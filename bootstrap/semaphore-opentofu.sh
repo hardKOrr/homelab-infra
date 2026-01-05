@@ -23,6 +23,7 @@ fi
 : "${SEMAPHORE_TOKEN:?Set SEMAPHORE_TOKEN in .env}"
 
 export TF_VAR_semaphore_url="$SEMAPHORE_URL"
+echo "Using Semaphore URL: $SEMAPHORE_URL"
 export TF_VAR_semaphore_admin_token="$SEMAPHORE_TOKEN"
 
 pushd "$TOFU_DIR" >/dev/null
@@ -33,7 +34,4 @@ echo ""
 echo "Outputs (store these securely):"
 echo "github_public_key:"
 tofu output -raw github_public_key
-echo ""
-echo "homelab_user_password:"
-tofu output -raw homelab_user_password
 popd >/dev/null
