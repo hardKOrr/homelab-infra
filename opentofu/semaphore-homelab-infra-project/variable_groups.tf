@@ -1,4 +1,4 @@
-resource "semaphore_project_environment" "semaphore" {
+resource "semaphoreui_project_environment" "semaphore" {
   project_id = semaphoreui_project.homelab.id
   name       = "Semaphore OpenTofu Env"
 

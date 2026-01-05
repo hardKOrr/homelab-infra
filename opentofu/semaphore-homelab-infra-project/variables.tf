@@ -1,5 +1,5 @@
 variable "semaphore_url" {
-  description = "Semaphore base URL (e.g., https://semaphore.local). The /api suffix is added automatically."
+  description = "Semaphore API base URL (include /api, e.g., http://127.0.0.1:3000/api)."
   type        = string
   default     = "http://127.0.0.1:3000/api"
 }
