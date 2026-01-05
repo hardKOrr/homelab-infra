@@ -1,7 +1,6 @@
-# Team with homelab user as owner
-resource "semaphoreui_team" "homelab" {
+# Assign homelab user as project owner
+resource "semaphoreui_project_user" "homelab_owner" {
   project_id = semaphoreui_project.homelab.id
-  name       = "homelab-infra"
+  user_id    = semaphoreui_user.homelab.id
   role       = "owner"
-  users      = [semaphoreui_user.homelab.id]
 }

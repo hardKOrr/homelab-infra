@@ -36,7 +36,4 @@ tofu output -raw github_public_key
 echo ""
 echo "homelab_user_password:"
 tofu output -raw homelab_user_password
-echo ""
-echo "homelab_user_api_token:"
-tofu output -raw homelab_user_api_token
 popd >/dev/null

@@ -3,8 +3,8 @@ terraform {
 
   required_providers {
     semaphoreui = {
-      source  = "semaphoreui/semaphoreui"
-      version = ">= 0.6.0"
+      source  = "semaphoreui/semaphore"
+      version = "~> 0.1"
     }
     random = {
       source  = "hashicorp/random"
@@ -17,9 +17,14 @@ terraform {
   }
 }
 
+locals {
+  semaphore_base_url = trimsuffix(var.semaphore_url, "/")
+  semaphore_api_url  = endswith(local.semaphore_base_url, "/api") ? local.semaphore_base_url : "${local.semaphore_base_url}/api"
+}
+
 provider "semaphoreui" {
-  url   = var.semaphore_url
-  token = var.semaphore_admin_token
+  api_base_url = local.semaphore_api_url
+  api_token    = var.semaphore_admin_token
 }
 
 # SSH keypair for Git access in Semaphore
@@ -40,12 +45,6 @@ resource "semaphoreui_user" "homelab" {
   email    = "homelab-infra@localhost"
   password = random_password.homelab.result
   admin    = true
-}
-
-# API token for the homelab-infra user
-resource "semaphoreui_api_token" "homelab" {
-  user_id = semaphoreui_user.homelab.id
-  name    = "homelab-infra-bootstrap"
 }
 
 # Project definition
