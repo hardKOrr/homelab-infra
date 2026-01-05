@@ -3,7 +3,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOFU_DIR="$REPO_ROOT/opentofu/semaphore-homelab-infra-project"
-ENV_FILE="$REPO_ROOT/.env"
 
 # Ensure semaphore data directory exists and is writable by the 'semaphore' user/group.
 # Uses sudo when needed.
@@ -45,21 +44,9 @@ if ! command -v tofu >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-else
-  echo "WARNING: $ENV_FILE not found; expecting required env vars to be set." >&2
-fi
 
-: "${SEMAPHORE_URL:?Set SEMAPHORE_URL in .env}"
-: "${SEMAPHORE_TOKEN:?Set SEMAPHORE_TOKEN in .env}"
-
-export TF_VAR_semaphore_url="$SEMAPHORE_URL"
-echo "Using Semaphore URL: $SEMAPHORE_URL"
-export TF_VAR_semaphore_admin_token="$SEMAPHORE_TOKEN"
+export SEMAPHOREUI_API_BASE_URL="http://127.0.0.1:3000/api"
+export SEMAPHORE_FORWARDED_ENV_VARS='["SEMAPHOREUI_BASE_URL","SEMAPHOREUI_API_TOKEN"]'
 
 pushd "$TOFU_DIR" >/dev/null
 tofu init -input=false
