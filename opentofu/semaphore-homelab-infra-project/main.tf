@@ -1,6 +1,8 @@
 terraform {
-  required_version = ">= 1.6.0"
-
+  backend "local" {
+    path = "/var/lib/semaphore/tofu-state/semaphore-homelab-infra-project.tfstate"
+  }
+  
   required_providers {
     semaphoreui = {
       source  = "semaphoreui/semaphore"
@@ -28,6 +30,6 @@ resource "tls_private_key" "repo_key" {
 }
 
 # Project definition
-resource "semaphoreui_project" "homelab" {
+resource "semaphoreui_project" "homelab_infra" {
   name = "Homelab Infra"
 }

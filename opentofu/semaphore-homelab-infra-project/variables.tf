@@ -5,7 +5,7 @@ variable "semaphore_url" {
 }
 
 variable "semaphore_admin_token" {
-  description = "API token for an admin user to bootstrap resources"
+  description = "API token with admin access"
   type        = string
   sensitive   = true
 }

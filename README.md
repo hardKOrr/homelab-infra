@@ -18,9 +18,15 @@ Getting started
   ```
   (Make sure it is executable: `chmod +x bootstrap/semaphore-project.sh`.)
 
+IMPORTANT: The bootstrap MUST be run locally against your Semaphore instance (the machine where Semaphore's API and runner access will read state). Running the OpenTofu/Tofu apply locally without sharing state with Semaphore can create duplicate resources: ensure the bootstrap uses the same remote state backend or run it on the Semaphore host so the created state is visible to Semaphore task runs.
+
 OpenTofu automation (optional)
 - `opentofu/semaphore-homelab-infra-project/` contains a Tofu config (using the `semaphoreui` provider) that:
   - Creates a `homelab-infra` admin user and API token.
   - Creates the `Homelab Infra` project, SSH key (`github`), API key store entry (`semaphore-api`), repository pointing to this GitHub repo, team ownership, and a task template to update itself.
   - Generates an SSH keypair; outputs the public key for GitHub deploy keys and the user API token.
 - To use it, set `semaphore_url` and `semaphore_admin_token` (admin API token) via `tofu.tfvars` or env (`TF_VAR_...`), then run `tofu init && tofu apply` from that folder. Review the outputs to add the public key to GitHub.
+
+State and backend notes:
+- If you want both local bootstrap and Semaphore task runs to share the same Terraform/OpenTofu state, configure a remote backend (Terraform Cloud, S3+DynamoDB, GCS, etc.) and ensure both runs use the same backend config and workspace name (example workspace: `semaphore`).
+- Alternatively, run the bootstrap on the Semaphore host and enable `TOFU_MIGRATE=true` with backend variables set so the script will migrate local state into the configured backend.
