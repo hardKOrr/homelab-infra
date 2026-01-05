@@ -1,9 +1,9 @@
-resource "semaphoreui_project_environment" "bootstrap" {
+resource "semaphore_project_environment" "semaphore" {
   project_id = semaphoreui_project.homelab.id
-  name       = "bootstrap"
+  name       = "Semaphore OpenTofu Env"
 
   environment = {
-    TF_VAR_semaphore_url = local.semaphore_api_url
+    TF_VAR_semaphore_url = var.semaphore_url
   }
 
   secrets = [{

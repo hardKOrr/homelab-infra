@@ -14,13 +14,3 @@ resource "semaphoreui_project_key" "github" {
     private_key = tls_private_key.repo_key.private_key_pem
   }
 }
-
-# Key store entry: Semaphore user credentials (pre-generated password)
-resource "semaphoreui_project_key" "semaphore_user" {
-  project_id = semaphoreui_project.homelab.id
-  name       = "semaphore-user"
-  login_password = {
-    login    = semaphoreui_user.homelab.username
-    password = random_password.homelab.result
-  }
-}

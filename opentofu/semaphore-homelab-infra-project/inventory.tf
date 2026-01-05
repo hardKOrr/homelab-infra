@@ -1,9 +1,9 @@
-resource "semaphoreui_project_inventory" "tofu_workspace" {
+resource "semaphoreui_project_inventory" "semaphore_workspace" {
   project_id = semaphoreui_project.homelab.id
-  name       = "tofu-workspace"
+  name       = "Semaphore OpenTofu Workspace"
   ssh_key_id = semaphoreui_project_key.none.id
 
   terraform_workspace = {
-    workspace = "default"
+    workspace = "semaphore"
   }
 }
