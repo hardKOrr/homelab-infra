@@ -20,8 +20,6 @@ terraform {
 }
 
 provider "semaphoreui" {
-  api_base_url = var.semaphore_url
-  api_token    = var.semaphore_admin_token
 }
 
 # SSH keypair for Git access in Semaphore
