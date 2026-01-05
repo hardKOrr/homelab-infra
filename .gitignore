@@ -1,0 +1,23 @@
+# Environment / secrets
+.env
+.env.*
+
+# OpenTofu / Terraform state
+.terraform/
+.terraform.lock.hcl
+.tofu/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
+*.tfvars
+
+# Ansible
+*.retry
+inventory/hosts.ini
+
+# Editor/OS noise
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
