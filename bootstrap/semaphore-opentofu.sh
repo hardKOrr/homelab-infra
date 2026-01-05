@@ -57,9 +57,7 @@ fi
 : "${SEMAPHORE_URL:?Set SEMAPHORE_URL in .env}"
 : "${SEMAPHORE_TOKEN:?Set SEMAPHORE_TOKEN in .env}"
 
-export TF_VAR_semaphore_url="$SEMAPHORE_URL"
-echo "Using Semaphore URL: $SEMAPHORE_URL"
-export TF_VAR_semaphore_admin_token="$SEMAPHORE_TOKEN"
+export SEMAPHOREUI_API_BASE_URL="http://127.0.0.1:3000/api"
 
 pushd "$TOFU_DIR" >/dev/null
 tofu init -input=false

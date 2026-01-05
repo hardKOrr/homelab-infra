@@ -11,7 +11,11 @@ Getting started
   git clone https://github.com/hardKOrr/homelab-infra.git
   cd homelab-infra
   ```
-- Copy and edit env: `cp example.env .env` then set `SEMAPHORE_URL` and `SEMAPHORE_TOKEN` with your instance URL and the token you copied.
+- Export environment variables instead of using an env file. Example:
+  ```bash
+  export SEMAPHOREUI_API_KEY="<your-admin-api-token>"
+  export SEMAPHORE_URL="https://your-semaphore.example/api"
+  ```
 - Run the bootstrap script to create/configure the project via API:
   ```
   bootstrap/semaphore-project.sh
@@ -25,7 +29,15 @@ OpenTofu automation (optional)
   - Creates a `homelab-infra` admin user and API token.
   - Creates the `Homelab Infra` project, SSH key (`github`), API key store entry (`semaphore-api`), repository pointing to this GitHub repo, team ownership, and a task template to update itself.
   - Generates an SSH keypair; outputs the public key for GitHub deploy keys and the user API token.
-- To use it, set `semaphore_url` and `semaphore_admin_token` (admin API token) via `tofu.tfvars` or env (`TF_VAR_...`), then run `tofu init && tofu apply` from that folder. Review the outputs to add the public key to GitHub.
+- To use it, set `semaphore_url` and `semaphore_admin_token` via environment variables (the bootstrap and the provider read env). Example:
+  ```bash
+  export SEMAPHOREUI_API_KEY="<your-admin-api-token>"
+  export SEMAPHORE_URL="https://your-semaphore.example/api"
+  export TF_VAR_semaphore_url="$SEMAPHORE_URL"
+  export TF_VAR_semaphore_admin_token="$SEMAPHOREUI_API_KEY"
+  tofu init && tofu apply -auto-approve
+  ```
+  Review the outputs to add the public key to GitHub.
 
 State and backend notes:
 - If you want both local bootstrap and Semaphore task runs to share the same Terraform/OpenTofu state, configure a remote backend (Terraform Cloud, S3+DynamoDB, GCS, etc.) and ensure both runs use the same backend config and workspace name (example workspace: `semaphore`).

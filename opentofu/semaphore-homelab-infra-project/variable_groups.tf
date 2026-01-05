@@ -3,11 +3,11 @@ resource "semaphoreui_project_environment" "semaphore" {
   name       = "Homelab Infra OpenTofu Environment"
 
   environment = {
-    TF_VAR_semaphore_url = var.semaphore_url
+    SEMAPHOREUI_API_BASE_URL = var.semaphore_url
   }
 
   secrets = [{
-    name  = "TF_VAR_semaphore_admin_token"
+    name  = "SEMAPHOREUI_API_TOKEN"
     type  = "env"
     value = var.semaphore_admin_token
   }]
