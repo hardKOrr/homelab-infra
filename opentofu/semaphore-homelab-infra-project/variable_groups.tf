@@ -1,6 +1,6 @@
 resource "semaphoreui_project_environment" "semaphore" {
-  project_id = semaphoreui_project.homelab.id
-  name       = "Semaphore OpenTofu Env"
+  project_id = semaphoreui_project.homelab_infra.id
+  name       = "Homelab Infra OpenTofu Environment"
 
   environment = {
     TF_VAR_semaphore_url = var.semaphore_url

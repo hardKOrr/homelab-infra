@@ -5,6 +5,41 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOFU_DIR="$REPO_ROOT/opentofu/semaphore-homelab-infra-project"
 ENV_FILE="$REPO_ROOT/.env"
 
+# Ensure semaphore data directory exists and is writable by the 'semaphore' user/group.
+# Uses sudo when needed.
+SEMAPHORE_DATA_DIR="/var/lib/semaphore"
+if [ ! -d "$SEMAPHORE_DATA_DIR" ]; then
+  echo "Creating $SEMAPHORE_DATA_DIR"
+  if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo mkdir -p "$SEMAPHORE_DATA_DIR"
+    else
+      mkdir -p "$SEMAPHORE_DATA_DIR"
+    fi
+  else
+    mkdir -p "$SEMAPHORE_DATA_DIR"
+  fi
+fi
+
+# Set ownership to semaphore:semaphore and grant rwx to owner/group
+if id -u semaphore >/dev/null 2>&1; then
+  echo "Setting ownership and permissions on $SEMAPHORE_DATA_DIR"
+  if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo chown -R semaphore:semaphore "$SEMAPHORE_DATA_DIR"
+      sudo chmod -R 770 "$SEMAPHORE_DATA_DIR"
+    else
+      chown -R semaphore:semaphore "$SEMAPHORE_DATA_DIR" 2>/dev/null || true
+      chmod -R 770 "$SEMAPHORE_DATA_DIR" 2>/dev/null || true
+    fi
+  else
+    chown -R semaphore:semaphore "$SEMAPHORE_DATA_DIR"
+    chmod -R 770 "$SEMAPHORE_DATA_DIR"
+  fi
+else
+  echo "Warning: user 'semaphore' not found; created directory but did not change ownership."
+fi
+
 if ! command -v tofu >/dev/null 2>&1; then
   echo "ERROR: OpenTofu (tofu) is not installed or not in PATH." >&2
   exit 1
