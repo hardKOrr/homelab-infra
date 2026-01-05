@@ -8,5 +8,4 @@ resource "semaphoreui_project_template" "update_project" {
   environment_id = semaphoreui_project_environment.homelab_infra_variable_group.id
   app            = "tofu"
   playbook       = "opentofu/semaphore-homelab-infra-project"
-  arguments      = []
 }
