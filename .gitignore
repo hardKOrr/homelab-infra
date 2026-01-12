@@ -21,3 +21,4 @@ inventory/hosts.ini
 *.swo
 .DS_Store
 Thumbs.db
+.vscode/settings.json
