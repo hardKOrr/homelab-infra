@@ -1,0 +1,36 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_backup_module.html
+
+- name: "backup.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Backup Proxmox VM or Container"
+      community.general.proxmox_backup:
+        api_host:
+        api_password:
+        api_port: 8006
+        api_token_id:
+        api_token_secret:
+        api_user:
+        backup_mode:
+        bandwidth:
+        change_detection_mode:
+        compress:
+        compression_threads:
+        description:
+        fleecing:
+        mode:
+        node:
+        notification_mode:
+        performance_tweaks:
+        pool:
+        protected:
+        retention:
+        storage:
+        validate_certs:
+        vmids:
+        wait:
+        wait_timeout:

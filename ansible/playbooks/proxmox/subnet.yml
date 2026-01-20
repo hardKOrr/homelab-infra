@@ -1,0 +1,33 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_subnet_module.html
+
+- name: "subnet.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Manage Proxmox Subnet"
+      community.general.proxmox_subnet:
+        api_host:
+        api_password:
+        api_port: 8006
+        api_token_id:
+        api_token_secret:
+        api_user:
+        delete:
+        dhcp_dns_server:
+        dhcp_range:
+        end:
+        start:
+        dhcp_range_update_mode:
+        dnszoneprefix:
+        gateway:
+        lock_token:
+        snat:
+        state:
+        subnet:
+        update:
+        validate_certs:
+        vnet:
+        zone:

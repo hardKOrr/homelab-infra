@@ -1,0 +1,29 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_template_module.html
+
+- name: "template.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Create Proxmox VM or Container Template"
+      community.general.proxmox_template:
+        api_host:
+        api_password:
+        api_port: 8006
+        api_token_id:
+        api_token_secret:
+        api_user:
+        checksum:
+        checksum_algorithm:
+        content_type:
+        force:
+        node:
+        src:
+        state:
+        storage:
+        template:
+        timeout:
+        url:
+        validate_certs:

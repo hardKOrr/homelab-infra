@@ -1,0 +1,32 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_node_module.html
+
+- name: "node.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Manage Proxmox Node"
+      community.general.proxmox_node:
+        api_host:
+        api_password:
+        api_port: 8006
+        api_token_id:
+        api_token_secret:
+        api_user:
+        certificates:
+        cert:
+        force:
+        key:
+        restart:
+        state:
+        dns:
+        dns1:
+        dns2:
+        dns3:
+        search:
+        node_name:
+        power_state:
+        subscription:
+        validate_certs:

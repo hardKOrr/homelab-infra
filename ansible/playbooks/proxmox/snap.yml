@@ -1,0 +1,28 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_snap_module.html
+
+- name: "snap.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Manage Proxmox Snapshots"
+      community.general.proxmox_snap:
+        api_host:
+        api_password:
+        api_port: 8006
+        api_token_id:
+        api_token_secret:
+        api_user:
+        description:
+        force:
+        hostname:
+        retention:
+        snapname:
+        state:
+        timeout:
+        unbind:
+        validate_certs:
+        vmid:
+        vmstate:

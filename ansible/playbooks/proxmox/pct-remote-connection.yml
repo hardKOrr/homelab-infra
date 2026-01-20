@@ -1,0 +1,30 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_pct_remote_connection.html
+
+- name: "pct-remote-connection.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Configure Proxmox PCT Remote Connection"
+      community.general.proxmox_pct_remote_connection:
+        banner_timeout:
+        forward_agent:
+        host_key_auto_add:
+        host_key_checking:
+        lock_file_timeout:
+        look_for_keys:
+        password:
+        port:
+        private_key_file:
+        proxmox_become_method:
+        proxy_command:
+        pty:
+        record_host_keys:
+        remote_addr:
+        remote_user:
+        timeout:
+        use_persistent_connections:
+        use_rsa_sha2_algorithms:
+        vmid:

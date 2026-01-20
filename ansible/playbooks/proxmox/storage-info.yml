@@ -1,0 +1,19 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_storage_info_module.html
+
+- name: "storage-info.yml"
+  gather_facts: true
+  hosts: proxmox
+  vars:
+
+  tasks:
+    - name: "Get Proxmox Storage Info"
+      community.general.proxmox_storage_info:
+        api_host:
+        api_password:
+        api_port: 8006
+        api_token_id:
+        api_token_secret:
+        api_user:
+        type:
+        validate_certs:
