@@ -1,0 +1,17 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/docker/docker_container_info_module.html
+
+- name: "container-info.yml"
+  gather_facts: true
+  hosts: docker
+  vars:
+
+  tasks:
+    - name: "Get Docker Container Info"
+      community.docker.docker_container_info:
+        debug:
+        name:
+        timeout:
+        tls:
+        tls_hostname:
+        use_ssh_client:

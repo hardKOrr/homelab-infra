@@ -1,0 +1,38 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/docker/docker_compose_v2_module.html
+
+- name: "compose-v2.yml"
+  gather_facts: true
+  hosts: docker
+  vars:
+
+  tasks:
+    - name: "Manage Docker Compose v2"
+      community.docker.docker_compose_v2:
+        assume_yes:
+        build:
+        check_files_existing:
+        cli_context:
+        definition:
+        dependencies:
+        docker_cli:
+        env_files:
+        files:
+        ignore_build_events:
+        profiles:
+        project_name:
+        project_src:
+        pull:
+        recreate:
+        remove_images:
+        remove_orphans:
+        remove_volumes:
+        renew_anon_volumes:
+        scale:
+        services:
+        state:
+        timeout:
+        tls:
+        tls_hostname:
+        wait:
+        wait_timeout:

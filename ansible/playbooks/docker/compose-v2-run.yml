@@ -1,0 +1,48 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/docker/docker_compose_v2_run_module.html
+
+- name: "compose-v2-run.yml"
+  gather_facts: true
+  hosts: docker
+  vars:
+
+  tasks:
+    - name: "Run Docker Compose v2 Service"
+      community.docker.docker_compose_v2_run:
+        argv:
+        build:
+        cap_add:
+        cap_drop:
+        chdir:
+        check_files_existing:
+        cleanup:
+        cli_context:
+        command:
+        definition:
+        detach:
+        docker_cli:
+        entrypoint:
+        env:
+        env_files:
+        files:
+        interactive:
+        labels:
+        name:
+        no_deps:
+        profiles:
+        project_name:
+        project_src:
+        publish:
+        quiet_pull:
+        remove_orphans:
+        service:
+        service_ports:
+        stdin:
+        stdin_add_newline:
+        strip_empty_ends:
+        tls:
+        tls_hostname:
+        tty:
+        use_aliases:
+        user:
+        volumes:

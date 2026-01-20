@@ -1,0 +1,35 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/docker/docker_compose_v2_exec_module.html
+
+- name: "compose-v2-exec.yml"
+  gather_facts: true
+  hosts: docker
+  vars:
+
+  tasks:
+    - name: "Run Docker Compose v2 Exec"
+      community.docker.docker_compose_v2_exec:
+        argv:
+        chdir:
+        check_files_existing:
+        cli_context:
+        command:
+        definition:
+        detach:
+        docker_cli:
+        env:
+        env_files:
+        files:
+        index:
+        privileged:
+        profiles:
+        project_name:
+        project_src:
+        service:
+        stdin:
+        stdin_add_newline:
+        strip_empty_ends:
+        tls:
+        tls_hostname:
+        tty:
+        user:

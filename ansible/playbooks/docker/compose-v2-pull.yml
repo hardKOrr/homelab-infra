@@ -1,0 +1,26 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/docker/docker_compose_v2_pull_module.html
+
+- name: "compose-v2-pull.yml"
+  gather_facts: true
+  hosts: docker
+  vars:
+
+  tasks:
+    - name: "Pull Docker Compose v2 Images"
+      community.docker.docker_compose_v2_pull:
+        check_files_existing:
+        cli_context:
+        definition:
+        docker_cli:
+        env_files:
+        files:
+        ignore_buildable:
+        include_deps:
+        policy:
+        profiles:
+        project_name:
+        project_src:
+        services:
+        tls:
+        tls_hostname:
