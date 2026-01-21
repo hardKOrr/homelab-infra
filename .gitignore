@@ -22,3 +22,6 @@ inventory/hosts.ini
 .DS_Store
 Thumbs.db
 .vscode/settings.json
+
+# todo folders
+**/todo/*

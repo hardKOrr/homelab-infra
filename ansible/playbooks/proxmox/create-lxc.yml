@@ -1,68 +1,27 @@
 ---
 # https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_module.html
 
-- name: "create-lxc.yml"
+- name: Create LXC container on proxmox host
+  hosts: proxmox_host
+  become: false
   gather_facts: true
-  hosts: proxmox
-  vars:
+
+  vars_files:
+    - ../../vars/homelabinfra.yml
 
   tasks:
-    - name: "Create LXC Container"
-      community.general.proxmox:
-        api_host:
-        api_password:
-        api_port: 8006
-        api_token_id:
-        api_token_secret:
-        api_user:
-        clone:
-        clone_type:
-        cores:
-        cpus:
-        cpuunits:
-        delete:
-        description:
-        disk:
-        disk_volume:
-          - host_path:
-          - options:
-          - size:
-          - storage:
-          - volume:
-        features:
-        force:
-        hookscript:
-        hostname:
-        ip_address:
-        memory:
-        mount_volumes:
-          - host_path:
-          - id:
-          - mountpoint:
-          - options:
-          - size:
-          - storage:
-          - volume:
-        mounts:
-        nameserver:
-        netif:
-        node:
-        onboot:
-        ostemplate:
-        ostype:
-        password:
-        pool:
-        pubkey:
-        purge:
-        searchdomain:
-        startup:
-        state:
-        storage:
-        swap:
-        tags:
-        timeout:
-        timezone:
-        unprivileged:
-        update:
-        validate_certs:
-        vmid:
+    - name: Set instance data for LXC container
+      ansible.builtin.set_fact:
+        homelabinfra:
+          config: >-
+            {{
+              dict(
+                ansible = homelabinfra_defaults.ansible | combine(config.ansible | default({}), recursive=True),
+                proxmox = homelabinfra_defaults.proxmox | combine(config.proxmox | default({}), recursive=True),
+                lxc = homelabinfra_defaults.lxc | combine(config.lxc | default({}), recursive=True),
+              )
+            }}
+
+    - name: Proxmox Create LXC Container
+      ansible.builtin.include_tasks:
+        file: ../../tasks/proxmox/lxc-create.yml

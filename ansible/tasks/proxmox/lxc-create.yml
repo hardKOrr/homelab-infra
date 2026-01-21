@@ -1,0 +1,71 @@
+---
+
+- name: Assert homelabinfra instance data is provided
+  ansible.builtin.assert:
+    that:
+      - homelabinfra.config is defined
+      - homelabinfra.config.ansible.ssh_public_key is defined
+      - homelabinfra.config.proxmox.api_host is defined
+      - homelabinfra.config.proxmox.api_token_id is defined
+      - homelabinfra.config.proxmox.api_token_secret is defined
+      - homelabinfra.config.proxmox.node is defined
+      - homelabinfra.config.lxc.vmid is defined
+      - homelabinfra.config.lxc.hostname is defined
+      - homelabinfra.config.lxc.ostemplate is defined
+      - homelabinfra.config.lxc.ip_address is defined
+      
+    fail_msg: "Required homelabinfra.config inputs: ansible[ssh_public_key], proxmox[api_host,api_token_id,api_token_secret,node], lxc[vmid,hostname,ostemplate,ip_address]"
+
+- name: Build facts for usage in proxmox lxc creation
+  ansible.builtin.set_fact:
+    homelabinfra:
+      instance:
+        lxc: >-
+          {{dict(
+            state =  'present',
+            api_host =  homelabinfra.config.proxmox.api_host,
+            api_port = homelabinfra.config.proxmox.api_port,
+            api_token_id = homelabinfra.config.proxmox.api_token_id,
+            api_token_secret = homelabinfra.config.proxmox.api_token_secret,
+            node = homelabinfra.config.proxmox.node,
+            pubkey = homelabinfra.config.ansible.ssh_public_key
+            **homelabinfra.config.lxc
+          )}}
+
+- name: Create LXC container
+  community.general.proxmox:
+    api_host: "{{ homelabinfra.instance.lxc.api_host }}"
+    api_port: "{{ homelabinfra.instance.lxc.api_port }}"
+    api_token_id: "{{ homelabinfra.instance.lxc.api_token_id }}"
+    api_token_secret: "{{ homelabinfra.instance.lxc.api_token_secret }}"
+    node: "{{ homelabinfra.instance.lxc.node }}"
+    pubkey: "{{ homelabinfra.instance.lxc.pubkey }}"
+    state: "{{ homelabinfra.instance.lxc.state }}"
+    vmid: "{{ homelabinfra.instance.lxc.vmid }}"
+    hostname: "{{ homelabinfra.instance.lxc.hostname }}"
+    ostemplate: "{{ homelabinfra.instance.lxc.ostemplate }}"
+    ip_address: "{{ homelabinfra.instance.lxc.ip_address }}"
+    disk_volume:
+      storage: "{{ homelabinfra.instance.lxc.disk_volume.storage }}"
+      size: "{{ homelabinfra.instance.lxc.disk_volume.size }}"
+    password: "{{ homelabinfra.instance.lxc.password }}"
+    cores: "{{ homelabinfra.instance.lxc.cores }}"
+    description: "{{ homelabinfra.instance.lxc.description }}"
+    features: "{{ homelabinfra.instance.lxc.features }}"    
+    memory: "{{ homelabinfra.instance.lxc.memory }}"
+    onboot: "{{ homelabinfra.instance.lxc.onboot }}"
+    tags: "{{ homelabinfra.instance.lxc.tags }}"
+    mount_volumes: "{{ homelabinfra.instance.lxc.mount_volumes | default(omit) }}"
+    pool: "{{ homelabinfra.instance.lxc.pool | default(omit) }}"
+    startup: "{{ homelabinfra.instance.lxc.startup | default(omit) }}"
+    swap: "{{ homelabinfra.instance.lxc.swap | default(omit) }}"
+
+  register: create_lxc_result
+
+- name: Add LXC to inventory
+  ansible.builtin.add_host:
+    name: "{{ homelabinfra.instance.lxc.hostname }}"
+    groups: lxc_containers
+    ansible_host: "{{ homelabinfra.instance.lxc.ip_address }}"
+    ansible_user: "root"
+    ansible_ssh_private_key_file: "~/.ssh/id_rsa"

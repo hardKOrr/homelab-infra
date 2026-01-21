@@ -1,0 +1,31 @@
+---
+
+- import_playbook: ../proxmox/create-lxc.yml
+- name: Create new LXC container for docker application
+  ansible.builtin.import_playbook:
+    file: ../proxmox/create-lxc.yml
+  vars: 
+    config:
+      ansible:
+        ssh_public_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+      proxmox:
+        api_host: "proxmox.example.com"
+        api_token_id: "ansible@pve!tokenid"
+        api_token_secret: "supersecrettoken"
+        node: "proxmox-node1"
+      lxc:
+        vmid: 102
+        hostname: "template-app-container"
+        ostemplate: "local:vztmpl/ubuntu-20.04-standard_20.04-1_amd64.tar.gz"
+        ip_address: "192.168.1.102"
+        tags:
+          - docker
+          - ubuntu
+          - homelab-infra
+
+- name: Apply Docker Role to LXC Container
+  hosts: "template-app-container"
+  become: true
+  gather_facts: true
+  roles:
+    - docker

@@ -1,0 +1,28 @@
+---
+# tasks for proxmox template operations
+
+- name: "Assert homelabinfra instance data is provided"
+  ansible.builtin.assert:
+    that:
+      - homelabinfra is defined
+      - homelabinfra.ansible.instance is defined
+      - homelabinfra.proxmox.instance is defined
+    fail_msg: "Required inputs: homelabinfra.{ansible,proxmox}.instance are not all defined."
+
+- name: "Set local facts from defaults, updated with instance data"
+  ansible.builtin.set_fact:
+    hli_proxmox: >-
+      {{
+        homelabinfra.proxmox.defaults
+        | combine(homelabinfra.proxmox.instance, recursive=True)
+      }}
+    hli_ansible: >-
+      {{
+        homelabinfra.ansible.defaults
+        | combine(homelabinfra.ansible.instance, recursive=True)
+      }}
+
+- name: "Run a task"
+  debug:
+    msg: |
+      "Proxmox API Host is {{ hli_proxmox.api_host }} and Ansible user is {{ hli_ansible.ssh_user }}"

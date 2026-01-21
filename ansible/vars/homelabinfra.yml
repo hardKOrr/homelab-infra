@@ -1,0 +1,24 @@
+homelabinfra:
+  config:
+    ansible:
+      instance:
+
+homelabinfra_defaults:
+  ansible:
+    ssh_user: root
+  proxmox:
+    api_port: 8006
+  lxc:
+    disk_volume:
+      storage: local
+      size: 8
+    password: changeme
+    cores: 1
+    description: LXC Container created by Ansible
+    features:
+      nesting: true
+    memory: 512
+    onboot: true
+    tags:
+      - homelab-infra
+  vm:
