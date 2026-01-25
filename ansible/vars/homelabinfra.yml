@@ -1,13 +1,16 @@
 homelabinfra:
   config:
     ansible:
-      instance:
+    proxmox:
+    lxc:
+    vm:
 
 homelabinfra_defaults:
   ansible:
     ssh_user: root
   proxmox:
     api_port: 8006
+    api_user: root@pam
   lxc:
     disk_volume:
       storage: local

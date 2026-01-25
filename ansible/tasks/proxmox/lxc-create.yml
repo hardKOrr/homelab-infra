@@ -62,10 +62,14 @@
 
   register: create_lxc_result
 
-- name: Add LXC to inventory
-  ansible.builtin.add_host:
-    name: "{{ homelabinfra.instance.lxc.hostname }}"
-    groups: lxc_containers
-    ansible_host: "{{ homelabinfra.instance.lxc.ip_address }}"
-    ansible_user: "root"
-    ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+- name: Stamp LXC.conf with instance data
+# TODO: We need to properly insert into the commented area to show up as notes (and make it pretty!)
+# TODO: Find a better way to store LXC config data than overwriting the proxmox generated config file
+  ansible.builtin.cmd:
+    cmd: >
+      cat > /etc/pve/lxc/{{ homelabinfra.instance.lxc.vmid }}.conf << EOF
+      {{ homelabinfra.instance.lxc | to_nice_json }}
+      EOF
+  delegate_to: "{{ homelabinfra.instance.lxc.ip_address }}"
+  become: true
+  become_user: root

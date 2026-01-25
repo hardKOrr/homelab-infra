@@ -6,22 +6,22 @@
   become: false
   gather_facts: true
 
-  vars_files:
-    - ../../vars/homelabinfra.yml
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
   tasks:
-    - name: Set instance data for LXC container
-      ansible.builtin.set_fact:
-        homelabinfra:
-          config: >-
-            {{
-              dict(
-                ansible = homelabinfra_defaults.ansible | combine(config.ansible | default({}), recursive=True),
-                proxmox = homelabinfra_defaults.proxmox | combine(config.proxmox | default({}), recursive=True),
-                lxc = homelabinfra_defaults.lxc | combine(config.lxc | default({}), recursive=True),
-              )
-            }}
-
     - name: Proxmox Create LXC Container
       ansible.builtin.include_tasks:
         file: ../../tasks/proxmox/lxc-create.yml
+
+    - name: Add LXC to inventory
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra.instance.lxc.hostname }}"
+        groups: provision_docker
+        ansible_host: "{{ homelabinfra.instance.lxc.ip_address }}"
+        ansible_user: "root"
+        ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+
+# TODO: Create a task to wait/test for the LXC to be fully up and running before proceeding
+# TODO: Create a task to setup some basics like SSH keys, updating commands, report commands, etc, etc.  

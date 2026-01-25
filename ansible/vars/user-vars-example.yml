@@ -1,0 +1,19 @@
+homelabinfra:
+  config:
+    ansible:
+      ssh_public_key: ""
+    proxmox:
+      api_host: ""
+      api_port: 8006
+      api_token_id: ""
+      api_token_secret: ""
+      node: ""
+    lxc:
+      vmid: 0
+      hostname: ""
+      ostemplate: ""
+      ip_address: ""
+    network:
+      network_cidr: ""
+    docker: {}
+    vm: {}

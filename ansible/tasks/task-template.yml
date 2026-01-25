@@ -1,0 +1,21 @@
+- name: Assert required inputs
+  ansible.builtin.assert:
+    that:
+      - homelabinfra.config is defined
+      - homelabinfra.config.example is defined
+    fail_msg: "Required inputs: homelabinfra.config.example"
+
+- name: Build instance config
+  ansible.builtin.set_fact:
+    homelabinfra_instance:
+      example: "{{ homelabinfra.config.example }}"
+
+- name: Execute task with instance config
+  ansible.builtin.debug:
+    msg: "Replace this task with the real action using homelabinfra_instance"
+
+- name: Report instance config
+  ansible.builtin.copy:
+    content: "{{ homelabinfra_instance | to_nice_yaml }}"
+    dest: /tmp/homelabinfra-instance.yml
+    mode: "0600"

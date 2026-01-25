@@ -1,0 +1,16 @@
+---
+
+plugin: community.proxmox.proxmox
+url: "{{ homelabinfra.instance.proxmox.api_host }}:{{ homelabinfra.instance.proxmox.api_port | default(homelabinfra_defaults.proxmox.api_port) }}"
+user: "{{ homelabinfra.instance.proxmox.api_user | default(homelabinfra_defaults.proxmox.api_user) }}"
+token_id: "{{ homelabinfra.instance.proxmox.api_token_id }}"
+token_secret: "{{ homelabinfra.instance.proxmox.api_token_secret }}"
+validate_certs: false
+want_facts: true
+groups:
+  proxmox_nodes: "type == 'node'"
+  proxmox_clients: "type in ['qemu', 'lxc']"
+keyed_groups:
+  - key: tags
+    prefix: tag
+    separator: "_"
