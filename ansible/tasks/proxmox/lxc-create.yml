@@ -27,7 +27,7 @@
             api_token_id = homelabinfra_config.proxmox.api_token_id,
             api_token_secret = homelabinfra_config.proxmox.api_token_secret,
             node = homelabinfra_config.proxmox.node,
-            pubkey = homelabinfra_config.ansible.ssh_public_key
+            pubkey = homelabinfra_config.ansible.ssh_public_key,
             **homelabinfra_config.proxmox.lxc
           )}}
 
@@ -64,11 +64,11 @@
 - name: Stamp LXC.conf with instance data
 # TODO: We need to properly insert into the commented area to show up as notes (and make it pretty!)
 # TODO: Find a better way to store LXC config data than overwriting the proxmox generated config file
-  ansible.builtin.cmd:
+  ansible.builtin.command:
     cmd: >
       cat > /etc/pve/lxc/{{ homelabinfra_instance.lxc.vmid }}.conf << EOF
       {{ homelabinfra_instance.lxc | to_nice_json }}
       EOF
-  delegate_to: "{{ homelabinfra_instance.lxc.ip_address }}"
-  become: true
-  become_user: root
+  #delegate_to: "{{ homelabinfra_instance.lxc.ip_address }}"
+  #become: true
+  #become_user: root
