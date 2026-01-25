@@ -27,6 +27,7 @@
 
 - name: Merge defaults with user config
   ansible.builtin.set_fact:
-    homelabinfra:
-      config: "{{ homelabinfra_defaults | default({}) | combine(homelabinfra.config | default({}), recursive=True) }}"
+    homelabinfra_config: "{{ homelabinfra_defaults 
+      | default({}) 
+      | combine(homelabinfra_config | default({}), recursive=True) }}"
   run_once: true

@@ -1,19 +1,26 @@
-homelabinfra:
-  config:
-    ansible:
-      ssh_public_key: ""
-    proxmox:
-      api_host: ""
-      api_port: 8006
-      api_token_id: ""
-      api_token_secret: ""
-      node: ""
+homelabinfra_config:
+  ansible:
+    ssh_user: ""
+    ssh_public_key: ""
+  network: #TODO: Create structure to allow deterministic network configuration at a more granular level
+    network_cidr: ""
+  proxmox:
+    api_host: ""
+    api_port: ""
+    api_user: ""
+    api_token_id: ""
+    api_token_secret: ""
+    node: ""
     lxc:
-      vmid: 0
+      vmid: 0 #TODO: Create structure to allow deterministic VMID assignment
       hostname: ""
       ostemplate: ""
       ip_address: ""
-    network:
-      network_cidr: ""
-    docker: {}
     vm: {}
+  docker_hosts: 
+    docker_example_tag:
+      type: "vm"
+  apps:
+    docker_example:
+      docker_tag: "docker_example_tag"
+  

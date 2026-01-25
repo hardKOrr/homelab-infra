@@ -4,17 +4,21 @@ homelabinfra_defaults:
   proxmox:
     api_port: 8006
     api_user: root@pam
-  lxc:
-    disk_volume:
-      storage: local
-      size: 8
-    password: changeme
-    cores: 1
-    description: LXC Container created by Ansible
-    features:
-      nesting: true
-    memory: 512
-    onboot: true
-    tags:
-      - homelab-infra
-  vm:
+    lxc:
+      disk_volume:
+        storage: local
+        size: 8
+      password: changeme
+      cores: 1
+      description: LXC Container created by Ansible
+      features:
+        nesting: true
+      memory: 512
+      onboot: true
+      tags:
+        - homelab-infra
+    vm: #TODO: EVerything about VM stuff
+      {}
+  docker_hosts:
+    docker_default_host:
+      type: vm

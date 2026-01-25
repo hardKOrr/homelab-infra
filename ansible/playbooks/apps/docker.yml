@@ -5,7 +5,7 @@
     file: ../proxmox/create-lxc.yml
 
 - name: Apply Docker Role to LXC Container
-  hosts: provision_docker
+  hosts: provisioning
   become: true
   gather_facts: true
   pre_tasks:
