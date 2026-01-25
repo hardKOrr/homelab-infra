@@ -16,7 +16,10 @@ homelabinfra_config:
       hostname: ""
       ostemplate: ""
       ip_address: ""
-    vm: {}
+    vm:
+      vmid: 0
+      name: ""
+      ansible_host: ""
   docker_hosts: 
     docker_example_tag:
       type: "vm"

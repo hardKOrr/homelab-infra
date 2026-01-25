@@ -1,0 +1,24 @@
+---
+# https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_kvm_module.html
+
+- name: Create VM on proxmox host
+  hosts: proxmox_nodes
+  become: false
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Proxmox Create VM
+      ansible.builtin.include_tasks:
+        file: ../../tasks/proxmox/vm-create.yml
+
+    - name: Add VM to inventory
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.vm.name }}"
+        groups: provisioning
+        ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        ansible_ssh_private_key_file: "~/.ssh/id_rsa"

@@ -1,0 +1,33 @@
+---
+
+- name: Assert homelabinfra instance data is provided
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config is defined
+      - homelabinfra_config.proxmox.api_host is defined
+      - homelabinfra_config.proxmox.api_token_id is defined
+      - homelabinfra_config.proxmox.api_token_secret is defined
+      - homelabinfra_config.proxmox.node is defined
+      - homelabinfra_config.proxmox.vm.vmid is defined
+      - homelabinfra_config.proxmox.vm.name is defined
+      - homelabinfra_config.proxmox.vm.ansible_host is defined or homelabinfra_config.proxmox.vm.ip_address is defined
+    fail_msg: "Required homelabinfra_config inputs: proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name,ansible_host|ip_address]]"
+
+- name: Build facts for usage in proxmox vm creation
+  ansible.builtin.set_fact:
+    homelabinfra_instance:
+      vm: >-
+        {{ dict(
+          state = 'present',
+          api_host = homelabinfra_config.proxmox.api_host,
+          api_port = homelabinfra_config.proxmox.api_port,
+          api_token_id = homelabinfra_config.proxmox.api_token_id,
+          api_token_secret = homelabinfra_config.proxmox.api_token_secret,
+          node = homelabinfra_config.proxmox.node,
+          sshkeys = homelabinfra_config.ansible.ssh_public_key
+        ) | combine(homelabinfra_config.proxmox.vm, recursive=True) }}
+      vm_ansible_host: "{{ homelabinfra_config.proxmox.vm.ansible_host | default(homelabinfra_config.proxmox.vm.ip_address) }}"
+
+- name: Create VM
+  community.proxmox.proxmox_kvm: "{{ homelabinfra_instance.vm }}"
+  register: create_vm_result

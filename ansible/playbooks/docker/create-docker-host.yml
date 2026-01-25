@@ -1,0 +1,58 @@
+---
+
+- name: Create docker host
+  hosts: proxmox_nodes
+  become: false
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Set docker host selector
+      ansible.builtin.set_fact:
+        docker_host_tag: "{{ docker_tag | default('docker_default_host') }}"
+      run_once: true
+
+    - name: Assert docker host config exists
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_config.docker_hosts is defined
+          - homelabinfra_config.docker_hosts[docker_host_tag] is defined
+          - homelabinfra_config.docker_hosts[docker_host_tag].type is defined
+        fail_msg: "Required homelabinfra_config inputs: docker_hosts[<tag>].type"
+      run_once: true
+
+    - name: Set docker host type
+      ansible.builtin.set_fact:
+        docker_host_type: "{{ homelabinfra_config.docker_hosts[docker_host_tag].type }}"
+      run_once: true
+
+  tasks:
+    - name: Proxmox Create LXC Docker Host
+      ansible.builtin.include_tasks:
+        file: ../../tasks/proxmox/lxc-create.yml
+      when: docker_host_type == 'lxc'
+
+    - name: Proxmox Create VM Docker Host
+      ansible.builtin.include_tasks:
+        file: ../../tasks/proxmox/vm-create.yml
+      when: docker_host_type == 'vm'
+
+    - name: Add docker host to inventory
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.lxc.hostname if docker_host_type == 'lxc' else homelabinfra_instance.vm.name }}"
+        groups: provisioning
+        ansible_host: "{{ homelabinfra_instance.lxc.ip_address if docker_host_type == 'lxc' else homelabinfra_instance.vm_ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+      run_once: true
+
+- name: Apply Docker Role to Host
+  hosts: provisioning
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+  roles:
+    - docker
