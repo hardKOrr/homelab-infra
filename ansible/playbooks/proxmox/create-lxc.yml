@@ -2,7 +2,7 @@
 # https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_module.html
 
 - name: Create LXC container on proxmox host
-  hosts: proxmox_host
+  hosts: proxmox_nodes
   become: false
   gather_facts: true
 

@@ -1,10 +1,10 @@
 ---
-
+# Rundeck needs to pass in user-vars.yml as -e @user-vars.yml to properly load homelabinfra_config
 plugin: community.proxmox.proxmox
-url: "{{ homelabinfra_instance.proxmox.api_host }}:{{ homelabinfra_instance.proxmox.api_port | default(homelabinfra_defaults.proxmox.api_port) }}"
-user: "{{ homelabinfra_instance.proxmox.api_user | default(homelabinfra_defaults.proxmox.api_user) }}"
-token_id: "{{ homelabinfra_instance.proxmox.api_token_id }}"
-token_secret: "{{ homelabinfra_instance.proxmox.api_token_secret }}"
+url: "{{ homelabinfra_config.proxmox.api_host }}:{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
+user: "{{ homelabinfra_config.proxmox.api_user | default('root@pam') }}"
+token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
+token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
 validate_certs: false
 want_facts: true
 groups:

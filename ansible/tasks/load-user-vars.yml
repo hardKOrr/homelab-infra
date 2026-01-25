@@ -1,3 +1,11 @@
+---
+- name: Assert homelabinfra instance data is provided
+  ansible.builtin.assert:
+    that:
+      - user_vars_file is defined or homelabinfra_config is defined
+      
+    fail_msg: "Required user_vars_file or homelabinfra_config to load user configuration"
+
 - name: Load homelabinfra defaults
   ansible.builtin.include_vars:
     file: ../../vars/homelabinfra-defaults.yml
@@ -9,25 +17,10 @@
   when: user_vars_file is defined and user_vars_file | length > 0
   run_once: true
 
-- name: Check for local user vars
-  ansible.builtin.stat:
-    path: ../../vars/user-vars.yml
-  register: user_vars_local
-  when: user_vars_file is not defined or user_vars_file | length == 0
-  delegate_to: localhost
-  run_once: true
-
-- name: Load local user vars
-  ansible.builtin.include_vars:
-    file: ../../vars/user-vars.yml
-  when:
-    - user_vars_file is not defined or user_vars_file | length == 0
-    - user_vars_local.stat.exists
-  run_once: true
-
 - name: Merge defaults with user config
   ansible.builtin.set_fact:
-    homelabinfra_config: "{{ homelabinfra_defaults 
+    homelabinfra_config: "{{ 
+      homelabinfra_defaults 
       | default({}) 
       | combine(homelabinfra_config | default({}), recursive=True) }}"
   run_once: true
