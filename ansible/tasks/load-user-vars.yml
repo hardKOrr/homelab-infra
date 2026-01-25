@@ -1,6 +1,6 @@
 - name: Load homelabinfra defaults
   ansible.builtin.include_vars:
-    file: ../../vars/homelabinfra.yml
+    file: ../../vars/homelabinfra-defaults.yml
   run_once: true
 
 - name: Load user vars from file option
