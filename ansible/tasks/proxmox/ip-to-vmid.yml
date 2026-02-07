@@ -1,0 +1,43 @@
+---
+
+- name: Select VM IP for VMID
+  ansible.builtin.set_fact:
+    vm_ip_for_vmid: "{{ homelabinfra_config.proxmox.vm.ip_address | default(homelabinfra_config.proxmox.vm.ansible_host) }}"
+  when:
+    - homelabinfra_config is defined
+    - homelabinfra_config.proxmox is defined
+    - homelabinfra_config.proxmox.vm is defined
+    - homelabinfra_config.proxmox.vm.ip_address is defined or homelabinfra_config.proxmox.vm.ansible_host is defined
+    - homelabinfra_config.proxmox.vm.vmid is not defined or homelabinfra_config.proxmox.vm.vmid | int == 0
+    - (homelabinfra_config.proxmox.vm.ip_address | default(homelabinfra_config.proxmox.vm.ansible_host)) | lower != 'dhcp'
+
+- name: Set VM VMID from IP
+  ansible.builtin.set_fact:
+    homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'vm': {'vmid': vm_vmid_from_ip}}}, recursive=True) }}"
+  vars:
+    vm_octets: "{{ vm_ip_for_vmid.split('.') | map('int') | list }}"
+    vm_prefix_octet: "{{ (vm_octets[1] | int) if (vm_octets[1] | int) != 0 else (vm_octets[0] | int) }}"
+    vm_vmid_from_ip: "{{ (vm_prefix_octet | string) ~ ('%03d' | format(vm_octets[2] | int)) ~ ('%03d' | format(vm_octets[3] | int)) | int }}"
+  when:
+    - vm_ip_for_vmid is defined
+
+- name: Select LXC IP for VMID
+  ansible.builtin.set_fact:
+    lxc_ip_for_vmid: "{{ homelabinfra_config.proxmox.lxc.ip_address }}"
+  when:
+    - homelabinfra_config is defined
+    - homelabinfra_config.proxmox is defined
+    - homelabinfra_config.proxmox.lxc is defined
+    - homelabinfra_config.proxmox.lxc.ip_address is defined
+    - homelabinfra_config.proxmox.lxc.vmid is not defined or homelabinfra_config.proxmox.lxc.vmid | int == 0
+    - homelabinfra_config.proxmox.lxc.ip_address | lower != 'dhcp'
+
+- name: Set LXC VMID from IP
+  ansible.builtin.set_fact:
+    homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'vmid': lxc_vmid_from_ip}}}, recursive=True) }}"
+  vars:
+    lxc_octets: "{{ lxc_ip_for_vmid.split('.') | map('int') | list }}"
+    lxc_prefix_octet: "{{ (lxc_octets[1] | int) if (lxc_octets[1] | int) != 0 else (lxc_octets[0] | int) }}"
+    lxc_vmid_from_ip: "{{ (lxc_prefix_octet | string) ~ ('%03d' | format(lxc_octets[2] | int)) ~ ('%03d' | format(lxc_octets[3] | int)) | int }}"
+  when:
+    - lxc_ip_for_vmid is defined

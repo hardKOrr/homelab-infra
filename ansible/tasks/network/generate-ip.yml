@@ -1,0 +1,86 @@
+---
+
+- name: Set network selector
+  ansible.builtin.set_fact:
+    network_name: "{{ network_name | default('default') }}"
+  run_once: true
+
+- name: Assert network config exists
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config is defined
+      - homelabinfra_config.networks is defined
+      - homelabinfra_config.networks[network_name] is defined
+      - homelabinfra_config.networks[network_name].cidr is defined
+    fail_msg: "Required inputs: homelabinfra_config.networks[<name>].cidr"
+  run_once: true
+
+- name: Build effective network config
+  ansible.builtin.set_fact:
+    network_config: "{{ homelabinfra_config.networks.default | default({}) | combine(homelabinfra_config.networks[network_name], recursive=True) }}"
+  run_once: true
+
+- name: Use DHCP for IP allocation
+  ansible.builtin.set_fact:
+    final_ip_address: "dhcp"
+  when: network_config.cidr is string and network_config.cidr | lower == 'dhcp'
+  run_once: true
+
+- name: Allocate static IP in subnet
+  when: network_config.cidr is not string or network_config.cidr | lower != 'dhcp'
+  run_once: true
+  block:
+    - name: Collect existing client IPs from proxmox inventory
+      ansible.builtin.set_fact:
+        proxmox_client_ips: >-
+          {{ (proxmox_client_ips | default([])) + [
+              hostvars[item].ansible_host
+              | default(hostvars[item].ip)
+              | default(hostvars[item].ip_address)
+            ] }}
+      loop: "{{ groups['proxmox_clients'] | default([]) }}"
+      when:
+        - hostvars[item] is defined
+        - hostvars[item].ansible_host is defined or hostvars[item].ip is defined or hostvars[item].ip_address is defined
+
+    - name: Set IP allocation bounds
+      ansible.builtin.set_fact:
+        ip_offset: "{{ network_config.ip_offset | default(1) | int }}"
+        max_hosts: "{{ network_config.max_hosts | default((network_config.cidr | ansible.utils.ipaddr('size') | int) - 2) | int }}"
+
+    - name: Initialize candidate IP index
+      ansible.builtin.set_fact:
+        candidate_index: "{{ ip_offset - 1 }}"
+
+    - name: Find next available IP in subnet
+      ansible.builtin.set_fact:
+        candidate_index: "{{ candidate_index + 1 }}"
+        candidate_ip: "{{ network_config.cidr | ansible.utils.nthhost(candidate_index + 1) }}"
+      until:
+        - candidate_ip not in (proxmox_client_ips | default([]))
+        - candidate_index < max_hosts
+      retries: "{{ max_hosts }}"
+      delay: 0
+
+    - name: Assert IP allocation succeeded
+      ansible.builtin.assert:
+        that:
+          - candidate_ip is defined
+        fail_msg: "No available IPs found in {{ network_config.cidr }}"
+
+    - name: Set final IP address
+      ansible.builtin.set_fact:
+        final_ip_address: "{{ candidate_ip }}"
+
+- name: Set network instance facts
+  ansible.builtin.set_fact:
+    homelabinfra_instance:
+      network:
+        name: "{{ network_name }}"
+        cidr: "{{ network_config.cidr }}"
+        gateway: "{{ network_config.gateway | default(omit) }}"
+        dns_servers: "{{ network_config.dns_servers | default(omit) }}"
+        bridge: "{{ network_config.bridge | default(omit) }}"
+        vlan: "{{ network_config.vlan | default(omit) }}"
+        ip_address: "{{ final_ip_address }}"
+  run_once: true

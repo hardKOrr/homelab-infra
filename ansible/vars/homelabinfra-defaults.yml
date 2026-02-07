@@ -1,4 +1,5 @@
 homelabinfra_defaults:
+  networks:
   ansible:
     ssh_user: root
   proxmox:
@@ -22,3 +23,4 @@ homelabinfra_defaults:
   docker_hosts:
     docker_default_host:
       type: vm
+

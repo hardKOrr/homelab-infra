@@ -12,6 +12,17 @@
 
   tasks:
 # TODO: Create task for deterministic configuration of LXC configuration
+    - name: Generate IP Address for LXC Container
+      ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+      vars:
+        network_name: "{{ homelabinfra_config.proxmox.lxc.network | default('default') }}"
+    
+    - name: Set LXC IP Address fact
+      ansible.builtin.set_fact:
+        homelabinfra_config.proxmox:
+          lxc:
+            ip_address: "{{ homelabinfra_instance.network.ip_address }}"
+
     - name: Proxmox Create LXC Container
       ansible.builtin.include_tasks:
         file: ../../tasks/proxmox/lxc-create.yml
