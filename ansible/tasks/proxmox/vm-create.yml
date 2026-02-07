@@ -31,3 +31,30 @@
 - name: Create VM
   community.proxmox.proxmox_kvm: "{{ homelabinfra_instance.vm }}"
   register: create_vm_result
+
+- name: Wait for VM to be running
+  ansible.builtin.command:
+    cmd: "qm status {{ homelabinfra_instance.vm.vmid }}"
+  register: vm_status
+  retries: 30
+  delay: 2
+  until: "'status: running' in vm_status.stdout"
+  changed_when: false
+
+- name: Wait for VM guest agent to accept exec
+  ansible.builtin.command:
+    cmd: "qm guest exec {{ homelabinfra_instance.vm.vmid }} -- /bin/true"
+  register: vm_guest_exec_ready
+  retries: 30
+  delay: 2
+  until: vm_guest_exec_ready.rc == 0
+  changed_when: false
+
+- name: Write VM instance data to /root/home
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cat <<'EOF' | qm guest exec {{ homelabinfra_instance.vm.vmid }} -- /bin/sh -c 'mkdir -p /root/home && cat > /root/home/homelabinfra_instance.vm.json'
+    {{ homelabinfra_instance.vm | to_nice_json }}
+    EOF
+  args:
+    executable: /bin/bash

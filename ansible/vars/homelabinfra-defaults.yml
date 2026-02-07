@@ -19,7 +19,12 @@ homelabinfra_defaults:
       tags:
         - homelab-infra
     vm: #TODO: EVerything about VM stuff
-      {}
+      agent: 1
+      onboot: true
+      autostart: true
+      description: VM created by Ansible
+      tags:
+        - homelab-infra
   docker_hosts:
     docker_default_host:
       type: vm

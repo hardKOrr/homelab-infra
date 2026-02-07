@@ -33,14 +33,29 @@
   community.proxmox.proxmox: "{{ homelabinfra_instance.lxc }}"
   register: create_lxc_result
 
-- name: Stamp LXC.conf with instance data
-# TODO: We need to properly insert into the commented area to show up as notes (and make it pretty!)
-# TODO: Find a better way to store LXC config data than overwriting the proxmox generated config file
+- name: Wait for LXC to be running
   ansible.builtin.command:
-    cmd: >
-      cat > /etc/pve/lxc/{{ homelabinfra_instance.lxc.vmid }}.conf << EOF
-      {{ homelabinfra_instance.lxc | to_nice_json }}
-      EOF
-  #delegate_to: "{{ homelabinfra_instance.lxc.ip_address }}"
-  #become: true
-  #become_user: root
+    cmd: "pct status {{ homelabinfra_instance.lxc.vmid }}"
+  register: lxc_status
+  retries: 30
+  delay: 2
+  until: "'status: running' in lxc_status.stdout"
+  changed_when: false
+
+- name: Wait for LXC to accept exec
+  ansible.builtin.command:
+    cmd: "pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/true"
+  register: lxc_exec_ready
+  retries: 30
+  delay: 2
+  until: lxc_exec_ready.rc == 0
+  changed_when: false
+
+- name: Write LXC instance data to /root/home
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cat <<'EOF' | pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/sh -c 'mkdir -p /root/home && cat > /root/home/homelabinfra_instance.lxc.json'
+    {{ homelabinfra_instance.lxc | to_nice_json }}
+    EOF
+  args:
+    executable: /bin/bash
