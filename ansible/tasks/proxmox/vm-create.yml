@@ -24,9 +24,56 @@
           api_token_id = homelabinfra_config.proxmox.api_token_id,
           api_token_secret = homelabinfra_config.proxmox.api_token_secret,
           node = homelabinfra_config.proxmox.node,
-          sshkeys = homelabinfra_config.ansible.ssh_public_key
+          sshkeys = homelabinfra_config.ansible.ssh_public_key,
+          ciuser = homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user)
         ) | combine(homelabinfra_config.proxmox.vm, recursive=True) }}
       vm_ansible_host: "{{ homelabinfra_config.proxmox.vm.ansible_host | default(homelabinfra_config.proxmox.vm.ip_address) }}"
+
+- name: Build VM network settings
+  ansible.builtin.set_fact:
+    vm_ip_cidr: >-
+      {{
+        'dhcp'
+        if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+        else homelabinfra_instance.network.ip_address ~ '/' ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
+      }}
+    vm_net0: >-
+      virtio
+      {%- if homelabinfra_instance.network.bridge is defined -%}
+      ,bridge={{ homelabinfra_instance.network.bridge }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.vlan is defined and (homelabinfra_instance.network.vlan | int) > 0 -%}
+      ,tag={{ homelabinfra_instance.network.vlan }}
+      {%- endif -%}
+    vm_ipconfig0: >-
+      ip={{ vm_ip_cidr }}
+      {%- if homelabinfra_instance.network.gateway is defined and (homelabinfra_instance.network.ip_address | lower) != 'dhcp' -%}
+      ,gw={{ homelabinfra_instance.network.gateway }}
+      {%- endif -%}
+  when: homelabinfra_instance.network is defined
+
+- name: Merge VM network settings
+  ansible.builtin.set_fact:
+    homelabinfra_instance:
+      vm: >-
+        {{
+          homelabinfra_instance.vm
+          | combine(
+              dict(net=dict(net0=vm_net0), ipconfig=dict(ipconfig0=vm_ipconfig0)),
+              recursive=True
+            )
+          | combine(
+              (homelabinfra_instance.network.dns_servers is defined and (homelabinfra_instance.network.dns_servers | length > 0))
+              | ternary(dict(nameservers=homelabinfra_instance.network.dns_servers), {}),
+              recursive=True
+            )
+          | combine(
+              homelabinfra_instance.network.searchdomain is defined
+              | ternary(dict(searchdomains=homelabinfra_instance.network.searchdomain), {}),
+              recursive=True
+            )
+        }}
+  when: homelabinfra_instance.network is defined
 
 - name: Create VM
   community.proxmox.proxmox_kvm: "{{ homelabinfra_instance.vm }}"

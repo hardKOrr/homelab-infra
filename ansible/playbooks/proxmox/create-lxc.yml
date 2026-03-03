@@ -23,6 +23,9 @@
           lxc:
             ip_address: "{{ homelabinfra_instance.network.ip_address }}"
 
+    - name: Derive VMID from IP (if needed)
+      ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+
     - name: Proxmox Create LXC Container
       ansible.builtin.include_tasks:
         file: ../../tasks/proxmox/lxc-create.yml

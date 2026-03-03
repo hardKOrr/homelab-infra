@@ -4,6 +4,7 @@ homelabinfra_config:
     ssh_public_key: ""
   networks:
     default:
+      cidr: "dhcp"
       gateway: ""
       dns_servers: []
       bridge: "vmbr0"

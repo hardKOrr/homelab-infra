@@ -29,6 +29,50 @@
           pubkey = homelabinfra_config.ansible.ssh_public_key
         ) | combine(homelabinfra_config.proxmox.lxc, recursive=True) }}
 
+- name: Build LXC network settings
+  ansible.builtin.set_fact:
+    lxc_ip_cidr: >-
+      {{
+        'dhcp'
+        if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+        else homelabinfra_instance.network.ip_address ~ '/' ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
+      }}
+    lxc_netif: >-
+      name=eth0,ip={{ lxc_ip_cidr }}
+      {%- if homelabinfra_instance.network.gateway is defined and (homelabinfra_instance.network.ip_address | lower) != 'dhcp' -%}
+      ,gw={{ homelabinfra_instance.network.gateway }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.bridge is defined -%}
+      ,bridge={{ homelabinfra_instance.network.bridge }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.vlan is defined and (homelabinfra_instance.network.vlan | int) > 0 -%}
+      ,tag={{ homelabinfra_instance.network.vlan }}
+      {%- endif -%}
+  when: homelabinfra_instance.network is defined
+
+- name: Merge LXC network settings
+  ansible.builtin.set_fact:
+    homelabinfra_instance:
+      lxc: >-
+        {{
+          homelabinfra_instance.lxc
+          | combine(
+              dict(netif=dict(net0=lxc_netif)),
+              recursive=True
+            )
+          | combine(
+              (homelabinfra_instance.network.dns_servers is defined and (homelabinfra_instance.network.dns_servers | length > 0))
+              | ternary(dict(nameserver=(homelabinfra_instance.network.dns_servers | join(' '))), {}),
+              recursive=True
+            )
+          | combine(
+              homelabinfra_instance.network.searchdomain is defined
+              | ternary(dict(searchdomain=homelabinfra_instance.network.searchdomain), {}),
+              recursive=True
+            )
+        }}
+  when: homelabinfra_instance.network is defined
+
 - name: Create LXC container
   community.proxmox.proxmox: "{{ homelabinfra_instance.lxc }}"
   register: create_lxc_result
