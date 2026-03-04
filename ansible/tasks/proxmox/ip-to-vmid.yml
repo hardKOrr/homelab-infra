@@ -21,6 +21,19 @@
   when:
     - vm_ip_for_vmid is defined
 
+- name: Assert VM VMID is provided when using DHCP
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.vm.vmid is defined
+      - homelabinfra_config.proxmox.vm.vmid | int > 0
+    fail_msg: >-
+      DHCP is configured but no vmid provided.
+      Set homelabinfra_config.proxmox.vm.vmid in your user vars.
+  when:
+    - homelabinfra_config.proxmox is defined
+    - homelabinfra_config.proxmox.vm is defined
+    - (homelabinfra_config.proxmox.vm.ip_address | default(homelabinfra_config.proxmox.vm.ansible_host) | lower) == 'dhcp'
+
 - name: Select LXC IP for VMID
   ansible.builtin.set_fact:
     lxc_ip_for_vmid: "{{ homelabinfra_config.proxmox.lxc.ip_address }}"
@@ -41,3 +54,17 @@
     lxc_vmid_from_ip: "{{ (lxc_prefix_octet | string) ~ ('%03d' | format(lxc_octets[2] | int)) ~ ('%03d' | format(lxc_octets[3] | int)) | int }}"
   when:
     - lxc_ip_for_vmid is defined
+
+- name: Assert LXC VMID is provided when using DHCP
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.lxc.vmid is defined
+      - homelabinfra_config.proxmox.lxc.vmid | int > 0
+    fail_msg: >-
+      DHCP is configured but no vmid provided.
+      Set homelabinfra_config.proxmox.lxc.vmid in your user vars.
+  when:
+    - homelabinfra_config.proxmox is defined
+    - homelabinfra_config.proxmox.lxc is defined
+    - homelabinfra_config.proxmox.lxc.ip_address is defined
+    - homelabinfra_config.proxmox.lxc.ip_address | lower == 'dhcp'
