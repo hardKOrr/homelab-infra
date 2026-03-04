@@ -19,7 +19,8 @@
           - homelabinfra_config.docker_hosts is defined
           - homelabinfra_config.docker_hosts[docker_host_tag] is defined
           - homelabinfra_config.docker_hosts[docker_host_tag].type is defined
-        fail_msg: "Required homelabinfra_config inputs: docker_hosts[<tag>].type"
+          - homelabinfra_config.docker_hosts[docker_host_tag].type in ['lxc', 'vm']
+        fail_msg: "Required homelabinfra_config inputs: docker_hosts[<tag>].type (must be 'lxc' or 'vm')"
       run_once: true
 
     - name: Set docker host type
@@ -52,9 +53,7 @@
 
         - name: Set LXC IP Address fact
           ansible.builtin.set_fact:
-            homelabinfra_config.proxmox:
-              lxc:
-                ip_address: "{{ homelabinfra_instance.network.ip_address }}"
+            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
 
         - name: Derive LXC VMID from IP (if needed)
           ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml
@@ -73,9 +72,7 @@
 
         - name: Set VM IP Address fact
           ansible.builtin.set_fact:
-            homelabinfra_config.proxmox:
-              vm:
-                ip_address: "{{ homelabinfra_instance.network.ip_address }}"
+            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'vm': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
 
         - name: Derive VMID from IP (if needed)
           ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml

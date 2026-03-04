@@ -19,9 +19,7 @@
     
     - name: Set LXC IP Address fact
       ansible.builtin.set_fact:
-        homelabinfra_config.proxmox:
-          lxc:
-            ip_address: "{{ homelabinfra_instance.network.ip_address }}"
+        homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
 
     - name: Derive VMID from IP (if needed)
       ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml

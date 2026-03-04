@@ -17,9 +17,8 @@
 
 - name: Build facts for usage in proxmox lxc creation
   ansible.builtin.set_fact:
-    homelabinfra_instance:
-      lxc: >-
-        {{ dict(
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': dict(
           state = 'present',
           api_host = homelabinfra_config.proxmox.api_host,
           api_port = homelabinfra_config.proxmox.api_port,
@@ -27,7 +26,7 @@
           api_token_secret = homelabinfra_config.proxmox.api_token_secret,
           node = homelabinfra_config.proxmox.node,
           pubkey = homelabinfra_config.ansible.ssh_public_key
-        ) | combine(homelabinfra_config.proxmox.lxc, recursive=True) }}
+        ) | combine(homelabinfra_config.proxmox.lxc, recursive=True)}, recursive=True) }}
 
 - name: Build LXC network settings
   ansible.builtin.set_fact:
@@ -52,9 +51,8 @@
 
 - name: Merge LXC network settings
   ansible.builtin.set_fact:
-    homelabinfra_instance:
-      lxc: >-
-        {{
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc':
           homelabinfra_instance.lxc
           | combine(
               dict(netif=dict(net0=lxc_netif)),
@@ -70,7 +68,7 @@
               | ternary(dict(searchdomain=homelabinfra_instance.network.searchdomain), {}),
               recursive=True
             )
-        }}
+        }, recursive=True) }}
   when: homelabinfra_instance.network is defined
 
 - name: Create LXC container

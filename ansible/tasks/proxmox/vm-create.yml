@@ -15,19 +15,20 @@
 
 - name: Build facts for usage in proxmox vm creation
   ansible.builtin.set_fact:
-    homelabinfra_instance:
-      vm: >-
-        {{ dict(
-          state = 'present',
-          api_host = homelabinfra_config.proxmox.api_host,
-          api_port = homelabinfra_config.proxmox.api_port,
-          api_token_id = homelabinfra_config.proxmox.api_token_id,
-          api_token_secret = homelabinfra_config.proxmox.api_token_secret,
-          node = homelabinfra_config.proxmox.node,
-          sshkeys = homelabinfra_config.ansible.ssh_public_key,
-          ciuser = homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user)
-        ) | combine(homelabinfra_config.proxmox.vm, recursive=True) }}
-      vm_ansible_host: "{{ homelabinfra_config.proxmox.vm.ansible_host | default(homelabinfra_config.proxmox.vm.ip_address) }}"
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'vm': dict(
+            state = 'present',
+            api_host = homelabinfra_config.proxmox.api_host,
+            api_port = homelabinfra_config.proxmox.api_port,
+            api_token_id = homelabinfra_config.proxmox.api_token_id,
+            api_token_secret = homelabinfra_config.proxmox.api_token_secret,
+            node = homelabinfra_config.proxmox.node,
+            sshkeys = homelabinfra_config.ansible.ssh_public_key,
+            ciuser = homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user)
+          ) | combine(homelabinfra_config.proxmox.vm, recursive=True),
+          'vm_ansible_host': homelabinfra_config.proxmox.vm.ansible_host | default(homelabinfra_config.proxmox.vm.ip_address)
+        }, recursive=True) }}
 
 - name: Build VM network settings
   ansible.builtin.set_fact:
@@ -54,9 +55,8 @@
 
 - name: Merge VM network settings
   ansible.builtin.set_fact:
-    homelabinfra_instance:
-      vm: >-
-        {{
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'vm':
           homelabinfra_instance.vm
           | combine(
               dict(net=dict(net0=vm_net0), ipconfig=dict(ipconfig0=vm_ipconfig0)),
@@ -72,7 +72,7 @@
               | ternary(dict(searchdomains=homelabinfra_instance.network.searchdomain), {}),
               recursive=True
             )
-        }}
+        }, recursive=True) }}
   when: homelabinfra_instance.network is defined
 
 - name: Create VM
