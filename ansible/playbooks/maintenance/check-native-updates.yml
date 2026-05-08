@@ -1,0 +1,36 @@
+---
+# Check native LXC apps (non-Docker) for available updates.
+# Compares installed version against latest GitHub release.
+# Sends Ntfy notification if any app is behind — does NOT update.
+# To update: re-run the app's deploy playbook (that IS the update mechanism).
+#
+# Schedule: run weekly via Semaphore/Rundeck scheduled job.
+#
+# Native apps to check (expand as roles are implemented):
+#   - Vaultwarden   (github: dani-garcia/vaultwarden)
+#   - Caddy         (github: caddyserver/caddy) — or apt repo, check accordingly
+#   - Ntfy          (github: binwiederhier/ntfy)
+#   - Uptime Kuma   (github: louislam/uptime-kuma) — Docker, handled by Watchtower
+#
+# For each app:
+#   1. SSH to the app's LXC host
+#   2. Get installed version (app --version or read version file)
+#   3. GET https://api.github.com/repos/<owner>/<repo>/releases/latest
+#   4. Compare versions
+#   5. If behind: add to notification list
+# After checking all apps:
+#   6. If any behind: POST to Ntfy with list of apps + current/latest versions
+#   7. If all current: no notification (silence is good news)
+#
+# TODO: Implement checks per native app
+
+- name: Check Native App Updates
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+  tasks:
+    - name: TODO - implement per-app version checks
+      ansible.builtin.debug:
+        msg: "check-native-updates not yet implemented"

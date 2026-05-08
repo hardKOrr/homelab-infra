@@ -1,0 +1,27 @@
+# docker-compose.yml for APP_NAME ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  APP_NAME:
+    image: ghcr.io/OWNER/APP_NAME:latest   # pin a specific tag if needed
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"   # opt in to Watchtower auto-updates
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      # Add app-specific environment variables here
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+      - "{{ app_config.app.data_path }}:/data"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.port }}"  # remove if using internal Docker networking only
+    # networks:
+    #   - stack_net   # use internal networking for apps that talk to each other on the stack
+
+# networks:
+#   stack_net:
+#     external: true
+#     name: "{{ app_config.stack }}_net"

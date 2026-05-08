@@ -1,0 +1,9 @@
+---
+# TODO: Remove a DNS custom record from Pihole.
+# Inverse of tasks/wiring/pihole.yml. Called by playbooks/apps/remove.yml.
+#
+# Steps:
+#   1. DELETE /api/config/dns/hosts/<hostname> (Pihole v6 API)
+#
+# Safe if record does not exist — idempotent no-op.
+# Conditions: only runs when homelabinfra_infra.dns.provider == 'pihole'

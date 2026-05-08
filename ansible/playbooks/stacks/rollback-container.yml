@@ -1,0 +1,26 @@
+---
+# Roll back a Docker container to a specific image tag.
+# Run this when Watchtower updates a container and it breaks.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/stacks/rollback-container.yml \
+#     -e stack=media_stack -e container=radarr-4k -e image_tag=5.1.3
+#
+# Semaphore/Rundeck parameters:
+#   stack:       stack host tag (e.g. media_stack)
+#   container:   app instance name / container name (e.g. radarr-4k)
+#   image_tag:   image tag to roll back to (e.g. 5.1.3 or latest-prior)
+#                if omitted, pins to the currently running tag (stops future auto-updates)
+#
+# Steps:
+#   1. SSH to the stack host (looked up via tag_<stack> in inventory)
+#   2. Edit the container's image tag in the Compose file to image_tag
+#   3. docker compose pull <container>
+#   4. docker compose up -d <container>
+#   5. Wait for container healthy
+#   6. Notify via Ntfy: "<container> rolled back to <image_tag>"
+#
+# Note: pinning a tag stops Watchtower from auto-updating that container.
+# To re-enable auto-updates later, re-run the app deploy playbook (restores latest tag).
+
+# TODO: Implement rollback plays

@@ -1,0 +1,5 @@
+---
+# Role-level defaults for APP_NAME.
+# These are overridden by app_config (which is already merged from app-defaults + user config).
+# Only put role-internal defaults here — things the role needs but users never touch.
+APP_NAME_image: "ghcr.io/OWNER/APP_NAME:latest"

@@ -1,0 +1,12 @@
+---
+# TODO: Remove an app monitor from Uptime Kuma.
+# Inverse of tasks/wiring/uptime-kuma.yml. Called by playbooks/apps/remove.yml.
+#
+# Expected inputs:
+#   wiring_app_name:  the app instance name — matches the monitor friendly name
+#
+# Steps:
+#   1. Find monitor by name (GET /api/monitors, filter by name)
+#   2. DELETE monitor by ID
+#
+# Safe if monitor does not exist — idempotent no-op.

@@ -1,0 +1,49 @@
+---
+# App defaults template.
+# Copy to vars/app-defaults/APP_NAME.yml and fill in values for your app.
+# Replace APP_NAME throughout this file.
+#
+# These are the defaults every user gets. Only expose knobs that make sense
+# to change. Users override specific values in config/apps/<instance>.yml.
+# This file is git-managed — improvements here benefit all users on git pull.
+
+APP_NAME_defaults:
+
+  # ── Proxmox resources ───────────────────────────────────────────────────────
+  # NATIVE LXC apps: fill in the full block below.
+  # DOCKER apps: replace with a single `stack:` key (see Docker section below).
+  proxmox:
+    type: lxc
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 1             # increase if app is CPU-bound (check Grafana after deploy)
+    memory: 512          # MB — increase if app logs OOM or slows under load
+    disk_volume:
+      storage: local
+      size: 8            # GB — data path is separate, this is just the OS disk
+    network: default     # references a network name in config/proxmox.yml
+    tags:
+      - homelab-infra
+      - APP_NAME
+
+  # ── DOCKER APPS: replace the proxmox block above with this ──────────────────
+  # stack: media_stack   # which stack host to deploy on
+  #                      # stack host is created if it does not exist
+
+  # ── App config ──────────────────────────────────────────────────────────────
+  app:
+    port: 8080           # port the app listens on inside the container/LXC
+    data_path: /opt/APP_NAME/data
+    config_path: /opt/APP_NAME/config
+
+  # ── Native LXC update checking ──────────────────────────────────────────────
+  # Only needed for apps installed from GitHub binary releases (not apt, not Docker).
+  # Used by playbooks/maintenance/check-native-updates.yml to notify when behind.
+  # update:
+  #   github_repo: owner/APP_NAME    # e.g. dani-garcia/vaultwarden
+  #   binary_path: /usr/local/bin/APP_NAME
+
+  # ── Routing ─────────────────────────────────────────────────────────────────
+  routing:
+    proxy: internal      # internal | external — which reverse proxy handles this app
+    auth: true           # true = wire Authentik SSO in front of this app
+                         # set false for apps with their own auth (Vaultwarden, Grafana)

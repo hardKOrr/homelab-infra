@@ -1,0 +1,10 @@
+---
+# TODO: Remove an app proxy host from Nginx Proxy Manager.
+# Inverse of tasks/wiring/nginx.yml. Called by playbooks/apps/remove.yml.
+#
+# Steps:
+#   1. GET /api/nginx/proxy-hosts — find host by domain_names
+#   2. DELETE /api/nginx/proxy-hosts/<id>
+#
+# Safe if proxy host does not exist — idempotent no-op.
+# Conditions: only runs when homelabinfra_infra.reverse_proxy.provider == 'nginx'

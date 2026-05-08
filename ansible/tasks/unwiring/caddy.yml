@@ -1,0 +1,17 @@
+---
+# TODO: Remove an app route from Caddy via the Caddy admin API.
+# Inverse of tasks/wiring/caddy.yml. Called by playbooks/apps/remove.yml.
+#
+# Expected inputs:
+#   wiring_app_name:  the app instance name — used to identify the route to delete
+#
+# Reads from homelabinfra_infra:
+#   homelabinfra_infra.caddy.admin_api_url
+#
+# Steps:
+#   1. Find the route ID for wiring_app_name (GET /config/apps/http/servers/srv0/routes)
+#   2. DELETE the route by ID
+#   3. Verify route is gone
+#
+# Safe if route does not exist — idempotent no-op.
+# Conditions: only runs when homelabinfra_infra.reverse_proxy.provider == 'caddy'

@@ -1,0 +1,78 @@
+---
+# APP_NAME role — native LXC deployment (single binary or package-installed).
+# This role is called from Play 2 of playbooks/apps/APP_NAME.yml.
+# Target host: a dedicated LXC container (provisioned in Play 1).
+#
+# Variables available:
+#   app_config        — merged defaults + user config (from Play 1)
+#   instance          — the instance name
+#   homelabinfra_infra — infrastructure facts
+
+# ── Install ───────────────────────────────────────────────────────────────────
+# OPTION A: Install from apt package (preferred when available)
+- name: Install APP_NAME
+  ansible.builtin.apt:
+    name: APP_NAME
+    state: present
+    update_cache: true
+
+# OPTION B: Install from GitHub binary release (when no apt package exists)
+# - name: Get latest release info
+#   ansible.builtin.uri:
+#     url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+#     return_content: true
+#   register: _release
+#   changed_when: false
+#
+# - name: Set version fact
+#   ansible.builtin.set_fact:
+#     _latest_version: "{{ _release.json.tag_name }}"
+#
+# - name: Download binary
+#   ansible.builtin.get_url:
+#     url: "https://github.com/{{ app_config.update.github_repo }}/releases/download/{{ _latest_version }}/APP_NAME-linux-amd64"
+#     dest: "{{ app_config.update.binary_path }}"
+#     mode: "0755"
+#   notify: Restart APP_NAME
+
+# ── Configure ─────────────────────────────────────────────────────────────────
+- name: Create config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    mode: "0750"
+
+- name: Write app config
+  ansible.builtin.template:
+    src: config.j2
+    dest: "{{ app_config.app.config_path }}/config.yml"
+    mode: "0640"
+  notify: Restart APP_NAME
+
+# ── Service ───────────────────────────────────────────────────────────────────
+- name: Enable and start APP_NAME service
+  ansible.builtin.systemd:
+    name: APP_NAME
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for APP_NAME to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"   # adjust health endpoint
+    status_code: 200
+  register: _health
+  until: _health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── Record installed version ───────────────────────────────────────────────────
+# Written to a local fact file so check-native-updates.yml can compare against GitHub.
+- name: Record installed version
+  ansible.builtin.copy:
+    content: |
+      [APP_NAME]
+      version={{ _latest_version | default('unknown') }}
+    dest: /etc/ansible/facts.d/APP_NAME.fact
+    mode: "0644"

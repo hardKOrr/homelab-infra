@@ -1,0 +1,153 @@
+---
+# App playbook template.
+# Copy this file and rename it for your app:
+#   cp playbooks/apps/_template.yml playbooks/apps/sonarr.yml
+#
+# Then replace every occurrence of APP_NAME with your app name.
+# See playbooks/apps/README.md for the full contributor guide.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/APP_NAME.yml -e instance=APP_NAME
+#   ansible-playbook -i inventory/ playbooks/apps/APP_NAME.yml -e instance=APP_NAME-custom
+#
+# The `instance` parameter is the unique name for this deployment.
+# It becomes the hostname, Caddy subdomain, Authentik app slug, and Uptime Kuma monitor name.
+# If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+
+# ── Play 1: Provision ──────────────────────────────────────────────────────────
+# Runs against the Proxmox node to provision or locate the guest.
+# Adds the target host to a group for Play 2 to use.
+- name: "APP_NAME | Provision"
+  hosts: proxmox_nodes
+  become: false
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=APP_NAME (or APP_NAME-custom for multiple instances)"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/APP_NAME.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.APP_NAME_defaults | combine(_instance_config | default({}), recursive=True) }}"
+
+  tasks:
+    # ── CHOOSE ONE PROVISIONING PATH — delete the other ───────────────────────
+
+    # PATH A: DOCKER APP — app runs as a container on a shared stack host
+    # The stack host is found (or created) by tag. App is deployed in Play 2.
+    - name: Find or create stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+
+    # PATH B: NATIVE LXC APP — app gets its own dedicated LXC container
+    # Uncomment this block and delete PATH A above.
+    # - name: Generate IP address
+    #   ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+    #   vars:
+    #     network_name: "{{ app_config.proxmox.network | default('default') }}"
+    # - name: Derive VMID from IP
+    #   ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+    # - name: Create LXC container
+    #   ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
+    # - name: Add LXC to deploy group
+    #   ansible.builtin.add_host:
+    #     name: "{{ homelabinfra_instance.lxc.hostname }}"
+    #     groups: app_deploy
+    #     ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+    #     ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    #     app_config: "{{ app_config }}"
+    #     homelabinfra_infra: "{{ homelabinfra_infra }}"
+
+
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the target guest to install and configure the app.
+# For Docker apps: target is tag_<stack>. For native LXC: target is app_deploy group.
+- name: "APP_NAME | Deploy"
+  hosts: app_deploy   # change to tag_STACK_NAME for Docker apps (e.g. tag_media_stack)
+  become: true
+  gather_facts: true
+
+  tasks:
+    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped | default(false))
+
+    # ── App Deployment ─────────────────────────────────────────────────────────
+    - name: Deploy APP_NAME
+      ansible.builtin.include_role:
+        name: APP_NAME
+
+
+# ── Play 3: Wire ───────────────────────────────────────────────────────────────
+# Registers the app with platform services. Runs on localhost (API calls).
+# All wiring tasks are idempotent — safe to re-run.
+- name: "APP_NAME | Wire"
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Set them here.
+    # Do not change the variable names — wiring tasks depend on them.
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ homelabinfra_instance.network.ip_address }}"
+    wiring_upstream_port: "{{ app_config.app.port }}"
+    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "APP_NAME ({{ instance }})"
+    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - app_config.routing.auth | default(true)
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # ── App-to-App Wiring (best-effort) ────────────────────────────────────────
+    # Attempt connections to peer apps if they are already deployed.
+    # Skip gracefully if peer not yet available — no failure.
+    # Full stack wiring runs via playbooks/stacks/wire-<stack>.yml
+    #
+    # Example (uncomment and adapt for your app's peers):
+    # - name: Wire to Prowlarr (if deployed)
+    #   ansible.builtin.include_tasks: ../../tasks/app-wiring/prowlarr.yml
+    #   when: "'tag_prowlarr' in groups and groups['tag_prowlarr'] | length > 0"
+    #
+    # - name: Wire to Plex (if deployed)
+    #   ansible.builtin.include_tasks: ../../tasks/app-wiring/plex.yml
+    #   when: "'tag_plex' in groups and groups['tag_plex'] | length > 0"

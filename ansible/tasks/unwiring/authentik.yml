@@ -1,0 +1,15 @@
+---
+# TODO: Remove an app's Authentik proxy provider and application entry.
+# Inverse of tasks/wiring/authentik.yml. Called by playbooks/apps/remove.yml.
+#
+# Expected inputs:
+#   wiring_app_name:  the app instance name — used as the Authentik app slug
+#
+# Steps:
+#   1. Find application by slug (GET /api/v3/core/applications/?slug=<name>)
+#   2. Delete application (DELETE /api/v3/core/applications/<pk>/)
+#   3. Find proxy provider linked to that application
+#   4. Delete provider (DELETE /api/v3/providers/proxy/<pk>/)
+#
+# Safe if application does not exist — idempotent no-op.
+# Conditions: only runs when homelabinfra_infra.sso.provider == 'authentik'

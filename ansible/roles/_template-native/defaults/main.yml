@@ -1,0 +1,3 @@
+---
+# Role-internal defaults — not user-facing.
+APP_NAME_service_name: APP_NAME

@@ -1,0 +1,25 @@
+---
+# Read-only lab status report. Safe to run at any time — makes no changes.
+#
+# Reports:
+#   - All homelab-infra tagged guests (running / stopped / unknown)
+#   - Docker container states on each stack host
+#   - Uptime Kuma monitor statuses (via API)
+#   - PBS last backup status per guest (via PBS API)
+#   - Any native LXC apps with known update availability (from last check-native-updates run)
+#
+# Output: formatted table to console / Semaphore job output
+# Does not send Ntfy notification (this is a pull action, not an event)
+#
+# TODO: Implement status plays
+
+- name: Lab Status
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+  tasks:
+    - name: TODO - query Proxmox for all homelab-infra guests
+      ansible.builtin.debug:
+        msg: "Status playbook not yet implemented"

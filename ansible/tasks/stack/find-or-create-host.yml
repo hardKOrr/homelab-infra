@@ -1,0 +1,33 @@
+---
+# Find an existing stack host by tag, or create one if it does not exist.
+# Called from Play 1 of Docker app playbooks.
+#
+# Expected input:
+#   stack_name:  the stack identifier (e.g. media_stack, services_stack)
+#                must match a tag on the Proxmox LXC/VM that hosts this stack
+#
+# Output (set as homelabinfra facts for Play 2 to consume):
+#   homelabinfra_instance.network.ip_address  — IP of the stack host
+#   homelabinfra_instance.stack.hostname      — hostname of the stack host
+#
+# Also ensures the stack host is added to a 'app_deploy' group so Play 2 can target it.
+#
+# Logic:
+#   1. Refresh dynamic inventory (re-query Proxmox for current hosts + tags)
+#   2. Check if tag_<stack_name> group exists and has at least one running host
+#   3. If YES: use the first host — set facts, add to app_deploy group
+#   4. If NO:  create a new Docker host via create-docker-host.yml
+#              then set facts and add to app_deploy group
+#
+# Stack host defaults come from vars/homelabinfra-defaults.yml (docker_hosts.<stack_name>)
+# Users can override in config/proxmox.yml under docker_hosts.
+
+# TODO: Implement find-or-create logic
+- name: Assert stack_name is provided
+  ansible.builtin.assert:
+    that: stack_name is defined and stack_name | length > 0
+    fail_msg: "stack_name must be set in app-defaults or instance config"
+
+- name: TODO - check for existing stack host in inventory
+  ansible.builtin.debug:
+    msg: "find-or-create-host not yet implemented — stack: {{ stack_name }}"

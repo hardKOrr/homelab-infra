@@ -1,0 +1,11 @@
+---
+# TODO: Remove a DNS host override from OPNsense Unbound.
+# Inverse of tasks/wiring/opnsense.yml. Called by playbooks/apps/remove.yml.
+#
+# Steps:
+#   1. GET /api/unbound/host/searchHost — find the host override by hostname
+#   2. DELETE /api/unbound/host/delHost/<uuid>
+#   3. Apply: POST /api/unbound/service/reconfigure
+#
+# Safe if record does not exist — idempotent no-op.
+# Conditions: only runs when homelabinfra_infra.dns.provider == 'opnsense'

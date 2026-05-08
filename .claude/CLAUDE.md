@@ -17,12 +17,20 @@ Ansible-based homelab automation platform. Goal: one click in Semaphore deploys 
 ansible/
   playbooks/
     bootstrap.yml                  # one-time platform setup
-    apps/<app>.yml                 # one playbook per deployable app
+    apps/
+      <app>.yml                    # deploy app (idempotent — re-run = update config/binary)
+      remove.yml                   # remove app: stop container, unwire Caddy/Authentik/Uptime Kuma/DNS
     proxmox/
       create-lxc.yml
       create-vm.yml
     docker/
       create-docker-host.yml
+    stacks/
+      wire-<stack>.yml             # wire all app-to-app connections for a stack (idempotent)
+      rollback-container.yml       # pin container to previous image tag, restart, notify via Ntfy
+    maintenance/
+      status.yml                   # read-only: what's running, what's down, what's behind on updates
+      check-native-updates.yml     # compare installed vs latest GitHub release for native LXC apps, notify via Ntfy
   tasks/
     load-user-vars.yml
     network/generate-ip.yml
@@ -30,7 +38,14 @@ ansible/
       lxc-create.yml
       vm-create.yml
       ip-to-vmid.yml
-    wiring/                        # cross-service registration tasks (conditional on provider)
+    wiring/                        # platform wiring tasks (conditional on provider)
+      caddy.yml
+      nginx.yml
+      authentik.yml
+      uptime-kuma.yml
+      opnsense.yml
+      pihole.yml
+    unwiring/                      # inverse of wiring/ — called by remove.yml
       caddy.yml
       nginx.yml
       authentik.yml
@@ -51,6 +66,13 @@ ansible/
     app-defaults/<app>.yml         # per-app sensible defaults (git-managed)
   inventory/
     proxmox.yml
+
+semaphore/
+  project.json                     # importable Semaphore project with all job templates
+
+rundeck/
+  jobs/
+    *.yaml                         # importable Rundeck job definitions
 
 config/                            # GITIGNORED — never overwritten by git pull
   proxmox.yml                      # Proxmox connection + API token
@@ -125,12 +147,47 @@ Wiring tasks read service connection details from `config/.generated/facts.yml`.
 
 ## Day-2 Operations
 
-| Concern | Tool | Our responsibility |
-|---|---|---|
-| Container updates | Watchtower | Configure at Docker host creation with Ntfy endpoint |
-| OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` |
-| Backups | PBS | Configure schedule + datastore in bootstrap |
-| Uptime alerts | Uptime Kuma | Auto-register each app URL at deploy time |
+All operations are idempotent and re-runnable. Every automated action produces a Ntfy notification.
+
+| Concern | Tool | Our responsibility | Notification |
+|---|---|---|---|
+| Container updates | Watchtower | Configure at Docker host creation | Ntfy: "X updated to vY — run Rollback if broken" |
+| Container rollback | `rollback-container.yml` | Semaphore/Rundeck job, takes container name + image tag | Ntfy: "X rolled back to vY" |
+| OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` | Ntfy: "N packages updated on hostname" |
+| Native LXC app updates | `check-native-updates.yml` (scheduled weekly) | Compare installed vs GitHub latest release | Ntfy: "Vaultwarden vX.Z available, you have vX.Y — re-run deploy to update" |
+| Backups | PBS | Configure schedule + datastore in bootstrap | PBS native notifications |
+| Uptime alerts | Uptime Kuma | Auto-register each app at deploy time | Ntfy: "X is DOWN / recovered" |
+| App removal | `remove.yml` | Semaphore/Rundeck job — stops container, unwires everything | Ntfy: "X removed" |
+| Lab status | `status.yml` | Semaphore/Rundeck job — read-only | Console/Semaphore output |
+| App-to-app wiring | `wire-<stack>.yml` | Semaphore/Rundeck job — idempotent, safe to re-run | Ntfy: "Media stack wired: N connections confirmed" |
+
+### Feedback Loop (Container Updates)
+Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs Rollback Container job.
+Watchtower notification includes the rollback instruction so the path is obvious without digging through docs.
+
+### Native LXC App Update Path
+Re-running the deploy playbook for a native app IS the update mechanism — it checks latest version, downloads if newer, restarts if changed. `check-native-updates.yml` (run on schedule) only notifies; it does not update.
+
+## UI Job Structure (Semaphore + Rundeck)
+
+Both are supported. Playbooks are UI-agnostic. Job definitions live in `semaphore/` and `rundeck/` and are importable.
+
+```
+Bootstrap
+  Bootstrap Platform          ← bootstrap.yml (run once)
+
+Per-App
+  Deploy App                  ← apps/<app>.yml  (param: instance name)
+  Remove App                  ← apps/remove.yml (param: instance name)
+
+Per-Stack
+  Wire Stack                  ← stacks/wire-<stack>.yml (param: stack name)
+  Rollback Container          ← stacks/rollback-container.yml (params: container, image tag)
+
+Maintenance
+  Lab Status                  ← maintenance/status.yml
+  Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
+```
 
 ## Secrets
 

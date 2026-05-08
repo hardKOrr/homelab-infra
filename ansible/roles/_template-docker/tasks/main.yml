@@ -1,0 +1,49 @@
+---
+# APP_NAME role — Docker deployment.
+# This role is called from Play 2 of playbooks/apps/APP_NAME.yml.
+# Target host: the stack host (already exists, Docker already installed).
+#
+# Variables available:
+#   app_config        — merged defaults + user config (from Play 1)
+#   instance          — the instance name (e.g. sonarr-anime)
+#   homelabinfra_infra — infrastructure facts (Vaultwarden, Caddy, etc.)
+
+- name: Create app directory
+  ansible.builtin.file:
+    path: "/opt/{{ instance }}"
+    state: directory
+    mode: "0750"
+
+- name: Create data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    mode: "0750"
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ instance }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart APP_NAME
+
+- name: Pull latest image
+  community.docker.docker_compose_v2_pull:
+    project_src: "/opt/{{ instance }}"
+  register: _pull_result
+
+- name: Start APP_NAME
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+  register: _compose_result
+
+- name: Wait for APP_NAME to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/ping"   # adjust health endpoint for your app
+    status_code: 200
+  register: _health
+  until: _health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false

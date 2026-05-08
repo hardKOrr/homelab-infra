@@ -1,0 +1,39 @@
+---
+# Remove a deployed app instance — inverse of the app deploy playbook.
+# Safe to re-run: if already removed, wiring tasks are no-ops.
+# config/apps/<instance>.yml is NOT deleted — it is your restore point.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k
+#
+# Semaphore/Rundeck: job parameter = instance (the app instance name)
+#
+# Steps:
+#   1. Load config for the named instance
+#   2. Locate the host (from Proxmox inventory by hostname tag)
+#   3. Stop and remove the app container (docker compose down) OR stop native service
+#   4. Unwiring step (inverse of wiring — conditional on provider):
+#      a. Remove Caddy/Nginx route
+#      b. Remove Authentik provider + application
+#      c. Remove Uptime Kuma monitor
+#      d. Remove DNS record
+#   5. Notify via Ntfy: "<instance> removed"
+#
+# Does NOT:
+#   - Delete config/apps/<instance>.yml (restore point — user deletes manually if desired)
+#   - Destroy the Proxmox guest (stack hosts are shared — other apps may still run there)
+#   - Remove the stack host even if it is now empty (user decision)
+#
+# TODO: Implement remove plays
+
+- name: Remove App | Load config
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+  tasks:
+    - name: Assert instance name provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Pass the app instance name: -e instance=<name> (e.g. radarr-4k)"

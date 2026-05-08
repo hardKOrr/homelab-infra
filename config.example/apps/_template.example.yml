@@ -1,0 +1,26 @@
+---
+# APP_NAME instance config.
+# Copy to config/apps/APP_NAME.yml (or APP_NAME-secondary.yml for a second instance).
+# Only set values that differ from defaults in vars/app-defaults/APP_NAME.yml.
+# This file persists after removal — it is your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the hostname,
+# Caddy subdomain (APP_NAME.yourdomain.com), and Authentik app name.
+
+# ── Proxmox resource overrides ─────────────────────────────────────────────────
+# Uncomment and change only what you need. All values have sensible defaults.
+# proxmox:
+#   cores: 2
+#   memory: 2048    # MB
+
+# ── Stack override (Docker apps only) ──────────────────────────────────────────
+# stack: media_stack   # override which stack host this app runs on
+
+# ── App-specific config ────────────────────────────────────────────────────────
+# APP_NAME:
+#   port: 8080         # only needed if running multiple instances on the same stack host
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal    # internal | external
+#   auth: true         # true = require Authentik login, false = publicly accessible
