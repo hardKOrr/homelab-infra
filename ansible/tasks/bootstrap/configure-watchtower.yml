@@ -1,0 +1,19 @@
+---
+# TODO: Deploy and configure Watchtower on a Docker stack host.
+# Called when a new Docker stack host is created (guest-bootstrap.yml triggers this for Docker hosts).
+#
+# Watchtower runs as a Docker container, watches other containers on the same host,
+# pulls updated images, and restarts containers automatically.
+#
+# Steps:
+#   1. Write docker-compose.watchtower.yml to /opt/watchtower/
+#   2. Configure Watchtower environment:
+#      - WATCHTOWER_NOTIFICATIONS=shoutrrr
+#      - WATCHTOWER_NOTIFICATION_URL: Ntfy URL from homelabinfra_infra.notifications
+#      - WATCHTOWER_SCHEDULE: "0 0 4 * * *"  (4am daily by default)
+#      - WATCHTOWER_LABEL_ENABLE: true  (only watch containers with label enable=true)
+#      - WATCHTOWER_CLEANUP: true  (remove old images after update)
+#   3. docker compose up -d
+#
+# Reads from homelabinfra_infra.notifications for Ntfy endpoint.
+# Notification format: "Container <name> updated from <old_image> to <new_image>"

@@ -1,0 +1,17 @@
+---
+# TODO: Create a DNS custom record in Pihole via the Pihole API.
+#
+# Expected inputs (vars passed by calling playbook):
+#   wiring_hostname:   full hostname (e.g. radarr-4k.homelab.example.com)
+#   wiring_ip:         IP address to resolve to
+#
+# Reads from homelabinfra_infra:
+#   homelabinfra_infra.dns.host        Pihole IP (looked up from Proxmox inventory)
+#   homelabinfra_infra.dns.api_key     Pihole API key (stored in Vaultwarden)
+#
+# Steps:
+#   1. POST to Pihole API v6: /api/config/dns/hosts
+#   2. Verify record resolves correctly
+#
+# Conditions: only runs when homelabinfra_infra.dns.provider == 'pihole'
+# Note: Pihole v6 has a full REST API. v5 used a different mechanism — check version.

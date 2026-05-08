@@ -1,0 +1,18 @@
+---
+# TODO: Register an app route with Caddy via the Caddy admin API.
+#
+# Expected inputs (vars passed by calling playbook):
+#   wiring_app_name:       the app instance name (e.g. radarr-4k)
+#   wiring_upstream_host:  IP or hostname of the app container
+#   wiring_upstream_port:  port the app listens on
+#   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com)
+#
+# Reads from homelabinfra_infra (loaded from config/.generated/facts.yml):
+#   homelabinfra_infra.caddy.admin_api_url  (e.g. http://192.168.1.10:2019)
+#
+# Steps:
+#   1. Build Caddy route JSON (reverse_proxy handler, TLS via ACME)
+#   2. POST to Caddy admin API: /config/apps/http/servers/srv0/routes
+#   3. Verify route is active
+#
+# Conditions: only runs when homelabinfra_infra.reverse_proxy.provider == 'caddy'

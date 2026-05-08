@@ -1,0 +1,19 @@
+---
+# TODO: Create a DNS host override in OPNsense Unbound via the OPNsense REST API.
+#
+# Expected inputs (vars passed by calling playbook):
+#   wiring_hostname:   hostname portion (e.g. radarr-4k)
+#   wiring_domain:     domain portion (e.g. homelab.example.com)
+#   wiring_ip:         IP address to resolve to (the Caddy/Nginx host IP, or app IP for internal)
+#
+# Reads from homelabinfra_infra (loaded from config/.generated/facts.yml):
+#   homelabinfra_infra.dns.host        OPNsense IP
+#   homelabinfra_infra.dns.api_key     OPNsense API key
+#   homelabinfra_infra.dns.api_secret  OPNsense API secret
+#
+# Steps:
+#   1. POST to OPNsense API: /api/unbound/host/addHost
+#   2. Apply Unbound config: /api/unbound/service/reconfigure
+#
+# Conditions: only runs when homelabinfra_infra.dns.provider == 'opnsense'
+# Docs: https://docs.opnsense.org/development/api/core/unbound.html

@@ -2,15 +2,8 @@
 .env
 .env.*
 
-# OpenTofu / Terraform state
-.terraform/
-.terraform.lock.hcl
-.tofu/
-*.tfstate
-*.tfstate.*
-terraform.tfvars
-terraform.tfvars.json
-*.tfvars
+# User config (gitignored — never overwritten by git pull)
+config/
 
 # Ansible
 *.retry

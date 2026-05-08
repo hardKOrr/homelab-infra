@@ -1,0 +1,22 @@
+---
+# TODO: Register an app with Authentik as a proxy provider + application.
+#
+# Expected inputs (vars passed by calling playbook):
+#   wiring_app_name:        the app instance name (becomes Authentik app slug)
+#   wiring_app_display:     human-readable name for Authentik UI
+#   wiring_upstream_url:    full internal URL of the app (e.g. http://192.168.1.50:7878)
+#   wiring_external_url:    public URL (e.g. https://radarr.homelab.example.com)
+#   wiring_auth_group:      Authentik group that can access this app (default: homelab-users)
+#
+# Reads from homelabinfra_infra:
+#   homelabinfra_infra.authentik.api_url    (e.g. https://auth.homelab.example.com/api/v3)
+#   homelabinfra_infra.authentik.api_token  (stored in Vaultwarden)
+#
+# Steps:
+#   1. Create or update proxy provider (forward auth mode)
+#   2. Create or update application linked to that provider
+#   3. Assign application to the configured Authentik outpost
+#   4. Bind access policy (group membership check)
+#
+# Conditions: only runs when homelabinfra_infra.sso.provider == 'authentik'
+# Note: Authentik has a full REST API at /api/v3 — use uri module, not shell commands.

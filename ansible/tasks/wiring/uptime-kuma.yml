@@ -1,0 +1,19 @@
+---
+# TODO: Register an app monitor in Uptime Kuma via its REST API.
+#
+# Expected inputs (vars passed by calling playbook):
+#   wiring_app_name:     the app instance name (becomes monitor friendly name)
+#   wiring_monitor_url:  URL to monitor (usually the public Caddy route)
+#   wiring_interval:     check interval in seconds (default: 60)
+#
+# Reads from homelabinfra_infra:
+#   homelabinfra_infra.uptime_kuma.api_url    (e.g. https://status.homelab.example.com)
+#   homelabinfra_infra.uptime_kuma.api_token  (stored in Vaultwarden)
+#
+# Steps:
+#   1. Check if monitor already exists (GET /api/monitors, match by name)
+#   2. Create monitor if not present (POST /api/monitors)
+#   3. Associate monitor with the homelab notification channel (Ntfy)
+#
+# Conditions: runs for all app deploys if Uptime Kuma is reachable
+# Note: Uptime Kuma v2 has a REST API. v1 required socket.io — verify version before implementing.

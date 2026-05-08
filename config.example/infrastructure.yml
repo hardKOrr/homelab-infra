@@ -1,0 +1,70 @@
+---
+# Platform infrastructure declarations.
+# Copy this to config/infrastructure.yml and fill in your values.
+# This file is gitignored — git pull will never overwrite it.
+#
+# This file declares ROLES and PROVIDER CHOICES only — not IPs or tokens.
+# Connection details are written automatically to config/.generated/facts.yml
+# by the bootstrap playbook after each service is deployed.
+
+# Your homelab domain. All app routes will be subdomains of this.
+domain: "homelab.example.com"
+
+# ── Reverse Proxy ──────────────────────────────────────────────────────────────
+# provider: caddy | nginx | none
+# instance: the Proxmox hostname of your reverse proxy LXC (used for inventory lookup)
+#
+# If you run two proxies (e.g. nginx external, caddy internal), declare both:
+#   internal: { provider: caddy, instance: caddy }
+#   external: { provider: nginx, instance: nginx-ext }
+# Apps default to 'internal'. Override per-app with routing.proxy: external
+reverse_proxy:
+  provider: caddy
+  instance: caddy
+
+# ── SSO ────────────────────────────────────────────────────────────────────────
+# provider: authentik | none
+# Set to none to skip SSO wiring for all apps.
+sso:
+  provider: authentik
+  instance: authentik
+
+# ── Notifications ──────────────────────────────────────────────────────────────
+# provider: ntfy | gotify | discord | none
+# ntfy/gotify: self-hosted — deploy via bootstrap, instance is Proxmox hostname
+# discord: external — provide webhook_url instead of instance
+notifications:
+  provider: ntfy
+  instance: ntfy
+  # topic: homelab           # ntfy topic to publish to (default: homelab)
+  # webhook_url: ""          # for discord/slack (instead of instance)
+
+# ── DNS ────────────────────────────────────────────────────────────────────────
+# provider: pihole | adguard | opnsense | none
+# pihole/adguard: managed by homelab-infra, instance is Proxmox hostname
+# opnsense: external — provide host IP (OPNsense has a REST API for host overrides)
+# none: no automatic DNS record creation
+dns:
+  provider: opnsense
+  host: "192.168.1.1"       # OPNsense/external DNS host IP
+  # api_key: ""             # OPNsense API key (stored in Vaultwarden after bootstrap)
+  # instance: pihole        # for pihole/adguard: Proxmox hostname
+
+# ── Backups ────────────────────────────────────────────────────────────────────
+# PBS is deployed as a VM by bootstrap. Configure the datastore path here.
+# Bootstrap will configure the backup schedule — PBS runs backups autonomously.
+backups:
+  datastore_path: "/mnt/backup"   # path on the PBS VM where backups are stored
+  schedule: "daily"               # daily | weekly | custom cron
+  retention:
+    keep_last: 3
+    keep_daily: 7
+    keep_weekly: 4
+
+# ── Vaultwarden ────────────────────────────────────────────────────────────────
+# Vaultwarden is enforced — it is always deployed as the platform secrets store.
+# After bootstrap step 1, paste your Vaultwarden admin token here.
+# Also accepted as env var VAULTWARDEN_ADMIN_TOKEN.
+vaultwarden:
+  admin_token: ""       # generated on first deploy, printed to console — paste here
+  instance: vaultwarden # Proxmox hostname

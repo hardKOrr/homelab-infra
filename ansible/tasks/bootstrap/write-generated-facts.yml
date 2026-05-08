@@ -1,0 +1,29 @@
+---
+# TODO: Write service connection details to config/.generated/facts.yml after a baseline service is deployed.
+# Called by bootstrap.yml after each baseline service comes up.
+#
+# This file grows incrementally — each baseline service appends its facts.
+# Subsequent services and all app deploys read from this file via homelabinfra_infra.
+#
+# Expected inputs:
+#   generated_facts_service:  name of the service just deployed (e.g. 'vaultwarden', 'caddy')
+#   generated_facts_data:     dict of facts to write for that service
+#
+# Output file: config/.generated/facts.yml
+# Structure:
+#   vaultwarden:
+#     url: https://vault.homelab.example.com
+#     admin_token: "{{ from_vault }}"
+#   caddy:
+#     admin_api_url: http://192.168.1.10:2019
+#   authentik:
+#     api_url: https://auth.homelab.example.com/api/v3
+#     api_token: "{{ from_vault }}"
+#   uptime_kuma:
+#     api_url: https://status.homelab.example.com
+#     api_token: "{{ from_vault }}"
+#   notifications:
+#     ntfy_url: https://ntfy.homelab.example.com
+#     topic: homelab
+#
+# Note: config/.generated/ is gitignored. Re-running bootstrap regenerates it.

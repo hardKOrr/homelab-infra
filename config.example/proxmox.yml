@@ -1,0 +1,38 @@
+---
+# Proxmox connection and global network config.
+# Copy this to config/proxmox.yml and fill in your values.
+# This file is gitignored — git pull will never overwrite it.
+
+proxmox:
+  host: ""              # Proxmox IP or hostname (required)
+  port: 8006
+  node: ""              # Proxmox node name to deploy on (required, e.g. pve)
+  api_user: root@pam
+  api_token_id: ""      # API token ID (required, e.g. ansible)
+  api_token_secret: ""  # API token secret (required) — also accepted as env var PROXMOX_API_TOKEN
+
+# Network definitions. Add as many as you need.
+# Apps reference a network by name (e.g. network: default).
+networks:
+  default:
+    cidr: "192.168.1.0/24"   # set to 'dhcp' for DHCP (VMID must be provided manually)
+    gateway: "192.168.1.1"
+    dns_servers:
+      - "192.168.1.1"
+    bridge: "vmbr0"
+    vlan: 0             # 0 = no VLAN tag
+    ip_offset: 10       # start allocating IPs from .10
+    max_hosts: 200      # optional: cap on allocated IPs in this subnet
+
+  # Example VLAN network (uncomment and fill in when ready):
+  # iot:
+  #   cidr: "10.10.20.0/24"
+  #   gateway: "10.10.20.1"
+  #   dns_servers: ["10.10.20.1"]
+  #   bridge: "vmbr0"
+  #   vlan: 20
+  #   ip_offset: 10
+
+ansible:
+  ssh_user: root
+  ssh_public_key: ""    # paste your public key here — deployed to all created guests

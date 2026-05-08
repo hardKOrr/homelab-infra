@@ -1,0 +1,27 @@
+---
+# Default Proxmox and app configuration for Vaultwarden.
+# Users override specific values in config/apps/vaultwarden.yml.
+# This file is git-managed — git pull may update these defaults.
+
+vaultwarden_defaults:
+  proxmox:
+    type: lxc                   # native LXC — single binary, no Docker needed
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 1
+    memory: 512                 # MB — Vaultwarden is very lightweight
+    disk_volume:
+      storage: local
+      size: 8                   # GB
+    network: default
+    tags:
+      - homelab-infra
+      - vaultwarden
+
+  app:
+    port: 80
+    admin_port: 8080
+    data_path: /opt/vaultwarden/data
+
+  routing:
+    proxy: internal
+    auth: false                 # Vaultwarden has its own auth — do not wrap in Authentik

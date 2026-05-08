@@ -1,0 +1,32 @@
+---
+# Radarr instance config.
+# Copy to config/apps/radarr.yml (or radarr-4k.yml, radarr-kids.yml, etc.)
+# Only set values that differ from defaults in vars/app-defaults/radarr.yml.
+# This file persists after removal — it is your restore point.
+
+app: radarr
+
+# instance_name becomes the hostname, Caddy subdomain, and Authentik app name.
+# For multiple instances, use unique names: radarr-4k, radarr-hd, radarr-kids
+instance_name: radarr
+
+# ── Proxmox resources ──────────────────────────────────────────────────────────
+# Uncomment and override only what you need. Defaults are in vars/app-defaults/radarr.yml.
+# proxmox:
+#   cores: 2
+#   memory: 2048         # MB
+
+# ── Stack assignment ───────────────────────────────────────────────────────────
+# Which Docker stack host this app runs on.
+# stack: media_stack     # default from app-defaults — override if needed
+
+# ── App config ─────────────────────────────────────────────────────────────────
+radarr:
+  root_folder: /media/movies   # path inside the container to your media
+  # quality_profile: ""        # Radarr quality profile name (optional)
+  # port: 7878                 # override default port only if running multiple instances
+
+# ── Routing ────────────────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal            # internal | external (which reverse proxy handles this app)
+#   auth: true                 # true = wire Authentik SSO, false = skip (default from app-defaults)

@@ -1,0 +1,16 @@
+---
+# TODO: Configure Proxmox Backup Server after its VM is deployed.
+# Target: PBS VM (tagged 'pbs' in Proxmox inventory)
+#
+# Steps:
+#   1. Configure datastore at homelabinfra_config.infrastructure.backups.datastore_path
+#   2. Add Proxmox node as a remote (so PBS can pull backups from PVE)
+#   3. Configure backup job schedule for all VMs/LXCs tagged 'homelab-infra':
+#      - Schedule from homelabinfra_config.infrastructure.backups.schedule
+#      - Retention from homelabinfra_config.infrastructure.backups.retention
+#   4. Send test notification via Ntfy to confirm PBS notifications are working
+#   5. Write PBS endpoint to generated facts (for future reference)
+#
+# Note: PBS uses its own REST API on port 8007. Do not use Proxmox PVE API for PBS config.
+# PBS admin password: auto-generated during VM provisioning, stored in Vaultwarden.
+# PBS runs backups autonomously after this — Ansible does not execute backups.

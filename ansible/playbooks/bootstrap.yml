@@ -1,0 +1,46 @@
+---
+# Bootstrap playbook — run once to set up the homelab-infra platform baseline.
+# After this completes, all app deploys (playbooks/apps/*.yml) are available.
+#
+# Prerequisites:
+#   - config/proxmox.yml exists and is filled in
+#   - config/infrastructure.yml exists and is filled in (provider choices)
+#   - Proxmox API token is set (config/proxmox.yml or env PROXMOX_API_TOKEN)
+#
+# What this deploys (in order):
+#   1. Vaultwarden   — secrets store (ENFORCED, always deployed)
+#   2. Ntfy          — notification hub
+#   3. Reverse proxy — Caddy or Nginx per infrastructure.yml
+#   4. Authentik     — SSO (if infrastructure.sso.provider: authentik)
+#   5. Uptime Kuma   — uptime monitoring
+#   6. Grafana stack — Prometheus + Grafana
+#   7. PBS           — Proxmox Backup Server (VM)
+#
+# After step 1: admin token printed to console. User must paste it into
+# config/infrastructure.yml (vaultwarden.admin_token) before proceeding.
+# All subsequent secrets are stored in Vaultwarden automatically.
+
+# TODO: Implement bootstrap plays in order above.
+# Each play should:
+#   1. Provision the guest (import create-lxc.yml or create-vm.yml)
+#   2. Run guest-bootstrap.yml on the new host
+#   3. Deploy the app role
+#   4. Run wiring step (Caddy route + Authentik + Uptime Kuma)
+#   5. Call bootstrap/write-generated-facts.yml to record service endpoint
+
+- name: Bootstrap | Load platform config
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../tasks/load-user-vars.yml
+  tasks:
+    - name: Assert required config is present
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_config.proxmox.host is defined
+          - homelabinfra_config.proxmox.api_token_id is defined
+          - homelabinfra_config.infrastructure.domain is defined
+        fail_msg: "config/proxmox.yml and config/infrastructure.yml must be filled in before running bootstrap."
+
+# TODO: Play per baseline service (see above)

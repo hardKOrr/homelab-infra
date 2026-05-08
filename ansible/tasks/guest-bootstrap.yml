@@ -1,0 +1,25 @@
+---
+# TODO: Post-provisioning bootstrap for any newly created LXC or VM.
+# Called after lxc-create.yml or vm-create.yml, before app deployment.
+# Target: the newly created guest (added to 'provisioning' group by create playbook).
+#
+# Steps:
+#   1. Wait for SSH to be available
+#   2. Deploy SSH public key from homelabinfra_config.ansible.ssh_public_key
+#   3. Run apt update + apt upgrade
+#   4. Install baseline packages (curl, ca-certificates, sudo, unattended-upgrades, apt-listchanges)
+#   5. Configure unattended-upgrades:
+#      - Enable automatic security + regular upgrades
+#      - Configure post-hook script to send Ntfy notification on completion
+#        (reads Ntfy endpoint from homelabinfra_infra.notifications)
+#   6. If this guest will run Docker: configure Watchtower
+#      - Watchtower runs as a Docker container on the stack host
+#      - Configured with Ntfy endpoint for update notifications
+#      - Watches only containers on this host (label-based filtering)
+#   7. Set hostname, timezone from config
+#   8. Write /root/homelab-infra-instance.json (instance metadata)
+#
+# Reads:
+#   homelabinfra_config.ansible.ssh_public_key
+#   homelabinfra_infra.notifications  (for Ntfy endpoint)
+#   homelabinfra_instance             (for instance metadata)

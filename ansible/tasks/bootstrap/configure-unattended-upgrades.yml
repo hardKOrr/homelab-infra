@@ -1,0 +1,21 @@
+---
+# TODO: Configure unattended-upgrades on a guest for automatic OS package updates.
+# Called from guest-bootstrap.yml after packages are installed.
+#
+# Steps:
+#   1. Install: unattended-upgrades, apt-listchanges
+#   2. Write /etc/apt/apt.conf.d/50unattended-upgrades:
+#      - Enable security + regular upgrades (Unattended-Upgrade::Allowed-Origins)
+#      - Enable automatic reboot if required (with safe reboot window, e.g. 3am)
+#      - Enable cleanup of old packages
+#   3. Write /etc/apt/apt.conf.d/20auto-upgrades:
+#      - APT::Periodic::Update-Package-Lists "1";
+#      - APT::Periodic::Unattended-Upgrade "1";
+#   4. Write post-invoke script to /etc/apt/apt.conf.d/99ntfy-notify:
+#      - Fires after each unattended-upgrades run
+#      - POSTs to Ntfy if any packages were upgraded
+#      - Message: "OS packages updated on <hostname>: <package list>"
+#      - Ntfy endpoint read from homelabinfra_infra.notifications
+#   5. Verify configuration: unattended-upgrades --dry-run
+#
+# Reads from homelabinfra_infra.notifications for Ntfy endpoint and topic.
