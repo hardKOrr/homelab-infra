@@ -91,7 +91,24 @@
         ansible_ssh_private_key_file: "~/.ssh/id_rsa"
       run_once: true
 
-- name: Apply Docker Role to Host
+- name: Bootstrap new Docker host
+  hosts: provisioning
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+- name: Apply Docker role to host
   hosts: provisioning
   become: true
   gather_facts: true

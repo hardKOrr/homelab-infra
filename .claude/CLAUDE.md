@@ -31,6 +31,8 @@ ansible/
     maintenance/
       status.yml                   # read-only: what's running, what's down, what's behind on updates
       check-native-updates.yml     # compare installed vs latest GitHub release for native LXC apps, notify via Ntfy
+      restart-app.yml              # restart a native app via lab-restart-app; param: instance
+      tail-applog.yml              # tail app logs via lab-tail-applog; params: instance, lines
   tasks/
     load-user-vars.yml
     network/generate-ip.yml
@@ -52,7 +54,9 @@ ansible/
       uptime-kuma.yml
       opnsense.yml
       pihole.yml
-    guest-bootstrap.yml            # post-provisioning: SSH keys, unattended-upgrades, Watchtower
+    guest-bootstrap.yml            # post-provisioning: packages, hostname, timezone, unattended-upgrades + Ntfy hook
+    stack/
+      find-or-create-host.yml      # find existing tag_<stack> host or provision new one; adds to app_deploy group
     bootstrap/
       write-generated-facts.yml   # writes config/.generated/facts.yml after each baseline service
       configure-pbs.yml
@@ -60,7 +64,9 @@ ansible/
       configure-unattended-upgrades.yml
   roles/
     docker/                        # installs Docker Engine (Debian only)
-    <app>/                         # one role per deployable app
+    _template-native/              # copy for new native LXC apps; includes files/ with lab script placeholders
+    _template-docker/              # copy for new Docker apps
+    <app>/                         # one role per deployable app; ships files/lab-* scripts
   vars/
     homelabinfra-defaults.yml      # global defaults (git-managed)
     app-defaults/<app>.yml         # per-app sensible defaults (git-managed)
@@ -153,8 +159,10 @@ All operations are idempotent and re-runnable. Every automated action produces a
 |---|---|---|---|
 | Container updates | Watchtower | Configure at Docker host creation | Ntfy: "X updated to vY — run Rollback if broken" |
 | Container rollback | `rollback-container.yml` | Semaphore/Rundeck job, takes container name + image tag | Ntfy: "X rolled back to vY" |
-| OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` | Ntfy: "N packages updated on hostname" |
-| Native LXC app updates | `check-native-updates.yml` (scheduled weekly) | Compare installed vs GitHub latest release | Ntfy: "Vaultwarden vX.Z available, you have vX.Y — re-run deploy to update" |
+| OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` with systemd drop-in → Ntfy | Ntfy: "N packages updated on hostname" |
+| Native LXC app updates | `check-native-updates.yml` (scheduled weekly) | Calls `lab-update-check` on all managed hosts, aggregates JSON results | Ntfy: "Vaultwarden vX.Z available, you have vX.Y — re-run deploy to update" |
+| App restart | `restart-app.yml` | Calls `lab-restart-app` on named host; param: instance | Ntfy: "X restarted" |
+| App log tail | `tail-applog.yml` | Calls `lab-tail-applog` on named host; output to job console | Job console |
 | Backups | PBS | Configure schedule + datastore in bootstrap | PBS native notifications |
 | Uptime alerts | Uptime Kuma | Auto-register each app at deploy time | Ntfy: "X is DOWN / recovered" |
 | App removal | `remove.yml` | Semaphore/Rundeck job — stops container, unwires everything | Ntfy: "X removed" |
@@ -167,6 +175,14 @@ Watchtower notification includes the rollback instruction so the path is obvious
 
 ### Native LXC App Update Path
 Re-running the deploy playbook for a native app IS the update mechanism — it checks latest version, downloads if newer, restarts if changed. `check-native-updates.yml` (run on schedule) only notifies; it does not update.
+
+### Lab Maintenance Scripts
+Each native app role ships three scripts to `/usr/local/bin/` (installed by the role, placeholders in `_template-native/files/`):
+- `lab-update-check` — outputs JSON `{"app":..., "installed":..., "latest":..., "update_available":...}`. Each app owns its own version-check logic.
+- `lab-restart-app` — restarts the app's service. Called by `restart-app.yml`.
+- `lab-tail-applog` — streams recent logs (journalctl or equivalent). Called by `tail-applog.yml`.
+
+All three are no-ops (exit 1) in the template — each app role replaces them with real implementations in `roles/<app>/files/`.
 
 ## UI Job Structure (Semaphore + Rundeck)
 
@@ -187,6 +203,8 @@ Per-Stack
 Maintenance
   Lab Status                  ← maintenance/status.yml
   Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
+  Restart App                 ← maintenance/restart-app.yml (param: instance)
+  Tail App Log                ← maintenance/tail-applog.yml (params: instance, lines)
 ```
 
 ## Secrets

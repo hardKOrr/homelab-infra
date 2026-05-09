@@ -37,7 +37,7 @@
   tasks:
     - name: Notify via Ntfy
       ansible.builtin.uri:
-        url: "{{ homelabinfra_infra.ntfy.url }}/homelab"
+        url: "{{ homelabinfra_infra.notifications.ntfy_url }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
         method: POST
         headers:
           Title: "{{ instance }} restarted"

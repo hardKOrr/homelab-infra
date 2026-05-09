@@ -1,25 +1,133 @@
 ---
-# TODO: Post-provisioning bootstrap for any newly created LXC or VM.
-# Called after lxc-create.yml or vm-create.yml, before app deployment.
-# Target: the newly created guest (added to 'provisioning' group by create playbook).
-#
-# Steps:
-#   1. Wait for SSH to be available
-#   2. Deploy SSH public key from homelabinfra_config.ansible.ssh_public_key
-#   3. Run apt update + apt upgrade
-#   4. Install baseline packages (curl, ca-certificates, sudo, unattended-upgrades, apt-listchanges)
-#   5. Configure unattended-upgrades:
-#      - Enable automatic security + regular upgrades
-#      - Configure post-hook script to send Ntfy notification on completion
-#        (reads Ntfy endpoint from homelabinfra_infra.notifications)
-#   6. If this guest will run Docker: configure Watchtower
-#      - Watchtower runs as a Docker container on the stack host
-#      - Configured with Ntfy endpoint for update notifications
-#      - Watches only containers on this host (label-based filtering)
-#   7. Set hostname, timezone from config
-#   8. Write /root/homelab-infra-instance.json (instance metadata)
-#
-# Reads:
-#   homelabinfra_config.ansible.ssh_public_key
-#   homelabinfra_infra.notifications  (for Ntfy endpoint)
-#   homelabinfra_instance             (for instance metadata)
+# Post-provisioning bootstrap — runs once on any newly created LXC or VM.
+# Called from Play 2 of app deploy playbooks, guarded by the homelab_bootstrapped local fact.
+# Assumes become: true and gather_facts: true on the calling play.
+
+- name: Wait for SSH to be available
+  ansible.builtin.wait_for_connection:
+    timeout: 120
+    sleep: 5
+
+- name: Gather facts
+  ansible.builtin.setup:
+
+- name: Create facts directory
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Update apt cache and install baseline packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - sudo
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+
+- name: Upgrade installed packages
+  ansible.builtin.apt:
+    upgrade: safe
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Update /etc/hosts for new hostname
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+    create: true
+    mode: "0644"
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ homelabinfra_config.timezone | default('UTC') }}"
+
+- name: Enable automatic apt upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Configure unattended-upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "${distro_id}:${distro_codename}";
+        "${distro_id}:${distro_codename}-security";
+        "${distro_id}ESMApps:${distro_codename}-apps-security";
+        "${distro_id}ESM:${distro_codename}-infra-security";
+        "${distro_id}:${distro_codename}-updates";
+      };
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::MinimalSteps "true";
+      Unattended-Upgrade::Dpkg-Options {
+        "--force-confdef";
+        "--force-confold";
+      };
+
+- name: Write unattended-upgrades Ntfy notification script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/unattended-upgrades-notify
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      NTFY_URL="{{ homelabinfra_infra.notifications.ntfy_url | default('') }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
+      LOGFILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+      [[ -z "$NTFY_URL" || ! -f "$LOGFILE" ]] && exit 0
+      LINE=$(grep "^$(date +%Y-%m-%d).*Packages that will be upgraded:" "$LOGFILE" | tail -1 || true)
+      [[ -z "$LINE" ]] && exit 0
+      COUNT=$(echo "$LINE" | tr ' ' '\n' | grep -c '\.' || echo 1)
+      curl -sf -X POST "$NTFY_URL" \
+        -H "Title: OS updates installed on {{ inventory_hostname }}" \
+        -d "$COUNT package(s) updated on {{ inventory_hostname }}" \
+        > /dev/null
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+
+- name: Create systemd drop-in directory for unattended-upgrades
+  ansible.builtin.file:
+    path: /etc/systemd/system/unattended-upgrades.service.d
+    state: directory
+    mode: "0755"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+
+- name: Install systemd drop-in to call Ntfy after unattended-upgrades
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/unattended-upgrades.service.d/ntfy-notify.conf
+    mode: "0644"
+    content: |
+      [Service]
+      ExecStartPost=/usr/local/bin/unattended-upgrades-notify
+  register: _dropin_changed
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+
+- name: Reload systemd after drop-in change
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _dropin_changed is changed
+
+- name: Write bootstrap marker
+  ansible.builtin.copy:
+    dest: /etc/ansible/facts.d/homelab_bootstrapped.fact
+    mode: "0644"
+    content: '{"bootstrapped": true}'
