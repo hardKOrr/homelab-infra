@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# lab-tail-applog — stream recent log output for this app.
+#
+# Usage: lab-tail-applog [lines]
+#   lines: number of recent lines to show (default: 50)
+
+set -euo pipefail
+
+LINES="${1:-50}"
+
+# TODO: replace APP_NAME with the systemd service name for this app.
+# Example:
+#   journalctl -u APP_NAME -n "$LINES" --no-pager
+
+echo "lab-tail-applog not implemented for this app" >&2
+exit 1

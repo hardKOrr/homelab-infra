@@ -1,0 +1,46 @@
+---
+# Restart a native LXC app via its lab-restart-app script.
+# Notifies via Ntfy on success or failure.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/restart-app.yml -e instance=vaultwarden
+#
+# Semaphore/Rundeck: job parameter = instance (the app instance name)
+
+- name: Restart App | {{ instance | default('(no instance)') }}
+  hosts: "{{ instance }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Assert instance name provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Pass the app instance name: -e instance=<name>"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Restart app
+      ansible.builtin.command: /usr/local/bin/lab-restart-app
+      changed_when: true
+      register: _restart
+
+- name: Restart App | Notify
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+  tasks:
+    - name: Notify via Ntfy
+      ansible.builtin.uri:
+        url: "{{ homelabinfra_infra.ntfy.url }}/homelab"
+        method: POST
+        headers:
+          Title: "{{ instance }} restarted"
+          Priority: "default"
+        body: "{{ instance }} was restarted manually."
+        body_format: raw

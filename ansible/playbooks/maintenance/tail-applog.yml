@@ -1,0 +1,31 @@
+---
+# Tail recent log output for a native LXC app.
+# Output is printed to the Semaphore/Rundeck job console.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml -e instance=vaultwarden
+#   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml -e instance=vaultwarden -e lines=100
+#
+# Semaphore/Rundeck: job parameters = instance (required), lines (optional, default 50)
+
+- name: Tail App Log | {{ instance | default('(no instance)') }}
+  hosts: "{{ instance }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Assert instance name provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Pass the app instance name: -e instance=<name>"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fetch log output
+      ansible.builtin.command: "/usr/local/bin/lab-tail-applog {{ lines | default('50') }}"
+      register: _logs
+      changed_when: false
+      failed_when: false
+
+    - name: Print log output
+      ansible.builtin.debug:
+        msg: "{{ _logs.stdout_lines }}"

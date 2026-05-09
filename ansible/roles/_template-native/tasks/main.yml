@@ -67,6 +67,17 @@
   delay: 5
   changed_when: false
 
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog
+
 # ── Record installed version ───────────────────────────────────────────────────
 # Written to a local fact file so check-native-updates.yml can compare against GitHub.
 - name: Record installed version

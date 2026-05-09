@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# lab-update-check — report whether this app has an update available.
+#
+# Contract (required by check-native-updates.yml):
+#   stdout: single JSON line
+#     {"app":"<name>","installed":"<version>","latest":"<version>","update_available":<bool>}
+#   exit 0: check completed (regardless of whether an update is available)
+#   exit 1: check could not be performed — result will be skipped
+
+set -euo pipefail
+
+# TODO: implement for this app.
+# Example pattern for a GitHub-released binary:
+#
+#   installed=$(your-binary --version | grep -oP '\d+\.\d+\.\d+')
+#   latest=$(curl -sf https://api.github.com/repos/owner/repo/releases/latest \
+#            | grep -oP '"tag_name":\s*"v?\K[^"]+')
+#   update_available=$([ "$installed" != "$latest" ] && echo true || echo false)
+#   echo "{\"app\":\"your-app\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"update_available\":$update_available}"
+
+echo "lab-update-check not implemented for this app" >&2
+exit 1
