@@ -1,0 +1,1 @@
+{"nodes": [{"id": "_template_docker_handlers_restart_app_name", "label": "Template Docker Handler: Restart APP_NAME", "file_type": "code", "source_file": "ansible/roles/_template-docker/handlers/main.yml", "source_location": "line 2", "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

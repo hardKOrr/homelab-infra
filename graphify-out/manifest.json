@@ -1,0 +1,357 @@
+{
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\files\\lab-restart-app": {
+    "mtime": 1781241824.0691845,
+    "ast_hash": "e00d7bb2a23616d8be5752e568c10194",
+    "semantic_hash": "e00d7bb2a23616d8be5752e568c10194"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\files\\lab-tail-applog": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "d7dd0743defb0811748faef8360e46f9",
+    "semantic_hash": "d7dd0743defb0811748faef8360e46f9"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\files\\lab-update-check": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "37c50c4b42419a6ba098f11a6487c5ee",
+    "semantic_hash": "37c50c4b42419a6ba098f11a6487c5ee"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\.claude\\CLAUDE.md": {
+    "mtime": 1781241824.0430791,
+    "ast_hash": "c15282288b1464f53d5a8af728b1b4a5",
+    "semantic_hash": "c15282288b1464f53d5a8af728b1b4a5"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\.claude\\agents\\project-manager.md": {
+    "mtime": 1781241824.046164,
+    "ast_hash": "01285a050b8400cf3267e80c4b967576",
+    "semantic_hash": "01285a050b8400cf3267e80c4b967576"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\.claude\\subagents\\ansible-expert.md": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "206e6d1207bc09ec5ac864877b462fde",
+    "semantic_hash": "206e6d1207bc09ec5ac864877b462fde"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\.claude\\subagents\\deployment-architect.md": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "5b3c1bc030efeb3e457eda180a9ffe74",
+    "semantic_hash": "5b3c1bc030efeb3e457eda180a9ffe74"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\.claude\\subagents\\notes-manager.md": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "26d7d2affd97da449b73b150ac7e69b0",
+    "semantic_hash": "26d7d2affd97da449b73b150ac7e69b0"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\.claude\\subagents\\test-developer.md": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "ab8fdd6f6d6392268719288c51ad66b6",
+    "semantic_hash": "ab8fdd6f6d6392268719288c51ad66b6"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\inventory\\proxmox.yml": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "d32f18de9a5f5cfdec237e6a419764c2",
+    "semantic_hash": "d32f18de9a5f5cfdec237e6a419764c2"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\apps\\README.md": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "e039828ab660a123c23b73abadaa1ec3",
+    "semantic_hash": "e039828ab660a123c23b73abadaa1ec3"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\apps\\_template.yml": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "82110567482baaaf85708da5121daf53",
+    "semantic_hash": "82110567482baaaf85708da5121daf53"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\apps\\remove.yml": {
+    "mtime": 1781241824.046795,
+    "ast_hash": "c2dce2c017e8eff29ab7de04e08176c7",
+    "semantic_hash": "c2dce2c017e8eff29ab7de04e08176c7"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\bootstrap.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "0dc494cb510ee630fe543fc439796f33",
+    "semantic_hash": "0dc494cb510ee630fe543fc439796f33"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\docker\\create-docker-host.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "31f9769ddb0f065a7218fb9d77dc54db",
+    "semantic_hash": "31f9769ddb0f065a7218fb9d77dc54db"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\maintenance\\check-native-updates.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "d29f798f16e7bac2b5295fcbded333c5",
+    "semantic_hash": "d29f798f16e7bac2b5295fcbded333c5"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\maintenance\\restart-app.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "3812a294b5d157781504b001f8fcf0a0",
+    "semantic_hash": "3812a294b5d157781504b001f8fcf0a0"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\maintenance\\status.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "ebd972aea6bde24e2449f4c69276dba6",
+    "semantic_hash": "ebd972aea6bde24e2449f4c69276dba6"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\maintenance\\tail-applog.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "abd9605fe4bfe63efb058dcaa8de5c80",
+    "semantic_hash": "abd9605fe4bfe63efb058dcaa8de5c80"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\proxmox\\create-lxc.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "fdd130a35bf7d29dd7d8d252a1c553b5",
+    "semantic_hash": "fdd130a35bf7d29dd7d8d252a1c553b5"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\proxmox\\create-vm.yml": {
+    "mtime": 1781241824.055992,
+    "ast_hash": "0ed7c298b6f479f8f2e79cab5d06a6e4",
+    "semantic_hash": "0ed7c298b6f479f8f2e79cab5d06a6e4"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\playbooks\\stacks\\rollback-container.yml": {
+    "mtime": 1781241824.0619001,
+    "ast_hash": "1c9c05914734d925003826637376169e",
+    "semantic_hash": "1c9c05914734d925003826637376169e"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\requirements.yml": {
+    "mtime": 1781241824.0619001,
+    "ast_hash": "0e0d24fb799e0a8256a14d9039125bff",
+    "semantic_hash": "0e0d24fb799e0a8256a14d9039125bff"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-docker\\defaults\\main.yml": {
+    "mtime": 1781241824.0638542,
+    "ast_hash": "d092f3dc417592d1a5153c50f6475a3e",
+    "semantic_hash": "d092f3dc417592d1a5153c50f6475a3e"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-docker\\handlers\\main.yml": {
+    "mtime": 1781241824.0638542,
+    "ast_hash": "7410d8dde2efdfa7baf87fc4a740cd0a",
+    "semantic_hash": "7410d8dde2efdfa7baf87fc4a740cd0a"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-docker\\meta\\main.yml": {
+    "mtime": 1781241824.0661848,
+    "ast_hash": "3a3e20786d16ebe71cdc770dc50ef16d",
+    "semantic_hash": "3a3e20786d16ebe71cdc770dc50ef16d"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-docker\\tasks\\main.yml": {
+    "mtime": 1781241824.0661848,
+    "ast_hash": "69d4a4bc3b334a37f848bcc63949c61c",
+    "semantic_hash": "69d4a4bc3b334a37f848bcc63949c61c"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\defaults\\main.yml": {
+    "mtime": 1781241824.0681846,
+    "ast_hash": "9c80b1ccc6725c5a5f419c53f513b737",
+    "semantic_hash": "9c80b1ccc6725c5a5f419c53f513b737"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\handlers\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "96b58f3f8cf17b612d6f8d1f4cd803d1",
+    "semantic_hash": "96b58f3f8cf17b612d6f8d1f4cd803d1"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\meta\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "fcc9f2ee7dcbb7f93d6be0ead58d85ea",
+    "semantic_hash": "fcc9f2ee7dcbb7f93d6be0ead58d85ea"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\_template-native\\tasks\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "0862b370f3d2569f85b9768692d17597",
+    "semantic_hash": "0862b370f3d2569f85b9768692d17597"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\docker\\defaults\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "226c76d94ca94caaab9437e327c4185b",
+    "semantic_hash": "226c76d94ca94caaab9437e327c4185b"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\docker\\handlers\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "b22c8c85b9370ff03157989260c4d753",
+    "semantic_hash": "b22c8c85b9370ff03157989260c4d753"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\docker\\meta\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "41c7c3e7dbbb62195dab83b3908ee2ad",
+    "semantic_hash": "41c7c3e7dbbb62195dab83b3908ee2ad"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\docker\\tasks\\config.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "ab8b824cd6d71a3dfe3e71fbbf13185b",
+    "semantic_hash": "ab8b824cd6d71a3dfe3e71fbbf13185b"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\docker\\tasks\\install.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "bb0fc52a7ac614953c9b34059791b8c1",
+    "semantic_hash": "bb0fc52a7ac614953c9b34059791b8c1"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\roles\\docker\\tasks\\main.yml": {
+    "mtime": 1781241824.0701847,
+    "ast_hash": "91a1b614ecdde1f890be4e3a93d494ba",
+    "semantic_hash": "91a1b614ecdde1f890be4e3a93d494ba"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\bootstrap\\configure-pbs.yml": {
+    "mtime": 1781241824.0794406,
+    "ast_hash": "6de5430874770a93e297571438d3c2a8",
+    "semantic_hash": "6de5430874770a93e297571438d3c2a8"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\bootstrap\\configure-unattended-upgrades.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "63817ec298a81a9cf060e1f82a7e0c25",
+    "semantic_hash": "63817ec298a81a9cf060e1f82a7e0c25"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\bootstrap\\configure-watchtower.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "3191cb5e5f5a683c6b8fc86ba8be766b",
+    "semantic_hash": "3191cb5e5f5a683c6b8fc86ba8be766b"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\bootstrap\\write-generated-facts.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "f885b4b68a7154dee27442e0b314a691",
+    "semantic_hash": "f885b4b68a7154dee27442e0b314a691"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\guest-bootstrap.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "f487bad180af3333e7c49234d3fedfa9",
+    "semantic_hash": "f487bad180af3333e7c49234d3fedfa9"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\load-user-vars.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "8c0c8394028bb1ec7dcc97a9af4428a8",
+    "semantic_hash": "8c0c8394028bb1ec7dcc97a9af4428a8"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\network\\generate-ip.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "e84e46ad08a26e27b31adb488eb07609",
+    "semantic_hash": "e84e46ad08a26e27b31adb488eb07609"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\proxmox\\ip-to-vmid.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "ebc8e3fa9f5284db5783e71292ce4230",
+    "semantic_hash": "ebc8e3fa9f5284db5783e71292ce4230"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\proxmox\\lxc-create.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "8ddf6ffd37bc5746d27a61003d890bd8",
+    "semantic_hash": "8ddf6ffd37bc5746d27a61003d890bd8"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\proxmox\\vm-create.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "57d7882b070f7b870f0c3b2b12e47ebc",
+    "semantic_hash": "57d7882b070f7b870f0c3b2b12e47ebc"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\stack\\find-or-create-host.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "c4ecf00f6083e9f466b959bd8a1ed3bf",
+    "semantic_hash": "c4ecf00f6083e9f466b959bd8a1ed3bf"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\task-template.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "c99baec4167fee2fec078f55495d976c",
+    "semantic_hash": "c99baec4167fee2fec078f55495d976c"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\unwiring\\authentik.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "7c98ae9bcb0b6df994268c7c7585fead",
+    "semantic_hash": "7c98ae9bcb0b6df994268c7c7585fead"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\unwiring\\caddy.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "46c06e0de63a663d8cfc6032abcf540b",
+    "semantic_hash": "46c06e0de63a663d8cfc6032abcf540b"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\unwiring\\nginx.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "6d5d58d3594b80642b41cb80ea6dbb39",
+    "semantic_hash": "6d5d58d3594b80642b41cb80ea6dbb39"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\unwiring\\opnsense.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "c4277b90913b522c109261b8df3fc58d",
+    "semantic_hash": "c4277b90913b522c109261b8df3fc58d"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\unwiring\\pihole.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "50365a1a16a16f6e8248cd947860d2bc",
+    "semantic_hash": "50365a1a16a16f6e8248cd947860d2bc"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\unwiring\\uptime-kuma.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "9a3228eb8fa947bb396118cae4d051e9",
+    "semantic_hash": "9a3228eb8fa947bb396118cae4d051e9"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\wiring\\authentik.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "227bd2a13b42363714f05690b391fa0c",
+    "semantic_hash": "227bd2a13b42363714f05690b391fa0c"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\wiring\\caddy.yml": {
+    "mtime": 1781241824.079887,
+    "ast_hash": "c993ce5122379943871527f3a3e17971",
+    "semantic_hash": "c993ce5122379943871527f3a3e17971"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\wiring\\nginx.yml": {
+    "mtime": 1781241824.0916915,
+    "ast_hash": "bfeb5bb6c8fc35505ac4847b96c0901e",
+    "semantic_hash": "bfeb5bb6c8fc35505ac4847b96c0901e"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\wiring\\opnsense.yml": {
+    "mtime": 1781241824.0916915,
+    "ast_hash": "ff4e25eac0ce33db02217500f264784f",
+    "semantic_hash": "ff4e25eac0ce33db02217500f264784f"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\wiring\\pihole.yml": {
+    "mtime": 1781241824.0916915,
+    "ast_hash": "ca05daa440cc71f883ea7b9435cf81e9",
+    "semantic_hash": "ca05daa440cc71f883ea7b9435cf81e9"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\tasks\\wiring\\uptime-kuma.yml": {
+    "mtime": 1781241824.0916915,
+    "ast_hash": "d8be54f8d348dcc166e398d0d1c5f5a9",
+    "semantic_hash": "d8be54f8d348dcc166e398d0d1c5f5a9"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\vars\\app-defaults\\_template.yml": {
+    "mtime": 1781241824.0916915,
+    "ast_hash": "68c4acf947ca2176973a573a2a528c08",
+    "semantic_hash": "68c4acf947ca2176973a573a2a528c08"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\vars\\app-defaults\\vaultwarden.yml": {
+    "mtime": 1781241824.0916915,
+    "ast_hash": "bc80af7bd37df3c5c39b92e1ffa6b84a",
+    "semantic_hash": "bc80af7bd37df3c5c39b92e1ffa6b84a"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\vars\\homelabinfra-defaults.yml": {
+    "mtime": 1781241824.095328,
+    "ast_hash": "f6772b9fe885d1484379d65ba750daea",
+    "semantic_hash": "f6772b9fe885d1484379d65ba750daea"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\ansible\\vars\\user-vars-example.yml": {
+    "mtime": 1781241824.095328,
+    "ast_hash": "c4a7fe65d0f6dafd10e21f8707b0319b",
+    "semantic_hash": "c4a7fe65d0f6dafd10e21f8707b0319b"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\config.example\\apps\\_template.example.yml": {
+    "mtime": 1781241824.096773,
+    "ast_hash": "febcb6ec4902a4ceddbc8f881046ec47",
+    "semantic_hash": "febcb6ec4902a4ceddbc8f881046ec47"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\config.example\\apps\\radarr.example.yml": {
+    "mtime": 1781241824.096773,
+    "ast_hash": "33f70a66f2e730b6fdc3f2bd3b869840",
+    "semantic_hash": "33f70a66f2e730b6fdc3f2bd3b869840"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\config.example\\infrastructure.yml": {
+    "mtime": 1781241824.096773,
+    "ast_hash": "a8969dc4781b70aa269bb7744fe8ab9f",
+    "semantic_hash": "a8969dc4781b70aa269bb7744fe8ab9f"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\config.example\\proxmox.yml": {
+    "mtime": 1781241824.096773,
+    "ast_hash": "c0fe2a9f4db65bb1da25423e74c452d0",
+    "semantic_hash": "c0fe2a9f4db65bb1da25423e74c452d0"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\rundeck\\README.md": {
+    "mtime": 1781241824.096773,
+    "ast_hash": "266cfc55d09e292b4a13d96251ce0be7",
+    "semantic_hash": "266cfc55d09e292b4a13d96251ce0be7"
+  },
+  "C:\\Users\\kevin\\GitHub\\hardKOrr\\homelab-infra\\semaphore\\README.md": {
+    "mtime": 1781241824.096773,
+    "ast_hash": "0f95e6120579c7423d3b4bedaca1c300",
+    "semantic_hash": "0f95e6120579c7423d3b4bedaca1c300"
+  }
+}

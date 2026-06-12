@@ -1,0 +1,1 @@
+{"nodes": [{"id": "docker_tasks_install", "label": "Docker Tasks: Install Docker Engine", "file_type": "code", "source_file": "ansible/roles/docker/tasks/install.yml", "source_location": "line 1", "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

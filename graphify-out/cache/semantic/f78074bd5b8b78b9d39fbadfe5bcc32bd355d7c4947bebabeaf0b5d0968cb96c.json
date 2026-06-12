@@ -1,0 +1,1 @@
+{"nodes": [{"id": "docker_defaults_main", "label": "Docker Role Defaults", "file_type": "code", "source_file": "ansible/roles/docker/defaults/main.yml", "source_location": "line 1", "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}
