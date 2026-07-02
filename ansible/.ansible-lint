@@ -1,0 +1,21 @@
+# Gate config. Loose by design: profile `min` enforces only parse/load/critical rules;
+# every style/idiom finding is reported as a warning and does NOT fail the gate. This keeps
+# the gate green on the current tree while the tracked lint-defect backlog items are worked.
+# Tighten the profile in a future backlog item once those land.
+profile: min
+
+# Downgrade a rule here ONLY when a specific backlog item owns its fix, and cite the item on
+# the line. If ansible-lint surfaces a hard (min-profile) error whose fix is NOT owned by an
+# existing backlog item, STOP and report it — do not invent a skip (see Decisions).
+skip_list: []
+
+# WIP staging dirs that are not part of the deliverable — exclude so their stubs cannot
+# hard-fail the gate. Paths are relative to this config's directory (ansible/).
+exclude_paths:
+  - "**/todo/"
+  # syntax-check is an "unskippable" ansible-lint rule (cannot be silenced via skip_list —
+  # ansible-lint raises RuntimeError if attempted); excluding the file is the sanctioned
+  # mechanism. Both are owned by meta 102 (restart/tail hosts: "{{ instance }}" resolves
+  # before the friendly assert runs when -e instance=... is omitted).
+  - "playbooks/maintenance/restart-app.yml"
+  - "playbooks/maintenance/tail-applog.yml"

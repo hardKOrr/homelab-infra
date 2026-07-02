@@ -1,0 +1,31 @@
+# .claude/build.yml — per-repo manifest read by the autobuild agents.
+
+lang: [ansible, yaml]
+
+# Gate toolchain lives in a WSL venv at ~/.venvs/homelab-ansible. One-time bootstrap (interactive
+# sudo, run once on a fresh WSL distro):
+#   sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
+#   python3 -m venv ~/.venvs/homelab-ansible
+#   ~/.venvs/homelab-ansible/bin/pip install --upgrade pip
+#   ~/.venvs/homelab-ansible/bin/pip install -r .claude/gate/requirements-dev.txt
+#   ~/.venvs/homelab-ansible/bin/ansible-galaxy collection install \
+#       community.proxmox:==2.0.0 ansible.utils:==6.0.3 community.general:==13.1.0 community.docker:==5.2.1
+#   (when meta 007 lands, switch the galaxy line to: -r ansible/requirements.yml)
+# Both gates are thin wrappers around committed scripts (.claude/gate/lint.sh,
+# .claude/gate/test.sh) that carry the ANSIBLE_CONFIG/ANSIBLE_INVENTORY/lint-target rationale —
+# see those scripts. Wrapping in a script (rather than an inline shell one-liner with $, $(...),
+# or nested quotes) avoids shell-relay quoting hazards: a bare $(...)/"$var" one-liner mis-expands
+# under some Windows-side shells (PowerShell native-arg quoting; one Bash-tool relay observed
+# expanding $(find ...) on the Windows side before it reached WSL) and can silently run zero
+# iterations while still exiting 0. .gitattributes forces these two scripts to LF so `bash` never
+# chokes on a CRLF shebang line.
+lint: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh'
+test: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh'
+
+conventions: .claude/CLAUDE.md
+architecture: .claude/architecture.md
+specs: .claude/specs/
+
+# Pre-existing backlog: .claude/meta/ (numbered slices 000-601, own INDEX.md). Autobuild plans in
+# .claude/plans/ cover findings meta does not; each plan cross-references related meta slices.
+# Do not duplicate a meta slice as a plan — extend the meta README instead.

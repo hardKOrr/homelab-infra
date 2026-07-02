@@ -1,0 +1,7 @@
+# Python toolchain for the homelab-infra lint/syntax gate. Installed into a WSL venv
+# (see .claude/build.yml gate comment for the one-time bootstrap). Values are the exact
+# versions pip resolved on first successful install — reproducible on a fresh WSL distro.
+# Verified 2026-07-02: `pip freeze` after install matched these three pins exactly.
+ansible-core==2.18.1
+ansible-lint==24.12.2
+yamllint==1.35.1

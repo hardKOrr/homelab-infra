@@ -1,0 +1,2 @@
+# Gate scripts run inside WSL bash — force LF endings so a CRLF shebang line never breaks them.
+.claude/gate/*.sh text eol=lf
