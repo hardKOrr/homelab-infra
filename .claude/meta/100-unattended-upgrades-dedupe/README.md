@@ -13,6 +13,11 @@
 - `ansible/tasks/bootstrap/configure-unattended-upgrades.yml` — currently TODO header only
 - `ansible/tasks/guest-bootstrap.yml:51-127` — actual implementation
 
+Additional defect to fix during the extraction (review 2026-07-02): the notify script's package
+count at `guest-bootstrap.yml:91` — `grep -c '\.'` counts words containing a dot, but package
+names mostly don't contain dots, so COUNT is wrong for typical upgrade lines. Count the tokens
+after `Packages that will be upgraded:` instead.
+
 ## Approach
 
 Two options:
