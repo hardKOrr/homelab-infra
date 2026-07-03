@@ -2,9 +2,9 @@
 # https://docs.ansible.com/projects/ansible/latest/collections/community/proxmox/proxmox_kvm_module.html
 
 - name: Create VM on proxmox host
-  hosts: proxmox_nodes
+  hosts: localhost
   become: false
-  gather_facts: true
+  gather_facts: false
 
   pre_tasks:
     - name: Load user vars

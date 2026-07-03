@@ -9,18 +9,15 @@
 - name: Load homelabinfra defaults
   ansible.builtin.include_vars:
     file: ../../vars/homelabinfra-defaults.yml
-  run_once: true
 
 - name: Load user vars from file option
   ansible.builtin.include_vars:
     file: "{{ user_vars_file }}"
   when: user_vars_file is defined and user_vars_file | length > 0
-  run_once: true
 
 - name: Merge defaults with user config
   ansible.builtin.set_fact:
-    homelabinfra_config: "{{ 
-      homelabinfra_defaults 
-      | default({}) 
+    homelabinfra_config: "{{
+      homelabinfra_defaults
+      | default({})
       | combine(homelabinfra_config | default({}), recursive=True) }}"
-  run_once: true

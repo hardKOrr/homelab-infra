@@ -1,9 +1,9 @@
 ---
 
 - name: Create docker host
-  hosts: proxmox_nodes
+  hosts: localhost
   become: false
-  gather_facts: true
+  gather_facts: false
   pre_tasks:
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
@@ -11,7 +11,6 @@
     - name: Set docker host selector
       ansible.builtin.set_fact:
         docker_host_tag: "{{ docker_tag | default('docker_default_host') }}"
-      run_once: true
 
     - name: Assert docker host config exists
       ansible.builtin.assert:
@@ -21,12 +20,10 @@
           - homelabinfra_config.docker_hosts[docker_host_tag].type is defined
           - homelabinfra_config.docker_hosts[docker_host_tag].type in ['lxc', 'vm']
         fail_msg: "Required homelabinfra_config inputs: docker_hosts[<tag>].type (must be 'lxc' or 'vm')"
-      run_once: true
 
     - name: Set docker host type
       ansible.builtin.set_fact:
         docker_host_type: "{{ homelabinfra_config.docker_hosts[docker_host_tag].type }}"
-      run_once: true
 
     - name: Ensure LXC keyctl feature for docker hosts
       ansible.builtin.set_fact:
@@ -42,7 +39,6 @@
               )
           }}
       when: docker_host_type == 'lxc'
-      run_once: true
   tasks:
     - name: Create docker host as LXC
       block:
@@ -89,7 +85,6 @@
         ansible_host: "{{ homelabinfra_instance.lxc.ip_address if docker_host_type == 'lxc' else homelabinfra_instance.vm_ansible_host }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         ansible_ssh_private_key_file: "~/.ssh/id_rsa"
-      run_once: true
 
 - name: Bootstrap new Docker host
   hosts: provisioning

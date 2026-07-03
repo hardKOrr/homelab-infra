@@ -15,12 +15,13 @@
 # If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
-# Runs against the Proxmox node to provision or locate the guest.
+# Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
+# pct/qm waits inside lxc-create.yml / vm-create.yml delegate to homelabinfra_config.proxmox.node.
 # Adds the target host to a group for Play 2 to use.
 - name: "APP_NAME | Provision"
-  hosts: proxmox_nodes
+  hosts: localhost
   become: false
-  gather_facts: true
+  gather_facts: false
 
   pre_tasks:
     - name: Load platform vars

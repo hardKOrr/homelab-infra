@@ -78,6 +78,7 @@
 - name: Wait for LXC to be running
   ansible.builtin.command:
     cmd: "pct status {{ homelabinfra_instance.lxc.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: lxc_status
   retries: 30
   delay: 2
@@ -87,6 +88,7 @@
 - name: Wait for LXC to accept exec
   ansible.builtin.command:
     cmd: "pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/true"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: lxc_exec_ready
   retries: 30
   delay: 2
@@ -99,5 +101,6 @@
     cat <<'EOF' | pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/sh -c 'mkdir -p /root/home && cat > /root/home/homelabinfra_instance.lxc.json'
     {{ homelabinfra_instance.lxc | to_nice_json }}
     EOF
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   args:
     executable: /bin/bash

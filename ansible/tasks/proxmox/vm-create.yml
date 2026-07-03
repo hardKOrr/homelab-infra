@@ -82,6 +82,7 @@
 - name: Wait for VM to be running
   ansible.builtin.command:
     cmd: "qm status {{ homelabinfra_instance.vm.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: vm_status
   retries: 30
   delay: 2
@@ -91,6 +92,7 @@
 - name: Wait for VM guest agent to accept exec
   ansible.builtin.command:
     cmd: "qm guest exec {{ homelabinfra_instance.vm.vmid }} -- /bin/true"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: vm_guest_exec_ready
   retries: 30
   delay: 2
@@ -103,5 +105,6 @@
     cat <<'EOF' | qm guest exec {{ homelabinfra_instance.vm.vmid }} -- /bin/sh -c 'mkdir -p /root/home && cat > /root/home/homelabinfra_instance.vm.json'
     {{ homelabinfra_instance.vm | to_nice_json }}
     EOF
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   args:
     executable: /bin/bash
