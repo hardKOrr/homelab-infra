@@ -1,13 +1,19 @@
 ---
-# Rundeck needs to pass in user-vars.yml as -e @user-vars.yml to properly load homelabinfra_config
+# community.proxmox templates its connection options (url/user/token_*) with a Templar that never
+# receives -e extra vars (proven: .claude/plans/done/fix-inventory-url-and-extra-vars.md Run log),
+# so these options read PROXMOX_API_* from the process environment via lookup('env', ...), which the
+# same Templar DOES evaluate (no host/extra vars needed). Populate them with
+# scripts/with-proxmox-env.sh (bare CLI / fresh clone) or export them in the Rundeck/Semaphore job
+# step. Playbooks still receive homelabinfra_config via -e @user-vars.yml for task-time vars; only
+# this inventory file is env-driven.
 plugin: community.proxmox.proxmox
-# Derive a full URL (scheme + host + port) from the same bare api_host the provisioning modules
-# consume, so users configure the host in exactly one place. community.proxmox's inventory `url`
-# option expects a scheme (its default is http://localhost:8006); port falls back to 8006.
-url: "https://{{ homelabinfra_config.proxmox.api_host }}:{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
-user: "{{ homelabinfra_config.proxmox.api_user | default('root@pam') }}"
-token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
-token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
+# Derive a full URL (scheme + host + port) from the same bare host the provisioning modules consume,
+# so users configure the host in exactly one place. community.proxmox's inventory `url` option
+# expects a scheme (its default is http://localhost:8006); port falls back to 8006.
+url: "https://{{ lookup('env', 'PROXMOX_API_HOST') }}:{{ lookup('env', 'PROXMOX_API_PORT') | default('8006', true) }}"
+user: "{{ lookup('env', 'PROXMOX_API_USER') | default('root@pam', true) }}"
+token_id: "{{ lookup('env', 'PROXMOX_API_TOKEN_ID') }}"
+token_secret: "{{ lookup('env', 'PROXMOX_API_TOKEN_SECRET') }}"
 # Homelab Proxmox nodes use self-signed TLS certs; skip verification deliberately.
 validate_certs: false
 want_facts: true

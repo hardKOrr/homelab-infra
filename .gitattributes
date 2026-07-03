@@ -1,2 +1,4 @@
 # Gate scripts run inside WSL bash — force LF endings so a CRLF shebang line never breaks them.
 .claude/gate/*.sh text eol=lf
+# Runtime wrapper runs inside WSL/Linux bash — force LF so the shebang never breaks.
+ansible/scripts/*.sh text eol=lf

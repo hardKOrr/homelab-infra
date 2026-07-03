@@ -19,5 +19,11 @@ Import `project.json` into Semaphore to get all job templates pre-configured.
 - `PROXMOX_API_TOKEN` — Proxmox API token secret
 - `VAULTWARDEN_ADMIN_TOKEN` — Vaultwarden admin token (set after bootstrap step 1)
 
+The `community.proxmox` dynamic inventory plugin cannot receive its connection details via `-e`
+extra vars (see `ansible/inventory/proxmox.yml`). Export `PROXMOX_API_HOST` / `PROXMOX_API_PORT` /
+`PROXMOX_API_USER` / `PROXMOX_API_TOKEN_ID` / `PROXMOX_API_TOKEN_SECRET` from Semaphore secrets in
+the job step before invoking `ansible`, or wrap the invocation in
+`ansible/scripts/with-proxmox-env.sh <user-vars.yml> <ansible-command>...`.
+
 ## TODO: project.json
 Semaphore project export with all job templates, inventory, and environment pre-configured.

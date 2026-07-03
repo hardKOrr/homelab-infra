@@ -19,5 +19,11 @@ Import YAML files from `rundeck/jobs/` into Rundeck to get all job definitions p
 - `keys/proxmox/api-token` — Proxmox API token secret
 - `keys/vaultwarden/admin-token` — Vaultwarden admin token (set after bootstrap step 1)
 
+The `community.proxmox` dynamic inventory plugin cannot receive its connection details via `-e`
+extra vars (see `ansible/inventory/proxmox.yml`). The Ansible job step must export
+`PROXMOX_API_HOST` / `PROXMOX_API_PORT` / `PROXMOX_API_USER` / `PROXMOX_API_TOKEN_ID` /
+`PROXMOX_API_TOKEN_SECRET` (sourced from `keys/proxmox/api-token`) before invoking `ansible`, or
+wrap the invocation in `ansible/scripts/with-proxmox-env.sh <user-vars.yml> <ansible-command>...`.
+
 ## TODO: jobs/*.yaml
 Rundeck job definition YAML files — one per job, importable via Rundeck API or UI.

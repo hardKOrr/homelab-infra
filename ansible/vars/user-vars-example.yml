@@ -9,6 +9,11 @@ homelabinfra_config:
       dns_servers: []
       bridge: "vmbr0"
       vlan: 0
+  # The community.proxmox dynamic inventory plugin (inventory/proxmox.yml) cannot read these values
+  # via -e extra vars — it reads PROXMOX_API_HOST / PROXMOX_API_PORT / PROXMOX_API_USER /
+  # PROXMOX_API_TOKEN_ID / PROXMOX_API_TOKEN_SECRET from the process environment instead. Populate
+  # them from this same file with `scripts/with-proxmox-env.sh` (bare CLI / fresh clone), or export
+  # them directly in the Rundeck/Semaphore job step before invoking ansible.
   proxmox:
     api_host: ""
     api_port: ""
