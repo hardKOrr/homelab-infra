@@ -1,70 +1,17 @@
 ---
+# Derive a VMID from the guest's IP for whichever guest types are present in
+# homelabinfra_config.proxmox (vm and/or lxc). No-arg interface: callers import/include this file
+# with no vars, exactly as before. Loops over both guest types and no-ops for any not configured.
+# Per-guest logic lives in ip-to-vmid-guest.yml.
 
-- name: Select VM IP for VMID
-  ansible.builtin.set_fact:
-    vm_ip_for_vmid: "{{ homelabinfra_config.proxmox.vm.ip_address | default(homelabinfra_config.proxmox.vm.ansible_host) }}"
+- name: Derive VMID from IP for each present guest type
+  ansible.builtin.include_tasks: ip-to-vmid-guest.yml
+  loop:
+    - vm
+    - lxc
+  loop_control:
+    loop_var: guest_type
   when:
     - homelabinfra_config is defined
     - homelabinfra_config.proxmox is defined
-    - homelabinfra_config.proxmox.vm is defined
-    - homelabinfra_config.proxmox.vm.ip_address is defined or homelabinfra_config.proxmox.vm.ansible_host is defined
-    - homelabinfra_config.proxmox.vm.vmid is not defined or homelabinfra_config.proxmox.vm.vmid | int == 0
-    - (homelabinfra_config.proxmox.vm.ip_address | default(homelabinfra_config.proxmox.vm.ansible_host)) | lower != 'dhcp'
-
-- name: Set VM VMID from IP
-  ansible.builtin.set_fact:
-    homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'vm': {'vmid': vm_vmid_from_ip}}}, recursive=True) }}"
-  vars:
-    vm_octets: "{{ vm_ip_for_vmid.split('.') | map('int') | list }}"
-    vm_prefix_octet: "{{ (vm_octets[1] | int) if (vm_octets[1] | int) != 0 else (vm_octets[0] | int) }}"
-    vm_vmid_from_ip: "{{ (vm_prefix_octet | string) ~ ('%03d' | format(vm_octets[2] | int)) ~ ('%03d' | format(vm_octets[3] | int)) | int }}"
-  when:
-    - vm_ip_for_vmid is defined
-
-- name: Assert VM VMID is provided when using DHCP
-  ansible.builtin.assert:
-    that:
-      - homelabinfra_config.proxmox.vm.vmid is defined
-      - homelabinfra_config.proxmox.vm.vmid | int > 0
-    fail_msg: >-
-      DHCP is configured but no vmid provided.
-      Set homelabinfra_config.proxmox.vm.vmid in your user vars.
-  when:
-    - homelabinfra_config.proxmox is defined
-    - homelabinfra_config.proxmox.vm is defined
-    - (homelabinfra_config.proxmox.vm.ip_address | default(homelabinfra_config.proxmox.vm.ansible_host) | lower) == 'dhcp'
-
-- name: Select LXC IP for VMID
-  ansible.builtin.set_fact:
-    lxc_ip_for_vmid: "{{ homelabinfra_config.proxmox.lxc.ip_address }}"
-  when:
-    - homelabinfra_config is defined
-    - homelabinfra_config.proxmox is defined
-    - homelabinfra_config.proxmox.lxc is defined
-    - homelabinfra_config.proxmox.lxc.ip_address is defined
-    - homelabinfra_config.proxmox.lxc.vmid is not defined or homelabinfra_config.proxmox.lxc.vmid | int == 0
-    - homelabinfra_config.proxmox.lxc.ip_address | lower != 'dhcp'
-
-- name: Set LXC VMID from IP
-  ansible.builtin.set_fact:
-    homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'vmid': lxc_vmid_from_ip}}}, recursive=True) }}"
-  vars:
-    lxc_octets: "{{ lxc_ip_for_vmid.split('.') | map('int') | list }}"
-    lxc_prefix_octet: "{{ (lxc_octets[1] | int) if (lxc_octets[1] | int) != 0 else (lxc_octets[0] | int) }}"
-    lxc_vmid_from_ip: "{{ (lxc_prefix_octet | string) ~ ('%03d' | format(lxc_octets[2] | int)) ~ ('%03d' | format(lxc_octets[3] | int)) | int }}"
-  when:
-    - lxc_ip_for_vmid is defined
-
-- name: Assert LXC VMID is provided when using DHCP
-  ansible.builtin.assert:
-    that:
-      - homelabinfra_config.proxmox.lxc.vmid is defined
-      - homelabinfra_config.proxmox.lxc.vmid | int > 0
-    fail_msg: >-
-      DHCP is configured but no vmid provided.
-      Set homelabinfra_config.proxmox.lxc.vmid in your user vars.
-  when:
-    - homelabinfra_config.proxmox is defined
-    - homelabinfra_config.proxmox.lxc is defined
-    - homelabinfra_config.proxmox.lxc.ip_address is defined
-    - homelabinfra_config.proxmox.lxc.ip_address | lower == 'dhcp'
+    - homelabinfra_config.proxmox[guest_type] is defined

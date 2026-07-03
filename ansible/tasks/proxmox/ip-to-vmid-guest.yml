@@ -1,0 +1,32 @@
+---
+# Per-guest VMID derivation, parameterized by guest_type ('vm' | 'lxc').
+# Called once per guest type, in a loop, by ip-to-vmid.yml.
+#
+# Scheme: <prefix-octet><octet3 as %03d><octet4 as %03d>, cast to int as ONE value.
+# Parenthesize the whole concatenation before `| int` — `|` binds tighter than `~`, so an
+# un-parenthesized `a ~ b | int` casts only b and strips its zero-padding
+# (per .claude/specs/jinja-string-typing.md). prefix-octet = second octet unless 0, else first.
+
+- name: Set VMID from IP for {{ guest_type }}
+  ansible.builtin.set_fact:
+    homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {guest_type: {'vmid': vmid_from_ip}}}, recursive=True) }}"
+  vars:
+    guest_ip: "{{ homelabinfra_config.proxmox[guest_type].ip_address | default(homelabinfra_config.proxmox[guest_type].ansible_host) }}"
+    octets: "{{ guest_ip.split('.') | map('int') | list }}"
+    prefix_octet: "{{ (octets[1] | int) if (octets[1] | int) != 0 else (octets[0] | int) }}"
+    vmid_from_ip: "{{ ((prefix_octet | string) ~ ('%03d' | format(octets[2] | int)) ~ ('%03d' | format(octets[3] | int))) | int }}"
+  when:
+    - homelabinfra_config.proxmox[guest_type].ip_address is defined or homelabinfra_config.proxmox[guest_type].ansible_host is defined
+    - homelabinfra_config.proxmox[guest_type].vmid is not defined or homelabinfra_config.proxmox[guest_type].vmid | int == 0
+    - (homelabinfra_config.proxmox[guest_type].ip_address | default(homelabinfra_config.proxmox[guest_type].ansible_host)) | lower != 'dhcp'
+
+- name: Assert VMID is provided when using DHCP for {{ guest_type }}
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox[guest_type].vmid is defined
+      - homelabinfra_config.proxmox[guest_type].vmid | int > 0
+    fail_msg: >-
+      DHCP is configured but no vmid provided.
+      Set homelabinfra_config.proxmox.{{ guest_type }}.vmid in your user vars.
+  when:
+    - (homelabinfra_config.proxmox[guest_type].ip_address | default(homelabinfra_config.proxmox[guest_type].ansible_host | default(''))) | lower == 'dhcp'
