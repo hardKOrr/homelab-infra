@@ -48,29 +48,28 @@
         ip_offset: "{{ network_config.ip_offset | default(1) | int }}"
         max_hosts: "{{ network_config.max_hosts | default((network_config.cidr | ansible.utils.ipaddr('size') | int) - 2) | int }}"
 
-    - name: Initialize candidate IP index
+    - name: Allocate first available static IP in subnet
       ansible.builtin.set_fact:
-        candidate_index: "{{ ip_offset - 1 }}"
+        final_ip_address: >-
+          {{ (range((network_base_int | int) + (ip_offset | int),
+                    (network_base_int | int) + (max_hosts | int) + 1)
+              | map('ansible.utils.ipaddr')
+              | reject('in', proxmox_client_ips | default([]))
+              | list | first | default('')) }}
+      vars:
+        network_address: "{{ (network_config.cidr | ansible.utils.ipaddr('network')).split('/')[0] }}"
+        network_octets: "{{ network_address.split('.') }}"
+        network_base_int: >-
+          {{ (network_octets[0] | int) * 16777216
+             + (network_octets[1] | int) * 65536
+             + (network_octets[2] | int) * 256
+             + (network_octets[3] | int) }}
 
-    - name: Find next available IP in subnet
-      ansible.builtin.set_fact:
-        candidate_index: "{{ candidate_index + 1 }}"
-        candidate_ip: "{{ network_config.cidr | ansible.utils.nthhost(candidate_index + 1) }}"
-      until:
-        - candidate_ip not in (proxmox_client_ips | default([]))
-        - candidate_index < max_hosts
-      retries: "{{ max_hosts }}"
-      delay: 0
-
-    - name: Assert IP allocation succeeded
+    - name: Assert an available IP was found in the subnet
       ansible.builtin.assert:
         that:
-          - candidate_ip is defined
+          - final_ip_address | length > 0
         fail_msg: "No available IPs found in {{ network_config.cidr }}"
-
-    - name: Set final IP address
-      ansible.builtin.set_fact:
-        final_ip_address: "{{ candidate_ip }}"
 
 - name: Set network instance facts
   ansible.builtin.set_fact:

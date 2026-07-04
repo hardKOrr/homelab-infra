@@ -321,3 +321,113 @@ FILTER-FLAG contingency in Decisions and re-run before proceeding.
 - Value proof (`192.168.1.3` / `10.0.0.1` / exhaustion) is stated and matches.
 
 ## Run log
+
+### [implementer] 2026-07-04
+
+Implemented Step 1 + Step 2 verbatim. Only file touched: `ansible/tasks/network/generate-ip.yml`
+(`git diff --stat`: 1 file changed, 17 insertions(+), 18 deletions(-)). Removed exactly the four
+defective tasks at the plan's cited lines 51-73 (`Initialize candidate IP index`, `Find next
+available IP in subnet`, `Assert IP allocation succeeded`, `Set final IP address`) and inserted the
+two tasks from Step 2 verbatim (`Allocate first available static IP in subnet`,
+`Assert an available IP was found in the subnet`). `Collect existing client IPs from proxmox
+inventory` and `Set IP allocation bounds` are untouched; `Set network instance facts` (now at
+lines 74-85) is untouched; no caller file (`create-lxc.yml`, `create-vm.yml`,
+`create-docker-host.yml`, `find-or-create-host.yml`) was edited.
+
+**Gate evidence:**
+
+- `lint` — `wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh'`
+  → exit 0. Output: `Passed: 0 failure(s), 0 warning(s) on 63 files. Profile 'min' was required,
+  but 'production' profile passed.`
+- `test` — `wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh'`
+  → exit 1 (read from the Bash tool's reported status, not `$?`). `Found 11 playbook(s) to
+  syntax-check.` The four callers of this task file all pass syntax-check cleanly: `==
+  playbooks/proxmox/create-lxc.yml` → `playbook: playbooks/proxmox/create-lxc.yml`; `==
+  playbooks/proxmox/create-vm.yml` → `playbook: playbooks/proxmox/create-vm.yml`; `==
+  playbooks/docker/create-docker-host.yml` → `playbook: playbooks/docker/create-docker-host.yml`
+  (only a benign `Could not match supplied host pattern, ignoring: provisioning` warning, no
+  error). `find-or-create-host.yml` is a task file, not a playbook, so it is not itself
+  syntax-checked directly but is exercised only via `create-docker-host.yml`, which passed. The
+  three failures present are exactly the pre-existing ones the plan names as acceptable and none
+  touch `generate-ip.yml` or its callers: `playbooks/maintenance/restart-app.yml` (`ERROR! The
+  field 'hosts' has an invalid value ... 'instance' is undefined`), `playbooks/maintenance/
+  tail-applog.yml` (same `instance` undefined error), `playbooks/stacks/rollback-container.yml`
+  (`ERROR! Empty playbook, nothing to do`). `git diff --stat` confirms only `generate-ip.yml`
+  changed on this branch, so these three are pre-existing and unrelated to this change.
+
+**Value proof (mandatory, per Verification):** wrote the throwaway playbook (byte-identical to
+the plan's Verification block) to the session scratchpad and ran it via the exact command given
+(substituting the scratchpad path for `/tmp/ip-alloc-check.yml`, with
+`ANSIBLE_STDOUT_CALLBACK=ansible.builtin.default` set as required). `netaddr` was already
+importable in the gate venv (`~/.venvs/homelab-ansible/bin/python -c "import netaddr;
+print(netaddr.__version__)"` → `1.3.0`), so no install step was needed. Output:
+
+```
+"192.168.1.0/24 -> 192.168.1.3"
+"10.0.0.0/24 -> 10.0.0.1"
+"192.168.1.0/30 -> EXHAUSTED"
+```
+
+All three match the plan's expected values exactly. Hand-computed worked examples (restated from
+the plan, confirmed by the run):
+
+- `192.168.1.0/24`, ip_offset 1, used `[.1, .2]`: base = `192*16777216 + 168*65536 + 1*256 + 0` =
+  `3232235776`; range starts at `3232235776 + 1` → `.1` (used), `.2` (used), `.3` free →
+  `192.168.1.3`. Confirms occupied IPs are skipped and `ip_offset` is honored.
+- `10.0.0.0/24`, ip_offset 1, used `[]`: base = `10*16777216` = `167772160`; first candidate
+  `167772161` → `10.0.0.1`. Confirms `ip_offset = 1` yields the first host `.1`, matching the old
+  `nthhost(1)` addressing semantics (D3).
+- `192.168.1.0/30`, ip_offset 1, max_hosts 2, used `[.1, .2]`: candidate indices 1..2 → `.1`
+  (used), `.2` (used) → reject empties the list → `first | default('EXHAUSTED')` → `EXHAUSTED` in
+  the proof; in the real task this is `first | default('')` → `''`, which the new
+  `Assert an available IP was found in the subnet` catches and fails with the verbatim message
+  `No available IPs found in 192.168.1.0/30`. Confirms exhaustion fails via `assert`, not retries
+  exhaustion.
+
+Throwaway proof file deleted after the run, per the plan's instruction.
+
+No decisions needed — all of D1-D8 and FILTER-FLAG were already resolved by korr-design; the
+change was implemented exactly as specified. No blockers encountered.
+
+### [reviewer] 2026-07-04
+
+[reviewer] verdict: PASS
+
+- Diff (`git diff master -- ansible/tasks/network/generate-ip.yml`) matches the plan's Step 2
+  verbatim block exactly; no `set_fact`+`until` counter loop, `candidate_index`, or `candidate_ip`
+  remain anywhere in the file.
+- All fact-sourced values used in arithmetic/`range` are cast `| int` inline
+  (`network_base_int | int`, `ip_offset | int`, `max_hosts | int`).
+- Exhaustion path is `ansible.builtin.assert` on `final_ip_address | length > 0` with the verbatim
+  message `No available IPs found in {{ network_config.cidr }}`.
+- `Collect existing client IPs from proxmox inventory`, `Set IP allocation bounds`, and `Set
+  network instance facts` are byte-identical to master; output fact is `final_ip_address`; no
+  caller file (`create-lxc.yml`, `create-vm.yml`, `create-docker-host.yml`,
+  `find-or-create-host.yml`) was touched.
+- Gate evidence: lint was green in the implementer's round (exit 0, 0 failures/warnings on 63
+  files) — trusted, not re-run. Test evidence showed exit 1, so per protocol I re-ran it myself:
+  reproduces exit 1 with the identical three pre-existing failures (`restart-app.yml`,
+  `tail-applog.yml`, `rollback-container.yml` — all `hosts:` field / empty-playbook errors
+  unrelated to `generate-ip.yml`); `create-lxc.yml` and `create-vm.yml` both syntax-check clean.
+  No new failures introduced.
+- Value-proof output (`192.168.1.3` / `10.0.0.1` / `EXHAUSTED`) matches the plan's hand-computed
+  expected values exactly.
+- Reflexes: no secrets, no injection, no swallowed errors — clean.
+- Note (non-blocking): `.claude/settings.local.json` also shows as modified in the working tree
+  (adds a `Bash(rm *)` permission-allow entry). This is unrelated harness/session housekeeping, not
+  part of this plan's file scope, and not a defect in the reviewed change — flagged for visibility,
+  not gating the verdict.
+
+### [qa] 2026-07-04
+
+[qa] verdict: PASS
+
+Senior pass over the diff and run log: the change is exactly the plan's Step 2 block — no
+`set_fact`+`until` loop or `candidate_*` facts remain, every arithmetic operand is cast `| int`
+inline, exhaustion fails via the assert with the verbatim message, output fact stays
+`final_ip_address`, and the surrounding tasks (`Collect existing client IPs`, `Set IP allocation
+bounds`, `Set network instance facts`) plus all four callers are byte-identical to master. Gate
+evidence accepted: lint exit 0; test exit 1 with only the three pre-existing failures, which the
+reviewer independently reproduced. Value proof (`192.168.1.3` / `10.0.0.1` / `EXHAUSTED`) matches
+the hand-computed examples. `.claude/settings.local.json` working-tree change is session
+housekeeping and is deliberately NOT staged into this commit. Clear to commit.
