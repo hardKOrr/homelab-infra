@@ -31,7 +31,10 @@
       "Bash(echo \"exit=$?\")",
       "Bash(sed -n '/validate_certs/,$p')",
       "Bash(sed -n '/validate_certs/,$p' 'C:\\\\Users\\\\korr\\\\source\\\\repos\\\\homelab-infra\\\\ansible\\\\inventory\\\\proxmox.yml')",
-      "PowerShell($b = [System.IO.File]::ReadAllBytes\\('C:\\\\Users\\\\korr\\\\source\\\\repos\\\\homelab-infra\\\\ansible\\\\scripts\\\\with-proxmox-env.sh'\\); if \\([System.Text.Encoding]::ASCII.GetString\\($b\\) -match \"`r`n\"\\) { 'CRLF present' } else { 'LF only' })"
+      "PowerShell($b = [System.IO.File]::ReadAllBytes\\('C:\\\\Users\\\\korr\\\\source\\\\repos\\\\homelab-infra\\\\ansible\\\\scripts\\\\with-proxmox-env.sh'\\); if \\([System.Text.Encoding]::ASCII.GetString\\($b\\) -match \"`r`n\"\\) { 'CRLF present' } else { 'LF only' })",
+      "Skill(fewer-permission-prompts)",
+      "Bash(echo \"ignore-rc=$?\")",
+      "PowerShell(python \"C:\\\\Users\\\\korr\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-korr-source-repos-homelab-infra\\\\1b44ef5c-c536-4540-86a5-ff626ea8d271\\\\scratchpad\\\\scan_tool_calls.py\")"
     ]
   }
 }

@@ -22,7 +22,9 @@ lang: [ansible, yaml]
 lint: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh'
 test: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh'
 
-conventions: .claude/CLAUDE.md
+conventions:
+  - .claude/CLAUDE.md
+  - .claude/specs/framework.md
 architecture: .claude/architecture.md
 specs: .claude/specs/
 
