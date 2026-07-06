@@ -214,3 +214,142 @@ gates, so verify by tracing the merge expression):**
   namespace dict (`.claude/specs/namespace-merge-discipline.md`).
 
 ## Run log
+
+### round 1
+
+**[implementer]**
+
+Replaced the entire body of `ansible/tasks/load-user-vars.yml` with the exact four-layer loader
+given verbatim in the plan's `## Plan` section — no deviation. Diff summary:
+
+- Removed the opening `assert` task (`user_vars_file is defined or homelabinfra_config is defined`)
+  per Decision 2.
+- Kept the defaults `include_vars` (`file: ../../vars/homelabinfra-defaults.yml`) unchanged.
+- Added two optional `include_vars` tasks, each `failed_when: false`: `config/proxmox.yml` ->
+  named var `_config_proxmox` (path `../../../config/proxmox.yml`), `config/infrastructure.yml` ->
+  named var `_config_infrastructure` (path `../../../config/infrastructure.yml`).
+- Kept the legacy `user_vars_file` `include_vars` unchanged (renamed task label only, per plan text).
+- Extended the final `set_fact` to a four-layer `combine(recursive=True)` chain: defaults ->
+  `_config_proxmox` (top-level) -> `{infrastructure: _config_infrastructure}` -> legacy
+  `homelabinfra_config` (last-wins).
+
+**Files touched:** `ansible/tasks/load-user-vars.yml` (only — confirmed via `git status`/`git diff`;
+no other tracked file was modified by this round).
+
+**Path-resolution check (hazard 1, plan's Decision 1):** ran the `test` gate (`--syntax-check` over
+every playbook under `ansible/playbooks/`) and confirmed both caller depths that `import_tasks` this
+file parse cleanly through it: `playbooks/bootstrap.yml` (playbook_dir = `ansible/playbooks`) and
+`playbooks/apps/_template.yml` / `playbooks/apps/remove.yml` (playbook_dir =
+`ansible/playbooks/apps`) all printed `playbook: <path>` (syntax-check success) with the new
+`../../../config/*.yml` includes in place — consistent with the task-file-relative resolution the
+plan's Decision 1 argues for.
+
+**Gate evidence:**
+
+Note on the two `lint`/`test` commands literally given in the plan/build.yml
+(`cd /mnt/c/Users/korr/source/repos/homelab-infra`): that path does not exist in this checkout
+(`No such file or directory`, exit 1) — this machine's WSL mount is
+`/mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra`. Ran both gates at the corrected path instead, per
+the task's fallback instruction.
+
+- `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh'`
+  → exit 0. Tail:
+  ```
+  Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64 encountered. Profile 'min' was
+  required, but 'production' profile passed.
+  ```
+- `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh'`
+  → exit 0 (confirmed by piping to a log file and echoing `$?` directly, to rule out a WSL-relay
+  exit-code quirk seen on the very first invocation — see note below). Output includes `[ERROR]`
+  lines for `playbooks/docker/create-docker-host.yml` (missing `docker` role dir),
+  `playbooks/maintenance/restart-app.yml` and `tail-applog.yml` (`instance` undefined — expected,
+  those playbooks require a runtime `-e instance=…`), and `playbooks/stacks/rollback-container.yml`
+  (`Empty playbook, nothing to do`). **Verified pre-existing and unrelated to this change**: stashed
+  the edit, re-ran `test.sh` against unmodified `master`'s `load-user-vars.yml` — identical `[ERROR]`
+  lines appear and the gate still exits 0 (Ansible's `--syntax-check` treats these as non-fatal
+  diagnostics, not exit-code failures); popped the stash to restore the edit. `bootstrap.yml`,
+  `apps/_template.yml`, and `apps/remove.yml` — the three playbooks that actually
+  `import_tasks: ../../tasks/load-user-vars.yml` at both relevant depths — all report
+  `playbook: <path>` (clean parse).
+  - WSL exit-code note: the very first raw invocation of this gate command (before the explicit
+    `; echo $?` capture) was reported by the Bash tool as exit 1 with this same output, for both the
+    modified file and unmodified `master`. Re-running with an explicit `echo RC=$?` inside the same
+    `wsl bash -lc '...'` call consistently returns 0 on both the modified branch and unmodified
+    `master`, so the "exit 1" was a Bash-tool/`wsl` exit-status relay artifact, not the script's real
+    result — reporting this honestly per the task's instructions rather than picking whichever run
+    looked better.
+
+**Decisions:** none needed — the plan's `## Decisions` section already resolves both hazards
+(config-file relative path depth, assert removal) and this round implemented them verbatim.
+
+**Notes for reviewer:** `.claude/settings.local.json` (modified) and `.claude/agents/fable-groomer.md`
+(untracked) were already present in the working tree before this round started (visible in the
+session's initial `git status` snapshot) — not touched by this implementation and not part of this
+plan's scope.
+
+### [reviewer] 2026-07-05
+
+[reviewer] verdict: PASS
+
+- Diff (`git diff -- ansible/tasks/load-user-vars.yml`) matches the plan's `## Plan` verbatim block
+  exactly, line for line: assert task removed, defaults include unchanged, two new
+  `config/proxmox.yml` / `config/infrastructure.yml` includes (named vars `_config_proxmox` /
+  `_config_infrastructure`, both `failed_when: false`, both `../../../config/...` three-dot paths),
+  legacy `user_vars_file` include unchanged, and the four-layer `combine(recursive=True)` merge
+  chain (defaults → proxmox top-level → `{infrastructure: ...}` → legacy `homelabinfra_config`
+  last-wins).
+- Cross-checked the merge shapes against `ansible/vars/CONTRACT.md` §2/§4/§5 directly: load-map row
+  order, wrapper placement (`proxmox`/`networks`/`ansible` at top level, whole file under
+  `.infrastructure`), and precedence order all match the contract verbatim. No key renaming
+  attempted (correctly out of scope, slice 004).
+- Verified Decision 1's path-resolution claim against the actual installed Ansible core (2.20.1)
+  source rather than taking it on inspection alone: `include_vars`'s action plugin calls
+  `_find_needle('vars', file)` → `Task.get_search_path()` (`ansible/playbook/base.py`), which builds
+  `task_dir = os.path.dirname(self.get_path())` from the task's own YAML origin file
+  (`ansible/tasks/load-user-vars.yml`), not the invoking playbook's `playbook_dir`. Traced
+  `path_dwim_relative_stack` (`ansible/parsing/dataloader.py`): the first, highest-priority search
+  candidate is `<task_dir>/vars/<relative-file>`, i.e.
+  `ansible/tasks/vars/../../../config/proxmox.yml` → `<repo-root>/config/proxmox.yml` — correct
+  regardless of which playbook (`bootstrap.yml` at `playbooks/` depth or `apps/_template.yml` at
+  `playbooks/apps/` depth) imports the task. Confirms the plan's claim: three dots is depth-agnostic
+  by construction, not coincidence.
+- Confirmed missing-file handling doesn't crash: `include_vars`'s action plugin catches
+  `AnsibleFileNotFound` internally and returns a normal failed result (not a raised fatal), so
+  `failed_when: false` on both config includes correctly suppresses it on a clean checkout.
+- Namespace-merge-discipline (`.claude/specs/namespace-merge-discipline.md`) satisfied: every layer
+  of the final `set_fact` is `combine(recursive=True)`, no bare dict replacement, no `default(omit)`
+  stored in a fact. Framework reflexes (`.claude/specs/framework.md`) checked — no bare `set_fact` on
+  a namespace dict, no fact-sourced arithmetic, no secrets in module args, no
+  `hosts: proxmox_nodes`/`run_once` pattern in this file. No secrets, injection, or swallowed-error
+  reflex issues — the `failed_when: false` permissiveness is the plan's explicit, documented design
+  (caller-side asserts are the real gate), not a silently dropped failure.
+- Gate evidence: re-ran both gates at the substituted path.
+  - `lint.sh` → exit 0, `Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64 encountered` —
+    matches implementer's report.
+  - `test.sh` → implementer reported an initial raw "exit 1" observation later reconciled to exit 0
+    via explicit `$?` capture, flagged as a possible Bash-tool/WSL exit-status relay artifact. Given
+    that inconsistency, re-ran independently: a plain re-run through this session's Bash tool also
+    reported "Exit code 1" in the tool-result metadata, but `wsl bash -lc '... ; echo "RC=$?"'` (and
+    a per-playbook direct run of the four flagged playbooks) consistently returned `RC=0`. Read
+    `.claude/gate/test.sh`: it sets `rc=1` only when an individual `ansible-playbook --syntax-check`
+    invocation itself returns non-zero, and empirically each of the four flagged playbooks
+    (`docker/create-docker-host.yml` missing role, `restart-app.yml`/`tail-applog.yml` undefined
+    `instance`, `stacks/rollback-container.yml` empty playbook) exits 0 from `--syntax-check` despite
+    printing `[ERROR]` — confirming the script's real, final exit code is 0 and the "Exit code 1"
+    surfaced by the tool wrapper is a reporting artifact independent of the script/gate itself, not a
+    gate failure. This corroborates rather than contradicts the implementer's account. Gate evidence
+    stands as green.
+- No trivia fixed — nothing needed it.
+
+[qa] verdict: PASS
+- Senior pass: diff re-read against Contract §2/§4 and the plan's verbatim block — exact match; merge
+  discipline (`combine(recursive=True)` on all four layers, legacy last-wins) confirmed.
+- Spot-ran both gates myself with explicit RC capture (`; echo "GATE_RC=$?"`): lint → GATE_RC=0
+  (`Passed: 0 failure(s), 0 warning(s)`); test → GATE_RC=0. The Bash-tool "exit 1" both agents saw is
+  confirmed a WSL relay artifact; the scripts' real exit codes are 0. Pre-existing `[ERROR]`
+  diagnostics (docker role, undefined `instance`, empty rollback playbook) verified unrelated —
+  identical on unmodified master.
+- Lifted upward (not this plan's scope): `.claude/build.yml` gate commands carry a stale WSL path
+  (`/mnt/c/Users/korr/source/repos/...`); this machine's checkout is
+  `/mnt/c/Users/kevin/GitHub/hardKOrr/...`. Both agents and QA substituted the real path. Fix at the
+  next korr-design pass.

@@ -1,23 +1,41 @@
 ---
-- name: Assert homelabinfra instance data is provided
-  ansible.builtin.assert:
-    that:
-      - user_vars_file is defined or homelabinfra_config is defined
-      
-    fail_msg: "Required user_vars_file or homelabinfra_config to load user configuration"
+# Loads the homelabinfra_config input layer per ansible/vars/CONTRACT.md §2/§4.
+# Merge order (low -> high precedence):
+#   1. vars/homelabinfra-defaults.yml   (seed; unwrap `homelabinfra_defaults:`)
+#   2. config/proxmox.yml               (top-level proxmox/networks/ansible keys, injected as-is)
+#   3. config/infrastructure.yml        (whole file wrapped under .infrastructure)
+#   4. user_vars_file / pre-set homelabinfra_config  (legacy back-compat; wins on conflict)
+# config/ is gitignored and may be absent on a clean checkout, so the two config includes use
+# `failed_when: false` and default to {} in the merge. Required-key validation is the CALLER's job
+# (bootstrap.yml / app playbooks assert homelabinfra_config.proxmox.* / .infrastructure.*), not this
+# loader's — the loader stays permissive so partial/absent config surfaces as a friendly caller-side
+# assert, never an include_vars file-not-found crash.
 
 - name: Load homelabinfra defaults
   ansible.builtin.include_vars:
     file: ../../vars/homelabinfra-defaults.yml
 
-- name: Load user vars from file option
+- name: Load config/proxmox.yml if present (absent on a clean checkout)
+  ansible.builtin.include_vars:
+    file: ../../../config/proxmox.yml
+    name: _config_proxmox
+  failed_when: false
+
+- name: Load config/infrastructure.yml if present (absent on a clean checkout)
+  ansible.builtin.include_vars:
+    file: ../../../config/infrastructure.yml
+    name: _config_infrastructure
+  failed_when: false
+
+- name: Load user vars from file option (legacy back-compat — highest precedence)
   ansible.builtin.include_vars:
     file: "{{ user_vars_file }}"
   when: user_vars_file is defined and user_vars_file | length > 0
 
-- name: Merge defaults with user config
+- name: Merge config layers into homelabinfra_config
   ansible.builtin.set_fact:
     homelabinfra_config: "{{
-      homelabinfra_defaults
-      | default({})
+      homelabinfra_defaults | default({})
+      | combine(_config_proxmox | default({}), recursive=True)
+      | combine({'infrastructure': _config_infrastructure | default({})}, recursive=True)
       | combine(homelabinfra_config | default({}), recursive=True) }}"
