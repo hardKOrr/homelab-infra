@@ -1,6 +1,7 @@
 #!/bin/bash
-# Ansible-lint gate. Invoked by .claude/build.yml's `lint:` wrapper from the repo root:
-#   wsl bash -lc 'cd <repo-root> && bash .claude/gate/lint.sh'
+# Ansible-lint gate. Invoked by .claude/build.yml's `lint:` wrapper from the repo root
+# (wsl inherits the Windows cwd, so no explicit cd is needed):
+#   wsl bash -lc 'bash .claude/gate/lint.sh'
 set -euo pipefail
 
 cd ansible
@@ -9,9 +10,9 @@ cd ansible
 # "world writable" and silently ignores a cwd-relative ansible.cfg as an ansible.cfg source.
 # Without this, ansible/ansible.cfg's roles_path never loads and role-using playbooks (e.g.
 # docker/create-docker-host.yml) falsely fail with "role not found". Setting ANSIBLE_CONFIG
-# explicitly to the absolute path bypasses the cwd-discovery safety check (Ansible's own
-# documented workaround).
-export ANSIBLE_CONFIG=/mnt/c/Users/korr/source/repos/homelab-infra/ansible/ansible.cfg
+# explicitly to an absolute path bypasses the cwd-discovery safety check (Ansible's own
+# documented workaround). Derived from $PWD so it works on any machine/checkout location.
+export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 
 # Neutralise the Proxmox dynamic inventory: ansible.cfg sets inventory = inventory/, which
 # points at the templated community.proxmox plugin needing Proxmox creds. This override

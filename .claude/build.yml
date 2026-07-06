@@ -19,8 +19,11 @@ lang: [ansible, yaml]
 # expanding $(find ...) on the Windows side before it reached WSL) and can silently run zero
 # iterations while still exiting 0. .gitattributes forces these two scripts to LF so `bash` never
 # chokes on a CRLF shebang line.
-lint: wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh'
-test: wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh'
+# No hardcoded repo path: `wsl` inherits the Windows cwd of the invoking shell (the repo root,
+# where gates always run from), so the same command works on any machine/checkout location. The
+# scripts derive their own absolute paths from $PWD inside WSL.
+lint: wsl bash -lc 'bash .claude/gate/lint.sh'
+test: wsl bash -lc 'bash .claude/gate/test.sh'
 
 conventions:
   - .claude/CLAUDE.md

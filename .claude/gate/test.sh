@@ -1,13 +1,15 @@
 #!/bin/bash
 # Syntax-check gate: --syntax-check over every playbook under ansible/playbooks/, without
-# contacting Proxmox. Invoked by .claude/build.yml's `test:` wrapper from the repo root:
-#   wsl bash -lc 'cd <repo-root> && bash .claude/gate/test.sh'
+# contacting Proxmox. Invoked by .claude/build.yml's `test:` wrapper from the repo root
+# (wsl inherits the Windows cwd, so no explicit cd is needed):
+#   wsl bash -lc 'bash .claude/gate/test.sh'
 set -uo pipefail
 
 cd ansible
 
 # See .claude/gate/lint.sh for the ANSIBLE_CONFIG world-writable-directory rationale.
-export ANSIBLE_CONFIG=/mnt/c/Users/korr/source/repos/homelab-infra/ansible/ansible.cfg
+# Derived from $PWD so it works on any machine/checkout location.
+export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 
 # Neutralise the Proxmox dynamic inventory (see lint.sh) so no live inventory is touched.
 export ANSIBLE_INVENTORY=localhost,
