@@ -17,8 +17,11 @@ lang: [ansible, yaml]
 # or nested quotes) avoids shell-relay quoting hazards: a bare $(...)/"$var" one-liner mis-expands
 # under some Windows-side shells (PowerShell native-arg quoting; one Bash-tool relay observed
 # expanding $(find ...) on the Windows side before it reached WSL) and can silently run zero
-# iterations while still exiting 0. .gitattributes forces these two scripts to LF so `bash` never
-# chokes on a CRLF shebang line.
+# iterations while still exiting 0. Related: when passing absolute POSIX paths (/mnt/c/...) as
+# arguments through a Windows-side Git Bash relay, prepend MSYS_NO_PATHCONV=1 — Git Bash otherwise
+# rewrites leading-slash arguments to Windows paths before they reach WSL (observed on a
+# value-proof command during the 006 run). .gitattributes forces these two scripts to LF so `bash`
+# never chokes on a CRLF shebang line.
 # No hardcoded repo path: `wsl` inherits the Windows cwd of the invoking shell (the repo root,
 # where gates always run from), so the same command works on any machine/checkout location. The
 # scripts derive their own absolute paths from $PWD inside WSL.
