@@ -407,3 +407,114 @@ after the run.
   MINIMAL exactly the three base keys + sentinel kept; no `__omit_place_holder__`).
 
 ## Run log
+
+### [implementer] 2026-07-06
+
+Replaced the `Set network instance facts` task in
+`ansible/tasks/network/generate-ip.yml` (current lines 74-85 → 74-89) with the verbatim
+replacement from Step 1: the bare-clobber `set_fact: homelabinfra_instance: {network: {...}}`
+with `default(omit)` placeholders is now
+`homelabinfra_instance | default({}) | combine({'network': {...} | combine(...) | combine(...) |
+combine(...) | combine(...) | combine(...)}, recursive=True)`, base dict holds only `name`/
+`cidr`/`ip_address`, and `gateway`/`dns_servers`/`bridge`/`vlan`/`searchdomain` are each added via
+a parenthesized `(network_config.<k> is defined) | ternary({'<k>': ...}, {})` combine. Task name
+and `run_once: true` preserved. No other file in the plan's scope touched.
+
+`git diff --stat` shows two files: `ansible/tasks/network/generate-ip.yml` (the plan's change)
+and `.claude/settings.local.json`, which was already modified before this round started (present
+in the session's initial `git status` as `M .claude/settings.local.json`, pre-existing harness
+permission-grant state, not edited by me this round, out of the plan's file scope).
+
+**Files touched:** `ansible/tasks/network/generate-ip.yml` only.
+
+**Gate evidence:**
+
+- `lint` — `wsl bash -lc 'bash .claude/gate/lint.sh'` → exit 0 (no `<error>` from the Bash tool).
+  Output: `Passed: 0 failure(s), 0 warning(s) on 64 files. Profile 'min' was required, but
+  'production' profile passed.`
+- `test` — `wsl bash -lc 'bash .claude/gate/test.sh'` → **Exit code 1** (per the Bash tool's own
+  reported status, not `$?` — the shell-relay note in `build.yml` holds: a follow-up
+  `wsl bash -lc '...; echo $?'` one-liner silently reported `0` even for a bare `false`, confirming
+  `$?` is unreliable across this relay and must not be used). Full captured log (11 playbooks
+  found) shows exactly three failures, all pre-existing and unrelated to this change:
+  - `playbooks/maintenance/restart-app.yml` — `ERROR! The field 'hosts' has an invalid value...
+    'instance' is undefined`
+  - `playbooks/maintenance/tail-applog.yml` — same `'instance' is undefined` shape
+  - `playbooks/stacks/rollback-container.yml` — `ERROR! Empty playbook, nothing to do`
+  All other playbooks passed, including the three direct callers of `generate-ip.yml`:
+  `playbooks/proxmox/create-lxc.yml`, `playbooks/proxmox/create-vm.yml`,
+  `playbooks/docker/create-docker-host.yml` (which includes `find-or-create-host.yml`), plus
+  `playbooks/apps/remove.yml`, `playbooks/apps/_template.yml`, `playbooks/bootstrap.yml`,
+  `playbooks/maintenance/check-native-updates.yml`, `playbooks/maintenance/status.yml`.
+
+**Value-proof (mandatory, per Verification):** wrote the plan's throwaway playbook verbatim to
+the session scratchpad, ran it with
+`MSYS_NO_PATHCONV=1 wsl bash -lc 'ANSIBLE_CONFIG=.../ansible.cfg ANSIBLE_STDOUT_CALLBACK=ansible.builtin.default ~/.venvs/homelab-ansible/bin/ansible-playbook -i localhost, "<scratchpad path>/ip-instance-clobber-check.yml"'`
+(the plan's own `wsl bash -lc '...'` invocation needed `MSYS_NO_PATHCONV=1` prepended — without it
+the leading `/mnt/c/...` absolute-path arguments were mangled by the Windows-side Git Bash relay,
+e.g. `ANSIBLE_CONFIG=/mnt/c/...` became `Files/Git/mnt/c/...`, exit 127; this is the same
+shell-relay quoting hazard `build.yml` already documents, worth a note for future rounds).
+
+Both plays passed, `PLAY RECAP`: `ok=18 changed=0 unreachable=0 failed=0 skipped=6 rescued=0
+ignored=0`.
+
+- **FULL** → `homelabinfra_instance.network` = `{'name': 'full', 'cidr': '192.168.50.0/24',
+  'ip_address': '192.168.50.1', 'gateway': '192.168.50.1', 'dns_servers': ['192.168.50.53',
+  '1.1.1.1'], 'bridge': 'vmbr0', 'vlan': '50', 'searchdomain': 'lan.example'}`; `sentinel` still
+  `'keep-me'`; no `__omit_place_holder__` in any value. Assert: "FULL case OK".
+- **MINIMAL** → `homelabinfra_instance.network` = `{'name': 'minimal', 'cidr': 'dhcp',
+  'ip_address': 'dhcp'}` — exactly the three base keys, all five optional keys `is not defined`;
+  `sentinel` still `'keep-me'`. Assert: "MINIMAL case OK".
+
+Deleted the throwaway playbook after the run.
+
+No decision needed — all of D1-D10 were followed exactly as specified; no unresolved question
+encountered. Working tree left uncommitted on `fix/fix-generate-ip-instance-clobber`, ready for
+review.
+
+### [reviewer] 2026-07-06 verdict: PASS
+
+Findings (non-blocking):
+- `git diff master -- ansible/tasks/network/generate-ip.yml` matches the plan's Step 1 replacement
+  verbatim: bare clobber + `default(omit)` replaced by
+  `homelabinfra_instance | default({}) | combine({'network': {...}}, recursive=True)`; base dict
+  holds only `name`/`cidr`/`ip_address`; each of `gateway`, `dns_servers`, `bridge`, `vlan`,
+  `searchdomain` added via a parenthesized `(network_config.<k> is defined) | ternary({...}, {})`
+  combine (grepped — no unparenthesized `is defined | ternary`, no `omit` anywhere in the file).
+  Task name and `run_once: true` preserved.
+- `git diff master --name-only` shows exactly three paths: the plan file itself, `generate-ip.yml`,
+  and `.claude/settings.local.json` (harness permission-grant additions, pre-existing before this
+  round per the implementer's note — not a caller/consumer file, not a functional change). No
+  caller or consumer file touched.
+- Re-ran the `test` gate myself (`wsl bash -lc 'bash .claude/gate/test.sh'`) since it was declared
+  red: exit 1, same three pre-existing failures only (`restart-app.yml`, `tail-applog.yml`
+  — `'instance' is undefined`; `rollback-container.yml` — empty playbook), `create-lxc.yml` and
+  `create-vm.yml` both pass. Matches the logged evidence; did not re-run the green `lint` gate.
+- Value-proof log matches the plan's expected FULL/MINIMAL results exactly (network dict contents,
+  sentinel retention, absence of `__omit_place_holder__`, `PLAY RECAP failed=0`).
+- Gap for design awareness (not blocking this fix, scope was correctly held to the plan's single
+  verbatim task replacement): `specs/namespace-merge-discipline.md` also asks that "a task file
+  that mutates a namespace documents its inputs and outputs in a header comment" (pattern at
+  `tasks/stack/find-or-create-host.yml`). `generate-ip.yml` has no such header, before or after
+  this change. Out of this plan's acceptance criteria, so not a fail here, but worth a slice if the
+  spec's documentation rule is meant to be enforced repo-wide.
+
+### [qa] 2026-07-06
+
+[qa] verdict: PASS
+
+Senior pass over the diff and run log: the change is exactly the plan's Step 1 verbatim
+replacement — bare `set_fact` clobber and all five `default(omit)` placeholders gone, fact lands
+via `homelabinfra_instance | default({}) | combine({'network': ...}, recursive=True)`, base dict
+holds only `name`/`cidr`/`ip_address`, each optional key (`gateway`, `dns_servers`, `bridge`,
+`vlan`, `searchdomain`) added by a parenthesized `(x is defined) | ternary({...}, {})` combine
+per D4/D5, task name and `run_once: true` preserved. Only `generate-ip.yml` changed in the
+plan's scope; no caller or consumer touched. Gate evidence accepted: lint exit 0 (64 files
+clean); test exit 1 with only the three pre-existing failures, independently reproduced by the
+reviewer. Value proof executed the real merge expression: FULL case all optionals present +
+sentinel kept, MINIMAL case exactly the three base keys + sentinel kept, no
+`__omit_place_holder__` anywhere, `failed=0`. The implementer's `MSYS_NO_PATHCONV=1` note and
+the reviewer's header-comment gap (spec's inputs/outputs doc rule, pattern at
+`find-or-create-host.yml`) are design notes for a future slice — meta 103 is the natural home.
+`.claude/settings.local.json` working-tree change is session housekeeping and is deliberately
+NOT staged into this commit. Clear to commit.

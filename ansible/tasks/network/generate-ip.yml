@@ -73,13 +73,17 @@
 
 - name: Set network instance facts
   ansible.builtin.set_fact:
-    homelabinfra_instance:
-      network:
-        name: "{{ network_name }}"
-        cidr: "{{ network_config.cidr }}"
-        gateway: "{{ network_config.gateway | default(omit) }}"
-        dns_servers: "{{ network_config.dns_servers | default(omit) }}"
-        bridge: "{{ network_config.bridge | default(omit) }}"
-        vlan: "{{ network_config.vlan | default(omit) }}"
-        ip_address: "{{ final_ip_address }}"
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | default({}) | combine({
+          'network': {
+              'name': network_name,
+              'cidr': network_config.cidr,
+              'ip_address': final_ip_address
+            }
+            | combine((network_config.gateway is defined) | ternary({'gateway': network_config.gateway}, {}))
+            | combine((network_config.dns_servers is defined) | ternary({'dns_servers': network_config.dns_servers}, {}))
+            | combine((network_config.bridge is defined) | ternary({'bridge': network_config.bridge}, {}))
+            | combine((network_config.vlan is defined) | ternary({'vlan': network_config.vlan}, {}))
+            | combine((network_config.searchdomain is defined) | ternary({'searchdomain': network_config.searchdomain}, {}))
+        }, recursive=True) }}
   run_once: true
