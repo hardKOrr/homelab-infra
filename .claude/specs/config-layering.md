@@ -4,6 +4,10 @@ Three layers merged via `combine(recursive=True)` at playbook runtime:
 `vars/homelabinfra-defaults.yml` → `vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml`.
 Users only write what differs; everything else falls through.
 
+The authoritative data-shape contract these rules protect — namespaces, load map, the canonical
+`homelabinfra_infra` shape, merge order, and per-file required keys — lives at
+`ansible/vars/CONTRACT.md`; keep the two in sync.
+
 ## Rule
 
 - Example files (`config.example/`, `vars/user-vars-example.yml`) must not teach users to blank

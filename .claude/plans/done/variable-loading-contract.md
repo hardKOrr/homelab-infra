@@ -400,3 +400,154 @@ diverges):**
   `config-layering.md`'s "no null subtrees" rule.
 
 ## Run log
+
+### [implementer] round 1
+
+Doc-only change, exactly the two files the plan names. No decisions to make — transcribed Step 1 and
+Step 2 content verbatim.
+
+**Files touched:**
+- Created `ansible/vars/CONTRACT.md` — intro + six sections (three namespaces; load map table
+  covering all seven sources; canonical `homelabinfra_infra` Shape B + superseded-shapes callout;
+  merge order; two required/optional-keys tables for `config/proxmox.yml` and
+  `config/infrastructure.yml`; six-row known-conflicts table) + the app-level-layering note, all
+  transcribed verbatim from the plan's Step 1.
+- Edited `.claude/specs/config-layering.md` — inserted the exact three-line pointer from Step 2
+  immediately after "Users only write what differs; everything else falls through."; nothing else in
+  that file changed (confirmed via `git diff`: 4 insertions, 0 deletions).
+
+`git diff --stat` on the two intended files:
+```
+.claude/specs/config-layering.md | 4 ++++
+1 file changed, 4 insertions(+)
+```
+plus `ansible/vars/CONTRACT.md` as a new untracked file. No `.yml`, playbook, role, or task file
+touched. (`.claude/settings.local.json` and `.claude/agents/fable-groomer.md` show as
+modified/untracked in `git status` but predate this round — not touched by this implementation.)
+
+**Run-lock / branch:** wrote `.claude/autobuild/run.json` (`plan: variable-loading-contract`,
+`branch: refactor/variable-loading-contract`, `base: master`) and cut `refactor/variable-loading-contract`
+from `master` (fresh start — no prior branch or run log entry existed).
+
+**Gate path adjustment:** `.claude/build.yml`'s `lint`/`test` commands `cd` into
+`/mnt/c/Users/korr/source/repos/homelab-infra`, which does not exist on this machine. Ran both gates
+with the `cd` target adjusted to this checkout's real WSL mount,
+`/mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra`, per the launch instructions. `.claude/build.yml`
+itself was not edited.
+
+**Additional environment gap found (beyond the `cd` mismatch):** both gate scripts also hardcode
+`ANSIBLE_CONFIG=/mnt/c/Users/korr/source/repos/homelab-infra/ansible/ansible.cfg` (a nonexistent path
+on this machine — Ansible just falls back to its "world writable directory" warning and proceeds
+without that cfg, which both gate scripts' own comments already anticipate as a known false-failure
+risk for role-using playbooks) and both invoke
+`"$HOME/.venvs/homelab-ansible/bin/ansible-lint"` / `.../ansible-playbook`, which did not exist in
+this WSL distro (no prior bootstrap had been run here). System-wide `ansible-lint` 26.1.1 and
+`ansible-playbook` were already present on PATH, so I created
+`~/.venvs/homelab-ansible/bin/{ansible-lint,ansible-playbook}` as symlinks to the system binaries
+(environment-only change, no repo file touched) so the gate scripts could run exactly as committed.
+Neither of these two gaps is caused by this doc-only change; both are pre-existing to the WSL
+environment itself.
+
+**Gate evidence:**
+
+- `lint` — `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh'`
+  → **exit 0**. Tail: `Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64 encountered.
+  Profile 'min' was required, but 'production' profile passed.`
+  Compared against a temporary `master` worktree run with the same adjusted `cd`: master shows
+  `55 files processed of 63 encountered` (identical pass, one fewer file encountered — exactly the
+  new `CONTRACT.md`, which ansible-lint encounters but does not process, a non-YAML file under
+  `ansible/vars/`). Same result as base branch; no new failures attributable to this change.
+
+- `test` — `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh'`
+  → **exit 0**. `Found 11 playbook(s) to syntax-check.` Three pre-existing `[ERROR]` lines appear
+  (`playbooks/docker/create-docker-host.yml` — role `docker` not found; `restart-app.yml` and
+  `tail-applog.yml` — `'instance' is undefined` for the templated `hosts:`; plus
+  `stacks/rollback-container.yml` — empty playbook) but none affect the script's exit code (these
+  `--syntax-check` errors are non-fatal for this ansible-core version; `rc` is only set from the
+  per-playbook exit status, which stays 0). Re-ran the identical gate against a temporary `master`
+  worktree: byte-for-byte the same `[ERROR]`/`[WARNING]` lines (path prefixes differing only by
+  worktree directory name) and the same exit 0. These are the pre-existing failures already recorded
+  in `.claude/plans/done/`; confirmed unrelated to this doc-only change.
+
+Completed cleanly — no decision needed, not blocked. Working tree left uncommitted for the reviewer.
+
+### [reviewer] round 1
+
+[reviewer] verdict: PASS
+
+**Gate evidence:** accepted as recorded, no re-run. The reasoning is sound and independently
+verifiable: `.claude/build.yml`'s `lint`/`test` commands only exercise YAML under
+`playbooks/`/`roles/`/`tasks/`/`vars/` (lint) and playbooks via `--syntax-check` (test); a `.md`
+file under `ansible/vars/` is invisible to both. The implementer's master-worktree comparison
+(lint: 55 processed/64 encountered on both branches, delta is exactly the new non-YAML file;
+test: byte-for-byte identical pre-existing `[ERROR]` lines and exit 0 on both) is internally
+consistent and sufficient; re-running would add nothing here.
+
+**Acceptance criteria — verified against the diff:**
+- `ansible/vars/CONTRACT.md` (new, read in full) contains all five required sections as distinct
+  non-empty sections plus the sixth known-conflicts table and the separate app-level-layering
+  note — content matches the plan's Step 1 verbatim, line for line.
+- Exactly one canonical `homelabinfra_infra` shape presented (Shape B, role-keyed); Shape-A
+  (`notifications.ntfy_url`) and the service-keyed stub sketch are explicitly named "Superseded —
+  do not use," not offered as alternatives.
+- All six Context conflicts appear in Section 6, each with an owning slice (004; 001+002; 200;
+  200; 005; 002) — none left open.
+- `.claude/specs/config-layering.md` diff is exactly the 3-line pointer inserted after "Users only
+  write what differs; everything else falls through." — confirmed via `git diff master --
+  .claude/specs/config-layering.md`; nothing else in that file changed.
+- `git diff --stat master` shows only the plan's own run-log growth and the 4-line
+  config-layering.md insertion as tracked changes, plus untracked `ansible/vars/CONTRACT.md`. No
+  `.yml`, playbook, role, or task file touched. `.claude/settings.local.json` and
+  `.claude/agents/fable-groomer.md` are pre-existing working-tree state, correctly excluded from
+  this implementation's scope per the launch note.
+
+**Spot-checks against real code (ground truth):**
+- Shape B matches live wiring exactly: read `ansible/playbooks/apps/_template.yml` — line 129
+  `homelabinfra_infra.domain`, lines 136/139/142/148 `.reverse_proxy.provider`, `.sso.provider`,
+  `.dns.provider`. Matches Section 3 verbatim.
+- The three `notifications.ntfy_url` read sites are exactly as claimed: grepped the repo and
+  confirmed `check-native-updates.yml:54`, `restart-app.yml:40`, `guest-bootstrap.yml:86` all read
+  `homelabinfra_infra.notifications.ntfy_url` — no fourth site exists, no claimed site is wrong.
+- `api_host`/`api_port` canonical claim checked against `.claude/specs/config-layering.md:21`
+  ("canonical: `api_host`/`api_port`") and real usage in `lxc-create.yml`/`vm-create.yml`/
+  `user-vars-example.yml` — consistent. `homelabinfra-defaults.yml` carries `api_port: 8006` only
+  (no `host` key), consistent with "optional, default 8006."
+- `load-user-vars.yml` read directly: confirms the load map's description of defaults-unwrap,
+  `user_vars_file` self-wrap, and `homelabinfra_config` merge — no divergence from Section 2/4.
+- `write-generated-facts.yml` TODO-stub header comment matches the "service/function-keyed stub
+  sketch" description (vaultwarden/caddy/authentik/uptime_kuma/notifications keys) cited as
+  superseded.
+- `networks:` null subtree confirmed present at `homelabinfra-defaults.yml:2` (key with no value),
+  matching the Section 6 row.
+
+**Reflexes:** no secrets, no injection, no swallowed errors — doc-only change, nothing applies.
+
+**Findings:** none. No trivia fixed (none found).
+
+### [qa] round 1
+
+[qa] verdict: PASS
+
+Senior pass — read `ansible/vars/CONTRACT.md` in full and confirmed against acceptance criteria:
+all five required sections present + non-empty, plus the sixth Known-conflicts table and the
+distinct app-layering note; exactly one canonical `homelabinfra_infra` shape (Shape B, role-keyed)
+with Shape-A (`notifications.ntfy_url`) and the service-keyed stub sketch both marked "Superseded —
+do not use"; all six Context conflicts appear in Section 6 each with an owning slice (004; 001+002;
+200; 200; 005; 002); the load map covers all seven sources; both required/optional key tables
+present. The `.claude/specs/config-layering.md` pointer is a clean 4-line insertion after the
+opening paragraph (`git diff master`), nothing else in that file changed.
+
+Gate evidence accepted (not re-run): a `.md` file under `ansible/vars/` engages neither
+ansible-lint's YAML targets nor `--syntax-check`; both implementer and reviewer confirmed identical
+results against a temporary `master` worktree (lint exit 0, test exit 0 with the same three
+pre-existing unrelated `[ERROR]`s). Diff scope confirmed clean: only `ansible/vars/CONTRACT.md`
+(new) and `.claude/specs/config-layering.md` (pointer) as this change's content — no
+`.yml`/playbook/role/task touched.
+
+Note (not a blocker, out of scope for this doc-only plan): `.claude/build.yml`'s gate commands
+hardcode a WSL path `/mnt/c/Users/korr/source/repos/homelab-infra` that does not exist in this
+checkout; the implementer ran the gates against the correct mount by adjusting the `cd`. A future
+plan should reconcile `build.yml`'s path to this working copy so gate commands run unmodified.
+
+Committing: `ansible/vars/CONTRACT.md` + `.claude/specs/config-layering.md` + this plan file (moved
+to done/), squashed on `refactor/variable-loading-contract`, ff-merged to master.
