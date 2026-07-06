@@ -1,30 +1,25 @@
 ---
 # Radarr instance config.
-# Copy to config/apps/radarr.yml (or radarr-4k.yml, radarr-kids.yml, etc.)
-# Only set values that differ from defaults in vars/app-defaults/radarr.yml.
+# Copy to config/apps/radarr.yml (or radarr-4k.yml, radarr-kids.yml, etc.).
+# The filename you choose IS the instance name: it becomes the hostname,
+# Caddy subdomain (radarr.yourdomain.com), and Authentik app name.
+# For multiple instances, use unique filenames: radarr-4k.yml, radarr-hd.yml, radarr-kids.yml.
+#
+# Only set values that differ from the defaults. Radarr's defaults live in
+# vars/app-defaults/radarr.yml, added by the radarr app contribution
+# (see playbooks/apps/README.md for the contributor guide).
 # This file persists after removal — it is your restore point.
 
-app: radarr
-
-# instance_name becomes the hostname, Caddy subdomain, and Authentik app name.
-# For multiple instances, use unique names: radarr-4k, radarr-hd, radarr-kids
-instance_name: radarr
-
-# ── Proxmox resources ──────────────────────────────────────────────────────────
-# Uncomment and override only what you need. Defaults are in vars/app-defaults/radarr.yml.
-# proxmox:
-#   cores: 2
-#   memory: 2048         # MB
-
-# ── Stack assignment ───────────────────────────────────────────────────────────
-# Which Docker stack host this app runs on.
-# stack: media_stack     # default from app-defaults — override if needed
+# ── Stack assignment (Docker app) ──────────────────────────────────────────────
+# Radarr runs on a shared Docker stack host, so its CPU/RAM belong to that host,
+# not to this file. The per-app knob is which stack host to place it on.
+stack: media_stack     # which Docker stack host this app runs on
 
 # ── App config ─────────────────────────────────────────────────────────────────
-radarr:
-  root_folder: /media/movies   # path inside the container to your media
-  # quality_profile: ""        # Radarr quality profile name (optional)
-  # port: 7878                 # override default port only if running multiple instances
+app:
+  root_folder: /media/movies   # path inside the container to your movie library
+  # port: 7878                 # override the default port only when running
+  #                            # multiple Radarr instances on the same stack host
 
 # ── Routing ────────────────────────────────────────────────────────────────────
 # routing:

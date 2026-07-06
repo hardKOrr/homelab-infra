@@ -422,3 +422,105 @@ contradicts the running code.
 [qa] verdict: PASS
  - senior notes; any agent-surfaced notification lifted here
 -->
+
+### round 1
+
+[implementer] Applied the three plan edits verbatim.
+
+- **File 1** — `config.example/apps/radarr.example.yml`: full rewrite per the plan's block. Removed
+  the clobbering `app: radarr` scalar, the orphan `instance_name:` key, the orphan nested `radarr:`
+  block, and the commented `proxmox:` block (Decision C). Kept two uncommented demo overrides
+  (`stack: media_stack`, `app.root_folder`) and the commented `routing:` block.
+- **File 2** — `config.example/apps/_template.example.yml`: changed only the app-specific block's
+  key from `# APP_NAME:` to `# app:`; everything else untouched.
+- **File 3** — `ansible/vars/CONTRACT.md`: applied edits 3a (§2 row), 3b (§5 closing paragraph), 3c
+  (§6 row), 3d (appended "Instance-file schema (settled by slice 005)" paragraph to the App-level
+  layering note, existing paragraph preserved verbatim). All four before/after texts matched the
+  live file exactly before editing.
+
+Diff scope verified: `git status --short` shows exactly `ansible/vars/CONTRACT.md`,
+`config.example/apps/_template.example.yml`, `config.example/apps/radarr.example.yml` modified (plus
+a pre-existing unrelated `.claude/settings.local.json` modification and untracked
+`.claude/agents/fable-groomer.md` / `.claude/autobuild/` that predate this round — not part of this
+plan's content). `ansible/playbooks/apps/_template.yml` and all other out-of-scope files: untouched.
+
+**Environment note (not a plan defect):** `.claude/build.yml`'s gate commands hardcode
+`cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra`, which does not exist on this machine — the
+actual WSL mount for this clone is `/mnt/c/Users/korr/source/repos/homelab-infra`. Ran both gates
+via the corrected path (same committed scripts, `.claude/gate/lint.sh` / `test.sh`, unchanged) and
+recorded a base-vs-branch comparison to satisfy the plan's "identical to base" requirement. Flagging
+for design/build.yml maintenance — not fixed here since `build.yml` is outside this plan's diff
+scope.
+
+Gate evidence:
+
+- lint (branch): `wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash
+  .claude/gate/lint.sh ; echo RC=$?'` → `RC=0`. Tail: `Passed: 0 failure(s), 0 warning(s) on 64
+  files. Profile 'min' was required, but 'production' profile passed.`
+- test (branch): `wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash
+  .claude/gate/test.sh ; echo RC=$?'` → `RC=0`. Exactly three `[ERROR]` diagnostics: `'instance' is
+  undefined` in `playbooks/maintenance/restart-app.yml` (line 10) and
+  `playbooks/maintenance/tail-applog.yml` (line 11), and `Empty playbook, nothing to do:
+  .../playbooks/stacks/rollback-container.yml`. No diagnostic named `docker` role missing this run —
+  the `docker` role now exists at `ansible/roles/docker/` (resolved by prior work, not this plan).
+- test (base): stashed the three plan-scoped edits (`git stash push -m ... -- <3 files>`), re-ran the
+  identical test-gate command on the unmodified tree → `RC=0`, byte-identical `[ERROR]` output (same
+  three diagnostics, same lines/files). `git stash pop` restored the plan edits cleanly (verified via
+  `git diff --stat` showing the same 3-file/36-insertion/27-deletion shape as before the stash).
+  Confirms no regression and no new diagnostic; nothing names any of the three touched files.
+
+Inspection trace (per Verification):
+
+- **radarr example** — confirmed via `git diff`: no `app: <scalar>` line, no `instance_name:` key, no
+  nested `radarr:` block, no `proxmox:` block. Top-level keys present: `stack` (uncommented), `app`
+  (uncommented), `routing` (commented) — exactly the allowed set, `update`/`proxmox` absent by
+  design.
+- **Consumed paths confirmed by grep** against `ansible/playbooks/apps/_template.yml`: line 63
+  `app_config.stack`, line 70 `app_config.proxmox.network`, line 128 `app_config.app.port`, line 143
+  `app_config.routing.auth` — matches the plan's Context grep evidence exactly. `stack:
+  media_stack` → `app_config.stack`; `app.root_folder` → `app_config.app.root_folder` (within the
+  `app_config.app.*` namespace read at `app_config.app.port` and elsewhere).
+- **_template example** — app-specific block now teaches `# app:` not `# APP_NAME:`; filename-=-
+  instance doctrine, commented `proxmox:`/`stack:` blocks, and commented `routing:` block all
+  retained unchanged.
+- **Shape parity with `vars/app-defaults/_template.yml`** — confirmed both examples' top-level keys
+  (`proxmox`/`stack`, `app`, `update`, `routing`) mirror the defaults-template dict's keys
+  (`APP_NAME_defaults.proxmox`/commented `stack`, `.app`, commented `.update`, `.routing`).
+- **Config-layering compliance** — no uncommented empty-string/`0` value in either example; all
+  optional keys remain commented.
+- **CONTRACT.md** — confirmed via `git diff` (above): §2 row, §5 closing paragraph, and §6 row no
+  longer say "contradictory/owned by 005/not resolved here"; App-level layering note now carries the
+  "Instance-file schema (settled by slice 005)" paragraph stating filename = instance name, top-level
+  keys mirror `<app>_defaults`, whole-file `combine(recursive=True)`, and the
+  mapping-clobbered-by-scalar rule; the pre-existing "separate from the four-layer merge" paragraph
+  is preserved verbatim above it.
+
+No decisions needed — all four Context/Plan decisions (A-D) were already resolved in the plan text
+and applied verbatim.
+
+[reviewer] verdict: PASS
+ - Verified all three file diffs match the plan's verbatim blocks byte-for-byte: radarr.example.yml full rewrite (no `app: <scalar>`, no `instance_name:`, no nested `radarr:`, no `proxmox:`; uncommented `stack`/`app.root_folder` only), _template.example.yml single-line `# APP_NAME:` → `# app:` change, CONTRACT.md's four edits (3a/3b/3c/3d) all match plan quotes exactly.
+ - Confirmed top-level key shape parity against `vars/app-defaults/_template.yml` (`proxmox`|`stack`, `app`, `update`, `routing`) for both examples.
+ - Diff scope confirmed exactly the three files (`git diff --stat`); `.claude/settings.local.json` M and untracked `.claude/agents/fable-groomer.md`/`.claude/autobuild/` predate this round per session's initial `git status`, consistent with implementer's note.
+ - Config-layering compliance: no uncommented empty/0 values; all optional keys remain commented.
+ - Verified the WSL path substitution is sound: `/mnt/c/Users/korr/source/repos/homelab-infra/.claude/gate/lint.sh` and `test.sh` exist at that mount (spot-checked, not a gate re-run) — same committed scripts as `build.yml` names, only the stale hardcoded `kevin/GitHub/hardKOrr` path corrected. Gate evidence is green and internally consistent (RC=0 both gates; test-gate's 3 `[ERROR]` diagnostics cross-checked against `reconcile-config-example.md`'s base evidence — the missing 4th "docker role not found" diagnostic is explained by prior unrelated work adding `roles/docker/`, and confirmed via the implementer's own stash-based base-vs-branch comparison). Did not re-run the gates myself since the evidence was complete, consistent, and green.
+ - No reflex violations (secrets, injection, swallowed errors) — docs/example-only change.
+ - No trivia fixes needed.
+[qa] verdict: PASS
+ - Senior pass: read the full three-file diff myself against the plan's verbatim blocks — exact
+   match (radarr full rewrite; `# APP_NAME:` → `# app:` one-liner; CONTRACT.md edits 3a-3d with the
+   pre-existing layering paragraph preserved). No schema claim contradicts the merge at
+   `_template.yml:51-53`; `ansible/playbooks/apps/_template.yml` untouched as fenced.
+ - Gate evidence accepted without a third run: implementer ran both gates (RC=0) with a stash-based
+   base-vs-branch comparison showing byte-identical test diagnostics; reviewer independently
+   verified the path substitution and evidence consistency. A docs-only diff outside the gates'
+   parse targets cannot move them.
+ - Lifted for design (not fixed here, out of scope): (1) `.claude/build.yml` gate commands hardcode
+   the stale WSL path `/mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra`; actual mount is
+   `/mnt/c/Users/korr/source/repos/homelab-infra` — fold the path fix into build.yml at the next
+   korr-design pass. (2) The known-diagnostics baseline changed: "docker role not found" no longer
+   occurs (roles/docker/ now exists); future plans should cite three pre-existing test-gate
+   [ERROR]s, not four.
+ - Meta slice 005's acceptance boxes are satisfied by this diff; CONTRACT.md now states the settled
+   instance-file schema. Committing: three files + this plan (moved to done/), squashed on
+   `fix/settle-instance-config-schema`, ff-merged to master.

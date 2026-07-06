@@ -24,7 +24,7 @@ shapes: `.claude/specs/config-layering.md` and `.claude/specs/namespace-merge-di
 | `config/proxmox.yml` | none (top-level `proxmox:`, `networks:`, `ansible:`) | `homelabinfra_config` (loader injects those three keys) | **not yet wired in loader → slice 001** |
 | `config/infrastructure.yml` | none (top-level `domain:`, `reverse_proxy:`, `sso:`, `notifications:`, `dns:`, `backups:`, `vaultwarden:`) | `homelabinfra_config.infrastructure` | **not yet wired in loader → slice 001** |
 | `vars/app-defaults/<app>.yml` | none | `app_config` (per-play app merge — see app-layering note) | separate merge, not part of `homelabinfra_config` |
-| `config/apps/<instance>.yml` | none | `app_config` (per-play app merge) | schema contradictory today → slice 005 |
+| `config/apps/<instance>.yml` | none | `app_config` (per-play app merge) | whole file merges over `<app>_defaults` via `combine(recursive=True)` — see app-layering note |
 | `config/.generated/facts.yml` | none | `homelabinfra_infra` (whole file, via `include_vars … name: homelabinfra_infra`) | written by `write-generated-facts.yml` (TODO stub → slice 200) |
 | `user_vars_file` (back-compat) | `homelabinfra_config:` | `homelabinfra_config` | legacy single-file path; already self-wrapping |
 
@@ -106,8 +106,8 @@ All merges use `combine(recursive=True)`; later layers win per key.
 
 The required/optional split for `config/.generated/facts.yml` follows the canonical shape in
 Section 3 but its authoritative required-key list is owned by **slice 200** (it defines what
-bootstrap writes); the `config/apps/<instance>.yml` schema is owned by **slice 005**. Contract names
-them here, does not resolve them.
+bootstrap writes); the Contract names it here, does not resolve it. The `config/apps/<instance>.yml`
+schema is settled in the App-level layering note below.
 
 ## 6. Known conflicts and owning slices
 
@@ -116,7 +116,7 @@ them here, does not resolve them.
 | `config.example/*.yml` unwrapped top-level keys vs namespaces the code reads | loader injects namespaces (001); examples reconciled to match (002) | **001 + 002** |
 | `notifications.ntfy_url` (Shape-A leak) vs `notifications.host` + `.topic` | registry stores `host` + `topic`; consumers build the URL; three consumers flagged for alignment | **200** |
 | `write-generated-facts.yml` stub service-keyed sketch vs canonical Shape B | Shape B supersedes the stub sketch | **200** |
-| `config/apps/<instance>.yml` schema contradictory across repo | named, not resolved here | **005** |
+| `config/apps/<instance>.yml` schema across the repo | settled: filename = instance name; top-level keys mirror `<app>_defaults`; whole file merges via `combine(recursive=True)` — see App-level layering note | **005 (settled)** |
 | `networks:` null subtree in `homelabinfra-defaults.yml` (config-layering violation) | remove null subtree (use `{}` or omit) | **002** |
 
 ## App-level layering note
@@ -125,3 +125,14 @@ The per-app merge (`vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml
 **separate** per-play merge done in the app template, **not** part of `homelabinfra_config`. It is
 described here for completeness but governed by its own precedence; do not conflate it with the
 four-layer `homelabinfra_config` merge in Section 4.
+
+**Instance-file schema (settled by slice 005).** `config/apps/<instance>.yml` is loaded whole by
+filename — the filename *is* the instance name (`-e instance=<name>`) and becomes the hostname,
+Caddy subdomain, and Authentik app name. Its top-level keys mirror the `<app>_defaults` dict in
+`vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
+as `media_stack`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
+(`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`, `auth`).
+The whole file merges over `<app>_defaults` via `combine(recursive=True)`, later layer wins per key.
+Because the merge is recursive, an override must match the default's shape: replacing a mapping (e.g.
+`app:`) with a scalar clobbers the entire subtree, so instance files never restate a mapping key as a
+bare scalar.

@@ -17,7 +17,7 @@
 # stack: media_stack   # override which stack host this app runs on
 
 # ── App-specific config ────────────────────────────────────────────────────────
-# APP_NAME:
+# app:
 #   port: 8080         # only needed if running multiple instances on the same stack host
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
