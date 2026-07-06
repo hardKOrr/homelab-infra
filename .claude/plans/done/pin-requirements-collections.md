@@ -85,6 +85,25 @@ Also update the meta slice status: `.claude/meta/007-requirements-collections/RE
 in `.claude/meta/INDEX.md` (`| 007 | ... | open |` → `done`). This is the repo's existing
 pattern for landed slices.
 
+**Scope amendment (user directive, 2026-07-06, at /korr-qa invocation):** 007 is the last open
+00# slice, so this change also closes the whole 0XX tier. Slices 000-006 all landed via done
+plans but their READMEs and INDEX rows were never flipped (verified 2026-07-06: every
+`.claude/meta/*/README.md` still says `**Status:** open`). Flip them in the same diff, each
+README citing the plan(s) that landed it:
+
+| Slice | README status becomes |
+|---|---|
+| 000 | `**Status:** done (plan variable-loading-contract)` |
+| 001 | `**Status:** done (plan implement-config-loader)` |
+| 002 | `**Status:** done (plan reconcile-config-example)` |
+| 003 | `**Status:** done (plan filter-proxmox-module-params)` |
+| 004 | `**Status:** done (plan unify-proxmox-key-naming)` |
+| 005 | `**Status:** done (plan settle-instance-config-schema)` |
+| 006 | `**Status:** done (plans fix-generate-ip-allocation-loop, fix-generate-ip-instance-clobber)` |
+
+and the eight 0XX rows in `.claude/meta/INDEX.md` (000-007) get their status cell `open` →
+`done`. Only line 3 of each README and only the status cells in INDEX.md change.
+
 **Environment facts for verification** (from prior runs, recorded 2026-07-04/06):
 
 - Gates run from the repo root: `wsl bash -lc 'bash .claude/gate/lint.sh'` and
@@ -117,7 +136,9 @@ pattern for landed slices.
   meta 007 lands" note is gone; `lint:`/`test:` commands unchanged.
 - `.claude/specs/framework.md` toolchain bullet states requirements.yml is the pinned source of
   truth; no "meta slice 007 owns reconciling" sentence remains.
-- Meta slice 007 marked done in its README and `.claude/meta/INDEX.md`.
+- Meta slices 000-007 all marked done: each 0XX README's `**Status:**` line cites its landing
+  plan(s) per the Context table, and all eight 0XX rows in `.claude/meta/INDEX.md` read `done`.
+  No 1XX+ row or README changes.
 - The `lint` and `test` gates from `.claude/build.yml` pass with no new failures (test exits 1
   with only the three recorded pre-existing failures).
 
@@ -207,31 +228,27 @@ with this **verbatim** bullet:
 Keeps the bullet's shape and all four name+version citations; no "meta slice 007 owns reconciling"
 sentence remains (Decision D5).
 
-### Step 4 — Flip the meta 007 status line
+### Step 4 — Flip the status line in all eight 0XX slice READMEs
 
-In `.claude/meta/007-requirements-collections/README.md`, **replace exactly line 3**:
+In each of the eight `.claude/meta/00X-*/README.md` files, **replace exactly line 3**
+(`**Status:** open`) with the slice's row from the Context table (Decisions D6, D8):
 
-```
-**Status:** open
-```
+- `000-variable-loading-contract` → `**Status:** done (plan variable-loading-contract)`
+- `001-config-loader` → `**Status:** done (plan implement-config-loader)`
+- `002-reconcile-config-example` → `**Status:** done (plan reconcile-config-example)`
+- `003-filter-proxmox-module-params` → `**Status:** done (plan filter-proxmox-module-params)`
+- `004-proxmox-key-naming` → `**Status:** done (plan unify-proxmox-key-naming)`
+- `005-instance-config-schema` → `**Status:** done (plan settle-instance-config-schema)`
+- `006-generate-ip-combine` → `**Status:** done (plans fix-generate-ip-allocation-loop, fix-generate-ip-instance-clobber)`
+- `007-requirements-collections` → `**Status:** done (plan pin-requirements-collections)`
 
-with:
+No other line in any README changes.
 
-```
-**Status:** done (plan pin-requirements-collections)
-```
+### Step 5 — Flip all eight 0XX rows in `INDEX.md`
 
-No other line in that README changes (Decision D6).
-
-### Step 5 — Flip the meta 007 row in `INDEX.md`
-
-In `.claude/meta/INDEX.md`, **replace exactly this row (line 16)**:
-
-```
-| 007 | [requirements.yml collections](007-requirements-collections/README.md) | open | none | any docker app, guest-bootstrap |
-```
-
-with (only the status cell `open` → `done`):
+In `.claude/meta/INDEX.md`, in the `## 0XX — Foundation` table (rows at lines 9-16), change
+**only the status cell** `open` → `done` on each of the eight rows (000-007). Every other cell
+(slice link, Depends on, Blocks) and every 1XX+ table stays byte-identical. E.g. row 16 becomes:
 
 ```
 | 007 | [requirements.yml collections](007-requirements-collections/README.md) | done | none | any docker app, guest-bootstrap |
@@ -273,6 +290,12 @@ with (only the status cell `open` → `done`):
   the two halves of one promotion of `requirements.yml` to source-of-truth; splitting would leave
   `framework.md` claiming "unpinned" against a pinned file for a review cycle. One reviewable
   change. Groomer's call.
+- **D8 — Close the whole 0XX tier in this diff (user directive at /korr-qa invocation,
+  2026-07-06).** 007 is the last open 00# slice; 000-006 all landed via done plans
+  (mapping verified against `.claude/plans/done/` — see the Context table) but their
+  README/INDEX statuses were never flipped. Status-only edits: line 3 of each 0XX README, the
+  eight status cells in INDEX.md's 0XX table. No 1XX+ status is touched — those slices have not
+  landed.
 
 ## Verification
 
@@ -347,9 +370,9 @@ inside `**/todo/` staging stubs resolve to `community.proxmox` / `community.dock
 
 **korr-qa senior pass confirms, from the diff alone:**
 
-- **Five files changed and no more** — `git diff --stat` shows exactly `ansible/requirements.yml`,
-  `.claude/build.yml`, `.claude/specs/framework.md`,
-  `.claude/meta/007-requirements-collections/README.md`, `.claude/meta/INDEX.md`. No `ansible/`
+- **Twelve files changed and no more** — `git diff --stat` shows exactly
+  `ansible/requirements.yml`, `.claude/build.yml`, `.claude/specs/framework.md`,
+  `.claude/meta/INDEX.md`, and the eight `.claude/meta/00X-*/README.md` files. No `ansible/`
   code (task/playbook/role) file is touched.
 - **`requirements.yml`** lists exactly four collections in order proxmox / utils / docker / general,
   each with a bare exact `version:` pin (`2.0.0`, `6.0.3`, `5.2.1`, `13.1.0`), plus the verified-date
@@ -360,11 +383,166 @@ inside `**/todo/` staging stubs resolve to `community.proxmox` / `community.dock
 - **`framework.md`** — the toolchain bullet names `ansible/requirements.yml` as the pinned single
   source of truth with all four name+version citations; no "lists names unpinned" / "meta slice 007
   owns reconciling" sentence remains.
-- **Meta status** — 007 README line 3 reads `**Status:** done (plan pin-requirements-collections)`;
-  the `INDEX.md` 007 row status cell reads `done`. No other cell in either changed.
+- **Meta status** — each 0XX README's line 3 reads `**Status:** done (plan …)` per the Context
+  table (007 → pin-requirements-collections); all eight 0XX rows in `INDEX.md` read `done`. No
+  other cell, no 1XX+ row, and no other README line changed.
 - **Gate evidence** — lint exit 0 (64 files clean); test exit 1 with only the three named
   pre-existing failures. Value-proof output shows install exit 0 and all four collections at the
   pinned versions in the throwaway path (dependency collections allowed). Grep-proof output is
   exactly the four declared prefixes.
 
 ## Run log
+
+### [implementer] 2026-07-06
+
+**Changes made** — exactly the twelve files the plan names, per the verbatim Steps 1-5:
+
+1. `ansible/requirements.yml` — rewritten in full: header comment plus four collections in order
+   `community.proxmox` `2.0.0`, `ansible.utils` `6.0.3`, `community.docker` `5.2.1`,
+   `community.general` `13.1.0`, each with a bare quoted exact `version:` pin.
+2. `.claude/build.yml` — collapsed the three-line bootstrap comment (explicit
+   `name:==version` args + "when meta 007 lands" parenthetical) to the single line
+   `#   ~/.venvs/homelab-ansible/bin/ansible-galaxy collection install -r ansible/requirements.yml`.
+   `lint:`/`test:` lines and everything else untouched.
+3. `.claude/specs/framework.md` — rewrote the toolchain bullet to name
+   `ansible/requirements.yml` as the pinned single source of truth with all four
+   name+version citations; removed the "lists names unpinned; meta slice 007 owns
+   reconciling" sentence.
+4. Eight `.claude/meta/00X-*/README.md` files (000-007) — line 3 `**Status:** open` →
+   `**Status:** done (plan ...)` per the Context table (000 variable-loading-contract,
+   001 implement-config-loader, 002 reconcile-config-example,
+   003 filter-proxmox-module-params, 004 unify-proxmox-key-naming,
+   005 settle-instance-config-schema, 006 fix-generate-ip-allocation-loop +
+   fix-generate-ip-instance-clobber, 007 pin-requirements-collections).
+5. `.claude/meta/INDEX.md` — the eight 0XX rows (000-007) in the "0XX — Foundation" table:
+   status cell `open` → `done`. No other cell, no 1XX+ row touched.
+
+`git status --short` confirms exactly these twelve files plus the plan file itself (this run
+log) changed; no `ansible/` task/playbook/role file was touched.
+
+**Gate evidence:**
+
+- `wsl bash -lc 'bash .claude/gate/lint.sh'` — exit **0**.
+  Output: `Passed: 0 failure(s), 0 warning(s) on 64 files. Profile 'min' was required, but
+  'production' profile passed.`
+- `wsl bash -lc 'bash .claude/gate/test.sh'` — exit **1**, exactly the three recorded
+  pre-existing failures:
+  - `playbooks/maintenance/restart-app.yml` — `'instance' is undefined` (invalid `hosts` value)
+  - `playbooks/maintenance/tail-applog.yml` — `'instance' is undefined` (invalid `hosts` value)
+  - `playbooks/stacks/rollback-container.yml` — `Empty playbook, nothing to do`
+  No new failures. Matches `.claude/plans/done/fix-generate-ip-allocation-loop.md`.
+
+**Value proof (mandatory, needs network):**
+
+Ran the exact command from Verification first:
+```
+MSYS_NO_PATHCONV=1 wsl bash -lc 'rm -rf /tmp/reqcheck && ~/.venvs/homelab-ansible/bin/ansible-galaxy collection install -r ansible/requirements.yml -p /tmp/reqcheck && echo "---INSTALLED---" && ~/.venvs/homelab-ansible/bin/ansible-galaxy collection list -p /tmp/reqcheck'
+```
+This exited 0 but printed `Nothing to do. All requested collections are already installed.`
+and the `collection list` showed only the pre-existing default path
+(`/root/.ansible/collections/ansible_collections`) — `/tmp/reqcheck/ansible_collections` was
+created but empty. Root cause: the gate venv already has all four collections installed at the
+default collections path from the `establish-ansible-gate` run, so `ansible-galaxy` treats the
+`-r` requirement as already satisfied anywhere in the search path and never populates the `-p`
+target. This is an environment-state quirk of `ansible-galaxy`'s satisfied-check, not a defect in
+`requirements.yml` or the plan's command.
+
+To get an actual fresh-install proof into the throwaway path, re-ran with `--force` added
+(same command otherwise):
+```
+MSYS_NO_PATHCONV=1 wsl bash -lc 'rm -rf /tmp/reqcheck && ~/.venvs/homelab-ansible/bin/ansible-galaxy collection install -r ansible/requirements.yml -p /tmp/reqcheck --force && echo "---INSTALLED---" && ~/.venvs/homelab-ansible/bin/ansible-galaxy collection list -p /tmp/reqcheck'
+```
+Exit **0**. Output under `# /tmp/reqcheck/ansible_collections`:
+```
+Collection                               Version
+---------------------------------------- -------
+ansible.utils                            6.0.3
+community.docker                         5.2.1
+community.general                        13.1.0
+community.proxmox                        2.0.0
+```
+All four at exactly the pinned versions. (The `community.library_inventory_filtering_v1`
+dependency was skipped as "already installed" from the default path — it is not one of the four
+required collections, so this does not affect the pass condition.) Cleaned up afterwards:
+`wsl bash -lc 'rm -rf /tmp/reqcheck'`.
+
+**Grep proof:**
+```
+wsl bash -lc "grep -rhoE '(community\.[a-z_0-9]+|ansible\.utils)\.[a-z_0-9]+' ansible --include='*.yml' | sed -E 's/\.[a-z_0-9]+\$//' | sort -u"
+```
+Output — exactly the four expected prefixes, nothing else:
+```
+ansible.utils
+community.docker
+community.general
+community.proxmox
+```
+
+**Note for reviewer:** the plan's exact value-proof command (without `--force`) does not, by
+itself, prove anything in this environment because the gate venv already carries the four
+collections from `establish-ansible-gate` — `ansible-galaxy` short-circuits to "Nothing to do"
+against the default path and leaves the `-p` throwaway path empty. Adding `--force` is the
+minimal change needed to force a real install into the throwaway path and is not a change to any
+plan file, decision, or acceptance criterion — it only affects how the ad-hoc verification
+command was invoked. Flagging this in case a future re-verification of this same proof hits the
+same "Nothing to do" result and needs the same `--force` addition.
+
+No decisions needed, no blockers. Working tree left uncommitted on `fix/pin-requirements-collections` for review.
+
+### [reviewer] 2026-07-06
+
+[reviewer] verdict: PASS
+
+- `ansible/requirements.yml` matches the Step 1 verbatim block byte-for-byte (four collections,
+  correct order, bare-string exact pins, header comment). Re-ran the grep proof myself: output is
+  exactly `ansible.utils` / `community.docker` / `community.general` / `community.proxmox`,
+  matching the recorded evidence.
+- `.claude/build.yml` — only the bootstrap comment block changed (3 lines → 1, parenthetical
+  gone); `lint:`/`test:` lines and everything else byte-identical to master. Verified with
+  `git diff master -- .claude/build.yml`.
+- `.claude/specs/framework.md` toolchain bullet rewritten as specified; no "lists names
+  unpinned"/"meta slice 007 owns reconciling" text remains.
+- All eight `.claude/meta/00X-*/README.md` status lines and all eight INDEX.md status cells
+  flipped exactly per the Context table; no other line/cell touched in any of the nine files.
+- Gate evidence: re-ran `wsl bash -lc 'bash .claude/gate/lint.sh'` myself — exit 0, `Passed: 0
+  failure(s), 0 warning(s) on 64 files`, matches the recorded transcript. Test-gate evidence
+  (exit 1, same three pre-existing failures: restart-app.yml, tail-applog.yml,
+  rollback-container.yml) is internally consistent with the documented baseline in
+  `fix-generate-ip-allocation-loop.md` and none of the twelve changed files are playbooks, so I
+  accepted the recorded record without re-running it.
+- Value proof: the `--force` substitution is accepted. The plain command's "Nothing to do"
+  result is a real `ansible-galaxy` quirk (it treats collections already present anywhere in the
+  configured collections path as satisfying `-r`, even when the `-p` target is empty) — not a
+  defect in `requirements.yml` or the command as written in the plan. `--force` is the minimal
+  change needed to get a genuine fresh-install proof into the throwaway path, doesn't touch any
+  plan file/decision/acceptance criterion, and the resulting evidence (exit 0, all four
+  collections at pinned versions under `/tmp/reqcheck`) satisfies the acceptance criterion's
+  actual intent (prove a fresh install resolves all four pins).
+- Reflexes: no secrets, no injection, no swallowed errors in the diff (doc/config-only change).
+- Scope note for korr-qa (non-blocking): `.claude/settings.local.json` also shows as modified in
+  `git diff master` (accumulated Claude Code permission entries, including a broad
+  `Bash(rm *)` allow-rule) — this predates this review task and is not part of the plan's twelve
+  files. Recommend excluding it when staging the commit for this plan (stage named paths per repo
+  convention), and flagging the `Bash(rm *)` entry separately if it warrants tightening.
+- No trivia found to fix in place.
+
+### [qa] 2026-07-06
+
+[qa] verdict: PASS
+
+Senior pass over the diff and run log: the four core files match the plan's verbatim blocks
+(requirements.yml four exact pins in order with the verified-date header; build.yml comment
+collapsed to the `-r` form with the parenthetical gone, `lint:`/`test:` byte-identical;
+framework.md bullet states the reconciled source-of-truth; INDEX.md flips exactly the eight 0XX
+status cells), and the D8 tier-close lands all eight README status lines citing their landing
+plans. Twelve files plus this plan file; no `ansible/` code touched. Gate evidence accepted:
+lint exit 0 (reviewer re-ran it), test exit 1 with only the three recorded pre-existing
+failures. The `--force` addition to the value proof is sound — plain install short-circuits on
+the venv's default collection path ("Nothing to do"), a satisfied-check quirk, and the forced
+run proved all four pins resolve from Galaxy into an empty path at exactly the pinned versions;
+a genuinely fresh clone has no pre-existing path to satisfy, so the criterion's intent is met.
+Grep proof exact. The full-line churn in requirements.yml is an EOL normalization (index was
+CRLF, rewrite is LF) — an improvement, verified functional by the value proof. Per the
+reviewer's scope note, `.claude/settings.local.json` (session permission-cache drift, including
+a `Bash(rm *)` allow entry worth a look outside this run) is deliberately NOT staged into this
+commit. Clear to commit.

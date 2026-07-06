@@ -1,6 +1,6 @@
 # 000 — Variable-loading contract
 
-**Status:** open
+**Status:** done (plan variable-loading-contract)
 **Depends on:** none
 **Blocks:** 001, 002, 003, 004, and everything downstream — every slice assumes this contract
 

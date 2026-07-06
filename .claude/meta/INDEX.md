@@ -6,14 +6,14 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 
 | # | Slice | Status | Depends on | Blocks |
 |---|---|---|---|---|
-| 000 | [Variable-loading contract (spec)](000-variable-loading-contract/README.md) | open | none | 001–004 and everything downstream |
-| 001 | [Implement config/*.yml loader](001-config-loader/README.md) | open | 000 | 004, 200, every playbook importing load-user-vars.yml |
-| 002 | [Reconcile config.example schema](002-reconcile-config-example/README.md) | open | 000, 001 | 004; any user attempting the documented workflow |
-| 003 | [Filter proxmox module params](003-filter-proxmox-module-params/README.md) | open | 000 | any real LXC/VM provisioning |
-| 004 | [Proxmox key naming unification](004-proxmox-key-naming/README.md) | open | 002 | all proxmox-touching work |
-| 005 | [Instance config schema contradiction](005-instance-config-schema/README.md) | open | none | any real app deploy |
-| 006 | [generate-ip combine](006-generate-ip-combine/README.md) | open | none | safe reuse of generate-ip |
-| 007 | [requirements.yml collections](007-requirements-collections/README.md) | open | none | any docker app, guest-bootstrap |
+| 000 | [Variable-loading contract (spec)](000-variable-loading-contract/README.md) | done | none | 001–004 and everything downstream |
+| 001 | [Implement config/*.yml loader](001-config-loader/README.md) | done | 000 | 004, 200, every playbook importing load-user-vars.yml |
+| 002 | [Reconcile config.example schema](002-reconcile-config-example/README.md) | done | 000, 001 | 004; any user attempting the documented workflow |
+| 003 | [Filter proxmox module params](003-filter-proxmox-module-params/README.md) | done | 000 | any real LXC/VM provisioning |
+| 004 | [Proxmox key naming unification](004-proxmox-key-naming/README.md) | done | 002 | all proxmox-touching work |
+| 005 | [Instance config schema contradiction](005-instance-config-schema/README.md) | done | none | any real app deploy |
+| 006 | [generate-ip combine](006-generate-ip-combine/README.md) | done | none | safe reuse of generate-ip |
+| 007 | [requirements.yml collections](007-requirements-collections/README.md) | done | none | any docker app, guest-bootstrap |
 
 ## 1XX — Hygiene (small fixes, no architectural impact)
 

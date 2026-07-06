@@ -1,6 +1,6 @@
 # 001 — Implement `config/*.yml` loader in `load-user-vars.yml`
 
-**Status:** open
+**Status:** done (plan implement-config-loader)
 **Depends on:** 000
 **Blocks:** 004 (key naming acceptance test), 200 (write-generated-facts), every playbook that imports `load-user-vars.yml`
 

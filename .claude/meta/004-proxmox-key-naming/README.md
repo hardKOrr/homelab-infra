@@ -1,6 +1,6 @@
 # 004 — Proxmox key naming unification
 
-**Status:** open
+**Status:** done (plan unify-proxmox-key-naming)
 **Depends on:** 002 (reconcile schema first — coordinate the key rename with the example file restructure)
 **Blocks:** all proxmox-touching work; precondition for 200+ once foundation is in
 

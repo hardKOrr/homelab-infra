@@ -1,6 +1,6 @@
 # 005 — Instance config schema contradiction
 
-**Status:** open
+**Status:** done (plan settle-instance-config-schema)
 **Depends on:** none
 **Blocks:** any real app deploy (every user will follow one example or the other)
 

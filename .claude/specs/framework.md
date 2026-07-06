@@ -5,9 +5,10 @@ findings. Contract-level rules live in the sibling specs this file links to.
 
 ## Language & toolchain
 
-- Ansible (YAML) throughout. Collections pinned at gate-bootstrap time: `community.proxmox`
-  2.0.0, `ansible.utils` 6.0.3, `community.general` 13.1.0, `community.docker` 5.2.1.
-  `ansible/requirements.yml` lists names unpinned; meta slice 007 owns reconciling the two.
+- Ansible (YAML) throughout. The four Galaxy collections this repo uses are pinned exactly in
+  `ansible/requirements.yml` — the single source of truth: `community.proxmox` 2.0.0,
+  `ansible.utils` 6.0.3, `community.docker` 5.2.1, `community.general` 13.1.0. The gate venv
+  installs from it (`ansible-galaxy collection install -r ansible/requirements.yml`).
 - Gates run inside a WSL venv (`~/.venvs/homelab-ansible`) via the committed wrappers
   `.claude/gate/lint.sh` / `test.sh`, invoked exactly as `build.yml`'s `lint:` / `test:` commands.
   Never replace the wrappers with an inline one-liner through the Windows→WSL relay — quoting

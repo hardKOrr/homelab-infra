@@ -1,6 +1,6 @@
 # 003 — Filter proxmox module params (drop user-defined keys)
 
-**Status:** open
+**Status:** done (plan filter-proxmox-module-params)
 **Depends on:** 000
 **Blocks:** any real LXC/VM provisioning run
 

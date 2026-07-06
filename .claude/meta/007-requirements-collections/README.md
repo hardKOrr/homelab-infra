@@ -1,6 +1,6 @@
 # 007 — requirements.yml missing collections
 
-**Status:** open
+**Status:** done (plan pin-requirements-collections)
 **Depends on:** none
 **Blocks:** any docker app deploy, guest-bootstrap on a fresh control node
 

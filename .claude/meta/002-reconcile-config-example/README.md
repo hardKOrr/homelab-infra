@@ -1,6 +1,6 @@
 # 002 — Reconcile `config.example/*.yml` schema with `homelabinfra_config` namespace
 
-**Status:** open
+**Status:** done (plan reconcile-config-example)
 **Depends on:** 000, 001
 **Blocks:** 004 (proxmox key naming acceptance), any user attempting the documented workflow
 

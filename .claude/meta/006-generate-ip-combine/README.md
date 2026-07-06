@@ -1,6 +1,6 @@
 # 006 — generate-ip.yml clobbers homelabinfra_instance
 
-**Status:** open
+**Status:** done (plans fix-generate-ip-allocation-loop, fix-generate-ip-instance-clobber)
 **Depends on:** none
 **Blocks:** safe reuse of generate-ip from any future caller
 

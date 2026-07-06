@@ -1,4 +1,16 @@
 ---
+# Galaxy collections this codebase imports. Pinned to the exact versions verified in the gate
+# venv (~/.venvs/homelab-ansible) — see .claude/build.yml. This file is the single source of
+# truth: the gate bootstrap and a fresh clone both install from it via
+# `ansible-galaxy collection install -r ansible/requirements.yml`. Users get version bumps via
+# git pull when the repo re-verifies; they never resolve versions themselves.
+# Verified 2026-07-06: gate (lint + syntax-check) green on ansible-core 2.18.1 with these pins.
 collections:
   - name: community.proxmox
+    version: "2.0.0"
   - name: ansible.utils
+    version: "6.0.3"
+  - name: community.docker
+    version: "5.2.1"
+  - name: community.general
+    version: "13.1.0"
