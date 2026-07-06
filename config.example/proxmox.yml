@@ -10,8 +10,8 @@
 #   ansible:  → homelabinfra_config.ansible.*
 
 proxmox:
-  host: ""              # Proxmox IP or hostname (required)
-  port: 8006
+  api_host: ""          # Proxmox IP or hostname (required)
+  api_port: 8006
   node: ""              # Proxmox node name to deploy on (required, e.g. pve)
   api_user: root@pam
   api_token_id: ""      # API token ID (required, e.g. ansible)

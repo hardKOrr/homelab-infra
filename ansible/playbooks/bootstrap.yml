@@ -38,7 +38,7 @@
     - name: Assert required config is present
       ansible.builtin.assert:
         that:
-          - homelabinfra_config.proxmox.host is defined
+          - homelabinfra_config.proxmox.api_host is defined
           - homelabinfra_config.proxmox.api_token_id is defined
           - homelabinfra_config.infrastructure.domain is defined
         fail_msg: "config/proxmox.yml and config/infrastructure.yml must be filled in before running bootstrap."

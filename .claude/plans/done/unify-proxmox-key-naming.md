@@ -239,3 +239,63 @@ files.
 ## Run log
 
 <Empty until the first round; korr-qa drives it.>
+
+### [implementer] round 1
+
+Applied the three file edits verbatim per the plan's `## Plan` section.
+
+**Files touched:**
+- `config.example/proxmox.yml` — lines 13-14: `host` → `api_host` (kept value `""`, inline comment,
+  and comment column — padding shrank by 4 spaces to keep `#` at column 25), `port` → `api_port`
+  (kept value `8006`, no inline comment). Rest of file byte-for-byte unchanged.
+- `ansible/playbooks/bootstrap.yml` — line 41 assert key `homelabinfra_config.proxmox.host` →
+  `homelabinfra_config.proxmox.api_host`. Sibling asserts (`api_token_id`,
+  `infrastructure.domain`) and `fail_msg` untouched.
+- `ansible/vars/CONTRACT.md` — Edit 3a: dropped the "slice 004" parentheticals from the §5
+  `proxmox.api_host` / `proxmox.api_port` table rows. Edit 3b: deleted the §6 "Proxmox key names"
+  conflict-table row entirely (table header/separator and remaining five rows intact).
+
+Verified before/after: only these three files changed (plus the run lock and a pre-existing,
+unrelated `.claude/settings.local.json` modification / `.claude/agents/fable-groomer.md` untracked
+file that predate this round — not touched by this work).
+
+**Gate evidence:**
+
+`lint` — `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh; echo RC=$?'`
+```
+RC=0
+...
+Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64 encountered. Profile 'min' was required, but 'production' profile passed.
+```
+
+`test` — `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh; echo RC=$?'`
+```
+RC=0
+...
+[ERROR]: the role 'docker' was not found in .../ansible/playbooks/docker/roles ... (playbooks/docker/create-docker-host.yml:114) — pre-existing, listed in Verification as expected
+[ERROR]: Error processing keyword 'hosts': 'instance' is undefined (playbooks/maintenance/restart-app.yml:11) — pre-existing, expected
+[ERROR]: Error processing keyword 'hosts': 'instance' is undefined (playbooks/maintenance/tail-applog.yml:12) — pre-existing, expected
+[ERROR]: Empty playbook, nothing to do: playbooks/stacks/rollback-container.yml — pre-existing, expected
+```
+All four `[ERROR]` diagnostics match the plan's documented pre-existing/base set exactly — none new,
+none gone.
+
+**Acceptance grep** — ran the equivalent of `grep -rn -E "proxmox\.(host|port)\b" ansible/playbooks
+ansible/tasks ansible/inventory ansible/vars config.example` (via the Grep tool, one directory at a
+time, same pattern): **no matches in any of the five directories** — matches the plan's expected
+outcome (previously two matches: `bootstrap.yml:41` and `CONTRACT.md:116`, both eliminated).
+
+**Diff scope** — `git diff --name-only` shows exactly the three target files changed:
+`config.example/proxmox.yml`, `ansible/playbooks/bootstrap.yml`, `ansible/vars/CONTRACT.md` (plus
+the pre-existing `.claude/settings.local.json` change present before this round started, unrelated
+to this plan). No task/role/loader file touched.
+
+No decisions needed — the plan's `## Decisions` section covered every judgment call encountered.
+Working tree left uncommitted on `fix/unify-proxmox-key-naming` for review.
+
+### [reviewer] verdict: PASS
+
+Verified independently: `git diff --stat` shows exactly the three target files plus the plan's own run-log growth changed (`.claude/settings.local.json` is pre-existing/unrelated as the implementer noted, `.claude/agents/fable-groomer.md` is untracked and untouched). `config.example/proxmox.yml` lines 13-14 are `api_host`/`api_port` with values, inline comment text, and comment-column alignment preserved (confirmed by column-index check: `#` sits at column 25 on both the old `host` line and the new `api_host` line, matching the `node` row); no other line in the file changed. `ansible/playbooks/bootstrap.yml` line 41 now asserts `homelabinfra_config.proxmox.api_host is defined`; the two sibling assert lines and `fail_msg` are byte-for-byte unchanged. `ansible/vars/CONTRACT.md` §5's two rows dropped the "slice 004" parentheticals exactly as specified, and §6's "Proxmox key names" row is deleted entirely with the table (header, separator, 5 remaining rows) still well-formed. Ran the acceptance grep myself: `grep -rn -E "proxmox\.(host|port)\b" ansible/playbooks ansible/tasks ansible/inventory ansible/vars config.example` — no matches (exit 1), matching the plan's expected outcome. Gate evidence pasted is green (`lint` RC=0 clean; `test` RC=0 with the four pre-existing `[ERROR]` diagnostics named in Verification, none new/gone) — did not re-run, evidence is internally consistent and matches the documented base set. No reflex findings (no secrets, no injection, no swallowed errors; nothing touches namespace merges, arithmetic typing, or `hosts: proxmox_nodes` plays). No trivia fixes needed — diff matches the plan verbatim.
+
+[qa] verdict: PASS
+ - Senior pass: read the full three-file diff — edits match the plan's `## Plan` section verbatim (rename-only in the example and the bootstrap assert; §5 parentheticals dropped and §6 row removed in CONTRACT.md, table well-formed). Independently re-ran the acceptance grep over `ansible/` and `config.example/` — zero `proxmox.host`/`proxmox.port` matches; the only remaining `host:` key in config.example is the unrelated, documented `dns.host` in infrastructure.yml. Gate evidence (lint RC=0, test RC=0 with the four documented pre-existing diagnostics) is internally consistent with the base set named in `## Verification`; no spot-run needed for a no-executable-code change whose real weight is the grep. No agent surfaced a decision. Clear to commit.

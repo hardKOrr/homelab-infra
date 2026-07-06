@@ -65,8 +65,8 @@ All merges use `combine(recursive=True)`; later layers win per key.
 
 | Key | Required? | Default / notes |
 |---|---|---|
-| `proxmox.api_host` | required | canonical name; examples' `host` is a conflict → slice 004 |
-| `proxmox.api_port` | optional | default `8006` (canonical name; examples' `port` → slice 004) |
+| `proxmox.api_host` | required | canonical name |
+| `proxmox.api_port` | optional | default `8006` (canonical name) |
 | `proxmox.node` | required | |
 | `proxmox.api_user` | required | |
 | `proxmox.api_token_id` | required | |
@@ -113,7 +113,6 @@ them here, does not resolve them.
 
 | Conflict | Contract's canonical decision | Resolving slice |
 |---|---|---|
-| Proxmox key names: examples `proxmox.host`/`.port` vs defaults/arch `api_host`/`api_port` | `api_host` / `api_port` canonical | **004** |
 | `config.example/*.yml` unwrapped top-level keys vs namespaces the code reads | loader injects namespaces (001); examples reconciled to match (002) | **001 + 002** |
 | `notifications.ntfy_url` (Shape-A leak) vs `notifications.host` + `.topic` | registry stores `host` + `topic`; consumers build the URL; three consumers flagged for alignment | **200** |
 | `write-generated-facts.yml` stub service-keyed sketch vs canonical Shape B | Shape B supersedes the stub sketch | **200** |
