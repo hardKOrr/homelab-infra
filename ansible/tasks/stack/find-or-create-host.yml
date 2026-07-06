@@ -1,6 +1,6 @@
 ---
 # Find an existing stack host by tag, or create one if none exists.
-# Called from Play 1 of Docker app playbooks (runs on proxmox_nodes).
+# Called from Play 1 of Docker app playbooks (runs on localhost).
 #
 # Input:
 #   stack_name — stack identifier, must match a tag in Proxmox (e.g. media_stack)

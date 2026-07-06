@@ -221,3 +221,49 @@ Change `runs on proxmox_nodes` to `runs on localhost`. Comment-only; no other ed
     `wiring_*` vars resolve (or lazily no-op when providers are absent).
 
 ## Run log
+
+### [implementer] 2026-07-06
+
+Implemented Steps 1-5 exactly as specified in the plan. No decisions needed — the plan's
+"Decisions" section covered every choice point encountered.
+
+**Files touched:**
+- `ansible/playbooks/apps/_template.yml`
+  - Step 1: added `failed_when: false` (with inline comment) to Play 1's "Load infrastructure
+    facts" task (line 50).
+  - Step 2: added the clarifying comment line above the commented-out `# - name: Add LXC to
+    deploy group` in PATH B (line 76).
+  - Step 3: added a `pre_tasks` block to Play 3 that loads `homelabinfra_infra` from
+    `config/.generated/facts.yml` with `failed_when: false` (lines 124-133).
+  - Step 4: replaced `wiring_upstream_host` and `wiring_upstream_port` in Play 3's `vars:` to
+    read `hostvars[groups['app_deploy'][0]].ansible_host` /
+    `hostvars[groups['app_deploy'][0]].app_config.app.port`, and expanded the wiring-contract
+    header comment to explain the path-agnostic hostvars source (lines 135-151). All other
+    `wiring_*` lines unchanged.
+- `ansible/tasks/stack/find-or-create-host.yml`
+  - Step 5: comment-only fix on line 3, `runs on proxmox_nodes` → `runs on localhost`. No
+    logic change.
+
+**Gate evidence:**
+
+```
+$ wsl bash -lc 'bash .claude/gate/lint.sh'
+WARNING: PATH altered to include /root/.venvs/homelab-ansible/bin, /root/.venvs/homelab-ansible/bin :: This is usually a sign of broken local setup, which can cause unexpected behaviors.
+
+Passed: 0 failure(s), 0 warning(s) on 64 files. Profile 'min' was required, but 'production' profile passed.
+```
+
+Exit code: 0. Gate passes.
+
+Working tree left uncommitted per protocol; `git status --short` confirms only the two plan
+files plus this run log edit are touched (the `.claude/settings.local.json` diff and untracked
+`.claude/agents/fable-groomer.md` / `.claude/autobuild/` predate this round and are not part of
+this change).
+
+### [reviewer] 2026-07-06
+
+[reviewer] verdict: PASS — all four acceptance criteria confirmed against the diff: `wiring_upstream_host`/`wiring_upstream_port` now read `hostvars[groups['app_deploy'][0]]` (verified both `find-or-create-host.yml:38-46,92-99` branches and PATH B's commented `add_host` all set `ansible_host` to the correct upstream IP and stash `app_config`); Play 3 loads `homelabinfra_infra` tolerantly in `pre_tasks` and Play 1's load now has `failed_when: false`; `find-or-create-host.yml:3` comment fixed to "runs on localhost"; lint gate evidence is complete, specific, and consistent with `.claude/gate/lint.sh` (exit 0, `Passed: 0 failure(s), 0 warning(s) on 64 files`) — not re-run. No reflex findings (no secrets, no injection, no swallowed errors; `failed_when: false` is the spec-sanctioned no-op pattern). No trivia to fix.
+
+### [qa] 2026-07-06
+
+[qa] verdict: PASS — senior pass: read the full diff and traced Play 3 in context; the uniform `hostvars[groups['app_deploy'][0]]` read is correct for both PATH A branches and PATH B, the `pre_tasks` load matches Play 2's tolerant pattern, and no residual `homelabinfra_instance.network.ip_address` remains in Play 3. Spot-ran the lint gate myself: exit 0, `Passed: 0 failure(s), 0 warning(s) on 64 files`. Two observations, neither blocking: (1) the unconditional Uptime Kuma include at `_template.yml:164-165` targets a TODO stub with no tasks, so it cannot fail today — its facts-absent guard belongs to the slice that implements it; (2) the SSO `when` at `_template.yml:162` still reads the localhost `app_config` fact from Play 1 — pre-existing, functional (Play 1 runs on localhost), and outside this plan's wiring-contract scope.

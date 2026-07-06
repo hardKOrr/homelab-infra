@@ -47,6 +47,7 @@
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         name: homelabinfra_infra
+      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
@@ -72,6 +73,7 @@
     #   ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml
     # - name: Create LXC container
     #   ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
+    # # ansible_host here is the app LXC's own IP — Play 3 reads it as the wiring upstream.
     # - name: Add LXC to deploy group
     #   ansible.builtin.add_host:
     #     name: "{{ homelabinfra_instance.lxc.hostname }}"
@@ -119,13 +121,30 @@
   hosts: localhost
   gather_facts: false
 
+  pre_tasks:
+    # Load infra facts in this play rather than relying on Play 1's localhost fact.
+    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout / pre-bootstrap
+    # run there is no facts.yml, homelabinfra_infra stays undefined, and every provider
+    # when-condition below falls through its `| default('none')` to a silent no-op.
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
   vars:
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
+    #
+    # upstream host/port come from the deploy target Play 1 registered in the
+    # app_deploy group (both PATH A branches and PATH B call add_host). Its
+    # ansible_host is the stack host IP for Docker apps and the app LXC IP for
+    # native apps, so this one read is correct for every provisioning path — do
+    # not special-case per path.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ homelabinfra_instance.network.ip_address }}"
-    wiring_upstream_port: "{{ app_config.app.port }}"
+    wiring_upstream_host: "{{ hostvars[groups['app_deploy'][0]].ansible_host }}"
+    wiring_upstream_port: "{{ hostvars[groups['app_deploy'][0]].app_config.app.port }}"
     wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "APP_NAME ({{ instance }})"
     wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
