@@ -13,7 +13,7 @@ homelabinfra_defaults:
       cores: 1
       description: LXC Container created by Ansible
       features:
-        nesting: true
+        - nesting=1
       memory: 512
       onboot: true
       tags:

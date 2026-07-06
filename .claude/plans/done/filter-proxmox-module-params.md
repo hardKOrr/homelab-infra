@@ -576,3 +576,168 @@ instance dicts are unchanged; diff scope is exactly the three files.
 [qa] verdict: PASS
  - senior notes; any agent-surfaced notification lifted here
 -->
+
+### round 1
+[implementer] Applied the three edit blocks verbatim.
+
+Files touched:
+- `ansible/tasks/proxmox/lxc-create.yml` — inserted "Build LXC module arguments from the
+  community.proxmox.proxmox allowlist" `set_fact` task (task-level `vars: lxc_module_keys`)
+  immediately before "Create LXC container"; that task's args source changed from
+  `homelabinfra_instance.lxc` to `lxc_module_args`. Nothing else in the file changed.
+- `ansible/tasks/proxmox/vm-create.yml` — same pattern: "Build VM module arguments from the
+  community.proxmox.proxmox_kvm allowlist" `set_fact` (`vm_module_keys`) before "Create VM"; args
+  source changed from `homelabinfra_instance.vm` to `vm_module_args`. Nothing else changed.
+- `ansible/vars/homelabinfra-defaults.yml` — `lxc.features` changed from `{nesting: true}` (dict)
+  to block-list `- nesting=1` (`["nesting=1"]`); no other line changed, `#TODO` comment intact.
+
+`git diff --name-only` confirms diff scope is exactly these three files (plus this plan file);
+`.claude/settings.local.json` shows as modified in `git status` but that change predates this round
+(present in the working tree before I acquired the run lock — local Claude Code permission-cache
+entries unrelated to this plan) and I did not touch it.
+
+**Allowlist cross-check against community.proxmox 2.0.0 (Verification step 2):**
+
+Environment note: `~/.venvs/homelab-ansible/bin/` in the WSL gate venv contains only symlinks to
+`ansible-lint` and `ansible-playbook` (no `ansible-doc`, no `pip`, no dedicated collection install —
+the venv was never bootstrapped per `.claude/build.yml`'s comment block). The system-wide
+`/usr/bin/ansible-doc` exists but its default collections path only has `community.proxmox==1.4.0`
+installed, not the `2.0.0` the plan requires as authority. To get the real 2.0.0 argument spec
+without touching any committed gate config, I installed `community.proxmox:==2.0.0` into an
+ephemeral `/tmp/collections_2.0.0` via `/usr/bin/ansible-galaxy collection install
+community.proxmox:==2.0.0 -p /tmp/collections_2.0.0 --force` (network install, WSL `/tmp` only,
+nothing written to the repo or to the gate venv) and pointed `ANSIBLE_COLLECTIONS_PATH` at it for
+the two `ansible-doc -j` dumps:
+
+```
+ANSIBLE_COLLECTIONS_PATH=/tmp/collections_2.0.0 /usr/bin/ansible-doc -j community.proxmox.proxmox
+ANSIBLE_COLLECTIONS_PATH=/tmp/collections_2.0.0 /usr/bin/ansible-doc -j community.proxmox.proxmox_kvm
+```
+
+Both exited 0, both dumps non-trivial (33678 / 53702 bytes). Copied to the scratchpad and
+cross-checked every key in both `lxc_module_keys` (34 keys) and `vm_module_keys` (50 keys) against
+`.doc.options.keys()` via a `python3` script run through WSL (Windows-side Bash has no `python3`).
+
+Result: **zero trims**. Every key in both landed allowlists — including every mandatory-minimum key
+(Context lines 120-128 / Acceptance's enumerated lists) and every extended candidate key — is present
+in the real 2.0.0 argument spec. Final landed allowlists (unchanged from the plan's Edit 1 / Edit 2):
+
+- LXC (34 keys): `api_host, api_port, api_token_id, api_token_secret, api_user, cores, cpuunits,
+  description, disk_volume, features, hookscript, hostname, memory, mount_volumes, mounts,
+  nameserver, netif, node, onboot, ostemplate, ostype, password, pool, pubkey, searchdomain,
+  startup, state, storage, swap, tags, timeout, timezone, unprivileged, vmid`
+- VM (50 keys): `agent, api_host, api_port, api_token_id, api_token_secret, api_user, autostart,
+  balloon, bios, boot, bootdisk, cicustom, cipassword, citype, ciupgrade, ciuser, cores, cpu,
+  description, efidisk0, hotplug, ide, ipconfig, kvm, machine, memory, name, nameservers, net, node,
+  numa_enabled, onboot, ostype, pool, sata, scsi, scsihw, searchdomains, serial, sockets, sshkeys,
+  startup, state, storage, tags, timeout, vcpus, vga, virtio, vmid`
+
+No key was surfaced as an absent-minimum finding (none expected, per plan, and none occurred).
+
+(decision needed: the `~/.venvs/homelab-ansible` gate venv does not match `.claude/build.yml`'s
+documented bootstrap — it has no `pip`/`ansible-doc`/dedicated `community.proxmox==2.0.0` install,
+only symlinks to system `ansible-lint`/`ansible-playbook`. The gates themselves ran fine against it
+(system `ansible-lint`/`ansible-playbook` cover lint/syntax-check), but any future task needing
+`ansible-doc` or a pinned collection version from *inside* that venv will hit this same gap. Worth
+a design-level decision on whether to actually bootstrap the venv per the comment, or drop the
+comment/rely on the system-wide + ephemeral-install workaround used here. Not blocking this round —
+the workaround produced a clean, authoritative 2.0.0 cross-check — but surfacing since it's a repo
+environment fact outside the plan's three files.)
+
+**Gate evidence:**
+
+- `lint`: `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh; echo RC=$?'`
+  → `RC=0`. Tail: `Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64 encountered.
+  Profile 'min' was required, but 'production' profile passed.` (plus the pre-existing
+  world-writable-directory WARNINGs and pathspec DeprecationWarnings, unrelated to this change).
+- `test`: `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh; echo RC=$?'`
+  → `RC=0`. `--syntax-check` ran over all playbooks including `playbooks/proxmox/create-lxc.yml` and
+  `playbooks/proxmox/create-vm.yml` (which import the two edited task files) — both syntax-checked
+  clean, confirming the new `set_fact` tasks and folded-scalar Jinja parse. The `[ERROR]` diagnostics
+  present are exactly the three known pre-existing ones and no others: `role 'docker' was not found`
+  (create-docker-host.yml:114), `'instance' is undefined` in both `restart-app.yml:11` and
+  `tail-applog.yml:12`, and `Empty playbook, nothing to do: .../stacks/rollback-container.yml` —
+  identical set to `.claude/plans/done/reconcile-config-example.md` Run log baseline. No new and no
+  resolved diagnostics.
+
+**Inspection checklist (Verification step 3), quick confirmation:**
+1-2. Both module tasks now take the filtered local var (`lxc_module_args` / `vm_module_args`);
+   both allowlists are literal `vars:` lists in their respective files.
+3. `network`, `ip_address`, `ansible_host` are absent from both allowlists — confirmed by reading
+   back both lists above.
+4. Every routed key enumerated in Acceptance is present in both final lists above.
+5. Both projections end with `| combine({'api_user': homelabinfra_config.proxmox.api_user})`; the
+   `Build facts` `set_fact` in both files is untouched (diff above shows no change above the
+   inserted task).
+6. `homelabinfra-defaults.yml` diff shows only the `features:` line changed; `#TODO` comment intact.
+7. Diff in both task files shows exactly one inserted task + one changed args-source line; the
+   `Build facts` set_fact, both network set_facts, the waits, and the JSON dump tasks are
+   byte-identical (see full diff above — no other hunks).
+8. `git diff --name-only` (excluding the pre-existing unrelated `.claude/settings.local.json`
+   change) shows exactly the three plan files plus this plan file.
+
+[reviewer] verdict: PASS
+ - Diff scope confirmed via `git diff --name-only`: exactly `ansible/tasks/proxmox/lxc-create.yml`,
+   `ansible/tasks/proxmox/vm-create.yml`, `ansible/vars/homelabinfra-defaults.yml`, plus this plan
+   file (`.claude/settings.local.json` churn is pre-existing local permission-cache noise, correctly
+   called out by the implementer, untouched by this round).
+ - Read both task files in full and the diffs: the two inserted `set_fact` tasks match Edit 1/Edit 2
+   verbatim (same task names, same folded-scalar Jinja, same allowlist order/contents); the module
+   task's args source is the only other change (`homelabinfra_instance.lxc`/`.vm` → `lxc_module_args`
+   / `vm_module_args`). `Build facts` set_facts, both network-merge `set_fact`s, both `assert`s, the
+   vmid waits, and the in-guest `to_nice_json` dumps are byte-identical to base — confirmed by
+   reading the full files, not just the diff hunks. `api_user` is combined only into the projected
+   local var (`combine({'api_user': homelabinfra_config.proxmox.api_user})`), never into the `Build
+   facts` dict — instance dicts stay byte-identical and the JSON dump does not gain `api_user`.
+ - `homelabinfra-defaults.yml` diff is exactly the `features:` line: `nesting: true` → `- nesting=1`
+   (`["nesting=1"]`), `#TODO` comment intact, no other value changed.
+ - `network`/`ip_address`/`ansible_host` confirmed absent from both allowlists; every routed key
+   enumerated in Acceptance is present in both.
+ - Independently re-verified the allowlist cross-check (did not trust the transcript alone, given
+   its weight): installed `community.proxmox:==2.0.0` fresh into a separate ephemeral collections
+   path in WSL and dumped `ansible-doc -j` for both modules. Byte sizes matched the implementer's
+   reported dumps exactly (33678 / 53702 bytes) — strong evidence it's the same real dump, not
+   fabricated. Programmatically checked every key in both landed `lxc_module_keys` (34) and
+   `vm_module_keys` (50) against `.doc.options.keys()`: zero keys missing from either dump —
+   confirms the implementer's "zero trims" result independently.
+ - Gate evidence: both commands and RC=0 shown for lint and test, matching `build.yml` verbatim.
+   `test` gate's four `[ERROR]` lines (three categories: docker role not found, `instance` undefined
+   ×2, empty rollback-container playbook) match the baseline recorded in
+   `.claude/plans/done/reconcile-config-example.md` Run log — evidence is credible and complete; did
+   not re-run the gates (green, internally consistent, matches known baseline).
+ - Finding (non-blocking, pre-existing, out of this plan's locked scope — surfacing per
+   `.claude/specs/secrets-handling.md` / `framework.md`'s "Review reflexes"): neither the new "Build
+   LXC/VM module arguments" `set_fact` tasks nor the module-call tasks they feed set `no_log: true`,
+   even though the resulting dicts carry `api_token_secret`/`password` (and now also `api_user` via
+   the `combine`). This defect predates the diff — the base `Create LXC container`/`Create VM` tasks
+   already dict-splat the same secrets with no `no_log` — and the plan's acceptance never asked for
+   it, so it is not this round's decision to make. Worth a design-level call on adding `no_log: true`
+   to these tasks (and whether the new intermediate `set_fact` needs it too, since it now computes
+   the same secret-bearing dict a second time).
+ - The implementer's `(decision needed: gate venv bootstrap mismatch)` flag is noted and left for
+   korr-qa/design; not a blocker for this round — the workaround it describes produced a verifiably
+   authoritative cross-check (independently reproduced above).
+[qa] verdict: PASS
+ - Senior pass: read the full three-file diff myself against the plan's Edit 1/2/3 blocks — exact
+   match (one inserted `set_fact` + one args-source change per task file; the `features:` line in
+   defaults). Instance dicts, network merges, asserts, waits, and JSON dumps untouched; `api_user`
+   enters only via the post-filter `combine`, so the in-guest JSON gains nothing.
+ - Spot-ran both gates myself (implementer's runs not re-verified by the reviewer): lint → RC=0,
+   "Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64 encountered"; test → RC=0 with
+   exactly the three known pre-existing `[ERROR]` categories (docker role not found; `instance`
+   undefined ×2; empty rollback-container playbook). Matches base — no new, no resolved.
+ - Allowlist evidence accepted: implementer and reviewer independently installed
+   community.proxmox 2.0.0 into ephemeral WSL paths and cross-checked all 34 LXC / 50 VM keys
+   against `ansible-doc -j` option specs — zero trims, dump byte-sizes matched across both runs.
+ - Decision resolved (implementer flag, gate venv mismatch): accepted for this run — the ephemeral
+   `/tmp/collections_2.0.0` install produced an authoritative cross-check without touching repo or
+   venv. Carried to the report as a design note: `.claude/build.yml`'s venv-bootstrap comment does
+   not match the actual `~/.venvs/homelab-ansible` (symlinks to system tools only, no pip/ansible-doc,
+   collections at system path with community.proxmox 1.4.0); next korr-design pass should either
+   bootstrap the venv per the comment or amend the comment to describe reality.
+ - Reviewer's non-blocking `no_log` finding (module-args dicts carry `api_token_secret`/`password`
+   with no `no_log: true` — pre-existing on the base module calls, outside this plan's acceptance)
+   is carried to the report as a backlog candidate alongside
+   `strip-secrets-from-guest-instance-json`, which owns the adjacent secrets surface.
+ - Committing: three code files + this plan (moved to done/), squashed on
+   `fix/filter-proxmox-module-params`, ff-merged to master.

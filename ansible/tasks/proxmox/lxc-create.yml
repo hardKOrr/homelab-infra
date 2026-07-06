@@ -71,8 +71,55 @@
         }, recursive=True) }}
   when: homelabinfra_instance.network is defined
 
+- name: Build LXC module arguments from the community.proxmox.proxmox allowlist
+  ansible.builtin.set_fact:
+    lxc_module_args: >-
+      {{ homelabinfra_instance.lxc | dict2items
+         | selectattr('key', 'in', lxc_module_keys)
+         | items2dict
+         | combine({'api_user': homelabinfra_config.proxmox.api_user}) }}
+  vars:
+    # community.proxmox.proxmox parameters only. User/bookkeeping keys (network, ip_address)
+    # are absent by design so they can never reach the module. Every key here is verified
+    # against the community.proxmox 2.0.0 argument spec — see this plan's Verification step 2.
+    lxc_module_keys:
+      - state
+      - api_host
+      - api_port
+      - api_user
+      - api_token_id
+      - api_token_secret
+      - node
+      - pubkey
+      - vmid
+      - hostname
+      - ostemplate
+      - cores
+      - memory
+      - tags
+      - features
+      - password
+      - description
+      - onboot
+      - disk_volume
+      - storage
+      - netif
+      - nameserver
+      - searchdomain
+      - swap
+      - unprivileged
+      - ostype
+      - timezone
+      - timeout
+      - cpuunits
+      - mounts
+      - mount_volumes
+      - pool
+      - hookscript
+      - startup
+
 - name: Create LXC container
-  community.proxmox.proxmox: "{{ homelabinfra_instance.lxc }}"
+  community.proxmox.proxmox: "{{ lxc_module_args }}"
   register: create_lxc_result
 
 - name: Wait for LXC to be running

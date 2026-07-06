@@ -75,8 +75,71 @@
         }, recursive=True) }}
   when: homelabinfra_instance.network is defined
 
+- name: Build VM module arguments from the community.proxmox.proxmox_kvm allowlist
+  ansible.builtin.set_fact:
+    vm_module_args: >-
+      {{ homelabinfra_instance.vm | dict2items
+         | selectattr('key', 'in', vm_module_keys)
+         | items2dict
+         | combine({'api_user': homelabinfra_config.proxmox.api_user}) }}
+  vars:
+    # community.proxmox.proxmox_kvm parameters only. User/bookkeeping keys (network, ip_address,
+    # ansible_host) are absent by design. vm_ansible_host is a sibling of .vm (not inside it), so
+    # it is untouched. Every key here is verified against the 2.0.0 spec — see Verification step 2.
+    vm_module_keys:
+      - state
+      - api_host
+      - api_port
+      - api_user
+      - api_token_id
+      - api_token_secret
+      - node
+      - sshkeys
+      - ciuser
+      - vmid
+      - name
+      - agent
+      - onboot
+      - autostart
+      - description
+      - tags
+      - net
+      - ipconfig
+      - nameservers
+      - searchdomains
+      - cores
+      - memory
+      - sockets
+      - vcpus
+      - cpu
+      - ostype
+      - scsihw
+      - boot
+      - bootdisk
+      - balloon
+      - bios
+      - machine
+      - ide
+      - sata
+      - scsi
+      - virtio
+      - efidisk0
+      - vga
+      - serial
+      - cipassword
+      - cicustom
+      - citype
+      - ciupgrade
+      - storage
+      - pool
+      - kvm
+      - numa_enabled
+      - hotplug
+      - startup
+      - timeout
+
 - name: Create VM
-  community.proxmox.proxmox_kvm: "{{ homelabinfra_instance.vm }}"
+  community.proxmox.proxmox_kvm: "{{ vm_module_args }}"
   register: create_vm_result
 
 - name: Wait for VM to be running
