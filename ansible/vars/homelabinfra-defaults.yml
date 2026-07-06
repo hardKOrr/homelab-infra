@@ -1,5 +1,5 @@
 homelabinfra_defaults:
-  networks:
+  networks: {}
   ansible:
     ssh_user: root
   proxmox:

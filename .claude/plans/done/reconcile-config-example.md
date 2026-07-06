@@ -360,3 +360,118 @@ hold on the diff; no key renamed; diff scope is exactly the four files.
 [qa] verdict: PASS
  - senior notes; any agent-surfaced notification lifted here
 -->
+
+### round 1
+[implementer] Applied all four edits from `## Plan` verbatim; no deviations, no decisions needed.
+
+Files touched:
+- `config.example/proxmox.yml` — header (lines 1-4 → 1-10): added landing-point note documenting
+  `proxmox:`/`networks:`/`ansible:` inject as-is into `homelabinfra_config.*`. Body (host/port and
+  everything below) untouched byte-for-byte.
+- `config.example/infrastructure.yml` — header (lines 1-8 → 1-18): added whole-file landing-point
+  note (`homelabinfra_config.infrastructure`) and amended the doctrine comment to name its two
+  exceptions (external-host IPs like `dns.host`; `vaultwarden.admin_token` with the chicken-and-egg
+  reason and the `VAULTWARDEN_ADMIN_TOKEN` env-var alternative). Body (including the `vaultwarden:`
+  block) untouched.
+- `ansible/vars/homelabinfra-defaults.yml` — line 2 only: bare `networks:` (null) → `networks: {}`.
+  No other line changed; `#TODO: EVerything about VM stuff` left untouched.
+- `ansible/vars/user-vars-example.yml` — three edits: (4a) `ansible.ssh_user: ""` commented out with
+  a default-pointer note, `ssh_public_key` kept as required-empty; (4b) `proxmox.api_port: ""` and
+  `proxmox.api_user: ""` commented out with default-pointer notes, `api_host`/`api_token_id`/
+  `api_token_secret`/`node` kept as required-empty with inline notes; (4c) `docker_hosts` kept
+  (trailing space after the key removed as part of the verbatim replace block) with a clarifying
+  comment naming its consumer, `apps:` orphan block removed and replaced with a pointer comment to
+  `config/apps/<instance>.yml` / `app_config` / CONTRACT.md's "App-level layering note". Wrapper,
+  `networks:` block, and the `PROXMOX_API_*`/`with-proxmox-env.sh` comment block (lines 12-16)
+  preserved verbatim.
+
+No file under `ansible/tasks/`, `ansible/playbooks/`, or `ansible/roles/` touched.
+
+Gate evidence (run via WSL per build.yml, real exit code captured with `; echo RC=$?` inside the
+WSL call per the plan's noted relay hazard):
+
+- lint: `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh; echo RC=$?'`
+  → `RC=0`. Output tail: `Passed: 0 failure(s), 0 warning(s) in 55 files processed of 64
+  encountered. Profile 'min' was required, but 'production' profile passed.`
+- test: `wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh; echo RC=$?'`
+  → `RC=0`. Exactly three `[ERROR]` diagnostics present, all pre-existing per the plan's Context:
+  `docker` role not found (`playbooks/docker/create-docker-host.yml`), `'instance' is undefined`
+  (`maintenance/restart-app.yml` and `maintenance/tail-applog.yml`, two occurrences), and `Empty
+  playbook, nothing to do: .../stacks/rollback-container.yml`. Verified identical on base: stashed
+  the four-file diff, re-ran the test gate on the unmodified tree (`git stash` / re-run / `git stash
+  pop`), got the same four `[ERROR]` lines verbatim — no regression, no new diagnostic, none
+  resolved.
+
+Inspection (Verification points 1-6):
+
+1. Landing-point comments match `CONTRACT.md` §2 — confirmed: `proxmox.yml` header states
+   `proxmox`/`networks`/`ansible` inject as-is; `infrastructure.yml` header states the whole file
+   lands under `homelabinfra_config.infrastructure`.
+2. Every uncommented key in both example files traced against `CONTRACT.md` §5 — all present
+   (`proxmox.host`/`port` named there as the pre-slice-004 aliases of `api_host`/`api_port`;
+   `networks.default.*`; `ansible.*`; `domain`; `reverse_proxy.*`; `sso.*`; `notifications.*`;
+   `dns.provider`/`host`; `backups.*`; `vaultwarden.admin_token`/`instance`). No contract drift
+   found.
+3. No blanking value survives in `user-vars-example.yml` — the three keys with git-managed
+   defaults (`ansible.ssh_user`, `proxmox.api_port`, `proxmox.api_user`) are commented out;
+   `networks.<name>.*` placeholders and no-default required keys (`api_host`, `api_token_id`,
+   `api_token_secret`, `node`, `ssh_public_key`) remain as empty placeholders. Wrapper, canonical
+   `api_host`/`api_port` names, and the `PROXMOX_API_*`/`with-proxmox-env.sh` comment block intact.
+4. `homelabinfra-defaults.yml` line 2 is `networks: {}`; no other value changed; `#TODO` comment
+   untouched.
+5. `infrastructure.yml` header no longer self-contradicts — the two exceptions (external-host IPs;
+   Vaultwarden admin token with chicken-and-egg reason and env-var alternative) are named; the
+   `vaultwarden:` block still lives in this file.
+6. Diff scope — `git status` shows exactly the four target files modified (plus my own run-lock
+   write at `.claude/autobuild/run.json`, which is out of the plan's scope by design). No playbook,
+   task, role, or loader file appears in the diff.
+
+No decisions needed — every choice in `## Decisions` matched the plan's edits exactly (including
+the "third blanking violation" note for `proxmox.api_user`, which the plan had already folded into
+Edit 4b). Nothing to flag as blocked. Working tree left uncommitted for the reviewer.
+
+[reviewer] verdict: PASS
+ - Re-ran both gates independently: lint → RC=0, "Passed: 0 failure(s), 0 warning(s) in 55 files
+   processed of 64 encountered" (matches implementer's evidence verbatim). test → RC=0, the same
+   four `[ERROR]` diagnostics (docker role not found; `instance` undefined ×2 in
+   restart-app/tail-applog; empty rollback-container playbook) — matches implementer's evidence
+   and the plan's Context enumeration of accepted pre-existing diagnostics.
+ - Diff scope verified via `git diff --name-only`: exactly `config.example/proxmox.yml`,
+   `config.example/infrastructure.yml`, `ansible/vars/homelabinfra-defaults.yml`,
+   `ansible/vars/user-vars-example.yml`, plus this plan file. No task/playbook/role/loader file
+   touched. (`.claude/settings.local.json` also shows modified but is pre-existing/out-of-scope
+   per the task framing, not part of this change.)
+ - No key renamed: `config.example/proxmox.yml` keeps `host`/`port` byte-for-byte; body below the
+   new header comment is untouched. `user-vars-example.yml` keeps canonical `api_host`/`api_port`.
+ - `config.example/infrastructure.yml` header now names its two doctrine exceptions (external-host
+   IPs, `vaultwarden.admin_token` with chicken-and-egg reasoning + env-var alternative); the
+   `vaultwarden:` block is untouched and still present per CONTRACT.md §5.
+ - `ansible/vars/homelabinfra-defaults.yml`: only line 2 changed, bare `networks:` → `networks: {}`;
+   confirmed via diff no other line moved.
+ - `ansible/vars/user-vars-example.yml`: wrapper, `networks:` block, and the `PROXMOX_API_*`/
+   with-proxmox-env.sh comment block preserved verbatim; all three blanking violations
+   (`ansible.ssh_user`, `proxmox.api_port`, `proxmox.api_user`) now commented out with
+   default-pointer notes; orphan `apps:` block removed and replaced with a pointer comment to
+   `config/apps/<instance>.yml` / CONTRACT.md's "App-level layering note" that asserts no schema.
+ - Cross-checked landing-point comments and required/optional keys against `CONTRACT.md` §2 and §5
+   directly (not just the plan's paraphrase) — both example files' top-level keys all trace
+   cleanly; no contract drift found.
+ - Reflexes: no secrets introduced (comments/placeholders only), no injection surface, no
+   swallowed errors — none applicable, this diff is comments + one scalar value + a block removal.
+ - No trivia fixes needed; diff matched the plan's edits exactly.
+
+[qa] verdict: PASS
+ - Senior pass: read the full four-file diff myself against the plan's verbatim blocks and
+   CONTRACT.md §2/§5 — exact match, no key renamed, no value changed beyond the three
+   commented-out blanking violations and `networks: {}`. The `docker_hosts:` trailing-space
+   removal is part of the plan's own replace block, not a deviation.
+ - Gate evidence accepted without a third run: implementer and reviewer ran both gates
+   independently with verbatim-matching output (lint RC=0 clean; test RC=0 with only the
+   enumerated pre-existing diagnostics, verified identical on base via stash/re-run). A
+   comments+scalar diff cannot alter what these static gates parse beyond the two linted
+   vars files, which stayed clean.
+ - Nothing lifted: no `(decision needed: …)` flags, no reviewer notes requiring resolution.
+   Meta slice 002's acceptance boxes are all satisfied by this diff; slice 004 (key rename)
+   is now unblocked.
+ - Committing: four config-surface files + this plan (moved to done/), squashed on
+   `refactor/reconcile-config-example`, ff-merged to master.

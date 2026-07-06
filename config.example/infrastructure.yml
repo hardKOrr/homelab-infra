@@ -3,9 +3,19 @@
 # Copy this to config/infrastructure.yml and fill in your values.
 # This file is gitignored — git pull will never overwrite it.
 #
-# This file declares ROLES and PROVIDER CHOICES only — not IPs or tokens.
-# Connection details are written automatically to config/.generated/facts.yml
-# by the bootstrap playbook after each service is deployed.
+# Where these keys land (see ansible/vars/CONTRACT.md §2): the loader places this WHOLE file
+# under homelabinfra_config.infrastructure — e.g. domain → homelabinfra_config.infrastructure.domain,
+# reverse_proxy.provider → homelabinfra_config.infrastructure.reverse_proxy.provider.
+#
+# This file declares ROLES and PROVIDER CHOICES only — not IPs or tokens — with two
+# deliberate exceptions:
+#   1. Connection details for hosts NOT in the Proxmox inventory (e.g. dns.host for an
+#      external OPNsense) — homelab-infra cannot resolve them, so you supply the IP here.
+#   2. vaultwarden.admin_token — Vaultwarden IS the secrets store, so its own admin token
+#      cannot live inside it (bootstrap chicken-and-egg). Paste it here after bootstrap
+#      step 1, or supply it as the VAULTWARDEN_ADMIN_TOKEN env var.
+# Everything else (connection details for managed services) is written automatically to
+# config/.generated/facts.yml by the bootstrap playbook after each service is deployed.
 
 # Your homelab domain. All app routes will be subdomains of this.
 domain: "homelab.example.com"

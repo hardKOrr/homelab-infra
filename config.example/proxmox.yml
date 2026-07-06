@@ -2,6 +2,12 @@
 # Proxmox connection and global network config.
 # Copy this to config/proxmox.yml and fill in your values.
 # This file is gitignored — git pull will never overwrite it.
+#
+# Where these keys land (see ansible/vars/CONTRACT.md §2): the loader injects the three
+# top-level keys below directly into homelabinfra_config, unwrapped —
+#   proxmox:  → homelabinfra_config.proxmox.*
+#   networks: → homelabinfra_config.networks.*
+#   ansible:  → homelabinfra_config.ansible.*
 
 proxmox:
   host: ""              # Proxmox IP or hostname (required)

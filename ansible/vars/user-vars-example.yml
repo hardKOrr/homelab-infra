@@ -1,7 +1,7 @@
 homelabinfra_config:
   ansible:
-    ssh_user: ""
-    ssh_public_key: ""
+    # ssh_user: root         # optional — defaults to 'root' (homelabinfra-defaults.yml); uncomment only to override
+    ssh_public_key: ""       # required — paste your public key; no default, so empty here blanks nothing
   networks:
     default:
       cidr: "dhcp"
@@ -15,12 +15,12 @@ homelabinfra_config:
   # them from this same file with `scripts/with-proxmox-env.sh` (bare CLI / fresh clone), or export
   # them directly in the Rundeck/Semaphore job step before invoking ansible.
   proxmox:
-    api_host: ""
-    api_port: ""
-    api_user: ""
-    api_token_id: ""
-    api_token_secret: ""
-    node: ""
+    api_host: ""             # required — no default
+    # api_port: 8006         # optional — defaults to 8006 (homelabinfra-defaults.yml); uncomment only to override
+    # api_user: root@pam     # optional — defaults to root@pam (homelabinfra-defaults.yml); uncomment only to override
+    api_token_id: ""         # required — no default
+    api_token_secret: ""     # required — no default
+    node: ""                 # required — no default
     lxc:
       hostname: ""
       ostemplate: ""
@@ -29,10 +29,10 @@ homelabinfra_config:
       vmid: 0
       name: ""
       ansible_host: ""
-  docker_hosts: 
+  docker_hosts:
     docker_default_host:
-      type: "vm"
-  apps:
-    docker_example:
-      docker_tag: "docker_default_host"
+      type: "vm"           # example override (mirrors the default) — read by playbooks/docker/create-docker-host.yml
+  # Per-app config does NOT live in this file. It merges separately (app_config) from
+  # config/apps/<instance>.yml layered over vars/app-defaults/<app>.yml — see CONTRACT.md
+  # "App-level layering note"; the per-instance schema is owned by meta slice 005.
   
