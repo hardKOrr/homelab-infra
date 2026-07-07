@@ -1,4 +1,4 @@
-# .claude/build.yml — per-repo manifest read by the autobuild agents.
+# .claude/build.yml — per-repo manifest read by the sdlc skills and agents.
 
 lang: [ansible, yaml]
 
@@ -25,6 +25,18 @@ lang: [ansible, yaml]
 # scripts derive their own absolute paths from $PWD inside WSL.
 lint: wsl bash -lc 'bash .claude/gate/lint.sh'
 test: wsl bash -lc 'bash .claude/gate/test.sh'
+# No build: — nothing compiles; syntax-check IS the test gate.
+
+# Deliberately empty. The whole toolchain (ansible-lint, ansible-playbook, ansible-galaxy) lives
+# inside WSL behind the `wsl bash -lc '<inner string>'` relay, and that relay must NEVER be an
+# allow: prefix: guard-git's simple-command check treats the single-quoted inner string as
+# literal, so `wsl bash -lc 'x && anything'` would ride through an allowed lead — the relay is a
+# bare interpreter in disguise. The two gate strings above are auto-approved by exact match,
+# which covers construction's routine loop; anything else prompts. When runs stall on per-file
+# iteration prompts, the fix is an argv-form wrapper (`wsl bash .claude/gate/<x>.sh <path>` — no
+# inner shell string, so chaining chars stay unquoted and fail the simple-command check) declared
+# here as a prefix — see plans/concept/sdlc-gate-iteration-wrappers.md.
+allow: []
 
 conventions:
   - .claude/CLAUDE.md
@@ -32,6 +44,8 @@ conventions:
 architecture: .claude/architecture.md
 specs: .claude/specs/
 
-# Pre-existing backlog: .claude/meta/ (numbered slices 000-601, own INDEX.md). Autobuild plans in
-# .claude/plans/ cover findings meta does not; each plan cross-references related meta slices.
-# Do not duplicate a meta slice as a plan — extend the meta README instead.
+# Pre-existing backlog: .claude/meta/ (numbered slices 000-601, own INDEX.md). Concepts in
+# .claude/plans/concept/ cover findings meta does not; each cross-references related meta slices.
+# Do not duplicate a meta slice as a change form — extend the meta README instead.
+# History note: records in plans/deployed/ dated before 2026-07-06 are autobuild-era plans
+# (the pipeline this repo ran before sdlc); same trail role, older format.

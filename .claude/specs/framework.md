@@ -25,7 +25,7 @@ findings. Contract-level rules live in the sibling specs this file links to.
   playbook (`.claude/gate/test.sh`), with the Proxmox dynamic inventory neutralized via
   `ANSIBLE_INVENTORY=localhost,` so no credentials are needed.
 - Verification beyond the gate is stated per-plan: hand-computed worked examples plus optional
-  ad-hoc localhost plays (see `.claude/plans/done/fix-ip-to-vmid-int-precedence.md`
+  ad-hoc localhost plays (see `.claude/plans/deployed/fix-ip-to-vmid-int-precedence.md`
   "Verification" for the shape).
 
 ## Lint

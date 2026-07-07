@@ -18,7 +18,7 @@ once, never police drift. This file is the map; contract detail lives in [specs/
 | `config/` (gitignored) | Config layer 3: user's `proxmox.yml`, `infrastructure.yml`, `apps/<instance>.yml`, plus `.generated/facts.yml` written by bootstrap | [secrets-handling](specs/secrets-handling.md) |
 | `ansible/inventory/proxmox.yml` | `community.proxmox` dynamic inventory → groups `proxmox_nodes`, `proxmox_clients`, `tag_<tag>`. Only `homelab-infra`-tagged guests are managed | [config-layering](specs/config-layering.md) |
 | `semaphore/`, `rundeck/` | Importable UI job definitions; playbooks stay UI-agnostic | — |
-| `.claude/meta/` | Pre-existing hand-written backlog of numbered slices (000–601) with its own INDEX.md; autobuild plans in `.claude/plans/` cross-reference it | — |
+| `.claude/meta/` | Pre-existing hand-written backlog of numbered slices (000–601) with its own INDEX.md; sdlc items in `.claude/plans/` (concept → design → active → deployed) cross-reference it. Records in `plans/deployed/` dated before 2026-07-06 are autobuild-era plans — same trail role, older format | — |
 
 ## Flows
 
