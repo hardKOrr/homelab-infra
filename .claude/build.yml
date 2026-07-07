@@ -18,7 +18,11 @@ lang: [ansible, yaml]
 # iterations while still exiting 0. Related: when passing absolute POSIX paths (/mnt/c/...) as
 # arguments through a Windows-side Git Bash relay, prepend MSYS_NO_PATHCONV=1 — Git Bash otherwise
 # rewrites leading-slash arguments to Windows paths before they reach WSL (observed on a
-# value-proof command during the 006 run). .gitattributes forces these two scripts to LF so `bash`
+# value-proof command during the 006 run). Second trigger of the same hazard class (observed
+# fix-adhoc-playbook-env run, 2026-07-06): an inline VAR=val prefix immediately before a
+# ~-prefixed command path inside the single-quoted -lc string also trips MSYS path conversion
+# (`bash: ~C:/Program: No such file or directory`); same fix — prepend MSYS_NO_PATHCONV=1 to the
+# whole wsl invocation. .gitattributes forces these two scripts to LF so `bash`
 # never chokes on a CRLF shebang line.
 # No hardcoded repo path: `wsl` inherits the Windows cwd of the invoking shell (the repo root,
 # where gates always run from), so the same command works on any machine/checkout location. The
