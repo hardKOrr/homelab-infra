@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "id": "expression",
+  "version": "1",
+  "coordinates": {
+    "required": ["slug"],
+    "properties": {
+      "slug": "slug of the armed flux specimen with an outcome"
+    }
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/expression.schema.json",
+  "allowed_effects": ["workspace.docs.write", "specimen.outcome.express"],
+  "authority": {
+    "catalyst": "native-workspace-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["expressed"],
+  "terminal_statuses": ["complete", "needs-user", "blocked", "refused", "failed"],
+  "assets": {
+    "expression_agent": {
+      "claude": "isotope-expression",
+      "codex": "isotope_expression"
+    },
+    "operate_owner": {
+      "claude": "isotope-operate",
+      "codex": "isotope-operate"
+    }
+  },
+  "transport": "native-only",
+  "result_destination": "/outcome/expression"
+}

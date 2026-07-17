@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/assay/2",
+  "title": "Isotope provenance-bound Review assay",
+  "type": "object",
+  "required": ["schema_version", "id", "change", "round", "outcome", "abstract", "findings", "invocation_id", "reaction_protocol_version", "source_revisions", "review_snapshot_revision", "actor"],
+  "properties": {
+    "schema_version": {"const": "2"},
+    "id": {"type": "string", "pattern": "^C[1-9][0-9]*-R[1-9][0-9]*-A$"},
+    "change": {"type": "integer", "minimum": 1},
+    "round": {"type": "integer", "minimum": 1},
+    "outcome": {"enum": ["PASS", "CHANGES"]},
+    "abstract": {"type": "string", "minLength": 1},
+    "findings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "invocation_id": {"type": "string", "pattern": "^I[1-9][0-9]*$"},
+    "reaction_protocol_version": {"type": "string", "minLength": 1},
+    "source_revisions": {"type": "object"},
+    "review_snapshot_revision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actor": {
+      "type": "object",
+      "required": ["host", "model", "reaction"],
+      "properties": {
+        "host": {"enum": ["claude", "codex"]},
+        "model": {"type": ["string", "null"]},
+        "reaction": {"const": "review"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

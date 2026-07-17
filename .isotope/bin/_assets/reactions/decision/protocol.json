@@ -1,0 +1,38 @@
+{
+  "schema_version": "1",
+  "id": "decision",
+  "version": "1",
+  "coordinates": {
+    "required": ["slug", "mode", "decision", "question_invocation", "question"],
+    "properties": {
+      "slug": "string",
+      "mode": "add|supersede",
+      "decision": "D-integer",
+      "question_invocation": "I-integer",
+      "question": "Q-integer"
+    }
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/decision.schema.json",
+  "allowed_effects": ["specimen.decision.add", "specimen.decision.supersede"],
+  "authority": {
+    "catalyst": "native-semantic-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["added", "superseded"],
+  "terminal_statuses": ["complete", "needs-user", "blocked", "refused", "failed"],
+  "assets": {
+    "decision_agent": {
+      "claude": "isotope-decision",
+      "codex": "isotope_decision"
+    },
+    "operate_owner": {
+      "claude": "isotope-operate",
+      "codex": "isotope-operate"
+    }
+  },
+  "transport": "native-only",
+  "result_destination": "/decisions[id={decision}]"
+}

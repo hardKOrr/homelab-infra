@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/round/2",
+  "title": "Isotope construction round",
+  "type": "object",
+  "required": ["schema_version", "id", "change", "number", "abstract", "status", "details", "files_touched", "evidence"],
+  "properties": {
+    "schema_version": {"const": "2"},
+    "id": {"type": "string", "pattern": "^C[1-9][0-9]*-R[1-9][0-9]*$"},
+    "change": {"type": "integer", "minimum": 1},
+    "number": {"type": "integer", "minimum": 1},
+    "abstract": {"type": "string", "minLength": 1},
+    "status": {"enum": ["complete", "blocked", "decision-needed"]},
+    "details": {"type": "string", "minLength": 1},
+    "files_touched": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate_id", "command", "exit_code", "output"],
+        "properties": {
+          "gate_id": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer"},
+          "output": {"type": "string"},
+          "cwd": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "decision_questions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "blockers": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "review_snapshot": {
+      "type": "object",
+      "required": ["schema_version", "base_commit", "head_commit", "index", "tracked", "untracked"],
+      "properties": {
+        "schema_version": {"const": "1"},
+        "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+        "head_commit": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+        "index": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["mode", "path", "blob", "stage"],
+            "properties": {
+              "mode": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1},
+              "blob": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+              "stage": {"type": "integer", "minimum": 0}
+            },
+            "additionalProperties": false
+          }
+        },
+        "tracked": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "status", "digest"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "status": {"enum": ["modified", "deleted"]},
+              "digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "untracked": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "digest"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "invocation_id": {"type": "string", "pattern": "^I[1-9][0-9]*$"},
+    "reaction_protocol_version": {"type": "string", "minLength": 1},
+    "source_revisions": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    },
+    "actor": {
+      "type": "object",
+      "required": ["host", "model", "reaction"],
+      "properties": {
+        "host": {"enum": ["claude", "codex"]},
+        "model": {"type": ["string", "null"]},
+        "reaction": {"const": "construction"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

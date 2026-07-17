@@ -1,0 +1,36 @@
+{
+  "schema_version": "1",
+  "id": "intake",
+  "version": "1",
+  "coordinates": {
+    "required": ["mode", "dump"],
+    "properties": {
+      "mode": "capture|rework",
+      "dump": "normalized repo-relative brain-dump path",
+      "slug": "slug (rework only)"
+    }
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/matter.schema.json",
+  "allowed_effects": ["specimen.matter.create", "specimen.matter.rework"],
+  "authority": {
+    "catalyst": "native-semantic-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["captured", "reworked"],
+  "terminal_statuses": ["complete", "needs-user", "blocked", "refused", "failed"],
+  "assets": {
+    "intake_agent": {
+      "claude": "isotope-intake",
+      "codex": "isotope_intake"
+    },
+    "operate_owner": {
+      "claude": "isotope-operate",
+      "codex": "isotope-operate"
+    }
+  },
+  "transport": "native-only",
+  "result_destination": ".isotope/cultures/matter/{slug}.json"
+}

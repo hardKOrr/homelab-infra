@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/acceptance/readout/1",
+  "title": "Isotope Acceptance catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status", "verdict", "abstract", "criteria", "verification", "findings", "questions", "condition", "facts", "next_action"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+    "verdict": {"type": ["string", "null"], "enum": ["PASS", "CHANGES", null]},
+    "abstract": {"type": ["string", "null"], "minLength": 1},
+    "criteria": {"type": "array", "items": {"type": "object", "required": ["criterion_id", "status", "evidence"], "properties": {"criterion_id": {"type": "string", "pattern": "^AC[1-9][0-9]*$"}, "status": {"enum": ["PASS", "FAIL"]}, "evidence": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "verification": {"type": "array", "items": {"type": "object", "required": ["verification_id", "status", "evidence"], "properties": {"verification_id": {"type": "string", "pattern": "^V[1-9][0-9]*$"}, "status": {"enum": ["PASS", "FAIL"]}, "evidence": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "findings": {"type": "array", "items": {"type": "object", "required": ["change", "text"], "properties": {"change": {"type": "integer", "minimum": 1}, "text": {"type": "string", "minLength": 1}}, "additionalProperties": false}},
+    "questions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "condition": {"type": ["string", "null"], "minLength": 1},
+    "facts": {"type": "object"},
+    "next_action": {"type": ["string", "null"], "minLength": 1}
+  },
+  "additionalProperties": false
+}

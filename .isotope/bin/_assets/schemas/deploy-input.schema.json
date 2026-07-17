@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/deploy-input/1",
+  "title": "Isotope deploy input",
+  "type": "object",
+  "required": ["expected_head", "target_branch", "reason"],
+  "properties": {
+    "expected_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "target_branch": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

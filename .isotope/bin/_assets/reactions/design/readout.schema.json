@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/design/readout/1",
+  "title": "Isotope Design catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status", "design", "questions", "condition", "facts", "next_action"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+    "design": {
+      "type": ["object", "null"],
+      "required": ["context", "acceptance_criteria", "changes", "verification"],
+      "properties": {
+        "context": {"type": "string", "minLength": 1},
+        "acceptance_criteria": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true, "minItems": 1},
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["title", "files", "steps", "tests", "commit"],
+            "properties": {
+              "title": {"type": "string", "minLength": 1},
+              "files": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+              "steps": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+              "tests": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+              "commit": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "verification": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["instruction"],
+            "properties": {
+              "instruction": {"type": "string", "minLength": 1},
+              "gate_id": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "questions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "condition": {"type": ["string", "null"], "minLength": 1},
+    "facts": {"type": "object"},
+    "next_action": {"type": ["string", "null"], "minLength": 1}
+  },
+  "additionalProperties": false
+}

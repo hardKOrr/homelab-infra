@@ -1,5 +1,7 @@
 # Spec: namespace merge discipline
 
+<!-- isotope:section namespace-merge-discipline:start -->
+
 The three shared dicts — `homelabinfra_config`, `homelabinfra_instance`, `homelabinfra_infra` —
 are grown incrementally by many task files. A destructive write anywhere silently corrupts every
 downstream consumer.
@@ -19,3 +21,5 @@ downstream consumer.
 
 - inspection — cite this spec in findings (source: `.claude/CLAUDE.md` "CRITICAL" clause;
   meta slice 006 tracks the known violation in `tasks/network/generate-ip.yml`)
+
+<!-- isotope:section namespace-merge-discipline:end -->

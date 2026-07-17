@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/registry/1",
+  "title": "Isotope consumer host and model registry",
+  "type": "object",
+  "required": ["schema_version", "hosts"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "hosts": {
+      "type": "object",
+      "propertyNames": {"enum": ["claude", "codex"]},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["enabled", "available", "default_model", "models"],
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "available": {"type": ["boolean", "null"]},
+          "default_model": {"type": ["string", "null"]},
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "enabled", "reactions"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "enabled": {"type": "boolean"},
+                "reactions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+                "cost": {"type": ["string", "null"]},
+                "rate": {"type": ["string", "null"]},
+                "reasoning": {"type": ["string", "null"]}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

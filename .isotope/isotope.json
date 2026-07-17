@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "gates": {
+    "lint": "wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh'",
+    "test": "wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh'"
+  },
+  "docs": [
+    { "concept": "architecture", "path": ".claude/architecture.md", "section_id": "architecture" },
+    { "concept": "framework", "path": ".claude/specs/framework.md", "section_id": "framework" },
+    { "concept": "config-layering", "path": ".claude/specs/config-layering.md", "section_id": "config-layering" },
+    { "concept": "namespace-merge-discipline", "path": ".claude/specs/namespace-merge-discipline.md", "section_id": "namespace-merge-discipline" },
+    { "concept": "provider-noop-wiring", "path": ".claude/specs/provider-noop-wiring.md", "section_id": "provider-noop-wiring" },
+    { "concept": "one-click-idempotent", "path": ".claude/specs/one-click-idempotent.md", "section_id": "one-click-idempotent" },
+    { "concept": "secrets-handling", "path": ".claude/specs/secrets-handling.md", "section_id": "secrets-handling" },
+    { "concept": "jinja-string-typing", "path": ".claude/specs/jinja-string-typing.md", "section_id": "jinja-string-typing" }
+  ]
+}

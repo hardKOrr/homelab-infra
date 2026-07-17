@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "id": "acceptance",
+  "version": "1",
+  "coordinates": {
+    "required": ["slug", "acceptance"],
+    "properties": {"slug": "string", "acceptance": "integer"}
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/acceptance.schema.json",
+  "allowed_effects": ["specimen.acceptance.append"],
+  "authority": {
+    "catalyst": "native-semantic-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["PASS", "CHANGES"],
+  "terminal_statuses": ["complete", "needs-user", "blocked", "refused", "failed"],
+  "assets": {
+    "acceptance_agent": {"claude": "isotope-acceptance", "codex": "isotope_acceptance"},
+    "operate_owner": {"claude": "isotope-operate", "codex": "isotope-operate"}
+  },
+  "transport": "native-only",
+  "result_destination": "/acceptances[number={acceptance}]"
+}

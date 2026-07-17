@@ -1,0 +1,10 @@
+{
+  "acceptance": "acceptance/protocol.json",
+  "analyze": "analyze/protocol.json",
+  "construction": "construction/protocol.json",
+  "decision": "decision/protocol.json",
+  "design": "design/protocol.json",
+  "expression": "expression/protocol.json",
+  "intake": "intake/protocol.json",
+  "review": "review/protocol.json"
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/matter/2",
+  "title": "Isotope specimen matter",
+  "type": "object",
+  "required": ["content"],
+  "properties": {
+    "content": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

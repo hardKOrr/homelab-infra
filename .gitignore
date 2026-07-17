@@ -10,6 +10,10 @@ config/
 inventory/hosts.ini
 ansible/vars/user-vars.yml
 
+# Python bytecode (Isotope toolkit)
+__pycache__/
+*.pyc
+
 # Editor/OS noise
 *.swp
 *.swo

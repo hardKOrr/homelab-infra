@@ -1,5 +1,7 @@
 # Spec: one click, idempotent, notified
 
+<!-- isotope:section one-click-idempotent:start -->
+
 The product is one click per app in Semaphore/Rundeck — not grouped stack deploys, not multi-job
 chains. Re-running any playbook is always safe.
 
@@ -22,3 +24,5 @@ chains. Re-running any playbook is always safe.
 
 - inspection — cite this spec in findings (source: `.claude/CLAUDE.md` "Philosophy" and
   "Day-2 Operations")
+
+<!-- isotope:section one-click-idempotent:end -->

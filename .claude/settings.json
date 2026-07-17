@@ -1,13 +1,8 @@
 {
-  "enabledPlugins": {
-    "autobuild@korr-tools": true
-  },
   "permissions": {
     "allow": [
-      "Bash(wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh')",
-      "Bash(wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh')",
-      "Bash(rm .claude/autobuild/run.json)",
-      "Bash(mkdir -p .claude/plans/done)",
+      "Bash(wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh')",
+      "Bash(wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh')",
       "Bash(git checkout -b *)",
       "Bash(git checkout fix/*)",
       "Bash(git checkout feat/*)"

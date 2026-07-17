@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "reaction": "intake",
+  "slots": [
+    {"id": "dump", "source": "{dump}", "selector": "", "readiness": "readable non-empty UTF-8 brain-dump at the revision frozen at open"},
+    {"id": "specimen", "source": ".isotope/cultures/matter/{slug}.json", "selector": "", "readiness": "rework selects one existing matter-stage specimen at its frozen revision; capture selects none"},
+    {"id": "cultures", "source": ".isotope/cultures/{matter,flux,stable}/", "selector": "slugs only", "readiness": "every culture stage enumerates at the slug listing frozen at open"},
+    {"id": "answers", "source": "predecessor invocation", "selector": "/questions/*/answer", "readiness": "every continuation question has an answer"},
+    {"id": "result_destination", "source": ".isotope/cultures/matter/", "selector": "/cultures/matter/{slug}.json", "readiness": "capture requires every readout-chosen slug to be vacant; rework requires the selected matter specimen"}
+  ]
+}

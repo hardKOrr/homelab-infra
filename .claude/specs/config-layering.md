@@ -1,5 +1,7 @@
 # Spec: config layering
 
+<!-- isotope:section config-layering:start -->
+
 Three layers merged via `combine(recursive=True)` at playbook runtime:
 `vars/homelabinfra-defaults.yml` → `vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml`.
 Users only write what differs; everything else falls through.
@@ -25,3 +27,5 @@ The authoritative data-shape contract these rules protect — namespaces, load m
 
 - inspection — cite this spec in findings (source: `.claude/CLAUDE.md` "Config Hierarchy";
   meta slices 000–005 track the known violations)
+
+<!-- isotope:section config-layering:end -->

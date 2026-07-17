@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/synthesis/1",
+  "title": "Isotope generated-asset synthesis",
+  "type": "object",
+  "required": ["schema_version", "source_version", "targets", "files", "observations"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "source_version": {"type": "string", "minLength": 1, "pattern": "^[0-9]+(?:\\.[0-9]+)*$"},
+    "targets": {"type": "object"},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "revision", "kind", "host"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "revision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "kind": {"type": "string", "minLength": 1},
+          "host": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "observations": {"type": "object"}
+  },
+  "additionalProperties": false
+}

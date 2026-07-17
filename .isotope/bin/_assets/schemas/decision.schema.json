@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/decision/2",
+  "title": "Isotope decision",
+  "type": "object",
+  "required": ["schema_version", "id", "question", "decision", "rationale"],
+  "properties": {
+    "schema_version": {"const": "2"},
+    "id": {"type": "string", "pattern": "^D[1-9][0-9]*$"},
+    "question": {"type": "string", "minLength": 1},
+    "decision": {"type": "string", "minLength": 1},
+    "rationale": {"type": "string", "minLength": 1},
+    "trigger": {
+      "type": "object",
+      "required": ["invocation_id", "question_id"],
+      "properties": {
+        "invocation_id": {"type": "string", "pattern": "^I[1-9][0-9]*$"},
+        "question_id": {"type": "string", "pattern": "^Q[1-9][0-9]*$"}
+      },
+      "additionalProperties": false
+    },
+    "invocation_id": {"type": "string", "pattern": "^I[1-9][0-9]*$"},
+    "reaction_protocol_version": {"type": "string", "minLength": 1},
+    "source_revisions": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+    "actor": {
+      "type": "object",
+      "required": ["host", "model", "reaction"],
+      "properties": {
+        "host": {"enum": ["claude", "codex"]},
+        "model": {"type": ["string", "null"]},
+        "reaction": {"const": "decision"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

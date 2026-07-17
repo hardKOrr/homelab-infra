@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/decision/readout/1",
+  "title": "Isotope Decision catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status", "decision", "rationale", "questions", "condition", "facts", "next_action"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+    "decision": {"type": ["string", "null"], "minLength": 1},
+    "rationale": {"type": ["string", "null"], "minLength": 1},
+    "questions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "condition": {"type": ["string", "null"], "minLength": 1},
+    "facts": {"type": "object"},
+    "next_action": {"type": ["string", "null"], "minLength": 1}
+  },
+  "additionalProperties": false
+}

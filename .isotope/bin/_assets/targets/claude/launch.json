@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "host": "claude",
+  "adapter_version": "1",
+  "executable": "claude",
+  "preflight": {"arguments": ["auth", "status", "--json"], "result_kind": "claude-auth-json", "sandbox_arguments": []},
+  "authority": {"read_only": true, "non_interactive": true, "structured_output": true, "explicit_agent": "isotope-review"},
+  "arguments": ["-p", "--agent", "isotope-review", "--output-format", "json", "--json-schema", "{readout_schema_json}", "--permission-mode", "dontAsk", "--tools", "Bash,Read,Grep,Glob", "--allowedTools", "Bash(python .isotope/bin/isotope.py agent brief review --invocation {invocation_id})", "--disallowedTools", "Edit,Write,NotebookEdit", "--max-turns", "20", "--no-session-persistence", "{prompt}"],
+  "model_arguments": ["--model", "{model}"],
+  "result_kind": "claude-json"
+}

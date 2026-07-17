@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/quantum/1",
+  "title": "Isotope quantum evidence record",
+  "type": "object",
+  "required": ["schema_version", "id", "type", "payload", "provenance"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "id": {"type": "string", "minLength": 1, "pattern": "^Q[1-9][0-9]*$"},
+    "type": {"enum": ["command", "friction", "dialect", "gap"]},
+    "payload": {"type": "object"},
+    "provenance": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "invocation": {"type": "string", "minLength": 1, "pattern": "^I[1-9][0-9]*$"},
+        "slug": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "change": {"type": "integer", "minimum": 1},
+        "round": {"type": "integer", "minimum": 1},
+        "reaction": {"enum": ["intake", "analyze", "design", "decision", "construction", "review", "acceptance", "expression", "architect", "operate"]},
+        "host": {"enum": ["claude", "codex"]},
+        "model": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "command-payload": {
+      "type": "object",
+      "required": ["signature", "exit_code", "effect"],
+      "properties": {
+        "signature": {"type": "string", "minLength": 1},
+        "exit_code": {"type": "integer"},
+        "cwd": {"type": "string", "minLength": 1},
+        "effect": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "friction-payload": {
+      "type": "object",
+      "required": ["condition"],
+      "properties": {
+        "condition": {"type": "string", "minLength": 1},
+        "operation": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "dialect-payload": {
+      "type": "object",
+      "required": ["statement"],
+      "properties": {
+        "statement": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "gap-payload": {
+      "type": "object",
+      "required": ["statement"],
+      "properties": {
+        "statement": {"type": "string", "minLength": 1},
+        "surface": {"enum": ["intake", "analyze", "design", "decision", "construction", "review", "acceptance", "expression", "architect", "operate"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

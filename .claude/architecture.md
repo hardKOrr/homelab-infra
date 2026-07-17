@@ -1,5 +1,7 @@
 # Architecture
 
+<!-- isotope:section architecture:start -->
+
 Ansible-based homelab automation platform: one click in Semaphore/Rundeck deploys a fully
 configured, cross-wired application on Proxmox. Designed to be cloned by others — fill in two
 config files, run bootstrap, have a working lab. Fire-and-forget provisioning: create correct
@@ -77,3 +79,5 @@ playbook IS the update. `apps/remove.yml` mirrors deploy: stop app, run `unwirin
   only `pct`/`qm` tasks are `delegate_to` the node named in `homelabinfra_config.proxmox.node`.
   Plays must never target `hosts: proxmox_nodes` with `run_once` facts — that pattern corrupts
   fact scoping on multi-node clusters.
+
+<!-- isotope:section architecture:end -->

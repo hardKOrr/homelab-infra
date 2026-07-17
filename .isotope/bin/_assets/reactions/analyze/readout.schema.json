@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/analyze/readout/1",
+  "title": "Isotope Analyze catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status", "analysis", "questions", "condition", "facts", "next_action"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+    "analysis": {
+      "type": ["object", "null"],
+      "required": ["type", "depends_on", "spec_provenance", "prerequisites", "goal"],
+      "properties": {
+        "type": {"enum": ["feature", "fix", "refactor", "config", "docs"]},
+        "depends_on": {"type": "array", "items": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"}, "uniqueItems": true},
+        "spec_provenance": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "prerequisites": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "goal": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "questions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "condition": {"type": ["string", "null"], "minLength": 1},
+    "facts": {"type": "object"},
+    "next_action": {"type": ["string", "null"], "minLength": 1}
+  },
+  "additionalProperties": false
+}

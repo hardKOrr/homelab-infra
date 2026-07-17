@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/feedback-bundle/1",
+  "title": "Isotope portable feedback bundle",
+  "type": "object",
+  "required": ["schema_version", "kind", "package_version", "reaction", "matter", "source", "evidence"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "kind": {"const": "isotope-feedback"},
+    "package_version": {"type": "string", "minLength": 1, "pattern": "^[0-9]+(?:\\.[0-9]+)*$"},
+    "reaction": {"enum": ["intake", "analyze", "design", "decision", "construction", "review", "acceptance", "expression", "architect", "operate", null]},
+    "matter": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["slug", "revision"],
+      "properties": {
+        "slug": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "revision": {"type": "string", "minLength": 1, "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["quantum", "invocations"],
+        "properties": {
+          "quantum": {"type": "object"},
+          "invocations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "reaction", "status", "result"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1, "pattern": "^I[1-9][0-9]*$"},
+                "reaction": {"enum": ["intake", "analyze", "design", "decision", "construction", "review", "acceptance", "expression"]},
+                "status": {"type": "string", "minLength": 1},
+                "result": {
+                  "type": ["object", "null"],
+                  "required": ["status", "outcome", "entity"],
+                  "properties": {
+                    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+                    "outcome": {"type": ["string", "null"], "minLength": 1},
+                    "entity": {
+                      "type": ["object", "null"],
+                      "required": ["kind"],
+                      "properties": {
+                        "kind": {"type": "string", "minLength": 1},
+                        "id": {"type": "string", "minLength": 1},
+                        "revision": {"type": "string", "minLength": 1, "pattern": "^sha256:[0-9a-f]{64}$"}
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
