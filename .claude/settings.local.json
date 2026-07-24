@@ -13,7 +13,15 @@
       "Skill(fewer-permission-prompts)",
       "Read(//c/Users/kevin/.claude/plugins/**)",
       "Bash(rm -rf .claude/autobuild)",
-      "Bash(rm -f .claude/agents/fable-groomer.md .claude/build.yml)"
+      "Bash(rm -f .claude/agents/fable-groomer.md .claude/build.yml)",
+      "Bash(tail -5 .gitignore)",
+      "Bash(grep -n \"pycache\\\\|isotope\" .gitignore)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(codex --help)",
+      "Bash(.isotope/bin/isotope.py operate *)",
+      "Bash(py *)",
+      "Bash(ISOTOPE_HOST=codex py *)",
+      "Bash(ISOTOPE_HOST=claude py *)"
     ]
   }
 }
