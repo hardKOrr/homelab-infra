@@ -21,7 +21,32 @@
       "Bash(.isotope/bin/isotope.py operate *)",
       "Bash(py *)",
       "Bash(ISOTOPE_HOST=codex py *)",
-      "Bash(ISOTOPE_HOST=claude py *)"
+      "Bash(ISOTOPE_HOST=claude py *)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent open analyze strip-secrets-from-guest-instance-json)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent brief analyze --invocation I5)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent record analyze --invocation I5 --input \"C:/Users/kevin/AppData/Local/Temp/claude/C--Users-kevin-GitHub-hardKOrr-homelab-infra/62f80c65-31a0-4387-a21a-0e59e90d4044/scratchpad/analyze.json\")",
+      "Bash(env)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent open analyze discover-dhcp-lease-ip)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent brief analyze --invocation I6)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent schema analyze)",
+      "Bash(find .isotope -iname \"*readout*analyze*\" -o -iname \"*analyze*schema*\")",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent record analyze --invocation I6 --input \"C:/Users/kevin/AppData/Local/Temp/claude/C--Users-kevin-GitHub-hardKOrr-homelab-infra/62f80c65-31a0-4387-a21a-0e59e90d4044/scratchpad/analyze-discover-dhcp.json\")",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent open analyze fix-adhoc-playbook-env)",
+      "Bash(ISOTOPE_HOST=claude python .isotope/bin/isotope.py agent brief analyze --invocation I7)",
+      "Bash(cat ansible/ansible.cfg)",
+      "Bash(cat .claude/gate/requirements-dev.txt)",
+      "Bash(find .isotope -path '*_scratch*' -prune -o -iname '*readout*' -print)",
+      "Bash(ls .isotope/bin/_assets)",
+      "Bash(ls .isotope/bin/_lib)",
+      "Bash(ISOTOPE_HOST=claude python *)",
+      "Bash(find .isotope -iname \"*readout*\" -o -iname \"*analyze*schema*\")",
+      "Bash(ls .isotope/cultures/matter .isotope/cultures/flux .isotope/cultures/stable)",
+      "Bash(grep -rl \"establish-ansible-gate\" .isotope/cultures)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(find .isotope -name \"*.json\" -path \"*readout*\")",
+      "Bash(find .isotope -iname \"*analyze*\")",
+      "Bash(ls .claude/gate)",
+      "Bash(ls .isotope/cultures/flux .isotope/cultures/matter .isotope/cultures/stable)"
     ]
   }
 }
