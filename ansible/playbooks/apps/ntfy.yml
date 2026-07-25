@@ -1,0 +1,263 @@
+---
+# Deploy Ntfy — the platform notification hub (bootstrap step 2).
+# Native LXC (PATH B): dedicated container, official .deb install (see role header).
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/ntfy.yml -e instance=ntfy
+#
+# The `instance` parameter is the unique name for this deployment.
+# It becomes the hostname, Caddy subdomain, Authentik app slug, and Uptime Kuma monitor name.
+# If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+#
+# Play 3 records the `notifications` registry key (CONTRACT.md §3) BEFORE wiring, so
+# a standalone deploy registers Ntfy exactly as a bootstrap run does. Every later
+# notification consumer (Watchtower, unattended-upgrades, PBS, maintenance jobs)
+# reads host + topic + token from there.
+
+# ── Play 1: Provision ──────────────────────────────────────────────────────────
+# Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
+# pct waits inside lxc-create.yml delegate to homelabinfra_config.proxmox.node.
+# Adds the target host to a group for Play 2 to use.
+- name: "Ntfy | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=ntfy"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/ntfy.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.ntfy_defaults | combine(_instance_config | default({}), recursive=True) }}"
+
+  tasks:
+    # PATH B: NATIVE LXC APP — dedicated container per instance. Mirrors
+    # find-or-create-host.yml: an existing tag_<instance> host is reused so
+    # re-runs are idempotent (a fresh generate-ip would otherwise allocate a
+    # second IP/VMID and provision a duplicate guest).
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Check for existing instance host
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ groups['tag_' + instance] | default([]) }}"
+
+    - name: Add existing instance host to deploy group
+      ansible.builtin.add_host:
+        name: "{{ _existing_hosts[0] }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: >-
+          {{ hostvars[_existing_hosts[0]].ansible_host
+             | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+      when: _existing_hosts | length > 0
+
+    - name: Provision new LXC
+      when: _existing_hosts | length == 0
+      block:
+        # Tag with the instance name so the reuse check above (and remove.yml)
+        # can find this guest via the tag_<instance> inventory group.
+        - name: Set LXC identity from app config
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({'proxmox': {'lxc':
+                   app_config.proxmox | combine({
+                     'hostname': instance,
+                     'tags': ((app_config.proxmox.tags | default(['homelab-infra'])) + [instance]) | unique
+                   }, recursive=True)
+                 }}, recursive=True) }}
+
+        - name: Generate IP address
+          ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+          vars:
+            network_name: "{{ app_config.proxmox.network | default('default') }}"
+
+        - name: Set instance IP in config
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({
+                'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}
+              }, recursive=True) }}
+
+        - name: Derive VMID from IP
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+
+        - name: Create LXC container
+          ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
+
+        # ansible_host here is the app LXC's own IP — Play 3 reads it as the wiring upstream.
+        - name: Add LXC to deploy group
+          # Play 3 reads ansible_host and app_config back from this hostvars handoff.
+          ansible.builtin.add_host:
+            name: "{{ homelabinfra_instance.lxc.hostname }}"
+            groups: "deploy_{{ instance }}"
+            ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+            app_config: "{{ app_config }}"
+            homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+
+
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the target guest to install and configure Ntfy.
+- name: "Ntfy | Deploy"
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
+    # on homelabinfra_infra.notifications, which does not exist yet when the first
+    # baseline guests are created. Running it every deploy is what gives them the
+    # hook once Ntfy is up. Idempotent copy/file tasks only.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    # ── App Deployment ─────────────────────────────────────────────────────────
+    - name: Deploy Ntfy
+      ansible.builtin.include_role:
+        name: ntfy
+
+
+# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# Registers Ntfy in the service registry, then registers the app with platform
+# services. Runs on localhost (API calls). All wiring tasks are idempotent.
+- name: "Ntfy | Record facts and wire"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    # Load infra facts in this play rather than relying on Play 1's localhost fact.
+    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout / pre-bootstrap
+    # run there is no facts.yml, homelabinfra_infra stays undefined, and every provider
+    # when-condition below falls through its `| default('none')` to a silent no-op.
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Shape B `notifications` per ansible/vars/CONTRACT.md §3. host is the direct
+    # LXC URL, not the public domain: consumers publish from inside the lab (and
+    # during bootstrap, before DNS or a certificate exists for ntfy.<domain>).
+    - name: Record Ntfy facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: notifications
+        generated_facts_data:
+          provider: ntfy
+          instance: "{{ instance }}"
+          host: "http://{{ _ntfy_deploy_host.ansible_host }}:{{ _ntfy_deploy_host.app_config.app.port }}"
+          topic: "{{ _ntfy_deploy_host.app_config.app.topic }}"
+          user: "{{ _ntfy_deploy_host.ntfy_publish_user }}"
+          password: "{{ _ntfy_deploy_host.ntfy_publish_password }}"
+          token: "{{ _ntfy_deploy_host.ntfy_publish_token }}"
+
+    # Re-read so the wiring tasks below see the key just written.
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  vars:
+    _ntfy_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Set them here.
+    # Do not change the variable names — wiring tasks depend on them.
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _ntfy_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _ntfy_deploy_host.app_config.app.port }}"
+    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Ntfy ({{ instance }})"
+    # /v1/health stays anonymous under auth-default-access: deny-all, so the
+    # monitor needs no credentials.
+    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}/v1/health"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    # Skipped for Ntfy: routing.auth is false in app-defaults (own token auth).
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - _ntfy_deploy_host.app_config.routing.auth | default(true)
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # The role already sent a "deployed" message as its authenticated-publish
+    # proof, so this one reports the wiring outcome rather than repeating it.
+    - name: Notify deployment complete
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Ntfy wired ({{ instance }})"
+        notify_message: >-
+          Notification hub {{ instance }} is registered as the platform
+          notifications provider on topic
+          '{{ _ntfy_deploy_host.app_config.app.topic }}'.
+          Publishing requires the homelab-infra token; anonymous posts are denied.

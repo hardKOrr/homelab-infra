@@ -1,0 +1,14 @@
+---
+- name: Restart observability
+  community.docker.docker_compose_v2:
+    project_src: "{{ observability_project_dir }}"
+    state: present
+    recreate: always
+
+# Prometheus reloads its scrape config without dropping the TSDB — cheaper and
+# less disruptive than recreating the container when only targets changed.
+- name: Reload prometheus
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.prometheus_port }}/-/reload"
+    method: POST
+    status_code: [200, 204]

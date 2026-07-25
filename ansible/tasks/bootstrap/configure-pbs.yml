@@ -127,19 +127,30 @@
         validate_certs: false
       register: _pbs_webhooks
 
+    # PBS webhook headers are `name=<header>,value=<base64>` entries. The Ntfy
+    # publish token goes here because Ntfy is closed by default (slice 401); an
+    # Ntfy predating that has no token and the header is omitted entirely.
     - name: PBS | Create Ntfy webhook notification target
       ansible.builtin.uri:
         url: "{{ _pbs_url }}/config/notifications/endpoints/webhook"
         method: POST
         headers: "{{ _pbs_headers }}"
         body_format: form-urlencoded
-        body:
-          name: ntfy
-          url: "{{ _ntfy_target_url }}"
-          method: post
-          body: "{{ _ntfy_body | b64encode }}"
-          comment: managed by homelab-infra
+        body: >-
+          {{ {
+               'name': 'ntfy',
+               'url': _ntfy_target_url,
+               'method': 'post',
+               'body': _ntfy_body | b64encode,
+               'comment': 'managed by homelab-infra',
+             }
+             | combine({'header': ['name=Authorization,value='
+                                   ~ (('Bearer ' ~ _ntfy_token) | b64encode)]}
+                       if _ntfy_token | length > 0 else {}) }}
         validate_certs: false
+      vars:
+        _ntfy_token: "{{ homelabinfra_infra.notifications.token | default('') }}"
+      no_log: true
       when: >-
         _pbs_webhooks.json.data
         | map(attribute='name') | list
@@ -282,8 +293,11 @@
       {{ homelabinfra_infra.notifications.host }}/{{
         homelabinfra_infra.notifications.topic | default('homelab') }}
     method: POST
-    headers:
-      Title: "PBS backups configured"
+    headers: >-
+      {{ {'Title': 'PBS backups configured'}
+         | combine({'Authorization': 'Bearer ' ~ homelabinfra_infra.notifications.token}
+                   if homelabinfra_infra.notifications.token | default('') | length > 0
+                   else {}) }}
     body: >-
       Datastore '{{ _pbs_datastore }}' ready; backup job covers
       {{ _backup_vmids | split(',') | length if _backup_vmids | length > 0 else 0 }}

@@ -1,0 +1,43 @@
+---
+# Uptime Kuma instance config.
+# Copy to config/apps/uptime-kuma.yml. Only set values that differ from defaults
+# in vars/app-defaults/uptime-kuma.yml. This file persists after removal — it is
+# your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the Caddy subdomain
+# (uptime-kuma.yourdomain.com) and the monitor name.
+#
+# The admin password is generated on first deploy and recorded in
+# config/.generated/facts.yml (gitignored, mode 0600) under monitoring.admin_password.
+
+# ── The one field worth setting ────────────────────────────────────────────────
+# Uptime Kuma issues REST API keys only to a signed-in browser session, so the
+# first key cannot be scripted. Until one exists, app deploys skip monitor
+# registration (with a warning) rather than failing.
+#
+# One-time setup:
+#   1. Open https://uptime-kuma.yourdomain.com and sign in as admin.
+#   2. Profile -> API Keys -> Add API Key. Name it "homelab-infra".
+#   3. Paste it below and re-run the Uptime Kuma deploy job.
+#
+# app:
+#   api_key: "uk1_..."
+
+# ── Stack placement ────────────────────────────────────────────────────────────
+# stack: core_stack
+
+# ── Other app config ───────────────────────────────────────────────────────────
+# app:
+#   port: 3001
+#   admin_user: admin
+#   monitor_interval: 60     # seconds between checks, applied to every monitor
+#
+#   # Pinned to the 2.x major. Version 1 has no REST API and cannot be used here.
+#   # Pin a patch tag to freeze upgrades:
+#   image_tag: "2"
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal  # internal | external
+#   # auth stays false — forward-auth in front would also intercept /api, which is
+#   # how every app registers its monitor.

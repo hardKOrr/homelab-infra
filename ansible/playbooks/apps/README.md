@@ -61,9 +61,13 @@ Do a find-and-replace of `APP_NAME` → `sonarr` across all four files.
 
 **`playbooks/apps/sonarr.yml`**
 - In Play 1: uncomment PATH A (Docker) or PATH B (native LXC) and delete the other
-- In Play 2: change `hosts:` to match your hosting type
-  - Docker: `hosts: tag_media_stack` (replace with your stack tag)
-  - Native LXC: `hosts: app_deploy`
+- In Play 2: leave `hosts: "deploy_{{ instance }}"` alone — it is correct for both
+  hosting types. Play 1 adds the guest to that per-instance group on every path
+  (PATH B's `add_host` directly, PATH A via `find-or-create-host.yml`'s
+  `deploy_group`). Do NOT target a shared group or a `tag_<stack>` pattern:
+  `add_host` groups persist for a whole run and `bootstrap.yml` chains app
+  playbooks with `import_playbook`, so a shared group accumulates every earlier
+  app's guest and the role would run on all of them.
 - In Play 3 (Wire): add any app-to-app wiring in the commented section at the bottom
 
 **`config.example/apps/sonarr.example.yml`**

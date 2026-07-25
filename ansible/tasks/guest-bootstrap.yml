@@ -17,6 +17,10 @@
     state: directory
     mode: "0755"
 
+# node_exporter is part of the baseline so the observability stack (slice 405) has
+# something to scrape on every guest it creates. It listens on :9100 and exposes
+# host metrics only — no control surface. Prometheus binds the stack host's
+# loopback, so nothing publishes these metrics beyond the lab network.
 - name: Update apt cache and install baseline packages
   ansible.builtin.apt:
     name:
@@ -25,8 +29,15 @@
       - sudo
       - unattended-upgrades
       - apt-listchanges
+      - prometheus-node-exporter
     state: present
     update_cache: true
+
+- name: Enable and start node_exporter
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    state: started
+    enabled: true
 
 - name: Upgrade installed packages
   ansible.builtin.apt:
@@ -48,8 +59,15 @@
   community.general.timezone:
     name: "{{ homelabinfra_config.timezone | default('UTC') }}"
 
-- name: Configure unattended-upgrades
-  ansible.builtin.import_tasks: bootstrap/configure-unattended-upgrades.yml
+# NOTE: configure-unattended-upgrades.yml is deliberately NOT imported here.
+# This file runs once, guarded by the homelab_bootstrapped marker, but that task's
+# Ntfy notify hook is conditional on homelabinfra_infra.notifications — which does
+# not exist yet when the first two baseline guests bootstrap (Vaultwarden is step 1,
+# and Ntfy's own guest bootstraps before its Play 3 records the key). Under the
+# marker they would never get the hook, and a re-run would not repair it because the
+# marker already exists. App playbooks call it unconditionally in Play 2 instead; all
+# its tasks are idempotent copy/file operations, so it is safe every run and
+# self-heals any guest whose deploy predates a provider change.
 
 - name: Write bootstrap marker
   ansible.builtin.copy:

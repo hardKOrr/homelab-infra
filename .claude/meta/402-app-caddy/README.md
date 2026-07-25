@@ -1,6 +1,6 @@
 # 402 — Caddy role + playbook
 
-**Status:** open
+**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 300 (wiring), 401 (ntfy must exist so Caddy can notify on cert renewal)
 **Blocks:** 500 (bootstrap), every app deploy that wires through Caddy
 

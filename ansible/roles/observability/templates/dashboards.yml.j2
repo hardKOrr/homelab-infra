@@ -1,0 +1,17 @@
+{{ ansible_managed | comment }}
+# Grafana dashboard provisioning for {{ instance }} — managed by homelab-infra.
+# Dashboards are loaded from the mounted directory on every Grafana start.
+apiVersion: 1
+
+providers:
+  - name: homelab-infra
+    orgId: 1
+    folder: homelab-infra
+    type: file
+    disableDeletion: false
+    # Operators can still edit and save copies; the provisioned original is
+    # restored on the next deploy.
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

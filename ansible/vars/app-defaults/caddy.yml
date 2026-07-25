@@ -1,0 +1,42 @@
+---
+# Default Proxmox and app configuration for Caddy — the default reverse proxy.
+# Users override specific values in config/apps/caddy.yml.
+# This file is git-managed — git pull may update these defaults.
+
+caddy_defaults:
+  proxmox:
+    type: lxc                   # native LXC — single Go binary from the official apt repo
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 1
+    memory: 512                 # MB — raise only for very high request volume
+    disk_volume:
+      storage: local
+      size: 8                   # GB
+    network: default
+    tags:
+      - homelab-infra
+      - caddy
+
+  app:
+    # The admin API port. This is the port recorded as reverse_proxy.port in the
+    # service registry — it is what tasks/wiring/caddy.yml talks to, and it is what
+    # the uptime monitor checks. The public listeners are http_port/https_port.
+    port: 2019
+    http_port: 80
+    https_port: 443
+
+    # tls_mode: acme | internal
+    #   acme     — public certificates via Let's Encrypt. Needs each app domain to
+    #              resolve publicly and reach this host on port 80 (HTTP-01).
+    #   internal — Caddy's built-in CA issues certificates. Correct for labs with no
+    #              public DNS; browsers warn until you trust the root at
+    #              /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+    tls_mode: acme
+    acme_email: ""              # optional; recommended for expiry notices from the CA
+
+  update:
+    github_repo: caddyserver/caddy   # used by lab-update-check for the release notes link
+
+  routing:
+    proxy: none                 # Caddy IS the reverse proxy — never route it through itself
+    auth: false                 # the admin API is LAN-only; Authentik in front would break wiring

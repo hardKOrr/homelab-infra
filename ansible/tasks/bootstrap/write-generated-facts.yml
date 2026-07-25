@@ -8,8 +8,8 @@
 #
 # Inputs:
 #   generated_facts_service:  top-level key to merge under — a Shape B role key
-#                             (reverse_proxy | sso | notifications | dns | backups |
-#                             vaultwarden) or 'domain'
+#                             (reverse_proxy | sso | notifications | monitoring |
+#                             metrics | dns | backups | vaultwarden) or 'domain'
 #   generated_facts_data:     dict to deep-merge under that key (scalar for 'domain')
 #   generated_facts_file:     optional override of the output path; defaults to
 #                             config/.generated/facts.yml anchored at bootstrap.yml's

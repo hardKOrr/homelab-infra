@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# lab-restart-app — restart Proxmox Backup Server.
+#
+# Both units are restarted: proxmox-backup is the API/datastore daemon and
+# proxmox-backup-proxy serves the web UI. Restarting only the proxy leaves a
+# half-restarted server.
+#
+# Exit 0: restarted successfully
+# Exit non-zero: restart failed (systemctl exit code propagated)
+
+set -euo pipefail
+
+systemctl restart proxmox-backup
+systemctl restart proxmox-backup-proxy

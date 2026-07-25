@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# lab-restart-app — restart the Caddy service.
+#
+# Restart, not reload: the running config (including every route added through the
+# admin API) is replayed from Caddy's autosave via `caddy run --resume`. A reload
+# would re-apply the base config file and drop those routes.
+#
+# Exit 0: restarted successfully
+# Exit non-zero: restart failed (systemctl exit code propagated)
+
+set -euo pipefail
+
+systemctl restart caddy

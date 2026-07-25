@@ -1,0 +1,39 @@
+---
+# Observability instance config — Prometheus + Grafana + node_exporter.
+# Copy to config/apps/observability.yml. Only set values that differ from defaults
+# in vars/app-defaults/observability.yml. This file persists after removal — it is
+# your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the Caddy subdomain
+# (observability.yourdomain.com — this is Grafana) and the Uptime Kuma monitor name.
+#
+# The Grafana admin password is generated on first deploy and recorded in
+# config/.generated/facts.yml (gitignored, mode 0600) under metrics.admin_password.
+#
+# Prometheus is NOT published. It binds the stack host's loopback because it has no
+# authentication of its own; reach it with an SSH tunnel if you need the raw UI.
+
+# ── Stack placement ────────────────────────────────────────────────────────────
+# Its own stack by default: Prometheus retention grows over time and should not
+# compete for disk with the login path on core_stack.
+# stack: monitoring_stack
+
+# ── App-specific config ────────────────────────────────────────────────────────
+# app:
+#   port: 3000                # Grafana, published to the reverse proxy
+#   prometheus_port: 9090     # loopback only
+#   node_exporter_port: 9100  # the port every guest's node_exporter is scraped on
+#
+#   admin_user: admin
+#   retention: 30d            # how long Prometheus keeps samples — raise with disk
+#   scrape_interval: 30s      # lower for finer resolution, at a cost in disk
+#
+#   grafana_image: "docker.io/grafana/grafana:latest"
+#   prometheus_image: "docker.io/prom/prometheus:latest"
+#   node_exporter_image: "quay.io/prometheus/node-exporter:latest"
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal
+#   auth: false   # set true to put Authentik in front of Grafana as well as
+#                 # Grafana's own login

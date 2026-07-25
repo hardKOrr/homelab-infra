@@ -1,0 +1,8 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/pbs.yml and config/apps/<instance>.yml.
+pbs_service_name: proxmox-backup-proxy
+pbs_apt_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+pbs_apt_keyring: /etc/apt/keyrings/proxmox-release.gpg
+pbs_apt_repo_url: "http://download.proxmox.com/debian/pbs"
+pbs_auth_id: root@pam

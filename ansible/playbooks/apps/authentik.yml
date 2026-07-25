@@ -1,0 +1,212 @@
+---
+# Deploy Authentik — SSO for every app with routing.auth: true (bootstrap step 4).
+# Docker on LXC (PATH A): server + worker + PostgreSQL + Redis on the core_stack host.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/authentik.yml -e instance=authentik
+#
+# The `instance` parameter is the unique name for this deployment.
+# It becomes the hostname, Caddy subdomain, Authentik app slug, and Uptime Kuma monitor name.
+# If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+#
+# Play 3 records the `sso` registry key (CONTRACT.md §3) BEFORE wiring, so a
+# standalone deploy registers Authentik exactly as a bootstrap run does. Every later
+# app deploy reads host + token from there to create its proxy provider.
+#
+# Authentik does not authenticate itself: app-defaults set routing.auth: false.
+
+# ── Play 1: Provision ──────────────────────────────────────────────────────────
+# Runs on localhost against the Proxmox API to find or create the stack host.
+# Adds the target host to a group for Play 2 to use.
+- name: "Authentik | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=authentik"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/authentik.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.authentik_defaults | combine(_instance_config | default({}), recursive=True) }}"
+
+  tasks:
+    # PATH A: DOCKER APP — app runs as containers on a shared stack host.
+    # The stack host is found (or created) by tag. App is deployed in Play 2.
+    - name: Find or create stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        # Per-instance group: add_host groups persist for the whole run, and
+        # bootstrap.yml chains app playbooks via import_playbook.
+        deploy_group: "deploy_{{ instance }}"
+
+
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the stack host to install and configure Authentik.
+- name: "Authentik | Deploy"
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
+    # on homelabinfra_infra.notifications, which does not exist yet when the first
+    # baseline guests are created. Running it every deploy is what gives them the
+    # hook once Ntfy is up. Idempotent copy/file tasks only.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    - name: Install Docker on newly created stack host
+      ansible.builtin.include_role:
+        name: docker
+      when: homelabinfra_stack_host_created | default(false) | bool
+
+    # ── App Deployment ─────────────────────────────────────────────────────────
+    - name: Deploy Authentik
+      ansible.builtin.include_role:
+        name: authentik
+
+
+# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# Registers Authentik in the service registry, then registers the app with platform
+# services. Runs on localhost (API calls). All wiring tasks are idempotent.
+- name: "Authentik | Record facts and wire"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    # Load infra facts in this play rather than relying on Play 1's localhost fact.
+    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout / pre-bootstrap
+    # run there is no facts.yml, homelabinfra_infra stays undefined, and every provider
+    # when-condition below falls through its `| default('none')` to a silent no-op.
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Shape B `sso` per ansible/vars/CONTRACT.md §3. host is the direct LAN URL
+    # (see the role's export task for why, not the public domain) and carries the
+    # scheme; tasks/wiring/authentik.yml appends /api/v3 to it.
+    - name: Record SSO facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: sso
+        generated_facts_data:
+          provider: authentik
+          instance: "{{ instance }}"
+          host: "{{ _authentik_deploy_host.authentik_api_url }}"
+          token: "{{ _authentik_deploy_host.authentik_api_token }}"
+          # Recorded so the operator can actually sign in — akadmin's password is
+          # generated, never prompted. Provider-specific optional fields per
+          # CONTRACT.md §3.
+          admin_user: "{{ _authentik_deploy_host.authentik_admin_username }}"
+          admin_password: "{{ _authentik_deploy_host.authentik_admin_password }}"
+
+    # Re-read so the wiring tasks below see the key just written.
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  vars:
+    _authentik_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Set them here.
+    # Do not change the variable names — wiring tasks depend on them.
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _authentik_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _authentik_deploy_host.app_config.app.port }}"
+    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Authentik ({{ instance }})"
+    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}/-/health/live/"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    # Skipped for Authentik: routing.auth is false in app-defaults. Putting the SSO
+    # provider behind its own forward-auth would deadlock the login flow.
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - _authentik_deploy_host.app_config.routing.auth | default(true)
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Notify deployment complete
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Authentik deployed ({{ instance }})"
+        notify_message: >-
+          SSO provider {{ instance }} is running and registered. Sign in at
+          https://{{ instance }}.{{ homelabinfra_infra.domain }} as
+          {{ _authentik_deploy_host.authentik_admin_username }} — the generated password
+          is in config/.generated/facts.yml on the controller, under
+          sso.admin_password. Apps with routing.auth: true are protected from their
+          next deploy onward.

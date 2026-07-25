@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# lab-restart-app — restart the Ntfy service.
+#
+# Exit 0: restarted successfully
+# Exit non-zero: restart failed (systemctl exit code propagated)
+
+set -euo pipefail
+
+systemctl restart ntfy

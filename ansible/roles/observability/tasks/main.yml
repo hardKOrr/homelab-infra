@@ -1,0 +1,227 @@
+---
+# observability role — Prometheus + Grafana + node_exporter via Docker Compose.
+# Called from Play 2 of playbooks/apps/observability.yml. Target: the
+# monitoring_stack host.
+#
+# ONE APP, NOT TWO — Grafana's only datasource is Prometheus and neither is useful
+# alone, so they deploy together under a single instance name and a single job in
+# Semaphore/Rundeck. Decision record: .claude/meta/405-app-grafana/notes.md.
+#
+# WHAT IS EXPOSED — only Grafana. Prometheus binds the stack host's loopback: it
+# has no authentication of its own, so publishing it would hand every metric in
+# the lab to anything on the LAN.
+#
+# SCRAPE TARGETS — generated from the Proxmox dynamic inventory at deploy time
+# (every homelab-infra-tagged guest). It is a snapshot, not live discovery:
+# re-running this deploy is what picks up newly added guests, which matches the
+# platform's fire-and-forget model. Guests get node_exporter from
+# tasks/guest-bootstrap.yml; this stack host runs it as a container instead.
+#
+# SECRETS — the Grafana admin password is generated once and reused from the
+# registry on re-run. It lives in the compose environment file (0600, root-owned)
+# because the container reads it, and in gitignored config/.generated/facts.yml so
+# the operator can sign in. Same narrow exception documented in roles/authentik.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to write the metrics registry key):
+#   observability_grafana_url, observability_prometheus_url,
+#   observability_admin_username, observability_admin_password
+
+- name: Set domain fact for the Grafana root URL
+  ansible.builtin.set_fact:
+    _observability_domain: >-
+      {{ homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+
+# ── Scrape targets ────────────────────────────────────────────────────────────
+# Guests with no resolvable address (never booted, inventory mid-refresh) are
+# skipped rather than written as an empty target Prometheus would reject.
+- name: Collect node scrape targets
+  ansible.builtin.set_fact:
+    _observability_node_targets: >-
+      {{ (_observability_node_targets | default([]))
+         + [{'name': item,
+             'address': hostvars[item].ansible_host
+                        | default(hostvars[item].ansible_default_ipv4.address | default(''))}] }}
+  loop: "{{ groups['tag_homelab-infra'] | default([]) }}"
+  when: >-
+    hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address | default(''))
+    | length > 0
+
+- name: Default the scrape target list when the inventory is empty
+  ansible.builtin.set_fact:
+    _observability_node_targets: "{{ _observability_node_targets | default([]) }}"
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ observability_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create config directories
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - ""
+    - dashboards
+    - provisioning/datasources
+    - provisioning/dashboards
+
+- name: Create data directories
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item }}"
+    state: directory
+    # Grafana runs as uid 472 and Prometheus as uid 65534 (nobody); both need to
+    # write their own volume, so these are not root-owned like the config tree.
+    owner: "{{ (item == 'grafana') | ternary('472', '65534') }}"
+    mode: "0750"
+  loop:
+    - prometheus
+    - grafana
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+- name: Read the existing compose environment (secret continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ observability_env_file }}"
+  register: _observability_env_current
+  failed_when: false
+  no_log: true
+
+- name: Parse the existing compose environment
+  ansible.builtin.set_fact:
+    _observability_env_existing: >-
+      {{ dict((_observability_env_current.content | b64decode).splitlines()
+              | select('match', '^[A-Z_]+=')
+              | map('split', '=', 1))
+         if _observability_env_current.content is defined else {} }}
+  no_log: true
+
+- name: Resolve the Grafana admin password
+  ansible.builtin.set_fact:
+    _observability_admin_password: >-
+      {{ homelabinfra_infra.metrics.admin_password
+         | default(_observability_env_existing.GF_ADMIN_PASSWORD
+                   | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true),
+                   true) }}
+  no_log: true
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+- name: Write the compose environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ observability_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart observability
+
+- name: Write the Prometheus config
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ app_config.app.config_path }}/prometheus.yml"
+    mode: "0644"
+  notify: Reload prometheus
+
+- name: Write the Grafana datasource provisioning
+  ansible.builtin.template:
+    src: datasource.yml.j2
+    dest: "{{ app_config.app.config_path }}/provisioning/datasources/prometheus.yml"
+    mode: "0644"
+  notify: Restart observability
+
+- name: Write the Grafana dashboard provisioning
+  ansible.builtin.template:
+    src: dashboards.yml.j2
+    dest: "{{ app_config.app.config_path }}/provisioning/dashboards/homelab-infra.yml"
+    mode: "0644"
+  notify: Restart observability
+
+- name: Install the default homelab dashboard
+  ansible.builtin.copy:
+    src: homelab-nodes.json
+    dest: "{{ app_config.app.config_path }}/dashboards/homelab-nodes.json"
+    mode: "0644"
+  notify: Restart observability
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ observability_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart observability
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+- name: Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ observability_project_dir }}"
+
+- name: Start the observability stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ observability_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts and reloads before the health checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Prometheus to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.prometheus_port }}/-/ready"
+    status_code: 200
+  register: _prometheus_health
+  until: _prometheus_health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Wait for Grafana to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/health"
+    status_code: 200
+  register: _grafana_health
+  until: _grafana_health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# Proves the provisioning actually landed — a datasource that failed to load
+# leaves every dashboard panel blank, which is easy to miss until someone looks.
+- name: Verify the Prometheus datasource is provisioned
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/datasources/uid/prometheus"
+    user: "{{ app_config.app.admin_user | default('admin') }}"
+    password: "{{ _observability_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: _grafana_datasource
+  until: _grafana_datasource.status | default(0) == 200
+  retries: 10
+  delay: 3
+  changed_when: false
+  no_log: true
+
+# ── Hand the endpoints back to the playbook ───────────────────────────────────
+- name: Export the observability endpoints to the playbook
+  ansible.builtin.set_fact:
+    observability_grafana_url: "http://{{ _observability_host }}:{{ app_config.app.port }}"
+    # Loopback-bound on purpose — recorded for humans and for on-host debugging,
+    # not as something other services can reach.
+    observability_prometheus_url: "http://127.0.0.1:{{ app_config.app.prometheus_port }}"
+    observability_admin_username: "{{ app_config.app.admin_user | default('admin') }}"
+    observability_admin_password: "{{ _observability_admin_password }}"
+    observability_scrape_target_count: "{{ _observability_node_targets | length }}"
+  vars:
+    _observability_host: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+  no_log: true

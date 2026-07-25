@@ -1,0 +1,291 @@
+---
+# Deploy Proxmox Backup Server — the backup target (bootstrap step 7).
+# VM, not LXC: PBS wants a full kernel and its own storage stack.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/pbs.yml -e instance=pbs
+#
+# The `instance` parameter is the unique name for this deployment.
+# It becomes the hostname, Caddy subdomain, Authentik app slug, and Uptime Kuma monitor name.
+# If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+#
+# PROVISIONING — PBS ships as an ISO installer, which cannot be driven unattended.
+# Play 1 instead builds (once) a Debian cloud-init template on the Proxmox node and
+# clones it; Play 2 installs the PBS packages from Proxmox's apt repository. The
+# template build is idempotent and shared — any future VM app clones the same one.
+#
+# Play 3 provisions the datastore, backup job and notification routing via
+# tasks/bootstrap/configure-pbs.yml, then records the `backups` registry key.
+
+# ── Play 1: Provision ──────────────────────────────────────────────────────────
+# Runs on localhost against the Proxmox API to provision or locate the VM. The
+# node-local qm waits inside vm-clone.yml delegate to homelabinfra_config.proxmox.node.
+# Adds the target host to a group for Play 2 to use.
+- name: "PBS | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=pbs"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/pbs.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.pbs_defaults | combine(_instance_config | default({}), recursive=True) }}"
+
+  tasks:
+    # VM PATH — dedicated VM per instance. Mirrors the native LXC playbooks: an
+    # existing tag_<instance> host is reused so re-runs are idempotent (a fresh
+    # generate-ip would otherwise allocate a second IP/VMID and clone a duplicate).
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Check for existing instance host
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ groups['tag_' + instance] | default([]) }}"
+
+    - name: Add existing instance host to deploy group
+      ansible.builtin.add_host:
+        name: "{{ _existing_hosts[0] }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: >-
+          {{ hostvars[_existing_hosts[0]].ansible_host
+             | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+      when: _existing_hosts | length > 0
+
+    - name: Provision new VM
+      when: _existing_hosts | length == 0
+      block:
+        # Built once and reused by every VM app afterwards; a no-op when it exists.
+        - name: Ensure the Debian cloud-init template exists
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
+          vars:
+            cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid }}"
+            cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
+            cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
+            cloud_template_storage: "{{ app_config.proxmox.cloud_template.storage }}"
+            cloud_template_bridge: >-
+              {{ homelabinfra_config.networks[app_config.proxmox.network | default('default')].bridge
+                 | default('vmbr0') }}
+
+        # Tag with the instance name so the reuse check above (and remove.yml)
+        # can find this guest via the tag_<instance> inventory group.
+        - name: Set VM identity from app config
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({'proxmox': {'vm':
+                   app_config.proxmox.vm | combine({
+                     'name': instance,
+                     'tags': ((app_config.proxmox.vm.tags | default(['homelab-infra'])) + [instance]) | unique
+                   }, recursive=True)
+                 }}, recursive=True) }}
+
+        - name: Generate IP address
+          ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+          vars:
+            network_name: "{{ app_config.proxmox.network | default('default') }}"
+
+        - name: Set instance IP in config
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({
+                'proxmox': {'vm': {'ip_address': homelabinfra_instance.network.ip_address}}
+              }, recursive=True) }}
+
+        - name: Derive VMID from IP
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+
+        - name: Clone the VM from the cloud-init template
+          ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
+
+        # ansible_host here is the PBS VM's own IP — Play 3 reads it as the wiring upstream.
+        - name: Add VM to deploy group
+          # Play 3 reads ansible_host and app_config back from this hostvars handoff.
+          ansible.builtin.add_host:
+            name: "{{ instance }}"
+            groups: "deploy_{{ instance }}"
+            ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+            app_config: "{{ app_config }}"
+            homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+
+
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the PBS VM to install and configure Proxmox Backup Server.
+- name: "PBS | Deploy"
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
+    # on homelabinfra_infra.notifications, which does not exist yet when the first
+    # baseline guests are created. Running it every deploy is what gives them the
+    # hook once Ntfy is up. Idempotent copy/file tasks only.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    # ── App Deployment ─────────────────────────────────────────────────────────
+    - name: Deploy PBS
+      ansible.builtin.include_role:
+        name: pbs
+
+
+# ── Play 3: Record facts, configure, wire ──────────────────────────────────────
+# Records the API token, configures the datastore and backup job, then registers
+# the app with platform services. Runs on localhost (API calls). Idempotent.
+- name: "PBS | Record facts, configure and wire"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    # Load infra facts in this play rather than relying on Play 1's localhost fact.
+    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout / pre-bootstrap
+    # run there is no facts.yml, homelabinfra_infra stays undefined, and every provider
+    # when-condition below falls through its `| default('none')` to a silent no-op.
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Written before configure-pbs.yml runs, for two reasons: the token is what
+    # configure-pbs authenticates with, and recording it now is what lets the next
+    # deploy reuse the token instead of rotating it. write-generated-facts
+    # deep-merges, so configure-pbs's own `backups` write preserves these fields.
+    - name: Record PBS API token
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: backups
+        generated_facts_data:
+          api_token_id: "{{ _pbs_deploy_host.pbs_token_id }}"
+          api_token_secret: "{{ _pbs_deploy_host.pbs_token_secret }}"
+
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  vars:
+    _pbs_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Set them here.
+    # Do not change the variable names — wiring tasks depend on them.
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _pbs_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _pbs_deploy_host.app_config.app.port }}"
+    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Proxmox Backup Server ({{ instance }})"
+    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+
+  tasks:
+    # Datastore, retention, Ntfy routing, PVE storage backend and the vzdump job.
+    # PBS runs the backups itself afterwards — Ansible never executes one.
+    - name: Configure datastore, backup job and notifications
+      ansible.builtin.include_tasks: ../../tasks/bootstrap/configure-pbs.yml
+      vars:
+        pbs_api_host: "{{ _pbs_deploy_host.pbs_url }}"
+        pbs_api_token_id: "{{ _pbs_deploy_host.pbs_token_id }}"
+        pbs_api_token_secret: "{{ _pbs_deploy_host.pbs_token_secret }}"
+        pbs_instance: "{{ instance }}"
+        pbs_datastore_name: "{{ _pbs_deploy_host.app_config.app.datastore_name }}"
+
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    # Skipped for PBS: routing.auth is false in app-defaults. PBS has its own login
+    # and its own API tokens, and forward-auth would also intercept the API that
+    # configure-pbs and the PVE storage backend use.
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - _pbs_deploy_host.app_config.routing.auth | default(true)
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # configure-pbs.yml already sends its own "backups configured" message with the
+    # job details, so this one reports the deploy itself.
+    - name: Notify deployment complete
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "PBS deployed ({{ instance }})"
+        notify_message: >-
+          Proxmox Backup Server {{ instance }} is running at
+          {{ _pbs_deploy_host.pbs_url }} and registered as a PVE storage backend.
+          Backups run on the configured schedule without further action.

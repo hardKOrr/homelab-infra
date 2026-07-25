@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# lab-update-check — report whether Ntfy has an update available.
+#
+# Contract (required by check-native-updates.yml):
+#   stdout: single JSON line
+#     {"app":"<name>","installed":"<version>","latest":"<version>","update_available":<bool>}
+#   exit 0: check completed (regardless of whether an update is available)
+#   exit 1: check could not be performed — result will be skipped
+
+set -euo pipefail
+
+installed="$(ntfy --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+latest="$(curl -sf https://api.github.com/repos/binwiederhier/ntfy/releases/latest \
+          | grep -oP '"tag_name":\s*"v?\K[^"]+')"
+
+[ -n "$installed" ] && [ -n "$latest" ] || exit 1
+
+if [ "$installed" != "$latest" ]; then
+    update_available=true
+else
+    update_available=false
+fi
+
+echo "{\"app\":\"ntfy\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"update_available\":$update_available}"

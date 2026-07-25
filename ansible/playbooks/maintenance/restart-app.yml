@@ -54,9 +54,14 @@
       ansible.builtin.uri:
         url: "{{ homelabinfra_infra.notifications.host }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
         method: POST
-        headers:
-          Title: "{{ instance }} restart {{ _restart_ok | bool | ternary('complete', 'FAILED') }}"
-          Priority: "{{ _restart_ok | bool | ternary('default', 'high') }}"
+        # Ntfy is closed by default (slice 401) — carry the publish token when the
+        # registry has one. An Ntfy predating that change has no token and stays open.
+        headers: >-
+          {{ {'Title': instance ~ ' restart ' ~ (_restart_ok | bool | ternary('complete', 'FAILED')),
+              'Priority': _restart_ok | bool | ternary('default', 'high')}
+             | combine({'Authorization': 'Bearer ' ~ homelabinfra_infra.notifications.token}
+                       if homelabinfra_infra.notifications.token | default('') | length > 0
+                       else {}) }}
         body: >-
           {{ _restart_ok | bool
              | ternary(instance ~ ' was restarted manually.',

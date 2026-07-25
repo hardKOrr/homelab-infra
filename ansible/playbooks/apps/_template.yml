@@ -62,6 +62,9 @@
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
+        # Per-instance group: add_host groups persist for the whole run, and
+        # bootstrap.yml chains app playbooks via import_playbook.
+        deploy_group: "deploy_{{ instance }}"
 
     # PATH B: NATIVE LXC APP — app gets its own dedicated LXC container
     # Uncomment this block and delete PATH A above.
@@ -78,7 +81,7 @@
     #   # Play 3 reads ansible_host and app_config back from this hostvars handoff.
     #   ansible.builtin.add_host:
     #     name: "{{ homelabinfra_instance.lxc.hostname }}"
-    #     groups: app_deploy
+    #     groups: "deploy_{{ instance }}"
     #     ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
     #     ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
     #     app_config: "{{ app_config }}"
@@ -87,9 +90,14 @@
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the target guest to install and configure the app.
-# For Docker apps: target is tag_<stack>. For native LXC: target is app_deploy group.
+# Both paths add the guest to the per-instance group deploy_<instance>.
 - name: "APP_NAME | Deploy"
-  hosts: app_deploy   # change to tag_STACK_NAME for Docker apps (e.g. tag_media_stack)
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"   # same for both paths — see the Play 2 comment above
   become: true
   gather_facts: true
 
@@ -108,6 +116,13 @@
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
+    # on homelabinfra_infra.notifications, which does not exist yet when the first
+    # baseline guests are created. Running it every deploy is what gives them the
+    # hook once Ntfy is up. Idempotent copy/file tasks only.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
     - name: Install Docker on newly created stack host
       ansible.builtin.include_role:
@@ -144,13 +159,13 @@
     # Do not change the variable names — wiring tasks depend on them.
     #
     # upstream host/port come from the deploy target Play 1 registered in the
-    # app_deploy group (both PATH A branches and PATH B call add_host). Its
+    # deploy_<instance> group (both PATH A branches and PATH B call add_host). Its
     # ansible_host is the stack host IP for Docker apps and the app LXC IP for
     # native apps, so this one read is correct for every provisioning path — do
     # not special-case per path.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ hostvars[groups['app_deploy'][0]].ansible_host }}"
-    wiring_upstream_port: "{{ hostvars[groups['app_deploy'][0]].app_config.app.port }}"
+    wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
+    wiring_upstream_port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port }}"
     wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "APP_NAME ({{ instance }})"
     wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
@@ -170,7 +185,7 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - hostvars[groups['app_deploy'][0]].app_config.routing.auth | default(true)
+        - hostvars[groups['deploy_' ~ instance][0]].app_config.routing.auth | default(true)
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml

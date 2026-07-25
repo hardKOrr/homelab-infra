@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# lab-tail-applog — stream recent log output for Ntfy.
+#
+# Usage: lab-tail-applog [lines]
+#   lines: number of recent lines to show (default: 50)
+
+set -euo pipefail
+
+LINES="${1:-50}"
+
+journalctl -u ntfy -n "$LINES" --no-pager

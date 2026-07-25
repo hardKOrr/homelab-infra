@@ -21,12 +21,21 @@
 - name: Watchtower | Derive Ntfy notification URL
   ansible.builtin.set_fact:
     # shoutrrr ntfy format wants a bare host — scheme moves to a query param.
+    # Credentials are inlined as userinfo because Ntfy is closed by default
+    # (slice 401); an Ntfy predating that has no recorded user and the URL stays
+    # anonymous. shoutrrr authenticates to Ntfy with the account's basic-auth
+    # pair, not the bearer token, so this reads user + password.
     _watchtower_ntfy_url: >-
-      ntfy://{{ _ntfy_host | regex_replace('^https?://', '') }}/{{
+      ntfy://{{ _ntfy_userinfo }}{{ _ntfy_host | regex_replace('^https?://', '') }}/{{
         homelabinfra_infra.notifications.topic | default('homelab')
       }}?scheme={{ 'http' if _ntfy_host is match('^http://') else 'https' }}
   vars:
     _ntfy_host: "{{ homelabinfra_infra.notifications.host }}"
+    _ntfy_userinfo: >-
+      {{ (homelabinfra_infra.notifications.user | urlencode ~ ':'
+          ~ homelabinfra_infra.notifications.password | default('') | urlencode ~ '@')
+         if homelabinfra_infra.notifications.user | default('') | length > 0 else '' }}
+  no_log: true
   when:
     - homelabinfra_infra is defined
     - homelabinfra_infra.notifications is defined
@@ -41,6 +50,11 @@
     group: root
     mode: "0750"
 
+# The compose file carries the Ntfy publish credential when notifications are
+# configured — root-only 0640 in a 0750 directory. Same narrow exception to
+# .claude/specs/secrets-handling.md documented in configure-unattended-upgrades.yml:
+# a guest that reports its own container updates must hold a publish credential,
+# and it grants nothing beyond publishing to one topic.
 - name: Watchtower | Write docker-compose.yml
   ansible.builtin.copy:
     dest: /opt/watchtower/docker-compose.yml
@@ -69,6 +83,7 @@
       {% endraw %}
               If a container broke after this update, run the "Rollback Container" job with the container name and its previous image tag.
       {% endif %}
+  no_log: true
 
 - name: Watchtower | Start via docker compose
   community.docker.docker_compose_v2:

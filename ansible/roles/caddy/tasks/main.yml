@@ -1,0 +1,278 @@
+---
+# caddy role — native LXC deployment from the official Cloudsmith apt repository.
+# Called from Play 2 of playbooks/apps/caddy.yml. Target: dedicated LXC.
+#
+# CONFIGURATION MODEL — read this before changing anything here.
+#
+# Caddy is configured as JSON through its admin API, not by a Caddyfile. An empty
+# Caddyfile adapts to a config with NO http servers at all, and the route wiring
+# (tasks/wiring/caddy.yml, slice 300) POSTs to
+# /config/apps/http/servers/srv0/routes — so `srv0` must exist with an empty route
+# table before the first app is wired. A JSON base config guarantees exactly that.
+#
+# Persistence: the unit runs `caddy run --config <base> --resume`. On first start
+# there is no autosave, so the base config applies. Afterwards Caddy replays its
+# autosaved running config, so routes added through the admin API survive restarts
+# and reboots. That is why the handler restarts and never reloads — `caddy reload`
+# re-applies the base file and would drop every wired route.
+#
+# Drift: per CLAUDE.md ("fire-and-forget provisioning — we do not police drift")
+# this role does not rewrite a healthy running config. It creates the base config
+# when no srv0 exists, and otherwise reconciles only the two subtrees it owns
+# (srv0 listeners, TLS automation policies) in place, never touching routes.
+#
+# Updating: re-running this playbook IS the update mechanism — apt state: latest
+# upgrades Caddy in place and reports changed only when it actually moves.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to write the reverse_proxy registry key):
+#   caddy_admin_host, caddy_admin_port
+
+# ── Install ───────────────────────────────────────────────────────────────────
+- name: Install apt repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - debian-keyring
+      - debian-archive-keyring
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Create apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Install the Caddy apt signing key
+  ansible.builtin.get_url:
+    url: "{{ caddy_apt_key_url }}"
+    dest: /etc/apt/keyrings/caddy-stable.asc
+    mode: "0644"
+  register: _caddy_key
+
+- name: Dearmor the Caddy apt signing key
+  ansible.builtin.command:
+    cmd: "gpg --batch --yes --dearmor -o {{ caddy_apt_keyring }} /etc/apt/keyrings/caddy-stable.asc"
+  when: _caddy_key is changed
+  changed_when: true
+
+- name: Add the Caddy apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ caddy_apt_keyring }}] {{ caddy_apt_repo_url }} any-version main"
+    filename: caddy-stable
+    state: present
+    update_cache: true
+
+# state: latest is deliberate — re-running the deploy is the documented update path
+# for native apps (CLAUDE.md "Native LXC App Update Path").
+- name: Install Caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: latest    # noqa package-latest — re-running the deploy IS the update mechanism
+  notify: Restart caddy
+
+# ── Base configuration ────────────────────────────────────────────────────────
+- name: Resolve the admin API bind address
+  ansible.builtin.set_fact:
+    # The wiring tasks reach the admin API from the Ansible controller, so it must
+    # bind the LXC's own interface rather than the localhost default.
+    _caddy_bind_ip: "{{ ansible_host | default(ansible_default_ipv4.address) }}"
+
+- name: Build the desired base configuration
+  ansible.builtin.set_fact:
+    # One dict expression keeps ports as ints in the JSON body
+    # (.claude/specs/jinja-string-typing.md). srv0 starts with an empty route
+    # table — every route is added later through the admin API by the wiring tasks.
+    _caddy_base_config: >-
+      {{ {
+           'admin': {'listen': _caddy_bind_ip ~ ':' ~ (app_config.app.port | int)},
+           'apps': {
+             'http': {
+               'servers': {
+                 'srv0': {
+                   'listen': [':' ~ (app_config.app.https_port | default(443) | int),
+                              ':' ~ (app_config.app.http_port | default(80) | int)],
+                   'routes': [],
+                 },
+               },
+             },
+             'tls': {'automation': {'policies': [{'issuers': [_caddy_issuer]}]}},
+           },
+         } }}
+  vars:
+    _caddy_issuer: >-
+      {{ {'module': 'internal'}
+         if app_config.app.tls_mode | default('acme') == 'internal'
+         else ({'module': 'acme'}
+               | combine({'email': app_config.app.acme_email}
+                         if app_config.app.acme_email | default('') | length > 0 else {})) }}
+
+- name: Write the base configuration
+  ansible.builtin.copy:
+    content: "{{ _caddy_base_config | to_nice_json }}"
+    dest: "{{ caddy_config_file }}"
+    owner: root
+    group: caddy
+    mode: "0640"
+
+# The packaged unit runs a Caddyfile; remove it so nothing can silently apply an
+# empty server set over the JSON config.
+- name: Remove the packaged Caddyfile
+  ansible.builtin.file:
+    path: /etc/caddy/Caddyfile
+    state: absent
+
+- name: Create the systemd drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ caddy_service_name }}.service.d"
+    state: directory
+    mode: "0755"
+
+- name: Point the service at the JSON config with autosave resume
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ caddy_service_name }}.service.d/homelab-infra.conf"
+    mode: "0644"
+    content: |
+      # Managed by homelab-infra. Overrides the packaged Caddyfile invocation.
+      # --resume replays the autosaved running config so admin-API routes survive
+      # restarts; the --config file is only the first-boot seed.
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/caddy run --config {{ caddy_config_file }} --resume
+      ExecReload=
+      ExecReload=/usr/bin/caddy reload --config {{ caddy_config_file }} --force
+  notify: Restart caddy
+
+- name: Enable and start caddy service
+  ansible.builtin.systemd:
+    name: "{{ caddy_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts before touching the admin API
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the admin API to answer
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/"
+    status_code: 200
+  register: _caddy_admin
+  until: _caddy_admin.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── Reconcile the subtrees this role owns ─────────────────────────────────────
+- name: Read the running http server config
+  ansible.builtin.uri:
+    url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0"
+    status_code: [200, 404, 500]
+    return_content: true
+  register: _caddy_srv0
+  changed_when: false
+  vars:
+    _caddy_admin_url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}"
+
+# Fresh install, or an autosave that lost the server — load the base config whole.
+# Safe here precisely because there are no routes to lose.
+- name: Load the base configuration
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/load"
+    method: POST
+    body_format: json
+    body: "{{ _caddy_base_config }}"
+    status_code: 200
+  when: _caddy_srv0.status != 200 or (_caddy_srv0.json | default(None)) is none
+  changed_when: true
+
+- name: Reconcile the subtrees this role owns
+  when:
+    - _caddy_srv0.status == 200
+    - (_caddy_srv0.json | default(None)) is not none
+  vars:
+    _caddy_admin_url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}"
+    _caddy_desired_listen: "{{ _caddy_base_config.apps.http.servers.srv0.listen }}"
+    _caddy_desired_policies: "{{ _caddy_base_config.apps.tls.automation.policies }}"
+  block:
+    # PATCH, not PUT on the parent: replacing srv0 wholesale would take its routes
+    # with it.
+    - name: Update drifted srv0 listeners
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0/listen"
+        method: PATCH
+        body_format: json
+        body: "{{ _caddy_desired_listen }}"
+        status_code: 200
+      when: _caddy_srv0.json.listen | default([]) != _caddy_desired_listen
+      changed_when: true
+
+    - name: Read the running TLS automation policies
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/automation/policies"
+        status_code: [200, 404, 500]
+        return_content: true
+      register: _caddy_policies
+      changed_when: false
+
+    - name: Update drifted TLS automation policies
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/automation/policies"
+        method: PATCH
+        body_format: json
+        body: "{{ _caddy_desired_policies }}"
+        status_code: 200
+      when: >-
+        _caddy_policies.status != 200
+        or (_caddy_policies.json | default([])) != _caddy_desired_policies
+      changed_when: true
+
+- name: Verify the route table is reachable
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/http/servers/srv0/routes"
+    status_code: 200
+  changed_when: false
+
+# ── Hand the admin endpoint back to the playbook ──────────────────────────────
+- name: Export the admin endpoint to the playbook
+  ansible.builtin.set_fact:
+    caddy_admin_host: "http://{{ _caddy_bind_ip }}"
+    caddy_admin_port: "{{ app_config.app.port | int }}"
+
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog
+
+# ── Record installed version ──────────────────────────────────────────────────
+- name: Read the installed Caddy version
+  ansible.builtin.command:
+    cmd: caddy version
+  register: _caddy_version
+  changed_when: false
+
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Record installed version
+  ansible.builtin.copy:
+    content: '{"version": "{{ _caddy_version.stdout | regex_search(''[0-9]+\.[0-9]+\.[0-9]+'') }}"}'
+    dest: /etc/ansible/facts.d/caddy.fact
+    mode: "0644"

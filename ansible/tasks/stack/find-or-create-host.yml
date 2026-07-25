@@ -14,6 +14,15 @@
 #
 # Inputs (required before calling):
 #   stack_name                          — stack id, matches Proxmox tag (e.g. media_stack)
+#   deploy_group                        — optional; inventory group the host is added to.
+#                                         Defaults to 'app_deploy' for back-compat, but every
+#                                         app playbook passes a PER-INSTANCE name
+#                                         (deploy_<instance>). add_host groups persist for the
+#                                         whole run, and bootstrap.yml chains app playbooks via
+#                                         import_playbook — a single shared group would
+#                                         accumulate hosts across steps, so step N's Play 2
+#                                         would run its role on every earlier app's guest and
+#                                         its Play 3 would read [0], the FIRST app's host.
 #   app_config                          — merged app config (handed to Play 2 via add_host)
 #   homelabinfra_config.ansible.ssh_user
 #   homelabinfra_config.proxmox.*       — API connection + lxc defaults (create path)
@@ -29,7 +38,7 @@
 #   homelabinfra_instance.stack.hostname   — hostname of the stack host
 #   homelabinfra_instance.stack.ip_address — IP of the stack host
 #   homelabinfra_stack_host_created         — hostvar on the added host; true only on create
-#   app_deploy group                        — host added so Play 2 can target it
+#   deploy_group                            — host added so Play 2 can target it
 #
 # One-shot per play: it sets _stack_hosts and rewrites proxmox.lxc in place, so a
 # second call in the same play reads stale state. Call once per app deploy.
@@ -70,7 +79,7 @@
 - name: Add existing stack host to deploy group
   ansible.builtin.add_host:
     name: "{{ homelabinfra_instance.stack.hostname }}"
-    groups: app_deploy
+    groups: "{{ deploy_group | default('app_deploy') }}"
     ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
     app_config: "{{ app_config }}"
@@ -143,7 +152,7 @@
     - name: Add new stack host to deploy group
       ansible.builtin.add_host:
         name: "{{ homelabinfra_instance.stack.hostname }}"
-        groups: app_deploy
+        groups: "{{ deploy_group | default('app_deploy') }}"
         ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"

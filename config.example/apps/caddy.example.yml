@@ -1,0 +1,40 @@
+---
+# Caddy instance config.
+# Copy to config/apps/caddy.yml. Only set values that differ from defaults
+# in vars/app-defaults/caddy.yml. This file persists after removal — it is
+# your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the hostname and the
+# Uptime Kuma monitor name. It must match reverse_proxy.instance in
+# config/infrastructure.yml.
+#
+# Caddy usually needs no overrides — with one exception worth reading:
+# if your lab has no public DNS, set app.tls_mode to `internal` (see below).
+
+# ── Proxmox resource overrides ─────────────────────────────────────────────────
+# proxmox:
+#   cores: 2
+#   memory: 1024    # MB — default 512 handles a typical homelab's request volume
+
+# ── App-specific config ────────────────────────────────────────────────────────
+# app:
+#   port: 2019            # admin API port — wiring tasks talk to this
+#   http_port: 80         # public HTTP listener (also serves ACME HTTP-01)
+#   https_port: 443       # public HTTPS listener
+#
+#   # tls_mode: acme | internal
+#   #   acme     — (default) real certificates from Let's Encrypt. Requires each
+#   #              app domain to resolve publicly and reach this host on port 80.
+#   #   internal — Caddy's own CA signs certificates. Use this for an internal-only
+#   #              lab: nothing needs to be reachable from the internet. Browsers
+#   #              warn until you trust Caddy's root certificate, found on the
+#   #              Caddy LXC at
+#   #              /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+#   tls_mode: internal
+#
+#   acme_email: "you@example.com"   # optional; the CA emails certificate expiry warnings here
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   # Both stay as they are. proxy: none keeps Caddy from routing itself, and
+#   # auth: false keeps Authentik off the admin API that every app deploy writes to.

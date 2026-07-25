@@ -1,0 +1,35 @@
+---
+# Default Proxmox and app configuration for Ntfy — the platform notification hub.
+# Users override specific values in config/apps/ntfy.yml.
+# This file is git-managed — git pull may update these defaults.
+
+ntfy_defaults:
+  proxmox:
+    type: lxc                   # native LXC — single Go binary, no Docker needed
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 1
+    memory: 512                 # MB — Ntfy is very lightweight
+    disk_volume:
+      storage: local
+      size: 8                   # GB
+    network: default
+    tags:
+      - homelab-infra
+      - ntfy
+
+  app:
+    port: 80                    # HTTP listener (publish + subscribe + web UI)
+    data_path: /var/lib/ntfy    # auth database lives here
+    cache_path: /var/cache/ntfy # message cache + attachments
+    topic: homelab              # the topic every homelab-infra tool publishes to
+    user: homelab               # the account homelab-infra publishes as
+    attachment_total_size_limit: 2G
+    message_retention: 12h      # how long cached messages stay fetchable
+
+  update:
+    github_repo: binwiederhier/ntfy
+    binary_path: /usr/bin/ntfy
+
+  routing:
+    proxy: internal
+    auth: false                 # Ntfy has its own token/user auth — no Authentik in front

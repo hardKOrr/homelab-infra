@@ -1,0 +1,55 @@
+---
+# Proxmox Backup Server instance config.
+# Copy to config/apps/pbs.yml. Only set values that differ from defaults
+# in vars/app-defaults/pbs.yml. This file persists after removal — it is
+# your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the VM name, the Caddy
+# subdomain (pbs.yourdomain.com), and the Uptime Kuma monitor name.
+#
+# PBS is the only baseline service that is a VM. It ships as an ISO installer, so
+# homelab-infra clones a Debian cloud-init template instead and installs the PBS
+# packages from Proxmox's apt repository. The template is built automatically the
+# first time a VM is needed — there is no manual step.
+#
+# The datastore PATH and retention live in config/infrastructure.yml under
+# `backups:`, not here — they are platform-level settings.
+#
+# The API token is generated on first deploy and recorded in
+# config/.generated/facts.yml (gitignored, mode 0600) under backups.api_token_secret.
+
+# ── VM resources ───────────────────────────────────────────────────────────────
+# proxmox:
+#   vm:
+#     cores: 4
+#     memory: 4096        # MB — raise for large datastores; deduplication is memory-hungry
+#     disk_size: 128      # GB — the OS disk. Add a second disk in Proxmox for the
+#                         # datastore itself if you want backups on separate storage,
+#                         # then point infrastructure.yml backups.datastore_path at it.
+#     storage: local-lvm  # storage the cloned disk lands on
+#   network: default
+
+# ── Cloud-init template ────────────────────────────────────────────────────────
+# Shared by every VM app. Built once, then reused. Delete the template VM in
+# Proxmox to force a rebuild on the next deploy.
+# proxmox:
+#   cloud_template:
+#     vmid: 9000
+#     name: debian-12-cloud
+#     image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+#     storage: local-lvm
+
+# ── App-specific config ────────────────────────────────────────────────────────
+# app:
+#   port: 8007              # PBS web UI and REST API
+#   datastore_name: homelab # datastore created at infrastructure.yml backups.datastore_path
+#   api_token_name: ansible # token id becomes root@pam!ansible
+#
+#   # Use pbs-enterprise instead if this lab has a Proxmox subscription.
+#   apt_repo_component: pbs-no-subscription
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal
+#   # auth stays false — PBS has its own login, and forward-auth would also
+#   # intercept the API that the backup configuration and PVE storage backend use.

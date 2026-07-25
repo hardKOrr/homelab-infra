@@ -1,6 +1,6 @@
 # 404 — Uptime Kuma role + playbook
 
-**Status:** open
+**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 303 (wiring), 401 (ntfy)
 **Blocks:** auto-registered monitoring per CLAUDE.md
 

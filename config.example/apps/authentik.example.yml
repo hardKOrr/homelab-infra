@@ -1,0 +1,43 @@
+---
+# Authentik instance config.
+# Copy to config/apps/authentik.yml. Only set values that differ from defaults
+# in vars/app-defaults/authentik.yml. This file persists after removal — it is
+# your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the Caddy subdomain
+# (authentik.yourdomain.com) and the Uptime Kuma monitor name. It must match
+# sso.instance in config/infrastructure.yml.
+#
+# Authentik usually needs no overrides. Credentials are NOT set here: the admin
+# password and API token are generated on first deploy and recorded in
+# config/.generated/facts.yml (gitignored, mode 0600) under sso.admin_password
+# and sso.token. Sign in as akadmin with that password.
+
+# ── Stack placement ────────────────────────────────────────────────────────────
+# Which stack host these containers run on. Authentik gets its own by default
+# because it carries a database and every login in the lab depends on it.
+# stack: core_stack
+
+# ── App-specific config ────────────────────────────────────────────────────────
+# app:
+#   port: 9000                    # HTTP listener published on the stack host
+#   https_port: 9443              # HTTPS listener, unused behind the reverse proxy
+#   admin_email: "you@example.com"   # akadmin's address — set this to reach password resets
+#
+#   # Image tag. Leave empty to track the latest GitHub release, which is what a
+#   # re-run of this deploy installs. Pin a version here to freeze upgrades:
+#   image_tag: "2025.10.1"
+#
+#   postgres_image: "docker.io/library/postgres:16-alpine"
+#   redis_image: "docker.io/library/redis:7-alpine"
+
+# ── Resource sizing ────────────────────────────────────────────────────────────
+# Authentik is the heaviest baseline service (server + worker + PostgreSQL + Redis).
+# Size the STACK HOST, not this app — see config/apps/<stack>.yml if you pin one,
+# or let find-or-create-host provision the default. 4 GB RAM is a comfortable floor.
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal  # internal | external
+#   # auth stays false — putting Authentik behind its own forward-auth deadlocks
+#   # the login flow.

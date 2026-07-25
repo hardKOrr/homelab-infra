@@ -1,0 +1,54 @@
+---
+# Publish one notification to the configured notification provider.
+# Spec: .claude/specs/one-click-idempotent.md — "every automated state change
+# notifies via the configured notification provider".
+#
+# Runs wherever it is called from; the POST goes out from that host, so call it
+# from a localhost play unless the guest is the one with network access to Ntfy.
+#
+# Inputs:
+#   notify_title:    short headline (becomes the Ntfy Title header)
+#   notify_message:  body text
+#   notify_priority: optional — min | low | default | high | max (default: 'default')
+#
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   notifications.provider  — ntfy | gotify | discord | none
+#   notifications.host      — full base URL including scheme
+#   notifications.topic     — topic to publish to (default: homelab)
+#   notifications.token     — optional publish token; Ntfy ships closed since slice
+#                             401, but an older open server has no token recorded
+#                             and the POST goes out unauthenticated
+#
+# Silent no-op when the provider is not ntfy or the registry has no notifications
+# key — a lab that chose `none`, or a pre-bootstrap run, must not fail here
+# (.claude/specs/provider-noop-wiring.md). Only ntfy is implemented; gotify and
+# discord are declared providers with no publisher yet.
+
+- name: Notify | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - notify_title is defined and notify_title | length > 0
+      - notify_message is defined and notify_message | length > 0
+    fail_msg: "notify.yml requires notify_title and notify_message."
+
+- name: Notify | Publish to Ntfy
+  ansible.builtin.uri:
+    url: "{{ homelabinfra_infra.notifications.host }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
+    method: POST
+    headers: >-
+      {{ {'Title': notify_title, 'Priority': notify_priority | default('default')}
+         | combine({'Authorization': 'Bearer ' ~ homelabinfra_infra.notifications.token}
+                   if homelabinfra_infra.notifications.token | default('') | length > 0
+                   else {}) }}
+    body: "{{ notify_message }}"
+    body_format: raw
+    status_code: 200
+  # A notification must never be the thing that fails a successful deploy.
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+    - homelabinfra_infra.notifications.host | default('') | length > 0

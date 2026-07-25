@@ -1,0 +1,19 @@
+# docker-compose.yml for Uptime Kuma ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+services:
+  uptime-kuma:
+    image: "louislam/uptime-kuma:{{ app_config.app.image_tag | default('2') }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      # Uptime Kuma keeps its state in a single SQLite volume and has no
+      # migration coupling across containers, so Watchtower can carry patch
+      # updates within the pinned major tag.
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+    volumes:
+      - "{{ app_config.app.data_path }}:/app/data"
+    ports:
+      - "{{ app_config.app.port }}:3001"
