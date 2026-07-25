@@ -5,14 +5,13 @@
 # your restore point for re-deploying.
 #
 # Filename = instance name; it must match sso.instance in config/infrastructure.yml.
-# The canonical hostname is auth.yourdomain.com regardless of the instance name
-# (routing.subdomain: auth in app-defaults).
+# The hostname defaults to auth.yourdomain.com (routing.subdomain: auth in
+# app-defaults) — override routing.subdomain below to use anything else.
 #
 # Authentik usually needs no overrides. Credentials are NOT set here: the admin
 # password and API token are generated on first deploy and recorded in
 # config/.generated/facts.yml (gitignored, mode 0600) under sso.admin_password
-# and sso.token. Sign in as `collector` with that password (the bootstrap-created
-# akadmin is renamed on first deploy — see roles/authentik/README.md).
+# and sso.token. Sign in as akadmin with that password.
 
 # ── Stack placement ────────────────────────────────────────────────────────────
 # Which stack host these containers run on. Authentik gets its own by default
@@ -31,12 +30,6 @@
 #
 #   postgres_image: "docker.io/library/postgres:16-alpine"
 #   redis_image: "docker.io/library/redis:7-alpine"
-#
-#   # Optional Google social login — configured only when BOTH are set. Register
-#   # redirect URI https://auth.<domain>/source/oauth/callback/google/ in Google
-#   # Cloud Console. MFA enforcement stays an operator step (roles/authentik/README.md).
-#   google_client_id: ""
-#   google_client_secret: ""
 
 # ── Resource sizing ────────────────────────────────────────────────────────────
 # Authentik is the heaviest baseline service (server + worker + PostgreSQL + Redis).
@@ -45,11 +38,9 @@
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
-#   proxy: internal            # internal | external
-#   subdomain: auth            # canonical hostname (auth.<domain>) — rarely changed
-#   estate: foxglove           # deploy a second estate's Authentik: set its estate
-#                              # name and its sso facts land under estates.<name>
-#   wire_instance_alias: true  # migration only: also route <instance>.<domain>
-#                              # while bookmarks move to auth.<domain>
+#   proxy: internal    # internal | external
+#   subdomain: auth    # hostname is <subdomain>.<domain>; default auth
+#   estate: foxglove   # deploy a second estate's Authentik: set its estate name
+#                      # and its sso facts land under estates.<name>
 #   # identity stays none — putting Authentik behind its own forward-auth
 #   # deadlocks the login flow.

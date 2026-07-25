@@ -103,20 +103,25 @@ unverified JSON that would look implemented while silently failing open.
 - The stack host has enough RAM (4 GB is a comfortable floor for four containers).
 - Acceptance item 3 — blocked, see "Known gap".
 
-## 2026-07-25 — account/hostname doctrine (with slices 008/009)
+## 2026-07-25 — estate hostname (with slices 008/009)
 
-- Bootstrap admin renamed post-first-start: AUTHENTIK_BOOTSTRAP_* always creates
-  akadmin, so the role PATCHes the username to `collector` after the whoami
-  verify; the assert now accepts either name so pre-doctrine labs re-run clean.
-  Password and API token survive the rename.
-- Canonical hostname is `auth.<domain>`: `routing.subdomain: auth` in
-  app-defaults; Play 3 computes wiring_domain from wiring_subdomain. Optional
-  `routing.wire_instance_alias: true` keeps `<instance>.<domain>` routed during
-  migration.
-- Standing groups (homelab-users, homelab-admins/is_superuser) created at deploy
-  time — the wiring's "binding lands on next wire" fallback is now the exception.
-- Optional Google OAuth source configured only when both
-  `app.google_client_id/_secret` are set (email_link matching). MFA enrollment
-  recorded as an operator step in the new roles/authentik/README.md.
+- `routing.subdomain` default `auth` in app-defaults; Play 3 computes
+  wiring_domain from wiring_subdomain. Multi-estate labs reach each estate's
+  Authentik at that estate's `auth.<domain>`. It is a default, not enforcement —
+  override it in `config/apps/<instance>.yml` like any routing key.
 - SSO facts write is estate-scoped via `generated_facts_estate` — a
   `routing.estate` deploy records `estates.<name>.sso` for that estate only.
+
+### Reverted same day — scope correction
+
+An earlier pass added directory-content management to the role: renaming the
+bootstrap admin to `collector`, creating homelab-users/homelab-admins groups, a
+Google OAuth source, an MFA operator doctrine, and a `wire_instance_alias`
+migration route. None of it is multi-domain work; it was lifted from the
+operator's personal lab plans (`.claude/meta/02-*`, `03-*`) and hard-coded as
+product defaults. All removed.
+
+**Boundary this establishes:** the role provisions the service and hands back its
+endpoint, admin credentials and token. Account names, group membership, social
+login sources and MFA enforcement are operator policy set in the Authentik UI. A
+re-deploy must never overwrite a decision made there.

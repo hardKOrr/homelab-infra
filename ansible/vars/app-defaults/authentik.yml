@@ -23,17 +23,10 @@ authentik_defaults:
     postgres_image: "docker.io/library/postgres:16-alpine"
     redis_image: "docker.io/library/redis:7-alpine"
 
-    # Optional Google social login. When BOTH are set, the role configures a
-    # Google OAuth source (slug `google`) on deploy; leave empty to skip.
-    # Create the credentials in Google Cloud Console with redirect URI
-    # https://auth.<domain>/source/oauth/callback/google/
-    google_client_id: ""
-    google_client_secret: ""
-
   update:
     github_repo: goauthentik/authentik
 
   routing:
     proxy: internal
     identity: none              # Authentik IS the SSO provider — never wrap it in itself
-    subdomain: auth             # canonical hostname is auth.<domain> regardless of instance name
+    subdomain: auth             # default hostname auth.<domain>; override per instance

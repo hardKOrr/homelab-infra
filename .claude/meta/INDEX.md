@@ -81,10 +81,10 @@ defaults to it); catalog/oidc modes never promised proxy enforcement.
 ³ 403 additionally has one acceptance item blocked on work it does not own: no
 wiring task emits a reverse-proxy `forward_auth` handler, so nothing enforces the
 `forward_auth` identity mode. Owned by slice 306 — see 403's notes.md "Known gap".
-403 was extended with the account/hostname doctrine (2026-07-25): bootstrap admin
-renamed akadmin → `collector`, canonical hostname `auth.<domain>` via
-`routing.subdomain`, standing groups (homelab-users, homelab-admins) created at
-deploy time, optional Google OAuth source when credentials exist. See
+403 gained a `routing.subdomain` default of `auth` (2026-07-25) so multi-estate
+labs reach each estate's Authentik at its own `auth.<domain>`; it is a default,
+overridable per instance like any routing key. Directory content — account names,
+groups, social login sources, MFA — is explicitly out of the role's scope; see
 `roles/authentik/README.md`.
 
 Cross-slice effects of the 4XX build (2026-07-25):

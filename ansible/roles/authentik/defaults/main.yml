@@ -3,16 +3,8 @@
 # vars/app-defaults/authentik.yml and config/apps/<instance>.yml.
 authentik_project_dir: "/opt/{{ instance }}"
 authentik_env_file: "/opt/{{ instance }}/.env"
-# Account doctrine (see the role README): AUTHENTIK_BOOTSTRAP_* always creates
-# akadmin on first start; the role renames it to the standing admin name below.
-authentik_admin_user: collector
-authentik_bootstrap_user: akadmin
-# Standing groups created at deploy time so app wiring's group binding never has
-# to fall back to "binding lands on next wire".
-authentik_standing_groups:
-  - name: homelab-users
-    is_superuser: false
-  - name: homelab-admins
-    is_superuser: true
+# AUTHENTIK_BOOTSTRAP_* creates this account on first start. The role does not
+# rename it — account naming, groups and MFA are operator policy, not deployment.
+authentik_admin_user: akadmin
 authentik_postgres_user: authentik
 authentik_postgres_db: authentik

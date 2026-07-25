@@ -178,8 +178,8 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _authentik_deploy_host.ansible_host }}"
     wiring_upstream_port: "{{ _authentik_deploy_host.app_config.app.port }}"
-    # Canonical hostname: routing.subdomain (auth in app-defaults), not the
-    # instance name — auth.<domain> regardless of what the instance is called.
+    # Hostname comes from routing.subdomain (default `auth` in app-defaults,
+    # overridable per instance), falling back to the instance name.
     wiring_subdomain: "{{ _authentik_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Authentik ({{ instance }})"
@@ -194,22 +194,6 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.reverse_proxy is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
-
-    # Migration alias: labs that reached Authentik at <instance>.<domain> before
-    # the auth.<domain> doctrine keep that hostname working. Off by default —
-    # set routing.wire_instance_alias: true in config/apps/<instance>.yml while
-    # sessions and bookmarks move over, then drop it and run remove/re-deploy.
-    - name: Wire reverse proxy (instance-name alias route)
-      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
-      vars:
-        wiring_app_name: "{{ instance }}-alias"
-        wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.reverse_proxy is defined
-        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
-        - wiring_subdomain != instance
-        - _authentik_deploy_host.app_config.routing.wire_instance_alias | default(false) | bool
 
     # Skipped for Authentik: routing.identity is none in app-defaults. Putting the
     # SSO provider behind its own forward-auth would deadlock the login flow.
