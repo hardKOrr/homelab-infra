@@ -16,18 +16,22 @@
 #   6. Grafana stack — Prometheus + Grafana
 #   7. PBS           — Proxmox Backup Server (VM)
 #
-# After step 1: admin token printed to console. User must paste it into
-# config/infrastructure.yml (vaultwarden.admin_token) before proceeding.
-# All subsequent secrets are stored in Vaultwarden automatically.
+# TWO-PASS FLOW (Vaultwarden chicken-and-egg):
+#   Pass 1: Vaultwarden deploys, its admin token is printed to console ONCE.
+#           Bootstrap then halts at the token gate with paste-and-re-run instructions.
+#   Pass 2: user has saved the token (config/infrastructure.yml vaultwarden.admin_token,
+#           or VAULTWARDEN_ADMIN_TOKEN env var); the gate passes and bootstrap continues
+#           from step 2. Every step is idempotent, so the Vaultwarden re-run is a no-op.
+#
+# Re-running after any failure is safe — each step finds-or-creates its guest and
+# re-applies config without destructive operations.
+#
+# Steps 2-7 are staged as commented import_playbook blocks: import_playbook is
+# parsed at load time, so an import of a not-yet-written playbook would break
+# --syntax-check for the whole file. Each app slice (401-406) uncomments its own
+# block when its playbook lands.
 
-# TODO: Implement bootstrap plays in order above.
-# Each play should:
-#   1. Provision the guest (import create-lxc.yml or create-vm.yml)
-#   2. Run guest-bootstrap.yml on the new host
-#   3. Deploy the app role
-#   4. Run wiring step (Caddy route + Authentik + Uptime Kuma)
-#   5. Call bootstrap/write-generated-facts.yml to record service endpoint
-
+# ── Play 1: Load + validate platform config ───────────────────────────────────
 - name: Bootstrap | Load platform config
   hosts: localhost
   gather_facts: false
@@ -43,4 +47,158 @@
           - homelabinfra_config.infrastructure.domain is defined
         fail_msg: "config/proxmox.yml and config/infrastructure.yml must be filled in before running bootstrap."
 
-# TODO: Play per baseline service (see above)
+    # Catch provider typos up front — a misspelled provider would otherwise skip
+    # its bootstrap step silently (conditional imports below) instead of failing.
+    - name: Assert provider choices are recognized
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') in ['caddy', 'nginx', 'none']
+          - homelabinfra_config.infrastructure.sso.provider | default('none') in ['authentik', 'none']
+          - homelabinfra_config.infrastructure.notifications.provider | default('none') in ['ntfy', 'gotify', 'discord', 'none']
+          - homelabinfra_config.infrastructure.dns.provider | default('none') in ['pihole', 'adguard', 'opnsense', 'none']
+        fail_msg: >-
+          Unrecognized provider in config/infrastructure.yml. Allowed values —
+          reverse_proxy: caddy|nginx|none, sso: authentik|none,
+          notifications: ntfy|gotify|discord|none, dns: pihole|adguard|opnsense|none.
+
+    # Wiring tasks read homelabinfra_infra.domain, so record it before the first
+    # app deploy. Idempotent — deep-merge rewrite of the same value.
+    - name: Record platform domain in generated facts
+      ansible.builtin.import_tasks: ../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: domain
+        generated_facts_data: "{{ homelabinfra_config.infrastructure.domain }}"
+
+
+# ── Step 1: Vaultwarden — secrets store (enforced) ────────────────────────────
+- import_playbook: apps/vaultwarden.yml
+  vars:
+    instance: vaultwarden
+
+- name: Bootstrap | Record Vaultwarden facts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # The vaultwarden import's provision play added exactly one host to
+    # app_deploy (both its find and create branches call add_host), so [0] is
+    # the Vaultwarden guest. Shape B per ansible/vars/CONTRACT.md §3.
+    - name: Write Vaultwarden facts
+      ansible.builtin.import_tasks: ../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: vaultwarden
+        generated_facts_data:
+          host: "http://{{ hostvars[groups['app_deploy'][0]].ansible_host }}"
+          port: "{{ hostvars[groups['app_deploy'][0]].app_config.app.port | int }}"
+
+- name: Bootstrap | Vaultwarden admin token gate
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # Pass 1 ends here by design: the halt is a hard fail so Semaphore/Rundeck
+    # surface the job as "needs attention", with the instructions in the output.
+    # Ntfy cannot carry this message — it does not exist until step 2.
+    - name: Halt until the Vaultwarden admin token is saved (two-pass bootstrap)
+      ansible.builtin.assert:
+        that: >-
+          (lookup('ansible.builtin.env', 'VAULTWARDEN_ADMIN_TOKEN') | default('') | length > 0)
+          or (homelabinfra_config.infrastructure.vaultwarden.admin_token | default('') | length > 0)
+        success_msg: "Vaultwarden admin token found — continuing bootstrap."
+        fail_msg: |
+          BOOTSTRAP PASS 1 COMPLETE — Vaultwarden is deployed, but its admin token
+          is not saved yet, and every later step needs it to store secrets.
+
+          1. Copy the admin token printed above (task "FIRST BOOTSTRAP — save this
+             admin token now").
+          2. Save it in config/infrastructure.yml:
+               vaultwarden:
+                 admin_token: "<token>"
+             (or set the VAULTWARDEN_ADMIN_TOKEN env var on this Semaphore/Rundeck job).
+          3. Re-run this bootstrap job. It is idempotent — pass 2 skips what is
+             already deployed and continues from step 2 (Ntfy).
+
+
+# ── Step 2: Ntfy — notification hub ───────────────────────────────────────────
+# STAGED (slice 401): uncomment when playbooks/apps/ntfy.yml lands, and follow it
+# with a "Record Ntfy facts" play (generated_facts_service: notifications; data:
+# provider, instance, host, topic per CONTRACT.md §3).
+#
+# - import_playbook: apps/ntfy.yml
+#   vars:
+#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.notifications.instance | default('ntfy') }}"
+#   when: hostvars['localhost'].homelabinfra_config.infrastructure.notifications.provider | default('none') == 'ntfy'
+
+
+# ── Step 3: Reverse proxy — Caddy or Nginx per infrastructure.yml ─────────────
+# STAGED (slice 402 caddy / 301+later nginx): conditions anchor on localhost's
+# merged config so they evaluate identically on every host the imported plays
+# target. Follow with a "Record reverse proxy facts" play
+# (generated_facts_service: reverse_proxy; data: provider, instance, host, port).
+#
+# - import_playbook: apps/caddy.yml
+#   vars:
+#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('caddy') }}"
+#   when: hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') == 'caddy'
+#
+# - import_playbook: apps/nginx.yml
+#   vars:
+#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('nginx') }}"
+#   when: hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') == 'nginx'
+
+
+# ── Step 4: Authentik — SSO (optional) ────────────────────────────────────────
+# STAGED (slice 403): uncomment when playbooks/apps/authentik.yml lands. Follow
+# with a "Record SSO facts" play (generated_facts_service: sso; data: provider,
+# instance, host, token).
+#
+# - import_playbook: apps/authentik.yml
+#   vars:
+#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.sso.instance | default('authentik') }}"
+#   when: hostvars['localhost'].homelabinfra_config.infrastructure.sso.provider | default('none') == 'authentik'
+
+
+# ── Step 5: Uptime Kuma — uptime monitoring ───────────────────────────────────
+# STAGED (slice 404): uncomment when playbooks/apps/uptime-kuma.yml lands. Follow
+# with a facts play recording the Uptime Kuma endpoint so later app deploys can
+# auto-register monitors.
+#
+# - import_playbook: apps/uptime-kuma.yml
+#   vars:
+#     instance: uptime-kuma
+
+
+# ── Step 6: Grafana + Prometheus — metrics ────────────────────────────────────
+# STAGED (slice 405): uncomment when playbooks/apps/grafana.yml lands.
+#
+# - import_playbook: apps/grafana.yml
+#   vars:
+#     instance: grafana
+
+
+# ── Step 7: PBS — Proxmox Backup Server (VM) ──────────────────────────────────
+# STAGED (slice 406): uncomment when playbooks/apps/pbs.yml lands. Its playbook
+# (or a follow-up play here) calls tasks/bootstrap/configure-pbs.yml and records
+# backups facts (generated_facts_service: backups; data: instance, host,
+# datastore, datastore_path).
+#
+# - import_playbook: apps/pbs.yml
+#   vars:
+#     instance: pbs
+
+
+# ── Wrap-up: report what this pass bootstrapped ───────────────────────────────
+- name: Bootstrap | Summary
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load generated facts written this pass
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../config/.generated/facts.yml"
+        name: _bootstrap_facts
+      failed_when: false
+
+    - name: Report bootstrapped services
+      ansible.builtin.debug:
+        msg: >-
+          Bootstrap pass complete. Services recorded in config/.generated/facts.yml:
+          {{ (_bootstrap_facts | default({})).keys() | list | join(', ') }}.
+          Re-running bootstrap is always safe (idempotent).

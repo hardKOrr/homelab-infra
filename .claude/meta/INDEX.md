@@ -63,11 +63,13 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 
 | # | Slice | Status | Depends on |
 |---|---|---|---|
-| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | open | 400–406 |
+| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | in-progress³ | 400–406 |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | open | 300–305 (unwire halves) |
 | 502 | [Rollback container](502-rollback-container/README.md) | open | 201 |
 | 503 | [Lab status](503-lab-status/README.md) | open | none |
 | 504 | [Wire media stack](504-wire-media-stack/README.md) | open | 300–305 |
+
+³ Structure, Vaultwarden pass, and two-pass token gate implemented and gate-verified; steps 2–7 are staged as commented imports each app slice (401–406) uncomments when its playbook lands.
 
 ## 6XX — UI (Semaphore + Rundeck job definitions)
 

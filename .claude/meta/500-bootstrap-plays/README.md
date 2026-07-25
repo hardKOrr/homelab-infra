@@ -1,6 +1,6 @@
 # 500 — Bootstrap playbook plays
 
-**Status:** open
+**Status:** in-progress — structure + Vaultwarden pass implemented and gate-verified; steps 2–7 staged as commented imports pending 401–406 (see notes.md)
 **Depends on:** 400, 401, 402, 403, 404, 405, 406
 **Blocks:** the "one click to set up the platform" promise; 600 (Semaphore), 601 (Rundeck)
 
