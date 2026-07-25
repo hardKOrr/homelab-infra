@@ -7,7 +7,7 @@ set -uo pipefail
 cd ansible
 
 # See .claude/gate/lint.sh for the ANSIBLE_CONFIG world-writable-directory rationale.
-export ANSIBLE_CONFIG=/mnt/c/Users/korr/source/repos/homelab-infra/ansible/ansible.cfg
+export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 
 # Neutralise the Proxmox dynamic inventory (see lint.sh) so no live inventory is touched.
 export ANSIBLE_INVENTORY=localhost,

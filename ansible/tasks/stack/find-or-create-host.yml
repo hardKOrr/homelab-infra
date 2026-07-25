@@ -8,6 +8,7 @@
 # Output (for Play 2 to consume):
 #   homelabinfra_instance.stack.hostname   — hostname of the stack host
 #   homelabinfra_instance.stack.ip_address — IP of the stack host
+#   homelabinfra_stack_host_created         — true only when this task created the host
 #   app_deploy group                        — host added so Play 2 can target it
 
 - name: Assert stack_name is provided
@@ -26,7 +27,7 @@
 - name: Set facts from existing stack host
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
-      {{ homelabinfra_instance | combine({
+      {{ homelabinfra_instance | default({}) | combine({
         'stack': {
           'hostname': _stack_hosts[0],
           'ip_address': hostvars[_stack_hosts[0]].ansible_host
@@ -42,24 +43,43 @@
     ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
     app_config: "{{ app_config }}"
-    homelabinfra_infra: "{{ homelabinfra_infra }}"
+    homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+    homelabinfra_stack_host_created: false
   when: _stack_hosts | length > 0
 
 # ── Provision new stack host ───────────────────────────────────────────────────
 - name: Provision new stack host
   when: _stack_hosts | length == 0
   block:
-    - name: Set stack hostname in LXC config
+    - name: Set stack hostname and Docker LXC features
       ansible.builtin.set_fact:
         homelabinfra_config: >-
-          {{ homelabinfra_config | combine({
-            'proxmox': {
-              'lxc': {
-                'hostname': stack_name,
-                'tags': (homelabinfra_config.proxmox.lxc.tags | default(['homelab-infra'])) + [stack_name]
-              }
-            }
-          }, recursive=True) }}
+          {{
+            homelabinfra_config | combine(
+              {
+                'proxmox': {
+                  'lxc': {
+                    'hostname': stack_name | replace('_', '-'),
+                    'tags': (
+                      homelabinfra_config.proxmox.lxc.tags
+                      | default(['homelab-infra'])
+                    ) + [stack_name],
+                    'features': _stack_lxc_features
+                  }
+                }
+              },
+              recursive=True
+            )
+          }}
+      vars:
+        _stack_existing_lxc_features: >-
+          {{ homelabinfra_config.proxmox.lxc.features | default([]) }}
+        _stack_lxc_features: >-
+          {{
+            _stack_existing_lxc_features | combine({'keyctl': true})
+            if _stack_existing_lxc_features is mapping
+            else (_stack_existing_lxc_features + ['keyctl=1']) | unique
+          }}
 
     - name: Generate IP for new stack host
       ansible.builtin.include_tasks: ../network/generate-ip.yml
@@ -96,4 +116,5 @@
         ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
-        homelabinfra_infra: "{{ homelabinfra_infra }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+        homelabinfra_stack_host_created: true

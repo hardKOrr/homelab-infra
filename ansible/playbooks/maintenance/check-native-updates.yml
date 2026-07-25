@@ -7,7 +7,8 @@
 # Schedule: weekly via Semaphore/Rundeck.
 
 - name: Gather update status from managed hosts
-  hosts: tag_homelab_infra
+  # Verified community.proxmox keyed_groups output for homelab-infra: tag_homelab-infra.
+  hosts: tag_homelab-infra
   gather_facts: false
   ignore_unreachable: true
   tasks:
@@ -22,14 +23,14 @@
       register: _check_raw
       changed_when: false
       failed_when: false
-      when: _script_stat.stat.exists
+      when: _script_stat.stat.exists | default(false)
 
     - name: Parse update check result
       ansible.builtin.set_fact:
         _update_result: "{{ _check_raw.stdout | from_json }}"
       when:
-        - _script_stat.stat.exists
-        - _check_raw.rc == 0
+        - _script_stat.stat.exists | default(false)
+        - _check_raw.rc | default(1) == 0
 
 - name: Report available updates
   hosts: localhost
@@ -37,6 +38,13 @@
   pre_tasks:
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
   tasks:
     - name: Collect apps with updates available
       ansible.builtin.set_fact:
@@ -65,4 +73,9 @@
 
           Re-run the Deploy App job for each to update.
         body_format: raw
-      when: _updates_available | length > 0
+      when:
+        - _updates_available | length > 0
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.notifications is defined
+        - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+        - homelabinfra_infra.notifications.ntfy_url is defined

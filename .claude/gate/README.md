@@ -16,8 +16,9 @@ test: wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash 
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
 
-Both export `ANSIBLE_CONFIG` to the absolute path: the repo lives on NTFS under `/mnt/c`, and
-Ansible's world-writable-cwd check silently ignores a cwd-relative `ansible.cfg`.
+Both export `ANSIBLE_CONFIG` to the checkout's absolute path derived from `$PWD`: the repo lives
+on NTFS under `/mnt/c`, and Ansible's world-writable-cwd check silently ignores a cwd-relative
+`ansible.cfg`.
 
 ## One-time bootstrap (fresh WSL distro)
 

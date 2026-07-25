@@ -1,3 +1,5 @@
+# Installs Docker Engine from Docker's Debian repository.
+# Inputs: ansible_architecture and ansible_distribution_release.
 - name: Install prerequisites
   ansible.builtin.apt:
     name:
@@ -7,18 +9,50 @@
     state: present
     update_cache: true
 
-- name: Add Docker GPG key
-  ansible.builtin.apt_key:
-    url: https://download.docker.com/linux/debian/gpg
-    state: present
+- name: Configure Docker APT repository
+  vars:
+    docker_apt_architecture_map:
+      x86_64: amd64
+      aarch64: arm64
+  block:
+    - name: Validate Docker repository architecture
+      ansible.builtin.assert:
+        that:
+          - ansible_architecture in docker_apt_architecture_map
+        fail_msg: >-
+          Docker does not publish Debian packages for the detected
+          {{ ansible_architecture }} architecture through this role.
 
-- name: Add Docker repository
-  ansible.builtin.apt_repository:
-    repo: >
-      deb [arch=amd64]
-      https://download.docker.com/linux/debian
-      {{ ansible_distribution_release }} stable
-    state: present
+    - name: Create APT keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install Docker repository signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Remove legacy Docker repository file
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/download_docker_com_linux_debian.list
+        state: absent
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ docker_apt_architecture_map[ansible_architecture] }}
+          signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/debian
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
 
 - name: Install Docker packages
   ansible.builtin.apt:

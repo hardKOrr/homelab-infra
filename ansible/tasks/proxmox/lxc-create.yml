@@ -76,6 +76,7 @@
     lxc_module_args: >-
       {{ homelabinfra_instance.lxc | dict2items
          | selectattr('key', 'in', lxc_module_keys)
+         | list
          | items2dict
          | combine({'api_user': homelabinfra_config.proxmox.api_user}) }}
   vars:
@@ -142,11 +143,60 @@
   until: lxc_exec_ready.rc == 0
   changed_when: false
 
-- name: Write LXC instance data to /root/home
+- name: Discover LXC DHCP lease
+  ansible.builtin.command:
+    argv:
+      - pct
+      - exec
+      - "{{ homelabinfra_instance.lxc.vmid }}"
+      - --
+      - /bin/sh
+      - -c
+      - |
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          lease="$(ip -4 -o address show dev eth0 scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          if [ -n "$lease" ]; then
+            printf '%s\n' "$lease"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        exit 1
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: lxc_dhcp_lease
+  changed_when: false
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert LXC DHCP lease was discovered
+  ansible.builtin.assert:
+    that:
+      - lxc_dhcp_lease.stdout | trim | ansible.utils.ipaddr('address')
+    fail_msg: "The LXC did not return a leased IPv4 address"
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Merge LXC DHCP lease into instance facts
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'network': {'ip_address': lxc_dhcp_lease.stdout | trim},
+          'lxc': {'ip_address': lxc_dhcp_lease.stdout | trim}
+        }, recursive=True) }}
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert LXC connection address is resolved
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_instance.lxc.ip_address | string | trim | length > 0
+      - homelabinfra_instance.lxc.ip_address | string | trim | lower != 'dhcp'
+    fail_msg: "The LXC connection address is empty or still set to DHCP"
+
+- name: Write sanitized LXC instance metadata to /root with mode 0600
   ansible.builtin.shell: |
     set -euo pipefail
-    cat <<'EOF' | pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/sh -c 'mkdir -p /root/home && cat > /root/home/homelabinfra_instance.lxc.json'
-    {{ homelabinfra_instance.lxc | to_nice_json }}
+    cat <<'EOF' | pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/sh -c 'set -e; umask 077; cat > /root/homelabinfra_instance.lxc.json; chmod 0600 /root/homelabinfra_instance.lxc.json; rm -f /root/home/homelabinfra_instance.lxc.json'
+    {{ homelabinfra_instance.lxc | dict2items | rejectattr('key', 'in', ['api_token_secret', 'api_token_id', 'password', 'cipassword', 'pubkey', 'sshkeys']) | list | items2dict | to_nice_json }}
     EOF
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   args:
