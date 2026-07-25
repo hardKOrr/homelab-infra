@@ -196,12 +196,12 @@ Bootstrap
   Bootstrap Platform          ← bootstrap.yml (run once)
 
 Per-App
-  Deploy App                  ← apps/<app>.yml  (param: instance name)
-  Remove App                  ← apps/remove.yml (param: instance name)
+  Deploy <App>                ← apps/<app>.yml  (one job per app; instance baked in, no params)
+  Remove App                  ← apps/remove.yml (params: instance, app (optional), delete_data)
 
 Per-Stack
   Wire Stack                  ← stacks/wire-<stack>.yml (param: stack name)
-  Rollback Container          ← stacks/rollback-container.yml (params: container, image tag)
+  Rollback Container          ← stacks/rollback-container.yml (params: stack, container, image_tag)
 
 Maintenance
   Lab Status                  ← maintenance/status.yml

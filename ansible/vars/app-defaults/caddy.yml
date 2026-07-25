@@ -24,6 +24,7 @@ caddy_defaults:
     port: 2019
     http_port: 80
     https_port: 443
+    service_name: caddy         # systemd unit — playbooks/apps/remove.yml stops this
 
     # tls_mode: acme | internal
     #   acme     — public certificates via Let's Encrypt. Needs each app domain to

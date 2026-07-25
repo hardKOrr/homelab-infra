@@ -1,6 +1,6 @@
 # 501 — App removal playbook
 
-**Status:** open
+**Status:** built — implemented and gate-verified; awaiting live acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 300-305 (unwire halves of each wiring slice)
 **Blocks:** Remove App job in Semaphore/Rundeck
 

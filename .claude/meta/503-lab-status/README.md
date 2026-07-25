@@ -1,6 +1,6 @@
 # 503 — Lab status playbook
 
-**Status:** open
+**Status:** built — implemented and gate-verified; awaiting live acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** none (read-only across whatever exists)
 **Blocks:** nothing critical
 

@@ -36,6 +36,8 @@ pbs_defaults:
     port: 8007                  # PBS web UI and REST API (HTTPS, self-signed by default)
     datastore_name: homelab
     api_token_name: ansible     # token id becomes root@pam!ansible
+    service_name: proxmox-backup-proxy   # systemd unit — the unit name is not the app
+                                         # name; playbooks/apps/remove.yml stops this
 
   routing:
     proxy: internal

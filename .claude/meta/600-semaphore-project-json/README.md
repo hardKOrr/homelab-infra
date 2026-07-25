@@ -1,6 +1,6 @@
 # 600 — Semaphore project.json
 
-**Status:** open
+**Status:** built — implemented; awaiting a live import. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 500 (bootstrap), and ideally most app slices so the deploy templates have real targets
 **Blocks:** the "import and click" Semaphore experience
 

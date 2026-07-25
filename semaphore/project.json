@@ -1,0 +1,338 @@
+{
+  "meta": {
+    "name": "homelab-infra",
+    "alert": false,
+    "max_parallel_tasks": 0
+  },
+  "views": [
+    { "title": "Bootstrap", "position": 1 },
+    { "title": "Apps", "position": 2 },
+    { "title": "Maintenance", "position": 3 }
+  ],
+  "keys": [
+    { "name": "homelab-ssh", "type": "ssh" },
+    { "name": "none", "type": "none" }
+  ],
+  "repositories": [
+    {
+      "name": "homelab-infra",
+      "git_url": "https://github.com/YOUR-USER/homelab-infra.git",
+      "git_branch": "master",
+      "ssh_key": "none"
+    }
+  ],
+  "inventories": [
+    {
+      "name": "Proxmox (dynamic)",
+      "type": "file",
+      "inventory": "ansible/inventory/proxmox.yml",
+      "ssh_key": "homelab-ssh",
+      "become_key": "none"
+    }
+  ],
+  "environments": [
+    {
+      "name": "Homelab",
+      "json": "{}",
+      "env": "{\"ANSIBLE_ROLES_PATH\":\"ansible/roles\",\"ANSIBLE_HOST_KEY_CHECKING\":\"False\",\"PROXMOX_API_HOST\":\"\",\"PROXMOX_API_PORT\":\"8006\",\"PROXMOX_API_USER\":\"root@pam\",\"PROXMOX_API_TOKEN_ID\":\"\",\"PROXMOX_API_TOKEN_SECRET\":\"\"}"
+    }
+  ],
+  "templates": [
+    {
+      "name": "Bootstrap Platform",
+      "description": "One-time platform setup: Vaultwarden, Ntfy, the reverse proxy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS, in that order. Re-runnable, but it is a bootstrap — run it once, then use the per-app jobs.",
+      "playbook": "ansible/playbooks/bootstrap.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Bootstrap"
+    },
+    {
+      "name": "Deploy Vaultwarden",
+      "description": "Deploy or update Vaultwarden (native LXC). Re-running is the update path.",
+      "playbook": "ansible/playbooks/apps/vaultwarden.yml",
+      "arguments": "[\"-e\",\"instance=vaultwarden\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Deploy Ntfy",
+      "description": "Deploy or update Ntfy, the notification hub every other job reports to (native LXC).",
+      "playbook": "ansible/playbooks/apps/ntfy.yml",
+      "arguments": "[\"-e\",\"instance=ntfy\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Deploy Caddy",
+      "description": "Deploy or update Caddy, the reverse proxy every app route is written to (native LXC).",
+      "playbook": "ansible/playbooks/apps/caddy.yml",
+      "arguments": "[\"-e\",\"instance=caddy\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Deploy Authentik",
+      "description": "Deploy or update Authentik, the SSO provider (Docker on its own core_stack host).",
+      "playbook": "ansible/playbooks/apps/authentik.yml",
+      "arguments": "[\"-e\",\"instance=authentik\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Deploy Uptime Kuma",
+      "description": "Deploy or update Uptime Kuma. Every later app deploy registers its own monitor here.",
+      "playbook": "ansible/playbooks/apps/uptime-kuma.yml",
+      "arguments": "[\"-e\",\"instance=uptime-kuma\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Deploy Observability",
+      "description": "Deploy or update Prometheus + Grafana as one app (Docker on monitoring_stack).",
+      "playbook": "ansible/playbooks/apps/observability.yml",
+      "arguments": "[\"-e\",\"instance=observability\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Deploy PBS",
+      "description": "Deploy or update Proxmox Backup Server (VM) and configure the backup schedule.",
+      "playbook": "ansible/playbooks/apps/pbs.yml",
+      "arguments": "[\"-e\",\"instance=pbs\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Remove App",
+      "description": "Stop an app and unwire it from the reverse proxy, Authentik, Uptime Kuma and DNS. config/apps/<instance>.yml is kept as the restore point; no guest is destroyed.",
+      "playbook": "ansible/playbooks/apps/remove.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "instance",
+          "title": "Instance",
+          "description": "App instance name, e.g. radarr-4k",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "app",
+          "title": "App (only if the instance was renamed)",
+          "description": "Leave blank unless the instance name differs from the app name, e.g. instance radarr-4k of app radarr",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "delete_data",
+          "title": "Delete data",
+          "description": "false keeps volumes and data paths so a re-deploy restores the app; true wipes them",
+          "required": false,
+          "type": "enum",
+          "values": [
+            { "name": "false", "value": "false" },
+            { "name": "true", "value": "true" }
+          ]
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
+      "name": "Lab Status",
+      "description": "Read-only overview: guests, containers, pending native app updates, uptime monitors and PBS snapshots. Changes nothing and sends no notification.",
+      "playbook": "ansible/playbooks/maintenance/status.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": true,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Maintenance"
+    },
+    {
+      "name": "Check Native App Updates",
+      "description": "Compare installed vs latest release for every native LXC app and notify via Ntfy. Notifies only — re-run an app's deploy job to update it.",
+      "playbook": "ansible/playbooks/maintenance/check-native-updates.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": true,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "cron": "0 6 * * 1",
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Maintenance"
+    },
+    {
+      "name": "Restart App",
+      "description": "Restart a native LXC app via its lab-restart-app script. Notifies via Ntfy.",
+      "playbook": "ansible/playbooks/maintenance/restart-app.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "instance",
+          "title": "Instance",
+          "description": "App instance name, e.g. vaultwarden",
+          "required": true,
+          "type": ""
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Maintenance"
+    },
+    {
+      "name": "Tail App Log",
+      "description": "Stream recent log lines from a native LXC app into this job's console.",
+      "playbook": "ansible/playbooks/maintenance/tail-applog.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": true,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "instance",
+          "title": "Instance",
+          "description": "App instance name, e.g. vaultwarden",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "lines",
+          "title": "Lines",
+          "description": "How many log lines to show (default 50)",
+          "required": false,
+          "type": "int"
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Maintenance"
+    },
+    {
+      "name": "Rollback Container",
+      "description": "Pin a Docker app to an earlier image tag and recreate it. Run this when a Watchtower update breaks something. Notifies via Ntfy.",
+      "playbook": "ansible/playbooks/stacks/rollback-container.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "stack",
+          "title": "Stack",
+          "description": "Stack tag the container runs on, e.g. media_stack",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "container",
+          "title": "Container",
+          "description": "App instance name — its Compose project is /opt/<instance>",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "image_tag",
+          "title": "Image tag",
+          "description": "Tag to roll back to, e.g. 5.1.3. Leave blank to re-pin the tag already in the Compose file.",
+          "required": false,
+          "type": ""
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Maintenance"
+    }
+  ]
+}

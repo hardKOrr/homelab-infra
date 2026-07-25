@@ -1,6 +1,6 @@
 # 502 — Rollback container playbook
 
-**Status:** open
+**Status:** built — implemented and gate-verified; awaiting live acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 201 (watchtower — to test the feedback loop)
 **Blocks:** container update recovery story
 

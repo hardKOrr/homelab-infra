@@ -1,25 +1,222 @@
 ---
 # Read-only lab status report. Safe to run at any time — makes no changes.
 #
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/status.yml
+#
+# Semaphore/Rundeck: no parameters. Output goes to the job console.
+#
 # Reports:
-#   - All homelab-infra tagged guests (running / stopped / unknown)
-#   - Docker container states on each stack host
-#   - Uptime Kuma monitor statuses (via API)
-#   - PBS last backup status per guest (via PBS API)
-#   - Any native LXC apps with known update availability (from last check-native-updates run)
+#   - Every homelab-infra tagged Proxmox guest (running / stopped, vmid, node, IP)
+#   - Docker containers on each guest that runs Docker (name, image, state)
+#   - Native LXC apps with an update available (lab-update-check, same source as
+#     playbooks/maintenance/check-native-updates.yml — this one only displays)
+#   - Uptime Kuma monitors (via the REST API)
+#   - PBS snapshots per guest, newest first (via the PBS API)
 #
-# Output: formatted table to console / Semaphore job output
-# Does not send Ntfy notification (this is a pull action, not an event)
+# Best-effort throughout: an unreachable guest, a down Kuma or an absent PBS
+# reports as much and the run continues. A status report must never fail — a
+# red job teaches nothing about the lab.
 #
-# TODO: Implement status plays
+# Sends no notification: this is a pull action, not an event.
 
-- name: Lab Status
+# ── Play 1: Proxmox guest inventory ────────────────────────────────────────────
+- name: "Status | Refresh Proxmox inventory"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+
+# ── Play 2: Per-guest state ────────────────────────────────────────────────────
+# Runs against every tagged guest. Unreachable guests are recorded as such by
+# Play 3 (their facts below are simply never set) rather than failing the run.
+- name: "Status | Gather guest detail"
+  hosts: tag_homelab-infra
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+
+  tasks:
+    - name: Check whether this guest runs Docker
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: _st_docker_stat
+      failed_when: false
+
+    # The Go-template braces are escaped: Ansible templates this string before the
+    # shell ever sees it.
+    - name: List containers
+      ansible.builtin.command:
+        cmd: >-
+          docker ps --all
+          --format {% raw %}'{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}'{% endraw %}
+      register: _st_docker_ps
+      changed_when: false
+      failed_when: false
+      when: _st_docker_stat.stat.exists | default(false)
+
+    - name: Record container lines
+      ansible.builtin.set_fact:
+        _st_containers: "{{ _st_docker_ps.stdout_lines | default([]) }}"
+
+    - name: Check whether this guest ships lab-update-check
+      ansible.builtin.stat:
+        path: /usr/local/bin/lab-update-check
+      register: _st_check_stat
+      failed_when: false
+
+    - name: Run the update check
+      ansible.builtin.command: /usr/local/bin/lab-update-check
+      register: _st_check_raw
+      changed_when: false
+      failed_when: false
+      when: _st_check_stat.stat.exists | default(false)
+
+    - name: Parse the update check result
+      ansible.builtin.set_fact:
+        _st_update: "{{ _st_check_raw.stdout | from_json }}"
+      when:
+        - _st_check_stat.stat.exists | default(false)
+        - _st_check_raw.rc | default(1) == 0
+
+
+# ── Play 3: Platform services and rendering ────────────────────────────────────
+- name: "Status | Report"
   hosts: localhost
   gather_facts: false
+
   pre_tasks:
-    - name: Load user vars
-      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — both sections report "not configured"
+
+  vars:
+    _st_guests: "{{ groups['tag_homelab-infra'] | default([]) | sort }}"
+
   tasks:
-    - name: TODO - query Proxmox for all homelab-infra guests
+    # ── Uptime Kuma ────────────────────────────────────────────────────────────
+    - name: Query Uptime Kuma monitors
+      ansible.builtin.uri:
+        url: "{{ homelabinfra_infra.monitoring.host }}/api/monitors"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ homelabinfra_infra.monitoring.token | default('') }}"
+          Accept: "application/json"
+        status_code: [200, 401, 403, 404]
+        timeout: 10
+      register: _st_kuma
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when:
+        - homelabinfra_infra.monitoring is defined
+        - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+        - homelabinfra_infra.monitoring.host | default('') | length > 0
+
+    - name: Normalise the monitor list
+      ansible.builtin.set_fact:
+        _st_monitors: >-
+          {{ (_st_kuma.json.monitors | default(_st_kuma.json | default([]), true))
+             if (_st_kuma.status | default(0)) == 200 else [] }}
+
+    # ── PBS ────────────────────────────────────────────────────────────────────
+    - name: Query PBS snapshots
+      ansible.builtin.uri:
+        url: >-
+          {{ homelabinfra_infra.backups.host }}/api2/json/admin/datastore/{{
+             homelabinfra_infra.backups.datastore | default('homelab') }}/snapshots
+        method: GET
+        headers:
+          Authorization: >-
+            PBSAPIToken={{ homelabinfra_infra.backups.api_token_id | default('') }}:{{
+               homelabinfra_infra.backups.api_token_secret | default('') }}
+        validate_certs: false
+        status_code: [200, 401, 403, 404]
+        timeout: 10
+      register: _st_pbs
+      failed_when: false
+      changed_when: false
+      no_log: true
+      when:
+        - homelabinfra_infra.backups is defined
+        - homelabinfra_infra.backups.host | default('') | length > 0
+        - homelabinfra_infra.backups.api_token_id | default('') | length > 0
+
+    - name: Reduce PBS snapshots to the newest per backup id
+      ansible.builtin.set_fact:
+        _st_backups: >-
+          {{ ((_st_pbs.json.data | default([]))
+              | sort(attribute='backup-time', reverse=true)
+              | unique(attribute='backup-id') | list)
+             if (_st_pbs.status | default(0)) == 200 else [] }}
+
+    # ── Render ─────────────────────────────────────────────────────────────────
+    # One debug of a pre-split line list: Semaphore and Rundeck both render a
+    # msg list one line per entry, which a single embedded-newline string does not.
+    - name: Render the status report
       ansible.builtin.debug:
-        msg: "Status playbook not yet implemented"
+        msg: "{{ _st_report.splitlines() }}"
+      vars:
+        _st_report: |
+          ══════════════════════════════════════════════════════════════════
+          LAB STATUS — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
+          ══════════════════════════════════════════════════════════════════
+
+          GUESTS ({{ _st_guests | length }} tagged homelab-infra)
+          {% if _st_guests | length == 0 %}
+            none — has bootstrap run? (or Proxmox credentials are not exported)
+          {% endif %}
+          {% for h in _st_guests %}
+            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined else '' }}
+          {% endfor %}
+
+          CONTAINERS
+          {% set _ctr_hosts = [] %}
+          {% for h in _st_guests if hostvars[h]._st_containers | default([]) | length > 0 %}
+          {% set _ = _ctr_hosts.append(h) %}
+          {% endfor %}
+          {% if _ctr_hosts | length == 0 %}
+            none — no Docker host reported a container
+          {% endif %}
+          {% for h in _ctr_hosts %}
+            {{ h }}:
+          {% for line in hostvars[h]._st_containers %}
+              {{ '%-24s' | format(line.split('|')[0]) }} {{ '%-10s' | format(line.split('|')[2] | default('?')) }} {{ line.split('|')[1] | default('?') }}
+          {% endfor %}
+          {% endfor %}
+
+          NATIVE APP UPDATES
+          {% set _updates = hostvars.values() | selectattr('_st_update', 'defined') | map(attribute='_st_update') | selectattr('update_available', 'equalto', true) | list %}
+          {% if _updates | length == 0 %}
+            all native apps are current (or none report a version)
+          {% endif %}
+          {% for u in _updates %}
+            {{ '%-22s' | format(u.app) }} {{ u.installed }} -> {{ u.latest }}   re-run its deploy job to update
+          {% endfor %}
+
+          MONITORS
+          {% if _st_monitors | length == 0 %}
+            unavailable — Uptime Kuma is not configured, not reachable, or has no API key
+          {% endif %}
+          {% for m in _st_monitors %}
+            {{ '%-24s' | format(m.name | default('?')) }} {{ 'active' if m.active | default(false) else 'paused' }}   {{ m.url | default('') }}
+          {% endfor %}
+
+          BACKUPS
+          {% if _st_backups | length == 0 %}
+            unavailable — PBS is not configured, not reachable, or has no snapshots yet
+          {% endif %}
+          {% for s in _st_backups %}
+            {{ '%-22s' | format(s['backup-id'] | string) }} newest {{ '%Y-%m-%d %H:%M' | strftime(s['backup-time']) }}
+          {% endfor %}
+          ══════════════════════════════════════════════════════════════════

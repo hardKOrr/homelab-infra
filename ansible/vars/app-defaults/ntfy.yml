@@ -20,6 +20,7 @@ ntfy_defaults:
   app:
     port: 80                    # HTTP listener (publish + subscribe + web UI)
     data_path: /var/lib/ntfy    # auth database lives here
+    service_name: ntfy          # systemd unit — playbooks/apps/remove.yml stops this
     cache_path: /var/cache/ntfy # message cache + attachments
     topic: homelab              # the topic every homelab-infra tool publishes to
     user: homelab               # the account homelab-infra publishes as

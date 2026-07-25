@@ -1,39 +1,272 @@
 ---
 # Remove a deployed app instance — inverse of the app deploy playbook.
-# Safe to re-run: if already removed, wiring tasks are no-ops.
+# Safe to re-run: if already removed, every step is a no-op.
 # config/apps/<instance>.yml is NOT deleted — it is your restore point.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k
+#   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k -e app=radarr
+#   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k -e delete_data=true
 #
-# Semaphore/Rundeck: job parameter = instance (the app instance name)
+# Semaphore/Rundeck: job parameters
+#   instance     — the app instance name (required)
+#   app          — the app whose vars/app-defaults/<app>.yml describes this instance.
+#                  Defaults to `instance`, which is correct whenever the instance was
+#                  deployed under the app's own name. Pass it for renamed instances
+#                  (-e instance=radarr-4k -e app=radarr).
+#   delete_data  — false (default) keeps volumes and data paths, so re-running the
+#                  deploy restores the app with its data. true wipes them.
 #
-# Steps:
-#   1. Load config for the named instance
-#   2. Locate the host (from Proxmox inventory by hostname tag)
-#   3. Stop and remove the app container (docker compose down) OR stop native service
-#   4. Unwiring step (inverse of wiring — conditional on provider):
-#      a. Remove Caddy/Nginx route
-#      b. Remove Authentik provider + application
-#      c. Remove Uptime Kuma monitor
-#      d. Remove DNS record
-#   5. Notify via Ntfy: "<instance> removed"
+# Order of operations — unwire first, then stop:
+#   1. Resolve the instance's config and locate its host
+#   2. Unwire (localhost, each step conditional on its provider):
+#      a. Caddy/Nginx route      d. DNS record
+#      b. Authentik application + provider
+#      c. Uptime Kuma monitor
+#   3. Stop and remove the app on its host (compose down, or stop+disable the service)
+#   4. Notify via Ntfy: "<instance> removed"
+#
+# Traffic is drained before the backend disappears, and the uptime monitor is gone
+# before the app stops answering — so removal does not page the operator.
+#
+# Docker vs native is decided by the merged config: an app_config with a `stack:`
+# key is a Docker app on a shared stack host; anything else is a native LXC app on
+# its own guest. This is the same key the deploy playbooks branch on.
 #
 # Does NOT:
-#   - Delete config/apps/<instance>.yml (restore point — user deletes manually if desired)
-#   - Destroy the Proxmox guest (stack hosts are shared — other apps may still run there)
-#   - Remove the stack host even if it is now empty (user decision)
-#
-# TODO: Implement remove plays
+#   - Delete config/apps/<instance>.yml (restore point — user deletes manually)
+#   - Destroy any Proxmox guest, including a now-empty stack host or a native app's
+#     own LXC (deliberate: re-running the deploy converges the guest back)
+#   - Remove data unless -e delete_data=true
 
-- name: Remove App | Load config
+# ── Play 1: Resolve the instance, unwire it ────────────────────────────────────
+- name: "Remove App | Unwire"
   hosts: localhost
+  become: false
   gather_facts: false
+
   pre_tasks:
-    - name: Load user vars
+    - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
-  tasks:
+
     - name: Assert instance name provided
       ansible.builtin.assert:
         that: instance is defined and instance | length > 0
         fail_msg: "Pass the app instance name: -e instance=<name> (e.g. radarr-4k)"
+
+    - name: Load app defaults (optional — absent for an app with no defaults file)
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/{{ app | default(instance) }}.yml"
+        name: _app_defaults
+      failed_when: false
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — every unwire step below no-ops
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ (_app_defaults | default({})).get(_defaults_key, {})
+             | combine(_instance_config | default({}), recursive=True) }}
+      vars:
+        _defaults_key: "{{ (app | default(instance)) | replace('-', '_') }}_defaults"
+
+    - name: Assert the instance is known
+      ansible.builtin.assert:
+        that: app_config | length > 0
+        fail_msg: >-
+          Nothing describes instance '{{ instance }}': neither
+          vars/app-defaults/{{ app | default(instance) }}.yml nor
+          config/apps/{{ instance }}.yml exists. If the instance was deployed under
+          a different app name, pass it: -e app=<app>.
+
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+  vars:
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # Unwire tasks read the same variable names the wire halves do. They need only
+    # the identity of the app (name + domain) — no upstream host or port, which is
+    # what lets removal work even when the guest is already gone.
+    wiring_app_name: "{{ instance }}"
+    wiring_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain | default('invalid') }}"
+
+  tasks:
+    - name: Unwire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    # Unconditional on routing.identity, unlike the wire half: one pass removes
+    # whichever shape exists, so an instance whose identity mode changed between
+    # deploys still gets its stale Authentik objects cleaned up.
+    - name: Unwire SSO
+      ansible.builtin.include_tasks: ../../tasks/unwiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - homelabinfra_infra.sso.token | default('') | length > 0
+
+    - name: Unregister uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/unwiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Unwire DNS
+      ansible.builtin.include_tasks: "../../tasks/unwiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # ── Locate the host that runs the app ──────────────────────────────────────
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Select the host running the app
+      ansible.builtin.set_fact:
+        _rm_kind: "{{ 'docker' if app_config.stack is defined else 'native' }}"
+        _rm_hosts: >-
+          {{ groups['tag_' ~ app_config.stack] | default([])
+             if app_config.stack is defined
+             else ([instance] if instance in (groups['all'] | default([])) else []) }}
+
+    # Not an error: the guest may already be gone, or never have existed. The
+    # unwiring above still ran, which is the part that leaves stale state behind.
+    - name: Report a missing host
+      ansible.builtin.debug:
+        msg: >-
+          No {{ 'stack host tagged ' ~ app_config.stack if _rm_kind == 'docker'
+                else 'Proxmox guest named ' ~ instance }} is in inventory —
+          nothing to stop. Unwiring completed; {{ instance }} is fully removed.
+      when: _rm_hosts | length == 0
+
+    - name: Add the app host to the removal group
+      ansible.builtin.add_host:
+        name: "{{ _rm_hosts[0] }}"
+        groups: "remove_{{ instance }}"
+        ansible_host: >-
+          {{ hostvars[_rm_hosts[0]].ansible_host
+             | default(hostvars[_rm_hosts[0]].ansible_default_ipv4.address | default('')) }}
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        remove_kind: "{{ _rm_kind }}"
+      when: _rm_hosts | length > 0
+
+
+# ── Play 2: Stop and remove the app ────────────────────────────────────────────
+# Empty group when Play 1 found no host — the play is then skipped entirely,
+# which is what makes a second `remove` run a clean no-op.
+# The default() can only fire during --syntax-check — Play 1 has already asserted
+# `instance` is defined by the time this pattern is resolved for real.
+- name: "Remove App | Stop {{ instance | default('(no instance)') }}"
+  hosts: "remove_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    _rm_delete_data: "{{ delete_data | default(false) | bool }}"
+    _rm_project_dir: "/opt/{{ instance }}"
+
+  tasks:
+    # ── Docker app on a shared stack host ──────────────────────────────────────
+    - name: Remove the Compose project
+      when: remove_kind == 'docker'
+      block:
+        - name: Stat the Compose file
+          ansible.builtin.stat:
+            path: "{{ _rm_project_dir }}/docker-compose.yml"
+          register: _rm_compose_stat
+
+        - name: Report an already-removed Compose project
+          ansible.builtin.debug:
+            msg: "{{ _rm_project_dir }}/docker-compose.yml is already gone — nothing to stop."
+          when: not _rm_compose_stat.stat.exists
+
+        - name: Stop and remove the containers
+          community.docker.docker_compose_v2:
+            project_src: "{{ _rm_project_dir }}"
+            state: absent
+            remove_volumes: "{{ _rm_delete_data | bool }}"
+            remove_orphans: true
+          when: _rm_compose_stat.stat.exists
+
+        - name: Delete the project directory
+          ansible.builtin.file:
+            path: "{{ _rm_project_dir }}"
+            state: absent
+          when: _rm_delete_data | bool
+
+    # ── Native app on its own LXC ──────────────────────────────────────────────
+    - name: Stop the native service
+      when: remove_kind == 'native'
+      block:
+        # app.service_name is declared in vars/app-defaults/<app>.yml for every
+        # native baseline app, because a unit name does not always match the app
+        # (PBS runs proxmox-backup-proxy). The instance name is the fallback.
+        - name: Stop and disable the service
+          ansible.builtin.systemd_service:
+            name: "{{ app_config.app.service_name | default(instance) }}"
+            state: stopped
+            enabled: false
+          register: _rm_service_stop
+          failed_when:
+            - _rm_service_stop is failed
+            - "'could not be found' not in (_rm_service_stop.msg | default(''))"
+
+        - name: Report an already-removed service
+          ansible.builtin.debug:
+            msg: >-
+              No systemd unit named
+              {{ app_config.app.service_name | default(instance) }} on
+              {{ inventory_hostname }} — nothing to stop.
+          when: "'could not be found' in (_rm_service_stop.msg | default(''))"
+
+        - name: Delete the data path
+          ansible.builtin.file:
+            path: "{{ app_config.app.data_path }}"
+            state: absent
+          when:
+            - _rm_delete_data | bool
+            - app_config.app.data_path | default('') | length > 0
+
+
+# ── Play 3: Notify ─────────────────────────────────────────────────────────────
+- name: "Remove App | Notify"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — notify.yml no-ops
+
+  tasks:
+    - name: Notify removal complete
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} removed"
+        notify_message: >-
+          {{ instance }} was stopped and unwired from the reverse proxy, SSO,
+          uptime monitoring and DNS.
+          {{ 'Its data was deleted.' if delete_data | default(false) | bool
+             else 'Its data was kept — re-run the deploy job to restore it.' }}
+          config/apps/{{ instance }}.yml was kept as the restore point.

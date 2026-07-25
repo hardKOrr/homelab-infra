@@ -12,10 +12,10 @@ digits are order within the tier. Slice template and workflow: [README.md](READM
 | `open` | Not started, or started and abandoned mid-way. |
 
 Gates (both current as of 2026-07-25): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes
-137 files on the `production` profile; `.claude/gate/test.sh` passes every playbook except
-`stacks/rollback-container.yml`, an empty stub owned by slice 502.
+137 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
+clean. **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 20 built · 7 open.**
+Counts: **12 done · 25 built · 2 open.**
 
 ---
 
@@ -39,7 +39,7 @@ No further work. Listed for provenance only.
 | 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) |
 | 200 | [write-generated-facts](200-write-generated-facts/README.md) |
 
-## Built — awaiting live acceptance (20)
+## Built — awaiting live acceptance (25)
 
 Every one of these is code-complete and gate-verified. **They all clear on the same
 event: a live bootstrap run against the lab** (slice 500's acceptance). Per-slice
@@ -66,6 +66,11 @@ deviations and open questions live in each slice's `notes.md`.
 | 406 | [PBS](406-app-pbs/README.md) | bootstrap step 7 — VM path never run live |
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | a real public domain + DNS token |
 | 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | the full run — the event above |
+| 501 | [App remove playbook](501-app-remove-playbook/README.md) | remove a deployed app; needs 300/302/303/304 live |
+| 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
+| 503 | [Lab status](503-lab-status/README.md) | one run against a populated lab |
+| 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | a restore into a fresh Semaphore |
+| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | `rd jobs load` of all 14 files |
 
 Carried caveats:
 
@@ -77,28 +82,26 @@ Carried caveats:
   but nothing enforces them at the proxy.
 - **500's one staged import is `apps/nginx.yml`**, which does not exist (301 shipped the
   wiring pair only, no app playbook).
+- **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
+  restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
 
-## Open (7)
+## Open (2)
 
 | # | Slice | Depends on | Ready? |
 |---|---|---|---|
-| 502 | [Rollback container](502-rollback-container/README.md) | 201 | yes — and it unblocks the test gate |
-| 503 | [Lab status](503-lab-status/README.md) | none | yes |
-| 501 | [App remove playbook](501-app-remove-playbook/README.md) | 300–305 unwire halves | yes |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | 300, 301, 302, 403, 009 | code yes; verify needs live Authentik |
-| 504 | [Wire media stack](504-wire-media-stack/README.md) | 300–305 | yes, but no media apps exist yet |
-| 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | 500 + full 5XX job set | after 501–504 |
-| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | 500 + full 5XX job set | after 501–504 |
+| 504 | [Wire media stack](504-wire-media-stack/README.md) | 300–305 | blocked in practice — no media app exists to wire |
 
 ## Recommended order
 
-1. **Live bootstrap run** — one event converts 19 of the 20 `built` slices. The backlog
-   of unverified work is the project's largest risk and it grows with every slice added.
-2. **502** — smallest slice in the backlog and the only thing keeping `test.sh` red.
-3. **501, 503** — completes the day-2 job set (remove, status) that 600/601 must enumerate.
-4. **306** — closes the forward-auth fail-open gap; verifiable once Authentik is live.
-5. **600, 601** — build the UI job definitions last, against a job set that has stopped moving.
-6. **504** — deferred until a media stack app actually exists to wire.
+1. **Live bootstrap run** — one event converts 24 of the 25 `built` slices. The backlog of
+   unverified work is now the project's *only* significant risk, and nothing else in the
+   backlog reduces it.
+2. **Import one UI** (600 or 601) and drive the live run from it, so the job definitions
+   are verified by the same event rather than in a second pass.
+3. **306** — closes the forward-auth fail-open gap; verifiable once Authentik is live.
+4. **504** — deferred until a media stack app actually exists to wire. Adding a media app
+   is the prerequisite, not more scaffolding.
 
 ## Retired trackers
 
@@ -115,6 +118,21 @@ Carried caveats:
   Not yet removed — decide before it accrues more stale state.
 
 ## Cross-slice effects on record
+
+From the 5XX/6XX build (2026-07-25):
+
+- **`app.service_name` added** to the four native baseline app-defaults (vaultwarden,
+  ntfy, caddy, pbs) and `vars/app-defaults/_template.yml`. 501 stops a native app by its
+  unit name, which is not always the app name (PBS runs `proxmox-backup-proxy`).
+  Additive — no deploy behaviour changed.
+- **`scripts/with-proxmox-env.sh` accepts `config/proxmox.yml`** (top-level `proxmox:`)
+  as well as the legacy `homelabinfra_config:`-wrapped user-vars file. Every Rundeck job
+  step depends on this; the CLI path in both READMEs now points at the config file rather
+  than a legacy vars file.
+- **Both UIs ship one job per app**, with `instance=<app>` baked in — no survey to fill
+  for a deploy. `Remove App`, `Restart App`, `Tail App Log` and `Rollback Container` keep
+  their parameters. Neither UI defines a Wire Stack job (504's playbook does not exist).
+- **`test.sh` is green for the first time** — 502 replaced the stub that was failing it.
 
 From the 4XX build (2026-07-25):
 
