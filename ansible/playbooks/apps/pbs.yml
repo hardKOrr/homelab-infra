@@ -216,6 +216,13 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _pbs_deploy_host.app_config.routing.estate | default('') }}"
+
   vars:
     _pbs_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
 
@@ -225,10 +232,12 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _pbs_deploy_host.ansible_host }}"
     wiring_upstream_port: "{{ _pbs_deploy_host.app_config.app.port }}"
-    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_subdomain: "{{ _pbs_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Proxmox Backup Server ({{ instance }})"
-    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    wiring_identity_mode: "{{ _pbs_deploy_host.app_config.routing.identity | default('catalog') }}"
 
   tasks:
     # Datastore, retention, Ntfy routing, PVE storage backend and the vzdump job.
@@ -255,16 +264,16 @@
         - homelabinfra_infra.reverse_proxy is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
-    # Skipped for PBS: routing.auth is false in app-defaults. PBS has its own login
-    # and its own API tokens, and forward-auth would also intercept the API that
-    # configure-pbs and the PVE storage backend use.
+    # Catalog mode for PBS: an Application tile only. PBS has its own login and
+    # API tokens, and forward-auth would also intercept the API that configure-pbs
+    # and the PVE storage backend use.
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - _pbs_deploy_host.app_config.routing.auth | default(true)
+        - wiring_identity_mode != 'none'
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml

@@ -205,6 +205,13 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _caddy_deploy_host.app_config.routing.estate | default('') }}"
+
   vars:
     _caddy_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
 
@@ -214,7 +221,9 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _caddy_deploy_host.ansible_host }}"
     wiring_upstream_port: "{{ _caddy_deploy_host.app_config.app.port }}"
-    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_subdomain: "{{ _caddy_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_identity_mode: "{{ _caddy_deploy_host.app_config.routing.identity | default('catalog') }}"
     wiring_app_display: "Caddy ({{ instance }})"
     # The admin API is the only endpoint that reliably answers 200 — Caddy replies
     # 404 on :80 for a host it has no route for. Monitored over the LAN, not the
@@ -235,15 +244,15 @@
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
         - _caddy_deploy_host.app_config.routing.proxy | default('internal') != 'none'
 
-    # Skipped for Caddy: routing.auth is false in app-defaults — Authentik in front
-    # of the admin API would break every app's route wiring.
+    # Skipped for Caddy: routing.identity is none in app-defaults — Authentik in
+    # front of the admin API would break every app's route wiring.
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - _caddy_deploy_host.app_config.routing.auth | default(true)
+        - wiring_identity_mode != 'none'
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml

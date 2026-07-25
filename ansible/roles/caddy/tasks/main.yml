@@ -79,6 +79,61 @@
     state: latest    # noqa package-latest — re-running the deploy IS the update mechanism
   notify: Restart caddy
 
+# ── DNS-challenge TLS (per-estate) ────────────────────────────────────────────
+# Estates declared in config/infrastructure.yml `domains:` may carry a
+# dns_challenge block (provider + api_token); single-domain labs put the same
+# block in app.dns_challenge. Each token is referenced only from its own domain's
+# TLS automation policy — the sanctioned per-estate separation. The stock apt
+# binary ships no DNS provider modules, so the matching caddy-dns package is
+# installed with `caddy add-package` (which swaps the binary in place; an apt
+# upgrade on a later deploy replaces it again, and this task re-adds the module).
+- name: Collect DNS-challenge domains
+  ansible.builtin.set_fact:
+    _caddy_dns_domains: >-
+      {{ ((homelabinfra_config.infrastructure.domains | default({})).values()
+          | selectattr('dns_challenge', 'defined') | list)
+         + ([{'domain': homelabinfra_config.infrastructure.domain | default(''),
+              'dns_challenge': app_config.app.dns_challenge}]
+            if app_config.app.dns_challenge is defined else []) }}
+  no_log: true   # entries carry API tokens
+
+- name: List installed Caddy modules
+  ansible.builtin.command:
+    cmd: caddy list-modules
+  register: _caddy_modules
+  changed_when: false
+  when: _caddy_dns_domains | length > 0
+
+- name: Install missing DNS provider modules
+  ansible.builtin.command:
+    cmd: "caddy add-package github.com/caddy-dns/{{ item }}"
+  loop: >-
+    {{ _caddy_dns_domains | map(attribute='dns_challenge.provider')
+       | unique | list }}
+  when:
+    - _caddy_dns_domains | length > 0
+    - ('dns.providers.' ~ item) not in _caddy_modules.stdout | default('')
+  changed_when: true
+  notify: Restart caddy
+
+# One policy per estate, ahead of the catch-all: subjects pin it to that estate's
+# domain tree, so its token never issues for another estate's names.
+- name: Build per-estate DNS-challenge TLS policies
+  ansible.builtin.set_fact:
+    _caddy_dns_policies: >-
+      {{ _caddy_dns_policies | default([]) + [ {
+           'subjects': ['*.' ~ item.domain, item.domain],
+           'issuers': [ {'module': 'acme',
+                         'challenges': {'dns': {'provider':
+                            {'name': item.dns_challenge.provider,
+                             'api_token': item.dns_challenge.api_token}}}}
+                        | combine({'email': app_config.app.acme_email}
+                                  if app_config.app.acme_email | default('') | length > 0
+                                  else {}) ]
+         } ] }}
+  loop: "{{ _caddy_dns_domains }}"
+  no_log: true   # policy bodies carry API tokens
+
 # ── Base configuration ────────────────────────────────────────────────────────
 - name: Resolve the admin API bind address
   ansible.builtin.set_fact:
@@ -104,7 +159,8 @@
                  },
                },
              },
-             'tls': {'automation': {'policies': [{'issuers': [_caddy_issuer]}]}},
+             'tls': {'automation': {'policies':
+               (_caddy_dns_policies | default([])) + [{'issuers': [_caddy_issuer]}]}},
            },
          } }}
   vars:
@@ -122,6 +178,10 @@
     owner: root
     group: caddy
     mode: "0640"
+  # The config embeds per-estate DNS tokens when any dns_challenge is declared —
+  # keep them out of logs/diffs (the 0640 root:caddy file itself is the narrow
+  # guest-held-credential exception, as with the authentik compose env).
+  no_log: "{{ _caddy_dns_domains | length > 0 }}"
 
 # The packaged unit runs a Caddyfile; remove it so nothing can silently apply an
 # empty server set over the JSON config.
@@ -193,6 +253,7 @@
     status_code: 200
   when: _caddy_srv0.status != 200 or (_caddy_srv0.json | default(None)) is none
   changed_when: true
+  no_log: "{{ _caddy_dns_domains | length > 0 }}"   # body may embed DNS tokens
 
 - name: Reconcile the subtrees this role owns
   when:
@@ -222,6 +283,7 @@
         return_content: true
       register: _caddy_policies
       changed_when: false
+      no_log: "{{ _caddy_dns_domains | length > 0 }}"   # response may embed DNS tokens
 
     - name: Update drifted TLS automation policies
       ansible.builtin.uri:
@@ -234,6 +296,7 @@
         _caddy_policies.status != 200
         or (_caddy_policies.json | default([])) != _caddy_desired_policies
       changed_when: true
+      no_log: "{{ _caddy_dns_domains | length > 0 }}"   # body may embed DNS tokens
 
 - name: Verify the route table is reachable
   ansible.builtin.uri:

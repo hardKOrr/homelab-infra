@@ -27,5 +27,6 @@ uptime_kuma_defaults:
 
   routing:
     proxy: internal
-    auth: false                   # Uptime Kuma has its own login; SSO in front would
-                                  # block the REST calls that register monitors
+    identity: catalog             # catalog tile only — Uptime Kuma has its own login;
+                                  # forward_auth would block the REST calls that
+                                  # register monitors

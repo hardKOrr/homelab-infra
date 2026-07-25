@@ -35,5 +35,5 @@ observability_defaults:
 
   routing:
     proxy: internal
-    auth: false                 # Grafana has its own login and its own user model;
-                                # set true to put Authentik in front as well
+    identity: catalog           # catalog tile only — Grafana has its own login and user
+                                # model; set forward_auth to put Authentik in front as well

@@ -35,5 +35,5 @@
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal
-#   auth: false   # set true to put Authentik in front of Grafana as well as
-#                 # Grafana's own login
+#   identity: catalog   # set forward_auth to put Authentik in front of Grafana
+#                       # as well as Grafana's own login

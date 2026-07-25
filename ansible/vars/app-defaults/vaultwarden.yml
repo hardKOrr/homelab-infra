@@ -28,4 +28,5 @@ vaultwarden_defaults:
 
   routing:
     proxy: internal
-    auth: false                 # Vaultwarden has its own auth — do not wrap in Authentik
+    identity: catalog           # catalog tile only — Vaultwarden has its own auth
+                                # (master-password E2E); never wrap it in forward_auth

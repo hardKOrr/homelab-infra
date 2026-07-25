@@ -24,4 +24,4 @@ app:
 # ── Routing ────────────────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal            # internal | external (which reverse proxy handles this app)
-#   auth: true                 # true = wire Authentik SSO, false = skip (default from app-defaults)
+#   identity: catalog          # none | catalog | oidc | forward_auth (default from app-defaults)

@@ -1,5 +1,8 @@
 ---
-# Remove an app's Authentik application, policy binding and proxy provider.
+# Remove an app's Authentik application, policy binding and provider — whichever
+# shape its identity mode created (catalog: application only; oidc: OAuth2
+# provider; forward_auth: proxy provider + outpost membership). Every lookup
+# tolerates absence, so one pass covers all modes and mode changes between runs.
 # Inverse of tasks/wiring/authentik.yml. Called by playbooks/apps/remove.yml.
 # Spec: .claude/specs/provider-noop-wiring.md.
 #
@@ -14,12 +17,12 @@
 #   sso.host   — full base URL including scheme
 #   sso.token  — Authentik API token
 #
-# Teardown order is the inverse of wiring: detach the provider from the outpost, delete
-# the application (which takes its policy bindings with it), then delete the provider.
-# Idempotent: every step is skipped when its object is already gone. Silent no-op when
-# the configured SSO provider is not authentik.
+# Teardown order is the inverse of wiring: detach the proxy provider from the outpost,
+# delete the application (which takes its policy bindings with it), then delete
+# whichever provider exists. Idempotent: every step is skipped when its object is
+# already gone. Silent no-op when the configured SSO provider is not authentik.
 
-- name: Unwire Authentik | Remove application and proxy provider
+- name: Unwire Authentik | Remove application and provider
   when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
   vars:
     _ak_api: "{{ homelabinfra_infra.sso.host }}/api/v3"
@@ -107,6 +110,34 @@
       register: _ak_provider_delete
       when: _ak_provider.pk is defined
       changed_when: _ak_provider_delete.status | default(404) == 204
+      no_log: true
+
+    # oidc-mode apps have an OAuth2 provider under the same name instead.
+    - name: Unwire Authentik | Find OAuth2 provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/?name={{ wiring_app_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_oauth_list
+      no_log: true
+
+    - name: Unwire Authentik | Select OAuth2 provider
+      ansible.builtin.set_fact:
+        _ak_oauth: >-
+          {{ (_ak_oauth_list.json.results | default([]))
+             | selectattr('name', 'equalto', wiring_app_name)
+             | list | first | default({}) }}
+
+    - name: Unwire Authentik | Delete OAuth2 provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/oauth2/{{ _ak_oauth.pk | default(0) }}/"
+        method: DELETE
+        headers: "{{ _ak_headers }}"
+        status_code: [204, 404]
+      register: _ak_oauth_delete
+      when: _ak_oauth.pk is defined
+      changed_when: _ak_oauth_delete.status | default(404) == 204
       no_log: true
 
     - name: Unwire Authentik | Verify application is gone

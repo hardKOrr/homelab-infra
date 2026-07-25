@@ -20,6 +20,23 @@
 # Your homelab domain. All app routes will be subdomains of this.
 domain: "homelab.example.com"
 
+# ── Estates (optional — most labs skip this) ───────────────────────────────────
+# A second domain is an ESTATE: its own domain and its own Authentik instance
+# (deployed as a normal app with routing.estate: <name>), optionally its own DNS
+# and its own ACME DNS-challenge token — sharing one reverse proxy, Ntfy, Uptime
+# Kuma, metrics and PBS with the rest of the lab. `domain:` above stays valid as
+# shorthand for a single default estate. Apps pick an estate with routing.estate
+# in config/apps/<instance>.yml; unset means the default estate.
+# domains:
+#   personal:
+#     domain: "homelab.example.com"
+#     default: true                # exactly one default; else the first entry wins
+#   foxglove:
+#     domain: "second-domain.example.com"
+#     dns_challenge:               # optional — public certs without opening port 80
+#       provider: cloudflare       # any github.com/caddy-dns/<provider> module
+#       api_token: ""              # DNS-edit token scoped to THIS domain only
+
 # ── Reverse Proxy ──────────────────────────────────────────────────────────────
 # provider: caddy | nginx | none
 # instance: the Proxmox hostname of your reverse proxy LXC (used for inventory lookup)

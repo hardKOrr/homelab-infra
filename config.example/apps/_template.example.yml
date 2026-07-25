@@ -22,5 +22,11 @@
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
-#   proxy: internal    # internal | external
-#   auth: true         # true = require Authentik login, false = publicly accessible
+#   proxy: internal        # internal | external
+#   identity: catalog      # none | catalog | oidc | forward_auth
+#                          #   none         — no Authentik object at all
+#                          #   catalog      — Authentik launch tile; app keeps its own login
+#                          #   oidc         — OAuth2 provider; app consumes client_id/secret
+#                          #   forward_auth — Authentik login enforced at the reverse proxy
+#   subdomain: APP_NAME    # hostname on the domain (default: the instance name)
+#   estate: personal       # which `domains:` estate this app belongs to (multi-domain labs)

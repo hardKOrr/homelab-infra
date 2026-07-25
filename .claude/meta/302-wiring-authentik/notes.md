@@ -45,3 +45,22 @@ Verified: ansible-lint green (production profile). Syntax gate unchanged (only t
 pre-existing slice-502 empty-playbook failure). NOT verified live — acceptance items
 (provider + application + binding created, redirect through Authentik, idempotent
 re-wire, unwire removes SSO) need slice 403. Flip to done after the first real wire.
+
+## 2026-07-25 — reworked for identity modes (slice 009)
+
+`wiring/authentik.yml` now dispatches on `wiring_identity_mode`
+(`catalog | oidc | forward_auth`; default forward_auth for out-of-tree callers):
+
+- **catalog** — Application only (`provider: null`), launch URL + group binding;
+  no flows lookup, no provider, no outpost.
+- **oidc** — OAuth2 provider (confidential, redirect default = regex scoped to
+  the app's own domain, signing key = stock self-signed cert when present) +
+  Application; client_id/secret exported to the caller as
+  `authentik_oidc_client_id/_secret` (not written to the registry — the first
+  consuming app slice settles durable storage).
+- **forward_auth** — the original proxy-provider path, unchanged.
+
+`unwiring/authentik.yml` deletes whichever shape exists (proxy AND oauth2
+lookups both tolerate absence), so mode changes between runs leave no orphans on
+removal. Estate awareness comes free: `resolve-estate.yml` swaps `sso` before
+this file runs. Live acceptance still pending (needs a running Authentik).

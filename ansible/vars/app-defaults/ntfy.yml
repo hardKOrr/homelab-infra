@@ -32,4 +32,5 @@ ntfy_defaults:
 
   routing:
     proxy: internal
-    auth: false                 # Ntfy has its own token/user auth — no Authentik in front
+    identity: catalog           # catalog tile only — Ntfy has its own token/user auth;
+                                # forward_auth would break every publisher's token POST

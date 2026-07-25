@@ -47,7 +47,22 @@ metrics:       { provider, instance, host, prometheus_host, admin_user, admin_pa
 dns:           { provider, host, api_key }
 backups:       { instance, host, datastore, datastore_path }
 vaultwarden:   { host, port }        # populated after bootstrap step 1
+estates:                             # optional — only when infrastructure.yml declares domains:
+  <estate-name>:                     # non-default estates only; the default estate uses
+    sso: { provider, instance, host, token }   # the top-level keys above
+    dns: { provider, host, api_key }           # optional — global dns serves the estate if absent
 ```
+
+**Estate scoping.** `infrastructure.yml` may declare a `domains:` map of named
+estates (§5); apps pick one with `routing.estate`. Estate-bound role keys (`sso`,
+optionally `dns`) for a non-default estate are written under `estates.<name>` by
+`write-generated-facts.yml` (`generated_facts_estate`) and overlaid onto the
+top-level keys by `tasks/resolve-estate.yml` before wiring runs — replacement is
+whole-key, never a recursive merge, so a default-estate token can never leak into
+another estate's wiring. All other role keys (reverse_proxy, notifications,
+monitoring, metrics, backups, vaultwarden) are global: one instance serves every
+estate. The default estate (and every lab without a `domains:` map) reads and
+writes only the top-level keys — unchanged behavior.
 
 Provider-specific optional fields, written by the app slice that deploys the provider and
 read only by that provider's wiring tasks (slices 301–305):
@@ -122,7 +137,8 @@ All merges use `combine(recursive=True)`; later layers win per key.
 
 | Key | Required? | Default / notes |
 |---|---|---|
-| `domain` | required | |
+| `domain` | required | shorthand for a single default estate |
+| `domains` | optional | map of named estates — see below |
 | `reverse_proxy.provider` | required | `caddy \| nginx \| none` |
 | `reverse_proxy.instance` | required unless provider `none` | |
 | `sso.provider` | required | `authentik \| none` |
@@ -140,6 +156,29 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `backups.retention` | optional | |
 | `vaultwarden.admin_token` | required | secret; written after bootstrap step 1 |
 | `vaultwarden.instance` | optional | |
+
+**`domains:` — named estates (optional).** An estate is a domain scope with its own
+SSO instance (and optionally DNS and ACME DNS-challenge token), sharing the rest of
+the platform. The plain `domain:` scalar stays valid as shorthand for one default
+estate, so existing labs are untouched.
+
+```yaml
+domains:
+  personal:
+    domain: homelab.example.com
+    default: true                  # exactly one entry; else the first entry is default
+  foxglove:
+    domain: foxglove.example.com
+    dns_challenge:                 # optional — per-estate ACME DNS-01 (caddy role)
+      provider: cloudflare         # any github.com/caddy-dns/<provider> module
+      api_token: "..."             # scoped to THIS domain; referenced only from its
+                                   # own TLS policy (third deliberate secret exception,
+                                   # alongside dns.host and vaultwarden.admin_token)
+```
+
+Apps choose an estate with `routing.estate` (default: the default estate). A
+non-default estate's Authentik is just another app deploy with
+`routing.estate: <name>` — its `sso` facts land under `estates.<name>` (§3).
 
 The required/optional split for `config/.generated/facts.yml` follows the canonical shape in
 Section 3. Slice 200 settled the write mechanics: bootstrap writes one role key per
@@ -171,7 +210,15 @@ filename — the filename *is* the instance name (`-e instance=<name>`) and beco
 Caddy subdomain, and Authentik app name. Its top-level keys mirror the `<app>_defaults` dict in
 `vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
 as `media_stack`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
-(`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`, `auth`).
+(`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`,
+`identity`, plus optional `subdomain` and `estate`). `routing.identity` is the identity-mode
+enum `none | catalog | oidc | forward_auth` (default `catalog`): `none` skips Authentik
+entirely, `catalog` creates an Application tile only, `oidc` creates an OAuth2 provider +
+Application (client_id/secret handed back to the deploy as `authentik_oidc_client_id/_secret`
+facts — not recorded in the registry), `forward_auth` creates a proxy provider enforced at the
+reverse proxy (slice 306). The boolean `routing.auth` is **superseded** by `routing.identity`
+— nothing reads it. `routing.subdomain` overrides the hostname on the estate domain (default:
+the instance name); `routing.estate` names a `domains:` estate (§5).
 The whole file merges over `<app>_defaults` via `combine(recursive=True)`, later layer wins per key.
 Because the merge is recursive, an override must match the default's shape: replacing a mapping (e.g.
 `app:`) with a scalar clobbers the entire subtree, so instance files never restate a mapping key as a

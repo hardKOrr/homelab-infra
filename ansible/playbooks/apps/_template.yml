@@ -153,6 +153,15 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: >-
+          {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate
+             | default('') }}
+
   vars:
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
@@ -166,10 +175,20 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
     wiring_upstream_port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port }}"
-    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    # Hostname on the estate domain — routing.subdomain overrides, instance name is
+    # the default. homelabinfra_infra.domain is estate-resolved by the pre_task above.
+    wiring_subdomain: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.subdomain
+         | default(instance, true) }}
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "APP_NAME ({{ instance }})"
-    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    # Identity mode (routing.identity): none | catalog | oidc | forward_auth.
+    # Dispatched inside tasks/wiring/authentik.yml; `none` skips the SSO wire below.
+    wiring_identity_mode: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.identity
+         | default('catalog') }}
 
   tasks:
     - name: Wire reverse proxy
@@ -185,7 +204,7 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - hostvars[groups['deploy_' ~ instance][0]].app_config.routing.auth | default(true)
+        - wiring_identity_mode != 'none'
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml

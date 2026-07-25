@@ -14,6 +14,8 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 | 005 | [Instance config schema contradiction](005-instance-config-schema/README.md) | done | none | any real app deploy |
 | 006 | [generate-ip combine](006-generate-ip-combine/README.md) | done | none | safe reuse of generate-ip |
 | 007 | [requirements.yml collections](007-requirements-collections/README.md) | done | none | any docker app, guest-bootstrap |
+| 008 | [Estate / multi-domain contract](008-estate-contract/README.md) | in-progress² | 000, 001, 200 | any second-domain deployment; 009, 407 |
+| 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | in-progress² | 008, 302, 403 | 306 |
 
 ## 1XX — Hygiene (small fixes, no architectural impact)
 
@@ -44,16 +46,22 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 | 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | in-progress¹ | 200, 404 |
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | in-progress¹ | 200 |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | in-progress¹ | 200 |
-| 306 | [Reverse-proxy forward_auth for SSO apps](306-wiring-forward-auth/README.md) | open | 300, 301, 302, 403 |
+| 306 | [Reverse-proxy forward_auth for forward-auth-mode apps](306-wiring-forward-auth/README.md) | open | 300, 301, 302, 403, 009 |
 
 ¹ Implementation complete and gate-verified; live acceptance needs the provider running.
 Per-slice decisions and deviations are in each slice's `notes.md` — 303 additionally
 renamed the registry key `uptime_kuma` → `monitoring` (CONTRACT.md §3), which slice 404
 now writes.
 
+302 was reworked by slice 009: `tasks/wiring/authentik.yml` now dispatches on
+`wiring_identity_mode` — catalog (Application tile only), oidc (OAuth2 provider,
+client creds exported to the caller), forward_auth (the original proxy-provider
+path, unchanged) — and the unwire removes whichever shape exists.
+
 306 was opened while implementing 403: the wire tasks create every Authentik object
-but emit no `forward_auth` handler, so SSO fails **open** and silently. Until it lands,
-`routing.auth: true` protects nothing.
+but emit no `forward_auth` handler, so forward-auth fails **open** and silently.
+Since slice 009 it blocks only the `forward_auth` exception mode (no baseline app
+defaults to it); catalog/oidc modes never promised proxy enforcement.
 
 ## 4XX — Apps (per-app roles + per-app playbooks)
 
@@ -66,13 +74,18 @@ but emit no `forward_auth` handler, so SSO fails **open** and silently. Until it
 | 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | in-progress² | 303, 401 |
 | 405 | [Grafana + Prometheus](405-app-grafana/README.md) | in-progress² | 401 |
 | 406 | [PBS](406-app-pbs/README.md) | in-progress² | 202, 401 |
+| 407 | [Caddy per-estate DNS-01 challenge](407-caddy-dns-challenge/README.md) | in-progress² | 402, 008 |
 
 ² Implementation complete and gate-verified; awaiting live deploy acceptance (see slice notes.md).
 
 ³ 403 additionally has one acceptance item blocked on work it does not own: no
-wiring task emits a reverse-proxy `forward_auth` handler, so Authentik creates its
-provider/application/binding but nothing enforces SSO. Owned by new slice 306 — see
-403's notes.md "Known gap".
+wiring task emits a reverse-proxy `forward_auth` handler, so nothing enforces the
+`forward_auth` identity mode. Owned by slice 306 — see 403's notes.md "Known gap".
+403 was extended with the account/hostname doctrine (2026-07-25): bootstrap admin
+renamed akadmin → `collector`, canonical hostname `auth.<domain>` via
+`routing.subdomain`, standing groups (homelab-users, homelab-admins) created at
+deploy time, optional Google OAuth source when credentials exist. See
+`roles/authentik/README.md`.
 
 Cross-slice effects of the 4XX build (2026-07-25):
 - **401 closed Ntfy by default** and reconciled all five existing notification

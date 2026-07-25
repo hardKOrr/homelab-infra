@@ -133,11 +133,14 @@ Related Docker apps group onto shared hosts ("stacks"). Stack assignment is decl
 Every app deployment ends by registering with platform services. Each task is conditional on the configured provider — missing providers are no-ops, not errors:
 
 1. Caddy or Nginx route (if `infrastructure.reverse_proxy.provider != none`)
-2. Authentik provider (if `infrastructure.sso.provider: authentik`)
+2. Authentik registration per identity mode (`routing.identity`, if `infrastructure.sso.provider: authentik`): `catalog` = launch tile only (default), `oidc` = OAuth2 provider + Application (client creds handed back to the deploy), `forward_auth` = proxy provider enforced at the reverse proxy, `none` = skipped
 3. Uptime Kuma monitor (if Uptime Kuma instance is reachable)
 4. DNS record (if `infrastructure.dns.provider != none`)
 
 Wiring tasks read service connection details from `config/.generated/facts.yml`.
+Before wiring, `tasks/resolve-estate.yml` overlays the app's `routing.estate`
+scope (domain, sso, dns) onto those facts — multi-domain labs declare estates in
+`infrastructure.yml` under `domains:`; single-domain labs are untouched.
 
 ## Baseline Apps (Bootstrap Order)
 
@@ -222,6 +225,10 @@ Bootstrap chicken-and-egg: Vaultwarden deploys first with no prior secrets. Admi
 Declares *roles and provider choices*, not connection details. IPs and tokens go in `.generated/facts.yml`.
 
 ```yaml
+# Optional multi-domain: a `domains:` map of named estates (own domain + own
+# Authentik per estate, optional per-estate dns_challenge token for Caddy).
+# The plain `domain:` scalar remains the single-estate shorthand.
+
 reverse_proxy:
   provider: caddy       # caddy | nginx | none
   instance: caddy       # Proxmox hostname — resolved via dynamic inventory

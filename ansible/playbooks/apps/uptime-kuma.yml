@@ -159,6 +159,13 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _kuma_deploy_host.app_config.routing.estate | default('') }}"
+
   vars:
     _kuma_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
 
@@ -168,11 +175,13 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _kuma_deploy_host.ansible_host }}"
     wiring_upstream_port: "{{ _kuma_deploy_host.app_config.app.port }}"
-    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_subdomain: "{{ _kuma_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Uptime Kuma ({{ instance }})"
-    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_interval: "{{ _kuma_deploy_host.app_config.app.monitor_interval | default(60) }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    wiring_identity_mode: "{{ _kuma_deploy_host.app_config.routing.identity | default('catalog') }}"
 
   tasks:
     - name: Wire reverse proxy
@@ -182,8 +191,8 @@
         - homelabinfra_infra.reverse_proxy is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
-    # Skipped for Uptime Kuma: routing.auth is false in app-defaults. Forward-auth
-    # in front would also intercept /api, which is how every app registers its
+    # Catalog mode for Uptime Kuma: an Application tile only. Forward-auth in
+    # front would also intercept /api, which is how every app registers its
     # monitor.
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
@@ -191,7 +200,7 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - _kuma_deploy_host.app_config.routing.auth | default(true)
+        - wiring_identity_mode != 'none'
 
     # Uptime Kuma monitors itself — a monitor that stops reporting is itself a
     # signal, and it costs nothing.

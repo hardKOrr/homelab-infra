@@ -34,9 +34,19 @@ caddy_defaults:
     tls_mode: acme
     acme_email: ""              # optional; recommended for expiry notices from the CA
 
+    # Optional DNS-01 challenge for the default domain — lets Caddy issue public
+    # certificates without being reachable from the internet on port 80. The role
+    # installs the matching caddy-dns module (caddy add-package) on deploy.
+    # Estates declared in config/infrastructure.yml `domains:` carry their own
+    # dns_challenge block there instead — each estate's token is referenced only
+    # from its own domain's TLS policy.
+    # dns_challenge:
+    #   provider: cloudflare    # any github.com/caddy-dns/<provider> module
+    #   api_token: ""           # scoped DNS-edit token for this domain only
+
   update:
     github_repo: caddyserver/caddy   # used by lab-update-check for the release notes link
 
   routing:
     proxy: none                 # Caddy IS the reverse proxy — never route it through itself
-    auth: false                 # the admin API is LAN-only; Authentik in front would break wiring
+    identity: none              # the admin API is LAN-only; Authentik in front would break wiring

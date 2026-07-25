@@ -45,7 +45,10 @@ Do a find-and-replace of `APP_NAME` → `sonarr` across all four files.
 - Set `cores`, `memory` to realistic values for this app
 - Set `stack: media_stack` (Docker) or fill in the `proxmox:` block (native LXC)
 - Set `app.port` to the app's default port
-- Set `routing.auth: false` if the app has its own login (no need for Authentik in front)
+- Pick the `routing.identity` mode: `catalog` (default — Authentik launch tile, app
+  keeps its own login), `oidc` (app consumes an OAuth2 client), `forward_auth`
+  (Authentik login enforced at the reverse proxy), or `none` (platform
+  infrastructure only — no Authentik object)
 - For native LXC binaries from GitHub: uncomment the `update.github_repo` key
 
 **`roles/sonarr/tasks/main.yml`**
@@ -108,7 +111,8 @@ ansible-playbook -i inventory/ playbooks/stacks/wire-media-stack.yml
 Check:
 - [ ] App is accessible at `https://sonarr.yourdomain.com`
 - [ ] Caddy/Nginx route exists
-- [ ] Authentik proxy appears (if `routing.auth: true`)
+- [ ] Authentik shape matches the identity mode (tile for `catalog`, OAuth2
+      provider for `oidc`, proxy provider + outpost for `forward_auth`)
 - [ ] Uptime Kuma monitor is registered
 - [ ] Re-running the deploy playbook makes no unwanted changes (idempotency)
 - [ ] Running remove.yml tears everything down cleanly
@@ -125,10 +129,16 @@ Play 3 of every app playbook sets these variables before calling wiring tasks.
 | `wiring_app_name` | `{{ instance }}` | All wiring tasks — used as slug/ID |
 | `wiring_upstream_host` | App container IP | Caddy, Nginx |
 | `wiring_upstream_port` | App listen port | Caddy, Nginx |
-| `wiring_domain` | `instance.yourdomain.com` | Caddy, Nginx, Authentik, DNS |
+| `wiring_subdomain` | `routing.subdomain`, default `{{ instance }}` | builds `wiring_domain` / monitor URL |
+| `wiring_domain` | `subdomain.estate-domain` | Caddy, Nginx, Authentik, DNS |
 | `wiring_app_display` | Human label | Authentik, Uptime Kuma |
 | `wiring_monitor_url` | Public HTTPS URL | Uptime Kuma |
 | `wiring_auth_group` | Authentik group name | Authentik |
+| `wiring_identity_mode` | `routing.identity`, default `catalog` | Authentik (mode dispatch), proxy forward_auth (slice 306) |
+
+Play 3 also runs `tasks/resolve-estate.yml` before wiring: it overlays the app's
+`routing.estate` domain/sso/dns facts onto `homelabinfra_infra`, so wiring tasks
+stay estate-agnostic.
 
 ---
 

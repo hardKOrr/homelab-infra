@@ -204,6 +204,13 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _ntfy_deploy_host.app_config.routing.estate | default('') }}"
+
   vars:
     _ntfy_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
 
@@ -213,12 +220,14 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _ntfy_deploy_host.ansible_host }}"
     wiring_upstream_port: "{{ _ntfy_deploy_host.app_config.app.port }}"
-    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    wiring_subdomain: "{{ _ntfy_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Ntfy ({{ instance }})"
     # /v1/health stays anonymous under auth-default-access: deny-all, so the
     # monitor needs no credentials.
-    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}/v1/health"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/v1/health"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    wiring_identity_mode: "{{ _ntfy_deploy_host.app_config.routing.identity | default('catalog') }}"
 
   tasks:
     - name: Wire reverse proxy
@@ -228,14 +237,15 @@
         - homelabinfra_infra.reverse_proxy is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
-    # Skipped for Ntfy: routing.auth is false in app-defaults (own token auth).
+    # Catalog mode for Ntfy: an Application tile only (own token auth) — see
+    # routing.identity in app-defaults.
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - _ntfy_deploy_host.app_config.routing.auth | default(true)
+        - wiring_identity_mode != 'none'
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml

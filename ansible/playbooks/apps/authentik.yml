@@ -1,5 +1,6 @@
 ---
-# Deploy Authentik — SSO for every app with routing.auth: true (bootstrap step 4).
+# Deploy Authentik — SSO for every app with a routing.identity mode other than
+# none (bootstrap step 4).
 # Docker on LXC (PATH A): server + worker + PostgreSQL + Redis on the core_stack host.
 #
 # Usage:
@@ -11,9 +12,13 @@
 #
 # Play 3 records the `sso` registry key (CONTRACT.md §3) BEFORE wiring, so a
 # standalone deploy registers Authentik exactly as a bootstrap run does. Every later
-# app deploy reads host + token from there to create its proxy provider.
+# app deploy reads host + token from there to register per its routing.identity mode.
+# A deploy with routing.estate set records the key under estates.<name>.sso — that
+# instance serves only its own estate.
 #
-# Authentik does not authenticate itself: app-defaults set routing.auth: false.
+# The canonical hostname is auth.<domain> (routing.subdomain: auth in app-defaults),
+# independent of the instance name. Authentik does not authenticate itself:
+# app-defaults set routing.identity: none.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to find or create the stack host.
@@ -136,6 +141,9 @@
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
         generated_facts_service: sso
+        # Estate-scoped: a non-default routing.estate lands this key under
+        # estates.<name>.sso, read back by tasks/resolve-estate.yml.
+        generated_facts_estate: "{{ _authentik_deploy_host.app_config.routing.estate | default('') }}"
         generated_facts_data:
           provider: authentik
           instance: "{{ instance }}"
@@ -154,6 +162,13 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _authentik_deploy_host.app_config.routing.estate | default('') }}"
+
   vars:
     _authentik_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
 
@@ -163,10 +178,14 @@
     wiring_app_name: "{{ instance }}"
     wiring_upstream_host: "{{ _authentik_deploy_host.ansible_host }}"
     wiring_upstream_port: "{{ _authentik_deploy_host.app_config.app.port }}"
-    wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+    # Canonical hostname: routing.subdomain (auth in app-defaults), not the
+    # instance name — auth.<domain> regardless of what the instance is called.
+    wiring_subdomain: "{{ _authentik_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Authentik ({{ instance }})"
-    wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}/-/health/live/"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/-/health/live/"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    wiring_identity_mode: "{{ _authentik_deploy_host.app_config.routing.identity | default('catalog') }}"
 
   tasks:
     - name: Wire reverse proxy
@@ -176,15 +195,31 @@
         - homelabinfra_infra.reverse_proxy is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
-    # Skipped for Authentik: routing.auth is false in app-defaults. Putting the SSO
-    # provider behind its own forward-auth would deadlock the login flow.
+    # Migration alias: labs that reached Authentik at <instance>.<domain> before
+    # the auth.<domain> doctrine keep that hostname working. Off by default —
+    # set routing.wire_instance_alias: true in config/apps/<instance>.yml while
+    # sessions and bookmarks move over, then drop it and run remove/re-deploy.
+    - name: Wire reverse proxy (instance-name alias route)
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      vars:
+        wiring_app_name: "{{ instance }}-alias"
+        wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+        - wiring_subdomain != instance
+        - _authentik_deploy_host.app_config.routing.wire_instance_alias | default(false) | bool
+
+    # Skipped for Authentik: routing.identity is none in app-defaults. Putting the
+    # SSO provider behind its own forward-auth would deadlock the login flow.
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - _authentik_deploy_host.app_config.routing.auth | default(true)
+        - wiring_identity_mode != 'none'
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
@@ -205,8 +240,8 @@
         notify_title: "Authentik deployed ({{ instance }})"
         notify_message: >-
           SSO provider {{ instance }} is running and registered. Sign in at
-          https://{{ instance }}.{{ homelabinfra_infra.domain }} as
+          https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }} as
           {{ _authentik_deploy_host.authentik_admin_username }} — the generated password
           is in config/.generated/facts.yml on the controller, under
-          sso.admin_password. Apps with routing.auth: true are protected from their
-          next deploy onward.
+          sso.admin_password. Apps register per their routing.identity mode from
+          their next deploy onward.

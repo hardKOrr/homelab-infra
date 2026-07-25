@@ -33,8 +33,16 @@
 #   tls_mode: internal
 #
 #   acme_email: "you@example.com"   # optional; the CA emails certificate expiry warnings here
+#
+#   # Optional DNS-01 challenge for the default domain — public certificates
+#   # without opening port 80 to the internet. The deploy installs the matching
+#   # caddy-dns module automatically. Estates declared under `domains:` in
+#   # config/infrastructure.yml carry their own dns_challenge block there instead.
+#   dns_challenge:
+#     provider: cloudflare    # any github.com/caddy-dns/<provider> module
+#     api_token: ""           # DNS-edit token scoped to this domain only
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   # Both stay as they are. proxy: none keeps Caddy from routing itself, and
-#   # auth: false keeps Authentik off the admin API that every app deploy writes to.
+#   # identity: none keeps Authentik off the admin API that every app deploy writes to.

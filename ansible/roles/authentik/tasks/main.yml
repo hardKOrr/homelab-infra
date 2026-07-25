@@ -10,6 +10,11 @@
 #   AUTHENTIK_BOOTSTRAP_TOKEN     akadmin's API token (first start only) — this is
 #                                 what tasks/wiring/authentik.yml authenticates with
 #
+# ACCOUNT DOCTRINE (see README.md): the bootstrap-created akadmin is renamed to
+# `collector` post-first-start; the standing groups homelab-users/homelab-admins
+# are created at deploy time; a Google OAuth source is configured when credentials
+# exist in app config. MFA enrollment is an operator step recorded in the README.
+#
 # Continuity: the existing .env is read back before anything is generated, so a
 # re-run reuses the same values. Regenerating PG_PASS would lock the server out of
 # its own database, and regenerating the API token would strand every wired app.
@@ -183,15 +188,147 @@
   changed_when: false
   no_log: true
 
-- name: Assert the token belongs to the bootstrap admin
+# Either name is valid: akadmin on a first start (before the rename below) or on
+# a lab that predates the rename, collector afterwards.
+- name: Assert the token belongs to the admin account
   ansible.builtin.assert:
-    that: _authentik_whoami.json.user.username | default('') == authentik_admin_user
+    that: >-
+      _authentik_whoami.json.user.username | default('')
+      in [authentik_admin_user, authentik_bootstrap_user]
     fail_msg: >-
-      The recorded Authentik API token does not belong to {{ authentik_admin_user }}.
-      AUTHENTIK_BOOTSTRAP_TOKEN is consumed only on the very first start, so a token
-      changed after that never took effect. Issue a fresh token for
-      {{ authentik_admin_user }} in the Authentik UI and put it in
+      The recorded Authentik API token does not belong to {{ authentik_admin_user }}
+      (or {{ authentik_bootstrap_user }}). AUTHENTIK_BOOTSTRAP_TOKEN is consumed only
+      on the very first start, so a token changed after that never took effect. Issue
+      a fresh token for {{ authentik_admin_user }} in the Authentik UI and put it in
       config/.generated/facts.yml under sso.token.
+
+# ── Account doctrine: rename the bootstrap admin ──────────────────────────────
+# AUTHENTIK_BOOTSTRAP_* always creates `akadmin`; the standing admin is named
+# `collector`. Post-first-start API rename — password and API token survive it,
+# only the sign-in name changes. Skipped on every later run (whoami already
+# reports the standing name).
+- name: Rename the bootstrap admin to the standing admin name
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v3/core/users/{{ _authentik_whoami.json.user.pk }}/"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    body_format: json
+    body:
+      username: "{{ authentik_admin_user }}"
+      name: "{{ authentik_admin_user }}"
+    status_code: 200
+  when:
+    - _authentik_whoami.json.user.username | default('') == authentik_bootstrap_user
+    - authentik_admin_user != authentik_bootstrap_user
+  changed_when: true
+  no_log: true
+
+# ── Standing groups ───────────────────────────────────────────────────────────
+# Created here, not lazily by wiring: the wiring task binds wiring_auth_group to
+# every application and only warns when the group is missing — creating the
+# groups at deploy time makes that fallback the exception, not the normal path.
+- name: Look up standing groups
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v3/core/groups/?name={{ item.name | urlencode }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    status_code: 200
+  register: _authentik_groups_found
+  loop: "{{ authentik_standing_groups }}"
+  changed_when: false
+  no_log: true
+
+- name: Create missing standing groups
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v3/core/groups/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    body_format: json
+    body:
+      name: "{{ item.item.name }}"
+      is_superuser: "{{ item.item.is_superuser | bool }}"
+    status_code: 201
+  loop: "{{ _authentik_groups_found.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: >-
+    item.json.results | default([])
+    | selectattr('name', 'equalto', item.item.name) | list | length == 0
+  changed_when: true
+  no_log: true
+
+# ── Optional Google OAuth source ──────────────────────────────────────────────
+# Configured only when credentials exist (both keys set in app config). MFA
+# enrollment enforcement is an operator step — see the role README.
+- name: Configure the Google OAuth source
+  when:
+    - app_config.app.google_client_id | default('') | length > 0
+    - app_config.app.google_client_secret | default('') | length > 0
+  block:
+    - name: Find existing Google source
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/v3/sources/oauth/?slug=google"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_api_token }}"
+          Accept: "application/json"
+        status_code: 200
+      register: _authentik_google_list
+      changed_when: false
+      no_log: true
+
+    - name: Select existing Google source
+      ansible.builtin.set_fact:
+        _authentik_google_source: >-
+          {{ (_authentik_google_list.json.results | default([]))
+             | selectattr('slug', 'equalto', 'google')
+             | list | first | default({}) }}
+      no_log: true
+
+    - name: Create Google source
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/v3/sources/oauth/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _authentik_api_token }}"
+          Accept: "application/json"
+        body_format: json
+        body:
+          name: Google
+          slug: google
+          provider_type: google
+          consumer_key: "{{ app_config.app.google_client_id }}"
+          consumer_secret: "{{ app_config.app.google_client_secret }}"
+          enabled: true
+          user_matching_mode: email_link
+        status_code: 201
+      when: _authentik_google_source.pk is not defined
+      changed_when: true
+      no_log: true
+
+    - name: Update drifted Google source credentials
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/v3/sources/oauth/{{ _authentik_google_source.slug }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ _authentik_api_token }}"
+          Accept: "application/json"
+        body_format: json
+        body:
+          consumer_key: "{{ app_config.app.google_client_id }}"
+          consumer_secret: "{{ app_config.app.google_client_secret }}"
+        status_code: 200
+      when:
+        - _authentik_google_source.pk is defined
+        - _authentik_google_source.consumer_key | default('') != app_config.app.google_client_id
+      changed_when: true
+      no_log: true
 
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the API endpoint to the playbook

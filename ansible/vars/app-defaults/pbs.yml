@@ -39,4 +39,4 @@ pbs_defaults:
 
   routing:
     proxy: internal
-    auth: false                 # PBS has its own login and its own API tokens
+    identity: catalog           # catalog tile only — PBS has its own login and API tokens

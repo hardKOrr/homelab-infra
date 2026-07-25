@@ -1,0 +1,78 @@
+---
+# Resolve the app's estate and overlay estate-scoped facts onto homelabinfra_infra.
+# Called in Play 3 (Wire) after infrastructure facts are loaded, before any wiring
+# task runs. Spec: ansible/vars/CONTRACT.md §3 (estates) and §5 (domains map).
+#
+# An ESTATE is a named domain scope declared in config/infrastructure.yml under
+# `domains:` — its own domain and its own SSO instance (optionally its own DNS),
+# sharing one reverse proxy, notifications, monitoring, metrics and backups with
+# the rest of the lab. The plain `domain:` scalar remains valid shorthand for a
+# single default estate, so a lab without `domains:` never reaches the overlay.
+#
+# Inputs:
+#   resolve_estate_name — the app's routing.estate ('' or undefined = default estate)
+#   homelabinfra_infra  — loaded facts (may be undefined pre-bootstrap)
+#
+# Effect (set_fact wins over the include_vars-loaded copy for the rest of the play):
+#   homelabinfra_infra.domain — the estate's domain, so wiring_domain computes
+#                               <subdomain>.<estate-domain> with no wiring changes
+#   homelabinfra_infra.sso    — the estate's sso registry entry, replaced WHOLE
+#                               (never merged — a default-estate token must not leak
+#                               into another estate); {provider: none} until that
+#                               estate's SSO service is deployed
+#   homelabinfra_infra.dns    — the estate's dns entry when one is recorded;
+#                               otherwise the global dns entry serves every estate
+#
+# Estate-scoped endpoints live in facts.yml under estates.<name>.<role_key>,
+# written by tasks/bootstrap/write-generated-facts.yml (generated_facts_estate).
+# The default estate always uses the top-level keys — for it, and for labs without
+# a domains map, this file is a no-op and behavior is byte-identical to before.
+
+- name: Resolve estate | Load domain declarations
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/infrastructure.yml"
+    name: _estate_infra_cfg
+  failed_when: false   # absent on a clean checkout — falls through to single-estate
+
+- name: Resolve estate | Compute estate names
+  ansible.builtin.set_fact:
+    _estate_domains: "{{ _estate_infra_cfg.domains | default({}) }}"
+    # Default estate: the entry with `default: true`, else the first declared entry,
+    # else '' (no domains map — the implicit single estate).
+    _estate_default: >-
+      {{ (_estate_infra_cfg.domains | default({}) | dict2items
+          | selectattr('value.default', 'defined')
+          | selectattr('value.default')
+          | map(attribute='key') | list | first)
+         | default(_estate_infra_cfg.domains | default({}) | list | first | default(''), true) }}
+
+- name: Resolve estate | Select the app's estate
+  ansible.builtin.set_fact:
+    _estate_selected: "{{ resolve_estate_name | default('', true) or _estate_default }}"
+
+- name: Resolve estate | Assert a named estate is declared
+  ansible.builtin.assert:
+    that: _estate_selected in _estate_domains
+    fail_msg: >-
+      routing.estate is '{{ _estate_selected }}' but config/infrastructure.yml declares
+      no domains.{{ _estate_selected }} entry. Declare the estate or drop the key.
+  when:
+    - _estate_selected | length > 0
+    - _estate_domains | length > 0
+
+- name: Resolve estate | Overlay estate-scoped facts
+  ansible.builtin.set_fact:
+    # Non-recursive combine on purpose: domain/sso/dns are replaced whole so no
+    # credential from the default estate survives into another estate's wiring.
+    homelabinfra_infra: "{{ homelabinfra_infra | combine(_estate_overlay) }}"
+  vars:
+    _estate_scope: "{{ (homelabinfra_infra.estates | default({}))[_estate_selected] | default({}) }}"
+    _estate_overlay: >-
+      {{ {'domain': _estate_domains[_estate_selected].domain,
+          'sso': _estate_scope.sso | default({'provider': 'none'})}
+         | combine({'dns': _estate_scope.dns} if _estate_scope.dns is defined else {}) }}
+  when:
+    - homelabinfra_infra is defined
+    - _estate_selected | length > 0
+    - _estate_selected != _estate_default
+    - _estate_selected in _estate_domains

@@ -45,5 +45,10 @@ APP_NAME_defaults:
   # ── Routing ─────────────────────────────────────────────────────────────────
   routing:
     proxy: internal      # internal | external — which reverse proxy handles this app
-    auth: true           # true = wire Authentik SSO in front of this app
-                         # set false for apps with their own auth (Vaultwarden, Grafana)
+    identity: catalog    # none | catalog | oidc | forward_auth — how Authentik fronts this app
+                         #   none         — no Authentik object at all (platform infrastructure)
+                         #   catalog      — Authentik Application tile only; the app keeps its own login
+                         #   oidc         — OAuth2 provider + Application; the app consumes client_id/secret
+                         #   forward_auth — proxy provider; the reverse proxy enforces Authentik login
+    # subdomain: APP_NAME  # hostname on the domain (default: the instance name)
+    # estate: personal     # which `domains:` estate this app belongs to (default estate if unset)

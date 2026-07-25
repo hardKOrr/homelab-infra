@@ -11,6 +11,12 @@
 #                             (reverse_proxy | sso | notifications | monitoring |
 #                             metrics | dns | backups | vaultwarden) or 'domain'
 #   generated_facts_data:     dict to deep-merge under that key (scalar for 'domain')
+#   generated_facts_estate:   optional estate name (the app's routing.estate). When it
+#                             names a non-default estate from config/infrastructure.yml's
+#                             domains map, the key merges under estates.<name>.<key>
+#                             instead of top-level — estate-scoped facts read back by
+#                             tasks/resolve-estate.yml. Empty/default estate writes
+#                             top-level exactly as before.
 #   generated_facts_file:     optional override of the output path; defaults to
 #                             config/.generated/facts.yml anchored at bootstrap.yml's
 #                             playbook_dir (ansible/playbooks/)
@@ -39,6 +45,28 @@
       {{ generated_facts_file
          | default(playbook_dir ~ '/../../config/.generated/facts.yml') }}
 
+# Estate scoping: mirror of tasks/resolve-estate.yml's default-estate rule — the
+# entry with `default: true`, else the first declared entry, else '' (no map).
+- name: Generated facts | Load domain declarations
+  ansible.builtin.include_vars:
+    file: "{{ _generated_facts_file | dirname }}/../infrastructure.yml"
+    name: _generated_facts_infra_cfg
+  failed_when: false
+
+- name: Generated facts | Resolve estate scope
+  ansible.builtin.set_fact:
+    _generated_facts_estate: >-
+      {{ '' if _gf_estate == _gf_default else _gf_estate }}
+  vars:
+    _gf_estate: "{{ generated_facts_estate | default('', true) }}"
+    _gf_default: >-
+      {{ (_generated_facts_infra_cfg.domains | default({}) | dict2items
+          | selectattr('value.default', 'defined')
+          | selectattr('value.default')
+          | map(attribute='key') | list | first)
+         | default(_generated_facts_infra_cfg.domains | default({}) | list | first
+                   | default(''), true) }}
+
 - name: Generated facts | Ensure config/.generated exists (0700 — holds tokens)
   ansible.builtin.file:
     path: "{{ _generated_facts_file | dirname }}"
@@ -55,7 +83,11 @@
       {{ (lookup('ansible.builtin.file', _generated_facts_file, errors='ignore')
           | from_yaml
           | default({}, true))
-         | combine({generated_facts_service: generated_facts_data}, recursive=True)
+         | combine({'estates': {_generated_facts_estate:
+                                {generated_facts_service: generated_facts_data}}}
+                   if _generated_facts_estate | length > 0
+                   else {generated_facts_service: generated_facts_data},
+                   recursive=True)
          | to_nice_yaml(indent=2) }}
   become: false
   delegate_to: localhost
