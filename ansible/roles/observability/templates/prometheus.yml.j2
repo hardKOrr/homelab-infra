@@ -1,0 +1,30 @@
+{{ ansible_managed | comment }}
+# Prometheus config for {{ instance }} — managed by homelab-infra.
+#
+# The node target list is generated from the Proxmox dynamic inventory at deploy
+# time: every guest tagged homelab-infra that runs node_exporter. It is a snapshot,
+# not a live discovery — re-run this deploy after adding guests to pick them up.
+# That matches the platform's fire-and-forget model (CLAUDE.md "Philosophy").
+
+global:
+  scrape_interval: {{ app_config.app.scrape_interval | default('30s') }}
+  evaluation_interval: {{ app_config.app.scrape_interval | default('30s') }}
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: nodes
+    static_configs:
+{% for target in _observability_node_targets %}
+      - targets: ["{{ target.address }}:{{ app_config.app.node_exporter_port }}"]
+        labels:
+          instance: "{{ target.name }}"
+{% endfor %}
+{% if _observability_node_targets | length == 0 %}
+      # No homelab-infra-tagged guests with a reachable address were in the
+      # inventory at deploy time, so this job has no targets yet. Re-run this
+      # deploy once guests exist. An empty static_configs is valid Prometheus
+      # config — the job simply scrapes nothing.
+{% endif %}

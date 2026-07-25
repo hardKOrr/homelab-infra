@@ -1,0 +1,211 @@
+---
+# pbs role — installs Proxmox Backup Server on a Debian VM.
+# Called from Play 2 of playbooks/apps/pbs.yml. Target: the PBS VM.
+#
+# INSTALL CHANNEL — PBS ships as an ISO installer, which no unattended pipeline can
+# drive. Instead the VM is a Debian clone (tasks/proxmox/vm-clone.yml) and the PBS
+# packages come from Proxmox's own apt repository, which is a supported install
+# path and leaves us in control of the base image.
+#
+# The pbs-no-subscription repository is used deliberately: it is the correct
+# repository for a lab without a Proxmox subscription. Swap it for pbs-enterprise
+# via app.apt_repo_component if the lab has one.
+#
+# API TOKEN — created with proxmox-backup-manager, granted Admin on the whole
+# datastore tree, and handed back to the playbook. PBS reveals a token secret
+# exactly once, at creation, so continuity matters: the recorded secret is reused
+# when it still works, and only a token that is missing or unverifiable is
+# recreated (which rotates the secret and is reported).
+#
+# The secret reaches config/.generated/facts.yml on the controller (gitignored,
+# 0600) because tasks/bootstrap/configure-pbs.yml authenticates with it from
+# localhost. It is not written anywhere on the guest.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to configure PBS and write the backups registry key):
+#   pbs_url, pbs_token_id, pbs_token_secret, pbs_token_rotated
+
+# ── Repository ────────────────────────────────────────────────────────────────
+- name: Install apt repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Create apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# Proxmox publishes this key already dearmored, so it is used as-is.
+- name: Install the Proxmox release key
+  ansible.builtin.get_url:
+    url: "{{ pbs_apt_key_url }}"
+    dest: "{{ pbs_apt_keyring }}"
+    mode: "0644"
+
+- name: Add the Proxmox Backup Server apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ pbs_apt_keyring }}] {{ pbs_apt_repo_url }}
+      {{ ansible_distribution_release }}
+      {{ app_config.app.apt_repo_component | default('pbs-no-subscription') }}
+    filename: pbs
+    state: present
+    update_cache: true
+
+- name: Install Proxmox Backup Server
+  ansible.builtin.apt:
+    name: proxmox-backup-server
+    state: present
+  notify: Restart pbs
+
+- name: Enable and start the PBS services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+
+- name: Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the PBS API to answer
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/ping"
+    validate_certs: false   # PBS serves a self-signed certificate until one is installed
+    status_code: [200, 401]
+  register: _pbs_health
+  until: _pbs_health.status | default(0) in [200, 401]
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── API token ─────────────────────────────────────────────────────────────────
+- name: Resolve the API token identity
+  ansible.builtin.set_fact:
+    _pbs_token_id: "{{ pbs_auth_id }}!{{ app_config.app.api_token_name | default('ansible') }}"
+    _pbs_recorded_secret: "{{ homelabinfra_infra.backups.api_token_secret | default('') }}"
+  no_log: true
+
+- name: List existing API tokens
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager user list-tokens {{ pbs_auth_id }} --output-format json"
+  register: _pbs_tokens
+  changed_when: false
+  failed_when: false
+
+- name: Determine whether the token exists
+  ansible.builtin.set_fact:
+    _pbs_token_exists: >-
+      {{ (_pbs_tokens.stdout | default('[]') | from_json)
+         | selectattr('tokenid', 'defined')
+         | selectattr('tokenid', 'equalto', _pbs_token_id)
+         | list | length > 0 }}
+
+# The recorded secret is only trustworthy if it still authenticates — a restored
+# VM or a hand-deleted token would otherwise leave configure-pbs.yml failing later
+# with an opaque 401.
+- name: Verify the recorded token still authenticates
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/access/permissions"
+    headers:
+      Authorization: "PBSAPIToken={{ _pbs_token_id }}:{{ _pbs_recorded_secret }}"
+    validate_certs: false
+    status_code: [200, 401, 403]
+  register: _pbs_token_check
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - _pbs_token_exists | bool
+    - _pbs_recorded_secret | length > 0
+
+- name: Decide whether the token must be recreated
+  ansible.builtin.set_fact:
+    _pbs_token_usable: >-
+      {{ (_pbs_token_exists | bool)
+         and (_pbs_recorded_secret | length > 0)
+         and ((_pbs_token_check.status | default(0)) == 200) }}
+
+# PBS reveals a token secret only at creation, so a token whose secret we cannot
+# verify is useless to us and has to be replaced.
+- name: Remove the unusable API token
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager user delete-token {{ pbs_auth_id }} {{ app_config.app.api_token_name | default('ansible') }}"
+  when:
+    - _pbs_token_exists | bool
+    - not (_pbs_token_usable | bool)
+  changed_when: true
+
+- name: Create the API token
+  ansible.builtin.command:
+    cmd: >-
+      proxmox-backup-manager user generate-token {{ pbs_auth_id }}
+      {{ app_config.app.api_token_name | default('ansible') }} --output-format json
+  register: _pbs_token_create
+  when: not (_pbs_token_usable | bool)
+  changed_when: true
+  no_log: true
+
+- name: Select the effective token secret
+  ansible.builtin.set_fact:
+    _pbs_token_secret: >-
+      {{ _pbs_recorded_secret
+         if _pbs_token_usable | bool
+         else (_pbs_token_create.stdout | from_json).value }}
+  no_log: true
+
+- name: Assert a token secret is available
+  ansible.builtin.assert:
+    that: _pbs_token_secret | length > 0
+    fail_msg: >-
+      Could not obtain a PBS API token secret for {{ _pbs_token_id }}. Check
+      `proxmox-backup-manager user list-tokens {{ pbs_auth_id }}` on the PBS VM.
+
+# Datastore creation, backup jobs and notification routing all need write access
+# across the tree, so the token is granted Admin at the root path.
+- name: Grant the token Admin on the datastore tree
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager acl update / Admin --auth-id '{{ _pbs_token_id }}'"
+  changed_when: true
+
+# ── Hand the endpoint and token back to the playbook ──────────────────────────
+- name: Export the PBS endpoint to the playbook
+  ansible.builtin.set_fact:
+    pbs_url: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    pbs_token_id: "{{ _pbs_token_id }}"
+    pbs_token_secret: "{{ _pbs_token_secret }}"
+    pbs_token_rotated: "{{ not (_pbs_token_usable | bool) }}"
+  no_log: true
+
+- name: Report a rotated API token
+  ansible.builtin.debug:
+    msg: >-
+      A new PBS API token was issued for {{ _pbs_token_id }} because no working
+      secret was recorded. It is written to config/.generated/facts.yml under
+      backups.api_token_secret; any external tool using the previous secret needs
+      updating.
+  when: not (_pbs_token_usable | bool)
+
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog

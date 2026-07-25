@@ -1,0 +1,162 @@
+---
+# Ensure a Debian cloud-init VM template exists on the Proxmox node, building it
+# from the official cloud image if it does not.
+#
+# Why this exists: tasks/proxmox/vm-create.yml creates a VM with no operating
+# system — Proxmox has no equivalent of an LXC `ostemplate` for VMs. Anything that
+# needs a real OS in a VM (PBS, slice 406) has to clone a prepared template, and
+# "go make a template by hand first" would break the one-click promise. This builds
+# it once, unattended, and every later VM clones it.
+#
+# Everything here runs on the Proxmox node itself (delegate_to), because the image
+# import is a local disk operation the API does not expose.
+#
+# Idempotent: if a VM with cloud_template_vmid already exists, this is a no-op. It
+# never rebuilds or overwrites an existing template — deleting the template VM is
+# the way to force a rebuild.
+#
+# Inputs:
+#   cloud_template_vmid     — vmid to create the template as (default 9000)
+#   cloud_template_name     — template name other tasks clone by (default debian-12-cloud)
+#   cloud_template_image_url— cloud image to build from (default Debian 12 genericcloud)
+#   cloud_template_storage  — storage for the imported disk (default local-lvm)
+#   cloud_template_bridge   — bridge for net0 (default vmbr0)
+#   homelabinfra_config.proxmox.node
+#   homelabinfra_config.ansible.ssh_public_key
+#
+# Output:
+#   homelabinfra_cloud_template.{vmid,name,created}
+
+- name: Cloud template | Set build facts
+  ansible.builtin.set_fact:
+    _ct_vmid: "{{ cloud_template_vmid | default(9000) | int }}"
+    _ct_name: "{{ cloud_template_name | default('debian-12-cloud') }}"
+    _ct_url: >-
+      {{ cloud_template_image_url
+         | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
+    _ct_storage: "{{ cloud_template_storage | default('local-lvm') }}"
+    _ct_bridge: "{{ cloud_template_bridge | default('vmbr0') }}"
+    _ct_cache_dir: /var/lib/vz/template/cache
+
+- name: Cloud template | Assert required inputs
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.node is defined
+      - homelabinfra_config.ansible.ssh_public_key is defined
+    fail_msg: >-
+      ensure-cloud-template.yml requires proxmox.node and ansible.ssh_public_key
+      in config/proxmox.yml.
+
+- name: Cloud template | Check whether the template already exists
+  ansible.builtin.command:
+    cmd: "qm config {{ _ct_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _ct_existing
+  failed_when: false
+  changed_when: false
+
+- name: Cloud template | Build the template
+  when: _ct_existing.rc != 0
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  block:
+    - name: Cloud template | Ensure the image cache directory exists
+      ansible.builtin.file:
+        path: "{{ _ct_cache_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Cloud template | Download the Debian cloud image
+      ansible.builtin.get_url:
+        url: "{{ _ct_url }}"
+        dest: "{{ _ct_cache_dir }}/{{ _ct_url | basename }}"
+        mode: "0644"
+      register: _ct_image
+
+    # serial0 + vga serial0 is what the Debian genericcloud image expects for
+    # console output; without it the Proxmox console stays blank and debugging a
+    # failed boot is guesswork.
+    - name: Cloud template | Create the VM shell
+      ansible.builtin.command:
+        argv:
+          - qm
+          - create
+          - "{{ _ct_vmid }}"
+          - --name
+          - "{{ _ct_name }}"
+          - --memory
+          - "2048"
+          - --cores
+          - "2"
+          - --net0
+          - "virtio,bridge={{ _ct_bridge }}"
+          - --scsihw
+          - virtio-scsi-pci
+          - --ostype
+          - l26
+          - --agent
+          - "1"
+          - --serial0
+          - socket
+          - --vga
+          - serial0
+          - --description
+          - "Debian cloud-init template built by homelab-infra. Delete this VM to force a rebuild."
+      changed_when: true
+
+    # PVE 8+ imports straight into a disk slot; no separate `qm importdisk` step.
+    - name: Cloud template | Import the cloud image as scsi0
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _ct_vmid }}"
+          - --scsi0
+          - "{{ _ct_storage }}:0,import-from={{ _ct_cache_dir }}/{{ _ct_url | basename }}"
+      changed_when: true
+
+    - name: Cloud template | Attach the cloud-init drive and boot order
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _ct_vmid }}"
+          - --ide2
+          - "{{ _ct_storage }}:cloudinit"
+          - --boot
+          - "order=scsi0"
+      changed_when: true
+
+    # Baked into the template so a clone can reach SSH even before per-VM
+    # cloud-init settings are applied.
+    - name: Cloud template | Set the default cloud-init SSH key
+      ansible.builtin.copy:
+        content: "{{ homelabinfra_config.ansible.ssh_public_key }}\n"
+        dest: "/tmp/homelab-infra-cloud-template-{{ _ct_vmid }}.pub"
+        mode: "0600"
+
+    - name: Cloud template | Apply the SSH key to the template
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _ct_vmid }}"
+          - --sshkeys
+          - "/tmp/homelab-infra-cloud-template-{{ _ct_vmid }}.pub"
+      changed_when: true
+
+    - name: Cloud template | Remove the staged SSH key
+      ansible.builtin.file:
+        path: "/tmp/homelab-infra-cloud-template-{{ _ct_vmid }}.pub"
+        state: absent
+
+    - name: Cloud template | Convert the VM into a template
+      ansible.builtin.command:
+        cmd: "qm template {{ _ct_vmid }}"
+      changed_when: true
+
+- name: Cloud template | Publish template facts
+  ansible.builtin.set_fact:
+    homelabinfra_cloud_template:
+      vmid: "{{ _ct_vmid | int }}"
+      name: "{{ _ct_name }}"
+      created: "{{ _ct_existing.rc != 0 }}"

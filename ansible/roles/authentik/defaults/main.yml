@@ -1,0 +1,8 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/authentik.yml and config/apps/<instance>.yml.
+authentik_project_dir: "/opt/{{ instance }}"
+authentik_env_file: "/opt/{{ instance }}/.env"
+authentik_admin_user: akadmin
+authentik_postgres_user: authentik
+authentik_postgres_db: authentik

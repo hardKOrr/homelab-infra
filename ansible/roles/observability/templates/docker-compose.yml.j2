@@ -1,0 +1,62 @@
+# docker-compose.yml for the observability stack ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+#
+# Only Grafana is published to the reverse proxy. Prometheus binds the stack host's
+# loopback so it is reachable for reloads and debugging but never routable from the
+# LAN or the internet — it has no authentication of its own.
+services:
+  prometheus:
+    image: {{ app_config.app.prometheus_image }}
+    container_name: "{{ instance }}-prometheus"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time={{ app_config.app.retention | default('30d') }}"
+      - "--web.enable-lifecycle"
+    volumes:
+      - "{{ app_config.app.config_path }}/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+      - "{{ app_config.app.data_path }}/prometheus:/prometheus"
+    ports:
+      - "127.0.0.1:{{ app_config.app.prometheus_port }}:9090"
+
+  grafana:
+    image: {{ app_config.app.grafana_image }}
+    container_name: "{{ instance }}-grafana"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=https://{{ instance }}.{{ _observability_domain }}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+    volumes:
+      - "{{ app_config.app.data_path }}/grafana:/var/lib/grafana"
+      - "{{ app_config.app.config_path }}/provisioning:/etc/grafana/provisioning:ro"
+      - "{{ app_config.app.config_path }}/dashboards:/var/lib/grafana/dashboards:ro"
+    ports:
+      - "{{ app_config.app.port }}:3000"
+    depends_on:
+      - prometheus
+
+  # Exports this stack host's own metrics. Every other homelab-infra guest runs
+  # node_exporter as a package instead, installed by tasks/guest-bootstrap.yml.
+  node-exporter:
+    image: {{ app_config.app.node_exporter_image }}
+    container_name: "{{ instance }}-node-exporter"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    command:
+      - "--path.rootfs=/host"
+    pid: host
+    volumes:
+      - "/:/host:ro,rslave"
+    ports:
+      - "{{ app_config.app.node_exporter_port }}:9100"

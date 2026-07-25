@@ -1,0 +1,279 @@
+---
+# ntfy role — native LXC deployment (official .deb from GitHub releases).
+# Called from Play 2 of playbooks/apps/ntfy.yml. Target: dedicated LXC.
+#
+# Install channel: upstream publishes a Debian package per release
+# (ntfy_<ver>_linux_amd64.deb), so there is no image-extraction dance here —
+# contrast roles/vaultwarden, which has no binary assets upstream.
+#
+# Credentials (spec: .claude/specs/secrets-handling.md): the publish account's
+# password and access token are generated on first deploy and live ONLY in
+# gitignored config/.generated/facts.yml on the controller. The guest keeps a
+# bcrypt hash in ntfy's own auth database — no plaintext secret is written to the
+# guest filesystem. On re-run the existing values come back from facts.yml, so the
+# credentials every other tool was configured with stay valid.
+#
+# Recovery: if facts.yml is lost, the password is regenerated and reset on the
+# account, and the labelled token is recovered from the guest when still present.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to write the notifications registry key):
+#   ntfy_publish_user, ntfy_publish_password, ntfy_publish_token
+
+- name: Set domain fact for the server config
+  ansible.builtin.set_fact:
+    _ntfy_domain: >-
+      {{ homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+
+# ── Install ───────────────────────────────────────────────────────────────────
+- name: Install dependencies
+  ansible.builtin.apt:
+    name:
+      - curl # lab-update-check
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Check installed ntfy version
+  ansible.builtin.command:
+    cmd: "{{ app_config.update.binary_path }} --version"
+  register: _ntfy_installed
+  failed_when: false
+  changed_when: false
+
+- name: Get latest release info
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+    return_content: true
+  register: _ntfy_release
+  changed_when: false
+
+- name: Set version facts
+  ansible.builtin.set_fact:
+    _ntfy_installed_version: >-
+      {{ (_ntfy_installed.stdout | default('') | regex_search('[0-9]+\.[0-9]+\.[0-9]+'))
+         if _ntfy_installed.rc == 0 else 'none' }}
+    _ntfy_latest_version: "{{ _ntfy_release.json.tag_name | regex_replace('^v', '') }}"
+
+- name: Select the amd64 Debian package for {{ _ntfy_latest_version }}
+  ansible.builtin.set_fact:
+    _ntfy_deb_url: >-
+      {{ _ntfy_release.json.assets
+         | selectattr('name', 'search', '_linux_amd64\.deb$')
+         | map(attribute='browser_download_url')
+         | first | default('') }}
+
+- name: Assert a Debian package was published for this release
+  ansible.builtin.assert:
+    that: _ntfy_deb_url | length > 0
+    fail_msg: >-
+      Release {{ _ntfy_latest_version }} of {{ app_config.update.github_repo }}
+      publishes no *_linux_amd64.deb asset. Pin an older version in
+      config/apps/{{ instance }}.yml or install manually.
+
+- name: Install ntfy {{ _ntfy_latest_version }} from the official package
+  ansible.builtin.apt:
+    deb: "{{ _ntfy_deb_url }}"
+  when: _ntfy_installed_version != _ntfy_latest_version
+  notify: Restart ntfy
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create ntfy directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: ntfy
+    group: ntfy
+    mode: "0750"
+  loop:
+    - "{{ app_config.app.data_path }}"
+    - "{{ app_config.app.cache_path }}"
+
+# ── Configure ─────────────────────────────────────────────────────────────────
+- name: Write server config
+  ansible.builtin.template:
+    src: server.yml.j2
+    dest: "{{ ntfy_config_file }}"
+    owner: root
+    group: ntfy
+    mode: "0640"
+  notify: Restart ntfy
+
+- name: Enable and start ntfy service
+  ansible.builtin.systemd:
+    name: "{{ ntfy_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts before provisioning credentials
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for ntfy to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/v1/health"
+    status_code: 200
+  register: _ntfy_health
+  until: _ntfy_health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── Publish account ───────────────────────────────────────────────────────────
+- name: Resolve publish credentials
+  ansible.builtin.set_fact:
+    _ntfy_user: "{{ app_config.app.user | default('homelab') }}"
+    # Reuse whatever bootstrap already handed to Watchtower/PBS/etc; only a lab
+    # with no recorded password (first deploy, or a lost facts.yml) generates one.
+    _ntfy_password: >-
+      {{ homelabinfra_infra.notifications.password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _ntfy_password_known: >-
+      {{ homelabinfra_infra.notifications.password | default('') | length > 0 }}
+  no_log: true
+
+- name: List existing ntfy users
+  ansible.builtin.command:
+    cmd: ntfy user list
+  register: _ntfy_user_list
+  changed_when: false
+
+- name: Create publish account
+  ansible.builtin.command:
+    cmd: "ntfy user add --role=user {{ _ntfy_user }}"
+  environment:
+    NTFY_PASSWORD: "{{ _ntfy_password }}"
+  when: _ntfy_user_list.stdout is not search('^user ' ~ _ntfy_user ~ '$')
+  changed_when: true
+  no_log: true
+
+# Only fires when facts.yml no longer holds the password — resets the account to
+# the freshly generated one so the recorded credential is authoritative again.
+- name: Reset publish account password (recovering a lost facts.yml)
+  ansible.builtin.command:
+    cmd: "ntfy user change-pass {{ _ntfy_user }}"
+  environment:
+    NTFY_PASSWORD: "{{ _ntfy_password }}"
+  when:
+    - not (_ntfy_password_known | bool)
+    - _ntfy_user_list.stdout is search('^user ' ~ _ntfy_user ~ '$')
+  changed_when: true
+  no_log: true
+
+# ntfy access is declarative — re-applying the same grant is a no-op.
+- name: Grant read-write access on the homelab topic
+  ansible.builtin.command:
+    cmd: "ntfy access {{ _ntfy_user }} {{ app_config.app.topic }} rw"
+  changed_when: true
+
+# ── Access token ──────────────────────────────────────────────────────────────
+# Tools publish with a bearer token rather than the password, so a rotated
+# password does not invalidate every configured notifier at once.
+- name: List existing access tokens
+  ansible.builtin.command:
+    cmd: "ntfy token list {{ _ntfy_user }}"
+  register: _ntfy_token_list
+  changed_when: false
+  no_log: true
+
+- name: Recover the homelab-infra token from the guest
+  ansible.builtin.set_fact:
+    _ntfy_existing_token: >-
+      {{ (_ntfy_token_list.stdout_lines | default([])
+          | select('search', ntfy_token_label)
+          | map('regex_search', 'tk_[A-Za-z0-9]+')
+          | select('string') | list | first | default('')) }}
+  no_log: true
+
+- name: Create access token
+  ansible.builtin.command:
+    cmd: "ntfy token add --label {{ ntfy_token_label }} {{ _ntfy_user }}"
+  register: _ntfy_token_add
+  when:
+    - homelabinfra_infra.notifications.token | default('') | length == 0
+    - _ntfy_existing_token | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Select the effective access token
+  ansible.builtin.set_fact:
+    # Conditional chain rather than chained `| default(..., true)`: a regex_search
+    # that matches nothing returns None, which would propagate through default()
+    # and make the assert below fail on `None | length` instead of on an empty
+    # string. The explicit `''` fallback keeps the failure legible.
+    _ntfy_token: >-
+      {{ _ntfy_recorded if _ntfy_recorded | length > 0
+         else (_ntfy_existing_token if _ntfy_existing_token | length > 0
+               else (_ntfy_token_add.stdout | default('')
+                     | regex_search('tk_[A-Za-z0-9]+') | default('', true))) }}
+  vars:
+    _ntfy_recorded: "{{ homelabinfra_infra.notifications.token | default('') }}"
+  no_log: true
+
+- name: Assert a publish token is available
+  ansible.builtin.assert:
+    that: _ntfy_token | length > 0
+    fail_msg: >-
+      Could not obtain an ntfy access token for {{ _ntfy_user }}. Check
+      `ntfy token list {{ _ntfy_user }}` on the guest.
+
+# ── Prove the closed-by-default policy actually holds ─────────────────────────
+- name: Verify authenticated publish succeeds
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/{{ app_config.app.topic }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _ntfy_token }}"
+      Title: "Ntfy deployed"
+    body: "{{ instance }} is up — homelab-infra notifications route to this topic."
+    body_format: raw
+    status_code: 200
+  changed_when: true
+  no_log: true
+
+- name: Verify anonymous publish is denied
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/{{ app_config.app.topic }}"
+    method: POST
+    body: "anonymous publish probe"
+    body_format: raw
+    status_code: [401, 403]
+  changed_when: false
+
+# ── Hand the credentials back to the playbook ─────────────────────────────────
+# Play 3 reads these off hostvars and writes the notifications registry key.
+- name: Export publish credentials to the playbook
+  ansible.builtin.set_fact:
+    ntfy_publish_user: "{{ _ntfy_user }}"
+    ntfy_publish_password: "{{ _ntfy_password }}"
+    ntfy_publish_token: "{{ _ntfy_token }}"
+  no_log: true
+
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog
+
+# ── Record installed version ──────────────────────────────────────────────────
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Record installed version
+  ansible.builtin.copy:
+    content: '{"version": "{{ _ntfy_latest_version }}"}'
+    dest: /etc/ansible/facts.d/ntfy.fact
+    mode: "0644"

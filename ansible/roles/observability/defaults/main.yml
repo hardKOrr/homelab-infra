@@ -1,0 +1,7 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/observability.yml and config/apps/<instance>.yml.
+observability_project_dir: "/opt/{{ instance }}"
+observability_env_file: "/opt/{{ instance }}/.env"
+observability_datasource_name: Prometheus
+observability_dashboard_uid: homelab-infra-nodes

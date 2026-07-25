@@ -1,0 +1,265 @@
+---
+# uptime-kuma role — Docker Compose deployment on a stack host.
+# Called from Play 2 of playbooks/apps/uptime-kuma.yml. Target: the core_stack host.
+#
+# VERSION — Uptime Kuma 2.x, locked by slice 404. Version 1 has no REST API at all
+# (socket.io only) and tasks/wiring/uptime-kuma.yml registers monitors over REST.
+# Full decision record in .claude/meta/404-app-uptime-kuma/notes.md.
+#
+# CREDENTIALS — the admin password is generated once and reused from the registry
+# on re-run; it is recorded in gitignored config/.generated/facts.yml so the
+# operator can sign in. The REST API key is what the wiring tasks authenticate
+# with.
+#
+# DEGRADED PATH — every REST call below tolerates a non-2xx answer and reports it
+# instead of failing the deploy. If the scripted setup cannot obtain a working API
+# key, the role records everything it does know, prints the exact manual step, and
+# leaves monitoring.token empty; tasks/wiring/uptime-kuma.yml already probes the
+# API and skips monitor registration with a warning when it is unusable (slice 303).
+# Monitoring is an add-on and must never be the thing that fails an app deploy.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to write the monitoring registry key):
+#   kuma_url, kuma_api_key, kuma_admin_username, kuma_admin_password,
+#   kuma_notification_id
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ uptime_kuma_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    mode: "0750"
+
+# ── Compose ───────────────────────────────────────────────────────────────────
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ uptime_kuma_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart uptime-kuma
+
+- name: Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ uptime_kuma_project_dir }}"
+
+- name: Start Uptime Kuma
+  community.docker.docker_compose_v2:
+    project_src: "{{ uptime_kuma_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Uptime Kuma to answer
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _kuma_up
+  until: _kuma_up.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── Admin account ─────────────────────────────────────────────────────────────
+- name: Resolve admin credentials
+  ansible.builtin.set_fact:
+    _kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
+    _kuma_password: >-
+      {{ homelabinfra_infra.monitoring.admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _kuma_base: "http://localhost:{{ app_config.app.port }}"
+  no_log: true
+
+# Kuma refuses this once a user exists, which is exactly the idempotency signal:
+# a re-run gets a non-2xx here and moves on with the recorded password.
+- name: Run first-time setup
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/setup"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ _kuma_user }}"
+      password: "{{ _kuma_password }}"
+    status_code: [200, 201, 400, 403, 404]
+  register: _kuma_setup
+  failed_when: false
+  changed_when: _kuma_setup.status | default(0) in [200, 201]
+  no_log: true
+
+- name: Report first-time setup outcome
+  ansible.builtin.debug:
+    msg: >-
+      Uptime Kuma setup endpoint returned
+      {{ _kuma_setup.status | default('no response') }}
+      {{ '(admin account created)' if _kuma_setup.status | default(0) in [200, 201]
+         else '(already initialised, or this build does not expose /setup)' }}.
+
+# ── REST API key ──────────────────────────────────────────────────────────────
+- name: Resolve the API key
+  ansible.builtin.set_fact:
+    # Order: an explicitly pasted key wins, then whatever the registry already
+    # holds from an earlier deploy.
+    _kuma_api_key: >-
+      {{ app_config.app.api_key
+         | default(homelabinfra_infra.monitoring.token | default(''), true) }}
+  no_log: true
+
+- name: Probe the REST API with the resolved key
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/api/monitors"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _kuma_api_key }}"
+      Accept: "application/json"
+    status_code: [200, 401, 403, 404]
+    timeout: 10
+  register: _kuma_probe
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: _kuma_api_key | length > 0
+
+- name: Record whether the REST API is usable
+  ansible.builtin.set_fact:
+    _kuma_api_usable: "{{ (_kuma_probe.status | default(0)) == 200 }}"
+
+# The one step this role cannot script: Uptime Kuma issues API keys only to an
+# authenticated UI session, and there is no documented endpoint to mint the first
+# one. Rather than fail the deploy, say exactly what to do and carry on — the
+# wiring tasks already skip monitor registration with a warning until a key exists.
+- name: Report the manual API key step
+  ansible.builtin.debug:
+    msg:
+      - "════════════════════════════════════════════════════════════════════"
+      - "Uptime Kuma is deployed, but has no usable REST API key yet, so app"
+      - "deploys will skip monitor registration (with a warning) until it does."
+      - ""
+      - "One-time step:"
+      - "  1. Open https://{{ instance }}.{{ _kuma_domain }} and sign in as"
+      - "     {{ _kuma_user }} (password is in config/.generated/facts.yml under"
+      - "     monitoring.admin_password)."
+      - "  2. Profile -> API Keys -> Add API Key, name it '{{ uptime_kuma_api_key_name }}'."
+      - "  3. Put the key in config/apps/{{ instance }}.yml as app.api_key and"
+      - "     re-run this deploy. Everything after this point then runs scripted."
+      - "════════════════════════════════════════════════════════════════════"
+  vars:
+    _kuma_domain: >-
+      {{ homelabinfra_infra.domain
+         | default(homelabinfra_config.infrastructure.domain, true) }}
+  when: not (_kuma_api_usable | bool)
+
+# ── Ntfy notification channel ─────────────────────────────────────────────────
+# Attached to every monitor the wiring tasks create, so a DOWN event reaches the
+# same Ntfy topic as everything else (CLAUDE.md feedback loop).
+- name: Provision the Ntfy notification channel
+  when:
+    - _kuma_api_usable | bool
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+  vars:
+    _kuma_headers:
+      Authorization: "Bearer {{ _kuma_api_key }}"
+      Accept: "application/json"
+  block:
+    - name: List existing notification channels
+      ansible.builtin.uri:
+        url: "{{ _kuma_base }}/api/notifications"
+        method: GET
+        headers: "{{ _kuma_headers }}"
+        status_code: [200, 404]
+      register: _kuma_notifications
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Select the existing homelab-infra channel
+      ansible.builtin.set_fact:
+        _kuma_existing_notification: >-
+          {{ ((_kuma_notifications.json.notifications
+               | default(_kuma_notifications.json | default([]), true))
+              | selectattr('name', 'defined')
+              | selectattr('name', 'equalto', uptime_kuma_notification_name)
+              | list | first | default({})) }}
+
+    - name: Build the notification payload
+      ansible.builtin.set_fact:
+        # One dict expression keeps bools as bools in the JSON body
+        # (.claude/specs/jinja-string-typing.md). Kuma nests provider settings in
+        # `config` as a JSON string.
+        _kuma_notification_payload: >-
+          {{ {
+               'name': uptime_kuma_notification_name,
+               'type': 'ntfy',
+               'isDefault': true,
+               'applyExisting': true,
+               'config': {
+                 'name': uptime_kuma_notification_name,
+                 'type': 'ntfy',
+                 'ntfyserverurl': homelabinfra_infra.notifications.host,
+                 'ntfytopic': homelabinfra_infra.notifications.topic | default('homelab'),
+                 'ntfyPriority': 5,
+                 'ntfyAuthenticationMethod': 'token',
+                 'ntfyaccesstoken': homelabinfra_infra.notifications.token | default(''),
+               } | to_json,
+             } }}
+      no_log: true
+
+    - name: Create the notification channel
+      ansible.builtin.uri:
+        url: "{{ _kuma_base }}/api/notifications"
+        method: POST
+        headers: "{{ _kuma_headers }}"
+        body_format: json
+        body: "{{ _kuma_notification_payload }}"
+        status_code: [200, 201]
+      register: _kuma_notification_create
+      when: _kuma_existing_notification.id is not defined
+      failed_when: false
+      changed_when: _kuma_notification_create.status | default(0) in [200, 201]
+      no_log: true
+
+    - name: Resolve the notification channel id
+      ansible.builtin.set_fact:
+        _kuma_notification_id: >-
+          {{ _kuma_existing_notification.id
+             | default(_kuma_notification_create.json.id
+                       | default(_kuma_notification_create.json.notificationID | default('')),
+                       true) }}
+
+    - name: Report an unprovisioned notification channel
+      ansible.builtin.debug:
+        msg: >-
+          Could not create the '{{ uptime_kuma_notification_name }}' notification
+          channel (status
+          {{ _kuma_notification_create.status | default('not attempted') }}).
+          Monitors will still be registered; they just will not notify until the
+          channel is added in the Uptime Kuma UI.
+      when: _kuma_notification_id | default('') | string | length == 0
+
+# ── Hand the endpoint and credentials back to the playbook ────────────────────
+- name: Export the monitoring endpoint to the playbook
+  ansible.builtin.set_fact:
+    # Direct LAN URL, not https://<instance>.<domain>: during bootstrap neither DNS
+    # nor a certificate exists for the public name yet, and the wiring tasks call
+    # this API from the controller on every subsequent app deploy.
+    kuma_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    kuma_api_key: "{{ _kuma_api_key }}"
+    kuma_admin_username: "{{ _kuma_user }}"
+    kuma_admin_password: "{{ _kuma_password }}"
+    kuma_notification_id: "{{ _kuma_notification_id | default('') }}"
+  no_log: true

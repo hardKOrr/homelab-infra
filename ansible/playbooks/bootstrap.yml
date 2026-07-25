@@ -26,10 +26,9 @@
 # Re-running after any failure is safe — each step finds-or-creates its guest and
 # re-applies config without destructive operations.
 #
-# Steps 2-7 are staged as commented import_playbook blocks: import_playbook is
-# parsed at load time, so an import of a not-yet-written playbook would break
-# --syntax-check for the whole file. Each app slice (401-406) uncomments its own
-# block when its playbook lands.
+# Each app playbook records its own service registry key in its Play 3, before it
+# wires. Bootstrap therefore only orders the imports — it does not write facts on
+# their behalf — and deploying any one app standalone registers it identically.
 
 # ── Play 1: Load + validate platform config ───────────────────────────────────
 - name: Bootstrap | Load platform config
@@ -75,21 +74,6 @@
   vars:
     instance: vaultwarden
 
-- name: Bootstrap | Record Vaultwarden facts
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    # The vaultwarden import's provision play added exactly one host to
-    # app_deploy (both its find and create branches call add_host), so [0] is
-    # the Vaultwarden guest. Shape B per ansible/vars/CONTRACT.md §3.
-    - name: Write Vaultwarden facts
-      ansible.builtin.import_tasks: ../tasks/bootstrap/write-generated-facts.yml
-      vars:
-        generated_facts_service: vaultwarden
-        generated_facts_data:
-          host: "http://{{ hostvars[groups['app_deploy'][0]].ansible_host }}"
-          port: "{{ hostvars[groups['app_deploy'][0]].app_config.app.port | int }}"
-
 - name: Bootstrap | Vaultwarden admin token gate
   hosts: localhost
   gather_facts: false
@@ -118,27 +102,26 @@
 
 
 # ── Step 2: Ntfy — notification hub ───────────────────────────────────────────
-# STAGED (slice 401): uncomment when playbooks/apps/ntfy.yml lands, and follow it
-# with a "Record Ntfy facts" play (generated_facts_service: notifications; data:
-# provider, instance, host, topic per CONTRACT.md §3).
-#
-# - import_playbook: apps/ntfy.yml
-#   vars:
-#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.notifications.instance | default('ntfy') }}"
-#   when: hostvars['localhost'].homelabinfra_config.infrastructure.notifications.provider | default('none') == 'ntfy'
+# Records `notifications` itself (host, topic, and the publish credentials every
+# later notifier authenticates with — Ntfy ships closed by default).
+- import_playbook: apps/ntfy.yml
+  vars:
+    instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.notifications.instance | default('ntfy') }}"
+  when: hostvars['localhost'].homelabinfra_config.infrastructure.notifications.provider | default('none') == 'ntfy'
 
 
 # ── Step 3: Reverse proxy — Caddy or Nginx per infrastructure.yml ─────────────
-# STAGED (slice 402 caddy / 301+later nginx): conditions anchor on localhost's
-# merged config so they evaluate identically on every host the imported plays
-# target. Follow with a "Record reverse proxy facts" play
-# (generated_facts_service: reverse_proxy; data: provider, instance, host, port).
+# Conditions anchor on localhost's merged config so they evaluate identically on
+# every host the imported plays target. Records `reverse_proxy` itself.
 #
-# - import_playbook: apps/caddy.yml
-#   vars:
-#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('caddy') }}"
-#   when: hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') == 'caddy'
-#
+# The nginx import stays staged: slice 301 shipped the nginx WIRING pair, but no
+# nginx app playbook exists yet. import_playbook is parsed at load time, so
+# importing a missing file would break --syntax-check for this whole playbook.
+- import_playbook: apps/caddy.yml
+  vars:
+    instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('caddy') }}"
+  when: hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') == 'caddy'
+
 # - import_playbook: apps/nginx.yml
 #   vars:
 #     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('nginx') }}"
@@ -146,43 +129,36 @@
 
 
 # ── Step 4: Authentik — SSO (optional) ────────────────────────────────────────
-# STAGED (slice 403): uncomment when playbooks/apps/authentik.yml lands. Follow
-# with a "Record SSO facts" play (generated_facts_service: sso; data: provider,
-# instance, host, token).
-#
-# - import_playbook: apps/authentik.yml
-#   vars:
-#     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.sso.instance | default('authentik') }}"
-#   when: hostvars['localhost'].homelabinfra_config.infrastructure.sso.provider | default('none') == 'authentik'
+# Records `sso` itself (API base URL and the bootstrap token the wiring tasks use).
+- import_playbook: apps/authentik.yml
+  vars:
+    instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.sso.instance | default('authentik') }}"
+  when: hostvars['localhost'].homelabinfra_config.infrastructure.sso.provider | default('none') == 'authentik'
 
 
 # ── Step 5: Uptime Kuma — uptime monitoring ───────────────────────────────────
-# STAGED (slice 404): uncomment when playbooks/apps/uptime-kuma.yml lands. Follow
-# with a facts play recording the Uptime Kuma endpoint so later app deploys can
-# auto-register monitors.
-#
-# - import_playbook: apps/uptime-kuma.yml
-#   vars:
-#     instance: uptime-kuma
+# Records `monitoring` itself, so every app deployed after this point
+# auto-registers a monitor.
+- import_playbook: apps/uptime-kuma.yml
+  vars:
+    instance: uptime-kuma
 
 
-# ── Step 6: Grafana + Prometheus — metrics ────────────────────────────────────
-# STAGED (slice 405): uncomment when playbooks/apps/grafana.yml lands.
-#
-# - import_playbook: apps/grafana.yml
-#   vars:
-#     instance: grafana
+# ── Step 6: Prometheus + Grafana — metrics ────────────────────────────────────
+# One app, not two (slice 405): Grafana's only datasource is Prometheus.
+# Deployed after the services above so its first scrape config already covers them.
+- import_playbook: apps/observability.yml
+  vars:
+    instance: observability
 
 
 # ── Step 7: PBS — Proxmox Backup Server (VM) ──────────────────────────────────
-# STAGED (slice 406): uncomment when playbooks/apps/pbs.yml lands. Its playbook
-# (or a follow-up play here) calls tasks/bootstrap/configure-pbs.yml and records
-# backups facts (generated_facts_service: backups; data: instance, host,
-# datastore, datastore_path).
-#
-# - import_playbook: apps/pbs.yml
-#   vars:
-#     instance: pbs
+# Last on purpose: its backup job is built from the vmid list of every
+# homelab-infra-tagged guest that exists at configure time. The playbook calls
+# tasks/bootstrap/configure-pbs.yml and records `backups` itself.
+- import_playbook: apps/pbs.yml
+  vars:
+    instance: pbs
 
 
 # ── Wrap-up: report what this pass bootstrapped ───────────────────────────────

@@ -37,3 +37,26 @@ Verified: ansible-lint green (production profile); payload typing and monitor-se
 expressions verified with a throwaway render. NOT verified live — every acceptance item
 needs a deployed Kuma (slice 404), and the REST surface itself is unconfirmed until
 then.
+
+## 2026-07-25 — version question resolved by slice 404
+
+Slice 404 locked **Uptime Kuma v2**, which is the outcome that needs no rework here:
+the REST implementation above stands as written, and the socket.io fallback this
+slice contemplated is not needed.
+
+What 404 supplies:
+
+- `monitoring: {provider, instance, host, token, admin_user, admin_password}` plus
+  `notification_id` — written only when a notification channel was actually
+  provisioned, because the wiring task gates on `is defined` and an empty value would
+  attach an invalid channel to every monitor.
+- `host` is the direct LAN URL (`http://<stack-ip>:3001`), not the public domain —
+  during bootstrap neither DNS nor a certificate exists yet.
+
+What still keeps the probe earning its place: Uptime Kuma issues REST API keys only
+to a signed-in browser session, so on a first deploy `monitoring.token` is empty
+until the operator mints one. The probe-and-skip path is exactly what carries app
+deploys through that window. Do not remove it.
+
+Still not verified live — the v2 endpoints this file targets are unconfirmed against
+a running Kuma. See 404's notes.md for the specific list to check.

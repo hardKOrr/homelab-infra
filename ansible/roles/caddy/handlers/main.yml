@@ -1,0 +1,9 @@
+---
+# Restart, never reload: `caddy reload` re-applies the base config file and would
+# drop every route the wiring tasks added through the admin API. A restart with
+# --resume replays the autosaved running config instead. See tasks/main.yml.
+- name: Restart caddy
+  ansible.builtin.systemd:
+    name: "{{ caddy_service_name }}"
+    state: restarted
+    daemon_reload: true

@@ -68,7 +68,7 @@
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"
-        groups: app_deploy
+        groups: "deploy_{{ instance }}"
         ansible_host: >-
           {{ hostvars[_existing_hosts[0]].ansible_host
              | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
@@ -115,7 +115,7 @@
           # Play 3 reads ansible_host and app_config back from this hostvars handoff.
           ansible.builtin.add_host:
             name: "{{ homelabinfra_instance.lxc.hostname }}"
-            groups: app_deploy
+            groups: "deploy_{{ instance }}"
             ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
@@ -125,7 +125,12 @@
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the target guest to install and configure Vaultwarden.
 - name: "Vaultwarden | Deploy"
-  hosts: app_deploy
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: true
 
@@ -145,16 +150,23 @@
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
+    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
+    # on homelabinfra_infra.notifications, which does not exist yet when the first
+    # baseline guests are created. Running it every deploy is what gives them the
+    # hook once Ntfy is up. Idempotent copy/file tasks only.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Vaultwarden
       ansible.builtin.include_role:
         name: vaultwarden
 
 
-# ── Play 3: Wire ───────────────────────────────────────────────────────────────
-# Registers the app with platform services. Runs on localhost (API calls).
-# All wiring tasks are idempotent — safe to re-run.
-- name: "Vaultwarden | Wire"
+# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# Registers Vaultwarden in the service registry, then registers the app with
+# platform services. Runs on localhost (API calls). Wiring tasks are idempotent.
+- name: "Vaultwarden | Record facts and wire"
   hosts: localhost
   gather_facts: false
 
@@ -169,17 +181,35 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Shape B `vaultwarden` per ansible/vars/CONTRACT.md §3. Recorded here rather
+    # than in bootstrap.yml so a standalone deploy registers the service too —
+    # every baseline app playbook (401-406) records its own key the same way.
+    - name: Record Vaultwarden facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: vaultwarden
+        generated_facts_data:
+          host: "http://{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
+          port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port | int }}"
+
+    # Re-read so the wiring tasks below see the key just written.
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
   vars:
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # These are the variables all wiring tasks read. Set them here.
     # Do not change the variable names — wiring tasks depend on them.
     #
     # upstream host/port come from the deploy target Play 1 registered in the
-    # app_deploy group (both branches call add_host). Its ansible_host is the
+    # deploy_<instance> group (both branches call add_host). Its ansible_host is the
     # app LXC's own IP, so this one read is correct for both provisioning paths.
     wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ hostvars[groups['app_deploy'][0]].ansible_host }}"
-    wiring_upstream_port: "{{ hostvars[groups['app_deploy'][0]].app_config.app.port }}"
+    wiring_upstream_host: "{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
+    wiring_upstream_port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port }}"
     wiring_domain: "{{ instance }}.{{ homelabinfra_infra.domain }}"
     wiring_app_display: "Vaultwarden ({{ instance }})"
     wiring_monitor_url: "https://{{ instance }}.{{ homelabinfra_infra.domain }}"
@@ -200,7 +230,7 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - hostvars[groups['app_deploy'][0]].app_config.routing.auth | default(true)
+        - hostvars[groups['deploy_' ~ instance][0]].app_config.routing.auth | default(true)
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
@@ -214,3 +244,13 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # No-op on the very first bootstrap pass — Ntfy does not exist until step 2.
+    - name: Notify deployment complete
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Vaultwarden deployed ({{ instance }})"
+        notify_message: >-
+          Secrets store {{ instance }} is running at
+          https://{{ instance }}.{{ homelabinfra_infra.domain }}.
+          Its admin panel is at /admin, using the admin token saved during bootstrap.

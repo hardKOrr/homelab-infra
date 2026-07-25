@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+# Grafana datasource provisioning for {{ instance }} — managed by homelab-infra.
+# Provisioned datasources are read-only in the Grafana UI by design; change them
+# here and re-deploy.
+apiVersion: 1
+
+datasources:
+  - name: {{ observability_datasource_name }}
+    # Fixed uid — the provisioned dashboard references the datasource by uid, so
+    # letting Grafana generate a random one would leave every panel unbound.
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # Container-to-container over the compose network, so this does not depend on
+    # the host's published port or on any DNS the lab may or may not have.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: {{ app_config.app.scrape_interval | default('30s') }}

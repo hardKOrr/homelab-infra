@@ -57,13 +57,17 @@
             | list
           }}
 
+    # Ntfy is closed by default (slice 401) — carry the publish token when the
+    # registry has one. An Ntfy predating that change has no token and stays open.
     - name: Notify via Ntfy
       ansible.builtin.uri:
         url: "{{ homelabinfra_infra.notifications.host }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
         method: POST
-        headers:
-          Title: "Homelab App Updates Available"
-          Priority: "default"
+        headers: >-
+          {{ {'Title': 'Homelab App Updates Available', 'Priority': 'default'}
+             | combine({'Authorization': 'Bearer ' ~ homelabinfra_infra.notifications.token}
+                       if homelabinfra_infra.notifications.token | default('') | length > 0
+                       else {}) }}
         body: |
           {{ _updates_available | length }} app(s) have updates available:
 

@@ -51,6 +51,31 @@ out of slice scope).
   `test.sh` overall still fails on the pre-existing empty `stacks/rollback-container.yml`
   stub (slice 502, untouched).
 
+## 2026-07-25 — aligned with the 401–406 pattern
+
+Reviewed while building the rest of the 4XX tier. The implementation above stands;
+two changes were made so all seven baseline apps behave identically.
+
+- **Fact-writing moved into `apps/vaultwarden.yml`.** It used to live in a
+  `Bootstrap | Record Vaultwarden facts` play inside `bootstrap.yml`, which meant a
+  standalone `ansible-playbook apps/vaultwarden.yml` deployed the service without
+  ever registering it. Every 401–406 playbook records its own registry key in Play 3
+  before wiring; Vaultwarden now does the same, and the play was removed from
+  `bootstrap.yml`. The two-pass admin token gate is unchanged.
+- **Added a deploy notification** via the new shared `tasks/notify.yml`, per
+  `.claude/specs/one-click-idempotent.md` ("every automated state change notifies").
+  It is a silent no-op on the very first bootstrap pass, because Ntfy does not exist
+  until step 2.
+
+Gate re-verified after both changes: ansible-lint clean (production profile),
+`apps/vaultwarden.yml` and `bootstrap.yml` syntax-check clean. The repo-wide
+syntax failure is still only the empty `stacks/rollback-container.yml` stub
+(slice 502, untouched).
+
+Note for live acceptance: Vaultwarden now sits behind an **authenticated** Ntfy
+(slice 401 closed the server by default), but nothing in this role publishes, so
+nothing here changed. Its own admin-token flow is untouched.
+
 ### Live acceptance TODO
 
 - Fresh deploy: LXC created, web vault loads at wired domain, token printed once.

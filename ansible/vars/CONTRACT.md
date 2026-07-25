@@ -43,6 +43,7 @@ reverse_proxy: { provider, instance, host, port }
 sso:           { provider, instance, host, token }
 notifications: { provider, instance, host, topic }   # NOT ntfy_url — consumers build {{ host }}/{{ topic }}
 monitoring:    { provider, instance, host, token, notification_id }
+metrics:       { provider, instance, host, prometheus_host, admin_user, admin_password }
 dns:           { provider, host, api_key }
 backups:       { instance, host, datastore, datastore_path }
 vaultwarden:   { host, port }        # populated after bootstrap step 1
@@ -56,13 +57,25 @@ read only by that provider's wiring tasks (slices 301–305):
 | `reverse_proxy` | `token` | nginx | pre-issued NPM JWT; skips the login round-trip |
 | `reverse_proxy` | `admin_user`, `admin_password` | nginx | NPM admin login, exchanged for a JWT per run |
 | `reverse_proxy` | `letsencrypt_email` | nginx | when set, new proxy hosts request a LE certificate and force SSL; omit for internal-only labs |
-| `monitoring` | `notification_id` | uptime_kuma | id of the Ntfy notification channel attached to every monitor |
+| `sso` | `admin_user`, `admin_password` | authentik | akadmin's generated sign-in credentials; nothing reads them, they are recorded so the operator can log in |
+| `notifications` | `user`, `password` | ntfy | publish account; `configure-watchtower.yml` needs the basic-auth pair because shoutrrr authenticates that way |
+| `notifications` | `token` | ntfy | publish-only access token on `topic`; every `uri`/`curl` consumer sends it as `Authorization: Bearer` |
+| `monitoring` | `notification_id` | uptime_kuma | id of the Ntfy notification channel attached to every monitor; written only when one was actually provisioned, because the wiring task gates on `is defined` |
+| `metrics` | `prometheus_host` | prometheus_grafana | loopback URL on the stack host; Prometheus is deliberately not routable, so this is for humans and on-host debugging |
+| `metrics` | `admin_user`, `admin_password` | prometheus_grafana | Grafana's generated sign-in credentials |
+| `monitoring` | `admin_user`, `admin_password` | uptime_kuma | generated sign-in credentials; nothing reads them, they are recorded so the operator can log in and mint the first API key |
+| `backups` | `api_token_id`, `api_token_secret` | pbs | PBS API token the backup configuration authenticates with; PBS reveals a secret only at creation, so a lost secret forces token rotation |
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
 
 `monitoring` is the Shape B role key for uptime monitoring; the provider-named
 `uptime_kuma` key that app playbooks briefly gated on is superseded — do not use it.
+
+Ntfy ships closed (`auth-default-access: deny-all`, slice 401), so every notification
+consumer must authenticate. Consumers treat the credential fields as **optional**: an
+absent `token` means an Ntfy that predates slice 401 and still accepts anonymous
+publishes, so they fall back to an unauthenticated POST rather than failing.
 `dns.host` is the one `host` that may be a bare IP (`config.example/infrastructure.yml`
 documents it that way for external, non-inventory hosts); the DNS wiring tasks prepend a
 scheme when it is missing.

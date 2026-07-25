@@ -1,0 +1,256 @@
+---
+# Clone a Proxmox VM from a cloud-init template, apply per-VM configuration, and
+# wait until it accepts commands.
+#
+# This is the VM counterpart to tasks/proxmox/lxc-create.yml. It exists alongside
+# tasks/proxmox/vm-create.yml rather than inside it: vm-create.yml builds a blank
+# VM from module parameters, which is the wrong shape for a clone (proxmox_kvm
+# treats `vmid` as the SOURCE and `newid` as the target when cloning, and ignores
+# most config parameters during the clone itself). Mixing the two into one task
+# file made both harder to read than keeping the paths separate.
+#
+# Sequence — each step is a separate module call because Proxmox requires it:
+#   1. clone template -> newid
+#   2. update the clone with cores/memory/cloud-init/network
+#   3. start it
+#   4. wait for the guest agent, then resolve the address
+#
+# Inputs:
+#   homelabinfra_cloud_template.{vmid,name}  — from ensure-cloud-template.yml
+#   homelabinfra_config.proxmox.*            — API connection, node, vm.* settings
+#   homelabinfra_config.ansible.*            — ssh_user, ssh_public_key
+#   homelabinfra_instance.network.*          — from generate-ip.yml
+#
+# Mutates (combine recursive per specs/namespace-merge-discipline.md):
+#   homelabinfra_instance.vm.*               — resolved vmid/name/ip_address
+#   homelabinfra_instance.vm_ansible_host    — address later plays connect to
+#   homelabinfra_instance.network.ip_address — replaced with the leased IP when DHCP
+
+- name: VM clone | Assert required inputs
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_cloud_template.vmid is defined
+      - homelabinfra_config.ansible.ssh_public_key is defined
+      - homelabinfra_config.proxmox.api_host is defined
+      - homelabinfra_config.proxmox.api_token_id is defined
+      - homelabinfra_config.proxmox.api_token_secret is defined
+      - homelabinfra_config.proxmox.node is defined
+      - homelabinfra_config.proxmox.vm.vmid is defined
+      - homelabinfra_config.proxmox.vm.name is defined
+    fail_msg: >-
+      Required inputs: homelabinfra_cloud_template.vmid, ansible[ssh_public_key],
+      proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name]].
+
+- name: VM clone | Set connection facts
+  ansible.builtin.set_fact:
+    _vmc_api:
+      api_host: "{{ homelabinfra_config.proxmox.api_host }}"
+      api_port: "{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
+      api_user: "{{ homelabinfra_config.proxmox.api_user }}"
+      api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
+      api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
+      node: "{{ homelabinfra_config.proxmox.node }}"
+    _vmc_vmid: "{{ homelabinfra_config.proxmox.vm.vmid | int }}"
+
+- name: VM clone | Build network settings
+  ansible.builtin.set_fact:
+    _vmc_ip_cidr: >-
+      {{
+        'dhcp'
+        if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+        else homelabinfra_instance.network.ip_address ~ '/'
+             ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
+      }}
+    _vmc_net0: >-
+      virtio
+      {%- if homelabinfra_instance.network.bridge is defined -%}
+      ,bridge={{ homelabinfra_instance.network.bridge }}
+      {%- endif -%}
+      {%- if homelabinfra_instance.network.vlan is defined and (homelabinfra_instance.network.vlan | int) > 0 -%}
+      ,tag={{ homelabinfra_instance.network.vlan }}
+      {%- endif -%}
+
+- name: VM clone | Build the cloud-init IP configuration
+  ansible.builtin.set_fact:
+    _vmc_ipconfig0: >-
+      ip={{ _vmc_ip_cidr }}
+      {%- if homelabinfra_instance.network.gateway is defined and _vmc_ip_cidr != 'dhcp' -%}
+      ,gw={{ homelabinfra_instance.network.gateway }}
+      {%- endif -%}
+
+# Cloning onto an existing vmid fails, so a re-run must detect the clone it made
+# last time and skip straight to the configuration update.
+- name: VM clone | Check whether the target VM already exists
+  ansible.builtin.command:
+    cmd: "qm config {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_existing
+  failed_when: false
+  changed_when: false
+
+- name: VM clone | Clone the template
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ _vmc_api.api_host }}"
+    api_port: "{{ _vmc_api.api_port }}"
+    api_user: "{{ _vmc_api.api_user }}"
+    api_token_id: "{{ _vmc_api.api_token_id }}"
+    api_token_secret: "{{ _vmc_api.api_token_secret }}"
+    node: "{{ _vmc_api.node }}"
+    # On a clone, `vmid` is the SOURCE template and `newid` is the VM being made.
+    clone: "{{ homelabinfra_cloud_template.name }}"
+    vmid: "{{ homelabinfra_cloud_template.vmid | int }}"
+    newid: "{{ _vmc_vmid | int }}"
+    name: "{{ homelabinfra_config.proxmox.vm.name }}"
+    full: true
+    storage: "{{ homelabinfra_config.proxmox.vm.storage | default(omit) }}"
+    timeout: "{{ homelabinfra_config.proxmox.vm.timeout | default(300) | int }}"
+  when: _vmc_existing.rc != 0
+
+# A clone carries the template's sizing and no cloud-init identity, so everything
+# that makes this VM itself is applied here.
+- name: VM clone | Apply per-VM configuration
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ _vmc_api.api_host }}"
+    api_port: "{{ _vmc_api.api_port }}"
+    api_user: "{{ _vmc_api.api_user }}"
+    api_token_id: "{{ _vmc_api.api_token_id }}"
+    api_token_secret: "{{ _vmc_api.api_token_secret }}"
+    node: "{{ _vmc_api.node }}"
+    vmid: "{{ _vmc_vmid | int }}"
+    update: true
+    cores: "{{ homelabinfra_config.proxmox.vm.cores | default(2) | int }}"
+    memory: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
+    agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
+    onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"
+    tags: "{{ homelabinfra_config.proxmox.vm.tags | default(['homelab-infra']) }}"
+    description: "{{ homelabinfra_config.proxmox.vm.description | default(omit) }}"
+    ciuser: "{{ homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user) }}"
+    sshkeys: "{{ homelabinfra_config.ansible.ssh_public_key }}"
+    net:
+      net0: "{{ _vmc_net0 }}"
+    ipconfig:
+      ipconfig0: "{{ _vmc_ipconfig0 }}"
+    nameservers: "{{ homelabinfra_instance.network.dns_servers | default(omit) }}"
+    searchdomains: "{{ homelabinfra_instance.network.searchdomain | default(omit) }}"
+
+- name: VM clone | Resize the disk
+  ansible.builtin.command:
+    cmd: >-
+      qm resize {{ _vmc_vmid }} scsi0
+      {{ homelabinfra_config.proxmox.vm.disk_size }}G
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_resize
+  # Shrinking is refused by Proxmox; a clone already at or above the requested
+  # size is the normal re-run case, not a failure.
+  failed_when:
+    - _vmc_resize.rc != 0
+    - "'not supported' not in _vmc_resize.stderr"
+    - "'shrink' not in _vmc_resize.stderr | lower"
+  changed_when: _vmc_resize.rc == 0
+  when: homelabinfra_config.proxmox.vm.disk_size is defined
+
+- name: VM clone | Start the VM
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ _vmc_api.api_host }}"
+    api_port: "{{ _vmc_api.api_port }}"
+    api_user: "{{ _vmc_api.api_user }}"
+    api_token_id: "{{ _vmc_api.api_token_id }}"
+    api_token_secret: "{{ _vmc_api.api_token_secret }}"
+    node: "{{ _vmc_api.node }}"
+    vmid: "{{ _vmc_vmid | int }}"
+    state: started
+
+- name: VM clone | Wait for the VM to be running
+  ansible.builtin.command:
+    cmd: "qm status {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_status
+  retries: 30
+  delay: 2
+  until: "'status: running' in _vmc_status.stdout"
+  changed_when: false
+
+- name: VM clone | Wait for the guest agent to accept exec
+  ansible.builtin.command:
+    cmd: "qm guest exec {{ _vmc_vmid }} -- /bin/true"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_agent
+  retries: 60
+  delay: 5
+  until: _vmc_agent.rc == 0
+  changed_when: false
+
+- name: VM clone | Discover the DHCP lease
+  ansible.builtin.command:
+    argv:
+      - qm
+      - guest
+      - exec
+      - "{{ _vmc_vmid }}"
+      - --synchronous
+      - "1"
+      - --timeout
+      - "70"
+      - --
+      - /bin/sh
+      - -c
+      - |
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          interface="$(ip -4 route show default | awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+          if [ -n "$interface" ]; then
+            lease="$(ip -4 -o address show dev "$interface" scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          else
+            lease="$(ip -4 -o address show scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          fi
+          if [ -n "$lease" ]; then
+            printf '%s\n' "$lease"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        exit 1
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_lease
+  changed_when: false
+  when: (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+
+- name: VM clone | Parse the DHCP lease result
+  ansible.builtin.set_fact:
+    _vmc_lease_result: "{{ _vmc_lease.stdout | from_json }}"
+  when: (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+
+- name: VM clone | Assert the DHCP lease was discovered
+  ansible.builtin.assert:
+    that:
+      - _vmc_lease_result.exited | default(false) | bool
+      - _vmc_lease_result.exitcode | default(1) | int == 0
+      - _vmc_lease_result['out-data'] | default('') | trim | ansible.utils.ipaddr('address')
+    fail_msg: "The VM guest agent did not return a leased IPv4 address"
+  when: (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+
+- name: VM clone | Merge the resolved address into instance facts
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'network': {'ip_address': _vmc_resolved_ip},
+          'vm': {
+            'vmid': _vmc_vmid | int,
+            'name': homelabinfra_config.proxmox.vm.name,
+            'ip_address': _vmc_resolved_ip
+          },
+          'vm_ansible_host': _vmc_resolved_ip
+        }, recursive=True) }}
+  vars:
+    _vmc_resolved_ip: >-
+      {{ (_vmc_lease_result['out-data'] | trim)
+         if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+         else homelabinfra_instance.network.ip_address }}
+
+- name: VM clone | Assert the connection address is resolved
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_instance.vm_ansible_host | string | trim | length > 0
+      - homelabinfra_instance.vm_ansible_host | string | trim | lower != 'dhcp'
+    fail_msg: "The VM connection address is empty or still set to DHCP"

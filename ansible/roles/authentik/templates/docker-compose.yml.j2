@@ -1,0 +1,97 @@
+# docker-compose.yml for Authentik ({{ instance }})
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+# To make permanent changes, update the role template or your instance config.
+#
+# Adapted from the upstream Authentik compose file. Secrets come from the sibling
+# .env file (0600), never from this file.
+#
+# No Watchtower label anywhere in this stack: an Authentik upgrade runs database
+# migrations and the server and worker must move together. Re-running the deploy
+# playbook is the controlled upgrade path (see the role header).
+services:
+  postgresql:
+    image: {{ app_config.app.postgres_image }}
+    container_name: "{{ instance }}-postgresql"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    volumes:
+      - "{{ app_config.app.data_path }}/database:/var/lib/postgresql/data"
+    environment:
+      POSTGRES_PASSWORD: "${PG_PASS}"
+      POSTGRES_USER: "${PG_USER}"
+      POSTGRES_DB: "${PG_DB}"
+
+  redis:
+    image: {{ app_config.app.redis_image }}
+    container_name: "{{ instance }}-redis"
+    command: --save 60 1 --loglevel warning
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 3s
+    volumes:
+      - "{{ app_config.app.data_path }}/redis:/data"
+
+  server:
+    image: "ghcr.io/goauthentik/server:{{ _authentik_tag }}"
+    container_name: "{{ instance }}-server"
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: "${PG_USER}"
+      AUTHENTIK_POSTGRESQL__NAME: "${PG_DB}"
+      AUTHENTIK_POSTGRESQL__PASSWORD: "${PG_PASS}"
+      AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
+      # Consumed only on the very first start, when the default tenant is created.
+      AUTHENTIK_BOOTSTRAP_PASSWORD: "${AUTHENTIK_BOOTSTRAP_PASSWORD}"
+      AUTHENTIK_BOOTSTRAP_TOKEN: "${AUTHENTIK_BOOTSTRAP_TOKEN}"
+      AUTHENTIK_BOOTSTRAP_EMAIL: "{{ app_config.app.admin_email }}"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    volumes:
+      - "{{ app_config.app.data_path }}/media:/media"
+      - "{{ app_config.app.data_path }}/custom-templates:/templates"
+    ports:
+      - "{{ app_config.app.port }}:9000"
+      - "{{ app_config.app.https_port }}:9443"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: "ghcr.io/goauthentik/server:{{ _authentik_tag }}"
+    container_name: "{{ instance }}-worker"
+    restart: unless-stopped
+    command: worker
+    # Upstream runs the worker as root so it can read the Docker socket and write
+    # into the certs/templates volumes.
+    user: root
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: "${PG_USER}"
+      AUTHENTIK_POSTGRESQL__NAME: "${PG_DB}"
+      AUTHENTIK_POSTGRESQL__PASSWORD: "${PG_PASS}"
+      AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "{{ app_config.app.data_path }}/media:/media"
+      - "{{ app_config.app.data_path }}/certs:/certs"
+      - "{{ app_config.app.data_path }}/custom-templates:/templates"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

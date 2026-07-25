@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: observability
+  description: "Deploys Prometheus, Grafana and a node exporter via Docker Compose on a stack host"
+  min_ansible_version: "2.15"
+
+dependencies: []

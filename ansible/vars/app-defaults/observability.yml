@@ -1,0 +1,39 @@
+---
+# Default stack and app configuration for the observability stack — Prometheus,
+# Grafana and a node exporter, deployed together as one app.
+# Users override specific values in config/apps/observability.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# One app, not two: Grafana's only datasource is Prometheus, nobody runs one
+# without the other, and splitting them would mean two deploy jobs to stand up a
+# single capability. Decision recorded in .claude/meta/405-app-grafana/notes.md.
+
+observability_defaults:
+  # Docker app: no `proxmox:` block. The stack host is found or created by tag on
+  # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
+  # Its own stack: Prometheus retention grows, and metrics collection should not
+  # compete for disk with the login path on core_stack.
+  stack: monitoring_stack
+
+  app:
+    # The user-facing piece is Grafana, so app.port is Grafana's — it is what the
+    # reverse proxy routes to and what the uptime monitor checks.
+    port: 3000
+    prometheus_port: 9090       # internal only; never published through the proxy
+    node_exporter_port: 9100
+
+    data_path: /opt/observability/data
+    config_path: /opt/observability/config
+
+    admin_user: admin
+    retention: 30d              # how long Prometheus keeps samples
+    scrape_interval: 30s
+
+    grafana_image: "docker.io/grafana/grafana:latest"
+    prometheus_image: "docker.io/prom/prometheus:latest"
+    node_exporter_image: "quay.io/prometheus/node-exporter:latest"
+
+  routing:
+    proxy: internal
+    auth: false                 # Grafana has its own login and its own user model;
+                                # set true to put Authentik in front as well

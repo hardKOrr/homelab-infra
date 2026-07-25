@@ -8,6 +8,17 @@
 #     notify script plus a systemd drop-in so each unattended-upgrades run posts
 #     "N package(s) updated on <hostname>" to Ntfy. Any other provider (or absent
 #     facts) is a silent no-op — the apt configuration itself is still applied.
+#
+# Guest-held credential (narrow, deliberate exception to .claude/specs/secrets-handling.md
+# "no secret is ever written to a managed guest's filesystem"): Ntfy is closed by
+# default (auth-default-access: deny-all, slice 401), so a guest that reports its own
+# OS updates must hold a publish credential. It is scoped as tightly as the mechanism
+# allows — an Ntfy access token with publish rights on one topic, no read access, no
+# bearing on any other service — and is stored in /etc/homelab-infra/ntfy.env, root-only
+# 0600, never in the world-readable notify script. Rotate by re-running the Ntfy deploy
+# after clearing notifications.token from config/.generated/facts.yml.
+# An absent token falls back to an unauthenticated POST, which is what an Ntfy deployed
+# before slice 401 (open by default) expects.
 
 - name: Enable automatic apt upgrades
   ansible.builtin.copy:
@@ -37,6 +48,36 @@
         "--force-confold";
       };
 
+# The token is kept OUT of the 0755 script (world-readable on the guest) and in a
+# root-only credential file that the script sources. See this file's header for
+# why a guest holds a publish credential at all.
+- name: Create homelab-infra credential directory
+  ansible.builtin.file:
+    path: /etc/homelab-infra
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+
+- name: Write Ntfy publish credential
+  ansible.builtin.copy:
+    dest: /etc/homelab-infra/ntfy.env
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      NTFY_URL={{ homelabinfra_infra.notifications.host | default('') }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}
+      NTFY_TOKEN={{ homelabinfra_infra.notifications.token | default('') }}
+  no_log: true
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+
 - name: Write unattended-upgrades Ntfy notification script
   ansible.builtin.copy:
     dest: /usr/local/bin/unattended-upgrades-notify
@@ -44,14 +85,20 @@
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
-      NTFY_URL="{{ homelabinfra_infra.notifications.host | default('') }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
+      CREDS=/etc/homelab-infra/ntfy.env
+      [[ -r "$CREDS" ]] || exit 0
+      # shellcheck disable=SC1090
+      . "$CREDS"
       LOGFILE="/var/log/unattended-upgrades/unattended-upgrades.log"
-      [[ -z "$NTFY_URL" || ! -f "$LOGFILE" ]] && exit 0
+      [[ -z "${NTFY_URL:-}" || ! -f "$LOGFILE" ]] && exit 0
       LINE=$(grep "^$(date +%Y-%m-%d).*Packages that will be upgraded:" "$LOGFILE" | tail -1 || true)
       [[ -z "$LINE" ]] && exit 0
       COUNT=$(echo "${LINE#*Packages that will be upgraded:}" | wc -w)
       [[ "$COUNT" -eq 0 ]] && exit 0
+      AUTH=()
+      [[ -n "${NTFY_TOKEN:-}" ]] && AUTH=(-H "Authorization: Bearer $NTFY_TOKEN")
       curl -sf -X POST "$NTFY_URL" \
+        "${AUTH[@]}" \
         -H "Title: OS updates installed on {{ inventory_hostname }}" \
         -d "$COUNT package(s) updated on {{ inventory_hostname }}" \
         > /dev/null

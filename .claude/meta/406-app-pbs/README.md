@@ -1,6 +1,6 @@
 # 406 — PBS role + playbook
 
-**Status:** open
+**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 202 (configure-pbs), 401 (ntfy)
 **Blocks:** backup story
 

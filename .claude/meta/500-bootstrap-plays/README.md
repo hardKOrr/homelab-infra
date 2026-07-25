@@ -1,6 +1,6 @@
 # 500 — Bootstrap playbook plays
 
-**Status:** in-progress — structure + Vaultwarden pass implemented and gate-verified; steps 2–7 staged as commented imports pending 401–406 (see notes.md)
+**Status:** in-progress — all seven steps implemented and gate-verified; 401–406 landed 2026-07-25 and their imports are now active. Only `apps/nginx.yml` remains staged (no nginx app playbook exists yet — slice 301 shipped only the nginx wiring pair). Fact-writing moved out of this playbook into each app's Play 3. Awaiting a live bootstrap run (see notes.md).
 **Depends on:** 400, 401, 402, 403, 404, 405, 406
 **Blocks:** the "one click to set up the platform" promise; 600 (Semaphore), 601 (Rundeck)
 

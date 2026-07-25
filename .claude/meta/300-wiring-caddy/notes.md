@@ -36,3 +36,26 @@ pre-existing slice-502 stub (`stacks/rollback-container.yml` — empty playbook)
 confirmed identical on a stashed tree. NOT yet verified live — acceptance items
 (working HTTPS route, re-run no-op, unwire removes route, unwire absent route) need
 a deployed Caddy. Flip to done after the first real wire through slice 402.
+
+## 2026-07-25 — slice 402 landed
+
+The assumption recorded above ("the caddy role templates a single HTTPS server named
+`srv0` with an empty route table and the admin API on the LXC interface") is what
+slice 402 implemented, via a JSON base config rather than a Caddyfile — an empty
+Caddyfile adapts to *no* http servers at all, so `srv0` would not have existed and
+the first wire would have 404'd.
+
+402 also writes Shape B `reverse_proxy: {provider, instance, host, port}` with
+port 2019, as this slice's notes required.
+
+Two things 402 introduced that this file's behaviour now depends on:
+
+- Caddy runs with `--resume`, so routes POSTed here persist across restarts. The
+  caddy role never reloads (a reload re-applies the base config and would drop every
+  route this file added).
+- The caddy role reconciles only srv0's `listen` and the TLS automation policies,
+  never `routes`.
+
+Still open, and it is not this file's alone: **nothing emits a `forward_auth`
+handler**, so an app with `routing.auth: true` gets a plain proxy route and SSO fails
+open. Tracked as slice 306.

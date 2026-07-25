@@ -1,0 +1,21 @@
+{{ ansible_managed | comment }}
+# Ntfy server config for {{ instance }} — managed by homelab-infra.
+# Changes made here are overwritten on the next deploy; edit the role template
+# or config/apps/{{ instance }}.yml instead.
+
+base-url: "https://{{ instance }}.{{ _ntfy_domain }}"
+listen-http: ":{{ app_config.app.port }}"
+
+# Behind the platform reverse proxy — trust its X-Forwarded-For for rate limiting.
+behind-proxy: true
+
+cache-file: "{{ app_config.app.cache_path }}/cache.db"
+cache-duration: "{{ app_config.app.message_retention | default('12h') }}"
+attachment-cache-dir: "{{ app_config.app.cache_path }}/attachments"
+attachment-total-size-limit: "{{ app_config.app.attachment_total_size_limit | default('2G') }}"
+
+# Auth: closed by default so this server is never an open spam relay.
+# Publishing requires the homelab-infra token (see the role's credential tasks);
+# only /v1/health stays anonymous, which is what Uptime Kuma monitors.
+auth-file: "{{ ntfy_auth_file }}"
+auth-default-access: "deny-all"

@@ -44,37 +44,68 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 | 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | in-progress¹ | 200, 404 |
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | in-progress¹ | 200 |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | in-progress¹ | 200 |
+| 306 | [Reverse-proxy forward_auth for SSO apps](306-wiring-forward-auth/README.md) | open | 300, 301, 302, 403 |
 
 ¹ Implementation complete and gate-verified; live acceptance needs the provider running.
 Per-slice decisions and deviations are in each slice's `notes.md` — 303 additionally
 renamed the registry key `uptime_kuma` → `monitoring` (CONTRACT.md §3), which slice 404
-must write.
+now writes.
+
+306 was opened while implementing 403: the wire tasks create every Authentik object
+but emit no `forward_auth` handler, so SSO fails **open** and silently. Until it lands,
+`routing.auth: true` protects nothing.
 
 ## 4XX — Apps (per-app roles + per-app playbooks)
 
 | # | Slice | Status | Depends on |
 |---|---|---|---|
 | 400 | [Vaultwarden](400-app-vaultwarden/README.md) | in-progress² | 004, 005, 200 (+000–003 foundation) |
-| 401 | [Ntfy](401-app-ntfy/README.md) | open | 200, 400 |
-| 402 | [Caddy](402-app-caddy/README.md) | open | 300, 401 |
-| 403 | [Authentik](403-app-authentik/README.md) | open | 302, 401 |
-| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | open | 303, 401 |
-| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | open | 401 |
-| 406 | [PBS](406-app-pbs/README.md) | open | 202, 401 |
+| 401 | [Ntfy](401-app-ntfy/README.md) | in-progress² | 200, 400 |
+| 402 | [Caddy](402-app-caddy/README.md) | in-progress² | 300, 401 |
+| 403 | [Authentik](403-app-authentik/README.md) | in-progress²ᐟ³ | 302, 401 |
+| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | in-progress² | 303, 401 |
+| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | in-progress² | 401 |
+| 406 | [PBS](406-app-pbs/README.md) | in-progress² | 202, 401 |
 
 ² Implementation complete and gate-verified; awaiting live deploy acceptance (see slice notes.md).
+
+³ 403 additionally has one acceptance item blocked on work it does not own: no
+wiring task emits a reverse-proxy `forward_auth` handler, so Authentik creates its
+provider/application/binding but nothing enforces SSO. Owned by new slice 306 — see
+403's notes.md "Known gap".
+
+Cross-slice effects of the 4XX build (2026-07-25):
+- **401 closed Ntfy by default** and reconciled all five existing notification
+  consumers to authenticate. `notifications` gained optional `user`/`password`/`token`
+  in `ansible/vars/CONTRACT.md` §3; consumers fall back to anonymous POST when no
+  token is recorded, so an existing lab is not broken by `git pull`.
+- **404 locked Uptime Kuma v2**, which resolves slice 303's open question in the
+  direction that needs no rework — 303's REST implementation stands.
+- **405 added `prometheus-node-exporter` to `tasks/guest-bootstrap.yml`**, so every
+  guest is scrapeable. This touches all guests, not just the observability host.
+- **406 added VM provisioning machinery** (`tasks/proxmox/ensure-cloud-template.yml`,
+  `tasks/proxmox/vm-clone.yml`) reusable by any future VM app. Never run live.
+- **New shared task** `tasks/notify.yml`; new Shape B registry key `metrics`.
+- **Fact-writing moved into the app playbooks.** Each baseline app records its own
+  registry key in its Play 3 before wiring, so a standalone deploy registers the
+  service identically to a bootstrap run. `bootstrap.yml` no longer writes facts on
+  their behalf (its Vaultwarden facts play moved into `apps/vaultwarden.yml`).
 
 ## 5XX — Top-level playbooks
 
 | # | Slice | Status | Depends on |
 |---|---|---|---|
-| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | in-progress³ | 400–406 |
+| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | in-progress⁴ | 400–406 |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | open | 300–305 (unwire halves) |
 | 502 | [Rollback container](502-rollback-container/README.md) | open | 201 |
 | 503 | [Lab status](503-lab-status/README.md) | open | none |
 | 504 | [Wire media stack](504-wire-media-stack/README.md) | open | 300–305 |
 
-³ Structure, Vaultwarden pass, and two-pass token gate implemented and gate-verified; steps 2–7 are staged as commented imports each app slice (401–406) uncomments when its playbook lands.
+⁴ Structure, two-pass Vaultwarden token gate, and **all seven steps** implemented and
+gate-verified — 401–406 landed and their imports are active. The one remaining staged
+import is `apps/nginx.yml` (no nginx app playbook exists; slice 301 shipped only the
+nginx wiring pair). Fact-writing now lives in each app playbook rather than here.
+Live acceptance needs a full bootstrap run.
 
 ## 6XX — UI (Semaphore + Rundeck job definitions)
 

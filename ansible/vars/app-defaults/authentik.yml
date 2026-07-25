@@ -1,0 +1,31 @@
+---
+# Default stack and app configuration for Authentik — the SSO provider.
+# Users override specific values in config/apps/authentik.yml.
+# This file is git-managed — git pull may update these defaults.
+
+authentik_defaults:
+  # Docker app: no `proxmox:` block. The stack host is found or created by tag on
+  # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
+  # Authentik gets its own stack: it carries a database, and a shared host would
+  # couple every co-tenant's restarts to the platform's login path.
+  stack: core_stack
+
+  app:
+    port: 9000                  # Authentik HTTP listener (the API + UI)
+    https_port: 9443            # Authentik HTTPS listener, unused behind the proxy
+    data_path: /opt/authentik/data
+    admin_email: "admin@example.com"   # akadmin's address; change to reach password resets
+
+    # Image tag. Empty means "resolve the latest GitHub release at deploy time",
+    # which is how this app stays current — see the role header for why Authentik
+    # is not left to Watchtower like other containers.
+    image_tag: ""
+    postgres_image: "docker.io/library/postgres:16-alpine"
+    redis_image: "docker.io/library/redis:7-alpine"
+
+  update:
+    github_repo: goauthentik/authentik
+
+  routing:
+    proxy: internal
+    auth: false                 # Authentik IS the SSO provider — never wrap it in itself

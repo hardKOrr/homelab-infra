@@ -1,0 +1,221 @@
+---
+# authentik role — Docker Compose deployment on a stack host.
+# Called from Play 2 of playbooks/apps/authentik.yml. Target: the core_stack host,
+# which already has Docker installed (playbooks/apps/authentik.yml Play 2).
+#
+# SECRETS — four values, generated once and never regenerated:
+#   PG_PASS                     PostgreSQL password
+#   AUTHENTIK_SECRET_KEY        session/cookie signing key
+#   AUTHENTIK_BOOTSTRAP_PASSWORD  akadmin's password (first start only)
+#   AUTHENTIK_BOOTSTRAP_TOKEN     akadmin's API token (first start only) — this is
+#                                 what tasks/wiring/authentik.yml authenticates with
+#
+# Continuity: the existing .env is read back before anything is generated, so a
+# re-run reuses the same values. Regenerating PG_PASS would lock the server out of
+# its own database, and regenerating the API token would strand every wired app.
+#
+# Guest-held credentials (narrow, deliberate exception to
+# .claude/specs/secrets-handling.md): a containerised database and its client must
+# both read the password, so the compose environment file has to exist on the stack
+# host. It is 0600 root-owned in a 0750 directory, and is the only file on that host
+# holding these values. The API token additionally reaches the controller, where it
+# is recorded in gitignored config/.generated/facts.yml for the wiring tasks.
+#
+# UPDATES — no Watchtower label on this stack. An Authentik upgrade runs database
+# migrations and needs server and worker to move together; letting Watchtower pull
+# them independently risks a half-migrated cluster. Re-running this playbook is the
+# upgrade path: it re-resolves the newest GitHub release and recreates the stack.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to write the sso registry key):
+#   authentik_api_url, authentik_api_token
+
+# ── Resolve the image tag ─────────────────────────────────────────────────────
+- name: Get latest Authentik release
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+    return_content: true
+  register: _authentik_release
+  when: app_config.app.image_tag | default('') | length == 0
+  changed_when: false
+
+- name: Select the image tag
+  ansible.builtin.set_fact:
+    # Authentik tags releases as `version/2025.10.1`; the container tag is the
+    # bare version.
+    #
+    # Written as a conditional expression, not `| default(..., true)`: Jinja
+    # evaluates a filter's arguments eagerly, so the default branch would touch
+    # _authentik_release.json even when the release lookup was skipped by a pinned
+    # image_tag — and a skipped register leaves a dict with no .json. The
+    # conditional only evaluates the branch it takes.
+    _authentik_tag: >-
+      {{ app_config.app.image_tag
+         if app_config.app.image_tag | default('') | length > 0
+         else (_authentik_release.json.tag_name | regex_replace('^version/', '')) }}
+
+- name: Assert an image tag was resolved
+  ansible.builtin.assert:
+    that: _authentik_tag | length > 0
+    fail_msg: >-
+      Could not resolve an Authentik image tag. Set app.image_tag in
+      config/apps/{{ instance }}.yml to pin one explicitly.
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ authentik_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create data directories
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - database
+    - redis
+    - media
+    - certs
+    - custom-templates
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+- name: Read the existing compose environment (secret continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ authentik_env_file }}"
+  register: _authentik_env_current
+  failed_when: false
+  no_log: true
+
+- name: Parse the existing compose environment
+  ansible.builtin.set_fact:
+    _authentik_env_existing: >-
+      {{ dict((_authentik_env_current.content | b64decode).splitlines()
+              | select('match', '^[A-Z_]+=')
+              | map('split', '=', 1))
+         if _authentik_env_current.content is defined else {} }}
+  no_log: true
+
+- name: Resolve secrets (reuse what exists, generate only what is missing)
+  ansible.builtin.set_fact:
+    _authentik_pg_pass: >-
+      {{ _authentik_env_existing.PG_PASS
+         | default(lookup('password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
+    _authentik_secret_key: >-
+      {{ _authentik_env_existing.AUTHENTIK_SECRET_KEY
+         | default(lookup('password', '/dev/null length=60 chars=ascii_letters,digits'), true) }}
+    _authentik_admin_password: >-
+      {{ _authentik_env_existing.AUTHENTIK_BOOTSTRAP_PASSWORD
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _authentik_api_token: >-
+      {{ homelabinfra_infra.sso.token
+         | default(_authentik_env_existing.AUTHENTIK_BOOTSTRAP_TOKEN
+                   | default(lookup('password', '/dev/null length=60 chars=ascii_letters,digits'), true),
+                   true) }}
+  no_log: true
+
+# ── Compose ───────────────────────────────────────────────────────────────────
+- name: Write the compose environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ authentik_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart authentik
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ authentik_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart authentik
+
+- name: Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ authentik_project_dir }}"
+
+- name: Start Authentik
+  community.docker.docker_compose_v2:
+    project_src: "{{ authentik_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+# Authentik answers 204 on ready; migrations on a first start or an upgrade can
+# take a while, hence the long ceiling.
+- name: Wait for Authentik to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
+    status_code: [200, 204]
+  register: _authentik_health
+  until: _authentik_health.status in [200, 204]
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# ── Verify the bootstrap credentials actually work ────────────────────────────
+# A token that does not authenticate would fail every later app deploy at the SSO
+# wiring step, far from the cause. Fail here instead.
+- name: Verify the API token authenticates
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/v3/core/users/me/"
+    headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    status_code: 200
+  register: _authentik_whoami
+  retries: 10
+  delay: 5
+  until: _authentik_whoami.status | default(0) == 200
+  changed_when: false
+  no_log: true
+
+- name: Assert the token belongs to the bootstrap admin
+  ansible.builtin.assert:
+    that: _authentik_whoami.json.user.username | default('') == authentik_admin_user
+    fail_msg: >-
+      The recorded Authentik API token does not belong to {{ authentik_admin_user }}.
+      AUTHENTIK_BOOTSTRAP_TOKEN is consumed only on the very first start, so a token
+      changed after that never took effect. Issue a fresh token for
+      {{ authentik_admin_user }} in the Authentik UI and put it in
+      config/.generated/facts.yml under sso.token.
+
+# ── Hand the endpoint and token back to the playbook ──────────────────────────
+- name: Export the API endpoint to the playbook
+  ansible.builtin.set_fact:
+    # Direct LAN URL, not https://<instance>.<domain>: during bootstrap neither DNS
+    # nor a certificate exists for the public name yet, and the wiring tasks call
+    # this API from the controller on every subsequent app deploy.
+    authentik_api_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    authentik_api_token: "{{ _authentik_api_token }}"
+    # Deliberately not named authentik_admin_user — a set_fact that reuses the
+    # role default's own name is a recursive reference and fails at runtime.
+    authentik_admin_username: "{{ authentik_admin_user }}"
+    authentik_admin_password: "{{ _authentik_admin_password }}"
+  no_log: true
+
+# ── Record the deployed version ───────────────────────────────────────────────
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Record deployed version
+  ansible.builtin.copy:
+    content: '{"version": "{{ _authentik_tag }}"}'
+    dest: /etc/ansible/facts.d/authentik.fact
+    mode: "0644"

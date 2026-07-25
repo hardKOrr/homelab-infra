@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# lab-update-check — report whether Caddy has an update available.
+#
+# Caddy is installed from the official apt repository, not a GitHub binary, so
+# "latest" is the apt candidate version rather than the newest GitHub release.
+# Re-running the Caddy deploy job installs the candidate.
+#
+# Contract (required by check-native-updates.yml):
+#   stdout: single JSON line
+#     {"app":"<name>","installed":"<version>","latest":"<version>","update_available":<bool>}
+#   exit 0: check completed (regardless of whether an update is available)
+#   exit 1: check could not be performed — result will be skipped
+
+set -euo pipefail
+
+apt-get update -qq >/dev/null 2>&1 || true
+
+policy="$(apt-cache policy caddy 2>/dev/null)"
+installed="$(echo "$policy" | awk '/Installed:/ {print $2}' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+latest="$(echo "$policy" | awk '/Candidate:/ {print $2}' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+
+[ -n "$installed" ] && [ -n "$latest" ] || exit 1
+
+if [ "$installed" != "$latest" ]; then
+    update_available=true
+else
+    update_available=false
+fi
+
+echo "{\"app\":\"caddy\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"update_available\":$update_available}"

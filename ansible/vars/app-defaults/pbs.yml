@@ -1,0 +1,42 @@
+---
+# Default Proxmox and app configuration for Proxmox Backup Server.
+# Users override specific values in config/apps/pbs.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# PBS is the only baseline service that is a full VM. It ships as an ISO installer,
+# so homelab-infra instead clones a Debian cloud-init template (built automatically
+# by tasks/proxmox/ensure-cloud-template.yml) and installs the PBS packages from
+# Proxmox's apt repository — cleaner to control, and no manual ISO step.
+
+pbs_defaults:
+  proxmox:
+    type: vm
+    vm:
+      cores: 2
+      memory: 2048              # MB — PBS wants headroom for deduplication
+      disk_size: 64             # GB — the OS disk; the datastore path can be separate
+      storage: local-lvm        # storage the cloned disk lands on
+      agent: 1
+      onboot: true
+      description: "Proxmox Backup Server, created by homelab-infra"
+      tags:
+        - homelab-infra
+        - pbs
+    network: default
+
+    # The cloud-init template every VM clones from. Built on first use and reused
+    # afterwards; delete the template VM in Proxmox to force a rebuild.
+    cloud_template:
+      vmid: 9000
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+      storage: local-lvm
+
+  app:
+    port: 8007                  # PBS web UI and REST API (HTTPS, self-signed by default)
+    datastore_name: homelab
+    api_token_name: ansible     # token id becomes root@pam!ansible
+
+  routing:
+    proxy: internal
+    auth: false                 # PBS has its own login and its own API tokens

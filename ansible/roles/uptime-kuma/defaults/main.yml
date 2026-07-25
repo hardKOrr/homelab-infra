@@ -1,0 +1,7 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/uptime-kuma.yml and config/apps/<instance>.yml.
+uptime_kuma_project_dir: "/opt/{{ instance }}"
+uptime_kuma_env_file: "/opt/{{ instance }}/.env"
+uptime_kuma_notification_name: "homelab-infra ntfy"
+uptime_kuma_api_key_name: "homelab-infra"

@@ -1,0 +1,6 @@
+---
+- name: Restart pbs
+  ansible.builtin.systemd:
+    name: "{{ pbs_service_name }}"
+    state: restarted
+    daemon_reload: true
