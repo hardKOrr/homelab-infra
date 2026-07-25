@@ -1,4 +1,22 @@
 ---
+# Allocate an IP address for a new guest: 'dhcp' pass-through when the network's
+# cidr is the string 'dhcp', otherwise the first static IP in the subnet not
+# already held by a proxmox_clients inventory host.
+#
+# Inputs:
+#   network_name (optional, default 'default') — key into homelabinfra_config.networks
+#   homelabinfra_config.networks.<name>.cidr   — required; subnet CIDR or 'dhcp'
+#   homelabinfra_config.networks.<name>.{gateway,dns_servers,bridge,vlan,
+#     searchdomain,ip_offset,max_hosts}         — optional; merged over networks.default
+#   groups['proxmox_clients'] hostvars          — existing IPs excluded from allocation
+#
+# Mutates (combine recursive per specs/namespace-merge-discipline.md):
+#   homelabinfra_instance.network.{name,cidr,ip_address}  — always
+#   homelabinfra_instance.network.{gateway,dns_servers,bridge,vlan,searchdomain}
+#     — only the keys the effective network config defines (never omit placeholders)
+#
+# Scratch facts left behind: network_name, network_config, final_ip_address,
+# proxmox_client_ips — a second call in the same play overwrites them.
 
 - name: Set network selector
   ansible.builtin.set_fact:

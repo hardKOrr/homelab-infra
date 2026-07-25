@@ -1,4 +1,15 @@
 ---
+# Create a Proxmox LXC container and wait until it accepts exec.
+#
+# Inputs:
+#   homelabinfra_config.proxmox.*      — API connection, node, and lxc.* settings
+#                                        (full list in the assert below)
+#   homelabinfra_instance.network.*    — from generate-ip.yml; drives netif/nameserver/
+#                                        searchdomain and the DHCP lease discovery
+#
+# Mutates (combine recursive per specs/namespace-merge-discipline.md):
+#   homelabinfra_instance.lxc.*        — module params + resolved ip_address
+#   homelabinfra_instance.network.ip_address — replaced with the leased IP when DHCP
 
 - name: Assert homelabinfra instance data is provided
   ansible.builtin.assert:

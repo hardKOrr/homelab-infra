@@ -1,6 +1,6 @@
 # 103 — Document find-or-create-host implicit state machine
 
-**Status:** open
+**Status:** done
 **Depends on:** 006 (related — both are about implicit ordering)
 **Blocks:** nothing (docs only)
 
@@ -26,6 +26,6 @@ Add a top-of-file comment to `find-or-create-host.yml` that lays out:
 
 ## Acceptance
 
-- [ ] Header comment exists on `find-or-create-host.yml` explaining the state-machine flow
-- [ ] Header comment exists on `generate-ip.yml` listing inputs and the `homelabinfra_instance` keys it writes
-- [ ] A new contributor can read just the header and understand what variables to set before calling
+- [x] Header comment exists on `find-or-create-host.yml` explaining the state-machine flow (numbered mutation order, inputs, mutations, outputs, one-shot-per-play caveat)
+- [x] Header comment exists on `generate-ip.yml` listing inputs and the `homelabinfra_instance` keys it writes (plus the scratch facts it leaves behind)
+- [x] A new contributor can read just the header and understand what variables to set before calling — the optional `lxc-create.yml` header was also added (inputs, mutations, DHCP lease rewrite)

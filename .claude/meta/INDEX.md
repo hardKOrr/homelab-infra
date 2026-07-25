@@ -19,10 +19,10 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 
 | # | Slice | Status | Depends on |
 |---|---|---|---|
-| 100 | [unattended-upgrades dedupe](100-unattended-upgrades-dedupe/README.md) | open | none |
-| 101 | [Stack key guard in template](101-stack-key-guard/README.md) | open | 005 |
-| 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) | open | none |
-| 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) | open | 006 |
+| 100 | [unattended-upgrades dedupe](100-unattended-upgrades-dedupe/README.md) | done | none |
+| 101 | [Stack key guard in template](101-stack-key-guard/README.md) | done | 005 |
+| 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) | done | none |
+| 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) | done | 006 |
 
 ## 2XX — Bootstrap helpers (tasks/bootstrap/* building blocks)
 

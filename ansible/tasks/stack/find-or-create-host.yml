@@ -2,19 +2,50 @@
 # Find an existing stack host by tag, or create one if none exists.
 # Called from Play 1 of Docker app playbooks (runs on localhost).
 #
-# Input:
-#   stack_name — stack identifier, must match a tag in Proxmox (e.g. media_stack)
+# The create path is an implicit state machine: it mutates homelabinfra_config
+# step by step, and each mutation feeds the next include. Order matters:
+#   1. set proxmox.lxc.hostname / .tags / .features from stack_name
+#   2. generate-ip.yml — reads homelabinfra_config.networks[...], writes
+#      homelabinfra_instance.network.*
+#   3. set proxmox.lxc.ip_address from homelabinfra_instance.network.ip_address
+#   4. ip-to-vmid.yml — derives proxmox.lxc.vmid from that IP (static IPs only)
+#   5. lxc-create.yml — reads homelabinfra_config.proxmox.* and
+#      homelabinfra_instance.network.*, writes homelabinfra_instance.lxc.*
+#
+# Inputs (required before calling):
+#   stack_name                          — stack id, matches Proxmox tag (e.g. media_stack)
+#   app_config                          — merged app config (handed to Play 2 via add_host)
+#   homelabinfra_config.ansible.ssh_user
+#   homelabinfra_config.proxmox.*       — API connection + lxc defaults (create path)
+#   homelabinfra_config.networks.*      — for generate-ip.yml (create path)
+#   homelabinfra_infra                  — optional; forwarded to the host if defined
+#
+# Mutates (create path only, except .stack):
+#   homelabinfra_config.proxmox.lxc.{hostname,tags,features,ip_address,vmid}
+#   homelabinfra_instance.{network,lxc}                — via generate-ip / lxc-create
+#   homelabinfra_instance.stack.{hostname,ip_address}  — both paths
 #
 # Output (for Play 2 to consume):
 #   homelabinfra_instance.stack.hostname   — hostname of the stack host
 #   homelabinfra_instance.stack.ip_address — IP of the stack host
-#   homelabinfra_stack_host_created         — true only when this task created the host
+#   homelabinfra_stack_host_created         — hostvar on the added host; true only on create
 #   app_deploy group                        — host added so Play 2 can target it
+#
+# One-shot per play: it sets _stack_hosts and rewrites proxmox.lxc in place, so a
+# second call in the same play reads stale state. Call once per app deploy.
 
+# default('') also absorbs an undefined app_config.stack behind the template's
+# lazy `stack_name: "{{ app_config.stack }}"` — without it the assert itself
+# dies with a raw undefined-variable error instead of the fail_msg.
 - name: Assert stack_name is provided
   ansible.builtin.assert:
-    that: stack_name is defined and stack_name | length > 0
-    fail_msg: "stack_name must be set in app-defaults or instance config"
+    that: stack_name | default('') | length > 0
+    fail_msg: >-
+      stack_name is undefined or empty. Docker apps must declare `stack` in
+      vars/app-defaults/<app>.yml (or config/apps/<instance>.yml). If you copied
+      playbooks/apps/_template.yml for a native LXC app, delete PATH A (Docker)
+      and uncomment PATH B (native LXC) in Play 1 — PATH A is what calls this
+      task file.
 
 - name: Refresh inventory to get current Proxmox state
   ansible.builtin.meta: refresh_inventory

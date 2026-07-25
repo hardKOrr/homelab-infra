@@ -1,6 +1,6 @@
 # 100 — Dedupe unattended-upgrades implementation
 
-**Status:** open
+**Status:** done
 **Depends on:** none
 **Blocks:** nothing (cosmetic), but resolves a footgun
 
@@ -30,6 +30,6 @@ Pick A. It matches the directory's "bootstrap/configure-*.yml" naming pattern an
 
 ## Acceptance
 
-- [ ] `configure-unattended-upgrades.yml` contains the implementation
-- [ ] `guest-bootstrap.yml` calls it via `include_tasks` (or `import_tasks`)
-- [ ] Running `guest-bootstrap.yml` against a fresh LXC still produces identical state (apt cache, drop-in, marker)
+- [x] `configure-unattended-upgrades.yml` contains the implementation
+- [x] `guest-bootstrap.yml` calls it via `import_tasks`
+- [x] Running `guest-bootstrap.yml` against a fresh LXC still produces identical state (apt cache, drop-in, marker) — tasks moved verbatim except the COUNT fix (`wc -w` on the token list after the marker, exit 0 on zero packages); verified by lint + syntax gates, not a live run

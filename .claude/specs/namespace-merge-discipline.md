@@ -21,6 +21,6 @@ downstream consumer.
 
 - inspection — cite this spec in findings (source: `.claude/CLAUDE.md` "CRITICAL" clause;
   the omit-placeholder violation in `tasks/network/generate-ip.yml` was fixed by meta 006;
-  its missing inputs/outputs header is tracked in meta 103)
+  its inputs/outputs header was added by meta 103)
 
 <!-- isotope:section namespace-merge-discipline:end -->

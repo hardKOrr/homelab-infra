@@ -1,6 +1,6 @@
 # 102 — Restart/tail playbook assert ordering
 
-**Status:** open
+**Status:** done
 **Depends on:** none
 **Blocks:** nothing critical — better UX on missing param
 
@@ -30,6 +30,7 @@ The assert in play 1 fails fast with the friendly message before Ansible tries t
 
 ## Acceptance
 
-- [ ] Running `restart-app.yml` without `-e instance=...` fails with the friendly assert message, not an inventory error
-- [ ] Same for `tail-applog.yml`
-- [ ] Successful runs (with `-e instance=foo`) still work end-to-end
+- [x] Running `restart-app.yml` without `-e instance=...` fails with the friendly assert message, not an inventory error — assert moved to a leading localhost play; the work play's hosts pattern also gained `| default('_instance_unset')` so `--syntax-check` (which templates play hosts) passes too
+- [x] Same for `tail-applog.yml`
+- [x] Successful runs (with `-e instance=foo`) still work end-to-end — work plays unchanged apart from the removed inline assert; lint + syntax gates pass
+- [x] (second defect) Notify play now reads `hostvars[instance]._restart` and words the Ntfy message/priority by outcome; it also tolerates missing facts.yml and no-ops unless the ntfy provider is configured, per the provider-noop philosophy

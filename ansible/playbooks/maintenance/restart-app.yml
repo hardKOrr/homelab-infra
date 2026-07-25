@@ -1,29 +1,39 @@
 ---
 # Restart a native LXC app via its lab-restart-app script.
-# Notifies via Ntfy on success or failure.
+# Notifies via Ntfy on success or failure (silent no-op if ntfy is not the
+# configured notifications provider).
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/restart-app.yml -e instance=vaultwarden
 #
 # Semaphore/Rundeck: job parameter = instance (the app instance name)
 
-- name: Restart App | {{ instance | default('(no instance)') }}
-  hosts: "{{ instance }}"
-  become: true
+# Play 1 asserts on localhost so a missing `instance` fails with the friendly
+# message below — Play 2's hosts pattern would otherwise die first with an
+# opaque inventory error.
+- name: Restart App | Validate parameters
+  hosts: localhost
   gather_facts: false
   tasks:
     - name: Assert instance name provided
       ansible.builtin.assert:
         that: instance is defined and instance | length > 0
         fail_msg: "Pass the app instance name: -e instance=<name>"
-      delegate_to: localhost
-      run_once: true
 
+# The default() can only fire during --syntax-check: Play 1 has already
+# asserted `instance` is defined by the time this play's pattern is resolved.
+- name: Restart App | {{ instance | default('(no instance)') }}
+  hosts: "{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+  tasks:
     - name: Restart app
       ansible.builtin.command: /usr/local/bin/lab-restart-app
       changed_when: true
       register: _restart
 
+# Runs even when the restart play failed (localhost is still healthy), so the
+# outcome is read back from the target's hostvars to word the message honestly.
 - name: Restart App | Notify
   hosts: localhost
   gather_facts: false
@@ -34,13 +44,25 @@
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — notify below no-ops
+  vars:
+    _restart_ok: >-
+      {{ hostvars[instance]._restart is defined
+         and hostvars[instance]._restart is not failed }}
   tasks:
     - name: Notify via Ntfy
       ansible.builtin.uri:
         url: "{{ homelabinfra_infra.notifications.ntfy_url }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
         method: POST
         headers:
-          Title: "{{ instance }} restarted"
-          Priority: "default"
-        body: "{{ instance }} was restarted manually."
+          Title: "{{ instance }} restart {{ _restart_ok | bool | ternary('complete', 'FAILED') }}"
+          Priority: "{{ _restart_ok | bool | ternary('default', 'high') }}"
+        body: >-
+          {{ _restart_ok | bool
+             | ternary(instance ~ ' was restarted manually.',
+                       instance ~ ' restart FAILED — check the job output.') }}
         body_format: raw
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.notifications is defined
+        - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'

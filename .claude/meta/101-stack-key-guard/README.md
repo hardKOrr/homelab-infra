@@ -1,6 +1,6 @@
 # 101 — Guard against missing `stack` key in app template
 
-**Status:** open
+**Status:** done
 **Depends on:** 005 (schema cleanup)
 **Blocks:** clean error messages on common contributor mistake
 
@@ -19,5 +19,5 @@ Tighten the assert in `find-or-create-host.yml` to also check that `app_config.s
 
 ## Acceptance
 
-- [ ] Running the unmodified template (with neither PATH A nor B configured) produces a clear error pointing at `_template.yml` PATH selection
-- [ ] PATH A and PATH B continue to work when correctly configured
+- [x] Running the unmodified template (with neither PATH A nor B configured) produces a clear error pointing at `_template.yml` PATH selection — assert now uses `stack_name | default('') | length > 0` so the lazy `{{ app_config.stack }}` undefined is absorbed and the fail_msg (naming PATH A/B) is what the user sees
+- [x] PATH A and PATH B continue to work when correctly configured — a non-empty stack_name passes the same assert; no other behavior changed (lint + syntax gates pass)
