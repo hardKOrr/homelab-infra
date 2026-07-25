@@ -1,18 +1,87 @@
 ---
-# TODO: Register an app route with Caddy via the Caddy admin API.
+# Register an app route with Caddy via the Caddy admin API.
+# Inverse: tasks/unwiring/caddy.yml. Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs (vars passed by calling playbook):
-#   wiring_app_name:       the app instance name (e.g. radarr-4k)
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name:       app instance name (e.g. radarr-4k) — route @id is route_<name>
 #   wiring_upstream_host:  IP or hostname of the app container
 #   wiring_upstream_port:  port the app listens on
 #   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com)
 #
-# Reads from homelabinfra_infra (loaded from config/.generated/facts.yml):
-#   homelabinfra_infra.caddy.admin_api_url  (e.g. http://192.168.1.10:2019)
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   reverse_proxy.host  — full base URL including scheme (e.g. http://192.168.1.10)
+#   reverse_proxy.port  — Caddy admin API port (written by the caddy app deploy; 2019)
 #
-# Steps:
-#   1. Build Caddy route JSON (reverse_proxy handler, TLS via ACME)
-#   2. POST to Caddy admin API: /config/apps/http/servers/srv0/routes
-#   3. Verify route is active
+# Routes are stored under the srv0 server (the caddy role templates a single
+# HTTPS server named srv0 with an empty route table). TLS comes from Caddy's
+# automatic HTTPS: adding a host matcher on srv0 makes Caddy issue an ACME cert
+# for that domain — the route carries no TLS config of its own.
 #
-# Conditions: only runs when homelabinfra_infra.reverse_proxy.provider == 'caddy'
+# Idempotent: existing identical route → no change; drifted route → PATCH in
+# place; absent route → POST. Silent no-op when the configured reverse proxy
+# provider is not caddy.
+
+- name: Wire Caddy | Register route
+  when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
+  vars:
+    _caddy_admin_url: >-
+      {{ homelabinfra_infra.reverse_proxy.host }}:{{
+         homelabinfra_infra.reverse_proxy.port | default(2019) }}
+    _caddy_route_id: "route_{{ wiring_app_name }}"
+    _caddy_route:
+      "@id": "route_{{ wiring_app_name }}"
+      match:
+        - host:
+            - "{{ wiring_domain }}"
+      handle:
+        - handler: reverse_proxy
+          upstreams:
+            - dial: "{{ wiring_upstream_host }}:{{ wiring_upstream_port }}"
+      terminal: true
+  block:
+    - name: Wire Caddy | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name is defined and wiring_app_name | length > 0
+          - wiring_upstream_host is defined and wiring_upstream_host | length > 0
+          - wiring_upstream_port is defined and wiring_upstream_port | string | length > 0
+          - wiring_domain is defined and wiring_domain | length > 0
+        fail_msg: >-
+          wiring/caddy.yml needs the wiring contract vars: wiring_app_name,
+          wiring_upstream_host, wiring_upstream_port, wiring_domain.
+
+    - name: Wire Caddy | Check for existing route
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
+        method: GET
+        status_code: [200, 404]
+        return_content: true
+      register: _caddy_existing
+
+    - name: Wire Caddy | Create route
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0/routes"
+        method: POST
+        body_format: json
+        body: "{{ _caddy_route }}"
+        status_code: 200
+      when: _caddy_existing.status == 404
+      changed_when: true
+
+    - name: Wire Caddy | Update drifted route
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
+        method: PATCH
+        body_format: json
+        body: "{{ _caddy_route }}"
+        status_code: 200
+      when:
+        - _caddy_existing.status == 200
+        - _caddy_existing.json != _caddy_route
+      changed_when: true
+
+    - name: Wire Caddy | Verify route active
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
+        method: GET
+        status_code: 200

@@ -1,17 +1,49 @@
 ---
-# TODO: Remove an app route from Caddy via the Caddy admin API.
+# Remove an app route from Caddy via the Caddy admin API.
 # Inverse of tasks/wiring/caddy.yml. Called by playbooks/apps/remove.yml.
+# Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs:
-#   wiring_app_name:  the app instance name — used to identify the route to delete
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name:  app instance name — identifies the route (@id route_<name>)
 #
-# Reads from homelabinfra_infra:
-#   homelabinfra_infra.caddy.admin_api_url
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   reverse_proxy.host  — full base URL including scheme (e.g. http://192.168.1.10)
+#   reverse_proxy.port  — Caddy admin API port (written by the caddy app deploy; 2019)
 #
-# Steps:
-#   1. Find the route ID for wiring_app_name (GET /config/apps/http/servers/srv0/routes)
-#   2. DELETE the route by ID
-#   3. Verify route is gone
-#
-# Safe if route does not exist — idempotent no-op.
-# Conditions: only runs when homelabinfra_infra.reverse_proxy.provider == 'caddy'
+# Idempotent: absent route → no-op success. Silent no-op when the configured
+# reverse proxy provider is not caddy.
+
+- name: Unwire Caddy | Remove route
+  when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
+  vars:
+    _caddy_admin_url: >-
+      {{ homelabinfra_infra.reverse_proxy.host }}:{{
+         homelabinfra_infra.reverse_proxy.port | default(2019) }}
+    _caddy_route_id: "route_{{ wiring_app_name }}"
+  block:
+    - name: Unwire Caddy | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name is defined and wiring_app_name | length > 0
+        fail_msg: "unwiring/caddy.yml needs wiring_app_name to identify the route."
+
+    - name: Unwire Caddy | Check for existing route
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
+        method: GET
+        status_code: [200, 404]
+      register: _caddy_existing
+
+    - name: Unwire Caddy | Delete route
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
+        method: DELETE
+        status_code: 200
+      when: _caddy_existing.status == 200
+      changed_when: true
+
+    - name: Unwire Caddy | Verify route gone
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
+        method: GET
+        status_code: 404
