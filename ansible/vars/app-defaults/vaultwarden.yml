@@ -18,9 +18,13 @@ vaultwarden_defaults:
       - vaultwarden
 
   app:
-    port: 80
-    admin_port: 8080
+    port: 80                    # web vault + API + /admin panel (one port for everything)
     data_path: /opt/vaultwarden/data
+    signups_allowed: false      # open registration off by default — invite via /admin
+
+  update:
+    github_repo: dani-garcia/vaultwarden
+    binary_path: /usr/local/bin/vaultwarden
 
   routing:
     proxy: internal

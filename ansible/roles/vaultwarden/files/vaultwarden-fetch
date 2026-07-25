@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# vaultwarden-fetch — install the vaultwarden binary and matching web-vault.
+#
+# Upstream publishes no prebuilt binary assets on GitHub releases (source archives
+# only); the official container image is the canonical binary channel. The Alpine
+# variant carries a statically linked musl binary at /vaultwarden and the web-vault
+# at /web-vault, so one image fetch yields both artifacts at matched versions.
+# skopeo downloads the image; the layers are plain tarballs — no container runtime
+# is installed or used.
+#
+# Usage: vaultwarden-fetch <version>     (e.g. vaultwarden-fetch 1.37.0)
+
+set -euo pipefail
+
+VERSION="${1:?usage: vaultwarden-fetch <version>}"
+BINARY_DEST=/usr/local/bin/vaultwarden
+WEB_VAULT_DEST=/usr/share/vaultwarden/web-vault
+
+case "$(uname -m)" in
+    x86_64)  ARCH=amd64 ;;
+    aarch64) ARCH=arm64 ;;
+    *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
+
+IMAGE="docker://docker.io/vaultwarden/server:${VERSION}-alpine"
+
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+skopeo copy --override-os linux --override-arch "$ARCH" "$IMAGE" "dir:${workdir}/image"
+
+# Walk the layers in manifest order (later layers win). Both artifacts sit at the
+# image root: /vaultwarden and /web-vault/. tar exits non-zero for layers that do
+# not contain them — the post-extract checks below catch a genuinely broken image.
+mkdir -p "${workdir}/rootfs"
+while read -r digest; do
+    layer="${workdir}/image/${digest#sha256:}"
+    tar -xf "$layer" -C "${workdir}/rootfs" vaultwarden web-vault 2>/dev/null || true
+done < <(jq -r '.layers[].digest' "${workdir}/image/manifest.json")
+
+[ -f "${workdir}/rootfs/vaultwarden" ] || { echo "ERROR: vaultwarden binary not found in image layers" >&2; exit 1; }
+[ -d "${workdir}/rootfs/web-vault" ]  || { echo "ERROR: web-vault not found in image layers" >&2; exit 1; }
+
+# Sanity-check the binary actually executes on this system before installing it.
+chmod +x "${workdir}/rootfs/vaultwarden"
+"${workdir}/rootfs/vaultwarden" --version >/dev/null
+
+install -m 0755 "${workdir}/rootfs/vaultwarden" "$BINARY_DEST"
+mkdir -p "$(dirname "$WEB_VAULT_DEST")"
+rm -rf "$WEB_VAULT_DEST"
+mv "${workdir}/rootfs/web-vault" "$WEB_VAULT_DEST"
+
+echo "vaultwarden ${VERSION} installed (${BINARY_DEST}, ${WEB_VAULT_DEST})"

@@ -1,0 +1,26 @@
+# Managed by homelab-infra — changes made here will be overwritten on next deploy.
+[Unit]
+Description=Vaultwarden password manager ({{ instance }})
+Documentation=https://github.com/dani-garcia/vaultwarden
+After=network.target
+
+[Service]
+User={{ vaultwarden_user }}
+Group={{ vaultwarden_user }}
+EnvironmentFile={{ vaultwarden_env_file }}
+ExecStart={{ app_config.update.binary_path }}
+WorkingDirectory={{ app_config.app.data_path | dirname }}
+Restart=on-failure
+RestartSec=5
+
+# Port {{ app_config.app.port }} may be privileged; grant only the bind capability.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ app_config.app.data_path }}
+
+[Install]
+WantedBy=multi-user.target

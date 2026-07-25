@@ -1,0 +1,30 @@
+---
+# Vaultwarden instance config.
+# Copy to config/apps/vaultwarden.yml. Only set values that differ from defaults
+# in vars/app-defaults/vaultwarden.yml. This file persists after removal — it is
+# your restore point for re-deploying.
+#
+# Filename = instance name. The filename you choose becomes the hostname,
+# Caddy subdomain (vaultwarden.yourdomain.com), and Uptime Kuma monitor name.
+#
+# Vaultwarden usually needs no overrides at all — an empty file (or no file) is fine.
+#
+# The admin token is NOT set here. It is generated on first deploy, printed to the
+# job console, and then lives in config/infrastructure.yml under
+# vaultwarden.admin_token (or the VAULTWARDEN_ADMIN_TOKEN env var).
+
+# ── Proxmox resource overrides ─────────────────────────────────────────────────
+# proxmox:
+#   cores: 2
+#   memory: 1024    # MB — default 512 is plenty for a handful of users
+
+# ── App-specific config ────────────────────────────────────────────────────────
+# app:
+#   port: 80              # port Vaultwarden listens on inside the LXC
+#   signups_allowed: true # false (default) = invite users via the /admin panel;
+#                         # true = anyone who can reach the page can register
+
+# ── Routing overrides ──────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal  # internal | external
+#   # auth stays false — Vaultwarden has its own login; do not put Authentik in front.

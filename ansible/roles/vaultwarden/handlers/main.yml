@@ -1,0 +1,6 @@
+---
+- name: Restart vaultwarden
+  ansible.builtin.systemd:
+    name: "{{ vaultwarden_service_name }}"
+    state: restarted
+    daemon_reload: true

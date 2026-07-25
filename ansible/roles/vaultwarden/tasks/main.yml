@@ -1,0 +1,224 @@
+---
+# vaultwarden role — native LXC deployment (static binary + web-vault).
+# Called from Play 2 of playbooks/apps/vaultwarden.yml. Target: dedicated LXC.
+#
+# Install channel: upstream publishes NO prebuilt binary assets on GitHub releases
+# (source archives only) — the container image is the canonical binary channel.
+# vaultwarden-fetch extracts the statically linked musl binary and the matching
+# web-vault from the official Alpine image via skopeo. No container runtime is
+# installed; skopeo is just a downloader. See .claude/meta/400-app-vaultwarden/notes.md.
+#
+# Admin token (spec: .claude/specs/secrets-handling.md — VAULTWARDEN_ADMIN_TOKEN is
+# one of the two secrets that live outside Vaultwarden):
+#   source order: VAULTWARDEN_ADMIN_TOKEN env var
+#              -> homelabinfra_config.infrastructure.vaultwarden.admin_token
+#              -> hash already present on the guest (token continuity across re-runs)
+#              -> first bootstrap: generate, PRINT TO CONSOLE (the one deliberate
+#                 plaintext exposure — chicken-and-egg, user pastes it into
+#                 config/infrastructure.yml), store only the argon2id hash.
+# Only the hash ever touches the guest filesystem.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+
+# ── Install ───────────────────────────────────────────────────────────────────
+- name: Install dependencies
+  ansible.builtin.apt:
+    name:
+      - skopeo # image download for vaultwarden-fetch
+      - jq # manifest parsing in vaultwarden-fetch
+      - argon2 # admin token hashing
+      - curl # lab-update-check
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Check installed vaultwarden version
+  ansible.builtin.command:
+    cmd: "{{ app_config.update.binary_path }} --version"
+  register: _vw_installed
+  failed_when: false
+  changed_when: false
+
+- name: Get latest release info
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+    return_content: true
+  register: _release
+  changed_when: false
+
+- name: Set version facts
+  ansible.builtin.set_fact:
+    _installed_version: >-
+      {{ (_vw_installed.stdout | default('') | regex_search('[0-9]+\.[0-9]+\.[0-9]+'))
+         if _vw_installed.rc == 0 else 'none' }}
+    _latest_version: "{{ _release.json.tag_name | regex_replace('^v', '') }}"
+
+- name: Install vaultwarden-fetch
+  ansible.builtin.copy:
+    src: vaultwarden-fetch
+    dest: /usr/local/bin/vaultwarden-fetch
+    mode: "0755"
+
+- name: Fetch vaultwarden {{ _latest_version }} (binary + web-vault)
+  ansible.builtin.command:
+    cmd: "/usr/local/bin/vaultwarden-fetch {{ _latest_version }}"
+  when: _installed_version != _latest_version
+  changed_when: true
+  notify: Restart vaultwarden
+
+# ── User and directories ──────────────────────────────────────────────────────
+- name: Create vaultwarden system user
+  ansible.builtin.user:
+    name: "{{ vaultwarden_user }}"
+    system: true
+    home: "{{ app_config.app.data_path | dirname }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "{{ vaultwarden_user }}"
+    group: "{{ vaultwarden_user }}"
+    mode: "0750"
+
+# ── Admin token ───────────────────────────────────────────────────────────────
+- name: Read current environment file (token continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ vaultwarden_env_file }}"
+  register: _vw_env_current
+  failed_when: false
+  no_log: true
+
+- name: Extract existing admin token hash
+  ansible.builtin.set_fact:
+    _existing_admin_hash: >-
+      {{ ((_vw_env_current.content | b64decode).splitlines()
+          | select('match', '^ADMIN_TOKEN=')
+          | map('regex_replace', '^ADMIN_TOKEN=', '')
+          | first | default(''))
+         if _vw_env_current.content is defined else '' }}
+  no_log: true
+
+- name: Resolve configured admin token (env var wins over config/infrastructure.yml)
+  ansible.builtin.set_fact:
+    _admin_token_plain: >-
+      {{ lookup('env', 'VAULTWARDEN_ADMIN_TOKEN')
+         | default(homelabinfra_config.infrastructure.vaultwarden.admin_token
+                   | default(''), true) }}
+  no_log: true
+
+- name: Generate admin token (first bootstrap only)
+  ansible.builtin.set_fact:
+    _admin_token_plain: "{{ lookup('password', '/dev/null length=48 chars=ascii_letters,digits') }}"
+    _admin_token_generated: true
+  when:
+    - _admin_token_plain | length == 0
+    - _existing_admin_hash | length == 0
+  no_log: true
+
+# Deliberate plaintext print — the bootstrap chicken-and-egg (CLAUDE.md "Secrets").
+# Fires only when the token was generated this run, i.e. exactly once per lab.
+- name: FIRST BOOTSTRAP — save this admin token now
+  ansible.builtin.debug:
+    msg:
+      - "════════════════════════════════════════════════════════════════════"
+      - "Vaultwarden admin token (shown ONCE — only its hash is stored):"
+      - "  {{ _admin_token_plain }}"
+      - "Paste it into config/infrastructure.yml under vaultwarden.admin_token"
+      - "or set it as the VAULTWARDEN_ADMIN_TOKEN env var in Semaphore/Rundeck."
+      - "════════════════════════════════════════════════════════════════════"
+  when: _admin_token_generated | default(false)
+
+# Deterministic salt (derived from the token itself) keeps the PHC string stable
+# across runs, so the env template stays idempotent — a random salt would rewrite
+# the file and bounce the service on every deploy.
+- name: Hash admin token (argon2id, OWASP parameters)
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    salt="$(printf '%s' "$VW_TOKEN" | sha256sum | cut -c1-32)";
+    printf '%s' "$VW_TOKEN" | argon2 "$salt" -id -e -m 16 -t 3 -p 4
+  args:
+    executable: /bin/bash
+  environment:
+    VW_TOKEN: "{{ _admin_token_plain }}"
+  register: _argon2
+  changed_when: false
+  no_log: true
+  when: _admin_token_plain | length > 0
+
+- name: Select admin token hash for the environment file
+  ansible.builtin.set_fact:
+    _admin_token_hash: >-
+      {{ (_argon2.stdout | trim)
+         if _admin_token_plain | length > 0 else _existing_admin_hash }}
+  no_log: true
+
+# ── Configure ─────────────────────────────────────────────────────────────────
+- name: Write environment file
+  ansible.builtin.template:
+    src: vaultwarden.env.j2
+    dest: "{{ vaultwarden_env_file }}"
+    owner: root
+    group: "{{ vaultwarden_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart vaultwarden
+
+- name: Write systemd unit
+  ansible.builtin.template:
+    src: vaultwarden.service.j2
+    dest: "/etc/systemd/system/{{ vaultwarden_service_name }}.service"
+    mode: "0644"
+  notify: Restart vaultwarden
+
+# ── Service ───────────────────────────────────────────────────────────────────
+- name: Enable and start vaultwarden service
+  ansible.builtin.systemd:
+    name: "{{ vaultwarden_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending restarts before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for vaultwarden to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/alive"
+    status_code: 200
+  register: _health
+  until: _health.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── Lab maintenance scripts ───────────────────────────────────────────────────
+- name: Install lab maintenance scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - lab-update-check
+    - lab-restart-app
+    - lab-tail-applog
+
+# ── Record installed version ──────────────────────────────────────────────────
+# Local fact file so check-native-updates.yml / status.yml can read the version
+# without executing the binary.
+- name: Ensure facts.d directory exists
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    mode: "0755"
+
+- name: Record installed version
+  ansible.builtin.copy:
+    content: '{"version": "{{ _latest_version }}"}'
+    dest: /etc/ansible/facts.d/vaultwarden.fact
+    mode: "0644"

@@ -1,0 +1,7 @@
+---
+# Role-internal defaults — not user-facing. User-facing knobs live in
+# vars/app-defaults/vaultwarden.yml and config/apps/<instance>.yml.
+vaultwarden_service_name: vaultwarden
+vaultwarden_user: vaultwarden
+vaultwarden_env_file: /etc/vaultwarden.env
+vaultwarden_web_vault_dir: /usr/share/vaultwarden/web-vault

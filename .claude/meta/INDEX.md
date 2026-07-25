@@ -49,13 +49,15 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 
 | # | Slice | Status | Depends on |
 |---|---|---|---|
-| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | open | 004, 005, 200 (+000–003 foundation) |
+| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | in-progress² | 004, 005, 200 (+000–003 foundation) |
 | 401 | [Ntfy](401-app-ntfy/README.md) | open | 200, 400 |
 | 402 | [Caddy](402-app-caddy/README.md) | open | 300, 401 |
 | 403 | [Authentik](403-app-authentik/README.md) | open | 302, 401 |
 | 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | open | 303, 401 |
 | 405 | [Grafana + Prometheus](405-app-grafana/README.md) | open | 401 |
 | 406 | [PBS](406-app-pbs/README.md) | open | 202, 401 |
+
+² Implementation complete and gate-verified; awaiting live deploy acceptance (see slice notes.md).
 
 ## 5XX — Top-level playbooks
 
