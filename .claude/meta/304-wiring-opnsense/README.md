@@ -1,6 +1,6 @@
 # 304 — OPNsense Unbound wire + unwire
 
-**Status:** in-progress
+**Status:** built
 **Depends on:** 200
 **Blocks:** DNS resolution for deployed apps in OPNsense homelabs
 

@@ -5,12 +5,26 @@ Lint and test gates for the Ansible repo. Both are thin wrappers around committe
 one-liner can mis-expand on the Windows side and silently run zero iterations while still exiting
 0. `.gitattributes` forces `*.sh` here to LF so `bash` in WSL never chokes on a CRLF shebang.
 
-Registered as Isotope gates in `.isotope/isotope.json`:
+Invoked as:
 
 ```
-lint: wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/lint.sh'
-test: wsl bash -lc 'cd /mnt/c/Users/kevin/GitHub/hardKOrr/homelab-infra && bash .claude/gate/test.sh'
+lint: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh'
+test: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh'
 ```
+
+Those two exact strings are the only WSL commands in `.claude/settings.json` `allow:`, and that
+is deliberate. **`wsl bash -lc` must never become an allow *prefix*.** The permission check reads
+the single-quoted inner string as one literal argument, so a prefix rule would auto-approve any
+chained inner command — `wsl bash -lc 'bash .claude/gate/lint.sh && anything'` — making the relay
+a bare interpreter in disguise. If ad-hoc iteration (lint one file, syntax-check one playbook)
+ever prompts often enough to hurt, add argv-form wrappers here instead: `wsl bash
+.claude/gate/lint-file.sh <path>` with no inner shell string, so chaining characters stay
+unquoted on the Windows side and fail the check rather than smuggle through. Any such wrapper
+must replicate the env exports below and be forced to LF in `.gitattributes`.
+
+Stale path note: `.isotope/isotope.json` still registers these gates under a `kevin/GitHub`
+checkout path that does not exist. Isotope is not in use here — see the cleanup note in
+`.claude/meta/INDEX.md`.
 
 - `lint.sh` — `ansible-lint` profile `min` over `playbooks roles tasks vars`.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic

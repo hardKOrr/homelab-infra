@@ -1,128 +1,140 @@
 # Meta Index
 
-Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = lowest), last two digits are order within the tier. See [README.md](README.md) for slice template and workflow.
+Numbering: `NNN` — first digit is **tier** (0 = highest priority, 6 = lowest), last two
+digits are order within the tier. Slice template and workflow: [README.md](README.md).
 
-## 0XX — Foundation (architecture/variable plumbing; nothing else runs until these work)
+## Status vocabulary
 
-| # | Slice | Status | Depends on | Blocks |
-|---|---|---|---|---|
-| 000 | [Variable-loading contract (spec)](000-variable-loading-contract/README.md) | done | none | 001–004 and everything downstream |
-| 001 | [Implement config/*.yml loader](001-config-loader/README.md) | done | 000 | 004, 200, every playbook importing load-user-vars.yml |
-| 002 | [Reconcile config.example schema](002-reconcile-config-example/README.md) | done | 000, 001 | 004; any user attempting the documented workflow |
-| 003 | [Filter proxmox module params](003-filter-proxmox-module-params/README.md) | done | 000 | any real LXC/VM provisioning |
-| 004 | [Proxmox key naming unification](004-proxmox-key-naming/README.md) | done | 002 | all proxmox-touching work |
-| 005 | [Instance config schema contradiction](005-instance-config-schema/README.md) | done | none | any real app deploy |
-| 006 | [generate-ip combine](006-generate-ip-combine/README.md) | done | none | safe reuse of generate-ip |
-| 007 | [requirements.yml collections](007-requirements-collections/README.md) | done | none | any docker app, guest-bootstrap |
-| 008 | [Estate / multi-domain contract](008-estate-contract/README.md) | in-progress² | 000, 001, 200 | any second-domain deployment; 009, 407 |
-| 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | in-progress² | 008, 302, 403 | 306 |
+| Status | Means |
+|---|---|
+| `done` | Acceptance met. Nothing left. Do not reopen without a new slice. |
+| `built` | Code written, both gates green, acceptance **not** yet observed on the live lab. |
+| `open` | Not started, or started and abandoned mid-way. |
 
-## 1XX — Hygiene (small fixes, no architectural impact)
+Gates (both current as of 2026-07-25): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes
+137 files on the `production` profile; `.claude/gate/test.sh` passes every playbook except
+`stacks/rollback-container.yml`, an empty stub owned by slice 502.
 
-| # | Slice | Status | Depends on |
+Counts: **12 done · 20 built · 7 open.**
+
+---
+
+## Done (12)
+
+No further work. Listed for provenance only.
+
+| # | Slice |
+|---|---|
+| 000 | [Variable-loading contract (spec)](000-variable-loading-contract/README.md) |
+| 001 | [Implement config/*.yml loader](001-config-loader/README.md) |
+| 002 | [Reconcile config.example schema](002-reconcile-config-example/README.md) |
+| 003 | [Filter proxmox module params](003-filter-proxmox-module-params/README.md) |
+| 004 | [Proxmox key naming unification](004-proxmox-key-naming/README.md) |
+| 005 | [Instance config schema contradiction](005-instance-config-schema/README.md) |
+| 006 | [generate-ip combine](006-generate-ip-combine/README.md) |
+| 007 | [requirements.yml collections](007-requirements-collections/README.md) |
+| 100 | [unattended-upgrades dedupe](100-unattended-upgrades-dedupe/README.md) |
+| 101 | [Stack key guard in template](101-stack-key-guard/README.md) |
+| 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) |
+| 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) |
+| 200 | [write-generated-facts](200-write-generated-facts/README.md) |
+
+## Built — awaiting live acceptance (20)
+
+Every one of these is code-complete and gate-verified. **They all clear on the same
+event: a live bootstrap run against the lab** (slice 500's acceptance). Per-slice
+deviations and open questions live in each slice's `notes.md`.
+
+| # | Slice | What live acceptance needs |
+|---|---|---|
+| 008 | [Estate / multi-domain contract](008-estate-contract/README.md) | a second-domain deploy |
+| 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | one app deployed per mode |
+| 201 | [configure-watchtower](201-configure-watchtower/README.md) | Ntfy running (401) |
+| 202 | [configure-pbs](202-configure-pbs/README.md) | PBS running (406) |
+| 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | Caddy running (402) |
+| 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists; see below |
+| 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | Authentik running (403) |
+| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | Kuma running (404) |
+| 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API creds |
+| 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
+| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | bootstrap step 1 |
+| 401 | [Ntfy](401-app-ntfy/README.md) | bootstrap step 2 |
+| 402 | [Caddy](402-app-caddy/README.md) | bootstrap step 3 |
+| 403 | [Authentik](403-app-authentik/README.md) | bootstrap step 4 — one item blocked on 306 |
+| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | bootstrap step 5 |
+| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | bootstrap step 6 |
+| 406 | [PBS](406-app-pbs/README.md) | bootstrap step 7 — VM path never run live |
+| 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | a real public domain + DNS token |
+| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | the full run — the event above |
+
+Carried caveats:
+
+- **301/305 have no live target.** The lab runs Caddy + OPNsense. These two stay `built`
+  indefinitely unless a second lab appears; that is expected, not a stall.
+- **406's VM provisioning machinery** (`tasks/proxmox/ensure-cloud-template.yml`,
+  `vm-clone.yml`) has never executed. Highest live-run risk in the set.
+- **403 acceptance item 3 cannot pass** until 306 lands — Authentik objects are created
+  but nothing enforces them at the proxy.
+- **500's one staged import is `apps/nginx.yml`**, which does not exist (301 shipped the
+  wiring pair only, no app playbook).
+
+## Open (7)
+
+| # | Slice | Depends on | Ready? |
 |---|---|---|---|
-| 100 | [unattended-upgrades dedupe](100-unattended-upgrades-dedupe/README.md) | done | none |
-| 101 | [Stack key guard in template](101-stack-key-guard/README.md) | done | 005 |
-| 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) | done | none |
-| 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) | done | 006 |
+| 502 | [Rollback container](502-rollback-container/README.md) | 201 | yes — and it unblocks the test gate |
+| 503 | [Lab status](503-lab-status/README.md) | none | yes |
+| 501 | [App remove playbook](501-app-remove-playbook/README.md) | 300–305 unwire halves | yes |
+| 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | 300, 301, 302, 403, 009 | code yes; verify needs live Authentik |
+| 504 | [Wire media stack](504-wire-media-stack/README.md) | 300–305 | yes, but no media apps exist yet |
+| 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | 500 + full 5XX job set | after 501–504 |
+| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | 500 + full 5XX job set | after 501–504 |
 
-## 2XX — Bootstrap helpers (tasks/bootstrap/* building blocks)
+## Recommended order
 
-| # | Slice | Status | Depends on |
-|---|---|---|---|
-| 200 | [write-generated-facts](200-write-generated-facts/README.md) | done | 004 |
-| 201 | [configure-watchtower](201-configure-watchtower/README.md) | in-progress¹ | 200, 401 |
-| 202 | [configure-pbs](202-configure-pbs/README.md) | in-progress¹ | 200, 406 |
+1. **Live bootstrap run** — one event converts 19 of the 20 `built` slices. The backlog
+   of unverified work is the project's largest risk and it grows with every slice added.
+2. **502** — smallest slice in the backlog and the only thing keeping `test.sh` red.
+3. **501, 503** — completes the day-2 job set (remove, status) that 600/601 must enumerate.
+4. **306** — closes the forward-auth fail-open gap; verifiable once Authentik is live.
+5. **600, 601** — build the UI job definitions last, against a job set that has stopped moving.
+6. **504** — deferred until a media stack app actually exists to wire.
 
-¹ Implementation complete and gate-verified; live acceptance blocked on the app slice it depends on.
+## Retired trackers
 
-## 3XX — Wiring (per-provider wire/unwire pairs)
+`.claude/meta/` is the single backlog. Two earlier systems overlapped it and are being wound down:
 
-| # | Slice | Status | Depends on |
-|---|---|---|---|
-| 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | in-progress¹ | 200 |
-| 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | in-progress¹ | 200 |
-| 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | in-progress¹ | 200, 403 |
-| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | in-progress¹ | 200, 404 |
-| 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | in-progress¹ | 200 |
-| 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | in-progress¹ | 200 |
-| 306 | [Reverse-proxy forward_auth for forward-auth-mode apps](306-wiring-forward-auth/README.md) | open | 300, 301, 302, 403, 009 |
+- **`.claude/plans/`** — deleted 2026-07-25. Its six `design/` forms (dhcp lease discovery,
+  check-native-updates report play, stack-host docker readiness, docker apt keyring, default LXC
+  password, secrets in guest JSON) were all verified implemented in the tree by later tier work,
+  and its two `concept/` notes were absorbed: the red-test-gate note's two `hosts:` defects by
+  slice 102, its third by slice 502; the gate-wrapper note into `.claude/gate/README.md`.
+- **`.claude/isotope-intake-backlog.md` + `.isotope/cultures/flux/`** — an abandoned migration of
+  `meta/` + `plans/backlog/` into Isotope specimens. All eight flux specimens describe work that
+  has since landed, and `.isotope/isotope.json` points at a checkout path that does not exist.
+  Not yet removed — decide before it accrues more stale state.
 
-¹ Implementation complete and gate-verified; live acceptance needs the provider running.
-Per-slice decisions and deviations are in each slice's `notes.md` — 303 additionally
-renamed the registry key `uptime_kuma` → `monitoring` (CONTRACT.md §3), which slice 404
-now writes.
+## Cross-slice effects on record
 
-302 was reworked by slice 009: `tasks/wiring/authentik.yml` now dispatches on
-`wiring_identity_mode` — catalog (Application tile only), oidc (OAuth2 provider,
-client creds exported to the caller), forward_auth (the original proxy-provider
-path, unchanged) — and the unwire removes whichever shape exists.
+From the 4XX build (2026-07-25):
 
-306 was opened while implementing 403: the wire tasks create every Authentik object
-but emit no `forward_auth` handler, so forward-auth fails **open** and silently.
-Since slice 009 it blocks only the `forward_auth` exception mode (no baseline app
-defaults to it); catalog/oidc modes never promised proxy enforcement.
-
-## 4XX — Apps (per-app roles + per-app playbooks)
-
-| # | Slice | Status | Depends on |
-|---|---|---|---|
-| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | in-progress² | 004, 005, 200 (+000–003 foundation) |
-| 401 | [Ntfy](401-app-ntfy/README.md) | in-progress² | 200, 400 |
-| 402 | [Caddy](402-app-caddy/README.md) | in-progress² | 300, 401 |
-| 403 | [Authentik](403-app-authentik/README.md) | in-progress²ᐟ³ | 302, 401 |
-| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | in-progress² | 303, 401 |
-| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | in-progress² | 401 |
-| 406 | [PBS](406-app-pbs/README.md) | in-progress² | 202, 401 |
-| 407 | [Caddy per-estate DNS-01 challenge](407-caddy-dns-challenge/README.md) | in-progress² | 402, 008 |
-
-² Implementation complete and gate-verified; awaiting live deploy acceptance (see slice notes.md).
-
-³ 403 additionally has one acceptance item blocked on work it does not own: no
-wiring task emits a reverse-proxy `forward_auth` handler, so nothing enforces the
-`forward_auth` identity mode. Owned by slice 306 — see 403's notes.md "Known gap".
-403 gained a `routing.subdomain` default of `auth` (2026-07-25) so multi-estate
-labs reach each estate's Authentik at its own `auth.<domain>`; it is a default,
-overridable per instance like any routing key. Directory content — account names,
-groups, social login sources, MFA — is explicitly out of the role's scope; see
-`roles/authentik/README.md`.
-
-Cross-slice effects of the 4XX build (2026-07-25):
-- **401 closed Ntfy by default** and reconciled all five existing notification
-  consumers to authenticate. `notifications` gained optional `user`/`password`/`token`
-  in `ansible/vars/CONTRACT.md` §3; consumers fall back to anonymous POST when no
-  token is recorded, so an existing lab is not broken by `git pull`.
-- **404 locked Uptime Kuma v2**, which resolves slice 303's open question in the
-  direction that needs no rework — 303's REST implementation stands.
-- **405 added `prometheus-node-exporter` to `tasks/guest-bootstrap.yml`**, so every
-  guest is scrapeable. This touches all guests, not just the observability host.
-- **406 added VM provisioning machinery** (`tasks/proxmox/ensure-cloud-template.yml`,
-  `tasks/proxmox/vm-clone.yml`) reusable by any future VM app. Never run live.
-- **New shared task** `tasks/notify.yml`; new Shape B registry key `metrics`.
-- **Fact-writing moved into the app playbooks.** Each baseline app records its own
-  registry key in its Play 3 before wiring, so a standalone deploy registers the
-  service identically to a bootstrap run. `bootstrap.yml` no longer writes facts on
-  their behalf (its Vaultwarden facts play moved into `apps/vaultwarden.yml`).
-
-## 5XX — Top-level playbooks
-
-| # | Slice | Status | Depends on |
-|---|---|---|---|
-| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | in-progress⁴ | 400–406 |
-| 501 | [App remove playbook](501-app-remove-playbook/README.md) | open | 300–305 (unwire halves) |
-| 502 | [Rollback container](502-rollback-container/README.md) | open | 201 |
-| 503 | [Lab status](503-lab-status/README.md) | open | none |
-| 504 | [Wire media stack](504-wire-media-stack/README.md) | open | 300–305 |
-
-⁴ Structure, two-pass Vaultwarden token gate, and **all seven steps** implemented and
-gate-verified — 401–406 landed and their imports are active. The one remaining staged
-import is `apps/nginx.yml` (no nginx app playbook exists; slice 301 shipped only the
-nginx wiring pair). Fact-writing now lives in each app playbook rather than here.
-Live acceptance needs a full bootstrap run.
-
-## 6XX — UI (Semaphore + Rundeck job definitions)
-
-| # | Slice | Status | Depends on |
-|---|---|---|---|
-| 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | open | 500 |
-| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | open | 500 |
+- **401 closed Ntfy by default** and reconciled all five notification consumers to
+  authenticate. `notifications` gained optional `user`/`password`/`token` in
+  `ansible/vars/CONTRACT.md` §3; consumers fall back to anonymous POST when no token is
+  recorded, so `git pull` does not break an existing lab.
+- **303 renamed the registry key** `uptime_kuma` → `monitoring` (CONTRACT.md §3); 404
+  writes it. **404 locked Uptime Kuma v2**, resolving 303's open question toward its
+  existing REST implementation — no rework.
+- **405 added `prometheus-node-exporter` to `tasks/guest-bootstrap.yml`** — every guest is
+  scrapeable, not just the observability host.
+- **New shared task** `tasks/notify.yml`; **new registry key** `metrics`.
+- **Fact-writing moved into the app playbooks.** Each baseline app records its own registry
+  key in Play 3 before wiring, so a standalone deploy registers the service identically to
+  a bootstrap run. `bootstrap.yml` no longer writes facts on their behalf.
+- **009 reworked 302**: `tasks/wiring/authentik.yml` dispatches on `wiring_identity_mode` —
+  catalog (Application tile only), oidc (OAuth2 provider, client creds returned to the
+  caller), forward_auth (the original proxy-provider path, unchanged); unwire removes
+  whichever shape exists.
+- **403 gained a `routing.subdomain` default of `auth`** so multi-estate labs reach each
+  estate's Authentik at its own `auth.<domain>`. Directory content — accounts, groups,
+  social sources, MFA — is out of the role's scope; see `roles/authentik/README.md`.

@@ -1,6 +1,6 @@
 # 202 — Implement configure-pbs
 
-**Status:** in-progress (implementation complete; live acceptance blocked on 406)
+**Status:** built (implementation complete; live acceptance blocked on 406)
 **Depends on:** 200, 406 (PBS VM must exist)
 **Blocks:** backup story for the platform
 

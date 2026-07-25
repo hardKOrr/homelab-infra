@@ -1,6 +1,6 @@
 # 403 — Authentik role + playbook
 
-**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md. **Acceptance item 3 is blocked**: nothing emits a Caddy/Nginx `forward_auth` handler, so SSO objects are created but not enforced — see notes.md "Known gap".
+**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md. **Acceptance item 3 is blocked**: nothing emits a Caddy/Nginx `forward_auth` handler, so SSO objects are created but not enforced — see notes.md "Known gap".
 **Depends on:** 302 (wiring), 401 (ntfy)
 **Blocks:** SSO across all apps that set `routing.auth: true`
 

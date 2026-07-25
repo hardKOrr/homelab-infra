@@ -1,6 +1,6 @@
 # 008 — Estate / multi-domain contract
 
-**Status:** in-progress — implementation complete; awaiting gate + live acceptance
+**Status:** built — implementation complete and gate-verified; awaiting live acceptance
 **Depends on:** 000, 001, 200
 **Blocks:** any second-domain ("estate") deployment; 009 builds on it
 

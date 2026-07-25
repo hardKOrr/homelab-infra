@@ -1,6 +1,6 @@
 # 401 — Ntfy role + playbook
 
-**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
+**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 200, 400 (vaultwarden for any secrets we want to store)
 **Blocks:** every other slice that sends a notification (Watchtower, unattended-upgrades, Uptime Kuma, etc.)
 

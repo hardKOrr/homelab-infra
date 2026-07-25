@@ -17,7 +17,7 @@ NNN-short-slug/
 ```markdown
 # NNN — Short title
 
-**Status:** open | in-progress | done | abandoned
+**Status:** open | built | done | abandoned
 **Depends on:** (NNN, ...) or none
 **Blocks:** (NNN, ...) or none
 
@@ -38,10 +38,14 @@ Bullets. Concrete steps.
 ## Workflow
 
 1. Pick a slice with status `open` and no unmet dependencies.
-2. Flip status to `in-progress`.
-3. Work the slice. Append to `notes.md` as you discover things.
-4. When acceptance is met, flip to `done`.
+2. Work the slice. Append to `notes.md` as you discover things.
+3. When the code is written and both gates are green, flip to `built`.
+4. When acceptance is observed on the live lab, flip to `done` and tick the boxes.
 5. If abandoned, mark `abandoned` with a note on why.
+
+`built` is the honest resting state for anything that touches Proxmox: gate-green code
+whose acceptance criteria have not been watched happening. Do not flip to `done` on the
+strength of a syntax check.
 
 ## Index
 

@@ -1,6 +1,6 @@
 # 300 — Caddy wire + unwire
 
-**Status:** in-progress (implementation complete; live acceptance blocked on 402)
+**Status:** built (implementation complete; live acceptance blocked on 402)
 **Depends on:** 200
 **Blocks:** 402 (caddy app), 504 (media stack wire)
 

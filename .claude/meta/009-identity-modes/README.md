@@ -1,6 +1,6 @@
 # 009 — Identity-mode contract (routing.identity)
 
-**Status:** in-progress — implementation complete; awaiting gate + live acceptance
+**Status:** built — implementation complete and gate-verified; awaiting live acceptance
 **Depends on:** 008 (estate contract — modes are estate-aware by construction), 302, 403
 **Blocks:** 306 (forward_auth enforcement gates on the mode)
 

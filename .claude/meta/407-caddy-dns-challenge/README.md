@@ -1,6 +1,6 @@
 # 407 — Caddy per-estate DNS-01 challenge
 
-**Status:** in-progress — implementation complete; awaiting gate + live acceptance (needs a real public domain + token)
+**Status:** built — implementation complete; gate-verified; awaiting live acceptance (needs a real public domain + token)
 **Depends on:** 402 (caddy role), 008 (estate contract)
 **Blocks:** serving a public estate domain without exposing port 80
 

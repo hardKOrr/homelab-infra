@@ -4,7 +4,7 @@
 > (`roles/observability/`, `playbooks/apps/observability.yml`). The option B
 > two-app split below was not taken. See notes.md.
 
-**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
+**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 401 (ntfy)
 **Blocks:** metrics + dashboards story per CLAUDE.md
 

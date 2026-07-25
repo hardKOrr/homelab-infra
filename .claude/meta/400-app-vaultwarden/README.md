@@ -1,6 +1,6 @@
 # 400 — Vaultwarden role + playbook
 
-**Status:** in-progress — implementation complete and gate-verified; awaiting live deploy acceptance. Install mechanism deviates from the approach below: upstream ships no GitHub binary assets — see notes.md.
+**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Install mechanism deviates from the approach below: upstream ships no GitHub binary assets — see notes.md.
 **Depends on:** 004 (proxmox keys), 005 (instance config), 200 (write-generated-facts); transitively 000-003 foundation
 **Blocks:** 500 (bootstrap), every secret-using slice (anything that does a `community.general.bitwarden` lookup)
 
