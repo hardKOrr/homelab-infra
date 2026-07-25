@@ -1,6 +1,6 @@
 # 200 — Implement write-generated-facts
 
-**Status:** open
+**Status:** done
 **Depends on:** 004 (proxmox key naming)
 **Blocks:** 201, 202, all wiring slices (300-305), all app slices (400+)
 
@@ -30,7 +30,11 @@ Use `ansible.builtin.copy` with `content: "{{ existing | combine({key: data}, re
 
 ## Acceptance
 
-- [ ] First call (file absent) creates `config/.generated/facts.yml` mode 0600 with the supplied data
-- [ ] Second call with a different `generated_facts_service` appends without losing the first
-- [ ] Third call with the same `generated_facts_service` but different nested data deep-merges
-- [ ] File is valid YAML loadable by `include_vars`
+- [x] First call (file absent) creates `config/.generated/facts.yml` mode 0600 with the supplied data
+- [x] Second call with a different `generated_facts_service` appends without losing the first
+- [x] Third call with the same `generated_facts_service` but different nested data deep-merges
+- [x] File is valid YAML loadable by `include_vars`
+
+All four verified by a functional test playbook run through the WSL gate venv (4 sequential
+calls incl. a scalar `domain` write; asserted merge results, 0600 file / 0700 dir modes, and
+`include_vars` loadability). See notes.md.

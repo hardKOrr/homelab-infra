@@ -1,16 +1,308 @@
 ---
-# TODO: Configure Proxmox Backup Server after its VM is deployed.
-# Target: PBS VM (tagged 'pbs' in Proxmox inventory)
+# Configure Proxmox Backup Server after its VM is deployed (bootstrap step 7).
+# Runs in a localhost play — everything here is API calls.
 #
-# Steps:
-#   1. Configure datastore at homelabinfra_config.infrastructure.backups.datastore_path
-#   2. Add Proxmox node as a remote (so PBS can pull backups from PVE)
-#   3. Configure backup job schedule for all VMs/LXCs tagged 'homelab-infra':
-#      - Schedule from homelabinfra_config.infrastructure.backups.schedule
-#      - Retention from homelabinfra_config.infrastructure.backups.retention
-#   4. Send test notification via Ntfy to confirm PBS notifications are working
-#   5. Write PBS endpoint to generated facts (for future reference)
+# Architecture note: PBS cannot pull guest backups from PVE (PBS "remotes" are
+# other PBS instances, used for sync). The working direction is:
+#   PBS side (REST API, port 8007 — NOT the PVE API):
+#     1. Ensure datastore exists at infrastructure.backups.datastore_path
+#     2. Apply retention (keep-*) settings on the datastore
+#     3. Point a webhook notification target + matcher at Ntfy
+#   PVE side (REST API, port 8006):
+#     4. Register PBS as a storage backend (with the PBS cert fingerprint)
+#     5. Create a vzdump backup job covering all homelab-infra-tagged guests
 #
-# Note: PBS uses its own REST API on port 8007. Do not use Proxmox PVE API for PBS config.
-# PBS admin password: auto-generated during VM provisioning, stored in Vaultwarden.
+# PVE backup jobs cannot select guests by tag, so the job is created with the
+# explicit vmid list of homelab-infra-tagged guests at configure time.
+# Re-running this task refreshes the list (fire-and-forget: bootstrap runs PBS
+# last, after all baseline guests exist).
+#
+# Inputs:
+#   pbs_api_host          — PBS base URL, e.g. https://192.168.1.30:8007
+#   pbs_api_token_id      — PBS API token, e.g. root@pam!ansible
+#   pbs_api_token_secret  — token secret (from Vaultwarden; created by slice 406)
+#   pbs_instance          — optional Proxmox hostname of the PBS VM, default 'pbs'
+#   pbs_datastore_name    — optional, default 'homelab'
+#   homelabinfra_config.infrastructure.backups.{datastore_path, schedule, retention}
+#   homelabinfra_config.proxmox.{api_host, api_port, api_user, api_token_id, api_token_secret}
+#   homelabinfra_infra.notifications — optional (Shape B); when provider == 'ntfy',
+#     PBS notifications and the configure-complete test message go to Ntfy
+#
 # PBS runs backups autonomously after this — Ansible does not execute backups.
+
+- name: PBS | Assert required inputs
+  ansible.builtin.assert:
+    that:
+      - pbs_api_host is defined
+      - pbs_api_token_id is defined
+      - pbs_api_token_secret is defined
+      - homelabinfra_config.infrastructure.backups.datastore_path is defined
+      - homelabinfra_config.proxmox.api_host is defined
+      - homelabinfra_config.proxmox.api_user is defined
+      - homelabinfra_config.proxmox.api_token_id is defined
+      - homelabinfra_config.proxmox.api_token_secret is defined
+    fail_msg: >-
+      configure-pbs.yml requires pbs_api_host, pbs_api_token_id,
+      pbs_api_token_secret, infrastructure.backups.datastore_path and the
+      proxmox.* connection keys.
+
+- name: PBS | Set connection facts
+  ansible.builtin.set_fact:
+    _pbs_url: "{{ pbs_api_host }}/api2/json"
+    _pbs_headers:
+      Authorization: "PBSAPIToken={{ pbs_api_token_id }}:{{ pbs_api_token_secret }}"
+    _pve_url: >-
+      https://{{ homelabinfra_config.proxmox.api_host }}:{{
+        homelabinfra_config.proxmox.api_port | default(8006) }}/api2/json
+    _pve_headers:
+      Authorization: >-
+        PVEAPIToken={{ homelabinfra_config.proxmox.api_user }}!{{
+          homelabinfra_config.proxmox.api_token_id }}={{
+          homelabinfra_config.proxmox.api_token_secret }}
+    _pbs_datastore: "{{ pbs_datastore_name | default('homelab') }}"
+
+# ── PBS side ──────────────────────────────────────────────────────────────────
+
+- name: PBS | List existing datastores
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_datastores
+
+- name: PBS | Create datastore {{ _pbs_datastore }}
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore"
+    method: POST
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body:
+      name: "{{ _pbs_datastore }}"
+      path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    validate_certs: false
+  when: >-
+    _pbs_datastores.json.data
+    | map(attribute='name') | list
+    is not contains(_pbs_datastore)
+
+- name: PBS | Apply retention settings on datastore
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ _pbs_keep }}"
+    validate_certs: false
+  vars:
+    _retention: "{{ homelabinfra_config.infrastructure.backups.retention | default({}) }}"
+    # keep_last/keep_daily/… (config style) → keep-last/keep-daily/… (PBS API style)
+    _pbs_keep: >-
+      {{ dict(_retention | dict2items | selectattr('key', 'match', '^keep_')
+              | map(attribute='key') | map('replace', '_', '-')
+              | zip(_retention | dict2items | selectattr('key', 'match', '^keep_')
+                    | map(attribute='value'))) }}
+  when: _pbs_keep | length > 0
+
+- name: PBS | Configure Ntfy notifications
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+    - homelabinfra_infra.notifications.host is defined
+  vars:
+    _ntfy_target_url: >-
+      {{ homelabinfra_infra.notifications.host }}/{{
+        homelabinfra_infra.notifications.topic | default('homelab') }}
+    # PBS webhook bodies are base64-encoded handlebars templates — the braces
+    # below are for PBS, not Jinja.
+    _ntfy_body: |-
+      {% raw %}{{ title }}
+
+      {{ message }}{% endraw %}
+  block:
+    - name: PBS | List webhook notification targets
+      ansible.builtin.uri:
+        url: "{{ _pbs_url }}/config/notifications/endpoints/webhook"
+        headers: "{{ _pbs_headers }}"
+        validate_certs: false
+      register: _pbs_webhooks
+
+    - name: PBS | Create Ntfy webhook notification target
+      ansible.builtin.uri:
+        url: "{{ _pbs_url }}/config/notifications/endpoints/webhook"
+        method: POST
+        headers: "{{ _pbs_headers }}"
+        body_format: form-urlencoded
+        body:
+          name: ntfy
+          url: "{{ _ntfy_target_url }}"
+          method: post
+          body: "{{ _ntfy_body | b64encode }}"
+          comment: managed by homelab-infra
+        validate_certs: false
+      when: >-
+        _pbs_webhooks.json.data
+        | map(attribute='name') | list
+        is not contains('ntfy')
+
+    - name: PBS | List notification matchers
+      ansible.builtin.uri:
+        url: "{{ _pbs_url }}/config/notifications/matchers"
+        headers: "{{ _pbs_headers }}"
+        validate_certs: false
+      register: _pbs_matchers
+
+    - name: PBS | Route all notifications to the Ntfy target
+      ansible.builtin.uri:
+        url: "{{ _pbs_url }}/config/notifications/matchers"
+        method: POST
+        headers: "{{ _pbs_headers }}"
+        body_format: form-urlencoded
+        body:
+          name: homelab-infra-ntfy
+          target: ntfy
+          comment: managed by homelab-infra
+        validate_certs: false
+      when: >-
+        _pbs_matchers.json.data
+        | map(attribute='name') | list
+        is not contains('homelab-infra-ntfy')
+
+- name: PBS | Read PBS certificate fingerprint
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/nodes/localhost/certificates/info"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_certs
+
+# ── PVE side ──────────────────────────────────────────────────────────────────
+
+- name: PBS | List PVE storage backends
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pve_storages
+
+- name: PBS | Register PBS as a PVE storage backend
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    method: POST
+    headers: "{{ _pve_headers }}"
+    body_format: form-urlencoded
+    body:
+      storage: pbs-homelab
+      type: pbs
+      server: "{{ pbs_api_host | regex_replace('^https?://', '') | regex_replace(':\\d+$', '') }}"
+      datastore: "{{ _pbs_datastore }}"
+      username: "{{ pbs_api_token_id }}"
+      password: "{{ pbs_api_token_secret }}"
+      fingerprint: >-
+        {{ _pbs_certs.json.data | selectattr('fingerprint', 'defined')
+           | map(attribute='fingerprint') | first }}
+      content: backup
+    validate_certs: false
+  when: >-
+    _pve_storages.json.data
+    | map(attribute='storage') | list
+    is not contains('pbs-homelab')
+
+- name: PBS | Collect vmids of homelab-infra-tagged guests
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/cluster/resources?type=vm"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pve_guests
+
+- name: PBS | Set backup job facts
+  ansible.builtin.set_fact:
+    _backup_vmids: >-
+      {{ _pve_guests.json.data
+         | selectattr('tags', 'defined')
+         | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
+         | map(attribute='vmid') | sort | join(',') }}
+    # infrastructure.yml keywords → PVE calendar events; custom values pass through
+    _backup_schedule: >-
+      {{ {'daily': '02:00', 'weekly': 'sun 02:00'}.get(_schedule_raw, _schedule_raw) }}
+  vars:
+    _schedule_raw: "{{ homelabinfra_config.infrastructure.backups.schedule | default('daily') }}"
+
+- name: PBS | List existing PVE backup jobs
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/cluster/backup"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pve_backup_jobs
+
+- name: PBS | Find our backup job (by comment marker)
+  ansible.builtin.set_fact:
+    _backup_job_id: >-
+      {{ _pve_backup_jobs.json.data
+         | selectattr('comment', 'defined')
+         | selectattr('comment', 'search', 'managed by homelab-infra')
+         | map(attribute='id') | first | default('') }}
+
+- name: PBS | Create backup job for tagged guests
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/cluster/backup"
+    method: POST
+    headers: "{{ _pve_headers }}"
+    body_format: form-urlencoded
+    body:
+      storage: pbs-homelab
+      schedule: "{{ _backup_schedule }}"
+      vmid: "{{ _backup_vmids }}"
+      mode: snapshot
+      enabled: 1
+      comment: managed by homelab-infra — vmid list refreshed on bootstrap re-run
+    validate_certs: false
+  when:
+    - _backup_job_id | length == 0
+    - _backup_vmids | length > 0
+
+- name: PBS | Refresh existing backup job (vmid list + schedule)
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/cluster/backup/{{ _backup_job_id }}"
+    method: PUT
+    headers: "{{ _pve_headers }}"
+    body_format: form-urlencoded
+    body:
+      schedule: "{{ _backup_schedule }}"
+      vmid: "{{ _backup_vmids }}"
+    validate_certs: false
+  when:
+    - _backup_job_id | length > 0
+    - _backup_vmids | length > 0
+
+# ── Confirm + record ──────────────────────────────────────────────────────────
+
+- name: PBS | Send configure-complete test notification to Ntfy
+  ansible.builtin.uri:
+    url: >-
+      {{ homelabinfra_infra.notifications.host }}/{{
+        homelabinfra_infra.notifications.topic | default('homelab') }}
+    method: POST
+    headers:
+      Title: "PBS backups configured"
+    body: >-
+      Datastore '{{ _pbs_datastore }}' ready; backup job covers
+      {{ _backup_vmids | split(',') | length if _backup_vmids | length > 0 else 0 }}
+      guest(s) on schedule '{{ _backup_schedule }}'. PBS notifications route to
+      this topic.
+    body_format: raw
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+    - homelabinfra_infra.notifications.host is defined
+
+- name: PBS | Record PBS facts
+  ansible.builtin.include_tasks:
+    file: write-generated-facts.yml
+  vars:
+    generated_facts_service: backups
+    generated_facts_data:
+      instance: "{{ pbs_instance | default('pbs') }}"
+      host: "{{ pbs_api_host }}"
+      datastore: "{{ _pbs_datastore }}"
+      datastore_path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"

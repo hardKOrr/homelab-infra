@@ -1,19 +1,77 @@
 ---
-# TODO: Deploy and configure Watchtower on a Docker stack host.
-# Called when a new Docker stack host is created (guest-bootstrap.yml triggers this for Docker hosts).
+# Deploy and configure Watchtower on a Docker stack host.
+# Called after the docker role has run on a new Docker host
+# (playbooks/docker/create-docker-host.yml). Runs on the target host; the
+# calling play provides become: true and the docker compose plugin (docker role).
 #
-# Watchtower runs as a Docker container, watches other containers on the same host,
-# pulls updated images, and restarts containers automatically.
+# Watchtower watches label-enabled containers on the same host, pulls updated
+# images on a schedule, restarts containers, and notifies via Ntfy. Containers
+# opt in with the label com.centurylinklabs.watchtower.enable=true
+# (WATCHTOWER_LABEL_ENABLE) — unlabeled containers, including Watchtower's own
+# infrastructure peers, are never touched.
 #
-# Steps:
-#   1. Write docker-compose.watchtower.yml to /opt/watchtower/
-#   2. Configure Watchtower environment:
-#      - WATCHTOWER_NOTIFICATIONS=shoutrrr
-#      - WATCHTOWER_NOTIFICATION_URL: Ntfy URL from homelabinfra_infra.notifications
-#      - WATCHTOWER_SCHEDULE: "0 0 4 * * *"  (4am daily by default)
-#      - WATCHTOWER_LABEL_ENABLE: true  (only watch containers with label enable=true)
-#      - WATCHTOWER_CLEANUP: true  (remove old images after update)
-#   3. docker compose up -d
-#
-# Reads from homelabinfra_infra.notifications for Ntfy endpoint.
-# Notification format: "Container <name> updated from <old_image> to <new_image>"
+# Inputs:
+#   homelabinfra_infra.notifications — optional (Shape B: provider, host, topic).
+#     When provider == 'ntfy' and host is set, Watchtower notifies via shoutrrr;
+#     the notification body carries the rollback instruction per the CLAUDE.md
+#     feedback loop. Any other provider (or absent facts) deploys Watchtower
+#     without notifications — updates still run.
+#   watchtower_schedule — optional cron (6-field), default daily at 04:00.
+
+- name: Watchtower | Derive Ntfy notification URL
+  ansible.builtin.set_fact:
+    # shoutrrr ntfy format wants a bare host — scheme moves to a query param.
+    _watchtower_ntfy_url: >-
+      ntfy://{{ _ntfy_host | regex_replace('^https?://', '') }}/{{
+        homelabinfra_infra.notifications.topic | default('homelab')
+      }}?scheme={{ 'http' if _ntfy_host is match('^http://') else 'https' }}
+  vars:
+    _ntfy_host: "{{ homelabinfra_infra.notifications.host }}"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.notifications is defined
+    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
+    - homelabinfra_infra.notifications.host is defined
+
+- name: Watchtower | Create /opt/watchtower
+  ansible.builtin.file:
+    path: /opt/watchtower
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Watchtower | Write docker-compose.yml
+  ansible.builtin.copy:
+    dest: /opt/watchtower/docker-compose.yml
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      services:
+        watchtower:
+          image: containrrr/watchtower:latest
+          container_name: watchtower
+          restart: unless-stopped
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+          environment:
+            WATCHTOWER_SCHEDULE: "{{ watchtower_schedule | default('0 0 4 * * *') }}"
+            WATCHTOWER_CLEANUP: "true"
+            WATCHTOWER_LABEL_ENABLE: "true"
+      {% if _watchtower_ntfy_url is defined %}
+            WATCHTOWER_NOTIFICATIONS: shoutrrr
+            WATCHTOWER_NOTIFICATION_URL: "{{ _watchtower_ntfy_url }}"
+            WATCHTOWER_NOTIFICATION_TEMPLATE: |
+      {% raw %}
+              {{- range . -}}{{ .Message }}
+              {{ end -}}
+      {% endraw %}
+              If a container broke after this update, run the "Rollback Container" job with the container name and its previous image tag.
+      {% endif %}
+
+- name: Watchtower | Start via docker compose
+  community.docker.docker_compose_v2:
+    project_src: /opt/watchtower
+    state: present
+    remove_orphans: true

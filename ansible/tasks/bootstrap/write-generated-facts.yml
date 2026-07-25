@@ -1,29 +1,61 @@
 ---
-# TODO: Write service connection details to config/.generated/facts.yml after a baseline service is deployed.
-# Called by bootstrap.yml after each baseline service comes up.
+# Write service connection details to config/.generated/facts.yml after a baseline
+# service is deployed. Called by bootstrap.yml after each baseline service comes up.
 #
-# This file grows incrementally — each baseline service appends its facts.
-# Subsequent services and all app deploys read from this file via homelabinfra_infra.
+# The file grows incrementally — each call deep-merges one top-level key. Subsequent
+# services and all app deploys load the whole file into homelabinfra_infra
+# (see ansible/vars/CONTRACT.md §3 — canonical Shape B, role-keyed).
 #
-# Expected inputs:
-#   generated_facts_service:  name of the service just deployed (e.g. 'vaultwarden', 'caddy')
-#   generated_facts_data:     dict of facts to write for that service
+# Inputs:
+#   generated_facts_service:  top-level key to merge under — a Shape B role key
+#                             (reverse_proxy | sso | notifications | dns | backups |
+#                             vaultwarden) or 'domain'
+#   generated_facts_data:     dict to deep-merge under that key (scalar for 'domain')
+#   generated_facts_file:     optional override of the output path; defaults to
+#                             config/.generated/facts.yml anchored at bootstrap.yml's
+#                             playbook_dir (ansible/playbooks/)
 #
-# Output file: config/.generated/facts.yml
-# Structure:
-#   vaultwarden:
-#     url: https://vault.homelab.example.com
-#     admin_token: "{{ from_vault }}"
-#   caddy:
-#     admin_api_url: http://192.168.1.10:2019
-#   authentik:
-#     api_url: https://auth.homelab.example.com/api/v3
-#     api_token: "{{ from_vault }}"
-#   uptime_kuma:
-#     api_url: https://status.homelab.example.com
-#     api_token: "{{ from_vault }}"
-#   notifications:
-#     ntfy_url: https://ntfy.homelab.example.com
-#     topic: homelab
+# Any `host` value written here is a full base URL including scheme
+# (e.g. http://192.168.1.20) — consumers concatenate paths onto it directly.
 #
-# Note: config/.generated/ is gitignored. Re-running bootstrap regenerates it.
+# All writes happen on the control node (delegate_to: localhost) regardless of the
+# calling play's hosts. config/.generated/ is gitignored; re-running bootstrap
+# regenerates it. Mode is restricted — the file holds tokens.
+
+- name: Generated facts | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - generated_facts_service is defined
+      - generated_facts_service is string
+      - generated_facts_service | length > 0
+      - generated_facts_data is defined
+    fail_msg: >-
+      write-generated-facts.yml requires generated_facts_service (string) and
+      generated_facts_data (dict, or scalar for 'domain').
+
+- name: Generated facts | Resolve output path
+  ansible.builtin.set_fact:
+    _generated_facts_file: >-
+      {{ generated_facts_file
+         | default(playbook_dir ~ '/../../config/.generated/facts.yml') }}
+
+- name: Generated facts | Ensure config/.generated exists (0700 — holds tokens)
+  ansible.builtin.file:
+    path: "{{ _generated_facts_file | dirname }}"
+    state: directory
+    mode: "0700"
+  become: false
+  delegate_to: localhost
+
+- name: Generated facts | Merge and write facts for {{ generated_facts_service }}
+  ansible.builtin.copy:
+    dest: "{{ _generated_facts_file }}"
+    mode: "0600"
+    content: >-
+      {{ (lookup('ansible.builtin.file', _generated_facts_file, errors='ignore')
+          | from_yaml
+          | default({}, true))
+         | combine({generated_facts_service: generated_facts_data}, recursive=True)
+         | to_nice_yaml(indent=2) }}
+  become: false
+  delegate_to: localhost

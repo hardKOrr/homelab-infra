@@ -59,7 +59,7 @@
 
     - name: Notify via Ntfy
       ansible.builtin.uri:
-        url: "{{ homelabinfra_infra.notifications.ntfy_url }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
+        url: "{{ homelabinfra_infra.notifications.host }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
         method: POST
         headers:
           Title: "Homelab App Updates Available"
@@ -78,4 +78,4 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.notifications is defined
         - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
-        - homelabinfra_infra.notifications.ntfy_url is defined
+        - homelabinfra_infra.notifications.host is defined

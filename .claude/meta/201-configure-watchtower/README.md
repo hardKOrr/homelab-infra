@@ -1,6 +1,6 @@
 # 201 — Implement configure-watchtower
 
-**Status:** open
+**Status:** in-progress (implementation complete; live acceptance blocked on 401)
 **Depends on:** 200 (needs ntfy facts), 401 (ntfy app must exist first in bootstrap order)
 **Blocks:** Docker app stack hosts auto-updating
 

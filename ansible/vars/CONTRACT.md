@@ -25,13 +25,16 @@ shapes: `.claude/specs/config-layering.md` and `.claude/specs/namespace-merge-di
 | `config/infrastructure.yml` | none (top-level `domain:`, `reverse_proxy:`, `sso:`, `notifications:`, `dns:`, `backups:`, `vaultwarden:`) | `homelabinfra_config.infrastructure` | **not yet wired in loader → slice 001** |
 | `vars/app-defaults/<app>.yml` | none | `app_config` (per-play app merge — see app-layering note) | separate merge, not part of `homelabinfra_config` |
 | `config/apps/<instance>.yml` | none | `app_config` (per-play app merge) | whole file merges over `<app>_defaults` via `combine(recursive=True)` — see app-layering note |
-| `config/.generated/facts.yml` | none | `homelabinfra_infra` (whole file, via `include_vars … name: homelabinfra_infra`) | written by `write-generated-facts.yml` (TODO stub → slice 200) |
+| `config/.generated/facts.yml` | none | `homelabinfra_infra` (whole file, via `include_vars … name: homelabinfra_infra`) | written incrementally by `write-generated-facts.yml` (slice 200) |
 | `user_vars_file` (back-compat) | `homelabinfra_config:` | `homelabinfra_config` | legacy single-file path; already self-wrapping |
 
 ## 3. Canonical `homelabinfra_infra` shape
 
 There is exactly one shape — role-keyed, provider-agnostic (Shape B). Consumers build derived values
 (e.g. a notification URL) from `host` + `topic`; the registry never stores pre-built URLs.
+Every `host` value is a full base URL **including scheme** (e.g. `http://192.168.1.20`) —
+consumers concatenate paths onto it directly; consumers needing a bare hostname (e.g. a
+shoutrrr URL) strip the scheme themselves.
 
 ```yaml
 # config/.generated/facts.yml, loaded whole into homelabinfra_infra
@@ -40,15 +43,16 @@ reverse_proxy: { provider, instance, host, port }
 sso:           { provider, instance, host, token }
 notifications: { provider, instance, host, topic }   # NOT ntfy_url — consumers build {{ host }}/{{ topic }}
 dns:           { provider, host, api_key }
-backups:       { instance, datastore_path }
+backups:       { instance, host, datastore, datastore_path }
 vaultwarden:   { host, port }        # populated after bootstrap step 1
 ```
 
 Superseded — do not use: (a) Shape-A flat pre-built URL `notifications.ntfy_url` +
-`.notifications.topic` (read today by `check-native-updates.yml`, `restart-app.yml`,
-`guest-bootstrap.yml`) — reconciled by slice 200; (b) the service/function-keyed stub sketch in
-`write-generated-facts.yml`'s header comment (`vaultwarden:{url,admin_token}`, `caddy:{admin_api_url}`,
-…) — superseded by slice 200.
+`.notifications.topic` — all former readers (`check-native-updates.yml`, `restart-app.yml`,
+`configure-unattended-upgrades.yml`) were reconciled to `host` + `topic` by slice 200;
+(b) the service/function-keyed sketch that used to live in `write-generated-facts.yml`'s
+header comment (`vaultwarden:{url,admin_token}`, `caddy:{admin_api_url}`, …) — replaced by
+the Shape B implementation (slice 200).
 
 ## 4. Merge order (low → high precedence)
 
@@ -105,8 +109,11 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `vaultwarden.instance` | optional | |
 
 The required/optional split for `config/.generated/facts.yml` follows the canonical shape in
-Section 3 but its authoritative required-key list is owned by **slice 200** (it defines what
-bootstrap writes); the Contract names it here, does not resolve it. The `config/apps/<instance>.yml`
+Section 3. Slice 200 settled the write mechanics: bootstrap writes one role key per
+`write-generated-facts.yml` call (deep-merge, so partial files are normal mid-bootstrap), and
+each role key carries exactly the fields listed in Section 3 for that role. Consumers guard
+with `is defined` on the keys they read — a role absent from the file means that baseline
+service has not been bootstrapped yet. The `config/apps/<instance>.yml`
 schema is settled in the App-level layering note below.
 
 ## 6. Known conflicts and owning slices
@@ -114,8 +121,8 @@ schema is settled in the App-level layering note below.
 | Conflict | Contract's canonical decision | Resolving slice |
 |---|---|---|
 | `config.example/*.yml` unwrapped top-level keys vs namespaces the code reads | loader injects namespaces (001); examples reconciled to match (002) | **001 + 002** |
-| `notifications.ntfy_url` (Shape-A leak) vs `notifications.host` + `.topic` | registry stores `host` + `topic`; consumers build the URL; three consumers flagged for alignment | **200** |
-| `write-generated-facts.yml` stub service-keyed sketch vs canonical Shape B | Shape B supersedes the stub sketch | **200** |
+| `notifications.ntfy_url` (Shape-A leak) vs `notifications.host` + `.topic` | registry stores `host` + `topic`; consumers build the URL; all three consumers aligned | **200 (resolved)** |
+| `write-generated-facts.yml` stub service-keyed sketch vs canonical Shape B | Shape B supersedes the stub sketch; implemented | **200 (resolved)** |
 | `config/apps/<instance>.yml` schema across the repo | settled: filename = instance name; top-level keys mirror `<app>_defaults`; whole file merges via `combine(recursive=True)` — see App-level layering note | **005 (settled)** |
 | `networks:` null subtree in `homelabinfra-defaults.yml` (config-layering violation) | remove null subtree (use `{}` or omit) | **002** |
 

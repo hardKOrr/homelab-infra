@@ -44,7 +44,7 @@
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
-      NTFY_URL="{{ homelabinfra_infra.notifications.ntfy_url | default('') }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
+      NTFY_URL="{{ homelabinfra_infra.notifications.host | default('') }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
       LOGFILE="/var/log/unattended-upgrades/unattended-upgrades.log"
       [[ -z "$NTFY_URL" || ! -f "$LOGFILE" ]] && exit 0
       LINE=$(grep "^$(date +%Y-%m-%d).*Packages that will be upgraded:" "$LOGFILE" | tail -1 || true)

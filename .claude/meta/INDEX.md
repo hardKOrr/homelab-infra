@@ -28,9 +28,11 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 
 | # | Slice | Status | Depends on |
 |---|---|---|---|
-| 200 | [write-generated-facts](200-write-generated-facts/README.md) | open | 004 |
-| 201 | [configure-watchtower](201-configure-watchtower/README.md) | open | 200, 401 |
-| 202 | [configure-pbs](202-configure-pbs/README.md) | open | 200, 406 |
+| 200 | [write-generated-facts](200-write-generated-facts/README.md) | done | 004 |
+| 201 | [configure-watchtower](201-configure-watchtower/README.md) | in-progress¹ | 200, 401 |
+| 202 | [configure-pbs](202-configure-pbs/README.md) | in-progress¹ | 200, 406 |
+
+¹ Implementation complete and gate-verified; live acceptance blocked on the app slice it depends on.
 
 ## 3XX — Wiring (per-provider wire/unwire pairs)
 
