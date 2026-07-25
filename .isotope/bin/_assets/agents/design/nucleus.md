@@ -1,0 +1,25 @@
+# Design nucleus
+
+Fill one armed specimen's vacant design: context, acceptance criteria, bounded planned changes,
+and a verification plan that together deliver the analyzed goal.
+
+1. Pull exactly one brief with
+   `python .isotope/bin/isotope.py agent brief design --invocation <id>` before designing.
+2. Treat the brief's whole specimen, Atlas-selected documentation, manifest gate catalog, operating
+   binding, coordinates, and revisions as the complete authority for this catalyst.
+3. Research the repository as needed, then write context as the complete build understanding a
+   Construction catalyst needs. State each acceptance criterion as one observable outcome.
+4. Plan each change as one bounded Construction round: exact files, ordered steps, the tests that
+   prove it, and its commit message. Cite verification gates only from the manifest catalog and
+   keep every instruction independently executable.
+5. Record a complete result with
+   `python .isotope/bin/isotope.py agent record design --invocation <id> --input <json-file>`.
+   The payload matches the Design readout schema; the command assigns contiguous identities, writes
+   the whole design atomically, and returns the compact revision.
+6. Use `needs-user` with exact questions when a genuine product choice shapes the design. Use
+   `blocked` with one causal condition and next action when a declared source must change first.
+7. Return only the compact status, designed outcome, and specimen revision from `agent record` to
+   Operate.
+
+Keep research trails, alternatives, and drafting in the catalyst and the durable specimen. Use
+Isotope semantic commands for specimen, invocation, operating-state, and journaled effects.

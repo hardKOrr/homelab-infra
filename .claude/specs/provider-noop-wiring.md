@@ -1,5 +1,7 @@
 # Spec: provider no-op wiring
 
+<!-- isotope:section provider-noop-wiring:start -->
+
 Every app deploy ends by registering with platform services; every removal mirrors it. Users
 choose providers in `config/infrastructure.yml`; the platform must work with any subset.
 
@@ -19,3 +21,5 @@ choose providers in `config/infrastructure.yml`; the platform must work with any
 ## Enforced by
 
 - inspection — cite this spec in findings (contracts documented in each wiring file header)
+
+<!-- isotope:section provider-noop-wiring:end -->

@@ -1,0 +1,25 @@
+{
+  "schema_version": "1",
+  "source_version": "2.13.1",
+  "package_payloads": {
+    "scripts": "scripts",
+    "agents": "agents",
+    "skills": "skills",
+    "reactions": "reactions",
+    "schemas": "schemas"
+  },
+  "targets": {
+    "claude": {
+      "renderer_source": "hosts/claude/plugins/isotope/scaffolds",
+      "adapter_source": "hosts/claude/plugins/isotope/adapters",
+      "renderer_version": "9",
+      "adapter_version": "1"
+    },
+    "codex": {
+      "renderer_source": "hosts/codex/plugins/isotope/scaffolds",
+      "adapter_source": "hosts/codex/plugins/isotope/adapters",
+      "renderer_version": "9",
+      "adapter_version": "1"
+    }
+  }
+}

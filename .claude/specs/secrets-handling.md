@@ -1,5 +1,7 @@
 # Spec: secrets handling
 
+<!-- isotope:section secrets-handling:start -->
+
 Exactly two secrets live outside Vaultwarden — `PROXMOX_API_TOKEN` and
 `VAULTWARDEN_ADMIN_TOKEN` — in gitignored `config/` files or Semaphore env vars. No Ansible
 Vault, ever. Everything else is generated at bootstrap, stored in Vaultwarden, and retrieved via
@@ -19,3 +21,5 @@ the `community.general.bitwarden` lookup.
 ## Enforced by
 
 - inspection — cite this spec in findings (source: `.claude/CLAUDE.md` "Secrets" section)
+
+<!-- isotope:section secrets-handling:end -->

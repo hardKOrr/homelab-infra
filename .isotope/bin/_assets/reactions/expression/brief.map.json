@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "reaction": "expression",
+  "slots": [
+    {"id": "specimen", "source": ".isotope/cultures/flux/{slug}.json", "selector": "", "readiness": "armed flux specimen revision equals operating specimen_revision"},
+    {"id": "goal", "source": "specimen", "selector": "/goal", "readiness": "non-empty schema-valid prose"},
+    {"id": "outcome", "source": "specimen", "selector": "/outcome", "readiness": "a passing acceptance backed outcome exists and its expression is vacant"},
+    {"id": "decisions", "source": "specimen", "selector": "/decisions", "readiness": "current schema-valid decisions in force"},
+    {"id": "targets", "source": "Atlas", "selector": "/outcome/doc_targets -> exact marked section", "readiness": "every declared target resolves in the documentation map"},
+    {"id": "acceptance_snapshot", "source": "specimen", "selector": "/acceptances[last]/acceptance_snapshot", "readiness": "the latest acceptance carries its canonical whole-worktree snapshot"},
+    {"id": "operating", "source": ".isotope/operating.json", "selector": "/slug,/branch,/base_commit,/specimen_revision", "readiness": "same slug armed, current branch matches, and worktree drift stays inside declared targets"},
+    {"id": "answers", "source": "predecessor invocation", "selector": "/questions/*/answer", "readiness": "every continuation question has an answer"},
+    {"id": "result_destination", "source": "specimen", "selector": "/outcome/expression", "readiness": "vacant is ready; an equivalent invocation-owned expression is complete"}
+  ]
+}

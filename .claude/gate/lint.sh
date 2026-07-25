@@ -1,6 +1,6 @@
 #!/bin/bash
-# Ansible-lint gate. Invoked by .claude/build.yml's `lint:` wrapper from the repo root
-# (wsl inherits the Windows cwd, so no explicit cd is needed):
+# Ansible-lint gate. Invoked as the `lint` gate registered in .isotope/isotope.json
+# (see .claude/gate/README.md), from the repo root:
 #   wsl bash -lc 'bash .claude/gate/lint.sh'
 set -euo pipefail
 

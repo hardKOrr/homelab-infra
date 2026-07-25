@@ -27,7 +27,11 @@
             sshkeys = homelabinfra_config.ansible.ssh_public_key,
             ciuser = homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user)
           ) | combine(homelabinfra_config.proxmox.vm, recursive=True),
-          'vm_ansible_host': homelabinfra_config.proxmox.vm.ansible_host | default(homelabinfra_config.proxmox.vm.ip_address)
+          'vm_ansible_host': (
+            homelabinfra_config.proxmox.vm.ip_address
+            if (homelabinfra_config.proxmox.vm.ansible_host | default('') | string | trim | lower) in ['', 'dhcp']
+            else homelabinfra_config.proxmox.vm.ansible_host
+          )
         }, recursive=True) }}
 
 - name: Build VM network settings
@@ -80,6 +84,7 @@
     vm_module_args: >-
       {{ homelabinfra_instance.vm | dict2items
          | selectattr('key', 'in', vm_module_keys)
+         | list
          | items2dict
          | combine({'api_user': homelabinfra_config.proxmox.api_user}) }}
   vars:
@@ -162,12 +167,93 @@
   until: vm_guest_exec_ready.rc == 0
   changed_when: false
 
-- name: Write VM instance data to /root/home
+- name: Discover VM DHCP lease
+  ansible.builtin.command:
+    argv:
+      - qm
+      - guest
+      - exec
+      - "{{ homelabinfra_instance.vm.vmid }}"
+      - --synchronous
+      - "1"
+      - --timeout
+      - "70"
+      - --
+      - /bin/sh
+      - -c
+      - |
+        attempt=0
+        while [ "$attempt" -lt 30 ]; do
+          interface="$(ip -4 route show default | awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+          if [ -n "$interface" ]; then
+            lease="$(ip -4 -o address show dev "$interface" scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          else
+            lease="$(ip -4 -o address show scope global | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+          fi
+          if [ -n "$lease" ]; then
+            printf '%s\n' "$lease"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        exit 1
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_dhcp_lease
+  changed_when: false
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Parse VM DHCP lease result
+  ansible.builtin.set_fact:
+    vm_dhcp_lease_result: "{{ vm_dhcp_lease.stdout | from_json }}"
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert VM DHCP lease was discovered
+  ansible.builtin.assert:
+    that:
+      - vm_dhcp_lease_result.exited | default(false) | bool
+      - vm_dhcp_lease_result.exitcode | default(1) | int == 0
+      - vm_dhcp_lease_result['out-data'] | default('') | trim | ansible.utils.ipaddr('address')
+    fail_msg: "The VM guest agent did not return a leased IPv4 address"
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Merge VM DHCP lease into instance facts
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({
+          'network': {'ip_address': vm_dhcp_lease_result['out-data'] | trim},
+          'vm': {'ip_address': vm_dhcp_lease_result['out-data'] | trim},
+          'vm_ansible_host': (
+            vm_dhcp_lease_result['out-data'] | trim
+            if (homelabinfra_instance.vm_ansible_host | default('') | string | trim | lower) in ['', 'dhcp']
+            else homelabinfra_instance.vm_ansible_host
+          )
+        }, recursive=True) }}
+  when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
+
+- name: Assert VM connection address is resolved
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_instance.vm_ansible_host | string | trim | length > 0
+      - homelabinfra_instance.vm_ansible_host | string | trim | lower != 'dhcp'
+    fail_msg: "The VM connection address is empty or still set to DHCP"
+
+- name: Write sanitized VM instance metadata to /root with mode 0600
   ansible.builtin.shell: |
     set -euo pipefail
-    cat <<'EOF' | qm guest exec {{ homelabinfra_instance.vm.vmid }} -- /bin/sh -c 'mkdir -p /root/home && cat > /root/home/homelabinfra_instance.vm.json'
-    {{ homelabinfra_instance.vm | to_nice_json }}
+    cat <<'EOF' | qm guest exec {{ homelabinfra_instance.vm.vmid }} --pass-stdin 1 --synchronous 1 --timeout 30 -- /bin/sh -c 'set -e; umask 077; cat > /root/homelabinfra_instance.vm.json; chmod 0600 /root/homelabinfra_instance.vm.json; rm -f /root/home/homelabinfra_instance.vm.json'
+    {{ homelabinfra_instance.vm | dict2items | rejectattr('key', 'in', ['api_token_secret', 'api_token_id', 'password', 'cipassword', 'pubkey', 'sshkeys']) | list | items2dict | to_nice_json }}
     EOF
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_instance_metadata_write
   args:
     executable: /bin/bash
+
+- name: Assert VM instance metadata was written
+  ansible.builtin.assert:
+    that:
+      - vm_instance_metadata_write_result.exited | default(false) | bool
+      - vm_instance_metadata_write_result.exitcode | default(1) | int == 0
+    fail_msg: "The VM guest agent failed to write protected instance metadata"
+  vars:
+    vm_instance_metadata_write_result: "{{ vm_instance_metadata_write.stdout | from_json }}"

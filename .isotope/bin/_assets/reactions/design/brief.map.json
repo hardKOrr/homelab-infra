@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "reaction": "design",
+  "slots": [
+    {"id": "specimen", "source": ".isotope/cultures/flux/{slug}.json", "selector": "", "readiness": "armed flux specimen revision equals operating specimen_revision and its design fields are vacant"},
+    {"id": "atlas_docs", "source": "Atlas", "selector": "/docs/* -> exact marked section", "readiness": "every declared Atlas target resolves with a source revision"},
+    {"id": "gates", "source": ".isotope/isotope.json", "selector": "/gates", "readiness": "the manifest gate catalog validates"},
+    {"id": "operating", "source": ".isotope/operating.json", "selector": "/slug,/branch,/base_commit,/specimen_revision", "readiness": "same slug armed and current branch matches"},
+    {"id": "answers", "source": "predecessor invocation", "selector": "/questions/*/answer", "readiness": "every continuation question has an answer"},
+    {"id": "result_destination", "source": "specimen", "selector": "/context,/acceptance_criteria,/changes,/verification", "readiness": "every design destination field is vacant"}
+  ]
+}

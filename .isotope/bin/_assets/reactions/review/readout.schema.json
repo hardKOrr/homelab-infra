@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/review/readout/1",
+  "title": "Isotope Review catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+    "outcome": {"enum": ["PASS", "CHANGES"]},
+    "abstract": {"type": "string", "minLength": 1},
+    "findings": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {"text": {"type": "string", "minLength": 1}},
+        "additionalProperties": false
+      }
+    },
+    "condition": {"type": "string", "minLength": 1},
+    "facts": {"type": "object"},
+    "next_action": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

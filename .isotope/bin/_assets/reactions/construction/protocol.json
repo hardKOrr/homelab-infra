@@ -1,0 +1,36 @@
+{
+  "schema_version": "1",
+  "id": "construction",
+  "version": "1",
+  "coordinates": {
+    "required": ["slug", "change", "round"],
+    "properties": {
+      "slug": "string",
+      "change": "integer",
+      "round": "integer"
+    }
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/round.schema.json",
+  "allowed_effects": ["workspace.files.write", "specimen.round.append"],
+  "authority": {
+    "catalyst": "native-workspace-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["complete", "decision-needed", "blocked"],
+  "terminal_statuses": ["complete", "needs-user", "blocked"],
+  "assets": {
+    "construction_agent": {
+      "claude": "isotope-construction",
+      "codex": "isotope_construction"
+    },
+    "operate_owner": {
+      "claude": "isotope-operate",
+      "codex": "isotope-operate"
+    }
+  },
+  "transport": "native-only",
+  "result_destination": "/rounds[change={change},number={round}]"
+}

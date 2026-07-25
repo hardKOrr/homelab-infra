@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "reaction": "decision",
+  "slots": [
+    {"id": "specimen", "source": ".isotope/cultures/flux/{slug}.json", "selector": "", "readiness": "armed flux specimen revision equals operating specimen_revision"},
+    {"id": "goal", "source": "specimen", "selector": "/goal", "readiness": "non-empty schema-valid prose"},
+    {"id": "change", "source": "specimen", "selector": "/changes[number=trigger.coordinates.change]", "readiness": "zero or one trigger-related planned change"},
+    {"id": "decisions", "source": "specimen", "selector": "/decisions", "readiness": "current schema-valid decisions in force"},
+    {"id": "trigger", "source": ".isotope/invocations/{question_invocation}.json", "selector": "/questions[id={question}]/text,/answer", "readiness": "exactly one answered durable question for the same specimen"},
+    {"id": "atlas_docs", "source": "Atlas", "selector": "/docs/* -> exact marked section", "readiness": "every declared Atlas target resolves with a source revision"},
+    {"id": "operating", "source": ".isotope/operating.json", "selector": "/slug,/branch,/base_commit,/specimen_revision", "readiness": "same slug armed and current branch matches"},
+    {"id": "answers", "source": "predecessor invocation", "selector": "/questions/*/answer", "readiness": "every continuation question has an answer"},
+    {"id": "result_destination", "source": "specimen", "selector": "/decisions[id={decision}]", "readiness": "add requires absence; supersede requires one existing stable identity"}
+  ]
+}

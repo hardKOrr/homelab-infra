@@ -1,5 +1,7 @@
 # Spec: framework
 
+<!-- isotope:section framework:start -->
+
 The repo's dialect — how Ansible is written *here*. Filled from observed code; cite this spec in
 findings. Contract-level rules live in the sibling specs this file links to.
 
@@ -10,9 +12,11 @@ findings. Contract-level rules live in the sibling specs this file links to.
   `ansible.utils` 6.0.3, `community.docker` 5.2.1, `community.general` 13.1.0. The gate venv
   installs from it (`ansible-galaxy collection install -r ansible/requirements.yml`).
 - Gates run inside a WSL venv (`~/.venvs/homelab-ansible`) via the committed wrappers
-  `.claude/gate/lint.sh` / `test.sh`, invoked exactly as `build.yml`'s `lint:` / `test:` commands.
+  `.claude/gate/lint.sh` / `test.sh`, invoked exactly as the `lint` / `test` gates in
+  `.isotope/isotope.json`.
   Never replace the wrappers with an inline one-liner through the Windows→WSL relay — quoting
-  hazards can silently run zero iterations and exit 0 (rationale in `build.yml` and the scripts).
+  hazards can silently run zero iterations and exit 0 (rationale in `.claude/gate/README.md` and
+  the scripts).
 - The repo lives on NTFS under `/mnt/c`: Ansible's world-writable-cwd check silently ignores a
   cwd-relative `ansible.cfg`, so anything running Ansible from WSL must export `ANSIBLE_CONFIG`
   to the absolute path (the gate scripts do; copy the pattern).
@@ -24,9 +28,8 @@ findings. Contract-level rules live in the sibling specs this file links to.
 - No molecule/unit tests yet. The `test` gate is `ansible-playbook --syntax-check` over every
   playbook (`.claude/gate/test.sh`), with the Proxmox dynamic inventory neutralized via
   `ANSIBLE_INVENTORY=localhost,` so no credentials are needed.
-- Verification beyond the gate is stated per-plan: hand-computed worked examples plus optional
-  ad-hoc localhost plays (see `.claude/plans/deployed/fix-ip-to-vmid-int-precedence.md`
-  "Verification" for the shape).
+- Verification beyond the gate is stated per-specimen: hand-computed worked examples plus optional
+  ad-hoc localhost plays. Record it in the specimen's design under `.isotope/cultures/`.
 
 ## Lint
 
@@ -72,5 +75,7 @@ Repo-typical defects the reviewer checks in every diff, each owned by a spec:
 
 ## Enforced by
 
-- `.claude/gate/lint.sh` + `.claude/gate/test.sh` (the `build.yml` gate); everything else by
+- `.claude/gate/lint.sh` + `.claude/gate/test.sh` (the Isotope `lint`/`test` gates); everything else by
   inspection — cite the linked spec in findings.
+
+<!-- isotope:section framework:end -->

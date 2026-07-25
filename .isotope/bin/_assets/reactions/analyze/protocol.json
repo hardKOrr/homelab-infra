@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "id": "analyze",
+  "version": "1",
+  "coordinates": {
+    "required": ["slug"],
+    "properties": {
+      "slug": "slug of one matter specimen"
+    }
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/analysis.schema.json",
+  "allowed_effects": ["specimen.analyze.promote"],
+  "authority": {
+    "catalyst": "native-semantic-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["promoted"],
+  "terminal_statuses": ["complete", "needs-user", "blocked", "refused", "failed"],
+  "assets": {
+    "analyze_agent": {
+      "claude": "isotope-analyze",
+      "codex": "isotope_analyze"
+    },
+    "operate_owner": {
+      "claude": "isotope-operate",
+      "codex": "isotope-operate"
+    }
+  },
+  "transport": "native-only",
+  "result_destination": ".isotope/cultures/flux/{slug}.json"
+}

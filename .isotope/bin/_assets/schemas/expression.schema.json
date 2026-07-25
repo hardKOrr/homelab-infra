@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://schema/expression/1",
+  "title": "Isotope outcome expression evidence",
+  "type": "object",
+  "required": ["abstract", "targets", "invocation_id", "reaction_protocol_version", "source_revisions", "actor"],
+  "properties": {
+    "abstract": {"type": "string", "minLength": 1},
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept", "path", "section_id", "revision"],
+        "properties": {
+          "concept": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "section_id": {"type": "string", "minLength": 1},
+          "revision": {"type": "string", "minLength": 1, "pattern": "^sha256:[0-9a-f]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "invocation_id": {"type": "string", "minLength": 1, "pattern": "^I[1-9][0-9]*$"},
+    "reaction_protocol_version": {"type": "string", "minLength": 1},
+    "source_revisions": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+    "actor": {
+      "type": "object",
+      "required": ["host", "model", "reaction"],
+      "properties": {
+        "host": {"enum": ["claude", "codex"]},
+        "model": {"type": ["string", "null"]},
+        "reaction": {"const": "expression"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

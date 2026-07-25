@@ -75,13 +75,14 @@
     #   ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
     # # ansible_host here is the app LXC's own IP — Play 3 reads it as the wiring upstream.
     # - name: Add LXC to deploy group
+    #   # Play 3 reads ansible_host and app_config back from this hostvars handoff.
     #   ansible.builtin.add_host:
     #     name: "{{ homelabinfra_instance.lxc.hostname }}"
     #     groups: app_deploy
     #     ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
     #     ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
     #     app_config: "{{ app_config }}"
-    #     homelabinfra_infra: "{{ homelabinfra_infra }}"
+    #     homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
@@ -107,6 +108,11 @@
     - name: Bootstrap guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Install Docker on newly created stack host
+      ansible.builtin.include_role:
+        name: docker
+      when: homelabinfra_stack_host_created | default(false) | bool
 
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy APP_NAME
@@ -153,20 +159,31 @@
   tasks:
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
-      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
     - name: Wire SSO
       ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
       when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
-        - app_config.routing.auth | default(true)
+        - hostvars[groups['app_deploy'][0]].app_config.routing.auth | default(true)
 
     - name: Register uptime monitor
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.uptime_kuma is defined
 
     - name: Wire DNS
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
-      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
 
     # ── App-to-App Wiring (best-effort) ────────────────────────────────────────
     # Attempt connections to peer apps if they are already deployed.

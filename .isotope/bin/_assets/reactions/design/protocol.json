@@ -1,0 +1,34 @@
+{
+  "schema_version": "1",
+  "id": "design",
+  "version": "1",
+  "coordinates": {
+    "required": ["slug"],
+    "properties": {
+      "slug": "slug of the armed flux specimen"
+    }
+  },
+  "brief_map": "brief.map.json",
+  "readout_schema": "readout.schema.json",
+  "entity_schema": "../../schemas/design.schema.json",
+  "allowed_effects": ["specimen.design.write"],
+  "authority": {
+    "catalyst": "native-semantic-write",
+    "broker": "invocation-bound-semantic-command",
+    "capability_custody": "native-agent-identity"
+  },
+  "outcomes": ["designed"],
+  "terminal_statuses": ["complete", "needs-user", "blocked", "refused", "failed"],
+  "assets": {
+    "design_agent": {
+      "claude": "isotope-design",
+      "codex": "isotope_design"
+    },
+    "operate_owner": {
+      "claude": "isotope-operate",
+      "codex": "isotope-operate"
+    }
+  },
+  "transport": "native-only",
+  "result_destination": "/context,/acceptance_criteria,/changes,/verification"
+}

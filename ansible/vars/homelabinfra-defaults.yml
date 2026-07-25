@@ -9,7 +9,6 @@ homelabinfra_defaults:
       disk_volume:
         storage: local
         size: 8
-      password: changeme
       cores: 1
       description: LXC Container created by Ansible
       features:

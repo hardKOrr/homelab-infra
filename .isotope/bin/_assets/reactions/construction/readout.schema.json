@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/construction/readout/1",
+  "title": "Isotope Construction catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status", "abstract", "details", "files_touched", "evidence", "questions", "blockers"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked"]},
+    "abstract": {"type": "string", "minLength": 1},
+    "details": {"type": "string", "minLength": 1},
+    "files_touched": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate_id", "command", "exit_code", "output", "cwd"],
+        "properties": {
+          "gate_id": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer"},
+          "output": {"type": "string"},
+          "cwd": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "questions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "blockers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  },
+  "additionalProperties": false
+}

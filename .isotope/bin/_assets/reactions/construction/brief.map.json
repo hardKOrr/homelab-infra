@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "reaction": "construction",
+  "slots": [
+    {"id": "specimen", "source": ".isotope/cultures/flux/{slug}.json", "selector": "", "readiness": "armed flux specimen revision equals operating specimen_revision"},
+    {"id": "goal", "source": "specimen", "selector": "/goal", "readiness": "non-empty schema-valid prose"},
+    {"id": "context", "source": "specimen", "selector": "/context", "readiness": "Design supplied non-empty context"},
+    {"id": "change", "source": "specimen", "selector": "/changes[number={change}]", "readiness": "exactly one planned change"},
+    {"id": "criteria", "source": "specimen", "selector": "/acceptance_criteria", "readiness": "schema-valid collection"},
+    {"id": "decisions", "source": "specimen", "selector": "/decisions", "readiness": "current schema-valid decisions in force"},
+    {"id": "prior_round", "source": "specimen", "selector": "/rounds[change={change},number={round}-1]", "readiness": "absent for round 1; otherwise exactly one prior round"},
+    {"id": "findings", "source": "specimen", "selector": "/assays latest CHANGES or /acceptances latest CHANGES findings[change={change}]", "readiness": "empty for first work; otherwise causal rework findings"},
+    {"id": "verification", "source": "specimen", "selector": "/verification", "readiness": "schema-valid verification plan"},
+    {"id": "gates", "source": ".isotope/isotope.json", "selector": "/gates referenced by /verification/*/gate_id", "readiness": "every referenced gate resolves"},
+    {"id": "operating", "source": ".isotope/operating.json", "selector": "/slug,/branch,/base_commit,/specimen_revision", "readiness": "same slug armed and current branch matches"},
+    {"id": "answers", "source": "predecessor invocation", "selector": "/questions/*/answer", "readiness": "every continuation question has an answer"},
+    {"id": "result_destination", "source": "specimen", "selector": "/rounds[change={change},number={round}]", "readiness": "absent is ready; equivalent invocation-owned round is complete"}
+  ]
+}

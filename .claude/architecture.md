@@ -1,5 +1,7 @@
 # Architecture
 
+<!-- isotope:section architecture:start -->
+
 Ansible-based homelab automation platform: one click in Semaphore/Rundeck deploys a fully
 configured, cross-wired application on Proxmox. Designed to be cloned by others — fill in two
 config files, run bootstrap, have a working lab. Fire-and-forget provisioning: create correct
@@ -18,7 +20,7 @@ once, never police drift. This file is the map; contract detail lives in [specs/
 | `config/` (gitignored) | Config layer 3: user's `proxmox.yml`, `infrastructure.yml`, `apps/<instance>.yml`, plus `.generated/facts.yml` written by bootstrap | [secrets-handling](specs/secrets-handling.md) |
 | `ansible/inventory/proxmox.yml` | `community.proxmox` dynamic inventory → groups `proxmox_nodes`, `proxmox_clients`, `tag_<tag>`. Only `homelab-infra`-tagged guests are managed | [config-layering](specs/config-layering.md) |
 | `semaphore/`, `rundeck/` | Importable UI job definitions; playbooks stay UI-agnostic | — |
-| `.claude/meta/` | Pre-existing hand-written backlog of numbered slices (000–601) with its own INDEX.md; sdlc items in `.claude/plans/` (concept → design → active → deployed) cross-reference it. Records in `plans/deployed/` dated before 2026-07-06 are autobuild-era plans — same trail role, older format | — |
+| `.claude/meta/` | Pre-existing hand-written backlog of numbered slices (000–601) with its own INDEX.md; Isotope specimens under `.isotope/cultures/` cross-reference it | — |
 
 ## Flows
 
@@ -77,3 +79,5 @@ playbook IS the update. `apps/remove.yml` mirrors deploy: stop app, run `unwirin
   only `pct`/`qm` tasks are `delegate_to` the node named in `homelabinfra_config.proxmox.node`.
   Plays must never target `hosts: proxmox_nodes` with `run_once` facts — that pattern corrupts
   fact scoping on multi-node clusters.
+
+<!-- isotope:section architecture:end -->

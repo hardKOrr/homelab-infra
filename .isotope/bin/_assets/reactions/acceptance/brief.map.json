@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "reaction": "acceptance",
+  "slots": [
+    {"id": "specimen", "source": ".isotope/cultures/flux/{slug}.json", "selector": "", "readiness": "armed flux specimen revision equals operating specimen_revision"},
+    {"id": "goal", "source": "specimen", "selector": "/goal", "readiness": "non-empty schema-valid prose"},
+    {"id": "criteria", "source": "specimen", "selector": "/acceptance_criteria", "readiness": "schema-valid collection"},
+    {"id": "verification", "source": "specimen", "selector": "/verification", "readiness": "schema-valid collection"},
+    {"id": "changes", "source": "specimen", "selector": "/changes", "readiness": "every change has a latest completed round and PASS assay"},
+    {"id": "decisions", "source": "specimen", "selector": "/decisions", "readiness": "current decisions in force"},
+    {"id": "final_rounds", "source": "specimen", "selector": "/rounds latest per change", "readiness": "one completed final round per change"},
+    {"id": "final_assays", "source": "specimen", "selector": "/assays matching final rounds", "readiness": "one PASS assay per final round"},
+    {"id": "gates", "source": ".isotope/isotope.json", "selector": "/gates referenced by /verification/*/gate_id", "readiness": "every referenced gate resolves"},
+    {"id": "operating", "source": ".isotope/operating.json", "selector": "/slug,/branch,/base_commit,/specimen_revision", "readiness": "same slug armed and current branch matches"},
+    {"id": "acceptance_snapshot", "source": "git", "selector": "canonical manifest and patch from operating.base_commit", "readiness": "frozen whole-worktree snapshot still matches"},
+    {"id": "answers", "source": "predecessor invocation", "selector": "/questions/*/answer", "readiness": "every continuation question has an answer"},
+    {"id": "result_destination", "source": "specimen", "selector": "/acceptances[number={acceptance}]", "readiness": "absent is ready; equivalent invocation-owned acceptance is complete"}
+  ]
+}

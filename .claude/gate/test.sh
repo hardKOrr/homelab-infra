@@ -1,7 +1,7 @@
 #!/bin/bash
 # Syntax-check gate: --syntax-check over every playbook under ansible/playbooks/, without
-# contacting Proxmox. Invoked by .claude/build.yml's `test:` wrapper from the repo root
-# (wsl inherits the Windows cwd, so no explicit cd is needed):
+# contacting Proxmox. Invoked as the `test` gate registered in .isotope/isotope.json
+# (see .claude/gate/README.md), from the repo root:
 #   wsl bash -lc 'bash .claude/gate/test.sh'
 set -uo pipefail
 

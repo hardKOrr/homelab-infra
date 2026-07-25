@@ -1,5 +1,7 @@
 # Spec: Jinja string typing
 
+<!-- isotope:section jinja-string-typing:start -->
+
 Jinja2 native mode is off (no `jinja2_native` in `ansible/ansible.cfg`), so every `set_fact`
 result and every `{{ ... }}` template resolves to a **string**, regardless of trailing `| int`
 filters at assignment time.
@@ -17,3 +19,5 @@ filters at assignment time.
 ## Enforced by
 
 - inspection — cite this spec in findings; `ansible-lint` catches some but not all instances
+
+<!-- isotope:section jinja-string-typing:end -->

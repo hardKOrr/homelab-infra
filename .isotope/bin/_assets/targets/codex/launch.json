@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "host": "codex",
+  "adapter_version": "1",
+  "executable": "codex",
+  "preflight": {"arguments": ["login", "status"], "result_kind": "exit-zero", "sandbox_arguments": ["sandbox", "-P", ":read-only", "-C", "{project}", "python", ".isotope/bin/isotope.py", "--help"]},
+  "authority": {"read_only": true, "non_interactive": true, "structured_output": true, "explicit_agent": "isotope_review"},
+  "arguments": ["exec", "--ephemeral", "--sandbox", "read-only", "-c", "approval_policy=\"never\"", "--output-schema", "{readout_schema_path}", "--output-last-message", "{result_path}", "--cd", "{project}", "{prompt}"],
+  "model_arguments": ["--model", "{model}"],
+  "result_kind": "last-message-json"
+}

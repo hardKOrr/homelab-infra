@@ -1,0 +1,72 @@
+{
+  "schema_version": "1",
+  "reaction": "review",
+  "slots": [
+    {
+      "id": "specimen",
+      "source": ".isotope/cultures/flux/{slug}.json",
+      "selector": "",
+      "readiness": "armed flux specimen revision equals operating specimen_revision"
+    },
+    {
+      "id": "goal",
+      "source": "specimen",
+      "selector": "/goal",
+      "readiness": "non-empty schema-valid prose"
+    },
+    {
+      "id": "change",
+      "source": "specimen",
+      "selector": "/changes[number={change}]",
+      "readiness": "exactly one item"
+    },
+    {
+      "id": "criteria",
+      "source": "specimen",
+      "selector": "/acceptance_criteria",
+      "readiness": "schema-valid collection"
+    },
+    {
+      "id": "decisions",
+      "source": "specimen",
+      "selector": "/decisions",
+      "readiness": "current schema-valid decisions in force"
+    },
+    {
+      "id": "round",
+      "source": "specimen",
+      "selector": "/rounds[change={change},number={round}]",
+      "readiness": "exactly one completed round"
+    },
+    {
+      "id": "gate_evidence",
+      "source": "specimen+manifest",
+      "selector": "/rounds/.../evidence -> /gates + /verification",
+      "readiness": "every evidence gate resolves and has whole output"
+    },
+    {
+      "id": "operating",
+      "source": ".isotope/operating.json",
+      "selector": "/slug,/branch,/base_commit,/specimen_revision",
+      "readiness": "same slug armed and branch/HEAD preconditions hold"
+    },
+    {
+      "id": "review_snapshot",
+      "source": "round+git",
+      "selector": "/review_snapshot",
+      "readiness": "stored and live canonical revisions match"
+    },
+    {
+      "id": "answers",
+      "source": "predecessor invocation",
+      "selector": "/questions/*/answer",
+      "readiness": "every continuation question has an answer"
+    },
+    {
+      "id": "result_destination",
+      "source": "specimen",
+      "selector": "/assays[change={change},round={round}]",
+      "readiness": "absent is ready; equivalent valid assay is complete"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "isotope://reaction/expression/readout/1",
+  "title": "Isotope Expression catalyst readout",
+  "type": "object",
+  "required": ["schema_version", "status", "abstract", "questions", "condition", "facts", "next_action"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "status": {"enum": ["complete", "needs-user", "blocked", "refused", "failed"]},
+    "abstract": {"type": ["string", "null"], "minLength": 1},
+    "questions": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "condition": {"type": ["string", "null"], "minLength": 1},
+    "facts": {"type": "object"},
+    "next_action": {"type": ["string", "null"], "minLength": 1}
+  },
+  "additionalProperties": false
+}
