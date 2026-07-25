@@ -30,13 +30,21 @@ To create:
    - OR check if Kuma v2 (currently beta) is mature enough — it has proper REST + setup-via-env
 5. After setup, create the Ntfy notification channel — POST monitor-notification with `type: ntfy`, server: `homelabinfra_infra.notifications.ntfy_url`, topic: `homelab`.
 6. Capture the notification channel ID.
-7. Write to facts:
+7. Write to facts under the Shape B role key (superseding the `uptime_kuma:` sketch this
+   README previously carried — slice 303 settled the key and `ansible/vars/CONTRACT.md`
+   §3 documents it):
    ```yaml
-   uptime_kuma:
-     api_url: https://status.<domain>
-     api_token: <from-vault>
-     ntfy_notification_id: <id>
+   monitoring:
+     provider: uptime_kuma
+     instance: <proxmox hostname>
+     host: https://status.<domain>      # full base URL including scheme
+     token: <from-vault>
+     notification_id: <ntfy channel id>
    ```
+   `tasks/wiring/uptime-kuma.yml` targets the v2 REST surface behind a probe and skips
+   with a warning when `GET /api/monitors` does not answer 200. Locking Kuma v1 here
+   means replacing that file with a socket.io implementation — record the choice in this
+   slice's `notes.md` and update slice 303.
 
 Wire Caddy + Authentik (Kuma's own auth is fine, but homelab-users like SSO).
 

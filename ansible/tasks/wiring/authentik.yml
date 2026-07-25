@@ -1,22 +1,320 @@
 ---
-# TODO: Register an app with Authentik as a proxy provider + application.
+# Register an app with Authentik as a forward-auth proxy provider + application.
+# Inverse: tasks/unwiring/authentik.yml. Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs (vars passed by calling playbook):
-#   wiring_app_name:        the app instance name (becomes Authentik app slug)
-#   wiring_app_display:     human-readable name for Authentik UI
-#   wiring_upstream_url:    full internal URL of the app (e.g. http://192.168.1.50:7878)
-#   wiring_external_url:    public URL (e.g. https://radarr.homelab.example.com)
-#   wiring_auth_group:      Authentik group that can access this app (default: homelab-users)
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name:       app instance name — provider name and application slug
+#   wiring_app_display:    human-readable name for the Authentik UI (default: wiring_app_name)
+#   wiring_domain:         full external domain of the app
+#   wiring_upstream_host:  IP or hostname of the app container
+#   wiring_upstream_port:  port the app listens on
+#   wiring_auth_group:     Authentik group granted access (default: homelab-users)
+#   wiring_external_url:   optional override; default https://{{ wiring_domain }}
+#   wiring_upstream_url:   optional override; default http://{{ host }}:{{ port }}
 #
-# Reads from homelabinfra_infra:
-#   homelabinfra_infra.authentik.api_url    (e.g. https://auth.homelab.example.com/api/v3)
-#   homelabinfra_infra.authentik.api_token  (stored in Vaultwarden)
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   sso.host   — full base URL including scheme (e.g. https://auth.homelab.example.com)
+#   sso.token  — Authentik API token
 #
-# Steps:
-#   1. Create or update proxy provider (forward auth mode)
-#   2. Create or update application linked to that provider
-#   3. Assign application to the configured Authentik outpost
-#   4. Bind access policy (group membership check)
+# Tunables (override per call if the lab renamed the stock objects):
+#   wiring_authentik_auth_flow          default-provider-authorization-implicit-consent
+#   wiring_authentik_invalidation_flow  default-provider-invalidation
+#   wiring_authentik_outpost            authentik Embedded Outpost
 #
-# Conditions: only runs when homelabinfra_infra.sso.provider == 'authentik'
-# Note: Authentik has a full REST API at /api/v3 — use uri module, not shell commands.
+# Idempotent: provider, application, policy binding and outpost membership are each
+# located first and only created or patched when absent or drifted. Silent no-op when
+# the configured SSO provider is not authentik.
+#
+# Authenticated requests carry no_log (they hold the API token, per
+# .claude/specs/secrets-handling.md); asserts on registered results keep failures
+# diagnosable without printing the token.
+
+- name: Wire Authentik | Register proxy provider and application
+  when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
+  vars:
+    _ak_api: "{{ homelabinfra_infra.sso.host }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ homelabinfra_infra.sso.token | default('') }}"
+      Accept: "application/json"
+    _ak_auth_flow_slug: >-
+      {{ wiring_authentik_auth_flow
+         | default('default-provider-authorization-implicit-consent') }}
+    _ak_invalidation_flow_slug: >-
+      {{ wiring_authentik_invalidation_flow | default('default-provider-invalidation') }}
+    _ak_outpost_name: "{{ wiring_authentik_outpost | default('authentik Embedded Outpost') }}"
+    _ak_external_url: "{{ wiring_external_url | default('https://' ~ wiring_domain) }}"
+    _ak_internal_url: >-
+      {{ wiring_upstream_url
+         | default('http://' ~ wiring_upstream_host ~ ':' ~ wiring_upstream_port) }}
+    _ak_display: "{{ wiring_app_display | default(wiring_app_name, true) }}"
+  block:
+    - name: Wire Authentik | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name is defined and wiring_app_name | length > 0
+          - wiring_domain is defined and wiring_domain | length > 0
+          - wiring_upstream_host is defined and wiring_upstream_host | length > 0
+          - wiring_upstream_port is defined and wiring_upstream_port | string | length > 0
+          - homelabinfra_infra.sso.host | default('') | length > 0
+          - homelabinfra_infra.sso.token | default('') | length > 0
+        fail_msg: >-
+          wiring/authentik.yml needs wiring_app_name, wiring_domain, wiring_upstream_host,
+          wiring_upstream_port, and sso.host + sso.token in config/.generated/facts.yml.
+
+    - name: Wire Authentik | Look up authorization flow
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/?slug={{ _ak_auth_flow_slug }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_auth_flow
+      no_log: true
+
+    - name: Wire Authentik | Look up invalidation flow
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/?slug={{ _ak_invalidation_flow_slug }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_inval_flow
+      no_log: true
+
+    - name: Wire Authentik | Assert both flows exist
+      ansible.builtin.assert:
+        that:
+          - _ak_auth_flow.json.results | default([]) | length > 0
+          - _ak_inval_flow.json.results | default([]) | length > 0
+        fail_msg: >-
+          Authentik has no flow with slug {{ _ak_auth_flow_slug }} and/or
+          {{ _ak_invalidation_flow_slug }}. Pass wiring_authentik_auth_flow /
+          wiring_authentik_invalidation_flow if this lab renamed the stock flows.
+
+    - name: Wire Authentik | Find existing proxy provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/proxy/?name={{ wiring_app_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_provider_list
+      no_log: true
+
+    - name: Wire Authentik | Select existing provider
+      ansible.builtin.set_fact:
+        _ak_provider: >-
+          {{ (_ak_provider_list.json.results | default([]))
+             | selectattr('name', 'equalto', wiring_app_name)
+             | list | first | default({}) }}
+
+    # Single dict expression so pks stay ints and flags stay bools in the JSON body
+    # (.claude/specs/jinja-string-typing.md). forward_single = one app, one domain.
+    - name: Wire Authentik | Build provider payload
+      ansible.builtin.set_fact:
+        _ak_provider_payload: >-
+          {{ {
+               'name': wiring_app_name,
+               'mode': 'forward_single',
+               'external_host': _ak_external_url,
+               'internal_host': _ak_internal_url,
+               'internal_host_ssl_validation': false,
+               'authorization_flow': _ak_auth_flow.json.results[0].pk,
+               'invalidation_flow': _ak_inval_flow.json.results[0].pk,
+             } }}
+
+    - name: Wire Authentik | Create proxy provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/proxy/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_provider_payload }}"
+        status_code: 201
+      register: _ak_provider_create
+      when: _ak_provider.pk is not defined
+      changed_when: _ak_provider.pk is not defined
+      no_log: true
+
+    - name: Wire Authentik | Update drifted proxy provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/proxy/{{ _ak_provider.pk | default(0) }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_provider_payload }}"
+        status_code: 200
+      when:
+        - _ak_provider.pk is defined
+        - >-
+          _ak_provider.external_host | default('') != _ak_external_url
+          or _ak_provider.internal_host | default('') != _ak_internal_url
+          or _ak_provider.mode | default('') != 'forward_single'
+      changed_when: true
+      no_log: true
+
+    - name: Wire Authentik | Resolve provider pk
+      ansible.builtin.set_fact:
+        _ak_provider_pk: >-
+          {{ _ak_provider.pk | default(_ak_provider_create.json.pk | default(''), true) }}
+
+    - name: Wire Authentik | Assert provider pk resolved
+      ansible.builtin.assert:
+        that:
+          - _ak_provider_pk | string | length > 0
+        fail_msg: "Could not resolve the Authentik proxy provider pk for {{ wiring_app_name }}."
+
+    - name: Wire Authentik | Find existing application
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_app_list
+      no_log: true
+
+    - name: Wire Authentik | Select existing application and build payload
+      ansible.builtin.set_fact:
+        _ak_app: >-
+          {{ (_ak_app_list.json.results | default([]))
+             | selectattr('slug', 'equalto', wiring_app_name)
+             | list | first | default({}) }}
+        _ak_app_payload: >-
+          {{ {
+               'name': _ak_display,
+               'slug': wiring_app_name,
+               'provider': _ak_provider_pk | int,
+               'meta_launch_url': _ak_external_url,
+             } }}
+
+    - name: Wire Authentik | Create application
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_app_payload }}"
+        status_code: 201
+      when: _ak_app.slug is not defined
+      changed_when: _ak_app.slug is not defined
+      no_log: true
+
+    - name: Wire Authentik | Update drifted application
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_app_payload }}"
+        status_code: 200
+      when:
+        - _ak_app.slug is defined
+        - >-
+          _ak_app.provider | default(0) | int != _ak_provider_pk | int
+          or _ak_app.name | default('') != _ak_display
+      changed_when: true
+      no_log: true
+
+    - name: Wire Authentik | Re-read application for its pk
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_app_final
+      no_log: true
+
+    # Access policy: bind the configured group to the application. A lab that has not
+    # created the group yet keeps an unrestricted application rather than a failed
+    # deploy — the binding lands on the next wire once the group exists.
+    - name: Wire Authentik | Find access group
+      ansible.builtin.uri:
+        url: >-
+          {{ _ak_api }}/core/groups/?name={{
+             (wiring_auth_group | default('homelab-users')) | urlencode }}
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_group_list
+      no_log: true
+
+    - name: Wire Authentik | Select access group
+      ansible.builtin.set_fact:
+        _ak_group: "{{ (_ak_group_list.json.results | default([])) | list | first | default({}) }}"
+
+    - name: Wire Authentik | Report missing access group
+      ansible.builtin.debug:
+        msg: >-
+          Authentik group '{{ wiring_auth_group | default('homelab-users') }}' does not exist —
+          {{ wiring_app_name }} is wired without a group policy binding. Create the group and
+          re-run the deploy to bind it.
+      when: _ak_group.pk is not defined
+
+    - name: Wire Authentik | Find existing policy binding
+      ansible.builtin.uri:
+        url: >-
+          {{ _ak_api }}/policies/bindings/?target={{ _ak_app_final.json.pk }}&group={{ _ak_group.pk }}
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_binding_list
+      when: _ak_group.pk is defined
+      no_log: true
+
+    - name: Wire Authentik | Bind access group to application
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/policies/bindings/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: >-
+          {{ {
+               'target': _ak_app_final.json.pk,
+               'group': _ak_group.pk,
+               'order': 0,
+               'enabled': true,
+               'negate': false,
+               'timeout': 30,
+             } }}
+        status_code: 201
+      when:
+        - _ak_group.pk is defined
+        - _ak_binding_list.json.results | default([]) | length == 0
+      changed_when: true
+      no_log: true
+
+    # The outpost is what actually serves forward-auth for the provider; a provider
+    # missing from it authenticates nobody.
+    - name: Wire Authentik | Find outpost
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/?name={{ _ak_outpost_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_outpost_list
+      no_log: true
+
+    - name: Wire Authentik | Select outpost
+      ansible.builtin.set_fact:
+        _ak_outpost: >-
+          {{ (_ak_outpost_list.json.results | default([]))
+             | selectattr('name', 'equalto', _ak_outpost_name)
+             | list | first | default({}) }}
+
+    - name: Wire Authentik | Assert outpost exists
+      ansible.builtin.assert:
+        that:
+          - _ak_outpost.pk is defined
+        fail_msg: >-
+          Authentik outpost '{{ _ak_outpost_name }}' not found. Pass wiring_authentik_outpost
+          with the name of the outpost that should serve {{ wiring_app_name }}.
+
+    - name: Wire Authentik | Add provider to outpost
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: >-
+          {{ {'providers': (_ak_outpost.providers | default([])) + [_ak_provider_pk | int]} }}
+        status_code: 200
+      when: (_ak_provider_pk | int) not in (_ak_outpost.providers | default([]))
+      changed_when: true
+      no_log: true

@@ -206,7 +206,7 @@
       ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
       when:
         - homelabinfra_infra is defined
-        - homelabinfra_infra.uptime_kuma is defined
+        - homelabinfra_infra.monitoring is defined
 
     - name: Wire DNS
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"

@@ -39,11 +39,16 @@ Numbering scheme: `NNN` — first digit is **tier** (0 = highest priority, 6 = l
 | # | Slice | Status | Depends on |
 |---|---|---|---|
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | in-progress¹ | 200 |
-| 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | open | 200 |
-| 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | open | 200, 403 |
-| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | open | 200, 404 |
-| 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | open | 200 |
-| 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | open | 200 |
+| 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | in-progress¹ | 200 |
+| 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | in-progress¹ | 200, 403 |
+| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | in-progress¹ | 200, 404 |
+| 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | in-progress¹ | 200 |
+| 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | in-progress¹ | 200 |
+
+¹ Implementation complete and gate-verified; live acceptance needs the provider running.
+Per-slice decisions and deviations are in each slice's `notes.md` — 303 additionally
+renamed the registry key `uptime_kuma` → `monitoring` (CONTRACT.md §3), which slice 404
+must write.
 
 ## 4XX — Apps (per-app roles + per-app playbooks)
 

@@ -1,6 +1,6 @@
 # 302 — Authentik wire + unwire
 
-**Status:** open
+**Status:** in-progress
 **Depends on:** 200, 403 (authentik app must exist before this can be tested)
 **Blocks:** SSO across all apps
 

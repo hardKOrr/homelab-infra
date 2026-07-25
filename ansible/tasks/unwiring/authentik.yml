@@ -1,15 +1,118 @@
 ---
-# TODO: Remove an app's Authentik proxy provider and application entry.
+# Remove an app's Authentik application, policy binding and proxy provider.
 # Inverse of tasks/wiring/authentik.yml. Called by playbooks/apps/remove.yml.
+# Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs:
-#   wiring_app_name:  the app instance name — used as the Authentik app slug
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name:  app instance name — the Authentik application slug and provider name
 #
-# Steps:
-#   1. Find application by slug (GET /api/v3/core/applications/?slug=<name>)
-#   2. Delete application (DELETE /api/v3/core/applications/<pk>/)
-#   3. Find proxy provider linked to that application
-#   4. Delete provider (DELETE /api/v3/providers/proxy/<pk>/)
+# Tunables:
+#   wiring_authentik_outpost  outpost to detach the provider from
+#                             (default: authentik Embedded Outpost)
 #
-# Safe if application does not exist — idempotent no-op.
-# Conditions: only runs when homelabinfra_infra.sso.provider == 'authentik'
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   sso.host   — full base URL including scheme
+#   sso.token  — Authentik API token
+#
+# Teardown order is the inverse of wiring: detach the provider from the outpost, delete
+# the application (which takes its policy bindings with it), then delete the provider.
+# Idempotent: every step is skipped when its object is already gone. Silent no-op when
+# the configured SSO provider is not authentik.
+
+- name: Unwire Authentik | Remove application and proxy provider
+  when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
+  vars:
+    _ak_api: "{{ homelabinfra_infra.sso.host }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ homelabinfra_infra.sso.token | default('') }}"
+      Accept: "application/json"
+    _ak_outpost_name: "{{ wiring_authentik_outpost | default('authentik Embedded Outpost') }}"
+  block:
+    - name: Unwire Authentik | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name is defined and wiring_app_name | length > 0
+          - homelabinfra_infra.sso.host | default('') | length > 0
+          - homelabinfra_infra.sso.token | default('') | length > 0
+        fail_msg: >-
+          unwiring/authentik.yml needs wiring_app_name, plus sso.host + sso.token in
+          config/.generated/facts.yml.
+
+    - name: Unwire Authentik | Find proxy provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/proxy/?name={{ wiring_app_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_provider_list
+      no_log: true
+
+    - name: Unwire Authentik | Select proxy provider
+      ansible.builtin.set_fact:
+        _ak_provider: >-
+          {{ (_ak_provider_list.json.results | default([]))
+             | selectattr('name', 'equalto', wiring_app_name)
+             | list | first | default({}) }}
+
+    - name: Unwire Authentik | Find outpost
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/?name={{ _ak_outpost_name | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_outpost_list
+      no_log: true
+
+    - name: Unwire Authentik | Select outpost
+      ansible.builtin.set_fact:
+        _ak_outpost: >-
+          {{ (_ak_outpost_list.json.results | default([]))
+             | selectattr('name', 'equalto', _ak_outpost_name)
+             | list | first | default({}) }}
+
+    - name: Unwire Authentik | Detach provider from outpost
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: >-
+          {{ {'providers': (_ak_outpost.providers | default([]))
+                           | reject('equalto', _ak_provider.pk | int) | list} }}
+        status_code: 200
+      when:
+        - _ak_provider.pk is defined
+        - _ak_outpost.pk is defined
+        - (_ak_provider.pk | int) in (_ak_outpost.providers | default([]))
+      changed_when: true
+      no_log: true
+
+    # Deleting the application cascades to its policy bindings — no separate unbind step.
+    - name: Unwire Authentik | Delete application
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+        method: DELETE
+        headers: "{{ _ak_headers }}"
+        status_code: [204, 404]
+      register: _ak_app_delete
+      changed_when: _ak_app_delete.status == 204
+      no_log: true
+
+    - name: Unwire Authentik | Delete proxy provider
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/providers/proxy/{{ _ak_provider.pk | default(0) }}/"
+        method: DELETE
+        headers: "{{ _ak_headers }}"
+        status_code: [204, 404]
+      register: _ak_provider_delete
+      when: _ak_provider.pk is defined
+      changed_when: _ak_provider_delete.status | default(404) == 204
+      no_log: true
+
+    - name: Unwire Authentik | Verify application is gone
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 404
+      no_log: true

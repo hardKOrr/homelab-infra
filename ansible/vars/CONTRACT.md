@@ -42,10 +42,30 @@ domain: homelab.example.com          # copied from infrastructure.yml
 reverse_proxy: { provider, instance, host, port }
 sso:           { provider, instance, host, token }
 notifications: { provider, instance, host, topic }   # NOT ntfy_url — consumers build {{ host }}/{{ topic }}
+monitoring:    { provider, instance, host, token, notification_id }
 dns:           { provider, host, api_key }
 backups:       { instance, host, datastore, datastore_path }
 vaultwarden:   { host, port }        # populated after bootstrap step 1
 ```
+
+Provider-specific optional fields, written by the app slice that deploys the provider and
+read only by that provider's wiring tasks (slices 301–305):
+
+| Role key | Field | Provider | Purpose |
+|---|---|---|---|
+| `reverse_proxy` | `token` | nginx | pre-issued NPM JWT; skips the login round-trip |
+| `reverse_proxy` | `admin_user`, `admin_password` | nginx | NPM admin login, exchanged for a JWT per run |
+| `reverse_proxy` | `letsencrypt_email` | nginx | when set, new proxy hosts request a LE certificate and force SSL; omit for internal-only labs |
+| `monitoring` | `notification_id` | uptime_kuma | id of the Ntfy notification channel attached to every monitor |
+| `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
+| `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
+| `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
+
+`monitoring` is the Shape B role key for uptime monitoring; the provider-named
+`uptime_kuma` key that app playbooks briefly gated on is superseded — do not use it.
+`dns.host` is the one `host` that may be a bare IP (`config.example/infrastructure.yml`
+documents it that way for external, non-inventory hosts); the DNS wiring tasks prepend a
+scheme when it is missing.
 
 Superseded — do not use: (a) Shape-A flat pre-built URL `notifications.ntfy_url` +
 `.notifications.topic` — all former readers (`check-native-updates.yml`, `restart-app.yml`,

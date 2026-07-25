@@ -1,10 +1,113 @@
 ---
-# TODO: Remove an app proxy host from Nginx Proxy Manager.
+# Remove an app proxy host from Nginx Proxy Manager via its REST API.
 # Inverse of tasks/wiring/nginx.yml. Called by playbooks/apps/remove.yml.
+# Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Steps:
-#   1. GET /api/nginx/proxy-hosts — find host by domain_names
-#   2. DELETE /api/nginx/proxy-hosts/<id>
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_domain:  full domain of the proxy host to remove — proxy hosts are
+#                   identified by domain_names, not by app name
 #
-# Safe if proxy host does not exist — idempotent no-op.
-# Conditions: only runs when homelabinfra_infra.reverse_proxy.provider == 'nginx'
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   reverse_proxy.host           — full base URL including scheme
+#   reverse_proxy.port           — NPM admin/API port (default 81)
+#   reverse_proxy.token          — optional pre-issued NPM JWT
+#   reverse_proxy.admin_user     — NPM admin email (used when no token is present)
+#   reverse_proxy.admin_password — NPM admin password
+#
+# Idempotent: absent proxy host → no-op success. Silent no-op when the configured
+# reverse proxy provider is not nginx. Deleting the proxy host also releases its
+# certificate binding; NPM keeps the certificate itself, which is reused verbatim
+# if the same domain is wired again.
+
+- name: Unwire Nginx | Remove proxy host
+  when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'nginx'
+  vars:
+    _npm_api: >-
+      {{ homelabinfra_infra.reverse_proxy.host }}:{{
+         homelabinfra_infra.reverse_proxy.port | default(81) }}/api
+  block:
+    - name: Unwire Nginx | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_domain is defined and wiring_domain | length > 0
+        fail_msg: "unwiring/nginx.yml needs wiring_domain to identify the proxy host."
+
+    - name: Unwire Nginx | Assert NPM credentials are available
+      ansible.builtin.assert:
+        that:
+          - >-
+            homelabinfra_infra.reverse_proxy.token | default('') | length > 0
+            or (homelabinfra_infra.reverse_proxy.admin_user | default('') | length > 0
+                and homelabinfra_infra.reverse_proxy.admin_password | default('') | length > 0)
+        fail_msg: >-
+          Nginx Proxy Manager unwiring needs reverse_proxy.token, or
+          reverse_proxy.admin_user + reverse_proxy.admin_password, in
+          config/.generated/facts.yml.
+
+    - name: Unwire Nginx | Mint API token
+      ansible.builtin.uri:
+        url: "{{ _npm_api }}/tokens"
+        method: POST
+        body_format: json
+        body:
+          identity: "{{ homelabinfra_infra.reverse_proxy.admin_user }}"
+          secret: "{{ homelabinfra_infra.reverse_proxy.admin_password }}"
+        status_code: 200
+      register: _npm_login
+      when: homelabinfra_infra.reverse_proxy.token | default('') | length == 0
+      no_log: true
+
+    - name: Unwire Nginx | Select API token
+      ansible.builtin.set_fact:
+        _npm_token: >-
+          {{ homelabinfra_infra.reverse_proxy.token
+             | default(_npm_login.json.token | default(''), true) }}
+      no_log: true
+
+    - name: Unwire Nginx | List existing proxy hosts
+      ansible.builtin.uri:
+        url: "{{ _npm_api }}/nginx/proxy-hosts"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _npm_token }}"
+        status_code: 200
+      register: _npm_hosts
+      no_log: true
+
+    - name: Unwire Nginx | Locate proxy host for this domain
+      ansible.builtin.set_fact:
+        _npm_existing: >-
+          {{ (_npm_hosts.json | default([]))
+             | selectattr('domain_names', 'contains', wiring_domain)
+             | list | first | default({}) }}
+
+    - name: Unwire Nginx | Delete proxy host
+      ansible.builtin.uri:
+        url: "{{ _npm_api }}/nginx/proxy-hosts/{{ _npm_existing.id | default(0) }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ _npm_token }}"
+        status_code: [200, 404]
+      register: _npm_delete
+      when: _npm_existing.id is defined
+      changed_when: _npm_existing.id is defined
+      no_log: true
+
+    - name: Unwire Nginx | Verify proxy host gone
+      ansible.builtin.uri:
+        url: "{{ _npm_api }}/nginx/proxy-hosts"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _npm_token }}"
+        status_code: 200
+      register: _npm_verify
+      no_log: true
+
+    - name: Unwire Nginx | Assert no proxy host serves the domain
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_npm_verify.json | default([]))
+            | selectattr('domain_names', 'contains', wiring_domain)
+            | list | length == 0
+        fail_msg: "Nginx Proxy Manager still serves {{ wiring_domain }} after unwiring."

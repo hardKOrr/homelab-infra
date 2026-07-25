@@ -1,12 +1,95 @@
 ---
-# TODO: Remove an app monitor from Uptime Kuma.
+# Remove an app monitor from Uptime Kuma via its REST API.
 # Inverse of tasks/wiring/uptime-kuma.yml. Called by playbooks/apps/remove.yml.
+# Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs:
-#   wiring_app_name:  the app instance name — matches the monitor friendly name
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name:  app instance name — matches the monitor's friendly name
 #
-# Steps:
-#   1. Find monitor by name (GET /api/monitors, filter by name)
-#   2. DELETE monitor by ID
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   monitoring.provider  — uptime_kuma | none
+#   monitoring.host      — full base URL including scheme
+#   monitoring.token     — Uptime Kuma API key
 #
-# Safe if monitor does not exist — idempotent no-op.
+# Same probe-first stance as the wire half: an unreachable or v1 (socket.io-only) Kuma
+# warns and skips rather than failing the removal — a stale monitor is a smaller problem
+# than a removal that aborts halfway. Idempotent: absent monitor → no-op success. Silent
+# no-op when the configured monitoring provider is not uptime_kuma.
+
+- name: Unwire Uptime Kuma | Remove monitor
+  when:
+    - homelabinfra_infra.monitoring is defined
+    - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+  vars:
+    _kuma_api: "{{ homelabinfra_infra.monitoring.host }}/api"
+    _kuma_headers:
+      Authorization: "Bearer {{ homelabinfra_infra.monitoring.token | default('') }}"
+      Accept: "application/json"
+  block:
+    - name: Unwire Uptime Kuma | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name is defined and wiring_app_name | length > 0
+        fail_msg: "unwiring/uptime-kuma.yml needs wiring_app_name to identify the monitor."
+
+    - name: Unwire Uptime Kuma | Probe the REST API
+      ansible.builtin.uri:
+        url: "{{ _kuma_api }}/monitors"
+        method: GET
+        headers: "{{ _kuma_headers }}"
+        status_code: [200, 401, 403, 404]
+        timeout: 10
+      register: _kuma_probe
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Unwire Uptime Kuma | Report unusable API
+      ansible.builtin.debug:
+        msg: >-
+          Uptime Kuma at {{ homelabinfra_infra.monitoring.host }} did not answer
+          GET /api/monitors with 200 (got {{ _kuma_probe.status | default('no response') }}) —
+          the monitor for {{ wiring_app_name }} was left in place. Remove it from the Kuma UI.
+      when: _kuma_probe.status | default(0) != 200
+
+    - name: Unwire Uptime Kuma | Delete monitor against the REST API
+      when: _kuma_probe.status | default(0) == 200
+      block:
+        - name: Unwire Uptime Kuma | Select existing monitor
+          ansible.builtin.set_fact:
+            _kuma_existing: >-
+              {{ (_kuma_probe.json.monitors | default(_kuma_probe.json | default([]), true))
+                 | selectattr('name', 'defined')
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list | first | default({}) }}
+
+        - name: Unwire Uptime Kuma | Delete monitor
+          ansible.builtin.uri:
+            url: "{{ _kuma_api }}/monitors/{{ _kuma_existing.id | default(0) }}"
+            method: DELETE
+            headers: "{{ _kuma_headers }}"
+            status_code: [200, 204, 404]
+          register: _kuma_delete
+          when: _kuma_existing.id is defined
+          changed_when: _kuma_delete.status | default(404) in [200, 204]
+          no_log: true
+
+        - name: Unwire Uptime Kuma | Verify monitor gone
+          ansible.builtin.uri:
+            url: "{{ _kuma_api }}/monitors"
+            method: GET
+            headers: "{{ _kuma_headers }}"
+            status_code: 200
+          register: _kuma_verify
+          changed_when: false
+          no_log: true
+
+        - name: Unwire Uptime Kuma | Assert monitor removed
+          ansible.builtin.assert:
+            that:
+              - >-
+                (_kuma_verify.json.monitors | default(_kuma_verify.json | default([]), true))
+                | selectattr('name', 'defined')
+                | selectattr('name', 'equalto', wiring_app_name)
+                | list | length == 0
+            fail_msg: "Uptime Kuma still has a monitor named {{ wiring_app_name }} after unwiring."

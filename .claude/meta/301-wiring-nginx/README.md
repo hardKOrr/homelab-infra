@@ -1,6 +1,6 @@
 # 301 — Nginx Proxy Manager wire + unwire
 
-**Status:** open
+**Status:** in-progress
 **Depends on:** 200
 **Blocks:** users who prefer NPM over Caddy
 

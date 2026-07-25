@@ -1,6 +1,6 @@
 # 305 — Pihole wire + unwire
 
-**Status:** open
+**Status:** in-progress
 **Depends on:** 200
 **Blocks:** DNS resolution for Pihole-based homelabs
 

@@ -1,19 +1,163 @@
 ---
-# TODO: Create a DNS host override in OPNsense Unbound via the OPNsense REST API.
+# Create a DNS host override in OPNsense Unbound via the OPNsense REST API.
+# Inverse: tasks/unwiring/opnsense.yml. Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs (vars passed by calling playbook):
-#   wiring_hostname:   hostname portion (e.g. radarr-4k)
-#   wiring_domain:     domain portion (e.g. homelab.example.com)
-#   wiring_ip:         IP address to resolve to (the Caddy/Nginx host IP, or app IP for internal)
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_domain:         full domain of the app (e.g. radarr-4k.homelab.example.com);
+#                          split into hostname + zone unless overridden below
+#   wiring_upstream_host:  app IP — the fallback record target when no reverse proxy runs
+#   wiring_app_name:       app instance name (record description only)
 #
-# Reads from homelabinfra_infra (loaded from config/.generated/facts.yml):
-#   homelabinfra_infra.dns.host        OPNsense IP
-#   homelabinfra_infra.dns.api_key     OPNsense API key
-#   homelabinfra_infra.dns.api_secret  OPNsense API secret
+# Optional overrides:
+#   wiring_hostname:    hostname portion            (default: first label of wiring_domain)
+#   wiring_dns_domain:  zone portion                (default: remaining labels)
+#   wiring_ip:          address the record resolves to (default: the reverse proxy's IP
+#                       when one is configured, else wiring_upstream_host — apps are
+#                       reached through the proxy, so the record points there)
 #
-# Steps:
-#   1. POST to OPNsense API: /api/unbound/host/addHost
-#   2. Apply Unbound config: /api/unbound/service/reconfigure
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   dns.host            — OPNsense address; bare IPs are assumed https (config.example
+#                         documents dns.host as a plain IP for external, non-inventory hosts)
+#   dns.api_key         — OPNsense API key      (basic-auth username)
+#   dns.api_secret      — OPNsense API secret   (basic-auth password)
+#   dns.validate_certs  — default false: OPNsense ships a self-signed certificate and
+#                         this call stays inside the lab network. Set true once the
+#                         firewall serves a trusted certificate.
 #
-# Conditions: only runs when homelabinfra_infra.dns.provider == 'opnsense'
+# Endpoints are the settings/* controller (OPNsense 23.1+); the older unbound/host/*
+# paths this slice's README sketched were retired upstream.
 # Docs: https://docs.opnsense.org/development/api/core/unbound.html
+#
+# Idempotent: the override is located by hostname + domain; absent → addHostOverride,
+# drifted → setHostOverride, identical → no change. Unbound is reconfigured only when
+# something actually changed. Silent no-op when the configured DNS provider is not
+# opnsense.
+
+- name: Wire OPNsense | Create Unbound host override
+  when: homelabinfra_infra.dns.provider | default('none') == 'opnsense'
+  vars:
+    _opn_base: >-
+      {{ homelabinfra_infra.dns.host
+         if homelabinfra_infra.dns.host is search('^https?://')
+         else 'https://' ~ homelabinfra_infra.dns.host }}
+    _opn_hostname: "{{ wiring_hostname | default(wiring_domain.split('.')[0]) }}"
+    _opn_zone: "{{ wiring_dns_domain | default(wiring_domain.split('.')[1:] | join('.')) }}"
+    _opn_proxy_ip: >-
+      {{ homelabinfra_infra.reverse_proxy.host | default('', true)
+         | regex_replace('^https?://', '') | regex_replace(':.*$', '') }}
+    _opn_ip: >-
+      {{ wiring_ip | default(_opn_proxy_ip, true)
+         | default(wiring_upstream_host | default(''), true) }}
+    _opn_validate: "{{ homelabinfra_infra.dns.validate_certs | default(false) }}"
+  block:
+    - name: Wire OPNsense | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_domain is defined and wiring_domain | length > 0
+          - _opn_hostname | length > 0
+          - _opn_zone | length > 0
+          - _opn_ip | length > 0
+          - homelabinfra_infra.dns.api_key | default('') | length > 0
+          - homelabinfra_infra.dns.api_secret | default('') | length > 0
+        fail_msg: >-
+          wiring/opnsense.yml needs wiring_domain (an FQDN) plus a record target
+          (wiring_ip, a configured reverse proxy, or wiring_upstream_host), and
+          dns.api_key + dns.api_secret in config/.generated/facts.yml.
+
+    - name: Wire OPNsense | Search existing host overrides
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
+        method: POST
+        url_username: "{{ homelabinfra_infra.dns.api_key }}"
+        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: >-
+          {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_hostname} }}
+        status_code: 200
+      register: _opn_search
+      changed_when: false
+      no_log: true
+
+    - name: Wire OPNsense | Select existing override and build payload
+      ansible.builtin.set_fact:
+        _opn_existing: >-
+          {{ (_opn_search.json.rows | default([]))
+             | selectattr('hostname', 'equalto', _opn_hostname)
+             | selectattr('domain', 'equalto', _opn_zone)
+             | list | first | default({}) }}
+        # OPNsense expects its form fields as strings ("1", not true) — this API is
+        # form-shaped even in JSON, so the string values here are deliberate.
+        _opn_payload: >-
+          {{ {'host': {
+               'enabled': '1',
+               'hostname': _opn_hostname,
+               'domain': _opn_zone,
+               'rr': 'A',
+               'server': _opn_ip,
+               'description': 'homelab-infra: ' ~ (wiring_app_name | default(_opn_hostname)),
+             }} }}
+
+    - name: Wire OPNsense | Add host override
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/unbound/settings/addHostOverride"
+        method: POST
+        url_username: "{{ homelabinfra_infra.dns.api_key }}"
+        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: "{{ _opn_payload }}"
+        status_code: 200
+      register: _opn_add
+      when: _opn_existing.uuid is not defined
+      changed_when: _opn_existing.uuid is not defined
+      no_log: true
+
+    - name: Wire OPNsense | Update drifted host override
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/unbound/settings/setHostOverride/{{ _opn_existing.uuid | default('') }}"
+        method: POST
+        url_username: "{{ homelabinfra_infra.dns.api_key }}"
+        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: "{{ _opn_payload }}"
+        status_code: 200
+      register: _opn_set
+      when:
+        - _opn_existing.uuid is defined
+        - >-
+          _opn_existing.server | default('') != _opn_ip
+          or _opn_existing.enabled | default('0') | string != '1'
+      changed_when: true
+      no_log: true
+
+    - name: Wire OPNsense | Assert the override was saved
+      ansible.builtin.assert:
+        that:
+          - _opn_add is skipped or _opn_add.json.result | default('') == 'saved'
+          - _opn_set is skipped or _opn_set.json.result | default('') == 'saved'
+        fail_msg: >-
+          OPNsense rejected the host override for {{ _opn_hostname }}.{{ _opn_zone }}
+          (add: {{ _opn_add.json.result | default('skipped') }},
+          set: {{ _opn_set.json.result | default('skipped') }}).
+
+    # Unbound serves the old zone until it is reconfigured — but a reconfigure restarts
+    # the resolver, so it runs only when this task file actually changed something.
+    - name: Wire OPNsense | Apply Unbound configuration
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/unbound/service/reconfigure"
+        method: POST
+        url_username: "{{ homelabinfra_infra.dns.api_key }}"
+        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: {}
+        status_code: 200
+      when: (_opn_add is not skipped) or (_opn_set is not skipped)
+      changed_when: true
+      no_log: true

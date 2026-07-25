@@ -1,6 +1,6 @@
 # 303 — Uptime Kuma wire + unwire
 
-**Status:** open
+**Status:** in-progress
 **Depends on:** 200, 404 (uptime-kuma app)
 **Blocks:** auto-registered monitoring per CLAUDE.md
 

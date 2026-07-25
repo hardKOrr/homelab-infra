@@ -1,19 +1,144 @@
 ---
-# TODO: Register an app monitor in Uptime Kuma via its REST API.
+# Register an app monitor in Uptime Kuma via its REST API.
+# Inverse: tasks/unwiring/uptime-kuma.yml. Spec: .claude/specs/provider-noop-wiring.md.
 #
-# Expected inputs (vars passed by calling playbook):
-#   wiring_app_name:     the app instance name (becomes monitor friendly name)
-#   wiring_monitor_url:  URL to monitor (usually the public Caddy route)
-#   wiring_interval:     check interval in seconds (default: 60)
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name:     app instance name — becomes the monitor's friendly name
+#   wiring_monitor_url:  URL to monitor (the public reverse-proxy route)
+#   wiring_interval:     check interval in seconds (default 60)
 #
-# Reads from homelabinfra_infra:
-#   homelabinfra_infra.uptime_kuma.api_url    (e.g. https://status.homelab.example.com)
-#   homelabinfra_infra.uptime_kuma.api_token  (stored in Vaultwarden)
+# Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
+#   monitoring.provider         — uptime_kuma | none
+#   monitoring.host             — full base URL including scheme
+#   monitoring.token            — Uptime Kuma API key
+#   monitoring.notification_id  — optional; id of the Ntfy notification channel to attach
 #
-# Steps:
-#   1. Check if monitor already exists (GET /api/monitors, match by name)
-#   2. Create monitor if not present (POST /api/monitors)
-#   3. Associate monitor with the homelab notification channel (Ntfy)
+# API-surface caveat (slice 303 / 404): Uptime Kuma v1 exposes no REST CRUD API — only
+# socket.io — so this file targets the v2 REST surface and PROBES it first. When the
+# probe does not return 200 (v1, unreachable, wrong key) the monitor is skipped with a
+# console warning and the deploy continues: monitoring is an add-on, never the thing
+# that fails an app deploy (slice 303 acceptance). A v1 Kuma needs a socket.io-based
+# implementation here instead.
 #
-# Conditions: runs for all app deploys if Uptime Kuma is reachable
-# Note: Uptime Kuma v2 has a REST API. v1 required socket.io — verify version before implementing.
+# Idempotent: monitor located by friendly name; absent → POST, drifted → PATCH,
+# identical → no change. Silent no-op when the configured monitoring provider is not
+# uptime_kuma.
+#
+# Authenticated requests carry no_log (they hold the API key, per
+# .claude/specs/secrets-handling.md).
+
+- name: Wire Uptime Kuma | Register monitor
+  when:
+    - homelabinfra_infra.monitoring is defined
+    - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+  vars:
+    _kuma_api: "{{ homelabinfra_infra.monitoring.host }}/api"
+    _kuma_headers:
+      Authorization: "Bearer {{ homelabinfra_infra.monitoring.token | default('') }}"
+      Accept: "application/json"
+  block:
+    - name: Wire Uptime Kuma | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name is defined and wiring_app_name | length > 0
+          - wiring_monitor_url is defined and wiring_monitor_url | length > 0
+        fail_msg: >-
+          wiring/uptime-kuma.yml needs wiring_app_name and wiring_monitor_url.
+
+    - name: Wire Uptime Kuma | Probe the REST API
+      ansible.builtin.uri:
+        url: "{{ _kuma_api }}/monitors"
+        method: GET
+        headers: "{{ _kuma_headers }}"
+        status_code: [200, 401, 403, 404]
+        timeout: 10
+      register: _kuma_probe
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Wire Uptime Kuma | Report unusable API
+      ansible.builtin.debug:
+        msg: >-
+          Uptime Kuma at {{ homelabinfra_infra.monitoring.host }} did not answer
+          GET /api/monitors with 200 (got {{ _kuma_probe.status | default('no response') }}) —
+          skipping monitor registration for {{ wiring_app_name }}. A v1 Kuma has no REST API;
+          check the version and the monitoring.token in config/.generated/facts.yml.
+      when: _kuma_probe.status | default(0) != 200
+
+    - name: Wire Uptime Kuma | Register monitor against the REST API
+      when: _kuma_probe.status | default(0) == 200
+      block:
+        - name: Wire Uptime Kuma | Select existing monitor and build payload
+          ansible.builtin.set_fact:
+            _kuma_existing: >-
+              {{ (_kuma_probe.json.monitors | default(_kuma_probe.json | default([]), true))
+                 | selectattr('name', 'defined')
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list | first | default({}) }}
+            # One dict expression keeps ints as ints and bools as bools in the JSON body
+            # (.claude/specs/jinja-string-typing.md).
+            _kuma_payload: >-
+              {{ {
+                   'type': 'http',
+                   'name': wiring_app_name,
+                   'url': wiring_monitor_url,
+                   'interval': wiring_interval | default(60) | int,
+                   'retryInterval': wiring_interval | default(60) | int,
+                   'maxretries': 2,
+                   'accepted_statuscodes': ['200-299'],
+                   'active': true,
+                 }
+                 | combine(
+                     {'notificationIDList':
+                        {homelabinfra_infra.monitoring.notification_id | string: true}}
+                     if homelabinfra_infra.monitoring.notification_id is defined else {}) }}
+
+        - name: Wire Uptime Kuma | Create monitor
+          ansible.builtin.uri:
+            url: "{{ _kuma_api }}/monitors"
+            method: POST
+            headers: "{{ _kuma_headers }}"
+            body_format: json
+            body: "{{ _kuma_payload }}"
+            status_code: [200, 201]
+          when: _kuma_existing.id is not defined
+          changed_when: _kuma_existing.id is not defined
+          no_log: true
+
+        - name: Wire Uptime Kuma | Update drifted monitor
+          ansible.builtin.uri:
+            url: "{{ _kuma_api }}/monitors/{{ _kuma_existing.id | default(0) }}"
+            method: PATCH
+            headers: "{{ _kuma_headers }}"
+            body_format: json
+            body: "{{ _kuma_payload }}"
+            status_code: 200
+          when:
+            - _kuma_existing.id is defined
+            - >-
+              _kuma_existing.url | default('') != wiring_monitor_url
+              or _kuma_existing.interval | default(0) | int != wiring_interval | default(60) | int
+              or not (_kuma_existing.active | default(true))
+          changed_when: true
+          no_log: true
+
+        - name: Wire Uptime Kuma | Verify monitor is present
+          ansible.builtin.uri:
+            url: "{{ _kuma_api }}/monitors"
+            method: GET
+            headers: "{{ _kuma_headers }}"
+            status_code: 200
+          register: _kuma_verify
+          changed_when: false
+          no_log: true
+
+        - name: Wire Uptime Kuma | Assert monitor exists
+          ansible.builtin.assert:
+            that:
+              - >-
+                (_kuma_verify.json.monitors | default(_kuma_verify.json | default([]), true))
+                | selectattr('name', 'defined')
+                | selectattr('name', 'equalto', wiring_app_name)
+                | list | length > 0
+            fail_msg: "Uptime Kuma has no monitor named {{ wiring_app_name }} after wiring."
