@@ -1,0 +1,90 @@
+---
+# Resolve where the Vaultwarden admin token is kept on the CONTROLLER, and read it
+# back if it is already there. Slice 013.
+#
+# The token is one of the two secrets that cannot live in Vaultwarden — it is the
+# credential for Vaultwarden itself (.claude/specs/secrets-handling.md). Before this
+# slice its only durable copy was a human's clipboard: the role printed it once and
+# bootstrap halted until someone pasted it into config/infrastructure.yml. This file
+# gives it a machine-readable home so bootstrap runs in one pass.
+#
+# Sink selection, first match wins:
+#   1. VAULTWARDEN_TOKEN_SINK            — explicit override, for an operator who has
+#                                          somewhere better to put it
+#   2. <secrets.d>/vaultwarden.env       — the runner path. Sibling of the secrets.env
+#                                          that already carries PROXMOX_API_TOKEN, in a
+#                                          directory the job user owns so writing it
+#                                          needs no privilege escalation. lab-run.sh
+#                                          sources it into every later job's environment.
+#   3. <config>/.generated/vaultwarden.env — bare CLI runs on a workstation, where there
+#                                          is no /etc/homelab-infra. Gitignored with the
+#                                          rest of config/, so it survives the
+#                                          `git reset --hard` in lab-run.sh.
+#
+# Format is a shell env fragment (VAULTWARDEN_ADMIN_TOKEN=...), not YAML: it has to be
+# sourceable by lab-run.sh, and one format for one secret beats two.
+#
+# Inputs:
+#   vaultwarden_token_config_dir  — REQUIRED. Absolute path to config/. Passed by the
+#                                   caller rather than derived from playbook_dir, which
+#                                   differs between a bootstrap run and a standalone
+#                                   `ansible-playbook playbooks/apps/vaultwarden.yml`.
+#   vaultwarden_token_secrets_dir — optional. Runner secrets directory
+#                                   (default: /etc/homelab-infra/secrets.d).
+#
+# Sets:
+#   vaultwarden_token_sink   — absolute path to the sink file (always defined)
+#   vaultwarden_token_stored — the token read back from it, or '' when absent
+#
+# Every task runs on the controller, so a caller executing on a guest gets the same
+# answer as one executing on localhost.
+
+- name: Token sink | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - vaultwarden_token_config_dir is defined
+      - vaultwarden_token_config_dir | length > 0
+    fail_msg: "token-sink.yml requires vaultwarden_token_config_dir (absolute path to config/)."
+  delegate_to: localhost
+  become: false
+
+- name: Token sink | Check for the runner secrets directory
+  ansible.builtin.stat:
+    path: "{{ vaultwarden_token_secrets_dir | default('/etc/homelab-infra/secrets.d') }}"
+  register: _vw_secrets_dir
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Token sink | Choose the sink path
+  ansible.builtin.set_fact:
+    vaultwarden_token_sink: >-
+      {{ _vw_override if _vw_override | length > 0
+         else (_vw_secrets_dir.stat.path ~ '/vaultwarden.env')
+              if (_vw_secrets_dir.stat.isdir | default(false))
+                 and (_vw_secrets_dir.stat.writeable | default(false))
+         else (vaultwarden_token_config_dir ~ '/.generated/vaultwarden.env') }}
+  vars:
+    _vw_override: "{{ lookup('env', 'VAULTWARDEN_TOKEN_SINK') | default('', true) }}"
+
+- name: Token sink | Read the stored token
+  ansible.builtin.slurp:
+    src: "{{ vaultwarden_token_sink }}"
+  register: _vw_sink_content
+  failed_when: false
+  no_log: true
+  delegate_to: localhost
+  become: false
+
+# Tolerates comments, blank lines and a trailing newline. Takes the LAST assignment so
+# an operator who appends a corrected line to the file wins over the original.
+- name: Token sink | Extract the stored token
+  ansible.builtin.set_fact:
+    vaultwarden_token_stored: >-
+      {{ ((_vw_sink_content.content | b64decode).splitlines()
+          | select('match', '^VAULTWARDEN_ADMIN_TOKEN=')
+          | map('regex_replace', '^VAULTWARDEN_ADMIN_TOKEN=', '')
+          | map('trim')
+          | list | last | default(''))
+         if _vw_sink_content.content is defined else '' }}
+  no_log: true

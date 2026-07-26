@@ -90,8 +90,15 @@ backups:
 
 # ── Vaultwarden ────────────────────────────────────────────────────────────────
 # Vaultwarden is enforced — it is always deployed as the platform secrets store.
-# After bootstrap step 1, paste your Vaultwarden admin token here.
-# Also accepted as env var VAULTWARDEN_ADMIN_TOKEN.
+#
+# admin_token is an OPTIONAL OVERRIDE. Leave it empty: bootstrap generates the token
+# on first deploy and writes it to the runner itself, then reads it back to finish in
+# one pass. You will find it at /etc/homelab-infra/secrets.d/vaultwarden.env on the
+# runner (or config/.generated/vaultwarden.env for a workstation run).
+#
+# Set it only to pin a token you already have — from an older lab, or one you rotated
+# by hand. Resolution order is: VAULTWARDEN_ADMIN_TOKEN env var, then this key, then
+# the sink. A value here wins over what the platform stored for itself.
 vaultwarden:
-  admin_token: ""       # generated on first deploy, printed to console — paste here
+  admin_token: ""       # leave empty — bootstrap generates and stores it
   instance: vaultwarden # Proxmox hostname

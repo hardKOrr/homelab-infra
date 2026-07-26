@@ -23,6 +23,20 @@
 # key — a lab that chose `none`, or a pre-bootstrap run, must not fail here
 # (.claude/specs/provider-noop-wiring.md). Only ntfy is implemented; gotify and
 # discord are declared providers with no publisher yet.
+#
+# The enabled check comes FIRST and the input assert is gated on it, because callers
+# build notify_message from homelabinfra_infra — "deployed at {{ ... .domain }}" is the
+# house style. Asserting first would template that message on the no-op path and fail
+# the deploy on an undefined fact, which is precisely the bootstrap-step-1 case this
+# no-op exists for: Ntfy is step 2, so nothing is registered when Vaultwarden calls in.
+
+- name: Notify | Resolve whether a publisher is configured
+  ansible.builtin.set_fact:
+    _notify_enabled: >-
+      {{ _notify_cfg.provider | default('none') == 'ntfy'
+         and _notify_cfg.host | default('') | length > 0 }}
+  vars:
+    _notify_cfg: "{{ (homelabinfra_infra | default({})).notifications | default({}) }}"
 
 - name: Notify | Assert inputs
   ansible.builtin.assert:
@@ -30,6 +44,7 @@
       - notify_title is defined and notify_title | length > 0
       - notify_message is defined and notify_message | length > 0
     fail_msg: "notify.yml requires notify_title and notify_message."
+  when: _notify_enabled | bool
 
 - name: Notify | Publish to Ntfy
   ansible.builtin.uri:
@@ -47,8 +62,4 @@
   failed_when: false
   changed_when: false
   no_log: true
-  when:
-    - homelabinfra_infra is defined
-    - homelabinfra_infra.notifications is defined
-    - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
-    - homelabinfra_infra.notifications.host | default('') | length > 0
+  when: _notify_enabled | bool

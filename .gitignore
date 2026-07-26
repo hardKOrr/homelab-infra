@@ -2,8 +2,15 @@
 .env
 .env.*
 
-# User config (gitignored — never overwritten by git pull)
+# User config (gitignored — never overwritten by git pull).
+# This is load-bearing, not housekeeping: lab-run.sh refreshes the runner's checkout with
+# `git reset --hard origin/<branch>` before every job, and the reset is only safe because
+# nothing under config/ is tracked. proxmox.yml, infrastructure.yml, apps/*.yml,
+# .generated/facts.yml and .backups/ all survive it.
 config/
+
+# Get Config's restore-point archives — real secrets, written on the runner.
+artifacts/
 
 # Ansible
 *.retry

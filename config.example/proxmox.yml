@@ -1,7 +1,14 @@
 ---
 # Proxmox connection and global network config.
-# Copy this to config/proxmox.yml and fill in your values.
-# This file is gitignored — git pull will never overwrite it.
+#
+# YOU USUALLY DO NOT WRITE THIS FILE. `rundeck/bootstrap-rundeck.sh`, run as root on a
+# Proxmox node, discovers most of it (`hostname`, `pvesm status`, `ip -o link`), prompts
+# for the handful it cannot know, and writes config/proxmox.yml into the runner's
+# checkout. This example is the reference for what it writes, and the template for anyone
+# authoring by hand — copy it to config/proxmox.yml if you are doing it yourself.
+#
+# config/ is gitignored — neither git pull nor the runner's own `git reset --hard`
+# refresh will ever overwrite it.
 #
 # Where these keys land (see ansible/vars/CONTRACT.md §2): the loader injects the three
 # top-level keys below directly into homelabinfra_config, unwrapped —
@@ -13,9 +20,22 @@ proxmox:
   api_host: ""          # Proxmox IP or hostname (required)
   api_port: 8006
   node: ""              # Proxmox node name to deploy on (required, e.g. pve)
-  api_user: root@pam
-  api_token_id: ""      # API token ID (required, e.g. ansible)
-  api_token_secret: ""  # API token secret (required) — also accepted as env var PROXMOX_API_TOKEN
+  api_user: homelab-infra@pve   # bootstrap-rundeck.sh creates this user with a scoped role
+  api_token_id: automation      # the token bootstrap-rundeck.sh mints for that user
+
+  # ── The secret is deliberately NOT here ──────────────────────────────────────
+  # RECOMMENDED SHAPE: leave api_token_secret out of this file entirely and supply the
+  # secret as the PROXMOX_API_TOKEN environment variable — from Rundeck Key Storage
+  # (keys/proxmox/api-token, injected by lab-run.sh) or the Semaphore `Homelab`
+  # environment. Both with-proxmox-env.sh and ansible/tasks/load-user-vars.yml read it
+  # from there, and the environment wins over the file when both are present.
+  #
+  # Why: this file is shape, not secret. Keeping them apart is what lets the shape be
+  # read, diffed, copied, reviewed and handed around by the Get Config job, while the one
+  # genuinely privileged value stays in exactly one place. Fusing them imposes the
+  # secret's constraints on the shape and gives the shape the secret's invisibility.
+  #
+  # api_token_secret: ""   # still supported, but prefer the env var above
 
 # Network definitions. Add as many as you need.
 # Apps reference a network by name (e.g. network: default).

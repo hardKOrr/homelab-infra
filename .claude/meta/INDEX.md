@@ -12,10 +12,10 @@ digits are order within the tier. Slice template and workflow: [README.md](READM
 | `open` | Not started, or started and abandoned mid-way. |
 
 Gates (both current as of 2026-07-26): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes
-143 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
-clean. **Both gates are green** — slice 502 closed the last red one.
+on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook clean.
+**Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 27 built · 3 open.**
+Counts: **12 done · 29 built · 3 open.**
 
 ---
 
@@ -39,17 +39,19 @@ No further work. Listed for provenance only.
 | 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) |
 | 200 | [write-generated-facts](200-write-generated-facts/README.md) |
 
-## Built — awaiting live acceptance (26)
+## Built — awaiting live acceptance (28)
 
 Every one of these is code-complete and gate-verified. **All but 504 clear on the same
 event: a live bootstrap run against the lab** (slice 500's acceptance); 504 needs a
 populated `config/` on the runner instead. Per-slice deviations and open questions live in
-each slice's `notes.md`.
+each slice's `notes.md` or in a "Built" section of its README.
 
 | # | Slice | What live acceptance needs |
 |---|---|---|
 | 008 | [Estate / multi-domain contract](008-estate-contract/README.md) | a second-domain deploy |
 | 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | one app deployed per mode |
+| 010 | [Config provenance](010-config-provenance/README.md) | the bootstrap script run on a node. The Config job group (Configure App / Get Config / Config Doctor) is verified on the workstation; nothing the script does is |
+| 012 | [Runner onboarding](012-runner-onboarding/README.md) | the same run — one command, then one click |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | Ntfy running (401) |
 | 202 | [configure-pbs](202-configure-pbs/README.md) | PBS running (406) |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | Caddy running (402) |
@@ -91,39 +93,78 @@ Carried caveats:
   wiring pair only, no app playbook).
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
   restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
+- **010/012's jobs have never been imported.** `bootstrap-rundeck.sh` was rewritten wholesale
+  and none of it — `pveum` role creation, config authoring, project creation, Key Storage
+  staging, job import — has run against a real node. Treat the first run as an experiment.
 
 ## Open (3)
 
-All three raised by the operator on 2026-07-26, reviewing the Rundeck runner handover. All
-are design defects in shipped code, not new features.
+011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 013 and
+014 were split out of 010 on 2026-07-27. All are design defects in shipped code or gaps
+between the documented model and the implemented one — none are new features.
 
 | # | Slice | Why now |
 |---|---|---|
-| 010 | [Config provenance](010-config-provenance/README.md) | The whole one-click platform runs off `config/proxmox.yml`, hand-written on one LXC, unversioned, unbacked-up, root token in plaintext. Nothing creates, validates or can reconstruct it. |
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
-| 012 | [Runner onboarding](012-runner-onboarding/README.md) | The handover is 14 manual steps against a promise of two, one of them (refreshing the runner's checkout) documented nowhere and owned by nothing. No README at the repository root. |
+| 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | Bootstrap halts mid-run for a human to paste a console-printed token. A UI-driven bootstrap has no one to paste, and the secret's only durable copy is a clipboard. |
+| 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | CLAUDE.md's secrets model is unimplemented — `community.general.bitwarden` exists only as `todo/` stubs. Every generated token lives solely in `facts.yml` on the runner, and PBS's is unrecoverable if lost. |
 
-**010 and 012 both gate the shareability claim** and **011 gates the first provisioning
-run** — the first deploy that allocates an address bakes in whatever the current model
-produces.
+**013 and 014 gate the shareability claim** (010 and 012 landed 2026-07-26) and **011 gates
+the first provisioning run** — the first deploy that allocates an address bakes in whatever
+the current model produces.
 
 ## Recommended order
 
 1. **011 before any provisioning job runs.** The moment Deploy Vaultwarden allocates an
    address, the flat model's output is on the wire and in the inventory. Cheaper to fix the
    allocator than to renumber guests.
-2. **010 alongside it** — same edit surface (`config/proxmox.yml`, `config.example`,
-   CONTRACT.md §2), and it removes the plaintext root token from the runner while the lab
-   is still empty enough for a mistake to cost nothing.
-3. **012 with 010** — eight of 012's fourteen manual steps are 010's credentials seen from
-   the operator's side. 010 decides where a secret lives; 012 decides who puts it there.
-   Splitting them means editing `bootstrap-rundeck.sh`, both UI job sets and both READMEs
-   twice.
-4. **Live bootstrap run** — one event converts 24 of the `built` slices. Still the largest
+2. **~~010 alongside it~~** and **~~012 with 010~~** — **both landed 2026-07-26**, as one
+   change, for the reason recorded here: they shared `bootstrap-rundeck.sh`, both UI job
+   sets and both READMEs, and landing them apart would have meant rewriting all four twice.
+   They stayed two documents because their acceptance criteria do not interleave — 010's is
+   "config exists, travels and validates", 012's is "one command and one click, and the
+   runner runs current `master`".
+3. **013 before the live bootstrap run.** It is small and it is the difference between a
+   bootstrap that completes unattended and one that stops halfway waiting for a paste.
+   Doing it after the live run means running the two-pass flow once and then deleting it.
+4. **Live bootstrap run** — one event converts 26 of the `built` slices. Still the largest
    single risk-reducer in the backlog, but see the parallel-instance caveat below.
-5. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
+5. **014 after the lab holds real secrets.** It is a durability change, not a correctness
+   one, and its acceptance test (delete `facts.yml`, restore from the vault) is only
+   meaningful once there is something in `facts.yml` worth losing.
+6. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
    writing `media.<instance>` on deploy closes the loop; until then media apps join the
    wiring through the `app.media_kind` discovery path.
+
+### The config model, decided 2026-07-27 — implemented 2026-07-26
+
+Three provenance classes, three homes — the shape 010/013/014 build toward:
+
+| Class | Home | Why |
+|---|---|---|
+| `proxmox.yml`, `infrastructure.yml`, `apps/*.yml` | the **runner's `config/`**, reached from the UI both ways | must pre-date the vault; humans edit it; transport is Configure App / Get Config, not a repo |
+| Proxmox token, Vaultwarden admin token | Rundeck **Key Storage** / Semaphore env | two values, never in a file, minted by bootstrap itself |
+| `.generated/facts.yml` (~10 service tokens) | **Vaultwarden**, file demoted to a cache | machine-written, never hand-edited, read by machines |
+
+**Two bootstrap layers, no manual seam.** `bootstrap-rundeck.sh` on a PVE node runs as root,
+so it discovers what is discoverable (`pvesm`, `ip -o link`, hostname), prompts for the six
+things it cannot know, issues its own Proxmox token via `pveum` rather than asking for one,
+**writes the first class**, imports the jobs and stages Key Storage. `Bootstrap Platform` in
+the UI then builds the lab. One command, one click. Authored config is never fused with a
+secret again.
+
+**No lab repo.** The morning's decision to carry the authored shape in a private git repo
+cloned into `config/` was reversed the same day: it bought only transport, and the Config
+job group buys transport with parts that already exist — `Configure App` writes an instance
+file, `Get Config` returns the set, both with the diff in the job log. Durability is PBS plus
+`config/.backups/<file>.<ts>`. The cost — history is point-in-time, not
+per-commit-with-message — is accepted and recorded in 010.
+
+**The runner becomes a managed guest.** `bootstrap-rundeck.sh` tags its own LXC
+`homelab-infra`, writes `config/apps/rundeck.yml`, and records a `runner` registry key. Until
+it did, `configure-pbs.yml:210-217` filtered the backup job on that tag and therefore excluded
+the single host that holds the platform's own configuration — and `status.yml` could not see
+the host it was running on.
 
 **Standing caveat on the bootstrap run.** The lab holds 57 LXCs and 4 VMs and **not one
 carries the `homelab-infra` tag** — every existing guest was hand-built, so the repo ignores
@@ -149,23 +190,51 @@ take, not a surprise to hit mid-run.
 
 ## Cross-slice effects on record
 
+From the 010 + 012 build (2026-07-26):
+
+- **`ansible/scripts/lab-run.sh` is the single job entry point.** Every Rundeck job step is
+  now `exec lab-run <playbook> [args]` with no path, venv or `cd` in it; paths come from
+  `/etc/homelab-infra/lab-run.env`. Changing how jobs run is one edit, not nineteen.
+- **The checkout refresh is a `git reset --hard` and is armed only on a runner.**
+  `LAB_REFRESH` defaults to 1 only when that env file exists, and to 0 everywhere else; it
+  also refuses on a tree with uncommitted tracked changes. Both guards exist because the
+  unconditional default destroyed uncommitted work in the development checkout during this
+  build — `lab-run.sh` ships in the repo, so it is present in every working tree, and
+  `LAB_REPO` falls back to its own repo root.
+- **New shared shell layer** under `ansible/scripts/`: `resolve-python.sh` (find a PyYAML
+  interpreter — extracted from `with-proxmox-env.sh`), `config-doctor.sh` (validate `config/`
+  against CONTRACT.md, all problems in one pass), `redact-config.sh` (print `config/` with
+  secrets masked by structure walk).
+- **New registry key `runner`** (CONTRACT.md §3) — written by `bootstrap-rundeck.sh`, not by
+  any playbook, because the runner exists before any playbook can run. Descriptive only.
+- **Secrets may now come from the environment** (CONTRACT.md §5): `PROXMOX_API_TOKEN`,
+  `PROXMOX_API_TOKEN_ID`, `PROXMOX_API_USER`, `VAULTWARDEN_ADMIN_TOKEN`, read by
+  `load-user-vars.yml` and `with-proxmox-env.sh`, environment winning over file. The
+  recommended `config/proxmox.yml` now omits `api_token_secret` entirely.
+- **New task directory `tasks/config/`** — `write-config-file.yml` (the one path any playbook
+  writes into `config/`: backup to `.backups/<file>.<ts>`, write, diff, prune to 20) and
+  `run-doctor.yml` (shared by `bootstrap.yml` Play 0 and the Config Doctor job).
+- **New `Config` job group in both UIs** — Config Doctor, Configure App, Get Config, plus
+  Reimport Jobs on Rundeck only. Rundeck job count 15 → 19; Semaphore templates 15 → 18.
+- **`artifacts/` is gitignored** — Get Config writes unredacted restore points there.
+- **The Rundeck git SCM plugin is retired**, not merely unused: job definitions are imported
+  one-way from the repo, and a job edited in the UI is overwritten by the next reimport.
+
 From the first live Rundeck run (2026-07-26):
 
 - **`with-proxmox-env.sh` now resolves its own Python** (`059316a`). No job step in either
-  UI puts the ansible venv on `PATH` — they call `"$VENV/ansible-playbook"` by absolute
+  UI puts the ansible venv on `PATH` — they called `"$VENV/ansible-playbook"` by absolute
   path — so the wrapper's hardcoded `python3` was the distro interpreter, which has no
   PyYAML. **All 15 Rundeck jobs failed identically** at config parse before Ansible was
-  reached. It now tries `$PYTHON`, then the `python3` sibling of the ansible command it is
-  handed, then `PATH`, taking the first that imports yaml. Fixed in the one wrapper rather
-  than in 15 job files; Semaphore's steps share the wrapper and inherit the fix.
+  reached. Fixed in the one wrapper rather than in 15 job files; Semaphore's steps share the
+  wrapper and inherit the fix. That episode is the direct argument for `lab-run.sh`.
 - **`rd` is not required.** The Rundeck REST API accepts the same job YAML the CLI sends
   (`POST /api/47/project/<p>/jobs/import`, `Content-Type: application/yaml`). Nothing in
   the repo depends on the CLI being installed; the README's `rd` loop remains one valid path.
 - **The runner is a documented host now, not a mystery.** LXC 13228 `pve-rundeck-4` on
   pve-host-3, project `homelab-infra`, checkout at `/var/lib/rundeck/homelab-infra` tracking
-  `origin/master`, venv at `/opt/homelab-ansible`, Proxmox token `root@pam!rundeck`
-  (privsep off). Slice 010 exists because that host's `config/` is the platform's only copy
-  of its own credentials.
+  `origin/master`, venv at `/opt/homelab-ansible`. Its Proxmox token was `root@pam!rundeck`
+  (privsep off); slice 010 replaces that with `homelab-infra@pve` and a scoped role.
 - **`ansible/.ansible/` is gitignored** — ansible-lint's local cache was staging itself into
   commits.
 

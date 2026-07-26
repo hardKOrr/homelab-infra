@@ -1,0 +1,128 @@
+---
+# Read config/ back out of the runner — to the job log, and as a downloadable archive.
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance/get-config.yml
+#   ansible-playbook playbooks/maintenance/get-config.yml -e instance=radarr-4k
+#
+# Rundeck/Semaphore: Config group. Parameters: instance (optional), archive (optional).
+#
+# This is the reading half of the config transport pair. Configure App writes the lab
+# definition from the UI; this reads it back from the UI. Between them, no SSH session
+# appears anywhere in the documented path — which is the point: config/ lives on one
+# host, and before these two jobs existed the only way to see or change it was a text
+# editor over SSH on a machine whose contents existed nowhere else.
+#
+# Read-only apart from the archive it writes under artifacts/.
+#
+# REDACTION. The job log is always redacted, because a job log is not a secret store and
+# this output is meant to be copied around: ansible/scripts/redact-config.sh masks every
+# key whose name contains token, secret, password, api_key or arl. The ARCHIVE is not
+# redacted — it is the restore point, and a redacted restore point restores nothing.
+# Treat the download accordingly.
+#
+# Parameters:
+#   instance   one instance file (config/apps/<instance>.yml); empty = the whole set
+#   archive    false skips the tarball and prints to the log only (default true when
+#              no instance is given, false when one is)
+
+- name: "Get config | Read config/ back out"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    _config_dir: "{{ (playbook_dir ~ '/../../../config') | realpath }}"
+    _instance: "{{ instance | default('') | trim }}"
+    _archive: "{{ archive | default(_instance | length == 0) | bool }}"
+
+  tasks:
+    - name: Assert config/ exists
+      ansible.builtin.stat:
+        path: "{{ _config_dir }}"
+      register: _cfg_stat
+      changed_when: false
+
+    - name: Fail when there is no config to read
+      ansible.builtin.fail:
+        msg: >-
+          {{ _config_dir }} does not exist. On a bootstrapped runner it is written by
+          rundeck/bootstrap-rundeck.sh; run that on the Proxmox node, or author it with
+          the Configure App job.
+      when: not _cfg_stat.stat.exists
+
+    # The script prints the whole redacted tree itself; this task captures it so the
+    # report below can render it as log lines rather than one escaped blob.
+    - name: Read and redact the authored config
+      ansible.builtin.command:
+        cmd: >-
+          bash {{ playbook_dir }}/../../scripts/redact-config.sh
+          {{ _config_dir }} {{ _instance }}
+      register: _cfg_dump
+      changed_when: false
+      failed_when: false
+      # The script parses YAML with PyYAML before Ansible is involved. The interpreter
+      # running this playbook is the ansible venv's, which has it by construction — handing
+      # it over removes the whole class of "no python3 with PyYAML found" failures on a
+      # host whose distro python lacks the module.
+      environment:
+        PYTHON: "{{ ansible_playbook_python }}"
+
+    # The script exits non-zero for "nothing matched" AND for any genuine error, so the
+    # message has to carry what it actually said. Reporting a broken interpreter as
+    # "no config file for that instance" sends the reader looking in the wrong place.
+    - name: Fail when the config could not be read
+      ansible.builtin.fail:
+        msg: "{{ _reason }}{{ _detail }}"
+      vars:
+        _reason: >-
+          {{ ('No config file for instance ' ~ _instance ~ '. Run Get Config with no '
+              ~ 'instance to list everything that is authored, or Configure App to '
+              ~ 'create it.')
+             if _instance | length > 0
+             else ('config/ holds no authored files. Run rundeck/bootstrap-rundeck.sh on '
+                   ~ 'the Proxmox node to author proxmox.yml and infrastructure.yml.') }}
+        _detail: >-
+          {{ ('  [redact-config.sh: ' ~ _cfg_dump.stderr | trim ~ ']')
+             if _cfg_dump.stderr | default('') | trim | length > 0 else '' }}
+      when: _cfg_dump.rc != 0
+
+    - name: Config (secrets redacted)
+      ansible.builtin.debug:
+        msg: "{{ _cfg_dump.stdout | split('\n') }}"
+
+    # The archive is the off-host copy on demand: download it and keep it wherever you
+    # like. It carries the tree verbatim — comments, .backups/ history and
+    # .generated/facts.yml — so it is a genuine restore point, which is exactly why it
+    # is secret-bearing and the log above is not.
+    - name: Write a downloadable archive
+      when: _archive
+      block:
+        - name: Ensure the artifacts directory exists
+          ansible.builtin.file:
+            path: "{{ (playbook_dir ~ '/../../../artifacts') | realpath }}"
+            state: directory
+            mode: "0700"
+
+        - name: Set the archive path
+          ansible.builtin.set_fact:
+            _cfg_archive: >-
+              {{ (playbook_dir ~ '/../../../artifacts') | realpath }}/config-{{
+                 now(fmt='%Y%m%dT%H%M%S') }}.tar.gz
+
+        - name: Create the archive
+          community.general.archive:
+            path: "{{ _config_dir }}"
+            dest: "{{ _cfg_archive }}"
+            format: gz
+            mode: "0600"
+
+        - name: Report the archive
+          ansible.builtin.debug:
+            msg:
+              - "Archive: {{ _cfg_archive }}  (on the runner)"
+              - "This file contains REAL secrets — the log above is redacted, it is not."
+              - >-
+                Neither Rundeck OSS nor Semaphore serves it as a download, so fetch it
+                over scp if you want it off the host. The runner is a homelab-infra
+                tagged guest, so PBS backs this file up with the rest of it.

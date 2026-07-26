@@ -11,6 +11,17 @@
 #   config/proxmox.yml        top-level `proxmox:` (the current config model)
 #   user-vars.yml             `homelabinfra_config: {proxmox: ...}` (legacy back-compat)
 #
+# The token secret is read from the environment first, the file second. The recommended
+# shape (slice 010) is a config/proxmox.yml with `api_token_secret` absent entirely and
+# PROXMOX_API_TOKEN supplied by Rundeck Key Storage or the Semaphore environment, so the
+# platform's most privileged credential never lands in a file. These env vars override
+# the file when both are present:
+#
+#   PROXMOX_API_TOKEN         the token secret            (file: proxmox.api_token_secret)
+#   PROXMOX_API_TOKEN_ID      the token id                (file: proxmox.api_token_id)
+#   PROXMOX_API_USER          the owning user             (file: proxmox.api_user)
+#   PROXMOX_API_HOST/_PORT    the endpoint                (file: proxmox.api_host/api_port)
+#
 # Usage:  with-proxmox-env.sh <proxmox-config.yml> <ansible-command> [args...]
 # Example (from ansible/), and the form every Rundeck job step uses:
 #   bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
@@ -25,45 +36,46 @@ fi
 vars_file="$1"; shift
 [ -f "$vars_file" ] || { echo "ERROR: proxmox config file not found: $vars_file" >&2; exit 1; }
 
-# Parsing the config needs PyYAML, which a distro's bare python3 usually lacks — the
-# interpreter that has it is the one in the ansible venv. "$1" is the ansible command we
-# are about to exec, so its sibling python3 is that venv's interpreter. Prefer an explicit
-# $PYTHON, then that sibling, then whatever python3 is on PATH; take the first that
-# actually imports yaml so a missing module fails here with a clear message.
-py_bin=""
-for _cand in ${PYTHON:-} "$(dirname -- "$1")/python3" python3; do
-  [ -n "$_cand" ] || continue
-  command -v "$_cand" >/dev/null 2>&1 || continue
-  "$_cand" -c 'import yaml' >/dev/null 2>&1 || continue
-  py_bin="$_cand"; break
-done
-[ -n "$py_bin" ] || {
-  echo "ERROR: no python3 with PyYAML found (tried \$PYTHON, $(dirname -- "$1")/python3, python3)" >&2
-  echo "       install PyYAML into the ansible venv, or set PYTHON=/path/to/python3" >&2
-  exit 1
-}
+# "$1" is the ansible command we are about to exec, so its sibling python3 is the ansible
+# venv's interpreter — the one that has PyYAML. Hand it to the shared resolver.
+py_bin="$(bash "$(dirname -- "${BASH_SOURCE[0]}")/resolve-python.sh" "$1")" || exit 1
 
-# Emit `export KEY=VALUE` lines; fail loudly if the proxmox block or a required key is absent.
+# Emit `export KEY=VALUE` lines; fail loudly if a required value is absent from BOTH the
+# environment and the file.
 env_exports="$("$py_bin" - "$vars_file" <<'PY'
-import sys, yaml
+import os, sys, yaml
 with open(sys.argv[1]) as fh:
     data = yaml.safe_load(fh) or {}
 # config/proxmox.yml puts `proxmox:` at the top level; the legacy user-vars file wraps
 # it in `homelabinfra_config:`. Take whichever one carries the connection keys.
 prox = (data.get("proxmox") or {}) or ((data.get("homelabinfra_config") or {}).get("proxmox") or {})
-missing = [k for k in ("api_host", "api_token_id", "api_token_secret") if not prox.get(k)]
+
+def pick(env_name, file_key, default=None):
+    """Environment wins over the file; the file wins over the default."""
+    return os.environ.get(env_name) or prox.get(file_key) or default
+
+resolved = {
+    "PROXMOX_API_HOST":         pick("PROXMOX_API_HOST", "api_host"),
+    "PROXMOX_API_PORT":         pick("PROXMOX_API_PORT", "api_port", 8006),
+    "PROXMOX_API_USER":         pick("PROXMOX_API_USER", "api_user", "root@pam"),
+    "PROXMOX_API_TOKEN_ID":     pick("PROXMOX_API_TOKEN_ID", "api_token_id"),
+    "PROXMOX_API_TOKEN_SECRET": pick("PROXMOX_API_TOKEN", "api_token_secret"),
+}
+missing = [k for k, v in resolved.items() if not v]
 if missing:
-    sys.stderr.write("ERROR: %s missing proxmox key(s): %s\n" % (sys.argv[1], ", ".join(missing)))
+    sys.stderr.write(
+        "ERROR: Proxmox connection incomplete - missing %s\n"
+        "       supply them in %s, or as environment variables\n"
+        "       (the token secret's env var is PROXMOX_API_TOKEN)\n"
+        % (", ".join(sorted(missing)), sys.argv[1]))
     sys.exit(1)
+
 def q(v):  # single-quote-safe shell literal
     return "'" + str(v).replace("'", "'\"'\"'") + "'"
-print("export PROXMOX_API_HOST=%s" % q(prox["api_host"]))
-print("export PROXMOX_API_PORT=%s" % q(prox.get("api_port") or 8006))
-print("export PROXMOX_API_USER=%s" % q(prox.get("api_user") or "root@pam"))
-print("export PROXMOX_API_TOKEN_ID=%s" % q(prox["api_token_id"]))
-print("export PROXMOX_API_TOKEN_SECRET=%s" % q(prox["api_token_secret"]))
+for key, value in resolved.items():
+    print("export %s=%s" % (key, q(value)))
 PY
-)" || { echo "ERROR: failed to parse Proxmox connection from $vars_file" >&2; exit 1; }
+)" || { echo "ERROR: failed to resolve the Proxmox connection from $vars_file" >&2; exit 1; }
 
 eval "$env_exports"
 exec "$@"

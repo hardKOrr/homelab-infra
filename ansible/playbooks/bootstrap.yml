@@ -16,12 +16,15 @@
 #   6. Grafana stack — Prometheus + Grafana
 #   7. PBS           — Proxmox Backup Server (VM)
 #
-# TWO-PASS FLOW (Vaultwarden chicken-and-egg):
-#   Pass 1: Vaultwarden deploys, its admin token is printed to console ONCE.
-#           Bootstrap then halts at the token gate with paste-and-re-run instructions.
-#   Pass 2: user has saved the token (config/infrastructure.yml vaultwarden.admin_token,
-#           or VAULTWARDEN_ADMIN_TOKEN env var); the gate passes and bootstrap continues
-#           from step 2. Every step is idempotent, so the Vaultwarden re-run is a no-op.
+# ONE PASS, NO HUMAN IN THE LOOP (slice 013):
+#   Vaultwarden deploys first and has no prior secret to authenticate with — the
+#   chicken-and-egg this playbook has to solve. Its admin token is generated during
+#   the deploy and written to the controller-side sink
+#   (tasks/vaultwarden/token-sink.yml); the gate below reads it back and the run
+#   continues straight into step 2. Nothing is pasted and nothing is re-run.
+#
+#   The gate still fails hard if no token is readable — that means the sink write
+#   failed, and the role prints the token in exactly that case so it is not lost.
 #
 # Re-running after any failure is safe — each step finds-or-creates its guest and
 # re-applies config without destructive operations.
@@ -29,6 +32,27 @@
 # Each app playbook records its own service registry key in its Play 3, before it
 # wires. Bootstrap therefore only orders the imports — it does not write facts on
 # their behalf — and deploying any one app standalone registers it identically.
+
+# ── Play 0: Fail at the front door ────────────────────────────────────────────
+# config-doctor validates the whole authored set in one pass and names every missing key
+# by file and key path. It runs FIRST so an incomplete config aborts here, before
+# Vaultwarden provisions anything — a missing key used to surface as a stack trace
+# somewhere mid-provision, which is the expensive place to learn it.
+#
+# lab-run.sh runs the same check before every job, so on a UI-driven run this play is a
+# second, redundant pass. It stays because a bare CLI run has no lab-run.sh in front of
+# it, and this is the playbook where the cost of a late failure is highest.
+- name: Bootstrap | Validate authored config
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Run config-doctor
+      ansible.builtin.import_tasks: ../tasks/config/run-doctor.yml
+      vars:
+        doctor_script_dir: "{{ playbook_dir }}/../scripts"
+        doctor_config_dir: "{{ playbook_dir }}/../../config"
+
 
 # ── Play 1: Load + validate platform config ───────────────────────────────────
 - name: Bootstrap | Load platform config
@@ -78,27 +102,58 @@
   hosts: localhost
   gather_facts: false
   tasks:
-    # Pass 1 ends here by design: the halt is a hard fail so Semaphore/Rundeck
-    # surface the job as "needs attention", with the instructions in the output.
-    # Ntfy cannot carry this message — it does not exist until step 2.
-    - name: Halt until the Vaultwarden admin token is saved (two-pass bootstrap)
-      ansible.builtin.assert:
-        that: >-
-          (lookup('ansible.builtin.env', 'VAULTWARDEN_ADMIN_TOKEN') | default('') | length > 0)
-          or (homelabinfra_config.infrastructure.vaultwarden.admin_token | default('') | length > 0)
-        success_msg: "Vaultwarden admin token found — continuing bootstrap."
-        fail_msg: |
-          BOOTSTRAP PASS 1 COMPLETE — Vaultwarden is deployed, but its admin token
-          is not saved yet, and every later step needs it to store secrets.
+    # The Vaultwarden deploy above wrote the generated token to the sink, so this
+    # reads back what it just stored and the run continues (slice 013). The gate
+    # remains, rather than being deleted, because it is the one place that proves the
+    # token reached durable storage before six more services depend on it.
+    - name: Resolve the admin token sink
+      ansible.builtin.import_tasks: ../tasks/vaultwarden/token-sink.yml
+      vars:
+        vaultwarden_token_config_dir: "{{ playbook_dir }}/../../config"
 
-          1. Copy the admin token printed above (task "FIRST BOOTSTRAP — save this
-             admin token now").
-          2. Save it in config/infrastructure.yml:
-               vaultwarden:
-                 admin_token: "<token>"
-             (or set the VAULTWARDEN_ADMIN_TOKEN env var on this Semaphore/Rundeck job).
-          3. Re-run this bootstrap job. It is idempotent — pass 2 skips what is
-             already deployed and continues from step 2 (Ntfy).
+    - name: Resolve the effective admin token
+      ansible.builtin.set_fact:
+        _bootstrap_vw_token: >-
+          {{ lookup('ansible.builtin.env', 'VAULTWARDEN_ADMIN_TOKEN')
+             | default(homelabinfra_config.infrastructure.vaultwarden.admin_token
+                       | default(''), true)
+             | default(vaultwarden_token_stored, true) }}
+      no_log: true
+
+    # A hard fail, so Semaphore/Rundeck surface the job as "needs attention" with the
+    # instructions in the output. Ntfy cannot carry this message — it does not exist
+    # until step 2. Reaching this now means the sink write failed, which is rare and
+    # is why the role prints the token in that case and only that case.
+    - name: Halt if no Vaultwarden admin token is available
+      ansible.builtin.assert:
+        that: _bootstrap_vw_token | length > 0
+        success_msg: "Vaultwarden admin token available — continuing bootstrap."
+        fail_msg: |
+          Vaultwarden is deployed, but its admin token is not readable from any
+          source, and every later step needs it to store secrets.
+
+          Expected sink: {{ vaultwarden_token_sink }}
+
+          If the Vaultwarden deploy above printed a token, save it now — either in
+          config/infrastructure.yml under vaultwarden.admin_token, or as the
+          VAULTWARDEN_ADMIN_TOKEN env var on this Semaphore/Rundeck job — and re-run.
+          Bootstrap is idempotent: it skips what is already deployed.
+
+          If nothing was printed, the guest already had a token whose plaintext is
+          lost. Reset it: clear ADMIN_TOKEN from /etc/vaultwarden.env on the
+          Vaultwarden guest, then re-run this job to generate a fresh one.
+
+    # Later plays read the merged config off localhost, so put the resolved token
+    # where they expect it. Without this, a one-pass run would have the token in the
+    # sink but not in homelabinfra_config, and slice 014's vault writes would not see
+    # it until the next job picked it up from the environment.
+    - name: Publish the admin token into the merged config for later steps
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config
+             | combine({'infrastructure': {'vaultwarden':
+                        {'admin_token': _bootstrap_vw_token}}}, recursive=True) }}
+      no_log: true
 
 
 # ── Step 2: Ntfy — notification hub ───────────────────────────────────────────

@@ -1,0 +1,72 @@
+# Reimport Jobs — re-import rundeck/jobs/*.yaml from the refreshed checkout.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/reimport-jobs.yaml
+#
+# This job exists because lab-run's checkout refresh solves only half of "the runner runs
+# current master". The refresh keeps the PLAYBOOKS current; job DEFINITIONS live in
+# Rundeck's database and only change when something imports them. The Rundeck git SCM
+# plugin is deliberately not used — it syncs job definitions and nothing else, it makes
+# UI edits and repo imports fight each other, and it was never going to refresh the
+# working tree the steps execute. One-way import from the repo is the only path, and this
+# job is that path once the bootstrap script has run.
+#
+# Job UUIDs in the repo are stable, so this updates jobs in place rather than duplicating
+# them. Jobs deleted from the repo are NOT removed here; delete those in the UI.
+
+- id: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
+  uuid: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
+  name: Reimport Jobs
+  group: Config
+  description: |-
+    Pull the latest job definitions out of the repo and import them into this project. Run it after a change to rundeck/jobs/*.yaml reaches the tracked branch — a new job, a new option, a changed description. Playbook changes do NOT need this: every job refreshes the checkout before it runs. Updates jobs in place by UUID and never duplicates them; jobs removed from the repo stay until you delete them in the UI.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Import rundeck/jobs/*.yaml over the REST API
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          # Read the same paths lab-run reads, so this file carries no path either.
+          # shellcheck disable=SC1091
+          . /etc/homelab-infra/lab-run.env
+          # RUNDECK_URL / _PROJECT / _API_TOKEN were written into the checkout's .env by
+          # rundeck/bootstrap-rundeck.sh — the job authenticates to its own Rundeck.
+          # shellcheck disable=SC1091
+          . "$LAB_REPO/.env"
+
+          : "${RUNDECK_API_TOKEN:?no RUNDECK_API_TOKEN in $LAB_REPO/.env — re-run bootstrap-rundeck.sh}"
+          RUNDECK_URL="${RUNDECK_URL:-http://localhost:4440}"
+          RUNDECK_PROJECT="${RUNDECK_PROJECT:-homelab-infra}"
+
+          # Refresh the checkout first: importing the job definitions that are already on
+          # disk would defeat the point of the job.
+          if [ "${LAB_REFRESH:-1}" != "0" ]; then
+            git -C "$LAB_REPO" fetch --quiet --prune origin "${LAB_BRANCH:-master}"
+            git -C "$LAB_REPO" reset --hard --quiet "origin/${LAB_BRANCH:-master}"
+          fi
+          echo "[reimport] revision $(git -C "$LAB_REPO" log --oneline -1)"
+
+          imported=0; failed=0
+          for job in "$LAB_REPO"/rundeck/jobs/*.yaml; do
+            [ -f "$job" ] || continue
+            resp="$(curl -s -m 60 -X POST \
+              -H "X-Rundeck-Auth-Token: $RUNDECK_API_TOKEN" \
+              -H "Accept: application/json" -H "Content-Type: application/yaml" \
+              --data-binary "@$job" \
+              "$RUNDECK_URL/api/47/project/$RUNDECK_PROJECT/jobs/import?fileformat=yaml&dupeOption=update&uuidOption=preserve")"
+            if printf '%s' "$resp" | grep -q '"succeeded"'; then
+              imported=$((imported + 1))
+              echo "[reimport] ok      $(basename "$job")"
+            else
+              failed=$((failed + 1))
+              echo "[reimport] FAILED  $(basename "$job"): $resp"
+            fi
+          done
+          echo "[reimport] $imported imported, $failed failed"
+          [ "$failed" -eq 0 ]

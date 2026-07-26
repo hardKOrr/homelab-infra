@@ -1,0 +1,113 @@
+# Configure App — write config/apps/<instance>.yml from this survey.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/configure-app.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# ONE job for every app, deliberately — not one job per app. Which app an instance file
+# belongs to is decided by which Deploy job you run against it, so this job does not need
+# to know, and the job list gains one entry rather than N. The common keys are named
+# below; everything else goes in extra_yaml.
+
+- id: 3df2e225-6d36-5dac-bed2-3875eba8ae1d
+  uuid: 3df2e225-6d36-5dac-bed2-3875eba8ae1d
+  name: Configure App
+  group: Config
+  description: |-
+    Create or edit config/apps/<instance>.yml without an SSH session. Every field is an OVERRIDE — anything you leave blank keeps its current value, and anything absent from the file falls through to the app's defaults. The previous content is kept under config/apps/.backups/ and the job log shows a unified diff of exactly what changed. Anything not covered by the fields below goes in Extra YAML.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: 'Instance name. This IS the filename, the guest hostname and the subdomain: lowercase letters, digits and hyphens (e.g. radarr, radarr-4k).'
+    required: true
+  - name: stack
+    description: Docker apps only — which shared stack host to place this app on (e.g. media_stack). Leave blank for native LXC apps and to keep the current value.
+    required: false
+  - name: network
+    description: Native LXC apps only — a named network from config/proxmox.yml. Blank keeps the current value.
+    required: false
+  - name: vmid
+    description: Explicit Proxmox VMID. Required only on a dhcp network; otherwise leave blank and one is allocated.
+    required: false
+  - name: cores
+    description: vCPUs. Blank keeps the current value (or the app default).
+    required: false
+  - name: memory
+    description: RAM in MB. Blank keeps the current value (or the app default).
+    required: false
+  - name: disk
+    description: Root disk in GB. Blank keeps the current value (or the app default).
+    required: false
+  - name: port
+    description: Port the app listens on. Set this only when running two instances of the same app on one stack host.
+    required: false
+  - name: subdomain
+    description: 'Hostname on the lab domain. Blank means: use the instance name.'
+    required: false
+  - name: identity
+    description: 'How Authentik treats this app. none = no Authentik object; catalog = a launch tile, the app keeps its own login; oidc = the app signs in through Authentik; forward_auth = Authentik login enforced at the reverse proxy. Blank keeps the current value.'
+    required: false
+    values: ['', 'none', 'catalog', 'oidc', 'forward_auth']
+    enforced: true
+  - name: proxy
+    description: Which reverse proxy publishes this app. Blank keeps the current value.
+    required: false
+    values: ['', 'internal', 'external']
+    enforced: true
+  - name: estate
+    description: Multi-domain labs only — the named estate from infrastructure.yml this app belongs to. Blank uses the default estate.
+    required: false
+  - name: extra_yaml
+    description: "Any other instance keys, as YAML. Deep-merged last, so it wins over the fields above. Example:  app:\\n    root_folder: /media/movies"
+    required: false
+  - name: reset
+    description: false merges over the existing file (the normal case). true discards it and writes only what this survey specifies — the old content is still kept under .backups/.
+    required: true
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/configure-app.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          # Blank options are omitted entirely rather than passed as empty strings, so
+          # the playbook can tell "not supplied" from "supplied as empty".
+          ARGS=()
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          for opt in stack network vmid cores memory disk port subdomain identity proxy estate; do
+            var="RD_OPTION_$(printf '%s' "$opt" | tr '[:lower:]' '[:upper:]')"
+            value="${!var:-}"
+            [ -n "$value" ] && ARGS+=(-e "$opt=$value")
+          done
+          # extra_yaml is multi-line free text, so it goes through a file rather than a
+          # -e string: newlines in an --extra-vars argument are not survivable.
+          if [ -n "${RD_OPTION_EXTRA_YAML:-}" ]; then
+            EXTRA="$(mktemp)"
+            trap 'rm -f "$EXTRA"' EXIT
+            printf 'extra_yaml: |\n' > "$EXTRA"
+            printf '%s\n' "$RD_OPTION_EXTRA_YAML" | sed 's/^/  /' >> "$EXTRA"
+            ARGS+=(-e "@$EXTRA")
+          fi
+          : "${RD_OPTION_RESET:?reset is required}"
+          ARGS+=(-e "reset=$RD_OPTION_RESET")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          #
+          # LAB_DOCTOR=0: this job is how an operator FIXES a config the doctor is
+          # complaining about, so it must not refuse to run because the doctor complains.
+          export LAB_DOCTOR=0
+          exec lab-run playbooks/maintenance/configure-app.yml "${ARGS[@]}"

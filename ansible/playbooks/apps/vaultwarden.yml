@@ -9,10 +9,10 @@
 # It becomes the hostname, Caddy subdomain, Authentik app slug, and Uptime Kuma monitor name.
 # If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
-# Bootstrap chicken-and-egg: on first deploy the admin token is generated and
-# printed to console (role task "FIRST BOOTSTRAP — save this admin token now");
-# the user pastes it into config/infrastructure.yml. Re-runs read it from there
-# (or the VAULTWARDEN_ADMIN_TOKEN env var) and never print again.
+# Bootstrap chicken-and-egg: on first deploy the admin token is generated and written
+# to the controller-side sink (tasks/vaultwarden/token-sink.yml), which bootstrap reads
+# back to continue in one pass — no paste, no re-run (slice 013). Re-runs resolve it
+# from the VAULTWARDEN_ADMIN_TOKEN env var, config/infrastructure.yml or that sink.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
@@ -268,5 +268,6 @@
         notify_title: "Vaultwarden deployed ({{ instance }})"
         notify_message: >-
           Secrets store {{ instance }} is running at
-          https://{{ instance }}.{{ homelabinfra_infra.domain }}.
-          Its admin panel is at /admin, using the admin token saved during bootstrap.
+          https://{{ instance }}.{{ homelabinfra_infra.domain | default('the configured domain') }}.
+          Its admin panel is at /admin, using the admin token stored on the runner
+          during bootstrap.
