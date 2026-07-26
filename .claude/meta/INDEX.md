@@ -15,7 +15,7 @@ Gates (both current as of 2026-07-26): `wsl bash -lc 'bash .claude/gate/lint.sh'
 143 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
 clean. **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 27 built · 2 open.**
+Counts: **12 done · 27 built · 3 open.**
 
 ---
 
@@ -92,18 +92,20 @@ Carried caveats:
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
   restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
 
-## Open (2)
+## Open (3)
 
-Both raised by the operator on 2026-07-26, reviewing the Rundeck runner handover. Both are
-design defects in shipped code, not new features.
+All three raised by the operator on 2026-07-26, reviewing the Rundeck runner handover. All
+are design defects in shipped code, not new features.
 
 | # | Slice | Why now |
 |---|---|---|
 | 010 | [Config provenance](010-config-provenance/README.md) | The whole one-click platform runs off `config/proxmox.yml`, hand-written on one LXC, unversioned, unbacked-up, root token in plaintext. Nothing creates, validates or can reconstruct it. |
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
+| 012 | [Runner onboarding](012-runner-onboarding/README.md) | The handover is 14 manual steps against a promise of two, one of them (refreshing the runner's checkout) documented nowhere and owned by nothing. No README at the repository root. |
 
-**010 gates the shareability claim** and **011 gates the first provisioning run** — the
-first deploy that allocates an address bakes in whatever the current model produces.
+**010 and 012 both gate the shareability claim** and **011 gates the first provisioning
+run** — the first deploy that allocates an address bakes in whatever the current model
+produces.
 
 ## Recommended order
 
@@ -113,9 +115,13 @@ first deploy that allocates an address bakes in whatever the current model produ
 2. **010 alongside it** — same edit surface (`config/proxmox.yml`, `config.example`,
    CONTRACT.md §2), and it removes the plaintext root token from the runner while the lab
    is still empty enough for a mistake to cost nothing.
-3. **Live bootstrap run** — one event converts 24 of the `built` slices. Still the largest
+3. **012 with 010** — eight of 012's fourteen manual steps are 010's credentials seen from
+   the operator's side. 010 decides where a secret lives; 012 decides who puts it there.
+   Splitting them means editing `bootstrap-rundeck.sh`, both UI job sets and both READMEs
+   twice.
+4. **Live bootstrap run** — one event converts 24 of the `built` slices. Still the largest
    single risk-reducer in the backlog, but see the parallel-instance caveat below.
-4. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
+5. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
    writing `media.<instance>` on deploy closes the loop; until then media apps join the
    wiring through the `app.media_kind` discovery path.
 
