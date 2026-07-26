@@ -29,6 +29,8 @@
 #                  because the refresh is a `git reset --hard`
 #                  It also refuses outright when the tree has uncommitted tracked changes.
 #   LAB_DOCTOR     0 disables the config check     (default: 1)
+#   LAB_SSH_KEY    private key used for guests and delegated PVE node commands
+#                  (default: unset; bootstrapped runner supplies it)
 #   LAB_ENV_FILE   env file to source              (default: /etc/homelab-infra/lab-run.env)
 #   LAB_SECRETS_FILE  operator-supplied secrets    (default: <env dir>/secrets.env)
 #   LAB_SECRETS_DIR   platform-written secrets     (default: <env dir>/secrets.d)
@@ -52,7 +54,7 @@ if [ -r "$LAB_ENV_FILE" ]; then
   _lab_configured=1
   while IFS='=' read -r _key _value; do
     case "$_key" in
-      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR)
+      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR|LAB_SSH_KEY)
         [ -n "${!_key:-}" ] || printf -v "$_key" '%s' "$_value" ;;
     esac
   done < <(grep -E '^LAB_[A-Z_]+=' "$LAB_ENV_FILE" || true)
@@ -95,6 +97,10 @@ LAB_REPO="${LAB_REPO:-$_self_repo}"
 LAB_VENV="${LAB_VENV:-/opt/homelab-ansible}"
 LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
+if [ -n "${LAB_SSH_KEY:-}" ]; then
+  [ -r "$LAB_SSH_KEY" ] || die "LAB_SSH_KEY is not readable: $LAB_SSH_KEY"
+  export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$LAB_SSH_KEY}"
+fi
 
 # THE REFRESH DEFAULTS TO OFF, AND ONLY A BOOTSTRAPPED RUNNER TURNS IT ON.
 #
@@ -142,6 +148,7 @@ if [ "$LAB_REFRESH" = "1" ] && [ -z "${LAB_REFRESHED:-}" ]; then
     git -C "$LAB_REPO" checkout --quiet -B "$LAB_BRANCH" "origin/$LAB_BRANCH"
     git -C "$LAB_REPO" reset --hard --quiet "origin/$LAB_BRANCH"
     export LAB_REFRESHED=1 LAB_REPO LAB_VENV LAB_BRANCH LAB_REFRESH LAB_DOCTOR
+    export LAB_SSH_KEY="${LAB_SSH_KEY:-}"
     exec bash "$LAB_REPO/ansible/scripts/lab-run.sh" "$@"
   fi
   log "LAB_REPO is not a git checkout — skipping refresh"

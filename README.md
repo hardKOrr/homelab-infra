@@ -20,8 +20,8 @@ the rest of the documentation obvious.
 |---|---|---|
 | **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
 | **Where** | as root on a Proxmox node | in the Rundeck/Semaphore UI |
-| **Builds** | the machine that runs the automation | the services the automation manages |
-| **Produces** | an LXC with Rundeck, Ansible, this repo, your Proxmox credential, your config and every job imported | Vaultwarden, Ntfy, Caddy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
+| **Builds** | the machine that runs the automation, then invokes Ansible for the preliminary secret store | the remaining services the automation manages |
+| **Produces** | an LXC with Rundeck, Ansible, this repo, your Proxmox credential, your config and every job imported; plus the tagged Vaultwarden LXC | reconciled Vaultwarden, Ntfy, Caddy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
 | **Run it** | once, by hand | once, by clicking |
 
 There is no manual step between them.
@@ -50,7 +50,10 @@ Proxmox user with a scoped role, mints that user's API token and puts it straigh
 Rundeck Key Storage, generates the SSH key the platform will use to reach its guests,
 writes `config/proxmox.yml` and `config/infrastructure.yml`, creates the Rundeck project,
 imports every job, and tags its own container so the platform manages it like any other
-guest it created.
+guest it created. Its last deployment step invokes the normal Vaultwarden app playbook
+inside the new runner, so the command returns with the secret-store LXC online and tagged
+for inventory adoption. Set `DEPLOY_VAULTWARDEN=0` only when you deliberately need a
+runner-only recovery.
 
 Re-running it converges: it rotates no credential and overwrites no answer you already
 gave.
@@ -59,10 +62,10 @@ gave.
 
 Open the Rundeck URL it printed and run **Bootstrap Platform**.
 
-That deploys the baseline in dependency order — Vaultwarden first (every platform secret
-lives there afterwards), then Ntfy, the reverse proxy, Authentik, Uptime Kuma, Prometheus
-+ Grafana and PBS. Each step records its own connection details before the next one needs
-them, so the run is resumable: if something fails, fix it and run the job again.
+That reconciles the already-tagged Vaultwarden LXC first—using the same idempotent
+playbook that created it—then deploys Ntfy, the reverse proxy, Authentik, Uptime Kuma,
+Prometheus + Grafana and PBS. Each step records its own connection details before the next
+one needs them, so the run is resumable: if something fails, fix it and run the job again.
 
 ### 3. Deploy things
 
