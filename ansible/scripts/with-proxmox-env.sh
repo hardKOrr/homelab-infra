@@ -25,8 +25,26 @@ fi
 vars_file="$1"; shift
 [ -f "$vars_file" ] || { echo "ERROR: proxmox config file not found: $vars_file" >&2; exit 1; }
 
+# Parsing the config needs PyYAML, which a distro's bare python3 usually lacks — the
+# interpreter that has it is the one in the ansible venv. "$1" is the ansible command we
+# are about to exec, so its sibling python3 is that venv's interpreter. Prefer an explicit
+# $PYTHON, then that sibling, then whatever python3 is on PATH; take the first that
+# actually imports yaml so a missing module fails here with a clear message.
+py_bin=""
+for _cand in ${PYTHON:-} "$(dirname -- "$1")/python3" python3; do
+  [ -n "$_cand" ] || continue
+  command -v "$_cand" >/dev/null 2>&1 || continue
+  "$_cand" -c 'import yaml' >/dev/null 2>&1 || continue
+  py_bin="$_cand"; break
+done
+[ -n "$py_bin" ] || {
+  echo "ERROR: no python3 with PyYAML found (tried \$PYTHON, $(dirname -- "$1")/python3, python3)" >&2
+  echo "       install PyYAML into the ansible venv, or set PYTHON=/path/to/python3" >&2
+  exit 1
+}
+
 # Emit `export KEY=VALUE` lines; fail loudly if the proxmox block or a required key is absent.
-env_exports="$(python3 - "$vars_file" <<'PY'
+env_exports="$("$py_bin" - "$vars_file" <<'PY'
 import sys, yaml
 with open(sys.argv[1]) as fh:
     data = yaml.safe_load(fh) or {}
