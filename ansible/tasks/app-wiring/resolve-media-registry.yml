@@ -1,0 +1,132 @@
+---
+# Build `media_registry` — the app-to-app wiring view of the media stack.
+# Called from playbooks/stacks/wire-media-stack.yml (Play 1), on localhost.
+#
+# Two sources, in precedence order:
+#
+#   1. `homelabinfra_infra.media` — the registry key media app deploys write via
+#      tasks/bootstrap/write-generated-facts.yml (ansible/vars/CONTRACT.md §3).
+#      Authoritative: an entry here is used as-is.
+#
+#   2. Discovery from `config/apps/<instance>.yml` — any instance file declaring
+#      `app.media_kind` joins the registry. Its host comes from `app.host` when
+#      declared, else from the Proxmox dynamic inventory entry for the instance
+#      plus `app.port`. This is the path that works before media app roles exist,
+#      and the path that lets a lab wire apps it did not deploy itself.
+#
+# Entries still missing an `api_key` after both sources are handed to Play 2,
+# which reads the key out of the guest's config.xml (*arr apps generate their own
+# API key on first start, so it is not knowable at deploy time). Only `arr` and
+# `indexer_manager` kinds are discoverable that way — every other kind must carry
+# its credential in the registry or its instance file.
+#
+# Outputs (localhost facts):
+#   media_registry        {<instance>: {app, host, api_key, ...}} — complete entries
+#   media_registry_needs_key  {<instance>: {...}} — entries handed to Play 2
+#   media_registry_skipped    [{instance, reason}] — reported, never fatal
+#
+# Nothing here fails a run: an empty media stack resolves to an empty registry and
+# the playbook no-ops (slice 504 acceptance 1).
+
+- name: Media registry | Seed from the infrastructure registry
+  ansible.builtin.set_fact:
+    _mw_from_facts: "{{ homelabinfra_infra.media | default({}, true) }}"
+    _mw_apps_dir: "{{ playbook_dir }}/../../../config/apps"
+
+- name: Media registry | List instance config files
+  ansible.builtin.set_fact:
+    _mw_instance_files: "{{ query('ansible.builtin.fileglob', _mw_apps_dir ~ '/*.yml') | sort }}"
+
+- name: Media registry | Collect instance files declaring app.media_kind
+  ansible.builtin.set_fact:
+    _mw_candidates: >-
+      {{ _mw_candidates | default({})
+         | combine({(item | basename | splitext | first): _mw_file_config})
+         if _mw_file_config.app.media_kind | default('') | length > 0
+         else _mw_candidates | default({}) }}
+  vars:
+    _mw_file_config: "{{ (lookup('ansible.builtin.file', item) | from_yaml) or {} }}"
+  loop: "{{ _mw_instance_files }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: Media registry | Build discovered entries
+  ansible.builtin.set_fact:
+    _mw_discovered: >-
+      {{ _mw_discovered | default({})
+         | combine({item.key: {'app': item.value.app.media_kind,
+                               'host': _mw_host,
+                               'config_path': item.value.app.config_path | default(''),
+                               'api_key': item.value.app.api_key | default('')}
+                    | dict2items | rejectattr('value', 'equalto', '') | items2dict}) }}
+  vars:
+    # An instance file may name the endpoint outright (an app this lab did not
+    # deploy); otherwise the dynamic inventory knows where the guest lives.
+    _mw_inventory_host: "{{ hostvars[item.key].ansible_host | default('') }}"
+    _mw_host: >-
+      {{ item.value.app.host
+         | default(('http://' ~ _mw_inventory_host ~ ':' ~ (item.value.app.port | default('')))
+                   if _mw_inventory_host | length > 0 else '', true) }}
+  loop: "{{ _mw_candidates | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+# Facts win over discovery: a deployed app's recorded endpoint is authoritative,
+# and a discovered entry only fills in what the registry does not have.
+- name: Media registry | Merge both sources
+  ansible.builtin.set_fact:
+    _mw_merged: "{{ _mw_discovered | default({}) | combine(_mw_from_facts, recursive=True) }}"
+
+- name: Media registry | Partition by completeness
+  ansible.builtin.set_fact:
+    # Only *arr-shaped apps are held back for key discovery. Every other kind
+    # carries a different credential (qBittorrent's user/password, Deemix's arl)
+    # or none at all, so a missing api_key is not a reason to hold it back.
+    media_registry: >-
+      {{ _mw_usable | dict2items | rejectattr('key', 'in', _mw_needs_key.keys() | list)
+         | items2dict }}
+    media_registry_needs_key: "{{ _mw_needs_key }}"
+    media_registry_skipped: >-
+      {{ _mw_merged | dict2items
+         | rejectattr('key', 'in', _mw_usable.keys() | list)
+         | map(attribute='key') | list }}
+  vars:
+    # Usable = a known kind with a resolvable endpoint. Anything else is reported
+    # by name and dropped; a half-declared app must not fail the whole wire run.
+    _mw_usable: >-
+      {{ _mw_merged | dict2items
+         | selectattr('value.app', 'defined')
+         | selectattr('value.app', 'in', media_wiring.kinds.keys() | list)
+         | selectattr('value.host', 'defined')
+         | rejectattr('value.host', 'equalto', '')
+         | items2dict }}
+    _mw_key_discoverable: >-
+      {{ media_wiring.kinds | dict2items
+         | selectattr('value.role', 'in', ['arr', 'indexer_manager'])
+         | map(attribute='key') | list }}
+    _mw_needs_key: >-
+      {{ _mw_usable | dict2items | selectattr('value.api_key', 'undefined')
+         | selectattr('value.app', 'in', _mw_key_discoverable) | items2dict }}
+
+- name: Media registry | Report unusable entries
+  ansible.builtin.debug:
+    msg: >-
+      Skipping {{ item }} — its media entry has no recognised `app` kind
+      (one of {{ media_wiring.kinds.keys() | list | join(', ') }}) or no resolvable
+      `host`. Declare app.host / app.port in config/apps/{{ item }}.yml,
+      or record the endpoint in config/.generated/facts.yml under media.
+  loop: "{{ media_registry_skipped }}"
+
+# Play 2 reads config.xml on these guests. add_host so the play targets them by
+# group; an empty group means Play 2 is skipped entirely.
+- name: Media registry | Hand key-less apps to the discovery play
+  ansible.builtin.add_host:
+    name: "{{ item.key }}"
+    groups: media_discover
+    ansible_host: "{{ item.value.host | ansible.builtin.urlsplit('hostname') }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    mw_config_path: "{{ item.value.config_path | default('') }}"
+  loop: "{{ media_registry_needs_key | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: false

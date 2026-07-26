@@ -1,6 +1,6 @@
 # 601 — Rundeck job definitions
 
-**Status:** open
+**Status:** built — implemented; awaiting a live `rd jobs load`. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 500 (bootstrap), and ideally most app slices
 **Blocks:** the "import and click" Rundeck experience
 

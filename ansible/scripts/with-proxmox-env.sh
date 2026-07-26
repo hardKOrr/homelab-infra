@@ -7,10 +7,14 @@
 # PROXMOX_API_* via lookup('env', ...) instead; this wrapper fills them from the same user-vars file
 # -e @<file> feeds the playbook, keeping the Proxmox host/token in one place.
 #
-# Usage:  with-proxmox-env.sh <user-vars.yml> <ansible-command> [args...]
-# Example (from ansible/):
-#   bash scripts/with-proxmox-env.sh vars/user-vars.yml \
-#     ansible-inventory -i inventory/proxmox.yml --list
+# Accepts either config file shape:
+#   config/proxmox.yml        top-level `proxmox:` (the current config model)
+#   user-vars.yml             `homelabinfra_config: {proxmox: ...}` (legacy back-compat)
+#
+# Usage:  with-proxmox-env.sh <proxmox-config.yml> <ansible-command> [args...]
+# Example (from ansible/), and the form every Rundeck job step uses:
+#   bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
+#     ansible-playbook -i inventory/ playbooks/bootstrap.yml
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -19,14 +23,16 @@ if [ "$#" -lt 2 ]; then
 fi
 
 vars_file="$1"; shift
-[ -f "$vars_file" ] || { echo "ERROR: user-vars file not found: $vars_file" >&2; exit 1; }
+[ -f "$vars_file" ] || { echo "ERROR: proxmox config file not found: $vars_file" >&2; exit 1; }
 
 # Emit `export KEY=VALUE` lines; fail loudly if the proxmox block or a required key is absent.
 env_exports="$(python3 - "$vars_file" <<'PY'
 import sys, yaml
 with open(sys.argv[1]) as fh:
     data = yaml.safe_load(fh) or {}
-prox = ((data.get("homelabinfra_config") or {}).get("proxmox") or {})
+# config/proxmox.yml puts `proxmox:` at the top level; the legacy user-vars file wraps
+# it in `homelabinfra_config:`. Take whichever one carries the connection keys.
+prox = (data.get("proxmox") or {}) or ((data.get("homelabinfra_config") or {}).get("proxmox") or {})
 missing = [k for k in ("api_host", "api_token_id", "api_token_secret") if not prox.get(k)]
 if missing:
     sys.stderr.write("ERROR: %s missing proxmox key(s): %s\n" % (sys.argv[1], ", ".join(missing)))

@@ -1,0 +1,58 @@
+# Remove App — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/remove-app.yaml
+#
+# Paths match rundeck/bootstrap-rundeck.sh: the repo at /var/lib/rundeck/homelab-infra
+# and ansible-core in the venv at /opt/homelab-ansible. Change REPO/VENV below if you
+# installed elsewhere.
+
+- id: 4db0d8b2-58b0-5a9b-adf0-ee9f2db37ce8
+  uuid: 4db0d8b2-58b0-5a9b-adf0-ee9f2db37ce8
+  name: Remove App
+  group: Apps
+  description: |-
+    Stop an app and unwire it from the reverse proxy, Authentik, Uptime Kuma and DNS. config/apps/<instance>.yml is kept as the restore point; no guest is destroyed.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: App instance name, e.g. radarr-4k
+    required: true
+  - name: app
+    description: Only if the instance name differs from the app name (instance radarr-4k of app radarr). Leave blank otherwise.
+    required: false
+  - name: delete_data
+    description: false keeps volumes and data paths so a re-deploy restores the app; true wipes them
+    required: true
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/remove.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          REPO=/var/lib/rundeck/homelab-infra
+          VENV=/opt/homelab-ansible/bin
+          cd "$REPO/ansible"
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          ARGS=()
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          if [ -n "${RD_OPTION_APP:-}" ]; then
+            ARGS+=(-e "app=$RD_OPTION_APP")
+          fi
+          : "${RD_OPTION_DELETE_DATA:?delete_data is required}"
+          ARGS+=(-e "delete_data=$RD_OPTION_DELETE_DATA")
+
+          # with-proxmox-env.sh exports the PROXMOX_API_* environment the community.proxmox
+          # dynamic inventory reads (it cannot take -e extra vars) from config/proxmox.yml,
+          # the same gitignored file the playbooks load their connection details from.
+          exec bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
+            "$VENV/ansible-playbook" -i inventory/ playbooks/apps/remove.yml "${ARGS[@]}"

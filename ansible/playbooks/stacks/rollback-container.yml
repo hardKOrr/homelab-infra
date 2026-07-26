@@ -8,19 +8,244 @@
 #
 # Semaphore/Rundeck parameters:
 #   stack:       stack host tag (e.g. media_stack)
-#   container:   app instance name / container name (e.g. radarr-4k)
-#   image_tag:   image tag to roll back to (e.g. 5.1.3 or latest-prior)
-#                if omitted, pins to the currently running tag (stops future auto-updates)
+#   container:   app instance name — also the Compose project dir /opt/<container>
+#   image_tag:   image tag to roll back to (e.g. 5.1.3)
+#                if omitted, re-pins the tag already in the Compose file, which
+#                only freezes anything when that tag is a real version. A project
+#                still on `:latest` needs an explicit tag — the play says so in
+#                its output and in the notification.
 #
-# Steps:
-#   1. SSH to the stack host (looked up via tag_<stack> in inventory)
-#   2. Edit the container's image tag in the Compose file to image_tag
-#   3. docker compose pull <container>
-#   4. docker compose up -d <container>
-#   5. Wait for container healthy
-#   6. Notify via Ntfy: "<container> rolled back to <image_tag>"
+# What it does, on the stack host looked up via tag_<stack>:
+#   1. Read /opt/<container>/docker-compose.yml and pick the service to roll back
+#      (the service named <container>, else the project's only/first service)
+#   2. Rewrite that service's image tag in place
+#   3. Pull the rollback image, recreate the service
+#   4. Best-effort health check against app.port from config/apps/<container>.yml
+#   5. Ntfy: "<container> rolled back from <old> to <new>"
+#
+# Idempotent: re-running with the same target tag rewrites nothing and recreates
+# nothing — it converges on the same state and notifies the same way.
 #
 # Note: pinning a tag stops Watchtower from auto-updating that container.
-# To re-enable auto-updates later, re-run the app deploy playbook (restores latest tag).
+# To re-enable auto-updates later, re-run the app deploy playbook — it rewrites
+# docker-compose.yml from the role template, restoring the configured tag.
+#
+# Out of scope: digest-pinned references (repo@sha256:...). Roll those back by
+# editing the Compose file directly.
 
-# TODO: Implement rollback plays
+# ── Play 1: Locate the stack host ──────────────────────────────────────────────
+- name: "Rollback | Locate stack host"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Assert parameters are provided
+      ansible.builtin.assert:
+        that:
+          - stack is defined and stack | length > 0
+          - container is defined and container | length > 0
+        fail_msg: >-
+          Provide the stack tag and container name:
+          -e stack=media_stack -e container=radarr-4k [-e image_tag=5.1.3]
+
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Select the stack host
+      ansible.builtin.set_fact:
+        _rb_stack_hosts: "{{ groups['tag_' ~ stack] | default([]) }}"
+
+    - name: Assert the stack host exists
+      ansible.builtin.assert:
+        that: _rb_stack_hosts | length > 0
+        fail_msg: >-
+          No Proxmox guest is tagged {{ stack }}. Check the stack name — tags are
+          the stack id as written in vars/app-defaults/<app>.yml (e.g. media_stack).
+
+    - name: Add stack host to the rollback group
+      ansible.builtin.add_host:
+        name: "{{ _rb_stack_hosts[0] }}"
+        groups: "rollback_{{ container }}"
+        ansible_host: >-
+          {{ hostvars[_rb_stack_hosts[0]].ansible_host
+             | default(hostvars[_rb_stack_hosts[0]].ansible_default_ipv4.address | default('')) }}
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+
+
+# ── Play 2: Rewrite the tag and recreate the service ───────────────────────────
+# The default() can only fire during --syntax-check — Play 1 has already asserted
+# `container` is defined by the time this pattern is resolved for real.
+- name: "Rollback | Recreate {{ container | default('(no container)') }}"
+  hosts: "rollback_{{ container | default('_container_unset') }}"
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    # Optional: only used for the best-effort health check below. Read on the
+    # controller, not the stack host.
+    - name: Load instance config (optional — health check is skipped without it)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ container }}.yml"
+        name: _rb_instance_config
+      failed_when: false
+
+  vars:
+    _rb_project_dir: "/opt/{{ container }}"
+    _rb_compose_file: "/opt/{{ container }}/docker-compose.yml"
+
+  tasks:
+    - name: Stat the Compose file
+      ansible.builtin.stat:
+        path: "{{ _rb_compose_file }}"
+      register: _rb_compose_stat
+
+    - name: Assert the Compose project exists
+      ansible.builtin.assert:
+        that: _rb_compose_stat.stat.exists
+        fail_msg: >-
+          {{ _rb_compose_file }} does not exist on {{ inventory_hostname }}.
+          `container` must be the app instance name — its Compose project lives
+          at /opt/<instance>/.
+
+    - name: Read the Compose file
+      ansible.builtin.slurp:
+        src: "{{ _rb_compose_file }}"
+      register: _rb_compose_raw
+
+    - name: Parse the Compose file
+      ansible.builtin.set_fact:
+        _rb_compose: "{{ _rb_compose_raw.content | b64decode | from_yaml }}"
+
+    # A single-app project usually has one service; multi-service projects
+    # (app + database) are rolled back on the service that carries the app name.
+    - name: Select the service to roll back
+      ansible.builtin.set_fact:
+        _rb_service: >-
+          {{ container if container in (_rb_compose.services | default({}))
+             else (_rb_compose.services | default({}) | list | first | default('')) }}
+
+    - name: Assert a service was found
+      ansible.builtin.assert:
+        that:
+          - _rb_service | length > 0
+          - _rb_compose.services[_rb_service].image is defined
+        fail_msg: >-
+          {{ _rb_compose_file }} declares no service with an `image:` to roll back.
+
+    # Split repo from tag on the last path segment, so a registry host:port
+    # (registry.lan:5000/app) is not mistaken for a tag.
+    - name: Resolve the current and target image references
+      ansible.builtin.set_fact:
+        _rb_old_ref: "{{ _ref }}"
+        _rb_old_tag: "{{ _tag }}"
+        _rb_new_tag: "{{ image_tag | default(_tag, true) }}"
+        _rb_new_ref: "{{ _repo }}:{{ image_tag | default(_tag, true) }}"
+      vars:
+        _ref: "{{ _rb_compose.services[_rb_service].image }}"
+        _segment: "{{ _ref.split('/') | last }}"
+        _tagged: "{{ (_segment.split(':') | length) > 1 }}"
+        _tag: "{{ (_segment.split(':') | last) if _tagged | bool else 'latest' }}"
+        _repo: >-
+          {{ _ref[:(_ref | length) - (_tag | length) - 1]
+             if _tagged | bool else _ref }}
+
+    - name: Report a no-op freeze on a floating tag
+      ansible.builtin.debug:
+        msg: >-
+          {{ container }} is pinned to {{ _rb_old_ref }} and no image_tag was
+          given, so there is nothing to roll back to. Re-run with
+          -e image_tag=<version> to pin a specific release.
+      when:
+        - image_tag | default('') | length == 0
+        - _rb_old_tag == 'latest'
+
+    - name: Rewrite the image tag in the Compose file
+      ansible.builtin.replace:
+        path: "{{ _rb_compose_file }}"
+        regexp: "{{ _rb_old_ref | regex_escape }}"
+        replace: "{{ _rb_new_ref }}"
+      when: _rb_new_ref != _rb_old_ref
+      register: _rb_rewrite
+
+    - name: Pull the rollback image
+      community.docker.docker_compose_v2_pull:
+        project_src: "{{ _rb_project_dir }}"
+        services: ["{{ _rb_service }}"]
+
+    # recreate: always only when the tag actually moved — a re-run with the same
+    # target tag must not bounce a healthy container.
+    - name: Recreate the service
+      community.docker.docker_compose_v2:
+        project_src: "{{ _rb_project_dir }}"
+        state: present
+        recreate: "{{ 'always' if _rb_rewrite is changed else 'auto' }}"
+
+    # Best-effort: a failed probe is reported, not fatal. The rollback already
+    # happened, and the operator needs to see that rather than a red job with no
+    # explanation of what state the container is in.
+    - name: Probe the app port
+      ansible.builtin.uri:
+        url: "http://localhost:{{ _rb_port }}/"
+        status_code: [200, 201, 204, 301, 302, 401, 403]
+        timeout: 5
+      register: _rb_probe
+      until: _rb_probe.status | default(0) >= 200
+      retries: 12
+      delay: 5
+      failed_when: false
+      changed_when: false
+      when: _rb_port | length > 0
+      vars:
+        _rb_port: "{{ _rb_instance_config.app.port | default('') | string }}"
+
+    - name: Report the health probe
+      ansible.builtin.debug:
+        msg: >-
+          {{ container }} answered with HTTP {{ _rb_probe.status }} after the
+          rollback.
+      when: _rb_probe is not skipped and _rb_probe.status | default(0) >= 200
+
+    - name: Warn when the app port never answered
+      ansible.builtin.debug:
+        msg: >-
+          {{ container }} did not answer on port
+          {{ _rb_instance_config.app.port | default('?') }} after the rollback to
+          {{ _rb_new_ref }}. The container was recreated — check its logs.
+      when: _rb_probe is not skipped and _rb_probe.status | default(0) < 200
+
+
+# ── Play 3: Notify ─────────────────────────────────────────────────────────────
+# Runs on localhost so the message goes out even if the stack host play failed.
+- name: "Rollback | Notify"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — notify.yml no-ops
+
+  vars:
+    _rb_host: "{{ (groups['rollback_' ~ container] | default([]) | first) | default('') }}"
+    _rb_old: "{{ hostvars[_rb_host]._rb_old_ref | default('unknown') }}"
+    _rb_new: "{{ hostvars[_rb_host]._rb_new_ref | default('unknown') }}"
+
+  tasks:
+    - name: Notify rollback complete
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ container }} rolled back"
+        notify_priority: high
+        notify_message: >-
+          {{ container }} on {{ stack }} moved from {{ _rb_old }} to {{ _rb_new }}.
+          {{ 'This tag is pinned — Watchtower will not auto-update it until the app deploy playbook is re-run.'
+             if _rb_new is not search(':latest$') and _rb_new != 'unknown'
+             else 'Still on a floating tag — re-run with -e image_tag=<version> to pin a release.' }}
+      when: _rb_host | length > 0

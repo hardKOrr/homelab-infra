@@ -1,0 +1,241 @@
+---
+# Wire the media stack's app-to-app connections.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/stacks/wire-media-stack.yml
+#
+# No parameters — the playbook is the media stack's wiring job. Semaphore/Rundeck
+# run it as "Wire Media Stack".
+#
+# Scope: app-to-app only. Reverse proxy, SSO, uptime and DNS wiring belong to each
+# app's own deploy playbook (Play 3 of playbooks/apps/<app>.yml) and are not
+# repeated here.
+#
+# What it wires, for whatever is present:
+#   1. Every *arr (Sonarr/Radarr/Lidarr/Readarr) → registered as a Prowlarr
+#      Application, so Prowlarr syncs its indexers into that app
+#   2. Every download client (SABnzbd/qBittorrent/Deemix/Slskd) → registered in
+#      every *arr whose protocols it speaks
+#   3. Bazarr → pointed at one Sonarr and one Radarr
+#
+# Where the endpoints come from: tasks/app-wiring/resolve-media-registry.yml —
+# the `media` registry key (ansible/vars/CONTRACT.md §3) plus discovery from
+# config/apps/<instance>.yml files declaring `app.media_kind`.
+#
+# Idempotent and re-runnable. An empty or partial media stack is a no-op, not a
+# failure: with no Prowlarr, step 1 is skipped; with no download client, step 2
+# is skipped; a single app on its own wires nothing and reports zero connections.
+#
+# A connection that fails (app down, wrong key, unsupported client) is recorded
+# and the run continues through every other pair. The Ntfy notification always
+# goes out; the play then exits non-zero if anything failed, so the job is red in
+# the UI rather than silently partial.
+#
+# Adding an app kind is an entry in ansible/vars/media-wiring.yml — the three
+# task files under tasks/app-wiring/ are generic. Cloning this playbook for
+# another stack means changing which task files it loops over, nothing else.
+
+# ── Play 1: Resolve the media registry ─────────────────────────────────────────
+- name: "Wire media stack | Resolve registry"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load the media wiring table
+      ansible.builtin.include_vars:
+        file: ../../vars/media-wiring.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — discovery still works
+
+  tasks:
+    # Discovery reads ansible_host out of the Proxmox dynamic inventory; a stale
+    # inventory is the common reason a freshly deployed app is not found.
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Resolve the media registry
+      ansible.builtin.import_tasks: ../../tasks/app-wiring/resolve-media-registry.yml
+
+
+# ── Play 2: Read API keys the *arr apps generated for themselves ───────────────
+# Empty group → play skipped. Only reached for entries with no api_key in the
+# registry and none in their instance file: an *arr generates its own key on
+# first start, so the key is not knowable at deploy time.
+- name: "Wire media stack | Discover API keys"
+  hosts: media_discover
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Read the app's config.xml
+      ansible.builtin.slurp:
+        src: "{{ mw_config_path }}/config.xml"
+      register: _mw_config_xml
+      failed_when: false
+      when: mw_config_path | length > 0
+
+    - name: Extract the API key
+      ansible.builtin.set_fact:
+        mw_api_key: >-
+          {{ _mw_config_xml.content | b64decode
+             | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1')
+             | default([], true) | join('') }}
+      when: _mw_config_xml.content is defined
+      no_log: true
+
+    - name: Report an unreadable config.xml
+      ansible.builtin.debug:
+        msg: >-
+          Could not read an API key for {{ inventory_hostname }} from
+          {{ mw_config_path | default('(no app.config_path declared)') }}/config.xml.
+          Record it as app.api_key in config/apps/{{ inventory_hostname }}.yml, or
+          under media.{{ inventory_hostname }}.api_key in
+          config/.generated/facts.yml. This app is not being wired.
+      when: mw_api_key | default('') | length == 0
+
+
+# ── Play 3: Wire the connections ───────────────────────────────────────────────
+- name: "Wire media stack | Wire connections"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load the media wiring table
+      ansible.builtin.include_vars:
+        file: ../../vars/media-wiring.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  vars:
+    _mw_entries: "{{ media_registry | default({}) | dict2items | sort(attribute='key') }}"
+    _mw_arr_kinds: >-
+      {{ media_wiring.kinds | dict2items | selectattr('value.role', 'equalto', 'arr')
+         | map(attribute='key') | list }}
+    _mw_client_kinds: >-
+      {{ media_wiring.kinds | dict2items
+         | selectattr('value.role', 'equalto', 'download_client')
+         | map(attribute='key') | list }}
+    _mw_arrs: "{{ _mw_entries | selectattr('value.app', 'in', _mw_arr_kinds) | list }}"
+    _mw_clients: "{{ _mw_entries | selectattr('value.app', 'in', _mw_client_kinds) | list }}"
+    _mw_bazarrs: "{{ _mw_entries | selectattr('value.app', 'equalto', 'bazarr') | list }}"
+    _mw_prowlarr: >-
+      {{ _mw_entries | selectattr('value.app', 'equalto', 'prowlarr')
+         | list | first | default({}) }}
+    # Bazarr holds one connection per app kind. Without an explicit `peers` list
+    # the first app of each kind wins — reversed before zipping so that the first
+    # entry, not the last, is the one left in the dict.
+    _mw_first_by_kind: >-
+      {{ dict((_mw_arrs | reverse | map(attribute='value.app') | list)
+              | zip(_mw_arrs | reverse | map(attribute='key') | list)) }}
+    _mw_ok: >-
+      {{ media_wire_results | default([])
+         | rejectattr('state', 'equalto', 'failed') | list }}
+    _mw_failed: >-
+      {{ media_wire_results | default([])
+         | selectattr('state', 'equalto', 'failed') | list }}
+
+  tasks:
+    # Play 2 ran on the app guests; its findings live in their hostvars.
+    - name: Fold discovered API keys back into the registry
+      ansible.builtin.set_fact:
+        media_registry: >-
+          {{ media_registry
+             | combine({item: media_registry_needs_key[item]
+                              | combine({'api_key': hostvars[item].mw_api_key})}) }}
+      loop: "{{ groups['media_discover'] | default([]) }}"
+      when: hostvars[item].mw_api_key | default('') | length > 0
+      no_log: true
+
+    - name: Report the resolved media stack
+      ansible.builtin.debug:
+        msg: >-
+          Media stack: {{ _mw_entries | length }} app(s) resolved
+          ({{ _mw_entries | map(attribute='key') | join(', ') | default('none', true) }}).
+          {{ 'No Prowlarr resolved — indexer sync is skipped.'
+             if _mw_prowlarr | length == 0 else '' }}
+
+    - name: Register each *arr app in Prowlarr
+      ansible.builtin.include_tasks: ../../tasks/app-wiring/prowlarr-application.yml
+      vars:
+        mw_prowlarr_host: "{{ _mw_prowlarr.value.host }}"
+        mw_prowlarr_key: "{{ _mw_prowlarr.value.api_key }}"
+        mw_target_name: "{{ item.key }}"
+        mw_target: "{{ item.value }}"
+      loop: "{{ _mw_arrs }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: _mw_prowlarr | length > 0
+
+    - name: Register each download client in each app that speaks its protocol
+      ansible.builtin.include_tasks: ../../tasks/app-wiring/arr-download-client.yml
+      vars:
+        mw_client_name: "{{ item.0.key }}"
+        mw_client: "{{ item.0.value }}"
+        mw_arr_name: "{{ item.1.key }}"
+        mw_arr: "{{ item.1.value }}"
+      loop: "{{ _mw_clients | product(_mw_arrs) | list }}"
+      loop_control:
+        label: "{{ item.0.key }} → {{ item.1.key }}"
+      when:
+        - media_wiring.kinds[item.0.value.app].protocol
+          in media_wiring.kinds[item.1.value.app].protocols
+        - item.0.value.peers is not defined or item.1.key in item.0.value.peers
+
+    - name: Point Bazarr at Sonarr and Radarr
+      ansible.builtin.include_tasks: ../../tasks/app-wiring/bazarr-arr.yml
+      vars:
+        mw_bazarr_name: "{{ item.0.key }}"
+        mw_bazarr: "{{ item.0.value }}"
+        mw_arr_name: "{{ item.1.key }}"
+        mw_arr: "{{ item.1.value }}"
+      loop: "{{ _mw_bazarrs | product(_mw_arrs) | list }}"
+      loop_control:
+        label: "{{ item.0.key }} → {{ item.1.key }}"
+      when:
+        - item.1.value.app in media_wiring.bazarr_kinds
+        - item.0.value.peers is not defined or item.1.key in item.0.value.peers
+        - item.0.value.peers is defined
+          or item.1.key == _mw_first_by_kind[item.1.value.app]
+
+    - name: Report every connection
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.state }}: {{ item.connection }}{{ ' — ' ~ item.detail
+                                                    if item.detail is defined else '' }}
+      loop: "{{ media_wire_results | default([]) }}"
+      loop_control:
+        label: "{{ item.connection }}"
+
+    - name: Notify the wiring result
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Media stack wired"
+        notify_priority: "{{ 'high' if _mw_failed | length > 0 else 'default' }}"
+        notify_message: >-
+          Media stack wired: {{ _mw_ok | length }} connections confirmed
+          ({{ _mw_ok | selectattr('state', 'equalto', 'created') | list | length }} new,
+          {{ _mw_ok | selectattr('state', 'equalto', 'updated') | list | length }} updated).
+          {{ (_mw_failed | length ~ ' failed: '
+              ~ (_mw_failed | map(attribute='connection') | join(', ')))
+             if _mw_failed | length > 0 else '' }}
+
+    - name: Fail when a connection could not be wired
+      ansible.builtin.fail:
+        msg: >-
+          {{ _mw_failed | length }} media connection(s) failed:
+          {{ _mw_failed | map(attribute='connection') | join(', ') }}.
+          Every other connection was wired — re-run after fixing these.
+      when: _mw_failed | length > 0

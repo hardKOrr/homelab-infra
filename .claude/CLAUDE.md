@@ -26,7 +26,7 @@ ansible/
     docker/
       create-docker-host.yml
     stacks/
-      wire-<stack>.yml             # wire all app-to-app connections for a stack (idempotent)
+      wire-media-stack.yml         # wire all app-to-app connections for the media stack (idempotent)
       rollback-container.yml       # pin container to previous image tag, restart, notify via Ntfy
     maintenance/
       status.yml                   # read-only: what's running, what's down, what's behind on updates
@@ -47,6 +47,11 @@ ansible/
       uptime-kuma.yml
       opnsense.yml
       pihole.yml
+    app-wiring/                    # app-to-app wiring, driven by vars/media-wiring.yml
+      resolve-media-registry.yml
+      prowlarr-application.yml     # one *arr → a Prowlarr Application (indexer sync)
+      arr-download-client.yml      # one download client → one *arr
+      bazarr-arr.yml               # Bazarr → one Sonarr / one Radarr
     unwiring/                      # inverse of wiring/ — called by remove.yml
       caddy.yml
       nginx.yml
@@ -69,6 +74,7 @@ ansible/
     <app>/                         # one role per deployable app; ships files/lab-* scripts
   vars/
     homelabinfra-defaults.yml      # global defaults (git-managed)
+    media-wiring.yml               # media app kinds: API versions, implementations, categories
     app-defaults/<app>.yml         # per-app sensible defaults (git-managed)
   inventory/
     proxmox.yml
@@ -170,7 +176,7 @@ All operations are idempotent and re-runnable. Every automated action produces a
 | Uptime alerts | Uptime Kuma | Auto-register each app at deploy time | Ntfy: "X is DOWN / recovered" |
 | App removal | `remove.yml` | Semaphore/Rundeck job — stops container, unwires everything | Ntfy: "X removed" |
 | Lab status | `status.yml` | Semaphore/Rundeck job — read-only | Console/Semaphore output |
-| App-to-app wiring | `wire-<stack>.yml` | Semaphore/Rundeck job — idempotent, safe to re-run | Ntfy: "Media stack wired: N connections confirmed" |
+| App-to-app wiring | `wire-media-stack.yml` | Semaphore/Rundeck job — idempotent, safe to re-run | Ntfy: "Media stack wired: N connections confirmed" |
 
 ### Feedback Loop (Container Updates)
 Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs Rollback Container job.
@@ -196,12 +202,12 @@ Bootstrap
   Bootstrap Platform          ← bootstrap.yml (run once)
 
 Per-App
-  Deploy App                  ← apps/<app>.yml  (param: instance name)
-  Remove App                  ← apps/remove.yml (param: instance name)
+  Deploy <App>                ← apps/<app>.yml  (one job per app; instance baked in, no params)
+  Remove App                  ← apps/remove.yml (params: instance, app (optional), delete_data)
 
 Per-Stack
-  Wire Stack                  ← stacks/wire-<stack>.yml (param: stack name)
-  Rollback Container          ← stacks/rollback-container.yml (params: container, image tag)
+  Wire Media Stack            ← stacks/wire-media-stack.yml (no params)
+  Rollback Container          ← stacks/rollback-container.yml (params: stack, container, image_tag)
 
 Maintenance
   Lab Status                  ← maintenance/status.yml

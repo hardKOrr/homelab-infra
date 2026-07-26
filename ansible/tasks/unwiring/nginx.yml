@@ -15,7 +15,9 @@
 #   reverse_proxy.admin_password — NPM admin password
 #
 # Idempotent: absent proxy host → no-op success. Silent no-op when the configured
-# reverse proxy provider is not nginx. Deleting the proxy host also releases its
+# reverse proxy provider is not nginx. The proxy host is deleted whole, so a
+# forward_auth app's advanced_config auth_request snippet (slice 306) goes with it —
+# this file needs no knowledge of the identity mode. Deleting the proxy host also releases its
 # certificate binding; NPM keeps the certificate itself, which is reused verbatim
 # if the same domain is wired again.
 

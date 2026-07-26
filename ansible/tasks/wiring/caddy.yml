@@ -7,10 +7,29 @@
 #   wiring_upstream_host:  IP or hostname of the app container
 #   wiring_upstream_port:  port the app listens on
 #   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com)
+#   wiring_identity_mode:  catalog | oidc | forward_auth | none (default: catalog).
+#                          Only `forward_auth` changes this file's output — that mode
+#                          fronts the app with the Authentik outpost (see below).
 #
 # Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
 #   reverse_proxy.host  — full base URL including scheme (e.g. http://192.168.1.10)
 #   reverse_proxy.port  — Caddy admin API port (written by the caddy app deploy; 2019)
+#   sso.provider, sso.host — forward_auth only: the Authentik the outpost runs in.
+#                          host is the direct LAN URL with scheme; the app's estate is
+#                          already resolved into these keys by tasks/resolve-estate.yml.
+#
+# forward_auth mode (slice 306). The route becomes a subroute of:
+#   1. /outpost.goauthentik.io/* → the outpost (its sign-in callback endpoints)
+#   2. a forward_auth probe: reverse_proxy to the outpost rewritten to
+#      /outpost.goauthentik.io/auth/caddy. On 2xx, each X-Authentik-* response header
+#      is copied onto the request — guarded per header, because an unguarded copy
+#      forwards the literal placeholder text for headers the outpost did not return.
+#      Non-2xx responses are copied to the client untouched, which is what turns an
+#      unauthenticated request into the 302 to the Authentik login flow.
+#   3. the app's own reverse_proxy
+# This is the JSON `caddy adapt` produces for the `forward_auth` Caddyfile directive
+# (verified against Caddy 2.10.2 + Authentik 2026.5.6). Every other identity mode
+# keeps the plain single-handler route, byte-identical to what it was before.
 #
 # Routes are stored under the srv0 server (the caddy role templates a single
 # HTTPS server named srv0 with an empty route table). TLS comes from Caddy's
@@ -28,15 +47,91 @@
       {{ homelabinfra_infra.reverse_proxy.host }}:{{
          homelabinfra_infra.reverse_proxy.port | default(2019) }}
     _caddy_route_id: "route_{{ wiring_app_name }}"
+
+    # Enforce at the proxy only for forward_auth apps backed by an Authentik.
+    # Any other identity mode, or no SSO provider, keeps the plain route.
+    _caddy_forward_auth: >-
+      {{ (wiring_identity_mode | default('catalog')) == 'forward_auth'
+         and (homelabinfra_infra.sso.provider | default('none')) == 'authentik' }}
+
+    _caddy_app_handler:
+      handler: reverse_proxy
+      upstreams:
+        - dial: "{{ wiring_upstream_host }}:{{ wiring_upstream_port }}"
+
+    # sso.host is a full base URL; Caddy dials host:port, and needs an explicit TLS
+    # transport when that URL is https (lab Authentiks serve their own certificate,
+    # matching internal_host_ssl_validation: false on the Authentik side).
+    _caddy_outpost_upstream:
+      dial: "{{ homelabinfra_infra.sso.host | default('') | urlsplit('netloc') }}"
+    _caddy_outpost_transport: >-
+      {{ {'transport': {'protocol': 'http', 'tls': {'insecure_skip_verify': true}}}
+         if (homelabinfra_infra.sso.host | default('') | urlsplit('scheme')) == 'https'
+         else {} }}
+
+    # The identity headers the outpost returns and the app consumes.
+    _caddy_authentik_headers:
+      - X-Authentik-Username
+      - X-Authentik-Groups
+      - X-Authentik-Email
+      - X-Authentik-Name
+      - X-Authentik-Uid
+      - X-Authentik-Jwt
+      - X-Authentik-Meta-Jwks
+      - X-Authentik-Meta-Outpost
+      - X-Authentik-Meta-Provider
+      - X-Authentik-Meta-App
+      - X-Authentik-Meta-Version
+
+    # One copy route per header, each gated on the outpost having actually returned
+    # it — this is what the `copy_headers` Caddyfile directive expands to, and the
+    # guard matters: copying unconditionally hands the app the literal placeholder
+    # text for every header the outpost left out. Emitted as JSON and read back with
+    # from_json so ints/bools/strings keep their types
+    # (.claude/specs/jinja-string-typing.md).
+    _caddy_copy_header_routes_json: >-
+      {%- set _routes = [] -%}
+      {%- for _header in _caddy_authentik_headers -%}
+      {%-   set _placeholder = '{http.reverse_proxy.header.' ~ _header ~ '}' -%}
+      {%-   set _ = _routes.append({
+              'match': [{'not': [{'vars': {_placeholder: ['']}}]}],
+              'handle': [{'handler': 'headers',
+                          'request': {'set': {_header: [_placeholder]}}}],
+            }) -%}
+      {%- endfor -%}
+      {{ _routes | to_json }}
+
+    _caddy_forward_auth_handler: >-
+      {{ {
+           'handler': 'reverse_proxy',
+           'upstreams': [_caddy_outpost_upstream],
+           'rewrite': {'method': 'GET', 'uri': '/outpost.goauthentik.io/auth/caddy'},
+           'headers': {'request': {'set': {
+             'X-Forwarded-Method': ['{http.request.method}'],
+             'X-Forwarded-Uri': ['{http.request.uri}'],
+           }}},
+           'handle_response': [{'match': {'status_code': [2]},
+                                'routes': _caddy_copy_header_routes_json | from_json}],
+         } | combine(_caddy_outpost_transport) }}
+
+    _caddy_handle: >-
+      {{ [{'handler': 'subroute',
+           'routes': [
+             {'match': [{'path': ['/outpost.goauthentik.io/*']}],
+              'handle': [{'handler': 'reverse_proxy',
+                          'upstreams': [_caddy_outpost_upstream]}
+                         | combine(_caddy_outpost_transport)]},
+             {'handle': [_caddy_forward_auth_handler, _caddy_app_handler]},
+           ]}]
+         if _caddy_forward_auth | bool
+         else [_caddy_app_handler] }}
+
     _caddy_route:
       "@id": "route_{{ wiring_app_name }}"
       match:
         - host:
             - "{{ wiring_domain }}"
-      handle:
-        - handler: reverse_proxy
-          upstreams:
-            - dial: "{{ wiring_upstream_host }}:{{ wiring_upstream_port }}"
+      handle: "{{ _caddy_handle }}"
       terminal: true
   block:
     - name: Wire Caddy | Assert wiring contract vars
@@ -49,6 +144,19 @@
         fail_msg: >-
           wiring/caddy.yml needs the wiring contract vars: wiring_app_name,
           wiring_upstream_host, wiring_upstream_port, wiring_domain.
+
+    # forward_auth without a reachable outpost would produce a route that proxies
+    # every request to nothing — fail the deploy instead of publishing it.
+    - name: Wire Caddy | Assert the outpost is known for forward_auth apps
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_infra.sso.host | default('') | urlsplit('netloc') | length > 0
+        fail_msg: >-
+          {{ wiring_app_name }} declares routing.identity: forward_auth, but
+          sso.host is missing from config/.generated/facts.yml — Caddy has no
+          Authentik outpost to enforce against. Deploy Authentik first, or set
+          routing.identity to catalog.
+      when: _caddy_forward_auth | bool
 
     - name: Wire Caddy | Check for existing route
       ansible.builtin.uri:

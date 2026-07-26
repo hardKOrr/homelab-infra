@@ -23,3 +23,6 @@ Thumbs.db
 
 # todo folders
 **/todo/*
+
+# ansible-lint / galaxy local cache
+ansible/.ansible/

@@ -1,0 +1,44 @@
+# Restart App — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/restart-app.yaml
+#
+# Paths match rundeck/bootstrap-rundeck.sh: the repo at /var/lib/rundeck/homelab-infra
+# and ansible-core in the venv at /opt/homelab-ansible. Change REPO/VENV below if you
+# installed elsewhere.
+
+- id: 89335213-807e-58f1-abc2-cc66b21acb9d
+  uuid: 89335213-807e-58f1-abc2-cc66b21acb9d
+  name: Restart App
+  group: Maintenance
+  description: |-
+    Restart a native LXC app via its lab-restart-app script. Notifies via Ntfy.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: App instance name, e.g. vaultwarden
+    required: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/restart-app.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          REPO=/var/lib/rundeck/homelab-infra
+          VENV=/opt/homelab-ansible/bin
+          cd "$REPO/ansible"
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          ARGS=()
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # with-proxmox-env.sh exports the PROXMOX_API_* environment the community.proxmox
+          # dynamic inventory reads (it cannot take -e extra vars) from config/proxmox.yml,
+          # the same gitignored file the playbooks load their connection details from.
+          exec bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
+            "$VENV/ansible-playbook" -i inventory/ playbooks/maintenance/restart-app.yml "${ARGS[@]}"

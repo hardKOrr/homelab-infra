@@ -34,6 +34,9 @@ APP_NAME_defaults:
     port: 8080           # port the app listens on inside the container/LXC
     data_path: /opt/APP_NAME/data
     config_path: /opt/APP_NAME/config
+    # NATIVE LXC apps: the systemd unit playbooks/apps/remove.yml stops. Set it
+    # whenever the unit name differs from the instance name.
+    # service_name: APP_NAME
 
   # ── Native LXC update checking ──────────────────────────────────────────────
   # Only needed for apps installed from GitHub binary releases (not apt, not Docker).
