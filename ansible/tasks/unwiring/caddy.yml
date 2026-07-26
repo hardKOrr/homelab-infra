@@ -11,7 +11,9 @@
 #   reverse_proxy.port  — Caddy admin API port (written by the caddy app deploy; 2019)
 #
 # Idempotent: absent route → no-op success. Silent no-op when the configured
-# reverse proxy provider is not caddy.
+# reverse proxy provider is not caddy. The route is deleted whole, so a
+# forward_auth app's outpost handler chain (slice 306) goes with it — this file
+# needs no knowledge of the identity mode.
 
 - name: Unwire Caddy | Remove route
   when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'

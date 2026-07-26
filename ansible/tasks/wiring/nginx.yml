@@ -8,6 +8,17 @@
 #   wiring_upstream_port:  port the app listens on
 #   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com) — the
 #                          proxy host is identified by this domain, not by name
+#   wiring_identity_mode:  catalog | oidc | forward_auth | none (default: catalog).
+#                          Only `forward_auth` changes this file's output.
+#
+# forward_auth mode (slice 306). NPM has no Authentik integration of its own, so the
+# enforcement lives in the proxy host's advanced_config: Authentik's documented nginx
+# snippet — an `auth_request` against the outpost's /outpost.goauthentik.io/auth/nginx,
+# a 401 handler that redirects to the outpost's sign-in start, and auth_request_set
+# lines that lift the X-Authentik-* response headers onto the upstream request. The
+# snippet's `location /` replaces NPM's own generated one, so it carries the
+# proxy_pass to the app; NPM keeps serving the certificate and the domain matching.
+# Every other identity mode leaves advanced_config empty, exactly as before.
 #
 # Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
 #   reverse_proxy.host              — full base URL including scheme (e.g. http://192.168.1.11)
@@ -37,6 +48,60 @@
       {{ homelabinfra_infra.reverse_proxy.host }}:{{
          homelabinfra_infra.reverse_proxy.port | default(81) }}/api
     _npm_le_email: "{{ homelabinfra_infra.reverse_proxy.letsencrypt_email | default('') }}"
+
+    _npm_forward_auth: >-
+      {{ (wiring_identity_mode | default('catalog')) == 'forward_auth'
+         and (homelabinfra_infra.sso.provider | default('none')) == 'authentik' }}
+    _npm_outpost: "{{ homelabinfra_infra.sso.host | default('') }}"
+
+    # Authentik's documented nginx forward-auth snippet, rendered for this app.
+    # Kept inline rather than in a template file so this task stays self-contained
+    # wherever it is included from. nginx variables ($host, $auth_cookie, …) are
+    # literal here — only the {{ }} expressions are Ansible's.
+    _npm_forward_auth_config: |
+      location /outpost.goauthentik.io {
+          proxy_pass              {{ _npm_outpost }}/outpost.goauthentik.io;
+          proxy_set_header        Host $host;
+          proxy_set_header        X-Original-URL $scheme://$http_host$request_uri;
+          add_header              Set-Cookie $auth_cookie;
+          auth_request_set        $auth_cookie $upstream_http_set_cookie;
+          proxy_pass_request_body off;
+          proxy_set_header        Content-Length "";
+      }
+
+      location / {
+          auth_request     /outpost.goauthentik.io/auth/nginx;
+          error_page       401 = @goauthentik_proxy_signin;
+          auth_request_set $auth_cookie $upstream_http_set_cookie;
+          add_header       Set-Cookie $auth_cookie;
+
+          auth_request_set $authentik_username $upstream_http_x_authentik_username;
+          auth_request_set $authentik_groups $upstream_http_x_authentik_groups;
+          auth_request_set $authentik_email $upstream_http_x_authentik_email;
+          auth_request_set $authentik_name $upstream_http_x_authentik_name;
+          auth_request_set $authentik_uid $upstream_http_x_authentik_uid;
+          proxy_set_header X-authentik-username $authentik_username;
+          proxy_set_header X-authentik-groups $authentik_groups;
+          proxy_set_header X-authentik-email $authentik_email;
+          proxy_set_header X-authentik-name $authentik_name;
+          proxy_set_header X-authentik-uid $authentik_uid;
+
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_pass http://{{ wiring_upstream_host }}:{{ wiring_upstream_port }};
+      }
+
+      location @goauthentik_proxy_signin {
+          internal;
+          add_header Set-Cookie $auth_cookie;
+          return 302 /outpost.goauthentik.io/start?rd=$request_uri;
+      }
+    _npm_advanced_config: "{{ _npm_forward_auth_config if _npm_forward_auth | bool else '' }}"
   block:
     - name: Wire Nginx | Assert wiring contract vars
       ansible.builtin.assert:
@@ -60,6 +125,19 @@
           Nginx Proxy Manager wiring needs reverse_proxy.token, or
           reverse_proxy.admin_user + reverse_proxy.admin_password, in
           config/.generated/facts.yml.
+
+    # Same reasoning as the Caddy path: a forward_auth app with no known outpost
+    # would be published with an auth_request pointing at nothing.
+    - name: Wire Nginx | Assert the outpost is known for forward_auth apps
+      ansible.builtin.assert:
+        that:
+          - _npm_outpost | length > 0
+        fail_msg: >-
+          {{ wiring_app_name }} declares routing.identity: forward_auth, but
+          sso.host is missing from config/.generated/facts.yml — Nginx Proxy Manager
+          has no Authentik outpost to enforce against. Deploy Authentik first, or set
+          routing.identity to catalog.
+      when: _npm_forward_auth | bool
 
     - name: Wire Nginx | Mint API token
       ansible.builtin.uri:
@@ -122,7 +200,7 @@
                'block_exploits': true,
                'caching_enabled': false,
                'allow_websocket_upgrade': true,
-               'advanced_config': '',
+               'advanced_config': _npm_advanced_config,
                'locations': [],
                'enabled': true,
                'meta': {'letsencrypt_agree': true, 'letsencrypt_email': _npm_le_email,
@@ -163,6 +241,7 @@
           or _npm_existing.forward_port | default(0) | int != wiring_upstream_port | int
           or _npm_existing.forward_scheme | default('') != 'http'
           or not (_npm_existing.enabled | default(false))
+          or _npm_existing.advanced_config | default('') != _npm_advanced_config
       changed_when: true
       no_log: true
 

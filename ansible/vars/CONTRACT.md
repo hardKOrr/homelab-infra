@@ -216,7 +216,11 @@ enum `none | catalog | oidc | forward_auth` (default `catalog`): `none` skips Au
 entirely, `catalog` creates an Application tile only, `oidc` creates an OAuth2 provider +
 Application (client_id/secret handed back to the deploy as `authentik_oidc_client_id/_secret`
 facts — not recorded in the registry), `forward_auth` creates a proxy provider enforced at the
-reverse proxy (slice 306). The boolean `routing.auth` is **superseded** by `routing.identity`
+reverse proxy. Enforcement is the reverse-proxy wiring's job: `tasks/wiring/caddy.yml` and
+`tasks/wiring/nginx.yml` both read `wiring_identity_mode` alongside `sso.provider` +
+`sso.host`, and emit the outpost handler chain (Caddy) or the Authentik `auth_request`
+snippet (NPM) only for `forward_auth`; every other mode keeps the plain route it always
+had. The boolean `routing.auth` is **superseded** by `routing.identity`
 — nothing reads it. `routing.subdomain` overrides the hostname on the estate domain (default:
 the instance name); `routing.estate` names a `domains:` estate (§5).
 The whole file merges over `<app>_defaults` via `combine(recursive=True)`, later layer wins per key.

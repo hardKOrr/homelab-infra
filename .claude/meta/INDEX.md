@@ -15,7 +15,7 @@ Gates (both current as of 2026-07-25): `wsl bash -lc 'bash .claude/gate/lint.sh'
 137 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
 clean. **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 25 built · 2 open.**
+Counts: **12 done · 26 built · 1 open.**
 
 ---
 
@@ -57,6 +57,7 @@ deviations and open questions live in each slice's `notes.md`.
 | 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | Kuma running (404) |
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API creds |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
+| 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open — see below |
 | 400 | [Vaultwarden](400-app-vaultwarden/README.md) | bootstrap step 1 |
 | 401 | [Ntfy](401-app-ntfy/README.md) | bootstrap step 2 |
 | 402 | [Caddy](402-app-caddy/README.md) | bootstrap step 3 |
@@ -78,18 +79,21 @@ Carried caveats:
   indefinitely unless a second lab appears; that is expected, not a stall.
 - **406's VM provisioning machinery** (`tasks/proxmox/ensure-cloud-template.yml`,
   `vm-clone.yml`) has never executed. Highest live-run risk in the set.
-- **403 acceptance item 3 cannot pass** until 306 lands — Authentik objects are created
-  but nothing enforces them at the proxy.
+- **403 acceptance item 3** — 306 landed and the Caddy enforcement is verified live, so
+  the fail-open gap is closed. The item still needs an app actually deployed with
+  `routing.identity: forward_auth` to be observed end to end.
+- **306's two remaining items** are the interactive browser sign-in leg (the redirect to
+  the flow is verified; completing it needs a human at a browser) and the nginx path,
+  which shares 301's no-NPM-lab carve-out.
 - **500's one staged import is `apps/nginx.yml`**, which does not exist (301 shipped the
   wiring pair only, no app playbook).
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
   restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
 
-## Open (2)
+## Open (1)
 
 | # | Slice | Depends on | Ready? |
 |---|---|---|---|
-| 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | 300, 301, 302, 403, 009 | code yes; verify needs live Authentik |
 | 504 | [Wire media stack](504-wire-media-stack/README.md) | 300–305 | blocked in practice — no media app exists to wire |
 
 ## Recommended order
@@ -99,8 +103,7 @@ Carried caveats:
    backlog reduces it.
 2. **Import one UI** (600 or 601) and drive the live run from it, so the job definitions
    are verified by the same event rather than in a second pass.
-3. **306** — closes the forward-auth fail-open gap; verifiable once Authentik is live.
-4. **504** — deferred until a media stack app actually exists to wire. Adding a media app
+3. **504** — deferred until a media stack app actually exists to wire. Adding a media app
    is the prerequisite, not more scaffolding.
 
 ## Retired trackers
