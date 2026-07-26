@@ -1,6 +1,8 @@
 # 503 — Lab status playbook
 
-**Status:** built — implemented and gate-verified; awaiting live acceptance. Decisions and deviations from the approach below are in notes.md.
+**Status:** built — ran green on the live lab 2026-07-26 via Rundeck, but against **zero
+tagged guests**, so every section rendered its empty-state line. The play chain is proven;
+the report content is not. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** none (read-only across whatever exists)
 **Blocks:** nothing critical
 
@@ -35,6 +37,11 @@ Best-effort throughout — if Kuma or PBS is down, that section reports "unreach
 
 ## Acceptance
 
-- [ ] `ansible-playbook playbooks/maintenance/status.yml` produces a useful overview without modifying anything
-- [ ] No notification fires
-- [ ] Tolerates any one provider being unavailable
+- [ ] `ansible-playbook playbooks/maintenance/status.yml` produces a useful overview
+      without modifying anything — ran clean (Rundeck execution 2, 2026-07-26) and changed
+      nothing, but with 0 tagged guests every section was an empty-state line. Re-observe
+      once something is deployed with the tag.
+- [x] No notification fires — confirmed, no notify task in the run
+- [x] Tolerates any one provider being unavailable — Uptime Kuma and PBS were both absent
+      (no `config/.generated/facts.yml` at all); both sections reported unavailable and the
+      run continued to a green recap

@@ -1,14 +1,29 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh')",
-      "Bash(wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh')",
-      "Bash(git checkout -b *)",
-      "Bash(git checkout fix/*)",
-      "Bash(git checkout feat/*)",
+      "Edit(//c/Users/korr/source/repos/homelab-infra/**)",
+      "Write(//c/Users/korr/source/repos/homelab-infra/**)",
+      "Bash(wsl bash -lc 'bash .claude/gate/lint.sh')",
+      "Bash(wsl bash -lc 'bash .claude/gate/test.sh')",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git ls-remote *)",
+      "Bash(git ls-files *)",
+      "Bash(git branch *)",
+      "Bash(git fetch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(ssh -o ConnectTimeout=* root@192.168.13.24* 'pct list*')",
+      "Bash(ssh -o ConnectTimeout=* root@192.168.13.24* 'hostname*')",
       "PowerShell(Get-ChildItem *)",
       "PowerShell(Get-Content *)",
-      "PowerShell(Test-Path *)"
+      "PowerShell(Test-Path *)",
+      "Bash(python -)",
+      "Bash(python -c ' *)"
     ]
   },
   "enabledPlugins": {

@@ -1,6 +1,6 @@
 # 601 — Rundeck job definitions
 
-**Status:** built — implemented; awaiting a live `rd jobs load`. Decisions and deviations from the approach below are in notes.md.
+**Status:** built — all 15 jobs imported and visible on the live Rundeck (2026-07-26); one of fifteen has run. Decisions and deviations from the approach below are in notes.md.
 **Depends on:** 500 (bootstrap), and ideally most app slices
 **Blocks:** the "import and click" Rundeck experience
 
@@ -36,7 +36,10 @@ Schedule for `check-native-updates.yaml`: weekly cron.
 
 ## Acceptance
 
-- [ ] All files load via `rd jobs load --file rundeck/jobs/*.yaml`
-- [ ] Jobs are visible in Rundeck UI
-- [ ] Each job runs to completion against a populated config
-- [ ] check-native-updates is scheduled and running on cron
+- [x] All files load via `rd jobs load --file rundeck/jobs/*.yaml` — 15/15 imported clean
+      2026-07-26 (via the equivalent REST import; `rd` is not installed)
+- [x] Jobs are visible in Rundeck UI — under Bootstrap / Apps / Maintenance as designed
+- [ ] Each job runs to completion against a populated config — **1 of 15**. Only Lab
+      Status has run (green). The other fourteen all mutate the lab and are unobserved.
+- [x] check-native-updates is scheduled and running on cron — registered SCHEDULED;
+      the first firing has not been watched

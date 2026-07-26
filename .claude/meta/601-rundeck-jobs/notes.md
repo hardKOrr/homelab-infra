@@ -40,3 +40,49 @@ but the whole Rundeck credential story depends on it.
 
 `rd jobs load` for all 14 files, the jobs appearing under their three groups, the cron
 on Check Native App Updates firing, and one run of each against a populated `config/`.
+
+## 2026-07-26 — first live import and run
+
+Target: LXC 13228 `pve-rundeck-4` on pve-host-3, Rundeck 6 at http://192.168.13.228:4440.
+Runner checkout was 16 commits stale at `7df0301`; reset to `origin/master` `059316a`.
+
+**Project `homelab-infra` created via the API**, not the UI —
+`POST /api/47/projects` with `service.NodeExecutor.default.provider: local`. It did not
+exist; the instance had zero projects.
+
+**All 15 files imported clean** (14 plus `wire-media-stack.yaml` from slice 504), via
+`POST /api/47/project/homelab-infra/jobs/import?dupeOption=update&uuidOption=preserve`
+with `Content-Type: application/yaml`. Every file reported `succeeded=1, failed=0`.
+Groups and the weekly cron on Check Native App Updates are as designed.
+
+**`rd` is not required and was not installed.** The REST API accepts the same job YAML
+the CLI sends, and `RUNDECK_API_TOKEN` from the repo's `.env` authenticates it. The
+README's `rd jobs load` loop still stands as the documented path, but nothing depends
+on the CLI being present.
+
+### Defect found: every job failed identically on the first run
+
+`ModuleNotFoundError: No module named 'yaml'` → `ERROR: failed to parse Proxmox
+connection from ../config/proxmox.yml`, exit 1, before Ansible was ever reached.
+
+No job step puts `$VENV` on `PATH` — it calls `"$VENV/ansible-playbook"` by absolute
+path — so the `python3` hardcoded inside `with-proxmox-env.sh` resolved to the distro
+interpreter, which has no PyYAML. **This blocked all 15 jobs, not just Lab Status.**
+
+Fixed in the wrapper rather than in 15 job files (`059316a`): it now resolves `$PYTHON`,
+then the `python3` sibling of the ansible command it is handed (necessarily the venv's
+own, since Ansible itself needs yaml), then `PATH` — taking the first that actually
+imports yaml, so a genuinely missing module fails there with an actionable message.
+Job definitions are untouched. The alternative — `apt install python3-yaml` on the
+runner — was rejected: it fixes one host and leaves the next clone broken.
+
+### Result
+
+Lab Status (execution 2) succeeded end to end: Rundeck script step → wrapper →
+venv ansible → Proxmox API → rendered report. Independently confirmed the token
+authenticates rather than returning an empty set — `ansible-inventory --list` sees
+57 LXCs, 4 QEMU, 3 nodes.
+
+Acceptance items 1, 2 and 4 are met. **Item 3 is one job of fifteen** — Lab Status is
+the only one that has run, and it is the only read-only one. The fourteen that mutate
+the lab remain unobserved.

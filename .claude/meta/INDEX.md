@@ -11,11 +11,11 @@ digits are order within the tier. Slice template and workflow: [README.md](READM
 | `built` | Code written, both gates green, acceptance **not** yet observed on the live lab. |
 | `open` | Not started, or started and abandoned mid-way. |
 
-Gates (both current as of 2026-07-25): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes
-137 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
+Gates (both current as of 2026-07-26): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes
+143 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
 clean. **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 27 built · 0 open.**
+Counts: **12 done · 27 built · 2 open.**
 
 ---
 
@@ -70,10 +70,10 @@ each slice's `notes.md`.
 | 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | the full run — the event above |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | remove a deployed app; needs 300/302/303/304 live |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
-| 503 | [Lab status](503-lab-status/README.md) | one run against a populated lab |
+| 503 | [Lab status](503-lab-status/README.md) | ran green via Rundeck 2026-07-26 but against 0 tagged guests — re-observe once anything is deployed |
 | 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs `config/` on a runner for the full play chain + Ntfy |
 | 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | a restore into a fresh Semaphore |
-| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | `rd jobs load` of all 14 files |
+| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | **15/15 imported live 2026-07-26**; 1 of 15 has run — the 14 that mutate the lab are unobserved |
 
 Carried caveats:
 
@@ -92,21 +92,40 @@ Carried caveats:
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
   restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
 
-## Open (0)
+## Open (2)
 
-Nothing open. 504 was the last one; it shipped against the operator's live media apps
-(read-only verification — see its `notes.md`).
+Both raised by the operator on 2026-07-26, reviewing the Rundeck runner handover. Both are
+design defects in shipped code, not new features.
+
+| # | Slice | Why now |
+|---|---|---|
+| 010 | [Config provenance](010-config-provenance/README.md) | The whole one-click platform runs off `config/proxmox.yml`, hand-written on one LXC, unversioned, unbacked-up, root token in plaintext. Nothing creates, validates or can reconstruct it. |
+| 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
+
+**010 gates the shareability claim** and **011 gates the first provisioning run** — the
+first deploy that allocates an address bakes in whatever the current model produces.
 
 ## Recommended order
 
-1. **Live bootstrap run** — one event converts 24 of the `built` slices. The backlog of
-   unverified work is now the project's *only* significant risk, and nothing else in the
-   backlog reduces it.
-2. **Import one UI** (600 or 601) and drive the live run from it, so the job definitions
-   are verified by the same event rather than in a second pass.
-3. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
+1. **011 before any provisioning job runs.** The moment Deploy Vaultwarden allocates an
+   address, the flat model's output is on the wire and in the inventory. Cheaper to fix the
+   allocator than to renumber guests.
+2. **010 alongside it** — same edit surface (`config/proxmox.yml`, `config.example`,
+   CONTRACT.md §2), and it removes the plaintext root token from the runner while the lab
+   is still empty enough for a mistake to cost nothing.
+3. **Live bootstrap run** — one event converts 24 of the `built` slices. Still the largest
+   single risk-reducer in the backlog, but see the parallel-instance caveat below.
+4. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
    writing `media.<instance>` on deploy closes the loop; until then media apps join the
    wiring through the `app.media_kind` discovery path.
+
+**Standing caveat on the bootstrap run.** The lab holds 57 LXCs and 4 VMs and **not one
+carries the `homelab-infra` tag** — every existing guest was hand-built, so the repo ignores
+all of them by design. `bootstrap.yml` will therefore stand up new Vaultwarden, Caddy,
+Authentik, Uptime Kuma, Grafana/Prometheus and PBS *beside* the running hand-built ones,
+including a second reverse proxy contending for the same domains. That is correct per the
+"manages what it creates" philosophy and is not a bug — but it is a deliberate decision to
+take, not a surprise to hit mid-run.
 
 ## Retired trackers
 
@@ -123,6 +142,26 @@ Nothing open. 504 was the last one; it shipped against the operator's live media
   Not yet removed — decide before it accrues more stale state.
 
 ## Cross-slice effects on record
+
+From the first live Rundeck run (2026-07-26):
+
+- **`with-proxmox-env.sh` now resolves its own Python** (`059316a`). No job step in either
+  UI puts the ansible venv on `PATH` — they call `"$VENV/ansible-playbook"` by absolute
+  path — so the wrapper's hardcoded `python3` was the distro interpreter, which has no
+  PyYAML. **All 15 Rundeck jobs failed identically** at config parse before Ansible was
+  reached. It now tries `$PYTHON`, then the `python3` sibling of the ansible command it is
+  handed, then `PATH`, taking the first that imports yaml. Fixed in the one wrapper rather
+  than in 15 job files; Semaphore's steps share the wrapper and inherit the fix.
+- **`rd` is not required.** The Rundeck REST API accepts the same job YAML the CLI sends
+  (`POST /api/47/project/<p>/jobs/import`, `Content-Type: application/yaml`). Nothing in
+  the repo depends on the CLI being installed; the README's `rd` loop remains one valid path.
+- **The runner is a documented host now, not a mystery.** LXC 13228 `pve-rundeck-4` on
+  pve-host-3, project `homelab-infra`, checkout at `/var/lib/rundeck/homelab-infra` tracking
+  `origin/master`, venv at `/opt/homelab-ansible`, Proxmox token `root@pam!rundeck`
+  (privsep off). Slice 010 exists because that host's `config/` is the platform's only copy
+  of its own credentials.
+- **`ansible/.ansible/` is gitignored** — ansible-lint's local cache was staging itself into
+  commits.
 
 From the 504 build (2026-07-25):
 
