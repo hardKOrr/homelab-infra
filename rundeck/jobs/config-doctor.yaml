@@ -1,0 +1,36 @@
+# Config Doctor — validate config/ and report every problem in one pass.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/config-doctor.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 56f42991-4bd0-5459-81b3-58310393b225
+  uuid: 56f42991-4bd0-5459-81b3-58310393b225
+  name: Config Doctor
+  group: Config
+  description: |-
+    Check config/proxmox.yml, config/infrastructure.yml and every config/apps/*.yml against the variable-loading contract. Names every missing or malformed key by file and key path in one pass. Read-only: it changes nothing, contacts no service, and is safe to run at any time. The same check runs in front of every other job, so this is how you see the whole report without starting a deploy.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/config-doctor.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          #
+          # LAB_DOCTOR=0 suppresses lab-run's own pre-flight check for this job only:
+          # the playbook IS the check, and failing in the wrapper would hide the report
+          # this job exists to print.
+          export LAB_DOCTOR=0
+          exec lab-run playbooks/maintenance/config-doctor.yml

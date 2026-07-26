@@ -1,0 +1,47 @@
+---
+# The runner describing itself.
+#
+# YOU DO NOT WRITE THIS FILE. `rundeck/bootstrap-rundeck.sh` writes config/apps/rundeck.yml
+# with the real values as its last act. This example documents the shape.
+#
+# WHY IT EXISTS. The runner is a guest this platform created, so the platform manages it —
+# that is the whole "homelab-infra manages what it creates" rule applied to the host doing
+# the creating. Concretely, bootstrap-rundeck.sh tags the LXC `homelab-infra`, and that one
+# tag is what puts it inside the platform's own machinery:
+#
+#   - tasks/bootstrap/configure-pbs.yml builds its vzdump vmid list by filtering guests on
+#     that tag. Untagged, the one host holding the platform's only copy of its own config
+#     was the single guest excluded from the backup job.
+#   - playbooks/maintenance/status.yml and check-native-updates.yml walk the same tag, so
+#     an untagged runner is invisible to the lab's own reporting.
+#
+# This file is where its vmid, address and paths are recorded, so they exist somewhere
+# other than a comment in a backlog document.
+#
+# THERE IS NO DEPLOY RUNDECK JOB, and no roles/rundeck/. The script owns the runner's
+# creation because it must: it runs before any of this exists. Adoption is the depth that
+# matters, and it costs three edits rather than a role.
+
+proxmox:
+  vmid: 13228
+  hostname: "pve-rundeck-4"
+  node: "pve-host-3"
+  cores: 4
+  memory: 8192          # MB — Rundeck is a JVM; 8 GB is comfortable, 4 GB works
+  disk: 16              # GB
+  storage: "local-zfs"
+  ip: "192.168.13.228/20"
+  gateway: "192.168.13.1"
+  bridge: "vmbr0"
+
+app:
+  port: 4440
+  service_name: rundeckd
+  checkout_path: "/var/lib/rundeck/homelab-infra"   # where every job step runs
+  venv_path: "/opt/homelab-ansible"                 # ansible-core lives here
+
+routing:
+  # The runner is not published through the reverse proxy by default — it is the thing
+  # that operates the lab, not part of it. Set proxy/identity here if you want it routed
+  # and behind Authentik like any other app.
+  identity: none

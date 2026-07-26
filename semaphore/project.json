@@ -5,13 +5,32 @@
     "max_parallel_tasks": 0
   },
   "views": [
-    { "title": "Bootstrap", "position": 1 },
-    { "title": "Apps", "position": 2 },
-    { "title": "Maintenance", "position": 3 }
+    {
+      "title": "Bootstrap",
+      "position": 1
+    },
+    {
+      "title": "Config",
+      "position": 2
+    },
+    {
+      "title": "Apps",
+      "position": 3
+    },
+    {
+      "title": "Maintenance",
+      "position": 4
+    }
   ],
   "keys": [
-    { "name": "homelab-ssh", "type": "ssh" },
-    { "name": "none", "type": "none" }
+    {
+      "name": "homelab-ssh",
+      "type": "ssh"
+    },
+    {
+      "name": "none",
+      "type": "none"
+    }
   ],
   "repositories": [
     {
@@ -34,7 +53,7 @@
     {
       "name": "Homelab",
       "json": "{}",
-      "env": "{\"ANSIBLE_ROLES_PATH\":\"ansible/roles\",\"ANSIBLE_HOST_KEY_CHECKING\":\"False\",\"PROXMOX_API_HOST\":\"\",\"PROXMOX_API_PORT\":\"8006\",\"PROXMOX_API_USER\":\"root@pam\",\"PROXMOX_API_TOKEN_ID\":\"\",\"PROXMOX_API_TOKEN_SECRET\":\"\"}"
+      "env": "{\"ANSIBLE_ROLES_PATH\": \"ansible/roles\", \"ANSIBLE_HOST_KEY_CHECKING\": \"False\", \"PROXMOX_API_HOST\": \"\", \"PROXMOX_API_PORT\": \"8006\", \"PROXMOX_API_USER\": \"homelab-infra@pve\", \"PROXMOX_API_TOKEN_ID\": \"automation\", \"PROXMOX_API_TOKEN_SECRET\": \"\", \"PROXMOX_API_TOKEN\": \"\", \"VAULTWARDEN_ADMIN_TOKEN\": \"\"}"
     }
   ],
   "templates": [
@@ -53,6 +72,228 @@
       "inventory": "Proxmox (dynamic)",
       "environment": "Homelab",
       "view": "Bootstrap"
+    },
+    {
+      "name": "Config Doctor",
+      "description": "Check config/proxmox.yml, config/infrastructure.yml and every config/apps/*.yml against the variable-loading contract. Names every missing or malformed key by file and key path in one pass. Read-only: it changes nothing, contacts no service, and is safe to run at any time.",
+      "playbook": "ansible/playbooks/maintenance/config-doctor.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Config"
+    },
+    {
+      "name": "Configure App",
+      "description": "Create or edit config/apps/<instance>.yml without an SSH session. Every field is an OVERRIDE: anything left blank keeps its current value, and anything absent from the file falls through to the app defaults. The previous content is kept under config/apps/.backups/ and the task log shows a unified diff of what changed. Anything not covered by the fields below goes in Extra YAML.",
+      "playbook": "ansible/playbooks/maintenance/configure-app.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "instance",
+          "title": "Instance name",
+          "description": "This IS the filename, the guest hostname and the subdomain: lowercase letters, digits and hyphens (e.g. radarr, radarr-4k).",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "stack",
+          "title": "Stack (Docker apps)",
+          "description": "Which shared stack host to place this app on, e.g. media_stack. Blank keeps the current value.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "network",
+          "title": "Network (native LXC apps)",
+          "description": "A named network from config/proxmox.yml. Blank keeps the current value.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "vmid",
+          "title": "VMID",
+          "description": "Explicit Proxmox VMID. Required only on a dhcp network.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "cores",
+          "title": "vCPUs",
+          "description": "Blank keeps the current value or the app default.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "memory",
+          "title": "RAM (MB)",
+          "description": "Blank keeps the current value or the app default.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "disk",
+          "title": "Disk (GB)",
+          "description": "Blank keeps the current value or the app default.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "port",
+          "title": "Port",
+          "description": "Set only when running two instances of the same app on one stack host.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "subdomain",
+          "title": "Subdomain",
+          "description": "Hostname on the lab domain. Blank means: use the instance name.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "identity",
+          "title": "Identity mode",
+          "description": "none = no Authentik object; catalog = a launch tile, the app keeps its own login; oidc = the app signs in through Authentik; forward_auth = Authentik login enforced at the reverse proxy.",
+          "required": false,
+          "type": "enum",
+          "values": [
+            {
+              "name": "",
+              "value": ""
+            },
+            {
+              "name": "none",
+              "value": "none"
+            },
+            {
+              "name": "catalog",
+              "value": "catalog"
+            },
+            {
+              "name": "oidc",
+              "value": "oidc"
+            },
+            {
+              "name": "forward_auth",
+              "value": "forward_auth"
+            }
+          ]
+        },
+        {
+          "name": "proxy",
+          "title": "Reverse proxy",
+          "description": "Which reverse proxy publishes this app. Blank keeps the current value.",
+          "required": false,
+          "type": "enum",
+          "values": [
+            {
+              "name": "",
+              "value": ""
+            },
+            {
+              "name": "internal",
+              "value": "internal"
+            },
+            {
+              "name": "external",
+              "value": "external"
+            }
+          ]
+        },
+        {
+          "name": "estate",
+          "title": "Estate",
+          "description": "Multi-domain labs only: the named estate from infrastructure.yml. Blank uses the default estate.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "extra_yaml",
+          "title": "Extra YAML",
+          "description": "Any other instance keys, as YAML. Deep-merged last, so it wins over the fields above.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "reset",
+          "title": "Reset instead of merge",
+          "description": "false merges over the existing file (the normal case). true discards it and writes only what this survey specifies; the old content is still kept under .backups/.",
+          "required": false,
+          "type": "enum",
+          "values": [
+            {
+              "name": "false",
+              "value": "false"
+            },
+            {
+              "name": "true",
+              "value": "true"
+            }
+          ]
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Config"
+    },
+    {
+      "name": "Get Config",
+      "description": "Read the lab definition off the runner without an SSH session. With no instance it returns everything authored; with one it returns that file. The task log is always redacted, so it is safe to copy out of the UI. It also writes an unredacted tar.gz restore point under artifacts/ on the runner and prints its path.",
+      "playbook": "ansible/playbooks/maintenance/get-config.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "instance",
+          "title": "Instance",
+          "description": "One app instance to return, e.g. radarr-4k. Blank returns the whole authored set plus the archive.",
+          "required": false,
+          "type": ""
+        },
+        {
+          "name": "archive",
+          "title": "Write the archive",
+          "description": "Write the tar.gz restore point under artifacts/. Defaults to true when no instance is given.",
+          "required": false,
+          "type": "enum",
+          "values": [
+            {
+              "name": "",
+              "value": ""
+            },
+            {
+              "name": "true",
+              "value": "true"
+            },
+            {
+              "name": "false",
+              "value": "false"
+            }
+          ]
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Config"
     },
     {
       "name": "Deploy Vaultwarden",
@@ -197,8 +438,14 @@
           "required": false,
           "type": "enum",
           "values": [
-            { "name": "false", "value": "false" },
-            { "name": "true", "value": "true" }
+            {
+              "name": "false",
+              "value": "false"
+            },
+            {
+              "name": "true",
+              "value": "true"
+            }
           ]
         }
       ],

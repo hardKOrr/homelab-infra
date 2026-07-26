@@ -1,0 +1,53 @@
+# Get Config — read config/ back out, redacted to the log and whole to an archive.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/get-config.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 786ded77-68eb-5b3e-bb11-bca0edaea79c
+  uuid: 786ded77-68eb-5b3e-bb11-bca0edaea79c
+  name: Get Config
+  group: Config
+  description: |-
+    Read the lab definition off the runner without an SSH session. With no instance it returns everything authored — proxmox.yml, infrastructure.yml and every app instance file. With an instance it returns just that one file. The job log is always redacted, so it is safe to copy out of the UI; that redacted YAML is what you paste back into Configure App. It also writes an unredacted tar.gz restore point under artifacts/ on the runner and prints its path — Rundeck OSS has no artifact download, so retrieve that file over scp if you want it off the host, or rely on PBS, which backs up the runner along with it.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: true
+  options:
+  - name: instance
+    description: One app instance to return (e.g. radarr-4k). Leave blank for the whole authored set plus the downloadable archive.
+    required: false
+  - name: archive
+    description: Write the tar.gz restore point under artifacts/. Defaults to true when no instance is given.
+    required: false
+    values: ['', 'true', 'false']
+    enforced: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/get-config.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          ARGS=()
+          if [ -n "${RD_OPTION_INSTANCE:-}" ]; then
+            ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          fi
+          if [ -n "${RD_OPTION_ARCHIVE:-}" ]; then
+            ARGS+=(-e "archive=$RD_OPTION_ARCHIVE")
+          fi
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          #
+          # LAB_DOCTOR=0: reading a broken config back out is exactly how you diagnose
+          # it, so this job must run even when the doctor is unhappy.
+          export LAB_DOCTOR=0
+          exec lab-run playbooks/maintenance/get-config.yml "${ARGS[@]}"

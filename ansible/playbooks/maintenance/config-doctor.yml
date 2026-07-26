@@ -1,0 +1,28 @@
+---
+# Validate the authored config/ tree and report every problem in one pass.
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance/config-doctor.yml
+#
+# Rundeck/Semaphore: Config group, no parameters. Output goes to the job console.
+#
+# Read-only: mutates nothing, contacts no service, needs no Proxmox connection. It wraps
+# ansible/scripts/config-doctor.sh — the same check lab-run.sh performs before every job
+# and bootstrap.yml performs in its first play. Running it here is how an operator sees
+# the whole report without starting a deploy.
+#
+# Exits non-zero when a required key is missing from both the config file and the
+# environment. Warnings (an unproduced Vaultwarden admin token, a superseded key) are
+# reported and do not fail the run.
+
+- name: "Config doctor | Validate config/"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Run config-doctor
+      ansible.builtin.import_tasks: ../../tasks/config/run-doctor.yml
+      vars:
+        doctor_script_dir: "{{ playbook_dir }}/../../scripts"
+        doctor_config_dir: "{{ playbook_dir }}/../../../config"

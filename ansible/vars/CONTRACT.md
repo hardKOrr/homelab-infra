@@ -49,11 +49,21 @@ backups:       { instance, host, datastore, datastore_path }
 vaultwarden:   { host, port }        # populated after bootstrap step 1
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, api_key, ... }   # see the media registry note below
+runner:                              # the host this platform runs FROM — see below
+  { provider, instance, host, vmid, node, checkout_path, venv_path, branch }
 estates:                             # optional — only when infrastructure.yml declares domains:
   <estate-name>:                     # non-default estates only; the default estate uses
     sso: { provider, instance, host, token }   # the top-level keys above
     dns: { provider, host, api_key }           # optional — global dns serves the estate if absent
 ```
+
+**`runner` — the host the platform runs from (slice 010).** Written by
+`rundeck/bootstrap-rundeck.sh`, not by any playbook, because the runner is created before
+any playbook can run. It exists so playbooks and `status.yml` can name the host they are
+executing on. `provider` is `rundeck` or `semaphore`; `host` is the UI's base URL including
+scheme; `checkout_path` and `venv_path` are the paths `lab-run.sh` resolves from
+`/etc/homelab-infra/lab-run.env`; `branch` is the branch the checkout tracks and refreshes
+to before every job. Nothing wires against this key — it is descriptive.
 
 **Estate scoping.** `infrastructure.yml` may declare a `domains:` map of named
 estates (§5); apps pick one with `routing.estate`. Estate-bound role keys (`sso`,
@@ -149,7 +159,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.node` | required | |
 | `proxmox.api_user` | required | |
 | `proxmox.api_token_id` | required | |
-| `proxmox.api_token_secret` | required | secret |
+| `proxmox.api_token_secret` | required *in file or env* | secret — **preferred shape is to omit it here** and supply `PROXMOX_API_TOKEN` in the environment (slice 010) |
 | `networks.<name>.cidr` | required | per named subnet |
 | `networks.<name>.gateway` | required | per named subnet |
 | `networks.<name>.dns_servers` | required | per named subnet |
@@ -181,8 +191,71 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |
 | `backups.retention` | optional | |
-| `vaultwarden.admin_token` | required | secret; written after bootstrap step 1 |
+| `vaultwarden.admin_token` | required *in file or env* | secret; produced by bootstrap step 1, or supplied as `VAULTWARDEN_ADMIN_TOKEN` |
 | `vaultwarden.instance` | optional | |
+
+### Secrets from the environment (slice 010)
+
+Two values may be supplied through the process environment instead of a config file, and
+the environment wins when both are present:
+
+| Env var | Overrides | Read by |
+|---|---|---|
+| `PROXMOX_API_TOKEN` | `proxmox.api_token_secret` | `scripts/with-proxmox-env.sh`, `tasks/load-user-vars.yml` |
+| `PROXMOX_API_TOKEN_ID` | `proxmox.api_token_id` | both of the above |
+| `PROXMOX_API_USER` | `proxmox.api_user` | both of the above |
+| `VAULTWARDEN_ADMIN_TOKEN` | `infrastructure.vaultwarden.admin_token` | `tasks/load-user-vars.yml` |
+
+This is what keeps **shape** and **secret** in separate homes. `config/proxmox.yml` and
+`config/infrastructure.yml` describe the lab and are meant to be read, diffed, copied and
+handed around by the `Get Config` job; the two genuinely privileged values live in Rundeck
+Key Storage / the Semaphore environment and reach a run as environment variables. On a
+bootstrapped Rundeck runner, `scripts/lab-run.sh` sources them from
+`/etc/homelab-infra/secrets.env` (0640 root:rundeck) — outside the git checkout, so the
+per-run `git reset --hard` never sees them, and outside `config/`, so `Get Config` never
+archives them.
+
+### The Vaultwarden admin token sink (slice 013)
+
+`VAULTWARDEN_ADMIN_TOKEN` differs from the Proxmox token in one way that matters: **the
+platform generates it rather than receiving it.** Vaultwarden has no admin token until its
+first deploy creates one, so there is nothing for an operator to stage in advance.
+
+`tasks/vaultwarden/token-sink.yml` gives that generated value a machine-readable home.
+`roles/vaultwarden` writes it there on the run that generates it; `playbooks/bootstrap.yml`
+reads it back two plays later and continues without stopping for a human.
+
+| Order | Sink | Used when |
+|---|---|---|
+| 1 | `$VAULTWARDEN_TOKEN_SINK` | an operator points it somewhere deliberately |
+| 2 | `/etc/homelab-infra/secrets.d/vaultwarden.env` | on a runner — the directory exists and is writable |
+| 3 | `<config>/.generated/vaultwarden.env` | bare CLI runs, where there is no `/etc/homelab-infra` |
+
+`secrets.d/` is owned by the job user at `0700`, not root, because a playbook running as
+`rundeck` has to create a file in it without privilege escalation. `secrets.env` beside it
+stays root-owned: operator-supplied secrets and platform-generated ones have different
+writers and different lifetimes. `lab-run.sh` sources both, and anything already exported
+wins over either.
+
+Resolution order for the token's **value** is the same everywhere it is read
+(`roles/vaultwarden`, the bootstrap gate): env var, then
+`infrastructure.vaultwarden.admin_token`, then the sink. The config key remains an accepted
+override so a lab that pasted a token before this slice is unaffected by a `git pull`.
+
+The plaintext token is printed to the job log **only when the sink write fails**, because
+then the console is its only surviving copy. On the normal path it does not appear in the
+log at all.
+
+### `config/.backups/` and `config/apps/.backups/`
+
+Every write into `config/` goes through `tasks/config/write-config-file.yml`, which copies
+the current content to `<dir>/.backups/<file>.<YYYYmmddTHHMMSS>` before replacing it, emits
+the unified diff into the job log, and prunes to the newest 20 per file. This is the
+platform's whole config-history mechanism, and it is deliberately point-in-time rather than
+per-commit-with-message: it answers "what did this look like before" and "get it back", and
+does not answer "who changed this and why". `.backups/` is inside the gitignored `config/`
+tree, so the runner's refresh cannot touch it, and PBS carries it off the host with the rest
+of the guest.
 
 **`domains:` — named estates (optional).** An estate is a domain scope with its own
 SSO instance (and optionally DNS and ACME DNS-challenge token), sharing the rest of

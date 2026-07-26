@@ -1,0 +1,213 @@
+---
+# Write config/apps/<instance>.yml from job parameters — the authoring half of the
+# config transport pair (Get Config is the reading half).
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance/configure-app.yml \
+#     -e instance=radarr-4k -e stack=media_stack -e identity=forward_auth
+#
+# Rundeck/Semaphore: Config group. The survey carries the common keys; anything else
+# goes in extra_yaml, which is parsed and deep-merged last. That is the deliberate
+# trade — a survey is a flat parameter list and instance files nest, so rather than
+# grow a parameter per key (or a separate job per app), the common dozen are named and
+# the long tail is free-form YAML validated before it is written.
+#
+# ONE job for every app, not one per app: which app an instance file belongs to is
+# decided by which Deploy job you run against it, so this playbook does not need to
+# know. It writes an override layer over vars/app-defaults/<app>.yml — every parameter
+# is optional, and an empty instance file is a valid one meaning "all defaults".
+#
+# Idempotent: writing the same values twice reports "unchanged". Every write is backed
+# up under config/apps/.backups/ and diffed into the job log by
+# tasks/config/write-config-file.yml.
+#
+# MERGE, NOT REPLACE: parameters left blank keep whatever the existing file has. That
+# is what makes this usable as an editor — changing one field does not require
+# restating the other eleven. Pass reset=true to author the file from scratch instead.
+#
+# Parameters (all optional except instance):
+#   instance    filename and instance name — becomes the hostname and subdomain
+#   stack       Docker stack host, e.g. media_stack (Docker apps)
+#   network     named network from config/proxmox.yml (native LXC apps)
+#   vmid        explicit Proxmox VMID (required on a dhcp network)
+#   cores       proxmox.cores
+#   memory      proxmox.memory, MB
+#   disk        proxmox.disk, GB
+#   port        app.port
+#   subdomain   routing.subdomain — defaults to the instance name
+#   identity    routing.identity — none | catalog | oidc | forward_auth
+#   proxy       routing.proxy — internal | external
+#   estate      routing.estate — a named estate from infrastructure.yml
+#   extra_yaml  free-form YAML deep-merged last; wins over everything above
+#   reset       true discards the existing file instead of merging over it
+
+- name: "Configure app | Write config/apps/<instance>.yml"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    _identity_modes: [none, catalog, oidc, forward_auth]
+    _config_dir: "{{ playbook_dir }}/../../../config"
+
+  tasks:
+    - name: Assert an instance name was supplied
+      ansible.builtin.assert:
+        that:
+          - instance is defined
+          - instance is string
+          - instance | length > 0
+          - instance is match('^[a-z0-9][a-z0-9-]*$')
+        fail_msg: >-
+          instance is required and becomes a hostname, so it must be lowercase
+          letters, digits and hyphens only (e.g. radarr-4k). Got:
+          {{ instance | default('<unset>') }}
+
+    - name: Assert identity is a recognised mode
+      ansible.builtin.assert:
+        that: identity | default('catalog') in _identity_modes
+        fail_msg: >-
+          identity must be one of {{ _identity_modes | join(' | ') }}.
+          Got: {{ identity }}
+      when: identity is defined and identity | length > 0
+
+    - name: Assert proxy is a recognised value
+      ansible.builtin.assert:
+        that: proxy in ['internal', 'external']
+        fail_msg: "proxy must be internal or external. Got: {{ proxy }}"
+      when: proxy is defined and proxy | length > 0
+
+    - name: Set the target path
+      ansible.builtin.set_fact:
+        _instance_file: "{{ _config_dir }}/apps/{{ instance }}.yml"
+
+    - name: Read the existing instance file
+      ansible.builtin.slurp:
+        src: "{{ _instance_file }}"
+      register: _existing_raw
+      failed_when: false
+
+    # An absent file, an empty file and reset=true all mean "start from nothing".
+    - name: Parse the existing content
+      ansible.builtin.set_fact:
+        _existing: >-
+          {{ {} if (reset | default(false) | bool
+                    or _existing_raw.content is not defined)
+             else (_existing_raw.content | b64decode | from_yaml | default({}, true)) }}
+
+    - name: Assert the existing file is a mapping
+      ansible.builtin.assert:
+        that: _existing is mapping
+        fail_msg: >-
+          {{ _instance_file }} exists but its top level is not a mapping, so this job
+          cannot safely merge into it. Fix it by hand, or re-run with reset=true to
+          overwrite it (the current content is kept under config/apps/.backups/).
+
+    # Free-form YAML is parsed BEFORE anything is written, so a typo fails the job
+    # rather than landing a broken instance file that breaks the next deploy instead.
+    - name: Parse extra_yaml
+      ansible.builtin.set_fact:
+        _extra: "{{ extra_yaml | from_yaml | default({}, true) }}"
+      when: extra_yaml is defined and extra_yaml | trim | length > 0
+
+    - name: Assert extra_yaml parsed to a mapping
+      ansible.builtin.assert:
+        that: _extra is mapping
+        fail_msg: >-
+          extra_yaml must be a YAML mapping of top-level instance keys, e.g.
+          "app:\n  root_folder: /media/movies". Got {{ _extra | type_debug }}.
+      when: _extra is defined
+
+    # Each survey parameter becomes a one-key dict only when it was actually supplied;
+    # blank parameters contribute {} and therefore preserve the existing value.
+    - name: Build the authored layer
+      ansible.builtin.set_fact:
+        _authored: >-
+          {{ {}
+             | combine(_stack, recursive=True)
+             | combine(_network, recursive=True)
+             | combine({'proxmox': _proxmox} if _proxmox else {}, recursive=True)
+             | combine({'app': _app} if _app else {}, recursive=True)
+             | combine({'routing': _routing} if _routing else {}, recursive=True) }}
+      vars:
+        _stack: "{{ {'stack': stack} if (stack | default('')) | length > 0 else {} }}"
+        _network: "{{ {'network': network} if (network | default('')) | length > 0 else {} }}"
+        _proxmox: >-
+          {{ {}
+             | combine({'vmid': vmid | int} if (vmid | default('')) | string | length > 0 else {})
+             | combine({'cores': cores | int} if (cores | default('')) | string | length > 0 else {})
+             | combine({'memory': memory | int} if (memory | default('')) | string | length > 0 else {})
+             | combine({'disk': disk | int} if (disk | default('')) | string | length > 0 else {}) }}
+        _app: >-
+          {{ {'port': port | int} if (port | default('')) | string | length > 0 else {} }}
+        _routing: >-
+          {{ {}
+             | combine({'subdomain': subdomain} if (subdomain | default('')) | length > 0 else {})
+             | combine({'identity': identity} if (identity | default('')) | length > 0 else {})
+             | combine({'proxy': proxy} if (proxy | default('')) | length > 0 else {})
+             | combine({'estate': estate} if (estate | default('')) | length > 0 else {}) }}
+
+    - name: Merge existing, authored and extra layers
+      ansible.builtin.set_fact:
+        _merged: >-
+          {{ _existing
+             | combine(_authored, recursive=True)
+             | combine(_extra | default({}), recursive=True) }}
+
+    - name: Assert the result changes something
+      ansible.builtin.assert:
+        that: _merged | length > 0
+        fail_msg: >-
+          No parameters were supplied and no file exists, so there is nothing to write.
+          Supply at least one override, or deploy the app with no instance file at all —
+          every key falls through to vars/app-defaults/<app>.yml.
+
+    # `app:` with nothing under it parses to null, and null survives combine() — it would
+    # be written out as `app: null` and then clobber the entire app subtree of the
+    # defaults at deploy time, because the per-app merge is recursive and a scalar
+    # replaces a mapping wholesale (CONTRACT.md, App-level layering). The usual way to
+    # produce one is an extra_yaml value that lost its indentation in transit, which is
+    # exactly the case worth catching before it is on disk.
+    - name: Assert no top-level mapping key is empty
+      ansible.builtin.assert:
+        that: _empty_keys | length == 0
+        fail_msg: >-
+          {{ _empty_keys | join(', ') }} would be written with no value, which clobbers
+          the whole defaults subtree for {{ 'those keys' if _empty_keys | length > 1
+          else 'that key' }}. Give it child keys, or leave it out entirely — omitting a
+          key is what "use the default" means here. If it came from extra_yaml, check
+          that its indentation survived.
+      vars:
+        _empty_keys: >-
+          {{ _merged | dict2items
+             | selectattr('value', 'none')
+             | map(attribute='key') | list }}
+
+    - name: Write the instance file
+      ansible.builtin.import_tasks: ../../tasks/config/write-config-file.yml
+      vars:
+        config_write_path: "{{ _instance_file }}"
+        config_write_mode: "0640"
+        # The header records provenance: the next reader knows a job wrote this and
+        # that hand-editing it is allowed (Configure App merges over what it finds).
+        # NO TIMESTAMP IN THIS HEADER. A generated date would differ on every run, so the
+        # file would never compare equal, every re-run would report "changed" and take a
+        # backup, and .backups/ would fill with identical copies. When this ran happens to
+        # be recorded already — in the backup filenames and in the file's own mtime.
+        config_write_content: |
+          ---
+          # {{ instance }} — instance config for homelab-infra.
+          #
+          # Written by the Configure App job.
+          # Safe to edit by hand: Configure App merges over whatever it finds here,
+          # and every write is backed up under .backups/ first.
+          #
+          # This is an OVERRIDE layer. Anything absent falls through to
+          # ansible/vars/app-defaults/<app>.yml — see ansible/vars/CONTRACT.md.
+          {{ _merged | to_nice_yaml(indent=2, width=100) }}
+
+    - name: Next step
+      ansible.builtin.debug:
+        msg:
+          - "Wrote config/apps/{{ instance }}.yml"
+          - "Deploy it with the Deploy job for this app, or Get Config to read it back."
