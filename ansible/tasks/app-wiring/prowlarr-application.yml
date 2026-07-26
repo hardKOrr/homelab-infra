@@ -1,0 +1,161 @@
+---
+# Register one *arr app as an Application in Prowlarr, so Prowlarr syncs its
+# indexers into that app. Called per *arr from playbooks/stacks/wire-media-stack.yml.
+#
+# Direction matters: in the *arr ecosystem the indexer list is owned by Prowlarr
+# and pushed outward. Sonarr has no "add Prowlarr" setting — the connection is a
+# Prowlarr Application entry pointing back at Sonarr. Slice 504's README described
+# it the other way round; this is the shape the live API actually exposes.
+#
+# Inputs (set by the caller):
+#   mw_prowlarr_host   Prowlarr base URL including scheme
+#   mw_prowlarr_key    Prowlarr API key
+#   mw_target_name     instance name of the *arr — becomes the Application name
+#   mw_target          its registry entry {app, host, api_key, sync_level?,
+#                      sync_categories?, anime_sync_categories?}
+#
+# Reads `media_wiring` (ansible/vars/media-wiring.yml) for the implementation name.
+#
+# Idempotent: the Application is located by name; absent → POST, drifted → PUT,
+# identical → no change. The API key field comes back masked ("********") on GET,
+# so it is deliberately excluded from drift comparison — comparing it would make
+# every run report a change and rewrite the record.
+#
+# Appends one entry to `media_wire_results`. A failure here is recorded and the
+# run continues: one unreachable app must not abandon the rest of the stack.
+
+- name: Prowlarr application | Wire {{ mw_target_name }}
+  vars:
+    _mw_api: "{{ mw_prowlarr_host }}/api/v1"
+    _mw_headers:
+      X-Api-Key: "{{ mw_prowlarr_key }}"
+      Accept: "application/json"
+    _mw_implementation: "{{ media_wiring.kinds[mw_target.app].prowlarr_implementation }}"
+  block:
+    - name: Prowlarr application | Read existing applications
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}/applications"
+        method: GET
+        headers: "{{ _mw_headers }}"
+        status_code: 200
+        timeout: 15
+      register: _mw_apps
+      changed_when: false
+      no_log: true
+
+    - name: Prowlarr application | Read the application schema
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}/applications/schema"
+        method: GET
+        headers: "{{ _mw_headers }}"
+        status_code: 200
+        timeout: 15
+      register: _mw_schema_all
+      changed_when: false
+      no_log: true
+
+    - name: Prowlarr application | Select the existing entry and its schema
+      ansible.builtin.set_fact:
+        _mw_existing: >-
+          {{ _mw_apps.json | selectattr('name', 'equalto', mw_target_name)
+             | list | first | default({}) }}
+        _mw_schema: >-
+          {{ _mw_schema_all.json | selectattr('implementation', 'equalto', _mw_implementation)
+             | list | first | default({}) }}
+
+    - name: Prowlarr application | Assert Prowlarr supports this app kind
+      ansible.builtin.assert:
+        that: _mw_schema.implementation is defined
+        fail_msg: >-
+          Prowlarr at {{ mw_prowlarr_host }} offers no {{ _mw_implementation }}
+          application implementation. Check the Prowlarr version.
+
+    # Schema fields carry Prowlarr's defaults (sync categories, priorities). Keep
+    # them, and overlay only the values this wiring owns — that way a category set
+    # in the Prowlarr UI survives a re-run unless the registry overrides it.
+    - name: Prowlarr application | Build the payload
+      ansible.builtin.set_fact:
+        _mw_payload: >-
+          {{ {'name': mw_target_name,
+              'implementation': _mw_implementation,
+              'implementationName': _mw_schema.implementationName | default(_mw_implementation),
+              'configContract': _mw_schema.configContract,
+              'syncLevel': mw_target.sync_level | default('fullSync'),
+              'tags': _mw_existing.tags | default([]),
+              'fields': _mw_fields}
+             | combine({'id': _mw_existing.id} if _mw_existing.id is defined else {}) }}
+      vars:
+        _mw_values: >-
+          {{ {'prowlarrUrl': mw_prowlarr_host,
+              'baseUrl': mw_target.host,
+              'apiKey': mw_target.api_key}
+             | combine({'syncCategories': mw_target.sync_categories}
+                       if mw_target.sync_categories is defined else {})
+             | combine({'animeSyncCategories': mw_target.anime_sync_categories}
+                       if mw_target.anime_sync_categories is defined else {}) }}
+        _mw_fields: >-
+          {{ (_mw_schema.fields | rejectattr('name', 'in', _mw_values.keys() | list)
+              | selectattr('value', 'defined') | list)
+             + (_mw_values | dict2items(key_name='name', value_name='value')) }}
+      no_log: true
+
+    - name: Prowlarr application | Detect drift
+      ansible.builtin.set_fact:
+        _mw_drifted: >-
+          {{ _mw_existing.id is defined
+             and (_mw_current.baseUrl | default('') != mw_target.host
+                  or _mw_current.prowlarrUrl | default('') != mw_prowlarr_host
+                  or _mw_existing.syncLevel | default('') != mw_target.sync_level | default('fullSync')
+                  or not (_mw_existing.enable | default(true))) }}
+      vars:
+        _mw_current: >-
+          {{ _mw_existing.fields | default([]) | selectattr('value', 'defined')
+             | items2dict(key_name='name', value_name='value') }}
+
+    - name: Prowlarr application | Create the application
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}/applications"
+        method: POST
+        headers: "{{ _mw_headers }}"
+        body_format: json
+        body: "{{ _mw_payload }}"
+        status_code: [200, 201]
+      when: _mw_existing.id is not defined
+      changed_when: _mw_existing.id is not defined
+      no_log: true
+
+    - name: Prowlarr application | Update the drifted application
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}/applications/{{ _mw_existing.id | default(0) }}"
+        method: PUT
+        headers: "{{ _mw_headers }}"
+        body_format: json
+        body: "{{ _mw_payload }}"
+        status_code: [200, 202]
+      when: _mw_drifted | bool
+      changed_when: true
+      no_log: true
+
+    - name: Prowlarr application | Record the result
+      ansible.builtin.set_fact:
+        media_wire_results: >-
+          {{ media_wire_results | default([])
+             + [{'connection': mw_target_name ~ ' → prowlarr indexers',
+                 'state': 'created' if _mw_existing.id is not defined
+                          else ('updated' if _mw_drifted | bool else 'confirmed')}] }}
+
+  rescue:
+    - name: Prowlarr application | Record the failure
+      ansible.builtin.set_fact:
+        media_wire_results: >-
+          {{ media_wire_results | default([])
+             + [{'connection': mw_target_name ~ ' → prowlarr indexers',
+                 'state': 'failed',
+                 'detail': ansible_failed_result.msg | default('unknown error') | truncate(160)}] }}
+
+    - name: Prowlarr application | Report the failure
+      ansible.builtin.debug:
+        msg: >-
+          Could not register {{ mw_target_name }} in Prowlarr at {{ mw_prowlarr_host }}:
+          {{ ansible_failed_result.msg | default('unknown error') }}.
+          The rest of the media stack is still being wired.

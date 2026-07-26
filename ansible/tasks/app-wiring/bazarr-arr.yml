@@ -1,0 +1,107 @@
+---
+# Point Bazarr at one Sonarr or one Radarr.
+# Called per (bazarr, app) pair from playbooks/stacks/wire-media-stack.yml.
+#
+# Inputs (set by the caller):
+#   mw_bazarr_name  instance name of Bazarr (for messages)
+#   mw_bazarr       its registry entry {app, host, api_key}
+#   mw_arr_name     instance name of the Sonarr/Radarr to connect
+#   mw_arr          its registry entry {app, host, api_key}
+#
+# Bazarr is not an *arr: it has no /api/v3 resource collections, one settings
+# document instead, and it holds exactly one Sonarr and one Radarr connection.
+# Reads are `GET /api/system/settings` (JSON); writes are
+# `POST /api/system/settings` with form-encoded `settings-<section>-<key>` pairs —
+# the same shape the Bazarr UI submits. Authentication is the `X-API-KEY` header.
+#
+# Idempotent: the current settings document is compared field by field and the
+# POST only fires on drift. Unlike the *arr apps, Bazarr returns its stored API
+# keys unmasked, so the peer's key is part of the comparison.
+#
+# Appends one entry to `media_wire_results`; failures are recorded, not fatal.
+
+- name: Bazarr | Wire {{ mw_arr_name }} into {{ mw_bazarr_name }}
+  vars:
+    _mw_api: "{{ mw_bazarr.host }}/api/system/settings"
+    _mw_headers:
+      X-API-KEY: "{{ mw_bazarr.api_key }}"
+      Accept: "application/json"
+    _mw_section: "{{ mw_arr.app }}"
+    _mw_connection: "{{ mw_bazarr_name }} → {{ mw_arr_name }}"
+  block:
+    - name: Bazarr | Read current settings
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}"
+        method: GET
+        headers: "{{ _mw_headers }}"
+        status_code: 200
+        timeout: 15
+      register: _mw_settings
+      changed_when: false
+      no_log: true
+
+    - name: Bazarr | Build the wanted connection
+      ansible.builtin.set_fact:
+        _mw_wanted:
+          ip: "{{ mw_arr.host | ansible.builtin.urlsplit('hostname') }}"
+          port: "{{ mw_arr.host | ansible.builtin.urlsplit('port') | int }}"
+          apikey: "{{ mw_arr.api_key }}"
+          ssl: "{{ mw_arr.host | ansible.builtin.urlsplit('scheme') == 'https' }}"
+          base_url: "{{ mw_arr.url_base | default('') }}"
+      no_log: true
+
+    - name: Bazarr | Detect drift
+      ansible.builtin.set_fact:
+        _mw_drifted: >-
+          {{ (_mw_current | combine(_mw_wanted_typed)) != _mw_current
+             or not (_mw_settings.json.general['use_' ~ _mw_section] | default(false)) }}
+      vars:
+        _mw_current: >-
+          {{ _mw_settings.json[_mw_section] | default({}) | dict2items
+             | selectattr('key', 'in', _mw_wanted.keys() | list) | items2dict }}
+        # set_fact stringifies, so restore the types Bazarr reports before comparing.
+        _mw_wanted_typed: >-
+          {{ _mw_wanted | combine({'port': _mw_wanted.port | int,
+                                   'ssl': _mw_wanted.ssl | bool}) }}
+      no_log: true
+
+    - name: Bazarr | Apply the connection
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}"
+        method: POST
+        headers: "{{ _mw_headers }}"
+        body_format: form-urlencoded
+        # Flat `settings-<section>-<key>` pairs, plus the master switch that makes
+        # Bazarr actually use the connection.
+        body: >-
+          {{ dict(_mw_wanted.keys()
+                  | map('regex_replace', '^', 'settings-' ~ _mw_section ~ '-') | list
+                  | zip(_mw_wanted.values() | list))
+             | combine({'settings-general-use_' ~ _mw_section: 'True'}) }}
+        status_code: [200, 204]
+      when: _mw_drifted | bool
+      changed_when: true
+      no_log: true
+
+    - name: Bazarr | Record the result
+      ansible.builtin.set_fact:
+        media_wire_results: >-
+          {{ media_wire_results | default([])
+             + [{'connection': _mw_connection,
+                 'state': 'updated' if _mw_drifted | bool else 'confirmed'}] }}
+
+  rescue:
+    - name: Bazarr | Record the failure
+      ansible.builtin.set_fact:
+        media_wire_results: >-
+          {{ media_wire_results | default([])
+             + [{'connection': _mw_connection,
+                 'state': 'failed',
+                 'detail': ansible_failed_result.msg | default('unknown error') | truncate(160)}] }}
+
+    - name: Bazarr | Report the failure
+      ansible.builtin.debug:
+        msg: >-
+          Could not point {{ mw_bazarr_name }} at {{ mw_arr_name }}:
+          {{ ansible_failed_result.msg | default('unknown error') }}.
+          The rest of the media stack is still being wired.

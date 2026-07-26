@@ -15,7 +15,7 @@ Gates (both current as of 2026-07-25): `wsl bash -lc 'bash .claude/gate/lint.sh'
 137 files on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
 clean. **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 26 built · 1 open.**
+Counts: **12 done · 27 built · 0 open.**
 
 ---
 
@@ -39,11 +39,12 @@ No further work. Listed for provenance only.
 | 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) |
 | 200 | [write-generated-facts](200-write-generated-facts/README.md) |
 
-## Built — awaiting live acceptance (25)
+## Built — awaiting live acceptance (26)
 
-Every one of these is code-complete and gate-verified. **They all clear on the same
-event: a live bootstrap run against the lab** (slice 500's acceptance). Per-slice
-deviations and open questions live in each slice's `notes.md`.
+Every one of these is code-complete and gate-verified. **All but 504 clear on the same
+event: a live bootstrap run against the lab** (slice 500's acceptance); 504 needs a
+populated `config/` on the runner instead. Per-slice deviations and open questions live in
+each slice's `notes.md`.
 
 | # | Slice | What live acceptance needs |
 |---|---|---|
@@ -70,6 +71,7 @@ deviations and open questions live in each slice's `notes.md`.
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | remove a deployed app; needs 300/302/303/304 live |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
 | 503 | [Lab status](503-lab-status/README.md) | one run against a populated lab |
+| 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs `config/` on a runner for the full play chain + Ntfy |
 | 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | a restore into a fresh Semaphore |
 | 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | `rd jobs load` of all 14 files |
 
@@ -90,21 +92,21 @@ Carried caveats:
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
   restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
 
-## Open (1)
+## Open (0)
 
-| # | Slice | Depends on | Ready? |
-|---|---|---|---|
-| 504 | [Wire media stack](504-wire-media-stack/README.md) | 300–305 | blocked in practice — no media app exists to wire |
+Nothing open. 504 was the last one; it shipped against the operator's live media apps
+(read-only verification — see its `notes.md`).
 
 ## Recommended order
 
-1. **Live bootstrap run** — one event converts 24 of the 25 `built` slices. The backlog of
+1. **Live bootstrap run** — one event converts 24 of the `built` slices. The backlog of
    unverified work is now the project's *only* significant risk, and nothing else in the
    backlog reduces it.
 2. **Import one UI** (600 or 601) and drive the live run from it, so the job definitions
    are verified by the same event rather than in a second pass.
-3. **504** — deferred until a media stack app actually exists to wire. Adding a media app
-   is the prerequisite, not more scaffolding.
+3. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
+   writing `media.<instance>` on deploy closes the loop; until then media apps join the
+   wiring through the `app.media_kind` discovery path.
 
 ## Retired trackers
 
@@ -122,6 +124,15 @@ Carried caveats:
 
 ## Cross-slice effects on record
 
+From the 504 build (2026-07-25):
+
+- **New registry key `media`** (CONTRACT.md §3) — instance-keyed, not role-keyed, because a
+  lab runs several Sonarrs. Read only by `wire-media-stack.yml`.
+- **Three optional `app:` keys** in instance files: `media_kind`, `host`, `api_key`. Their
+  presence is what enrols an app in media wiring, so a lab can wire apps it did not deploy.
+- **New shared directory** `tasks/app-wiring/` and its table `vars/media-wiring.yml` —
+  cloning the playbook for another stack means changing which task files it loops over.
+
 From the 5XX/6XX build (2026-07-25):
 
 - **`app.service_name` added** to the four native baseline app-defaults (vaultwarden,
@@ -134,7 +145,7 @@ From the 5XX/6XX build (2026-07-25):
   than a legacy vars file.
 - **Both UIs ship one job per app**, with `instance=<app>` baked in — no survey to fill
   for a deploy. `Remove App`, `Restart App`, `Tail App Log` and `Rollback Container` keep
-  their parameters. Neither UI defines a Wire Stack job (504's playbook does not exist).
+  their parameters. 504 added `Wire Media Stack` to both UIs, parameter-free.
 - **`test.sh` is green for the first time** — 502 replaced the stub that was failing it.
 
 From the 4XX build (2026-07-25):

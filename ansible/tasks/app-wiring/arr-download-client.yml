@@ -1,0 +1,179 @@
+---
+# Register one download client in one *arr app (Sonarr/Radarr/Lidarr/Readarr).
+# Called per (client, app) pair from playbooks/stacks/wire-media-stack.yml.
+#
+# Inputs (set by the caller):
+#   mw_arr_name     instance name of the *arr
+#   mw_arr          its registry entry {app, host, api_key}
+#   mw_client_name  instance name of the download client — becomes the client name
+#   mw_client       its registry entry {app, host, api_key|username+password|arl,
+#                   url_base?, categories?}
+#
+# Reads `media_wiring` (ansible/vars/media-wiring.yml) for the implementation name
+# and the app's category field.
+#
+# The payload starts from the *arr's own /downloadclient/schema entry, so every
+# setting this wiring does not own (priorities, removeCompletedDownloads, content
+# layout) keeps the app's default. Only fields the schema actually declares are
+# sent — that is what makes a category-less client (Deemix, Slskd) work through
+# the same code path as SABnzbd.
+#
+# Idempotent: located by name; absent → POST, drifted → PUT, identical → no
+# change. Secrets come back masked on GET and are excluded from drift comparison.
+#
+# Appends one entry to `media_wire_results`; failures are recorded, not fatal.
+
+- name: Download client | Wire {{ mw_client_name }} into {{ mw_arr_name }}
+  vars:
+    _mw_api: "{{ mw_arr.host }}/api/{{ media_wiring.kinds[mw_arr.app].api }}/downloadclient"
+    _mw_headers:
+      X-Api-Key: "{{ mw_arr.api_key }}"
+      Accept: "application/json"
+    _mw_client_kind: "{{ media_wiring.kinds[mw_client.app] }}"
+    _mw_arr_kind: "{{ media_wiring.kinds[mw_arr.app] }}"
+    _mw_connection: "{{ mw_client_name }} → {{ mw_arr_name }}"
+  block:
+    - name: Download client | Read existing clients
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}"
+        method: GET
+        headers: "{{ _mw_headers }}"
+        status_code: 200
+        timeout: 15
+      register: _mw_clients
+      changed_when: false
+      no_log: true
+
+    - name: Download client | Read the client schema
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}/schema"
+        method: GET
+        headers: "{{ _mw_headers }}"
+        status_code: 200
+        timeout: 15
+      register: _mw_schema_all
+      changed_when: false
+      no_log: true
+
+    - name: Download client | Select the existing entry and its schema
+      ansible.builtin.set_fact:
+        _mw_existing: >-
+          {{ _mw_clients.json | selectattr('name', 'equalto', mw_client_name)
+             | list | first | default({}) }}
+        _mw_schema: >-
+          {{ _mw_schema_all.json
+             | selectattr('implementation', 'equalto', _mw_client_kind.implementation)
+             | list | first | default({}) }}
+
+    - name: Download client | Assert the app supports this client
+      ansible.builtin.assert:
+        that: _mw_schema.implementation is defined
+        fail_msg: >-
+          {{ mw_arr_name }} offers no {{ _mw_client_kind.implementation }} download
+          client. Deemix and Slskd need the Lidarr plugins branch; check the app
+          version, or drop {{ mw_client_name }} from this app's peers.
+
+    - name: Download client | Build the payload
+      ansible.builtin.set_fact:
+        _mw_payload: >-
+          {{ _mw_schema
+             | combine({'name': mw_client_name,
+                        'enable': mw_client.enabled | default(true),
+                        'tags': _mw_existing.tags | default([]),
+                        'fields': _mw_fields})
+             | combine({'id': _mw_existing.id} if _mw_existing.id is defined else {}) }}
+        _mw_wanted: "{{ _mw_values }}"
+      vars:
+        _mw_scheme_ssl: "{{ mw_client.host | ansible.builtin.urlsplit('scheme') == 'https' }}"
+        _mw_category: >-
+          {{ mw_client.categories[mw_arr_name] | default(_mw_arr_kind.default_category, true)
+             if mw_client.categories is defined else _mw_arr_kind.default_category }}
+        # Every value this wiring owns, before the schema decides which of them
+        # this client actually accepts.
+        _mw_all_values: >-
+          {{ {'host': mw_client.host | ansible.builtin.urlsplit('hostname'),
+              'port': mw_client.host | ansible.builtin.urlsplit('port') | int,
+              'useSsl': _mw_scheme_ssl | bool,
+              'urlBase': mw_client.url_base | default(''),
+              'apiKey': mw_client.api_key | default(''),
+              'username': mw_client.username | default(''),
+              'password': mw_client.password | default(''),
+              'arl': mw_client.arl | default(''),
+              _mw_arr_kind.category_field | default('_unused'): _mw_category}
+             | dict2items | rejectattr('value', 'equalto', '') | items2dict }}
+        _mw_values: >-
+          {{ _mw_all_values | dict2items
+             | selectattr('key', 'in', _mw_schema.fields | map(attribute='name') | list)
+             | items2dict }}
+        _mw_fields: >-
+          {{ (_mw_schema.fields | rejectattr('name', 'in', _mw_values.keys() | list)
+              | selectattr('value', 'defined') | list)
+             + (_mw_values | dict2items(key_name='name', value_name='value')) }}
+      no_log: true
+
+    - name: Download client | Detect drift
+      ansible.builtin.set_fact:
+        # Overlaying the wanted values onto what the app reports changes nothing
+        # when the client is already wired the way this run wants it.
+        _mw_drifted: >-
+          {{ _mw_existing.id is defined
+             and ((_mw_current | combine(_mw_comparable)) != _mw_current
+                  or _mw_existing.enable | default(true) != (mw_client.enabled | default(true))) }}
+      vars:
+        _mw_current: >-
+          {{ _mw_existing.fields | default([]) | selectattr('value', 'defined')
+             | items2dict(key_name='name', value_name='value') }}
+        # Secrets are masked on read — comparing them would report drift forever.
+        _mw_comparable: >-
+          {{ _mw_wanted | dict2items
+             | rejectattr('key', 'in', ['apiKey', 'password', 'arl'])
+             | items2dict }}
+      no_log: true
+
+    - name: Download client | Create the client
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}"
+        method: POST
+        headers: "{{ _mw_headers }}"
+        body_format: json
+        body: "{{ _mw_payload }}"
+        status_code: [200, 201]
+      when: _mw_existing.id is not defined
+      changed_when: _mw_existing.id is not defined
+      no_log: true
+
+    - name: Download client | Update the drifted client
+      ansible.builtin.uri:
+        url: "{{ _mw_api }}/{{ _mw_existing.id | default(0) }}"
+        method: PUT
+        headers: "{{ _mw_headers }}"
+        body_format: json
+        body: "{{ _mw_payload }}"
+        status_code: [200, 202]
+      when: _mw_drifted | bool
+      changed_when: true
+      no_log: true
+
+    - name: Download client | Record the result
+      ansible.builtin.set_fact:
+        media_wire_results: >-
+          {{ media_wire_results | default([])
+             + [{'connection': _mw_connection,
+                 'state': 'created' if _mw_existing.id is not defined
+                          else ('updated' if _mw_drifted | bool else 'confirmed')}] }}
+
+  rescue:
+    - name: Download client | Record the failure
+      ansible.builtin.set_fact:
+        media_wire_results: >-
+          {{ media_wire_results | default([])
+             + [{'connection': _mw_connection,
+                 'state': 'failed',
+                 'detail': ansible_failed_result.msg | default('unknown error') | truncate(160)}] }}
+
+    - name: Download client | Report the failure
+      ansible.builtin.debug:
+        msg: >-
+          Could not register {{ mw_client_name }} in {{ mw_arr_name }}:
+          {{ ansible_failed_result.msg | default('unknown error') }}.
+          The rest of the media stack is still being wired.

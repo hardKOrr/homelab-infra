@@ -47,6 +47,8 @@ metrics:       { provider, instance, host, prometheus_host, admin_user, admin_pa
 dns:           { provider, host, api_key }
 backups:       { instance, host, datastore, datastore_path }
 vaultwarden:   { host, port }        # populated after bootstrap step 1
+media:                               # optional — app-to-app wiring for the media stack
+  <instance>: { app, host, api_key, ... }   # see the media registry note below
 estates:                             # optional — only when infrastructure.yml declares domains:
   <estate-name>:                     # non-default estates only; the default estate uses
     sso: { provider, instance, host, token }   # the top-level keys above
@@ -86,6 +88,31 @@ read only by that provider's wiring tasks (slices 301–305):
 
 `monitoring` is the Shape B role key for uptime monitoring; the provider-named
 `uptime_kuma` key that app playbooks briefly gated on is superseded — do not use it.
+
+**`media` — the app-to-app wiring registry (slice 504).** Unlike every other role
+key, `media` is instance-keyed rather than role-keyed: one entry per media app,
+because a lab runs several Sonarrs and several download clients at once. It is
+read by `playbooks/stacks/wire-media-stack.yml` and by nothing else.
+
+| Field | Required? | Notes |
+|---|---|---|
+| `app` | required | app kind — a key of `media_wiring.kinds` in `ansible/vars/media-wiring.yml` (`sonarr`, `radarr`, `lidarr`, `readarr`, `prowlarr`, `bazarr`, `sabnzbd`, `qbittorrent`, `deemix`, `slskd`) |
+| `host` | required | full base URL including scheme **and port** — the port is read off this value, not from a separate field |
+| `api_key` | per kind | *arr apps, Prowlarr, Bazarr, SABnzbd, Slskd. Discoverable for *arr kinds — see below |
+| `username`, `password` | qBittorrent | |
+| `arl` | Deemix | |
+| `url_base` | optional | reverse-proxy subpath |
+| `enabled` | optional | default `true`; sets the download client's enable flag |
+| `peers` | optional | instance names this app may wire to; default is every compatible app |
+| `categories` | optional | `{<arr instance>: <category>}` — download clients only; default is the target app's `default_category` |
+| `sync_level`, `sync_categories`, `anime_sync_categories` | optional | Prowlarr Application settings for an *arr entry |
+
+Entries may also be **discovered** rather than registered: an instance file
+declaring `app.media_kind` joins the registry with its `app.host` (or the dynamic
+inventory entry plus `app.port`), and an *arr's self-generated API key is read out
+of `<app.config_path>/config.xml` at wire time. Registry entries win over
+discovered ones. This is what lets a lab wire media apps it did not deploy itself,
+before per-app media roles exist.
 
 Ntfy ships closed (`auth-default-access: deny-all`, slice 401), so every notification
 consumer must authenticate. Consumers treat the credential fields as **optional**: an
@@ -223,6 +250,11 @@ snippet (NPM) only for `forward_auth`; every other mode keeps the plain route it
 had. The boolean `routing.auth` is **superseded** by `routing.identity`
 — nothing reads it. `routing.subdomain` overrides the hostname on the estate domain (default:
 the instance name); `routing.estate` names a `domains:` estate (§5).
+Media-stack instances may add three optional `app:` keys read only by
+`wire-media-stack.yml`: `media_kind` (the app kind — its presence is what enrols
+the instance in media wiring), `host` (an explicit base URL, for an app this lab
+did not deploy) and `api_key` (when the app's key cannot be read from
+`config_path/config.xml`).
 The whole file merges over `<app>_defaults` via `combine(recursive=True)`, later layer wins per key.
 Because the merge is recursive, an override must match the default's shape: replacing a mapping (e.g.
 `app:`) with a scalar clobbers the entire subtree, so instance files never restate a mapping key as a

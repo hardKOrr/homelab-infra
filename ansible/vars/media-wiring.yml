@@ -1,0 +1,86 @@
+---
+# Media-stack app-to-app wiring table.
+#
+# One entry per media app kind, keyed by the `app` value recorded in the
+# `media` registry key (ansible/vars/CONTRACT.md §3). The wiring tasks in
+# tasks/app-wiring/ are generic — every app-specific fact (API version, Prowlarr
+# implementation name, download-client category field) lives here, so adding an
+# app kind is a table entry, not a new task file.
+#
+# Field names and API paths below were read off live *arr instances
+# (Sonarr 4.0.19, Radarr 6.2.1, Lidarr 2.12 plugins, Prowlarr, Bazarr 1.6.0) via
+# each app's /schema endpoint. Re-check the schema endpoint before adding a kind.
+#
+# Keys per entry:
+#   role                    arr | indexer_manager | download_client | subtitles
+#   api                     API version segment (/api/<api>/...) — arr apps only
+#   prowlarr_implementation implementation name Prowlarr uses for this app
+#   category_field          download-client field carrying this app's category
+#   default_category        category used when the registry declares none
+#   protocols               download-client protocols this app accepts
+#   implementation          *arr download-client implementation name
+#   protocol                protocol this client speaks
+#   auth                    api_key | userpass | arl | none — which credential
+#                           fields the client's settings contract carries
+
+media_wiring:
+  kinds:
+    sonarr:
+      role: arr
+      api: v3
+      prowlarr_implementation: Sonarr
+      category_field: tvCategory
+      default_category: tv-sonarr
+      protocols: [usenet, torrent]
+    radarr:
+      role: arr
+      api: v3
+      prowlarr_implementation: Radarr
+      category_field: movieCategory
+      default_category: radarr
+      protocols: [usenet, torrent]
+    lidarr:
+      role: arr
+      api: v1
+      prowlarr_implementation: Lidarr
+      category_field: musicCategory
+      default_category: lidarr
+      # The plugins branch adds Deemix and Slskd as first-class download clients;
+      # a mainline Lidarr rejects them and the wiring reports the failed probe.
+      protocols: [usenet, torrent, deemix, slskd]
+    readarr:
+      role: arr
+      api: v1
+      prowlarr_implementation: Readarr
+      category_field: bookCategory
+      default_category: readarr
+      protocols: [usenet, torrent]
+    prowlarr:
+      role: indexer_manager
+      api: v1
+    bazarr:
+      role: subtitles
+    sabnzbd:
+      role: download_client
+      implementation: Sabnzbd
+      protocol: usenet
+      auth: api_key
+    qbittorrent:
+      role: download_client
+      implementation: QBittorrent
+      protocol: torrent
+      auth: userpass
+    deemix:
+      role: download_client
+      implementation: Deemix
+      protocol: deemix
+      auth: arl
+    slskd:
+      role: download_client
+      implementation: Slskd
+      protocol: slskd
+      auth: api_key
+
+  # Bazarr drives exactly one Sonarr and one Radarr — its settings model has a
+  # single connection per app, not a list.
+  bazarr_kinds: [sonarr, radarr]
