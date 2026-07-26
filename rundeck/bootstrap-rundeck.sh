@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # bootstrap-rundeck.sh — stand up the whole homelab-infra runner from nothing.
 #
-# Run this ON a Proxmox node, as root. When it finishes there is nothing left to do by
-# hand: open Rundeck and click Bootstrap Platform.
+# Run this ON a Proxmox node, as root. By default it returns a working automation
+# runner AND the preliminary Vaultwarden LXC. Open Rundeck and click Bootstrap
+# Platform to reconcile Vaultwarden and deploy the remaining baseline services.
 #
 #   ./bootstrap-rundeck.sh
 #   VMID=13228 CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh
 #   LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 ./bootstrap-rundeck.sh
+#   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
 #
 # This is the first of the platform's two bootstrap layers:
 #
 #   1. THIS SCRIPT, on a PVE node — builds the runner and everything the UI needs to
 #      exist: the LXC, Java, Rundeck, an ansible venv, the repo clone, the platform's
 #      Proxmox credential, the authored config, Key Storage, the project and the jobs.
-#   2. BOOTSTRAP PLATFORM, in the UI — builds the lab itself: Vaultwarden, Ntfy, the
-#      reverse proxy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS.
+#      It then invokes the normal Ansible app playbook to deploy Vaultwarden first.
+#   2. BOOTSTRAP PLATFORM, in the UI — reconciles the already-tagged Vaultwarden guest,
+#      then builds Ntfy, the reverse proxy, Authentik, Uptime Kuma,
+#      Prometheus + Grafana and PBS.
 #
-# One command, then one click. There is no manual seam between them.
+# One command produces the runner and its secret store; one click finishes the platform.
 #
 # What it produces:
 #   - Unprivileged Debian 13 LXC, tagged homelab-infra so the platform manages it like
@@ -73,6 +77,12 @@ PVE_TOKEN_NAME="${PVE_TOKEN_NAME:-automation}"
 # A token secret is displayed once, at creation, and can never be re-read. Re-runs
 # therefore keep the existing token; set this to 1 to deliberately rotate it.
 ROTATE_PROXMOX_TOKEN="${ROTATE_PROXMOX_TOKEN:-0}"
+
+# Deploy the preliminary Vaultwarden LXC before this script returns. The script
+# deliberately invokes Ansible rather than duplicating app provisioning in Bash:
+# later inventory refreshes find the `vaultwarden` tag and the same playbook adopts
+# and reconciles the guest. Set to 0 only for runner-only recovery/diagnostics.
+DEPLOY_VAULTWARDEN="${DEPLOY_VAULTWARDEN:-1}"
 
 # Root SSH access into the container. Default: whatever keys already authorise root on THIS
 # Proxmox node — anyone who can run this script is already node root, so copying them grants no
@@ -160,6 +170,10 @@ command -v pct >/dev/null    || die "pct not found — run this on a Proxmox nod
 command -v pveam >/dev/null  || die "pveam not found"
 command -v pveum >/dev/null  || die "pveum not found"
 pvesm status --storage "$CT_STORAGE" >/dev/null 2>&1 || die "storage '$CT_STORAGE' not available on this node"
+case "$DEPLOY_VAULTWARDEN" in
+  0|1) : ;;
+  *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
+esac
 info "node $(hostname), target VMID $VMID at $RD_URL"
 
 # Resolve the keys now so we fail before building anything, not after.
@@ -442,6 +456,9 @@ LAB_BRANCH=$REPO_BRANCH
 LAB_REFRESH=1
 # 1 = run config-doctor before every job, so a missing key fails at the front door.
 LAB_DOCTOR=1
+# Dedicated identity generated above. lab-run exports it as
+# ANSIBLE_PRIVATE_KEY_FILE for guest SSH and node-delegated pct/qm waits.
+LAB_SSH_KEY=$LAB_SSH_KEY
 EOF
 chmod 0644 "$LAB_ETC/lab-run.env"
 ln -sfn "$REPO_DIR/ansible/scripts/lab-run.sh" /usr/local/bin/lab-run
@@ -649,6 +666,20 @@ push_file "$STAGE2/rundeck.yml" "$CONFIG_RUNNER" 0640
 in_ct chown rundeck:rundeck "$CONFIG_RUNNER"
 info "wrote config/apps/rundeck.yml"
 
+# The provisioning tasks use the Proxmox API for create/update, then delegate
+# node-local `pct`/`qm` readiness checks to the PVE node. Authorize the platform's
+# dedicated runner identity for that existing contract. The exact key is appended
+# idempotently and no password or host key is copied.
+log "Authorize the automation runner on this Proxmox node"
+LAB_SSH_PUBKEY="$(in_ct cat "${LAB_SSH_KEY}.pub" 2>/dev/null || true)"
+[ -n "$LAB_SSH_PUBKEY" ] || die "the platform SSH key was not generated at ${LAB_SSH_KEY}.pub"
+install -d -m 0700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 0600 /root/.ssh/authorized_keys
+grep -qxF "$LAB_SSH_PUBKEY" /root/.ssh/authorized_keys \
+  || printf '%s\n' "$LAB_SSH_PUBKEY" >> /root/.ssh/authorized_keys
+info "platform runner key is authorized for node-local pct/qm waits"
+
 # ── Proxmox credential ─────────────────────────────────────────────────────────
 # Node root can issue the platform's credential, so nothing here asks a human for one.
 log "Proxmox credential"
@@ -666,9 +697,11 @@ log "Proxmox credential"
 #                       fallback below
 #   Pool.Audit          guest enumeration by the inventory plugin
 #
-# This is a real reduction from root@pam — no user, realm, permission or ACL management,
-# no root shell — but be clear-eyed: Sys.Modify at / is broad. It is required because
+# This is a real API-credential reduction from root@pam — no user, realm, permission or
+# ACL management — but be clear-eyed: Sys.Modify at / is broad. It is required because
 # creating a storage backend and a cluster backup job are cluster-configuration writes.
+# The separate SSH identity authorized above still has the node-root command channel the
+# existing pct/qm delegate tasks require; that is not a property of this API token.
 PVE_PRIVS_FULL="Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Pool.Audit,SDN.Audit,SDN.Use,Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,VM.Audit,VM.Backup,VM.Clone,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.Console,VM.Migrate,VM.Monitor,VM.PowerMgmt,VM.Snapshot,VM.Snapshot.Rollback"
 # Older PVE releases do not know the SDN privileges; drop them rather than fail.
 PVE_PRIVS_NOSDN="$(printf '%s' "$PVE_PRIVS_FULL" | sed 's/SDN\.Audit,//; s/SDN\.Use,//')"
@@ -972,6 +1005,31 @@ rm -f "$PATCH"
 MERGE
 info "recorded the runner registry key in config/.generated/facts.yml"
 
+# ── Preliminary Vaultwarden ───────────────────────────────────────────────────
+# This is still Ansible-owned provisioning. Running it here simply moves the first
+# app deployment into the host bootstrap so the script returns with the secret
+# store online. apps/vaultwarden.yml refreshes dynamic inventory, creates the LXC
+# when absent, and reuses `tag_vaultwarden` on every later run.
+if [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
+  log "Deploy preliminary Vaultwarden through the automation runner"
+  if ! ct_file_exists "$LAB_ETC/secrets.env"; then
+    die "cannot deploy Vaultwarden: $LAB_ETC/secrets.env is absent.
+The Proxmox token secret cannot be re-read; re-run with ROTATE_PROXMOX_TOKEN=1
+to mint a token the runner can use."
+  fi
+
+  in_ct sudo -u rundeck env \
+    HOME=/var/lib/rundeck \
+    LAB_REFRESH=0 \
+    LAB_DOCTOR=1 \
+    ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" \
+    /usr/local/bin/lab-run \
+      playbooks/apps/vaultwarden.yml -e instance=vaultwarden
+  info "Vaultwarden is online and tagged for Ansible inventory adoption"
+else
+  warn "DEPLOY_VAULTWARDEN=0 — runner created without the preliminary secret store"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────────
 log "Done"
 cat <<EOF
@@ -982,9 +1040,11 @@ cat <<EOF
     Ansible    $VENV_DIR/bin/ansible
     Config     $REPO_DIR/config/{proxmox.yml,infrastructure.yml,apps/rundeck.yml}
     Proxmox    $PVE_USER (role $PVE_ROLE), token secret in Key Storage
+    Vaultwarden $([ "$DEPLOY_VAULTWARDEN" = "1" ] && printf '%s' 'deployed through Ansible' || printf '%s' 'skipped (runner-only mode)')
     Creds      pct exec $VMID -- cat $CRED_FILE
 
-    NEXT: open $RD_URL and run Bootstrap Platform. That is the whole handover.
+    NEXT: open $RD_URL and run Bootstrap Platform. It will reuse the tagged
+    Vaultwarden LXC and deploy the remaining baseline services.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

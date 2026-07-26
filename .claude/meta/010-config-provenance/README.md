@@ -259,8 +259,9 @@ surfaces as a stack trace mid-provision — and as a job of its own.
   The privilege list and the reasoning per group are in "The Proxmox role" in
   `rundeck/README.md`. Honest caveat recorded there: `Sys.Modify` at `/` is required —
   registering PBS as a storage backend and creating the cluster vzdump job are both
-  cluster-configuration writes — so the reduction from `root@pam` is real (no user, realm,
-  permission or ACL management, no root shell) but not dramatic.
+  cluster-configuration writes — so the API-token reduction from `root@pam` is real (no
+  user, realm, permission or ACL management) but not dramatic. The separate automation
+  SSH identity still has the node-root channel required by delegated `pct`/`qm` tasks.
 - **~~Does `config/.backups/` need pruning?~~** **Yes, keep the last 20 per file.** Four
   lines in `write-config-file.yml`.
 - **~~How does `Configure App`'s survey stay in step with the instance schema?~~** **The

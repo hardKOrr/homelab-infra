@@ -10,8 +10,10 @@ scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
 ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
 ```
 
-When it finishes, open the URL it prints and run **Bootstrap Platform**. That is the
-entire handover — there are no UI steps to perform first.
+By default the command returns with both the automation runner and the preliminary
+Vaultwarden LXC online. Open the URL it prints and run **Bootstrap Platform**; that job
+reuses/reconciles Vaultwarden and deploys the remaining baseline. There are no UI steps
+to perform first.
 
 ### What it does
 
@@ -25,11 +27,17 @@ entire handover — there are no UI steps to perform first.
 | **Config** | writes `config/proxmox.yml`, `config/infrastructure.yml` and `config/apps/rundeck.yml` |
 | **Rundeck** | random admin password, non-expiring API token, the `homelab-infra` project, every job in `jobs/` imported, Key Storage staged |
 | **Wiring** | `/etc/homelab-infra/lab-run.env` and a `/usr/local/bin/lab-run` symlink into the checkout |
+| **Vaultwarden** | invokes `playbooks/apps/vaultwarden.yml` inside the finished runner; Ansible creates the LXC with `homelab-infra` and `vaultwarden` tags |
 
 Everything is idempotent — re-running converges an existing container, rotates no
 credential, and overwrites no answer you already gave. Override any default with an
 environment variable (`VMID`, `CT_IP`, `CT_GW`, `CT_STORAGE`, `TEMPLATE`, `REPO_URL`,
 `REPO_BRANCH`, …); see the header of the script.
+
+`DEPLOY_VAULTWARDEN=1` is the default. Set `DEPLOY_VAULTWARDEN=0` only for a
+runner-only recovery or diagnostic run. The shell script does not contain a second
+Vaultwarden provisioner: it invokes the normal Ansible playbook, and later inventory
+refreshes find `tag_vaultwarden` and reuse that guest.
 
 ### What it asks
 
@@ -64,11 +72,14 @@ playbooks actually call:
 | `Sys.Modify` | the bridge on a new NIC, and the cluster-level vzdump backup job `configure-pbs.yml` creates |
 | `SDN.Audit`, `SDN.Use` | bridge selection on PVE 8+; dropped automatically on releases that do not have them |
 
-Be clear-eyed about the size of the reduction. This removes user, realm, permission and
-ACL management and the root shell, which is real — but `Sys.Modify` at `/` is broad,
-because creating a storage backend and a cluster backup job are cluster-configuration
-writes. The role is granted on `/` with propagation so the platform can create guests on
-any node without the script enumerating them.
+Be clear-eyed about the size of the reduction. The API token cannot manage users, realms,
+permissions or ACLs, which is real — but `Sys.Modify` at `/` is broad because creating a
+storage backend and a cluster backup job are cluster-configuration writes. Separately,
+the existing provisioning contract delegates `pct`/`qm` readiness, DHCP-discovery and
+sanitized-metadata commands to the PVE node over SSH. The bootstrap therefore authorizes
+the platform's dedicated SSH identity for node root. The API credential is scoped; the
+node-local command channel is not yet. The role is granted on `/` with propagation so the
+platform can create guests on any node without the script enumerating them.
 
 A token secret is displayed once, at creation, and can never be re-read. Re-runs therefore
 keep the existing token; `ROTATE_PROXMOX_TOKEN=1` mints a new one.
@@ -132,10 +143,12 @@ clone; only the symlink and `/etc/homelab-infra/lab-run.env` live on the host. I
 1. resolves `LAB_REPO`, `LAB_VENV` and `LAB_BRANCH` from that env file
 2. sources the runner's secrets from `/etc/homelab-infra/secrets.env` and every
    `*.env` in `/etc/homelab-infra/secrets.d/`
-3. **refreshes the checkout** to `origin/$LAB_BRANCH` and echoes the resolved commit into
+3. selects the runner's dedicated SSH key for guest connections and delegated PVE-node
+   `pct`/`qm` waits
+4. **refreshes the checkout** to `origin/$LAB_BRANCH` and echoes the resolved commit into
    the job log, then re-execs itself from the refreshed copy
-4. runs `config-doctor` — a missing key fails here, at the front door
-5. execs `ansible-playbook` through `with-proxmox-env.sh`
+5. runs `config-doctor` — a missing key fails here, at the front door
+6. execs `ansible-playbook` through `with-proxmox-env.sh`
 
 This is why a fix pushed to the repo is executed by the next click with no human action,
 and why a change to *how* jobs run is one edit rather than eighteen. That lesson was paid
