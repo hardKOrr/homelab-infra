@@ -8,7 +8,7 @@ authentik_defaults:
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   # Authentik gets its own stack: it carries a database, and a shared host would
   # couple every co-tenant's restarts to the platform's login path.
-  stack: core_stack
+  stack: sso_stack
 
   app:
     port: 9000                  # Authentik HTTP listener (the API + UI)

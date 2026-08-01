@@ -113,13 +113,13 @@ vaultwarden:
 # Proxmox operation; changing a number here does not move a running guest.
 #
 # Omit this block entirely unless a stack needs more than the default:
-#   core_stack        4 cores / 4096 MB / 32 GB   Authentik + Uptime Kuma
-#   monitoring_stack  2 cores / 2048 MB / 48 GB   Prometheus + Grafana
+#   sso_stack         4 cores / 4096 MB / 32 GB   Authentik, on its own by design
+#   monitoring_stack  4 cores / 4096 MB / 64 GB   Uptime Kuma + Prometheus + Grafana
 #   media_stack       4 cores / 4096 MB / 32 GB   the *arr suite
 #   anything else     2 cores / 2048 MB / 16 GB
 #
 # stacks:
-#   core_stack:
+#   monitoring_stack:
 #     memory: 8192
 #     disk_volume:
 #       size: 64

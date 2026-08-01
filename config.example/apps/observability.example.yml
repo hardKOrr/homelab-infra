@@ -15,7 +15,7 @@
 
 # ── Stack placement ────────────────────────────────────────────────────────────
 # Its own stack by default: Prometheus retention grows over time and should not
-# compete for disk with the login path on core_stack.
+# compete for disk with the login path on sso_stack.
 # stack: monitoring_stack
 
 # ── App-specific config ────────────────────────────────────────────────────────

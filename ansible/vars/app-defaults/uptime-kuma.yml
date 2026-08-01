@@ -6,7 +6,7 @@
 uptime_kuma_defaults:
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
-  stack: core_stack
+  stack: monitoring_stack
 
   app:
     port: 3001

@@ -14,7 +14,7 @@
 # add a `stacks:` map to config/infrastructure.yml; it is deep-merged over these:
 #
 #   stacks:
-#     core_stack:
+#     monitoring_stack:
 #       memory: 8192
 #
 # Resizing an existing stack host is a Proxmox operation, not a deploy-time one: these
@@ -29,21 +29,27 @@ stack_defaults:
     disk_volume:
       size: 16
 
-  # The platform's own login path: Authentik (server, worker, Postgres, Redis) and
-  # Uptime Kuma. The worker is the memory-hungry piece.
-  core_stack:
+  # Authentik alone — server, worker, Postgres and Redis. It gets its own host because it
+  # carries a database and is the greediest thing the platform runs: a co-tenant's restart
+  # or a co-tenant's memory spike would land on the lab's login path. The worker is the
+  # memory-hungry piece.
+  sso_stack:
     cores: 4
     memory: 4096
     disk_volume:
       size: 32
 
-  # Prometheus + Grafana. Disk is the number that matters: the TSDB grows with retention
-  # and with every node_exporter tasks/guest-bootstrap.yml adds to the lab.
+  # Everything that watches the lab: Uptime Kuma, Prometheus and Grafana. These share
+  # willingly — they are read-mostly, none of them carries a database the lab depends on,
+  # and if the monitoring host restarts, nothing stops working except the watching.
+  #
+  # Disk is the number that matters: Prometheus' TSDB grows with retention and with every
+  # node_exporter tasks/guest-bootstrap.yml adds to the lab.
   monitoring_stack:
-    cores: 2
-    memory: 2048
+    cores: 4
+    memory: 4096
     disk_volume:
-      size: 48
+      size: 64
 
   # The *arr suite, download clients and Bazarr. Many small containers, and the media
   # itself lives on mounted storage rather than the rootfs.

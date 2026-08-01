@@ -1,6 +1,6 @@
 ---
 # authentik role — Docker Compose deployment on a stack host.
-# Called from Play 2 of playbooks/apps/authentik.yml. Target: the core_stack host,
+# Called from Play 2 of playbooks/apps/authentik.yml. Target: the sso_stack host,
 # which already has Docker installed (playbooks/apps/authentik.yml Play 2).
 #
 # SECRETS — four values, generated once and never regenerated:

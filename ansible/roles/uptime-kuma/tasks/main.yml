@@ -1,6 +1,6 @@
 ---
 # uptime-kuma role — Docker Compose deployment on a stack host.
-# Called from Play 2 of playbooks/apps/uptime-kuma.yml. Target: the core_stack host.
+# Called from Play 2 of playbooks/apps/uptime-kuma.yml. Target: the monitoring_stack host.
 #
 # VERSION — Uptime Kuma 2.x, locked by slice 404. Version 1 has no REST API at all
 # (socket.io only) and tasks/wiring/uptime-kuma.yml registers monitors over REST.
@@ -107,7 +107,12 @@
       Uptime Kuma setup endpoint returned
       {{ _kuma_setup.status | default('no response') }}
       {{ '(admin account created)' if _kuma_setup.status | default(0) in [200, 201]
-         else '(already initialised, or this build does not expose /setup)' }}.
+         else '(NOT initialised — 2.x has no POST /setup; see below)' }}.
+      {{ '' if _kuma_setup.status | default(0) in [200, 201] else
+         'Uptime Kuma 2.x performs first-run setup over socket.io, not REST: POST /setup
+          answers 404 and GET /api/entry-page reports {"type":"setup-database"} until a
+          human completes the wizard. Open ' ~ _kuma_base ~ ' and finish setup to make this
+          instance usable. Verified against 2.5.0.' }}
 
 # ── REST API key ──────────────────────────────────────────────────────────────
 - name: Resolve the API key
@@ -134,9 +139,15 @@
   no_log: true
   when: _kuma_api_key | length > 0
 
+# The content type is load-bearing, not belt-and-braces: Uptime Kuma serves its Vue front
+# end from a catch-all route, so every unmatched path answers 200 with index.html. Checking
+# the status alone reports a REST API that is not there. Verified on 2.5.0 — GET
+# /api/monitors is 200 text/html and POST /api/monitors is "404 Cannot POST".
 - name: Record whether the REST API is usable
   ansible.builtin.set_fact:
-    _kuma_api_usable: "{{ (_kuma_probe.status | default(0)) == 200 }}"
+    _kuma_api_usable: >-
+      {{ (_kuma_probe.status | default(0)) == 200
+         and 'json' in (_kuma_probe.content_type | default('')) }}
 
 # The one step this role cannot script: Uptime Kuma issues API keys only to an
 # authenticated UI session, and there is no documented endpoint to mint the first

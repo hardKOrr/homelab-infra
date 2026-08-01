@@ -56,18 +56,40 @@
       failed_when: false
       changed_when: false
       no_log: true
+      when: homelabinfra_infra.monitoring.token | default('') | length > 0
+
+    # A 200 from Uptime Kuma proves nothing on its own. Its Vue front end is served by a
+    # catch-all route, so EVERY unmatched path — /api/monitors included — returns 200 with
+    # index.html. Verified against 2.5.0: GET /api/monitors is 200 text/html, and
+    # POST /api/monitors is "404 Cannot POST /api/monitors".
+    #
+    # The old status-only check therefore always passed, the block below ran, and the POST
+    # failed the whole app deploy. That is the precise opposite of this file's contract
+    # (slice 303): monitoring is an add-on and must never fail an app deploy.
+    #
+    # So usability means an authenticated request that came back as JSON, not merely a 200.
+    - name: Wire Uptime Kuma | Decide whether the REST API is usable
+      ansible.builtin.set_fact:
+        _kuma_usable: >-
+          {{ (homelabinfra_infra.monitoring.token | default('') | length > 0)
+             and (_kuma_probe.status | default(0)) == 200
+             and 'json' in (_kuma_probe.content_type | default('')) }}
 
     - name: Wire Uptime Kuma | Report unusable API
       ansible.builtin.debug:
         msg: >-
-          Uptime Kuma at {{ homelabinfra_infra.monitoring.host }} did not answer
-          GET /api/monitors with 200 (got {{ _kuma_probe.status | default('no response') }}) —
-          skipping monitor registration for {{ wiring_app_name }}. A v1 Kuma has no REST API;
-          check the version and the monitoring.token in config/.generated/facts.yml.
-      when: _kuma_probe.status | default(0) != 200
+          Skipping the Uptime Kuma monitor for {{ wiring_app_name }} —
+          {{ 'no monitoring.token is recorded in config/.generated/facts.yml'
+             if (homelabinfra_infra.monitoring.token | default('') | length) == 0
+             else 'GET ' ~ _kuma_api ~ '/monitors answered ' ~ (_kuma_probe.status | default('nothing'))
+                  ~ ' as ' ~ (_kuma_probe.content_type | default('no content-type')) }}.
+          Uptime Kuma serves its web UI from a catch-all route, so a 200 of text/html means
+          the REST endpoint does not exist rather than that the request succeeded.
+          The deploy continues: monitoring is an add-on, never a reason to fail an app.
+      when: not _kuma_usable
 
     - name: Wire Uptime Kuma | Register monitor against the REST API
-      when: _kuma_probe.status | default(0) == 200
+      when: _kuma_usable
       block:
         - name: Wire Uptime Kuma | Select existing monitor and build payload
           ansible.builtin.set_fact:

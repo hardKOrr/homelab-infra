@@ -1,6 +1,6 @@
 ---
 # Deploy Uptime Kuma — uptime monitoring for every app (bootstrap step 5).
-# Docker on LXC (PATH A): a single container on the core_stack host.
+# Docker on LXC (PATH A): a single container on the monitoring_stack host.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/uptime-kuma.yml -e instance=uptime-kuma
