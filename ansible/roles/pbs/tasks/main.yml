@@ -30,6 +30,25 @@
 #   pbs_url, pbs_token_id, pbs_token_secret, pbs_token_rotated
 
 # ── Repository ────────────────────────────────────────────────────────────────
+# FIRST, before any apt operation in this role.
+#
+# The proxmox-backup-server package installs its own
+# /etc/apt/sources.list.d/pbs-enterprise.list pointing at the subscription-only enterprise
+# repository, which answers 401 for a lab without a subscription. Once that file exists —
+# which it does from the moment PBS is first installed — EVERY apt call on this guest
+# fails, including the very first task of this role:
+#
+#   TASK [pbs : Install apt repository prerequisites]
+#   E:Failed to fetch https://enterprise.proxmox.com/debian/pbs/dists/bookworm/InRelease
+#   401 Unauthorized
+#
+# so the removal has to precede the first `update_cache`, not merely the install. It is
+# repeated after the install below, because that is when a FIRST deploy creates the file.
+- name: Disable the subscription-only enterprise repository before any apt call
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
+
 - name: Install apt repository prerequisites
   ansible.builtin.apt:
     name:
@@ -61,26 +80,6 @@
     filename: pbs
     state: present
     update_cache: true
-
-# The proxmox-backup-server PACKAGE installs its own
-# /etc/apt/sources.list.d/pbs-enterprise.list pointing at the subscription-only
-# enterprise repository. Without a subscription every later apt update then fails:
-#
-#   E:Failed to fetch https://enterprise.proxmox.com/debian/pbs/dists/bookworm/InRelease
-#   401 Unauthorized
-#
-# That is not cosmetic. It breaks re-running this deploy — which is the documented update
-# path for a native app — and it breaks unattended-upgrades on this guest, which
-# tasks/guest-bootstrap.yml configured earlier in the same run. The lab already has the
-# right repository from the task above; this one only ever returns 401.
-#
-# Removed BOTH before and after the install because the file arrives at different times:
-# on a re-run it is already there and would fail the install's own cache refresh; on a
-# first run the package creates it during the install.
-- name: Disable the subscription-only enterprise repository (pre-existing)
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/pbs-enterprise.list
-    state: absent
 
 - name: Install Proxmox Backup Server
   ansible.builtin.apt:
