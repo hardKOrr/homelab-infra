@@ -15,7 +15,12 @@ Gates (both current as of 2026-07-26): `wsl bash -lc 'bash .claude/gate/lint.sh'
 on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook clean.
 **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 29 built · 3 open.**
+Counts: **12 done · 29 built · 4 open.**
+
+Neither gate reads shell. `lint.sh` is ansible-lint and `test.sh` is `--syntax-check`, so
+`rundeck/bootstrap-rundeck.sh` — the largest shell file in the project and the entry point to
+everything else — is unchecked by both. A `set -euo pipefail` defect in it went undetected
+until the first from-scratch run; see [012's notes](012-runner-onboarding/notes.md).
 
 ---
 
@@ -97,17 +102,19 @@ Carried caveats:
   and none of it — `pveum` role creation, config authoring, project creation, Key Storage
   staging, job import — has run against a real node. Treat the first run as an experiment.
 
-## Open (3)
+## Open (4)
 
 011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 013 and
-014 were split out of 010 on 2026-07-27. All are design defects in shipped code or gaps
-between the documented model and the implemented one — none are new features.
+014 were split out of 010 on 2026-07-27; 015 was raised on 2026-08-01 during the first
+from-scratch runner bootstrap. All are design defects in shipped code or gaps between the
+documented model and the implemented one — none are new features.
 
 | # | Slice | Why now |
 |---|---|---|
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
 | 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | Bootstrap halts mid-run for a human to paste a console-printed token. A UI-driven bootstrap has no one to paste, and the secret's only durable copy is a clipboard. |
 | 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | CLAUDE.md's secrets model is unimplemented — `community.general.bitwarden` exists only as `todo/` stubs. Every generated token lives solely in `facts.yml` on the runner, and PBS's is unrecoverable if lost. |
+| 015 | [Wildcard DNS as the default path](015-wildcard-dns-default/README.md) | A lab on a stock ISP router has no DNS API. `none` already works as a silent no-op, but nothing documents it — README promises a DNS record per app, `config.example` presumes OPNsense, and one wildcard record would serve the whole lab. Separately, choosing a credentialed DNS provider at bootstrap authors a config that cannot work, because nothing collects its API key. |
 
 **013 and 014 gate the shareability claim** (010 and 012 landed 2026-07-26) and **011 gates
 the first provisioning run** — the first deploy that allocates an address bakes in whatever

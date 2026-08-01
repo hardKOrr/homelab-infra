@@ -372,6 +372,15 @@ sed -i \
 grep -q '^rundeck.api.tokens.duration.max' /etc/rundeck/rundeck-config.properties \
   || echo 'rundeck.api.tokens.duration.max=0' >> /etc/rundeck/rundeck-config.properties
 
+# Permit API calls authenticated by a login session rather than an API token. This is off by
+# default, and without it there is no way to bootstrap the FIRST token: issuing one is itself
+# an API call, so a fresh Rundeck with no token cannot be given one over the API. The symptom
+# is a login that plainly works (the UI returns 200) while every /api/ call answers
+# `"(unauthenticated) is not authorized"`, which then skips project creation, Key Storage and
+# the whole job import.
+grep -q '^rundeck.security.apiCookieAccess.enabled' /etc/rundeck/rundeck-config.properties \
+  || echo 'rundeck.security.apiCookieAccess.enabled=true' >> /etc/rundeck/rundeck-config.properties
+
 # Jobs inherit the service environment, so pin the locale for the ansible plugin too.
 mkdir -p /etc/systemd/system/rundeckd.service.d
 cat > /etc/systemd/system/rundeckd.service.d/locale.conf <<EOF
@@ -385,7 +394,14 @@ systemctl daemon-reload
 # Only replace the shipped admin:admin. A re-run must not lock the operator out.
 if grep -q '^admin:admin,' /etc/rundeck/realm.properties; then
   say "replacing default admin password"
-  RD_ADMIN_PW="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 28)"
+  # Every producer here is BOUNDED, and nothing exits early. The obvious spelling,
+  # `tr -dc ... </dev/urandom | head -c 28`, cannot be used under `set -euo pipefail`:
+  # /dev/urandom never ends, so `head` exits at 28 bytes, `tr`'s next write takes SIGPIPE,
+  # and pipefail hands that 141 to set -e — killing this script at the password step with
+  # everything after it (venv, clone, config, jobs, Vaultwarden) silently unrun.
+  RD_ADMIN_PW_POOL="$(head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+  RD_ADMIN_PW="${RD_ADMIN_PW_POOL:0:28}"
+  [ "${#RD_ADMIN_PW}" -eq 28 ] || { echo "could not generate an admin password" >&2; exit 1; }
   cp -n /etc/rundeck/realm.properties /etc/rundeck/realm.properties.orig
   sed -i "s|^admin:admin,|admin:${RD_ADMIN_PW},|" /etc/rundeck/realm.properties
   chown root:rundeck /etc/rundeck/realm.properties
@@ -693,8 +709,7 @@ log "Proxmox credential"
 #                       (tasks/bootstrap/configure-pbs.yml)
 #   Sys.Audit/Modify    node facts, the bridge on a new NIC, and the cluster-level vzdump
 #                       backup job configure-pbs.yml creates
-#   SDN.*               bridge selection on PVE 8+; absent on older releases, hence the
-#                       fallback below
+#   SDN.*               bridge selection on PVE 8+
 #   Pool.Audit          guest enumeration by the inventory plugin
 #
 # This is a real API-credential reduction from root@pam — no user, realm, permission or
@@ -702,19 +717,43 @@ log "Proxmox credential"
 # creating a storage backend and a cluster backup job are cluster-configuration writes.
 # The separate SSH identity authorized above still has the node-root command channel the
 # existing pct/qm delegate tasks require; that is not a property of this API token.
-PVE_PRIVS_FULL="Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Pool.Audit,SDN.Audit,SDN.Use,Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,VM.Audit,VM.Backup,VM.Clone,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.Console,VM.Migrate,VM.Monitor,VM.PowerMgmt,VM.Snapshot,VM.Snapshot.Rollback"
-# Older PVE releases do not know the SDN privileges; drop them rather than fail.
-PVE_PRIVS_NOSDN="$(printf '%s' "$PVE_PRIVS_FULL" | sed 's/SDN\.Audit,//; s/SDN\.Use,//')"
+PVE_PRIVS_WANTED="Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,Pool.Audit,SDN.Audit,SDN.Use,Sys.Audit,Sys.Console,Sys.Modify,VM.Allocate,VM.Audit,VM.Backup,VM.Clone,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.Console,VM.Migrate,VM.PowerMgmt,VM.Snapshot,VM.Snapshot.Rollback"
+
+# The privilege VOCABULARY moves between PVE releases: SDN.* arrived in 8, VM.Monitor was
+# removed in 9. `pveum role add` rejects the whole list on the first unknown name, so a
+# hardcoded set makes this script version-locked, and a per-privilege fallback needs a new
+# branch for every future change. Intersect with what THIS node accepts instead — the
+# Administrator role holds every privilege the node knows, so it is the vocabulary itself.
+PVE_PRIVS_SUPPORTED="$(pvesh get /access/roles/Administrator --output-format json 2>/dev/null \
+  | tr ',' '\n' | tr -d '{}" ' | sed 's/:1$//' \
+  | grep -E '^[A-Za-z]+\.[A-Za-z.]+$' || true)"
+
+PVE_PRIVS=""
+PVE_PRIVS_DROPPED=""
+if [ -n "$PVE_PRIVS_SUPPORTED" ]; then
+  for _priv in $(printf '%s' "$PVE_PRIVS_WANTED" | tr ',' ' '); do
+    if printf '%s\n' "$PVE_PRIVS_SUPPORTED" | grep -qxF "$_priv"; then
+      PVE_PRIVS="${PVE_PRIVS:+${PVE_PRIVS},}${_priv}"
+    else
+      PVE_PRIVS_DROPPED="${PVE_PRIVS_DROPPED:+${PVE_PRIVS_DROPPED} }${_priv}"
+    fi
+  done
+  if [ -n "$PVE_PRIVS_DROPPED" ]; then
+    warn "this PVE does not define: $PVE_PRIVS_DROPPED — dropped from $PVE_ROLE"
+  fi
+else
+  warn "could not read this node's privilege vocabulary — requesting the full set"
+  PVE_PRIVS="$PVE_PRIVS_WANTED"
+fi
+[ -n "$PVE_PRIVS" ] || die "no usable privileges resolved for role $PVE_ROLE"
 
 if pveum role list --output-format json 2>/dev/null | grep -q "\"roleid\":\"${PVE_ROLE}\""; then
   info "role $PVE_ROLE exists — updating its privileges"
-  pveum role modify "$PVE_ROLE" --privs "$PVE_PRIVS_FULL" >/dev/null 2>&1 \
-    || pveum role modify "$PVE_ROLE" --privs "$PVE_PRIVS_NOSDN" >/dev/null \
+  pveum role modify "$PVE_ROLE" --privs "$PVE_PRIVS" >/dev/null \
     || die "could not set privileges on role $PVE_ROLE"
 else
   info "creating role $PVE_ROLE"
-  pveum role add "$PVE_ROLE" --privs "$PVE_PRIVS_FULL" >/dev/null 2>&1 \
-    || pveum role add "$PVE_ROLE" --privs "$PVE_PRIVS_NOSDN" >/dev/null \
+  pveum role add "$PVE_ROLE" --privs "$PVE_PRIVS" >/dev/null \
     || die "could not create role $PVE_ROLE"
 fi
 
