@@ -138,6 +138,7 @@
     - name: Record monitoring facts
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: monitoring
         generated_facts_data: >-
           {{ {

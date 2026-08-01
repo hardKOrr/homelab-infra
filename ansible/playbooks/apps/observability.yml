@@ -139,6 +139,7 @@
     - name: Record metrics facts
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: metrics
         generated_facts_data:
           provider: prometheus_grafana

@@ -140,6 +140,7 @@
     - name: Record SSO facts
       ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
       vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: sso
         # Estate-scoped: a non-default routing.estate lands this key under
         # estates.<name>.sso, read back by tasks/resolve-estate.yml.
