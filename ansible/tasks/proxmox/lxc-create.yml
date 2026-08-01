@@ -31,14 +31,19 @@
       - homelabinfra_config.proxmox.lxc.ip_address is defined
     fail_msg: "Required homelabinfra_config inputs: ansible[ssh_public_key], proxmox[api_host,api_token_id,api_token_secret,node,lxc[vmid,hostname,ostemplate,ip_address]]"
 
+# state is 'started', not 'present': `present` creates a STOPPED container, and nothing
+# else here starts one — the "Wait for LXC to be running" below would spin for its full 30
+# retries and then fail on every first deploy. `started` creates and starts in one
+# idempotent step, and is a no-op on a container already running.
+#
+# The comment lives HERE, above the task, and not inside the expression: Jinja has no `#`
+# comment form, so a YAML comment indented into a `{{ }}` block is parsed as expression
+# text and fails with "unexpected char '#'". Neither gate catches it — ansible-lint and
+# --syntax-check both parse the YAML without ever templating the string.
 - name: Build facts for usage in proxmox lxc creation
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | combine({'lxc': dict(
-          # 'started', not 'present': `present` creates a STOPPED container, and nothing
-          # else here starts one — the "Wait for LXC to be running" below would spin for its
-          # full 30 retries and then fail on every first deploy. `started` creates and starts
-          # in one idempotent step, and is a no-op on a container already running.
           state = 'started',
           api_host = homelabinfra_config.proxmox.api_host,
           api_port = homelabinfra_config.proxmox.api_port,

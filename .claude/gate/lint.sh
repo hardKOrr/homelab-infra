@@ -23,3 +23,11 @@ export ANSIBLE_INVENTORY=localhost,
 # a bare "." target as a single *role* here (ansible/ has top-level tasks/, vars/, roles/ dirs,
 # matching role-layout heuristics) and silently short-scans ~3 files instead of the full tree.
 "$HOME/.venvs/homelab-ansible/bin/ansible-lint" -c .ansible-lint playbooks roles tasks vars
+
+# Compile every Jinja expression in the tree. ansible-lint above and --syntax-check in
+# test.sh both parse YAML without ever templating a string, so a malformed expression —
+# most cheaply, a YAML `#` comment indented inside a `{{ }}` block, which Jinja reads as
+# expression source — reaches a live provision before anything notices. See the docstring
+# in jinja-parse.py for the run that proved it.
+cd ..
+"$HOME/.venvs/homelab-ansible/bin/python" .claude/gate/jinja-parse.py ansible
