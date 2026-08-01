@@ -8,35 +8,3 @@ uptime_kuma_defaults:
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   stack: core_stack
 
-  # Sizing for the stack host, applied only when this app is the one that creates it.
-  # Deliberately identical to authentik.yml's: both live on core_stack, whichever deploys
-  # first creates the host, and the other then inherits it. Sizing for Uptime Kuma alone
-  # would leave Authentik on a host that cannot run it whenever the order is reversed.
-  stack_host:
-    cores: 4
-    memory: 4096
-    disk_volume:
-      size: 32
-
-  app:
-    port: 3001
-    data_path: /opt/uptime-kuma/data
-
-    # Uptime Kuma 2.x. Version 1 exposes no REST API at all (socket.io only), and
-    # tasks/wiring/uptime-kuma.yml registers monitors over REST — see slice 404
-    # notes.md for the decision record. Pin a patch tag here to freeze upgrades.
-    image_tag: "2"
-
-    admin_user: admin
-
-    # Paste an API key created under Profile -> API Keys in the Uptime Kuma UI to
-    # skip the scripted key provisioning entirely. Leave empty for the normal path.
-    api_key: ""
-
-    monitor_interval: 60          # seconds between checks, applied to every monitor
-
-  routing:
-    proxy: internal
-    identity: catalog             # catalog tile only — Uptime Kuma has its own login;
-                                  # forward_auth would block the REST calls that
-                                  # register monitors

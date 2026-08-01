@@ -100,16 +100,35 @@
 - name: Provision new stack host
   when: _stack_hosts | length == 0
   block:
-    # app_config.stack_host is the app's sizing for the host it is about to create. The
-    # global lxc defaults are sized for a single native service (1 core / 512M / 8G), which
-    # is nowhere near enough for a Docker stack — Authentik alone runs a server, a worker,
-    # Postgres and Redis. Docker apps deliberately carry no `proxmox:` block (that is what
-    # distinguishes them from native ones), so the sizing has its own key rather than
-    # reusing that shape.
+    # Sizing is a property of the STACK, not of whichever app reaches it first. A stack host
+    # is shared, and the first app to deploy creates it — so per-app sizing would make the
+    # host's size depend on deploy order, and every app on a stack would have to repeat the
+    # same numbers to stop that mattering. vars/stack-defaults.yml keys it by stack name;
+    # a lab overrides one stack with a `stacks:` map in config/infrastructure.yml.
     #
-    # Whichever app creates the stack sets its size; later apps joining the same stack reuse
-    # the host as it stands. That follows from the stack model rather than being a new rule,
-    # and resizing an existing stack host is a Proxmox operation, not a deploy-time one.
+    # The global lxc defaults (1 core / 512M / 8G) size a single native service and are
+    # nowhere near a Docker host: Authentik alone runs a server, a worker, Postgres and
+    # Redis.
+    #
+    # Not tolerant of absence, unlike the optional config/ loads elsewhere: this file is
+    # git-managed and always present, and silently falling back would create the stack host
+    # at the single-service global defaults — a host too small to run what lands on it,
+    # which is far worse to debug than a missing-file error here.
+    - name: Load stack sizing defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
+        name: _stack_defaults_file
+
+    - name: Resolve this stack's host sizing
+      ansible.builtin.set_fact:
+        _stack_sizing: >-
+          {{ (_defaults._default | default({}))
+             | combine(_defaults[stack_name] | default({}), recursive=True)
+             | combine(_overrides[stack_name] | default({}), recursive=True) }}
+      vars:
+        _defaults: "{{ _stack_defaults_file.stack_defaults | default({}) }}"
+        _overrides: "{{ homelabinfra_config.infrastructure.stacks | default({}) }}"
+
     - name: Set stack hostname and Docker LXC features
       ansible.builtin.set_fact:
         homelabinfra_config: >-
@@ -117,7 +136,7 @@
             homelabinfra_config | combine(
               {
                 'proxmox': {
-                  'lxc': (app_config.stack_host | default({})) | combine({
+                  'lxc': _stack_sizing | combine({
                     'hostname': stack_name | replace('_', '-'),
                     'tags': (
                       homelabinfra_config.proxmox.lxc.tags

@@ -102,3 +102,24 @@ backups:
 vaultwarden:
   admin_token: ""       # leave empty — bootstrap generates and stores it
   instance: vaultwarden # Proxmox hostname
+
+# ── Stack host sizing (optional) ───────────────────────────────────────────────
+# Docker apps share a host per stack, created by whichever app on that stack deploys
+# first. Sizing lives with the STACK rather than with any one app, so the host does not
+# end up sized by deploy order — ansible/vars/stack-defaults.yml holds the git-managed
+# values, and anything here is deep-merged over them.
+#
+# These apply when the stack host is CREATED. Resizing a host that already exists is a
+# Proxmox operation; changing a number here does not move a running guest.
+#
+# Omit this block entirely unless a stack needs more than the default:
+#   core_stack        4 cores / 4096 MB / 32 GB   Authentik + Uptime Kuma
+#   monitoring_stack  2 cores / 2048 MB / 48 GB   Prometheus + Grafana
+#   media_stack       4 cores / 4096 MB / 32 GB   the *arr suite
+#   anything else     2 cores / 2048 MB / 16 GB
+#
+# stacks:
+#   core_stack:
+#     memory: 8192
+#     disk_volume:
+#       size: 64

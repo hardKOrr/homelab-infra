@@ -1,0 +1,54 @@
+---
+# Sizing for the LXC that hosts each Docker stack.
+#
+# A stack host is shared: several apps land on one container, and the first app to deploy
+# is the one that creates it. Sizing therefore belongs to the STACK, not to whichever app
+# happened to get there first — otherwise the host's size depends on deploy order, and
+# every app on a stack has to repeat the same numbers to keep that order from mattering.
+#
+# The global lxc defaults in homelabinfra-defaults.yml size a single native service
+# (1 core / 512M / 8G). A stack host runs a Docker engine plus every container its
+# tenants bring, so it starts from here instead.
+#
+# This file is git-managed — git pull may update these defaults. To override for one lab,
+# add a `stacks:` map to config/infrastructure.yml; it is deep-merged over these:
+#
+#   stacks:
+#     core_stack:
+#       memory: 8192
+#
+# Resizing an existing stack host is a Proxmox operation, not a deploy-time one: these
+# values apply when the host is CREATED. Changing them later does not move a running host.
+
+stack_defaults:
+  # Applied to any stack without an entry of its own, so a new stack works before anyone
+  # has decided what it should be.
+  _default:
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 16
+
+  # The platform's own login path: Authentik (server, worker, Postgres, Redis) and
+  # Uptime Kuma. The worker is the memory-hungry piece.
+  core_stack:
+    cores: 4
+    memory: 4096
+    disk_volume:
+      size: 32
+
+  # Prometheus + Grafana. Disk is the number that matters: the TSDB grows with retention
+  # and with every node_exporter tasks/guest-bootstrap.yml adds to the lab.
+  monitoring_stack:
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 48
+
+  # The *arr suite, download clients and Bazarr. Many small containers, and the media
+  # itself lives on mounted storage rather than the rootfs.
+  media_stack:
+    cores: 4
+    memory: 4096
+    disk_volume:
+      size: 32
