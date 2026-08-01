@@ -34,7 +34,11 @@
     _egr_vmid: "{{ hostvars[ensure_guest_host].proxmox_vmid | default('') }}"
     _egr_node: "{{ hostvars[ensure_guest_host].proxmox_node | default('') }}"
     _egr_status: "{{ hostvars[ensure_guest_host].proxmox_status | default('') }}"
-    _egr_command: "{{ (hostvars[ensure_guest_host].proxmox_vmtype | default('lxc')) == 'qemu' | ternary('qm', 'pct') }}"
+    # The comparison needs its own parentheses: Jinja binds `|` tighter than `==`, so
+    # `x == 'qemu' | ternary('qm', 'pct')` groups as `x == ('qemu' | ternary(...))`, which
+    # compares the vmtype against the string 'qm' and yields the BOOLEAN False — producing
+    # the command `False start <vmid>`.
+    _egr_command: "{{ ((hostvars[ensure_guest_host].proxmox_vmtype | default('lxc')) == 'qemu') | ternary('qm', 'pct') }}"
 
 # A guest in the inventory always carries these. Missing them means the caller passed
 # a host the Proxmox inventory did not produce, which is worth failing on rather than
