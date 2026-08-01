@@ -333,6 +333,26 @@
       - homelabinfra_instance.lxc.ip_address | string | trim | lower != 'dhcp'
     fail_msg: "The LXC connection address is empty or still set to DHCP"
 
+# `pct exec` works as soon as the container's init is up, which is EARLIER than sshd
+# binding port 22 — and the play that follows this one connects over SSH, not pct. On a
+# freshly created guest that gap is real:
+#
+#   fatal: [sso-stack]: UNREACHABLE! ssh: connect to host 192.168.0.16 port 22:
+#   Connection refused
+#
+# and the port was open moments later, so nothing was wrong except the timing. It hid for
+# a long time because the race only exists for a guest created in the same run that then
+# connects to it; a reused guest has had sshd up for hours.
+#
+# Placed after the address assert above, so the DHCP path waits on its resolved lease
+# rather than on the literal string 'dhcp'. tasks/proxmox/vm-clone.yml waits the same way.
+- name: Wait for SSH on the new container
+  ansible.builtin.wait_for:
+    host: "{{ homelabinfra_instance.lxc.ip_address }}"
+    port: 22
+    timeout: 180
+    sleep: 3
+
 - name: Write sanitized LXC instance metadata to /root with mode 0600
   ansible.builtin.shell: |
     set -euo pipefail
