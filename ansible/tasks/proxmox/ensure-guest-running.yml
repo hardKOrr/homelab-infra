@@ -1,0 +1,74 @@
+---
+# Make sure an EXISTING guest is running before a play tries to connect to it.
+#
+# Why this exists: every app playbook and stack/find-or-create-host.yml has a
+# "reuse the guest we already made" branch, and that branch skips lxc-create.yml /
+# vm-create.yml entirely — which is where starting a guest lives. So reuse assumed
+# the guest was running, and a guest that was stopped for ANY reason stayed stopped:
+# a host rebooted with onboot off, an operator stop, or — how this surfaced — a
+# guest created by an earlier run that failed before it started anything. Every
+# subsequent deploy then died identically at the first connection:
+#
+#     fatal: [ntfy]: UNREACHABLE! ... connect to host 192.168.0.11 port 22: No route to host
+#
+# That contradicts the promise bootstrap.yml makes in its header — "re-running after
+# any failure is safe" — because the one thing a re-run could not do was recover a
+# guest left stopped by the failure it is re-running after.
+#
+# Start goes through node-local pct/qm for the reason recorded in lxc-create.yml:
+# the module's start path reads an eventually-consistent /cluster/resources entry.
+#
+# Inputs:
+#   ensure_guest_host — inventory hostname of the existing guest. Its proxmox_*
+#                       hostvars (vmid, node, status, vmtype) come from the dynamic
+#                       inventory with want_facts: true.
+#
+# Idempotent: a running guest is a no-op, and the "already running" race between the
+# status fact and the start is tolerated rather than treated as a failure.
+
+- name: Make Proxmox nodes addressable for delegation
+  ansible.builtin.import_tasks: register-nodes.yml
+
+- name: Ensure running | Resolve the guest's identity from inventory facts
+  ansible.builtin.set_fact:
+    _egr_vmid: "{{ hostvars[ensure_guest_host].proxmox_vmid | default('') }}"
+    _egr_node: "{{ hostvars[ensure_guest_host].proxmox_node | default('') }}"
+    _egr_status: "{{ hostvars[ensure_guest_host].proxmox_status | default('') }}"
+    _egr_command: "{{ (hostvars[ensure_guest_host].proxmox_vmtype | default('lxc')) == 'qemu' | ternary('qm', 'pct') }}"
+
+# A guest in the inventory always carries these. Missing them means the caller passed
+# a host the Proxmox inventory did not produce, which is worth failing on rather than
+# silently skipping the start and failing later at the connection.
+- name: Ensure running | Assert the guest was resolved
+  ansible.builtin.assert:
+    that:
+      - _egr_vmid | string | length > 0
+      - _egr_node | string | length > 0
+    fail_msg: >-
+      Cannot determine the Proxmox vmid/node for '{{ ensure_guest_host }}'. Expected
+      proxmox_vmid and proxmox_node hostvars from the dynamic inventory.
+
+- name: Ensure running | Start the guest if it is not running
+  ansible.builtin.command:
+    cmd: "{{ _egr_command }} start {{ _egr_vmid }}"
+  delegate_to: "{{ _egr_node }}"
+  register: _egr_start
+  when: _egr_status != 'running'
+  changed_when: _egr_start.rc == 0
+  failed_when:
+    - _egr_start.rc != 0
+    - "'already running' not in (_egr_start.stderr | default('')) | lower"
+
+# Only after an actual start: a guest that was already running has already passed this.
+- name: Ensure running | Wait for the guest to accept exec
+  ansible.builtin.command:
+    cmd: >-
+      {{ _egr_command }} {{ (_egr_command == 'qm') | ternary('guest exec', 'exec') }}
+      {{ _egr_vmid }} -- /bin/true
+  delegate_to: "{{ _egr_node }}"
+  register: _egr_exec
+  retries: 30
+  delay: 2
+  until: _egr_exec.rc == 0
+  changed_when: false
+  when: _egr_status != 'running'

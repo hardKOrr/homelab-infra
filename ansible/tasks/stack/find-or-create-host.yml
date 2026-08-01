@@ -87,6 +87,15 @@
     homelabinfra_stack_host_created: false
   when: _stack_hosts | length > 0
 
+# A reused stack host is not necessarily a RUNNING one — this branch skips the
+# provisioning block below, which is where starting lives. See the header of
+# tasks/proxmox/ensure-guest-running.yml for the failure this prevents.
+- name: Ensure the existing stack host is running
+  ansible.builtin.include_tasks: ../proxmox/ensure-guest-running.yml
+  vars:
+    ensure_guest_host: "{{ _stack_hosts[0] }}"
+  when: _stack_hosts | length > 0
+
 # ── Provision new stack host ───────────────────────────────────────────────────
 - name: Provision new stack host
   when: _stack_hosts | length == 0

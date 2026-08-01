@@ -80,6 +80,15 @@
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       when: _existing_hosts | length > 0
 
+    # A reused guest is not necessarily a RUNNING guest — this branch skips
+    # lxc-create.yml/vm-create.yml, which is where starting lives. See the header of
+    # tasks/proxmox/ensure-guest-running.yml for the failure this prevents.
+    - name: Ensure the existing instance host is running
+      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
+      vars:
+        ensure_guest_host: "{{ _existing_hosts[0] }}"
+      when: _existing_hosts | length > 0
+
     - name: Provision new LXC
       when: _existing_hosts | length == 0
       block:
