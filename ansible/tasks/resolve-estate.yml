@@ -34,6 +34,33 @@
     name: _estate_infra_cfg
   failed_when: false   # absent on a clean checkout — falls through to single-estate
 
+# The single-estate domain is AUTHORED config, and this is the file that decides which
+# domain applies — so it resolves it from the authored source rather than depending on a
+# copy in the registry.
+#
+# Only bootstrap.yml's Play 1 ever wrote `domain` into facts.yml, so deploying any app on
+# its own before a bootstrap run left homelabinfra_infra.domain unset and wiring failed
+# with "needs the wiring contract vars: ... wiring_domain" — which names the symptom and
+# not the cause, because wiring_domain is composed as <subdomain>.<domain> and it was the
+# domain half that was empty. That contradicts the standing promise that deploying one app
+# standalone registers it exactly as a bootstrap run does.
+#
+# Reading the authored value also means editing `domain:` in config/infrastructure.yml
+# takes effect on the next deploy, instead of waiting for a bootstrap re-run to refresh
+# the cached copy.
+#
+# Runs BEFORE the estate overlay below, so a multi-estate lab still replaces this with its
+# estate's own domain and nothing about that path changes.
+- name: Resolve estate | Default the domain from authored config
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra | default({}, true)
+         | combine({'domain': _estate_infra_cfg.domain}) }}
+  when:
+    - _estate_infra_cfg.domain is defined
+    - (_estate_infra_cfg.domain | default('') | length) > 0
+    - ((homelabinfra_infra | default({}, true)).domain | default('') | length) == 0
+
 - name: Resolve estate | Compute estate names
   ansible.builtin.set_fact:
     _estate_domains: "{{ _estate_infra_cfg.domains | default({}) }}"
