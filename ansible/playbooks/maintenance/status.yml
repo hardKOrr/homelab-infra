@@ -39,7 +39,7 @@
 # Runs against every tagged guest. Unreachable guests are recorded as such by
 # Play 3 (their facts below are simply never set) rather than failing the run.
 - name: "Status | Gather guest detail"
-  hosts: tag_homelab-infra
+  hosts: tag_homelab_infra
   become: true
   gather_facts: false
   ignore_unreachable: true
@@ -101,7 +101,7 @@
       failed_when: false   # absent pre-bootstrap — both sections report "not configured"
 
   vars:
-    _st_guests: "{{ groups['tag_homelab-infra'] | default([]) | sort }}"
+    _st_guests: "{{ groups['tag_homelab_infra'] | default([]) | sort }}"
 
   tasks:
     # ── Uptime Kuma ────────────────────────────────────────────────────────────

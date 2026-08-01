@@ -17,10 +17,31 @@ token_secret: "{{ lookup('env', 'PROXMOX_API_TOKEN_SECRET') }}"
 # Homelab Proxmox nodes use self-signed TLS certs; skip verification deliberately.
 validate_certs: false
 want_facts: true
+# The plugin namespaces every fact it publishes as `proxmox_*`, and these expressions are
+# evaluated against those hostvars. Bare `type` and `tags` do not exist, so the previous
+# `type == 'node'` / `key: tags` matched nothing and silently produced no groups at all —
+# no `proxmox_clients`, and not one `tag_*`. `proxmox_nodes` still appeared only because the
+# plugin creates a group of that name itself, which is what made the breakage invisible.
+#
+# What depended on the groups that were never created:
+#   tag_<instance>   — every app playbook's "reuse the existing guest" check, so re-running
+#                      a deploy would provision a SECOND guest instead of converging
+#   tag_<stack>      — stack/find-or-create-host.yml locating a shared Docker host
+#   tag_homelab_infra— status.yml and check-native-updates.yml's host pattern
+#
+# Group names are sanitised by Ansible: a hyphen in a Proxmox tag becomes an underscore, so
+# the tag `homelab-infra` yields the group `tag_homelab_infra`. Consumers must look up the
+# sanitised name — `hosts: tag_homelab-infra` silently matches nothing, which is exactly
+# what status.yml and check-native-updates.yml did.
+#   proxmox_clients  — network/generate-ip.yml's in-use address list, so allocation never
+#                      excluded an address already held by a guest
+#
+# Nodes are distinguished from guests by `proxmox_node`: the plugin sets it on every guest
+# (the node hosting it) and publishes no hostvars at all for node entries.
 groups:
-  proxmox_nodes: "type == 'node'"
-  proxmox_clients: "type in ['qemu', 'lxc']"
+  proxmox_nodes: "proxmox_node is not defined"
+  proxmox_clients: "proxmox_node is defined"
 keyed_groups:
-  - key: tags
+  - key: proxmox_tags_parsed
     prefix: tag
     separator: "_"

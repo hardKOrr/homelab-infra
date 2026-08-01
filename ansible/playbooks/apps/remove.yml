@@ -143,7 +143,7 @@
       ansible.builtin.set_fact:
         _rm_kind: "{{ 'docker' if app_config.stack is defined else 'native' }}"
         _rm_hosts: >-
-          {{ groups['tag_' ~ app_config.stack] | default([])
+          {{ groups['tag_' ~ (app_config.stack | regex_replace('[^A-Za-z0-9_]', '_'))] | default([])
              if app_config.stack is defined
              else ([instance] if instance in (groups['all'] | default([])) else []) }}
 

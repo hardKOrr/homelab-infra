@@ -61,7 +61,7 @@
 
 - name: Check for existing stack host
   ansible.builtin.set_fact:
-    _stack_hosts: "{{ groups['tag_' + stack_name] | default([]) }}"
+    _stack_hosts: "{{ groups['tag_' + (stack_name | regex_replace('[^A-Za-z0-9_]', '_'))] | default([]) }}"
 
 # ── Use existing host ──────────────────────────────────────────────────────────
 - name: Set facts from existing stack host

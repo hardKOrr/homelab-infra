@@ -47,7 +47,7 @@
          + [{'name': item,
              'address': hostvars[item].ansible_host
                         | default(hostvars[item].ansible_default_ipv4.address | default(''))}] }}
-  loop: "{{ groups['tag_homelab-infra'] | default([]) }}"
+  loop: "{{ groups['tag_homelab_infra'] | default([]) }}"
   when: >-
     hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address | default(''))
     | length > 0

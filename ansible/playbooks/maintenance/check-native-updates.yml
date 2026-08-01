@@ -7,8 +7,8 @@
 # Schedule: weekly via Semaphore/Rundeck.
 
 - name: Gather update status from managed hosts
-  # Verified community.proxmox keyed_groups output for homelab-infra: tag_homelab-infra.
-  hosts: tag_homelab-infra
+  # Verified community.proxmox keyed_groups output for homelab-infra: tag_homelab_infra.
+  hosts: tag_homelab_infra
   gather_facts: false
   ignore_unreachable: true
   tasks:

@@ -35,7 +35,11 @@
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | combine({'lxc': dict(
-          state = 'present',
+          # 'started', not 'present': `present` creates a STOPPED container, and nothing
+          # else here starts one — the "Wait for LXC to be running" below would spin for its
+          # full 30 retries and then fail on every first deploy. `started` creates and starts
+          # in one idempotent step, and is a no-op on a container already running.
+          state = 'started',
           api_host = homelabinfra_config.proxmox.api_host,
           api_port = homelabinfra_config.proxmox.api_port,
           api_token_id = homelabinfra_config.proxmox.api_token_id,
