@@ -63,6 +63,28 @@
   failed_when: false
   changed_when: false
 
+# Existence at a vmid is not identity. The default vmid 9000 is the conventional slot for a
+# cloud-init template, so on a lab that has ever built one by hand it is already taken — and
+# it was, on the lab this first ran against: vmid 9000 there is an untagged, hand-built
+# `debian12-cloudinit`. Checking `qm config` alone would have read that as "the template
+# exists", skipped the build, and then handed vm-clone.yml a template NAME that does not
+# exist, while adopting a guest this repo did not create — against the philosophy that
+# homelab-infra manages only what it creates.
+#
+# So the guard is on the name. Failing is deliberate rather than silently choosing a free
+# vmid: which slot holds the template is a fact about the lab that has to stay stable across
+# runs, and picking one automatically would scatter a new template per run.
+- name: Cloud template | Assert the existing VM at this vmid is our template
+  ansible.builtin.assert:
+    that: _ct_existing.stdout is search('^name:\s*' ~ (_ct_name | regex_escape) ~ '\s*$', multiline=True)
+    fail_msg: >-
+      Proxmox vmid {{ _ct_vmid }} on node {{ homelabinfra_config.proxmox.node }} is already
+      in use by a guest that is not this platform's cloud-init template
+      ('{{ _ct_name }}'). homelab-infra will not adopt or overwrite a guest it did not
+      create. Pick a free vmid for the template by setting
+      proxmox.cloud_template.vmid in config/apps/<instance>.yml.
+  when: _ct_existing.rc == 0
+
 - name: Cloud template | Build the template
   when: _ct_existing.rc != 0
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
@@ -107,6 +129,11 @@
           - socket
           - --vga
           - serial0
+          # Tagged like every other guest this platform creates, so the template is
+          # recognisable as ours on a lab full of hand-built ones — which is the same
+          # distinction the vmid assert above enforces.
+          - --tags
+          - homelab-infra
           - --description
           - "Debian cloud-init template built by homelab-infra. Delete this VM to force a rebuild."
       changed_when: true

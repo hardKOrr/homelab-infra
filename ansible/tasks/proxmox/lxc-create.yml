@@ -31,10 +31,12 @@
       - homelabinfra_config.proxmox.lxc.ip_address is defined
     fail_msg: "Required homelabinfra_config inputs: ansible[ssh_public_key], proxmox[api_host,api_token_id,api_token_secret,node,lxc[vmid,hostname,ostemplate,ip_address]]"
 
-# state is 'started', not 'present': `present` creates a STOPPED container, and nothing
-# else here starts one — the "Wait for LXC to be running" below would spin for its full 30
-# retries and then fail on every first deploy. `started` creates and starts in one
-# idempotent step, and is a no-op on a container already running.
+# state is 'present': it is the only state that CREATES a container. `started` does not
+# create — community.proxmox's lxc_started() resolves the guest first and raises
+# "VM with VMID <n> does not exist in cluster." on anything that is not already there.
+# `present` leaves the new container STOPPED, so "Start the LXC container" below turns it
+# on as its own step; that call is a no-op on a container already running, which keeps the
+# re-run path idempotent.
 #
 # The comment lives HERE, above the task, and not inside the expression: Jinja has no `#`
 # comment form, so a YAML comment indented into a `{{ }}` block is parsed as expression
@@ -44,7 +46,7 @@
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | combine({'lxc': dict(
-          state = 'started',
+          state = 'present',
           api_host = homelabinfra_config.proxmox.api_host,
           api_port = homelabinfra_config.proxmox.api_port,
           api_token_id = homelabinfra_config.proxmox.api_token_id,
@@ -175,6 +177,25 @@
 - name: Create LXC container
   community.proxmox.proxmox: "{{ lxc_module_args }}"
   register: create_lxc_result
+
+# Separate call, because `present` above created the container stopped and no other task
+# here starts it — without this, "Wait for LXC to be running" spins its full 30 retries and
+# fails on every first deploy. Only the connection identity is passed: the create-time
+# parameters (ostemplate, netif, disk_volume, pubkey...) describe a container that now
+# exists, and re-sending them on the start call puts the module on its UPDATE path, which
+# is where community.proxmox 2.0.0's cmode='default' regression lives.
+- name: Start the LXC container
+  community.proxmox.proxmox:
+    api_host: "{{ homelabinfra_config.proxmox.api_host }}"
+    api_port: "{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
+    api_user: "{{ homelabinfra_config.proxmox.api_user }}"
+    api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
+    api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
+    validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
+    node: "{{ homelabinfra_config.proxmox.node }}"
+    vmid: "{{ homelabinfra_instance.lxc.vmid }}"
+    state: started
+    timeout: "{{ homelabinfra_instance.lxc.timeout | default(120) }}"
 
 - name: Wait for LXC to be running
   ansible.builtin.command:
