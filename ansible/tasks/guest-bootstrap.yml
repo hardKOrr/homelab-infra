@@ -39,6 +39,24 @@
     state: started
     enabled: true
 
+# VMs only — an LXC has no virtio-serial channel for it, and the package is meaningless
+# there. The cloud image this platform clones does not ship the agent, so `agent: 1` in the
+# VM config is only a device until this installs the daemon behind it. With it, Proxmox
+# reports the guest's address and can shut it down gracefully, and vm-clone.yml's DHCP
+# lease discovery has something to answer it.
+- name: Install the QEMU guest agent on VMs
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+  when: ansible_virtualization_type | default('') != 'lxc'
+
+- name: Enable and start the QEMU guest agent on VMs
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    state: started
+    enabled: true
+  when: ansible_virtualization_type | default('') != 'lxc'
+
 - name: Upgrade installed packages
   ansible.builtin.apt:
     upgrade: safe

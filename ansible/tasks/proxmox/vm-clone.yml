@@ -192,6 +192,14 @@
   until: "'status: running' in _vmc_status.stdout"
   changed_when: false
 
+# Only the DHCP path needs the agent, and only to read back the lease. A stock Debian
+# genericcloud image does NOT ship qemu-guest-agent — `qm guest exec` answers "QEMU guest
+# agent is not running" forever — so waiting for it unconditionally spent 60 retries and
+# then failed a VM that was up and correctly addressed. `agent: 1` in the VM config only
+# adds the virtio device; it does not put the daemon in the image.
+#
+# tasks/guest-bootstrap.yml installs qemu-guest-agent on every VM it bootstraps, so the
+# agent does arrive — just later than this point, on the first Ansible pass over the guest.
 - name: VM clone | Wait for the guest agent to accept exec
   ansible.builtin.command:
     cmd: "qm guest exec {{ _vmc_vmid }} -- /bin/true"
@@ -201,6 +209,17 @@
   delay: 5
   until: _vmc_agent.rc == 0
   changed_when: false
+  when: (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
+
+# The static path knows its own address, so readiness means SSH, which is what the next
+# play connects with anyway. cloud-init installs the platform key during first boot.
+- name: VM clone | Wait for SSH on the configured address
+  ansible.builtin.wait_for:
+    host: "{{ homelabinfra_instance.network.ip_address }}"
+    port: 22
+    timeout: 300
+    sleep: 5
+  when: (homelabinfra_instance.network.ip_address | lower) != 'dhcp'
 
 - name: VM clone | Discover the DHCP lease
   ansible.builtin.command:
