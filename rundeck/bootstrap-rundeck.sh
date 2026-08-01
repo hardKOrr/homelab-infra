@@ -323,10 +323,19 @@ fi
 say "base packages"
 apt-get update -qq
 apt-get -y -qq upgrade
+# prometheus-node-exporter is here for the same reason tasks/guest-bootstrap.yml installs
+# it on every guest the platform creates: the runner tags ITSELF homelab-infra, so
+# observability's scrape list — built from that tag — includes it. This container is the
+# one managed guest guest-bootstrap.yml never touches, because bootstrap-rundeck.sh builds
+# it before Ansible exists to run against it. Without the package the runner is a
+# permanently DOWN target in Prometheus, which is exactly the host whose health matters
+# most: every job runs on it.
 apt-get install -y -qq \
   ca-certificates curl gnupg git jq rsync sudo \
   openssh-client openssh-server python3-venv python3-pip \
-  unattended-upgrades apt-transport-https >/dev/null
+  unattended-upgrades apt-transport-https prometheus-node-exporter >/dev/null
+
+systemctl enable --now prometheus-node-exporter >/dev/null 2>&1 || true
 
 # -- root SSH ------------------------------------------------------------------
 # The Debian LXC template ships root with a locked password and no authorized_keys, so a
