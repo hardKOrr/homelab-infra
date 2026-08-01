@@ -173,11 +173,28 @@
     - not (_pbs_token_usable | bool)
   changed_when: true
 
+# No --output-format here, unlike every other proxmox-backup-manager call in this role.
+# generate-token does not accept it and rejects the whole command:
+#
+#   Error: parameter verification failed - 'output-format': schema does not allow
+#   additional properties.
+#
+# Its only options are --comment, --digest, --enable and --expire (verified against
+# 3.4.8-3). It always prints the same shape instead, which is JSON behind a literal
+# "Result: " prefix and therefore is NOT parseable as-is:
+#
+#   Result: {
+#     "tokenid": "root@pam!ansible",
+#     "value": "de3980f1-b781-4de3-b671-6ccbf8a0685e"
+#   }
+#
+# The prefix is stripped below before from_json. list-tokens DOES take
+# --output-format json, which is why the neighbouring calls look different.
 - name: Create the API token
   ansible.builtin.command:
     cmd: >-
       proxmox-backup-manager user generate-token {{ pbs_auth_id }}
-      {{ app_config.app.api_token_name | default('ansible') }} --output-format json
+      {{ app_config.app.api_token_name | default('ansible') }}
   register: _pbs_token_create
   when: not (_pbs_token_usable | bool)
   changed_when: true
@@ -185,10 +202,12 @@
 
 - name: Select the effective token secret
   ansible.builtin.set_fact:
+    # regex_replace strips the "Result: " prefix generate-token puts in front of its JSON
+    # (see the note on that task). Anchored and non-greedy so it only removes the prefix.
     _pbs_token_secret: >-
       {{ _pbs_recorded_secret
          if _pbs_token_usable | bool
-         else (_pbs_token_create.stdout | from_json).value }}
+         else ((_pbs_token_create.stdout | regex_replace('^\s*Result:\s*', '')) | from_json).value }}
   no_log: true
 
 - name: Assert a token secret is available
