@@ -62,11 +62,36 @@
     state: present
     update_cache: true
 
+# The proxmox-backup-server PACKAGE installs its own
+# /etc/apt/sources.list.d/pbs-enterprise.list pointing at the subscription-only
+# enterprise repository. Without a subscription every later apt update then fails:
+#
+#   E:Failed to fetch https://enterprise.proxmox.com/debian/pbs/dists/bookworm/InRelease
+#   401 Unauthorized
+#
+# That is not cosmetic. It breaks re-running this deploy — which is the documented update
+# path for a native app — and it breaks unattended-upgrades on this guest, which
+# tasks/guest-bootstrap.yml configured earlier in the same run. The lab already has the
+# right repository from the task above; this one only ever returns 401.
+#
+# Removed BOTH before and after the install because the file arrives at different times:
+# on a re-run it is already there and would fail the install's own cache refresh; on a
+# first run the package creates it during the install.
+- name: Disable the subscription-only enterprise repository (pre-existing)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
+
 - name: Install Proxmox Backup Server
   ansible.builtin.apt:
     name: proxmox-backup-server
     state: present
   notify: Restart pbs
+
+- name: Disable the subscription-only enterprise repository (installed by the package)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.list
+    state: absent
 
 - name: Enable and start the PBS services
   ansible.builtin.systemd:
