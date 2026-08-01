@@ -11,11 +11,28 @@ digits are order within the tier. Slice template and workflow: [README.md](READM
 | `built` | Code written, both gates green, acceptance **not** yet observed on the live lab. |
 | `open` | Not started, or started and abandoned mid-way. |
 
-Gates (both current as of 2026-07-26): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes
-on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook clean.
+Gates (current as of 2026-08-01): `wsl bash -lc 'bash .claude/gate/lint.sh'` passes on the
+`production` profile and now also runs `.claude/gate/jinja-parse.py`, which compiles every
+Jinja expression in `ansible/`; `.claude/gate/test.sh` syntax-checks every playbook clean.
 **Both gates are green** — slice 502 closed the last red one.
 
 Counts: **12 done · 29 built · 4 open.**
+
+**`Bootstrap Platform` ran green on 2026-08-01** — executions 7, 8 and 9, API-triggered, all
+seven baseline services, converging to `changed=0` on the hosts that can reach it. That is
+slice 500's acceptance event and 012's second criterion. It cost **twenty-five more
+blockers** (16–40) on top of the fifteen below; full account in
+[012's notes](012-runner-onboarding/notes.md). Live layout: Vaultwarden .10, Ntfy .11,
+Caddy .12, Authentik on `sso-stack` .16, Uptime Kuma + Prometheus/Grafana on
+`monitoring-stack` .14, PBS .15 (VM).
+
+**The session's finding is that almost nothing here was idempotent.** Six of the
+twenty-five (32, 36, 37, 38, 39, 40) are one defect in six costumes — an "is it already
+there?" check that answered wrong. They were invisible to per-app testing because that only
+ever runs a service once successfully; the chained bootstrap is the only thing that runs all
+seven against a lab that already has them. Convergence is the property CLAUDE.md leans on
+hardest ("re-running a deploy IS the update mechanism") and it was the least verified thing
+in the repo.
 
 **The gates do not measure whether the platform runs.** The first from-scratch runner
 bootstrap (2026-08-01) hit **fifteen** blockers with both gates green throughout — eleven in
@@ -28,6 +45,17 @@ dependency*, so the gate venv had it and the runner venv never did. Full account
 [012's notes](012-runner-onboarding/notes.md). Worth adding: a smoke target that provisions
 one throwaway guest, `shellcheck` over `rundeck/*.sh` + `ansible/scripts/*.sh`, and a
 file-mode assertion.
+
+**Three entries below are less true than recorded, and the 2026-08-01 click disproved them.**
+**010** — the Config job group has never worked on a runner: `tasks/config/run-doctor.yml`
+and `write-config-file.yml` were never in git, excluded by a bare `config/` in `.gitignore`,
+so `Config Doctor` and `Configure App` fail on any machine that clones the repo. The
+workstation was the only place they could have worked. **302** — the Authentik wiring is
+verified for first-time creation only; the application lookup could not see what it had
+created, so every app's *second* deploy failed at SSO wiring. **404** — its premise is false:
+Uptime Kuma 2.5.0's entire HTTP surface is 16 routes, all GET. There is no REST write API in
+any version, so monitor auto-registration cannot work as designed; socket.io is accepted as
+later work.
 
 **Two of the fifteen invalidate prior assumptions recorded here.** No `tag_*` inventory group
 had ever existed (`keyed_groups: key: tags` matched nothing, since the plugin namespaces facts

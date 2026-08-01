@@ -159,3 +159,147 @@ file-mode assertion would have caught #1, #4 and probably #3.
 
 **Nothing here was reachable before.** The lab's 57 guests are all hand-built and untagged, so
 no guest this repo created had ever existed. Every one of these defects sat behind that fact.
+
+## 2026-08-01 — the Bootstrap Platform click, completed: 25 more blockers
+
+The seven baseline services had never run. This session deployed them, then ran
+`Bootstrap Platform` through the Rundeck API until it succeeded on three consecutive
+clicks. **The second acceptance criterion is now observed.**
+
+Twenty-five blockers, numbered 16–40 continuing the fifteen above. Ten executions of the
+job; the first six each failed at a different point and moved the frontier forward.
+
+### Verified end state
+
+| Check | Result |
+|---|---|
+| `Bootstrap Platform` | **succeeded on executions 7, 8 and 9** — API-triggered, no CLI |
+| Vaultwarden | 200 at 192.168.0.10 |
+| Ntfy | health 200; anonymous publish **403**, authenticated publish **200** |
+| Caddy | admin API 200 at 192.168.0.12:2019, six routes, correct upstreams |
+| Authentik | 4 containers healthy on **sso-stack** .16, API token authenticates |
+| Uptime Kuma | serving on monitoring-stack .14 |
+| Prometheus + Grafana | Grafana 13.1.1, **7/7 scrape targets up** |
+| PBS | services + datastore `homelab` + PVE storage `pbs-homelab` + backup job |
+| Registry keys | backups, domain, metrics, monitoring, notifications, reverse_proxy, runner, sso, vaultwarden |
+| Convergence | **five consecutive green clicks (7–11)**; by 11, caddy, monitoring-stack, sso-stack and vaultwarden all at **changed=0** |
+
+### The twenty-five
+
+| # | Where | Defect |
+|---|---|---|
+| 16 | `lxc-create.yml` | YAML `#` comment inside a Jinja `{{ }}` — every LXC create died templating |
+| 17 | `lxc-create.yml`, `vm-create.yml` | `state: started` never CREATES; it resolves a guest first and raises |
+| 18 | `ensure-cloud-template.yml` | vmid 9000 treated as "our template" on existence alone; adopts a hand-built guest |
+| 19 | all three provisioning tasks | `/cluster/resources` is eventually consistent; module reads `name` unconditionally |
+| 20 | 4 app playbooks + `find-or-create-host.yml` | guest reuse never STARTED a stopped guest |
+| 21 | `roles/caddy` | `--resume` makes Caddy ignore `--config`; base config never applied |
+| 22 | `homelabinfra-defaults.yml` | no `ostemplate` — **no Docker app could ever deploy** |
+| 23 | `lxc-create.yml` | PVE forbids non-`nesting` features to a non-root@pam token |
+| 24 | `resolve-estate.yml` | `domain` had one writer (`bootstrap.yml`); standalone deploys failed |
+| 25 | `wiring/uptime-kuma.yml`, `roles/uptime-kuma` | a 200 of `text/html` read as a working REST API |
+| 26 | `roles/observability` | node-exporter container vs the package on every guest — port 9100 collision |
+| 27 | `bootstrap-rundeck.sh` | runner had no node_exporter; permanently DOWN scrape target |
+| 28 | `vm-clone.yml` | `validate_certs` missing — the one file 012's blocker 8 could not reach |
+| 29 | `vm-clone.yml` | waited for a guest agent absent from the cloud image |
+| 30 | `roles/pbs` | the PBS package adds an enterprise apt repo that 401s without a subscription |
+| 31 | `roles/pbs` | `generate-token` rejects `--output-format` and prefixes its JSON with `Result: ` |
+| 32 | `configure-pbs.yml` | datastore POST returns a UPID; PVE was told to use it before it existed |
+| 33 | `configure-pbs.yml` | backup job included the cloud template (self-inflicted by 18's tag) |
+| 34 | `.gitignore` | bare `config/` excluded **`ansible/tasks/config/`** from the repo |
+| 35 | `load-user-vars.yml` | relative paths encoded the CALLER's depth; bootstrap.yml never ran |
+| 36 | `roles/ntfy` | user-existence regex never matched — re-running Ntfy always failed |
+| 37 | `lxc-create.yml` | `pct exec` ready is not sshd listening |
+| 38 | `wiring/authentik.yml` | application list filtered by object permission; could not see what it created |
+| 39 | 4 app playbooks | Docker install gated on "did I create this host THIS run" |
+| 40 | `roles/observability` | unsorted scrape targets restarted Prometheus every pass |
+
+### What this run was actually testing
+
+Almost nothing in this platform was idempotent, and that is the session's finding.
+
+Blockers 32, 36, 37, 38, 39 and 40 are one defect in six costumes: an "is it already there?"
+check that answered wrong, so the code re-created something that existed and failed — or
+rewrote something unchanged and restarted a service. They were invisible to the per-app loop
+because **that loop only ever ran each service once successfully**. The moment a service
+worked, it was done.
+
+`Bootstrap Platform` is the first thing in this project's history that runs all seven
+services in sequence against a lab that already has them. It is not a harder test of the
+services; it is the only test of convergence, which is the property CLAUDE.md leans on
+hardest — *"re-running a deploy IS the update mechanism"*.
+
+A related family — 19, 21, 32, 37 — is async-vs-sync: something returns success before the
+work it started has finished. Three of those four only appear when a resource is created and
+consumed in the same run, which is exactly what a one-click bootstrap does.
+
+And four more — 18, 21, 26, 30 — were **confident comments asserting something untrue**.
+"vmid 9000 is our template", "`--config` is the first-boot seed", "every OTHER guest runs
+node_exporter as a package", "the no-subscription repository is used deliberately". In each
+case the code did exactly what the comment said and the comment was wrong about the world.
+These are the ones that stay hidden longest, because the code reads as though someone checked.
+
+### Status corrections
+
+Three entries in INDEX.md are less true than recorded. None of these are new work — they are
+claims the live run disproved.
+
+- **010 — the Config job group has never worked on a runner.** `tasks/config/run-doctor.yml`
+  and `write-config-file.yml` were never in git (blocker 34), so `Config Doctor` and
+  `Configure App` would fail identically on any machine that cloned the repo. INDEX already
+  said "verified on the workstation; nothing the script does is" — the workstation was the
+  only place they could have worked. The `Configure App` / `Get Config` transport story that
+  replaced the rejected lab-repo idea is still unexercised end to end.
+- **302 — the Authentik wiring was verified for first-time creation only.** Blocker 38 means
+  every app's SECOND deploy failed at SSO wiring. "wire/unwire verified live" has meant
+  "wire once".
+- **404 — the premise is false.** Uptime Kuma 2.5.0's entire HTTP surface is 16 routes and
+  every one is a GET. There is no REST write API in any version; monitors, notifications and
+  first-run setup are all socket.io, and the API key gates the Prometheus `/metrics`
+  endpoint rather than granting CRUD. v2 was locked in to get an API that does not exist, so
+  monitor auto-registration cannot work as designed. The operator has accepted socket.io
+  (`lucasheld/uptime-kuma-api`) as later work — its version matrix tracks 1.x and 2.x changed
+  the setup flow, so support needs verifying before committing to it.
+
+### Known properties, not bugs
+
+- **Relocating the SSO provider takes two bootstrap passes to converge.** Authentik deploys
+  at step 4, but Vaultwarden (1) and Ntfy (2) wire their SSO before it. On the pass where
+  Authentik moves stack, those two wire against the old address and the next pass corrects
+  them. It self-heals and nothing breaks. Inherent to the ordering: the SSO provider cannot
+  be both before and after the apps that wire into it.
+- **Residual `changed` on a converged run is 10, all accounted for**: `add_host` (7, always
+  changed by design), two `changed_when: true` ACL grants that are declarative
+  re-applications, and Ntfy's deliberate authenticated-publish proof. Four of six hosts
+  report `changed=0`.
+- **A fix that changes rendered output costs one extra pass.** Blocker 40's sort landed in
+  execution 10, which still reported the Prometheus config changed — that run rewrote the
+  file from the old arbitrary order into the sorted one. Execution 11 was `changed=0`. Worth
+  remembering when reading a single run's counts: the pass that lands a fix is not the pass
+  that demonstrates it.
+
+### Stack layout, revised during the run
+
+The operator moved Authentik onto its own stack. Its own app-defaults had argued for that
+already — "it carries a database, and a shared host would couple every co-tenant's restarts
+to the platform's login path" — while the value said `core_stack`, so the comment and the
+assignment disagreed. Uptime Kuma joined observability on `monitoring_stack`; `core_stack` is
+retired. Sizing moved from per-app to `vars/stack-defaults.yml` keyed by stack, because a
+stack host is shared and the first app to deploy creates it — per-app sizing made the host's
+size depend on deploy order.
+
+LXC **168000013** (`core-stack`) is left over from the old layout and holds nothing the
+platform references. Destroying it is the operator's call and was not done.
+
+### Gates
+
+`.claude/gate/jinja-parse.py` was added to `lint.sh`: it walks every string scalar under
+`ansible/` and compiles the ones containing `{{` or `{%`. It catches blocker 16's class,
+which both existing gates are structurally blind to — they parse YAML and never compile a
+template string.
+
+It catches nothing else here, and that is the point. **All twenty-five were found by running
+the thing.** Of them, 34 and 35 could not have been found any other way: 34 needs a fresh
+clone (the working tree is correct), and 35 needs a playbook at a depth no development run
+uses. The smoke target INDEX already suggests — provision one throwaway guest and immediately
+use it — would have caught 19, 32, 37 and probably 20 in a single pass.
