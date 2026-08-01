@@ -15,6 +15,14 @@ filters at assignment time.
   expression (`range | map | reject | first`) instead of incrementing counters.
 - When a value must round-trip as a number (e.g. `vmid`), watch operator precedence: `|` binds
   tighter than `~`, so `a ~ b | int` casts only `b`. Parenthesize the whole expression.
+- **Subscript any config key whose name is also a `dict` method**: `update`, `items`, `keys`,
+  `values`, `get`, `pop`, `copy`, `clear`, `setdefault`, `fromkeys`. Jinja resolves `foo.bar`
+  by trying `getattr(foo, 'bar')` *before* `foo['bar']`, so `app_config.update` evaluates to
+  the bound `dict.update` method **whether or not the key exists** — the config value is
+  simply unreachable by dot notation. The symptom is
+  `'builtin_function_or_method object' has no attribute '<subkey>'`. Write
+  `app_config['update'].binary_path`. This is why `vars/app-defaults/*.yml` may declare an
+  `update:` block that dot access can never read.
 
 ## Enforced by
 

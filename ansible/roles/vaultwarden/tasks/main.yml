@@ -39,14 +39,14 @@
 
 - name: Check installed vaultwarden version
   ansible.builtin.command:
-    cmd: "{{ app_config.update.binary_path }} --version"
+    cmd: "{{ app_config['update'].binary_path }} --version"
   register: _vw_installed
   failed_when: false
   changed_when: false
 
 - name: Get latest release info
   ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+    url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
     return_content: true
   register: _release
   changed_when: false

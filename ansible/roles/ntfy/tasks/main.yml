@@ -41,14 +41,14 @@
 
 - name: Check installed ntfy version
   ansible.builtin.command:
-    cmd: "{{ app_config.update.binary_path }} --version"
+    cmd: "{{ app_config['update'].binary_path }} --version"
   register: _ntfy_installed
   failed_when: false
   changed_when: false
 
 - name: Get latest release info
   ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+    url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
     return_content: true
   register: _ntfy_release
   changed_when: false
@@ -72,7 +72,7 @@
   ansible.builtin.assert:
     that: _ntfy_deb_url | length > 0
     fail_msg: >-
-      Release {{ _ntfy_latest_version }} of {{ app_config.update.github_repo }}
+      Release {{ _ntfy_latest_version }} of {{ app_config['update'].github_repo }}
       publishes no *_linux_amd64.deb asset. Pin an older version in
       config/apps/{{ instance }}.yml or install manually.
 

@@ -19,7 +19,7 @@
 # OPTION B: Install from GitHub binary release (when no apt package exists)
 # - name: Get latest release info
 #   ansible.builtin.uri:
-#     url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+#     url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
 #     return_content: true
 #   register: _release
 #   changed_when: false
@@ -30,8 +30,8 @@
 #
 # - name: Download binary
 #   ansible.builtin.get_url:
-#     url: "https://github.com/{{ app_config.update.github_repo }}/releases/download/{{ _latest_version }}/APP_NAME-linux-amd64"
-#     dest: "{{ app_config.update.binary_path }}"
+#     url: "https://github.com/{{ app_config['update'].github_repo }}/releases/download/{{ _latest_version }}/APP_NAME-linux-amd64"
+#     dest: "{{ app_config['update'].binary_path }}"
 #     mode: "0755"
 #   notify: Restart APP_NAME
 

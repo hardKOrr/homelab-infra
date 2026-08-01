@@ -41,7 +41,7 @@
 # ── Resolve the image tag ─────────────────────────────────────────────────────
 - name: Get latest Authentik release
   ansible.builtin.uri:
-    url: "https://api.github.com/repos/{{ app_config.update.github_repo }}/releases/latest"
+    url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
     return_content: true
   register: _authentik_release
   when: app_config.app.image_tag | default('') | length == 0
