@@ -211,6 +211,41 @@
       ExecReload=/usr/bin/caddy reload --config {{ caddy_config_file }} --force
   notify: Restart caddy
 
+# ── Make sure the base configuration can actually be applied ──────────────────
+# `--resume` does not merely prefer the autosave, it makes Caddy IGNORE --config
+# outright whenever an autosave exists:
+#
+#   --config and --resume flags were used together; ignoring --config and
+#   resuming from last configuration
+#
+# The packaged caddy service starts on install with its stock Caddyfile and autosaves
+# that — a file_server on :80 with no `admin` key, so the admin endpoint stays on its
+# localhost default. The base config written above, including the admin bind the
+# wiring tasks depend on, was therefore never applied on a first deploy: the deploy
+# then failed waiting for an admin API that was only ever listening on loopback.
+# "--config is the first-boot seed" was the intent; with an autosave already on disk
+# it seeded nothing.
+#
+# So an autosave that does not already carry the admin bind we want is discarded,
+# which lets --config apply on the next start; Caddy immediately autosaves the result.
+# An autosave that DOES carry it is left alone, which is the steady state and is what
+# keeps admin-API routes across restarts — the property --resume exists for.
+- name: Check for an autosaved running configuration
+  ansible.builtin.slurp:
+    src: "{{ caddy_autosave_file }}"
+  register: _caddy_autosave
+  failed_when: false
+
+- name: Discard an autosave that predates this role's base configuration
+  ansible.builtin.file:
+    path: "{{ caddy_autosave_file }}"
+    state: absent
+  when:
+    - _caddy_autosave.content is defined
+    - ((_caddy_autosave.content | b64decode | from_json).admin | default({})).listen | default('')
+      != (_caddy_bind_ip ~ ':' ~ (app_config.app.port | int))
+  notify: Restart caddy
+
 - name: Enable and start caddy service
   ansible.builtin.systemd:
     name: "{{ caddy_service_name }}"
