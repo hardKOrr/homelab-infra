@@ -97,3 +97,65 @@ created and deleted).
 a fact about its environment that was true where it was written and is not true everywhere it
 is meant to run. This one matters more for the shareability claim than for this lab — anyone
 on PVE 9 hits it on their first run, which is every new adopter from here on.
+
+## 2026-08-01 — the from-scratch run, completed: 15 blockers
+
+The old runner (LXC 13228, built 2026-07-26, five slices out of date) and its stale
+predecessor 13227 were destroyed. `bootstrap-rundeck.sh` was then run from nothing, thirteen
+times, against `master`. **The first acceptance criterion is now observed.**
+
+Runner: LXC **168000002** at 192.168.0.2/20, tagged `homelab-infra`, VMID derived from the
+address by the repo's own scheme. Guests land at 192.168.0.10+.
+
+### Verified end state
+
+| Check | Result |
+|---|---|
+| `bootstrap-rundeck.sh` exit | 0, on three consecutive runs |
+| Rundeck project + jobs | created, **19/19 imported**, no UI steps |
+| Key Storage | `keys/proxmox/api-token` + `keys/rundeck/homelab-ssh` staged |
+| Proxmox credential | `homelab-infra@pve` role `HomelabInfra`, minted and rotated cleanly |
+| `config/` authored | `proxmox.yml`, `infrastructure.yml`, `apps/rundeck.yml` |
+| `.generated/facts.yml` | `runner` + `vaultwarden` keys, correct path |
+| Vaultwarden | 1.37.1 active+enabled, **HTTP 200** at 192.168.0.10, lab-* scripts installed |
+| Admin token sink (013) | `VAULTWARDEN_ADMIN_TOKEN` at 0600 — **one pass, no paste** |
+| Idempotency | full re-run reused runner and guest, created nothing duplicate |
+
+### The fifteen
+
+Four in shipped Ansible; eleven in the seam between the repo and the machine that runs it.
+
+| # | Where | Defect |
+|---|---|---|
+| 1 | `bootstrap-rundeck.sh` | `tr </dev/urandom \| head -c` under `pipefail` → SIGPIPE 141 |
+| 2 | `bootstrap-rundeck.sh` | `VM.Monitor` removed in PVE 9; privilege list version-locked to PVE 8 |
+| 3 | `bootstrap-rundeck.sh` | `apiCookieAccess` off — the first API token cannot be minted |
+| 4 | `ansible/scripts/lab-run.sh` | mode 100644 in git; **all 19 jobs** would fail `exec lab-run` |
+| 5 | `bootstrap-rundeck.sh` | Rundeck rotates JSESSIONID; `-b` without `-c` sent a stale session |
+| 6 | `bootstrap-rundeck.sh` | `netaddr` absent from the runner venv (the gate venv had it since 2026-07-06) |
+| 7 | `lxc-create.yml`, `vm-create.yml` | `set_fact` sibling key reference — undefined by construction |
+| 8 | both create tasks | `validate_certs` missing from the module allowlists; PVE is self-signed |
+| 9 | 7 files in `vars/` | storage pinned per-app; `local` cannot hold a container rootfs at all |
+| 10 | 4 task files | `delegate_to: <node name>` — nothing ever made node names resolvable |
+| 11 | `inventory/proxmox.yml` | `key: tags` / `type ==` matched nothing: **no `tag_*` group ever existed** |
+| 12 | `lxc-create.yml` | `state: present` creates a stopped container the next task waits on |
+| 13 | `inventory/proxmox.yml` | no `ansible_host` for guests — a reused guest was unreachable |
+| 14 | 4 roles + template | `app_config.update` resolves to `dict.update`, never the config key |
+| 15 | `write-generated-facts.yml` | app playbooks wrote `facts.yml` two levels up, into a path nothing reads |
+
+**#11 and #15 are the two that mattered most.** #11 meant idempotency never worked — a re-run
+could not find the guest it had made and would provision a second one — and `proxmox_clients`
+being absent meant IP allocation never excluded an address already in use. #15 meant no app
+could ever record an endpoint another app could read, so the bootstrap ordering the whole
+baseline sequence rests on did not hold.
+
+**Neither gate saw any of the fifteen.** `lint.sh` and `test.sh` stayed green throughout —
+they check Ansible syntax and style, and none of these were syntax or style. #6 is the
+sharpest illustration: `.claude/gate/requirements-dev.txt` pinned `netaddr` in July precisely
+as the ipaddr filters' runtime dependency, so the gate environment had it and the runner
+environment never did. **Green gates were never evidence the platform could run.** A smoke
+target that provisions one throwaway guest would have caught most of this; `shellcheck` and a
+file-mode assertion would have caught #1, #4 and probably #3.
+
+**Nothing here was reachable before.** The lab's 57 guests are all hand-built and untagged, so
+no guest this repo created had ever existed. Every one of these defects sat behind that fact.

@@ -17,10 +17,24 @@ on the `production` profile; `.claude/gate/test.sh` syntax-checks every playbook
 
 Counts: **12 done · 29 built · 4 open.**
 
-Neither gate reads shell. `lint.sh` is ansible-lint and `test.sh` is `--syntax-check`, so
-`rundeck/bootstrap-rundeck.sh` — the largest shell file in the project and the entry point to
-everything else — is unchecked by both. A `set -euo pipefail` defect in it went undetected
-until the first from-scratch run; see [012's notes](012-runner-onboarding/notes.md).
+**The gates do not measure whether the platform runs.** The first from-scratch runner
+bootstrap (2026-08-01) hit **fifteen** blockers with both gates green throughout — eleven in
+the seam between the repo and the machine that runs it (file modes, venv packages, shell
+semantics, HTTP sessions, PVE version vocabulary, TLS trust, storage, node resolution,
+inventory grouping) and four in shipped Ansible. `lint.sh` is ansible-lint and `test.sh` is
+`--syntax-check`; none of the fifteen were syntax or style. `netaddr` is the sharpest case:
+`.claude/gate/requirements-dev.txt` pinned it on 2026-07-06 *as the ipaddr filters' runtime
+dependency*, so the gate venv had it and the runner venv never did. Full account in
+[012's notes](012-runner-onboarding/notes.md). Worth adding: a smoke target that provisions
+one throwaway guest, `shellcheck` over `rundeck/*.sh` + `ansible/scripts/*.sh`, and a
+file-mode assertion.
+
+**Two of the fifteen invalidate prior assumptions recorded here.** No `tag_*` inventory group
+had ever existed (`keyed_groups: key: tags` matched nothing, since the plugin namespaces facts
+as `proxmox_*`), so tag-based guest reuse — the basis of idempotency — never worked, and
+`proxmox_clients` being absent meant `generate-ip.yml` never excluded an address already in
+use. Separately, every app playbook wrote `.generated/facts.yml` two levels up into a path
+nothing reads, so no service could record an endpoint another could load.
 
 ---
 
@@ -56,7 +70,7 @@ each slice's `notes.md` or in a "Built" section of its README.
 | 008 | [Estate / multi-domain contract](008-estate-contract/README.md) | a second-domain deploy |
 | 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | one app deployed per mode |
 | 010 | [Config provenance](010-config-provenance/README.md) | the bootstrap script run on a node. The Config job group (Configure App / Get Config / Config Doctor) is verified on the workstation; nothing the script does is |
-| 012 | [Runner onboarding](012-runner-onboarding/README.md) | the same run — one command, then one click |
+| 012 | [Runner onboarding](012-runner-onboarding/README.md) | **first criterion observed 2026-08-01** — one command yields project + 19/19 jobs + Key Storage + config + a serving Vaultwarden. Remaining: the `Bootstrap Platform` click, Configure App / Get Config from the UI, and a job run naming its commit |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | Ntfy running (401) |
 | 202 | [configure-pbs](202-configure-pbs/README.md) | PBS running (406) |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | Caddy running (402) |
@@ -66,7 +80,7 @@ each slice's `notes.md` or in a "Built" section of its README.
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API creds |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open — see below |
-| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | bootstrap step 1 |
+| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | **deployed live 2026-08-01** — 1.37.1 serving on its own LXC, admin-token sink written in one pass (013). Wiring legs still unobserved: no reverse proxy, SSO or monitor existed to wire into |
 | 401 | [Ntfy](401-app-ntfy/README.md) | bootstrap step 2 |
 | 402 | [Caddy](402-app-caddy/README.md) | bootstrap step 3 |
 | 403 | [Authentik](403-app-authentik/README.md) | bootstrap step 4 — one item blocked on 306 |

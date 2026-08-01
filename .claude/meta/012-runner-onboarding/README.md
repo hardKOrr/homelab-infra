@@ -112,8 +112,12 @@ the acceptance bar, not a reduction to some smaller number of chores.
 
 ## Acceptance
 
-- [ ] `bash rundeck/bootstrap-rundeck.sh` on a bare Proxmox node yields a Rundeck with
+- [x] `bash rundeck/bootstrap-rundeck.sh` on a bare Proxmox node yields a Rundeck with
       the project created, every job imported and Key Storage staged — no UI steps
+      — **observed 2026-08-01** on pve-host-3 after destroying the previous runner:
+      project created, 19/19 jobs imported, both Key Storage entries staged, config
+      authored, and Vaultwarden deployed and serving. Took fifteen fixes to get there;
+      see [notes.md](notes.md)
 - [ ] **The whole onboarding path is one command and one click**: run the script on the
       node, then run `Bootstrap Platform`. Every one of the fourteen steps above is
       performed by one layer or the other, and the root README says so in that order

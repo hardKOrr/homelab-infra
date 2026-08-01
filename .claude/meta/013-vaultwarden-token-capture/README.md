@@ -1,6 +1,15 @@
 # 013 — Vaultwarden admin token self-capture: collapse the two-pass bootstrap
 
-**Status:** built, unverified on live hardware
+**Status:** built — **sink verified live 2026-08-01**
+
+The mechanism this slice exists for is observed: `bootstrap-rundeck.sh` deployed Vaultwarden
+through the runner, `roles/vaultwarden` generated the admin token and wrote it to
+`/etc/homelab-infra/secrets.d/vaultwarden.env` (0600 `rundeck:rundeck`), and the script
+returned **exit 0 in a single pass with no human paste and no re-run**. The token was not
+printed to the log, which is correct — the console copy exists only when the sink write
+fails. Not yet observed: the *consumer* half — no later bootstrap step has read
+`VAULTWARDEN_ADMIN_TOKEN` back out of the sink, because nothing after Vaultwarden has run.
+That clears on the `Bootstrap Platform` click.
 **Depends on:** 400 (Vaultwarden app), 500 (bootstrap plays)
 **Blocks:** 010 (config provenance) — the unattended bootstrap path; 014 (Vaultwarden as
 the generated-secret store)

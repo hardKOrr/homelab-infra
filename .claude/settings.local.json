@@ -91,7 +91,8 @@
       "Bash(timeout 40 ssh -o ConnectTimeout=8 root@192.168.13.247 'pct status 13227; echo \"--- recent task log ---\"; grep -i 13227 /var/log/pve/tasks/index 2>/dev/null | tail -5')",
       "Bash(timeout 30 ssh -o ConnectTimeout=8 root@192.168.13.247 'pct exec 13228 -- rm -f /root/.ssh/authorized_keys')",
       "Bash(timeout 15 ssh -o ConnectTimeout=6 -o BatchMode=yes root@192.168.13.228 'echo reachable')",
-      "Bash(timeout 900 ssh -o ConnectTimeout=8 root@192.168.13.247 '/root/bootstrap-rundeck.sh')"
+      "Bash(timeout 900 ssh -o ConnectTimeout=8 root@192.168.13.247 '/root/bootstrap-rundeck.sh')",
+      "Bash(ssh *)"
     ]
   }
 }
