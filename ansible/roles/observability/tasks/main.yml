@@ -1,5 +1,6 @@
 ---
-# observability role — Prometheus + Grafana + node_exporter via Docker Compose.
+# observability role — Prometheus + Grafana via Docker Compose. node_exporter is NOT part
+# of this stack: it is a package on every guest, installed by tasks/guest-bootstrap.yml.
 # Called from Play 2 of playbooks/apps/observability.yml. Target: the
 # monitoring_stack host.
 #

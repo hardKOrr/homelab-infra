@@ -31,7 +31,9 @@ observability_defaults:
 
     grafana_image: "docker.io/grafana/grafana:latest"
     prometheus_image: "docker.io/prom/prometheus:latest"
-    node_exporter_image: "quay.io/prometheus/node-exporter:latest"
+    # No node_exporter_image: node_exporter is a PACKAGE on every guest, installed by
+    # tasks/guest-bootstrap.yml, not a container this stack runs. node_exporter_port
+    # above is still live — it is the port Prometheus scrapes every guest on.
 
   routing:
     proxy: internal

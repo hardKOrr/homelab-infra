@@ -30,7 +30,10 @@
 #
 #   grafana_image: "docker.io/grafana/grafana:latest"
 #   prometheus_image: "docker.io/prom/prometheus:latest"
-#   node_exporter_image: "quay.io/prometheus/node-exporter:latest"
+#
+# There is no node_exporter_image: node_exporter is installed as a package on every
+# guest by the platform, not run as a container here. node_exporter_port above is the
+# port Prometheus scrapes those packages on.
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:

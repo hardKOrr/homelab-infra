@@ -45,18 +45,16 @@ services:
     depends_on:
       - prometheus
 
-  # Exports this stack host's own metrics. Every other homelab-infra guest runs
-  # node_exporter as a package instead, installed by tasks/guest-bootstrap.yml.
-  node-exporter:
-    image: {{ app_config.app.node_exporter_image }}
-    container_name: "{{ instance }}-node-exporter"
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    command:
-      - "--path.rootfs=/host"
-    pid: host
-    volumes:
-      - "/:/host:ro,rslave"
-    ports:
-      - "{{ app_config.app.node_exporter_port }}:9100"
+  # No node-exporter service here on purpose.
+  #
+  # There used to be one, to export "this stack host's own metrics", on the premise that
+  # every OTHER guest runs node_exporter as a package. That premise was false:
+  # tasks/guest-bootstrap.yml installs prometheus-node-exporter on EVERY guest this
+  # platform creates, and the observability host is one of them. So the package already
+  # held 0.0.0.0:9100 and the container could never start:
+  #
+  #   failed to bind host port 0.0.0.0:9100/tcp: address already in use
+  #
+  # which failed the whole deploy. Nothing is lost by removing it: prometheus.yml.j2
+  # builds its scrape list from every guest tagged homelab-infra, and this host is in that
+  # list like any other, scraped on the same node_exporter_port.
