@@ -85,6 +85,38 @@
     | map(attribute='name') | list
     is not contains(_pbs_datastore)
 
+# POST /config/datastore returns as soon as PBS has QUEUED the creation — the response is a
+# UPID for a background task that builds the chunk store directory tree. The datastore is
+# not usable until that finishes, and nothing downstream waits for it.
+#
+# That surfaced as a failure attributed to the wrong component: "Register PBS as a PVE
+# storage backend" came back
+#
+#   create storage failed: pbs-homelab:
+#   Cannot find datastore 'homelab', check permissions and existence!
+#
+# which reads like a permissions problem on a datastore that does not exist. Both were
+# fine — ACL was Admin on / with propagate, and the datastore was there seconds later. PVE
+# simply asked PBS before PBS had finished. Confirmed by the timestamps: /mnt/backup
+# created at 21:15, the PVE registration failing at 21:15:41.
+#
+# Polling /admin/datastore rather than /config/datastore on purpose: the config endpoint
+# lists what has been DECLARED, which is true the instant the POST returns, while the admin
+# endpoint lists what is actually serving.
+- name: PBS | Wait for the datastore to finish initialising
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/admin/datastore"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_datastore_ready
+  until: >-
+    _pbs_datastore_ready.json.data | default([])
+    | map(attribute='store') | list
+    is contains(_pbs_datastore)
+  retries: 30
+  delay: 5
+  changed_when: false
+
 - name: PBS | Apply retention settings on datastore
   ansible.builtin.uri:
     url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
