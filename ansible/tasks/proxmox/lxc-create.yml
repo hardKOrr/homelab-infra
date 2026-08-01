@@ -39,7 +39,11 @@
           pubkey = homelabinfra_config.ansible.ssh_public_key
         ) | combine(homelabinfra_config.proxmox.lxc, recursive=True)}, recursive=True) }}
 
-- name: Build LXC network settings
+# Deliberately its own task: keys set by one set_fact are templated against the variable
+# context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
+# this back into the task below reintroduces "'lxc_ip_cidr' is undefined" at the first
+# guest creation.
+- name: Resolve the LXC address in CIDR form
   ansible.builtin.set_fact:
     lxc_ip_cidr: >-
       {{
@@ -47,6 +51,10 @@
         if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
         else homelabinfra_instance.network.ip_address ~ '/' ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
       }}
+  when: homelabinfra_instance.network is defined
+
+- name: Build LXC network settings
+  ansible.builtin.set_fact:
     lxc_netif: >-
       name=eth0,ip={{ lxc_ip_cidr }}
       {%- if homelabinfra_instance.network.gateway is defined and (homelabinfra_instance.network.ip_address | lower) != 'dhcp' -%}

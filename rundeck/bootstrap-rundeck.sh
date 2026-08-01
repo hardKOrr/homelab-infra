@@ -421,7 +421,11 @@ say "ansible venv at $VENV_DIR"
 "$VENV_DIR/bin/pip" install -q --upgrade pip wheel
 # PyYAML is not optional: scripts/config-doctor.sh, redact-config.sh and
 # with-proxmox-env.sh all parse config/*.yml with this interpreter before Ansible starts.
-"$VENV_DIR/bin/pip" install -q "$ANSIBLE_CORE_SPEC" proxmoxer requests PyYAML
+# netaddr is not optional either: every guest this platform creates gets its address from
+# tasks/network/generate-ip.yml, which filters through ansible.utils.ipaddr — and that
+# filter is a thin wrapper over netaddr. Without it the very first provisioning task of the
+# very first app deploy fails with "Failed to import the required Python library (netaddr)".
+"$VENV_DIR/bin/pip" install -q "$ANSIBLE_CORE_SPEC" proxmoxer requests PyYAML netaddr
 say "$("$VENV_DIR/bin/ansible" --version | head -1)"
 
 # -- repo clone -----------------------------------------------------------------
@@ -820,20 +824,27 @@ if [ -z "$RD_TOKEN" ]; then
     warn "no stored admin password at ${CRED_FILE} in the container — skipping token issue"
     info "create one in the UI under: admin -> Profile -> User API Tokens"
   else
+    # EVERY call below both reads AND writes the jar (-b and -c together). Rundeck rotates
+    # JSESSIONID on API requests, so a call given only -b sends whatever the previous
+    # response superseded: the session is silently stale and the API answers
+    # `"(unauthenticated) is not authorized"` even though the UI login plainly worked.
+    # It is the intervening GET that rotates the cookie the POST then needs, which is why
+    # the failure looked like "the token endpoint is forbidden" rather than "the cookie
+    # is out of date". Dropping -c from any one of these reintroduces the bug.
     COOKIE="$(mktemp "$TMPROOT/cookie.XXXXXX")"
     curl -s -c "$COOKIE" -o /dev/null -m 15 "$RD_URL/user/login"
     curl -s -b "$COOKIE" -c "$COOKIE" -o /dev/null -m 15 \
       -d "j_username=admin" --data-urlencode "j_password=${RD_ADMIN_PW}" \
       "$RD_URL/j_security_check"
 
-    EXISTING="$(curl -s -b "$COOKIE" -H 'Accept: application/json' -m 15 \
+    EXISTING="$(curl -s -b "$COOKIE" -c "$COOKIE" -H 'Accept: application/json' -m 15 \
       "$RD_URL/api/58/tokens/admin" 2>/dev/null | grep -c '"name":"homelab-infra"' || true)"
 
     if [ "${EXISTING:-0}" -gt 0 ]; then
       warn "a token named 'homelab-infra' exists but its secret is not in $CRED_FILE"
       info "revoke it in the UI and re-run this script to issue a readable one"
     else
-      RESP="$(curl -s -b "$COOKIE" -m 20 -X POST \
+      RESP="$(curl -s -b "$COOKIE" -c "$COOKIE" -m 20 -X POST \
         -H 'Content-Type: application/json' -H 'Accept: application/json' \
         -d '{"user":"admin","roles":["*"],"duration":"0","name":"homelab-infra"}' \
         "$RD_URL/api/58/tokens/admin")"

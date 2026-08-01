@@ -34,7 +34,11 @@
           )
         }, recursive=True) }}
 
-- name: Build VM network settings
+# Deliberately its own task: keys set by one set_fact are templated against the variable
+# context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
+# this back into the task below reintroduces "'vm_ip_cidr' is undefined" at the first
+# VM creation — the same defect that stopped the first live LXC create.
+- name: Resolve the VM address in CIDR form
   ansible.builtin.set_fact:
     vm_ip_cidr: >-
       {{
@@ -42,6 +46,10 @@
         if (homelabinfra_instance.network.ip_address | lower) == 'dhcp'
         else homelabinfra_instance.network.ip_address ~ '/' ~ (homelabinfra_instance.network.cidr | ansible.utils.ipaddr('prefix'))
       }}
+  when: homelabinfra_instance.network is defined
+
+- name: Build VM network settings
+  ansible.builtin.set_fact:
     vm_net0: >-
       virtio
       {%- if homelabinfra_instance.network.bridge is defined -%}
