@@ -135,6 +135,12 @@
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
     _ntfy_password_known: >-
       {{ homelabinfra_infra.notifications.password | default('') | length > 0 }}
+    # Matches the START of `ntfy user list`'s line for this account, which carries trailing
+    # detail: "user homelab (role: user, tier: none)". The trailing (\s|$) stops `homelab`
+    # from also matching a `homelab-admin`, and regex_escape keeps a username with regex
+    # punctuation from being read as a pattern.
+    _ntfy_user_re: >-
+      {{ '^user ' ~ (app_config.app.user | default('homelab') | regex_escape) ~ '(\s|$)' }}
   no_log: true
 
 - name: List existing ntfy users
@@ -143,12 +149,24 @@
   register: _ntfy_user_list
   changed_when: false
 
+# The existence test matches the line PREFIX, with multiline, because `ntfy user list`
+# prints trailing detail and the anchors were wrong in two ways:
+#
+#   user homelab (role: user, tier: none)
+#     - read-write access to topic homelab
+#
+# The old pattern was '^user homelab$', which cannot match that line — and without
+# multiline=True, ^ and $ anchor to the whole STRING rather than each line, so it could
+# not have matched even if the format were bare. The test therefore always said "absent":
+# `user add` ran on every deploy and failed the moment the account already existed, so
+# this role was not idempotent and every re-run of Ntfy died here. It only ever passed
+# because it had never been run twice.
 - name: Create publish account
   ansible.builtin.command:
     cmd: "ntfy user add --role=user {{ _ntfy_user }}"
   environment:
     NTFY_PASSWORD: "{{ _ntfy_password }}"
-  when: _ntfy_user_list.stdout is not search('^user ' ~ _ntfy_user ~ '$')
+  when: _ntfy_user_list.stdout is not search(_ntfy_user_re, multiline=True)
   changed_when: true
   no_log: true
 
@@ -161,7 +179,7 @@
     NTFY_PASSWORD: "{{ _ntfy_password }}"
   when:
     - not (_ntfy_password_known | bool)
-    - _ntfy_user_list.stdout is search('^user ' ~ _ntfy_user ~ '$')
+    - _ntfy_user_list.stdout is search(_ntfy_user_re, multiline=True)
   changed_when: true
   no_log: true
 
