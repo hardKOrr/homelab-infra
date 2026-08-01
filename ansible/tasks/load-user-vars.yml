@@ -13,19 +13,50 @@
 # loader's — the loader stays permissive so partial/absent config surfaces as a friendly caller-side
 # assert, never an include_vars file-not-found crash.
 
+# Paths are resolved from the tree, not written relative to the caller.
+#
+# These used to be `../../vars/...` and `../../../config/...`, which silently encoded an
+# assumption about how deep the CALLING playbook sits. Ansible resolves a relative
+# include_vars against the playbook's directory, so those paths were correct for
+# playbooks/apps/*.yml (two levels under ansible/) and wrong for playbooks/bootstrap.yml
+# (one level), where they resolved above the repo root:
+#
+#   Could not find or access '../../vars/homelabinfra-defaults.yml'
+#   Searched in: .../ansible/playbooks/../../vars/homelabinfra-defaults.yml
+#
+# Every app playbook worked and bootstrap.yml could never have. --syntax-check does not
+# catch it because include_vars resolves at runtime.
+#
+# first_found locates the defaults file wherever the caller happens to be, and every other
+# path is derived from it, so a new playbook at any depth works without knowing this.
+- name: Resolve the platform vars file from the tree
+  ansible.builtin.set_fact:
+    _luv_vars_file: >-
+      {{ lookup('ansible.builtin.first_found', {
+           'files': ['homelabinfra-defaults.yml'],
+           'paths': [playbook_dir ~ '/../vars',
+                     playbook_dir ~ '/../../vars',
+                     playbook_dir ~ '/../../../vars']
+         }) }}
+
+# <repo>/ansible/vars/homelabinfra-defaults.yml -> <repo>/config
+- name: Derive the config directory
+  ansible.builtin.set_fact:
+    _luv_config_dir: "{{ _luv_vars_file | dirname | dirname | dirname }}/config"
+
 - name: Load homelabinfra defaults
   ansible.builtin.include_vars:
-    file: ../../vars/homelabinfra-defaults.yml
+    file: "{{ _luv_vars_file }}"
 
 - name: Load config/proxmox.yml if present (absent on a clean checkout)
   ansible.builtin.include_vars:
-    file: ../../../config/proxmox.yml
+    file: "{{ _luv_config_dir }}/proxmox.yml"
     name: _config_proxmox
   failed_when: false
 
 - name: Load config/infrastructure.yml if present (absent on a clean checkout)
   ansible.builtin.include_vars:
-    file: ../../../config/infrastructure.yml
+    file: "{{ _luv_config_dir }}/infrastructure.yml"
     name: _config_infrastructure
   failed_when: false
 
