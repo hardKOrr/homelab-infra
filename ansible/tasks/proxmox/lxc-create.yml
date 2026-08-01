@@ -121,6 +121,41 @@
         }, recursive=True) }}
   when: homelabinfra_instance.network is defined
 
+# ── Feature flags the API is not allowed to set ───────────────────────────────
+# PVE refuses every container feature except `nesting` for any token that is not
+# root@pam:
+#
+#   403 Forbidden: Permission check failed
+#   (changing feature flags (except nesting) is only allowed for root@pam)
+#
+# This platform authenticates as homelab-infra@pve with a deliberately scoped role, so
+# that restriction is permanent by design, not a misconfiguration to fix with more
+# privileges. It matters because a Docker stack host needs `keyctl` — containerd uses the
+# kernel keyring — and every Docker app is created through this file.
+#
+# So the create call carries only what the API will accept, and the rest is applied
+# node-locally with `pct set`, where the command runs as real root. Same split, same
+# reason, as starting the guest through pct rather than the module.
+- name: Split the feature flags into what the API accepts and what pct must set
+  ansible.builtin.set_fact:
+    _lxc_features_desired: "{{ _features_normalized }}"
+    _lxc_features_api: "{{ _features_normalized | select('match', '^nesting=') | list }}"
+  vars:
+    _features_raw: "{{ homelabinfra_instance.lxc.features | default([]) }}"
+    # Both shapes reach here: a list of "key=value" strings (the global default) and a
+    # mapping (what a user is most likely to write). Normalize to the list form, which is
+    # what the module takes and what `pct set --features` joins with commas.
+    _features_normalized: >-
+      {{ _features_raw | dict2items | map(attribute='key') | zip(_features_raw | dict2items | map(attribute='value'))
+         | map('join', '=') | map('regex_replace', '=True$', '=1') | map('regex_replace', '=False$', '=0') | list
+         if _features_raw is mapping
+         else _features_raw }}
+
+- name: Restrict the created container's features to the API-permitted set
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': {'features': _lxc_features_api}}, recursive=True) }}
+
 - name: Build LXC module arguments from the community.proxmox.proxmox allowlist
   ansible.builtin.set_fact:
     lxc_module_args: >-
@@ -177,6 +212,34 @@
 - name: Create LXC container
   community.proxmox.proxmox: "{{ lxc_module_args }}"
   register: create_lxc_result
+
+# Applied while the container is still STOPPED — pct refuses a feature change on a running
+# container, and `present` above left it stopped, so this sits between create and start by
+# necessity as well as by preference.
+- name: Read the container's current feature flags
+  ansible.builtin.command:
+    cmd: "pct config {{ homelabinfra_instance.lxc.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _lxc_config_now
+  changed_when: false
+
+# Compared as SETS, not as strings: PVE stores the flags in its own canonical order, so
+# comparing the joined text would differ from the order they were written in and re-set
+# them on every run.
+- name: Apply the feature flags the API could not set
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ homelabinfra_instance.lxc.vmid }}
+      --features {{ _lxc_features_desired | sort | join(',') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  when:
+    - _lxc_features_desired | length > 0
+    - (_lxc_features_desired | sort) != _lxc_features_current
+  vars:
+    _lxc_features_current: >-
+      {{ (_lxc_config_now.stdout_lines | select('match', '^features:') | list | first | default('features:'))
+         | regex_replace('^features:\s*', '') | trim | split(',') | select() | sort }}
 
 # `present` above created the container STOPPED and no other task here starts it — without
 # this, "Wait for LXC to be running" spins its full 30 retries and fails on every first
