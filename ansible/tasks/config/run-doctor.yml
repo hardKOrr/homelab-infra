@@ -1,0 +1,55 @@
+---
+# Run ansible/scripts/config-doctor.sh and fail the play if it reports an error.
+#
+# Inputs (both required — the caller passes them because playbook_dir differs by the
+# depth of the calling playbook, and this task file must not guess):
+#   doctor_script_dir   path to ansible/scripts/
+#   doctor_config_dir   path to the config/ tree to validate
+#
+# The script prints the whole report itself. This wrapper captures it, prints it as log
+# lines, and only then fails — a red task with the diagnosis hidden inside .stdout
+# teaches nothing. Warnings are printed and do not fail the play.
+#
+# Read-only: validates, mutates nothing, contacts no service, needs no Proxmox connection.
+
+- name: Config doctor | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - doctor_script_dir is defined
+      - doctor_config_dir is defined
+    fail_msg: >-
+      run-doctor.yml requires doctor_script_dir and doctor_config_dir.
+  delegate_to: localhost
+  run_once: true
+
+- name: Config doctor | Validate the authored config
+  ansible.builtin.command:
+    cmd: "bash {{ doctor_script_dir }}/config-doctor.sh {{ doctor_config_dir }}"
+  register: _doctor_result
+  changed_when: false
+  failed_when: false
+  # The script parses YAML with PyYAML before Ansible is involved. The interpreter running
+  # this playbook is the ansible venv's, which has it by construction — handing it over
+  # removes the whole class of "no python3 with PyYAML found" failures on a host whose
+  # distro python lacks the module.
+  environment:
+    PYTHON: "{{ ansible_playbook_python }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Config doctor | Report
+  ansible.builtin.debug:
+    msg: "{{ ((_doctor_result.stdout | default('')) ~ (_doctor_result.stderr | default(''))) | trim | split('\n') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Config doctor | Fail when a required key is missing
+  ansible.builtin.fail:
+    msg: >-
+      config/ is incomplete — every problem is named by file and key path above, and
+      nothing has been changed. Fix an app instance with the Configure App job, or
+      re-run rundeck/bootstrap-rundeck.sh on the Proxmox node to re-author
+      config/proxmox.yml and config/infrastructure.yml.
+  when: _doctor_result.rc != 0
+  delegate_to: localhost
+  run_once: true

@@ -1,0 +1,130 @@
+---
+# The one path by which any playbook writes a file into config/.
+#
+# Every write is preceded by a timestamped copy under config/.backups/, and every write
+# emits a unified diff into the job log. Together those are this platform's whole config
+# history mechanism: point-in-time, not per-commit-with-message. `Configure App` therefore
+# shows exactly what it changed, and the previous content is one `cp` away. PBS carries
+# config/.backups/ off the host with the rest of the guest, and 012's `git reset --hard`
+# refresh cannot touch it because config/ is gitignored and untracked.
+#
+# Inputs:
+#   config_write_path      absolute path of the file to write (required)
+#   config_write_content   the content to write — a string, already rendered (required)
+#   config_write_mode      file mode (default "0640"; use "0600" for anything with a secret)
+#   config_write_keep      backups to retain per file (default 20)
+#
+# Output:
+#   config_write_result    the copy module's result — .changed says whether it differed,
+#                          .diff carries the unified diff
+#
+# Runs on the control node regardless of the calling play's hosts: config/ lives on the
+# runner, not on the guest being deployed.
+
+- name: Config write | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - config_write_path is defined
+      - config_write_path is string
+      - config_write_path | length > 0
+      - config_write_content is defined
+    fail_msg: >-
+      write-config-file.yml requires config_write_path (absolute path) and
+      config_write_content (rendered string).
+  delegate_to: localhost
+  run_once: true
+
+- name: Config write | Resolve backup facts
+  ansible.builtin.set_fact:
+    _config_write_dir: "{{ config_write_path | dirname }}"
+    _config_write_name: "{{ config_write_path | basename }}"
+    _config_write_backup_dir: "{{ config_write_path | dirname }}/.backups"
+    _config_write_keep: "{{ config_write_keep | default(20) | int }}"
+  delegate_to: localhost
+  run_once: true
+
+# .backups/ sits beside the file it protects, so config/apps/.backups/ holds instance
+# files and config/.backups/ holds proxmox.yml and infrastructure.yml. Keeping them
+# adjacent means a restore never has to reconstruct which directory a backup came from.
+- name: Config write | Ensure the target and backup directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ _config_write_dir }}"
+    - "{{ _config_write_backup_dir }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Config write | Stat the current file
+  ansible.builtin.stat:
+    path: "{{ config_write_path }}"
+  register: _config_write_existing
+  delegate_to: localhost
+  run_once: true
+
+# Read-then-write rather than `copy: remote_src=true`. The copy module routes a same-host
+# copy through atomic_move, whose chmod step fails outright on filesystems that do not
+# support it — a 9p/NTFS mount is the one that surfaced it — and a backup that cannot be
+# taken must not be what stops a config edit from landing. Config files are small text, so
+# slurping them costs nothing.
+- name: Config write | Read the content being replaced
+  ansible.builtin.slurp:
+    src: "{{ config_write_path }}"
+  register: _config_write_previous
+  when: _config_write_existing.stat.exists
+  delegate_to: localhost
+  run_once: true
+
+- name: Config write | Back up the current content
+  ansible.builtin.copy:
+    content: "{{ _config_write_previous.content | b64decode }}"
+    dest: "{{ _config_write_backup_dir }}/{{ _config_write_name }}.{{ now(fmt='%Y%m%dT%H%M%S') }}"
+    mode: "0600"
+  when: _config_write_existing.stat.exists
+  delegate_to: localhost
+  run_once: true
+
+- name: Config write | Write {{ _config_write_name }}
+  ansible.builtin.copy:
+    content: "{{ config_write_content }}"
+    dest: "{{ config_write_path }}"
+    mode: "{{ config_write_mode | default('0640') }}"
+  register: config_write_result
+  diff: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Config write | Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ config_write_path }}
+      {{ 'updated — see the diff above' if config_write_result.changed
+         else 'unchanged — the authored content already matched' }}
+  delegate_to: localhost
+  run_once: true
+
+# Unbounded growth of small YAML on an LXC is survivable, but pruning is four lines and
+# keeps `ls .backups/` readable. Newest are kept; the count is per file, not per directory.
+- name: Config write | List existing backups of this file
+  ansible.builtin.find:
+    paths: "{{ _config_write_backup_dir }}"
+    patterns: "{{ _config_write_name }}.*"
+    file_type: file
+  register: _config_write_backups
+  delegate_to: localhost
+  run_once: true
+
+- name: Config write | Prune to the newest {{ _config_write_keep }} backups
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: >-
+    {{ (_config_write_backups.files | sort(attribute='mtime', reverse=True) | list)[
+         _config_write_keep | int : ] }}
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (_config_write_backups.files | length) > (_config_write_keep | int)
+  delegate_to: localhost
+  run_once: true

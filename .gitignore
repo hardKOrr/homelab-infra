@@ -7,10 +7,22 @@
 # `git reset --hard origin/<branch>` before every job, and the reset is only safe because
 # nothing under config/ is tracked. proxmox.yml, infrastructure.yml, apps/*.yml,
 # .generated/facts.yml and .backups/ all survive it.
-config/
+#
+# ANCHORED with a leading slash. A bare `config/` matches a directory of that name at ANY
+# depth, and it silently excluded ansible/tasks/config/ — run-doctor.yml and
+# write-config-file.yml, both shipped code. The working tree had them, so both gates were
+# green; the runner clones from GitHub, where they did not exist, and the first Bootstrap
+# Platform click died on
+#
+#   Could not find or access '.../ansible/tasks/config/run-doctor.yml'
+#
+# Only the repo-root config/ is user config. Anything named config/ deeper in the tree is
+# ours and belongs in git.
+/config/
 
 # Get Config's restore-point archives — real secrets, written on the runner.
-artifacts/
+# Anchored for the same reason as config/ above.
+/artifacts/
 
 # Ansible
 *.retry
