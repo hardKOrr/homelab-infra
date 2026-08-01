@@ -25,6 +25,7 @@
             api_token_secret = homelabinfra_config.proxmox.api_token_secret,
             node = homelabinfra_config.proxmox.node,
             sshkeys = homelabinfra_config.ansible.ssh_public_key,
+            validate_certs = (homelabinfra_config.proxmox.validate_certs | default(false)),
             ciuser = homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user)
           ) | combine(homelabinfra_config.proxmox.vm, recursive=True),
           'vm_ansible_host': (
@@ -106,6 +107,9 @@
       - api_user
       - api_token_id
       - api_token_secret
+      # See the note in lxc-create.yml: Proxmox is self-signed by default, and the module
+      # verifies unless told otherwise.
+      - validate_certs
       - node
       - sshkeys
       - ciuser

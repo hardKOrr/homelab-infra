@@ -160,6 +160,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.api_user` | required | |
 | `proxmox.api_token_id` | required | |
 | `proxmox.api_token_secret` | required *in file or env* | secret — **preferred shape is to omit it here** and supply `PROXMOX_API_TOKEN` in the environment (slice 010) |
+| `proxmox.validate_certs` | optional | default `false` — a stock Proxmox node is self-signed, so guest creation fails with `CERTIFICATE_VERIFY_FAILED` when this verifies. `inventory/proxmox.yml` assumes the same. Set `true` once the node serves a trusted certificate |
 | `networks.<name>.cidr` | required | per named subnet |
 | `networks.<name>.gateway` | required | per named subnet |
 | `networks.<name>.dns_servers` | required | per named subnet |

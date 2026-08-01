@@ -23,6 +23,12 @@ proxmox:
   api_user: homelab-infra@pve   # bootstrap-rundeck.sh creates this user with a scoped role
   api_token_id: automation      # the token bootstrap-rundeck.sh mints for that user
 
+  # Verify the Proxmox API's TLS certificate. Defaults to false, because a stock Proxmox
+  # node serves a self-signed certificate and every guest-creating task would otherwise
+  # fail with CERTIFICATE_VERIFY_FAILED. The dynamic inventory makes the same assumption
+  # (ansible/inventory/proxmox.yml). Set to true once the node serves a trusted cert.
+  # validate_certs: false
+
   # ── The secret is deliberately NOT here ──────────────────────────────────────
   # RECOMMENDED SHAPE: leave api_token_secret out of this file entirely and supply the
   # secret as the PROXMOX_API_TOKEN environment variable — from Rundeck Key Storage

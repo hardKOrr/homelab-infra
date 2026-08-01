@@ -36,7 +36,8 @@
           api_token_id = homelabinfra_config.proxmox.api_token_id,
           api_token_secret = homelabinfra_config.proxmox.api_token_secret,
           node = homelabinfra_config.proxmox.node,
-          pubkey = homelabinfra_config.ansible.ssh_public_key
+          pubkey = homelabinfra_config.ansible.ssh_public_key,
+          validate_certs = (homelabinfra_config.proxmox.validate_certs | default(false))
         ) | combine(homelabinfra_config.proxmox.lxc, recursive=True)}, recursive=True) }}
 
 # Deliberately its own task: keys set by one set_fact are templated against the variable
@@ -109,6 +110,11 @@
       - api_user
       - api_token_id
       - api_token_secret
+      # Proxmox serves a self-signed certificate out of the box, so the module's default of
+      # verifying it fails every create on a stock node. The rest of the repo already assumes
+      # this — inventory/proxmox.yml and every PBS task set validate_certs: false — and this
+      # allowlist omitting the key was the one place that did not.
+      - validate_certs
       - node
       - pubkey
       - vmid
