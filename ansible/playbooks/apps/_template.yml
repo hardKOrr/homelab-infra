@@ -124,10 +124,21 @@
     - name: Configure OS update notifications
       ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
-    - name: Install Docker on newly created stack host
+    # Unconditional, and deliberately not gated on homelabinfra_stack_host_created.
+    # That fact means "I created this host in THIS run", which is not the same question as
+    # "does this host have Docker". A host created by a run that then failed before Play 2
+    # is an existing host on every later run, so the install was skipped forever and the
+    # deploy died at the first compose task with
+    #
+    #   Cannot find docker CLI in path
+    #
+    # Same shape as the guest-reuse defect that never started a stopped guest: state was
+    # inferred from what this run did rather than from what is actually there. The docker
+    # role is idempotent, so running it every deploy costs an apt check and removes the
+    # failure mode.
+    - name: Ensure Docker is installed on the stack host
       ansible.builtin.include_role:
         name: docker
-      when: homelabinfra_stack_host_created | default(false) | bool
 
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy APP_NAME
