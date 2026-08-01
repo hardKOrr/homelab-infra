@@ -154,16 +154,19 @@
   changed_when: _vmc_resize.rc == 0
   when: homelabinfra_config.proxmox.vm.disk_size is defined
 
+# Node-local `qm start` rather than the module's `state: started`: the module resolves the
+# guest through the eventually-consistent /cluster/resources cache and reads its name
+# unconditionally, which fails on a guest cloned seconds earlier. Same reasoning, same shape
+# and same node as lxc-create.yml — see the longer note there.
 - name: VM clone | Start the VM
-  community.proxmox.proxmox_kvm:
-    api_host: "{{ _vmc_api.api_host }}"
-    api_port: "{{ _vmc_api.api_port }}"
-    api_user: "{{ _vmc_api.api_user }}"
-    api_token_id: "{{ _vmc_api.api_token_id }}"
-    api_token_secret: "{{ _vmc_api.api_token_secret }}"
-    node: "{{ _vmc_api.node }}"
-    vmid: "{{ _vmc_vmid | int }}"
-    state: started
+  ansible.builtin.command:
+    cmd: "qm start {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_start
+  changed_when: _vmc_start.rc == 0
+  failed_when:
+    - _vmc_start.rc != 0
+    - "'already running' not in (_vmc_start.stderr | default('')) | lower"
 
 - name: VM clone | Wait for the VM to be running
   ansible.builtin.command:

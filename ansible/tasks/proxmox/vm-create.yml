@@ -177,21 +177,21 @@
 
 # `present` above created the VM stopped, exactly as it does for LXC in lxc-create.yml, and
 # nothing else here starts it — without this the wait below spins its full 30 retries and
-# fails on every first create. Only the connection identity is passed, so the module takes
-# its start path rather than its update path. tasks/proxmox/vm-clone.yml already does this;
-# this file did not.
+# fails on every first create.
+#
+# Node-local `qm start` rather than the module's `state: started`: the module resolves the
+# guest through the eventually-consistent /cluster/resources cache and reads its name
+# unconditionally, which fails on a guest created seconds earlier. Same reasoning, same
+# shape and same node as lxc-create.yml — see the longer note there.
 - name: Start the VM
-  community.proxmox.proxmox_kvm:
-    api_host: "{{ homelabinfra_config.proxmox.api_host }}"
-    api_port: "{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
-    api_user: "{{ homelabinfra_config.proxmox.api_user }}"
-    api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
-    api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
-    validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
-    node: "{{ homelabinfra_config.proxmox.node }}"
-    vmid: "{{ homelabinfra_instance.vm.vmid }}"
-    state: started
-    timeout: "{{ homelabinfra_instance.vm.timeout | default(300) }}"
+  ansible.builtin.command:
+    cmd: "qm start {{ homelabinfra_instance.vm.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: vm_start
+  changed_when: vm_start.rc == 0
+  failed_when:
+    - vm_start.rc != 0
+    - "'already running' not in (vm_start.stderr | default('')) | lower"
 
 - name: Wait for VM to be running
   ansible.builtin.command:

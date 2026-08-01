@@ -178,24 +178,28 @@
   community.proxmox.proxmox: "{{ lxc_module_args }}"
   register: create_lxc_result
 
-# Separate call, because `present` above created the container stopped and no other task
-# here starts it — without this, "Wait for LXC to be running" spins its full 30 retries and
-# fails on every first deploy. Only the connection identity is passed: the create-time
-# parameters (ostemplate, netif, disk_volume, pubkey...) describe a container that now
-# exists, and re-sending them on the start call puts the module on its UPDATE path, which
-# is where community.proxmox 2.0.0's cmode='default' regression lives.
+# `present` above created the container STOPPED and no other task here starts it — without
+# this, "Wait for LXC to be running" spins its full 30 retries and fails on every first
+# deploy.
+#
+# Node-local `pct start` rather than the module's `state: started`, for two reasons. The
+# module resolves the guest through /cluster/resources and then reads lxc["name"]
+# unconditionally; that cache is only eventually consistent, and a container queried in the
+# seconds after its creation comes back as a partial entry, so the start died with
+# `An error occurred: 'name'`. Second, `pct` is already how this file waits for the
+# container and how it writes the metadata file, so the start now runs over the same path
+# as the checks that follow it, on the node that owns the guest.
+#
+# Idempotent by the rc==0 / "already running" pair, which is the re-run case.
 - name: Start the LXC container
-  community.proxmox.proxmox:
-    api_host: "{{ homelabinfra_config.proxmox.api_host }}"
-    api_port: "{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
-    api_user: "{{ homelabinfra_config.proxmox.api_user }}"
-    api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
-    api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
-    validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
-    node: "{{ homelabinfra_config.proxmox.node }}"
-    vmid: "{{ homelabinfra_instance.lxc.vmid }}"
-    state: started
-    timeout: "{{ homelabinfra_instance.lxc.timeout | default(120) }}"
+  ansible.builtin.command:
+    cmd: "pct start {{ homelabinfra_instance.lxc.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: lxc_start
+  changed_when: lxc_start.rc == 0
+  failed_when:
+    - lxc_start.rc != 0
+    - "'already running' not in (lxc_start.stderr | default('')) | lower"
 
 - name: Wait for LXC to be running
   ansible.builtin.command:
