@@ -8,6 +8,16 @@ uptime_kuma_defaults:
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   stack: core_stack
 
+  # Sizing for the stack host, applied only when this app is the one that creates it.
+  # Deliberately identical to authentik.yml's: both live on core_stack, whichever deploys
+  # first creates the host, and the other then inherits it. Sizing for Uptime Kuma alone
+  # would leave Authentik on a host that cannot run it whenever the order is reversed.
+  stack_host:
+    cores: 4
+    memory: 4096
+    disk_volume:
+      size: 32
+
   app:
     port: 3001
     data_path: /opt/uptime-kuma/data

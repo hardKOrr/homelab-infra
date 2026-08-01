@@ -15,6 +15,16 @@ observability_defaults:
   # compete for disk with the login path on core_stack.
   stack: monitoring_stack
 
+  # Sizing for the stack host, applied only when this app is the one that creates it.
+  # The disk is the number that matters here: Prometheus' TSDB grows with retention and
+  # with every node_exporter tasks/guest-bootstrap.yml adds to the lab, so it gets more
+  # room than the login stack rather than more CPU.
+  stack_host:
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 48
+
   app:
     # The user-facing piece is Grafana, so app.port is Grafana's — it is what the
     # reverse proxy routes to and what the uptime monitor checks.

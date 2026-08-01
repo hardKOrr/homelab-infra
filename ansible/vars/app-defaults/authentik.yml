@@ -10,6 +10,17 @@ authentik_defaults:
   # couple every co-tenant's restarts to the platform's login path.
   stack: core_stack
 
+  # Sizing for the stack host, applied only when this app is the one that creates it.
+  # The global lxc defaults (1 core / 512M / 8G) size a single native service; Authentik
+  # runs four containers — server, worker, Postgres and Redis — and its worker is the
+  # memory-hungry one. These are Authentik's own documented minimums with headroom for
+  # the co-tenants core_stack is meant to hold.
+  stack_host:
+    cores: 4
+    memory: 4096
+    disk_volume:
+      size: 32
+
   app:
     port: 9000                  # Authentik HTTP listener (the API + UI)
     https_port: 9443            # Authentik HTTPS listener, unused behind the proxy

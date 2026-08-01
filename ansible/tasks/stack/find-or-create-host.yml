@@ -100,6 +100,16 @@
 - name: Provision new stack host
   when: _stack_hosts | length == 0
   block:
+    # app_config.stack_host is the app's sizing for the host it is about to create. The
+    # global lxc defaults are sized for a single native service (1 core / 512M / 8G), which
+    # is nowhere near enough for a Docker stack — Authentik alone runs a server, a worker,
+    # Postgres and Redis. Docker apps deliberately carry no `proxmox:` block (that is what
+    # distinguishes them from native ones), so the sizing has its own key rather than
+    # reusing that shape.
+    #
+    # Whichever app creates the stack sets its size; later apps joining the same stack reuse
+    # the host as it stands. That follows from the stack model rather than being a new rule,
+    # and resizing an existing stack host is a Proxmox operation, not a deploy-time one.
     - name: Set stack hostname and Docker LXC features
       ansible.builtin.set_fact:
         homelabinfra_config: >-
@@ -107,14 +117,14 @@
             homelabinfra_config | combine(
               {
                 'proxmox': {
-                  'lxc': {
+                  'lxc': (app_config.stack_host | default({})) | combine({
                     'hostname': stack_name | replace('_', '-'),
                     'tags': (
                       homelabinfra_config.proxmox.lxc.tags
                       | default(['homelab-infra'])
                     ) + [stack_name],
                     'features': _stack_lxc_features
-                  }
+                  }, recursive=True)
                 }
               },
               recursive=True
