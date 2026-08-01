@@ -19,7 +19,8 @@
 #   cloud_template_vmid     — vmid to create the template as (default 9000)
 #   cloud_template_name     — template name other tasks clone by (default debian-12-cloud)
 #   cloud_template_image_url— cloud image to build from (default Debian 12 genericcloud)
-#   cloud_template_storage  — storage for the imported disk (default local-lvm)
+#   cloud_template_storage  — storage for the imported disk; defaults to the lab-wide
+#                             homelabinfra_config.proxmox.storage, written by bootstrap
 #   cloud_template_bridge   — bridge for net0 (default vmbr0)
 #   homelabinfra_config.proxmox.node
 #   homelabinfra_config.ansible.ssh_public_key
@@ -34,7 +35,9 @@
     _ct_url: >-
       {{ cloud_template_image_url
          | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
-    _ct_storage: "{{ cloud_template_storage | default('local-lvm') }}"
+    _ct_storage: >-
+      {{ cloud_template_storage
+         | default(homelabinfra_config.proxmox.storage | default('local-lvm'), true) }}
     _ct_bridge: "{{ cloud_template_bridge | default('vmbr0') }}"
     _ct_cache_dir: /var/lib/vz/template/cache
 

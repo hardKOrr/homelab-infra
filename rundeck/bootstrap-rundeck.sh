@@ -53,7 +53,9 @@ CT_CORES="${CT_CORES:-4}"
 CT_MEMORY="${CT_MEMORY:-8192}"
 CT_SWAP="${CT_SWAP:-512}"
 CT_DISK="${CT_DISK:-16}"
-CT_STORAGE="${CT_STORAGE:-friends-pool-zfs}"
+# Left empty on purpose: resolved below from what this node can actually hold a container
+# rootfs on. Hardcoding a pool name here would name one lab's storage in everyone's script.
+CT_STORAGE="${CT_STORAGE:-}"
 
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 TEMPLATE="${TEMPLATE:-debian-13-standard_13.6-1_amd64.tar.zst}"
@@ -169,7 +171,19 @@ log "Preflight"
 command -v pct >/dev/null    || die "pct not found — run this on a Proxmox node, not inside a container"
 command -v pveam >/dev/null  || die "pveam not found"
 command -v pveum >/dev/null  || die "pveum not found"
+# Resolve the storage that will hold every guest this platform creates. `rootdir` is the
+# content type a container rootfs needs, and a stock Proxmox `local` does NOT carry it — it
+# is vztmpl/iso/backup, which is why a default of "local" fails every create with
+# "storage 'local' does not support container directories". Ask the node instead of guessing.
+if [ -z "$CT_STORAGE" ]; then
+  CT_STORAGE="$(pvesm status --content rootdir 2>/dev/null | awk 'NR>1 && $3 == "active" {print $1; exit}')"
+  [ -n "$CT_STORAGE" ] || die "no active storage on this node supports container rootfs (content type 'rootdir').
+Add one in Proxmox, or set CT_STORAGE=... if you know better."
+  info "storage        $CT_STORAGE (discovered — first active storage supporting rootdir)"
+fi
 pvesm status --storage "$CT_STORAGE" >/dev/null 2>&1 || die "storage '$CT_STORAGE' not available on this node"
+pvesm status --content rootdir 2>/dev/null | awk 'NR>1 {print $1}' | grep -qxF "$CT_STORAGE" \
+  || warn "storage '$CT_STORAGE' does not advertise content type 'rootdir'; container creation may fail"
 case "$DEPLOY_VAULTWARDEN" in
   0|1) : ;;
   *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
@@ -573,6 +587,13 @@ proxmox:
   api_user: "$PVE_USER"
   api_token_id: "$PVE_TOKEN_NAME"
   # api_token_secret: supplied as the PROXMOX_API_TOKEN environment variable
+
+  # Storage every guest this platform creates lands on. Discovered above as the first
+  # active storage advertising content type 'rootdir' — the type a container rootfs needs.
+  # Lab-wide on purpose: which pool holds a guest is a fact about this node, not about the
+  # app, so no app-default pins it. An app that genuinely needs its own pool sets
+  # proxmox.disk_volume.storage (LXC) or proxmox.vm.storage (VM) in its instance file.
+  storage: "$CT_STORAGE"
 
 networks:
   default:

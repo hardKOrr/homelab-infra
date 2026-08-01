@@ -161,6 +161,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.api_token_id` | required | |
 | `proxmox.api_token_secret` | required *in file or env* | secret — **preferred shape is to omit it here** and supply `PROXMOX_API_TOKEN` in the environment (slice 010) |
 | `proxmox.validate_certs` | optional | default `false` — a stock Proxmox node is self-signed, so guest creation fails with `CERTIFICATE_VERIFY_FAILED` when this verifies. `inventory/proxmox.yml` assumes the same. Set `true` once the node serves a trusted certificate |
+| `proxmox.storage` | required *in practice* | lab-wide storage for every guest; written by `bootstrap-rundeck.sh` from the first active storage advertising content type `rootdir`. Falls back to `local`, which a stock node **cannot** hold a container on. No `vars/app-defaults/*` pins storage — it is a node fact, not an app fact. Per-app override: `proxmox.disk_volume.storage` (LXC), `proxmox.vm.storage` (VM) |
 | `networks.<name>.cidr` | required | per named subnet |
 | `networks.<name>.gateway` | required | per named subnet |
 | `networks.<name>.dns_servers` | required | per named subnet |

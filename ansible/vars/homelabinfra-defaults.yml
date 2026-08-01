@@ -7,7 +7,6 @@ homelabinfra_defaults:
     api_user: root@pam
     lxc:
       disk_volume:
-        storage: local
         size: 8
       cores: 1
       description: LXC Container created by Ansible

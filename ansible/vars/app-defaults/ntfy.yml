@@ -10,7 +10,6 @@ ntfy_defaults:
     cores: 1
     memory: 512                 # MB — Ntfy is very lightweight
     disk_volume:
-      storage: local
       size: 8                   # GB
     network: default
     tags:

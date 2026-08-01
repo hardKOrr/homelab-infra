@@ -23,6 +23,15 @@ proxmox:
   api_user: homelab-infra@pve   # bootstrap-rundeck.sh creates this user with a scoped role
   api_token_id: automation      # the token bootstrap-rundeck.sh mints for that user
 
+  # Storage every guest lands on. bootstrap-rundeck.sh discovers this as the first active
+  # storage advertising content type 'rootdir' — the type a container rootfs requires. A
+  # stock Proxmox `local` is vztmpl/iso/backup and will NOT hold a container.
+  #
+  # Lab-wide on purpose: which pool holds a guest is a fact about your node, not about the
+  # app, so no app-default pins it. Override per app in config/apps/<instance>.yml with
+  # proxmox.disk_volume.storage (LXC) or proxmox.vm.storage (VM).
+  storage: ""           # e.g. local-lvm, tank-zfs (required — bootstrap fills this in)
+
   # Verify the Proxmox API's TLS certificate. Defaults to false, because a stock Proxmox
   # node serves a self-signed certificate and every guest-creating task would otherwise
   # fail with CERTIFICATE_VERIFY_FAILED. The dynamic inventory makes the same assumption

@@ -44,6 +44,20 @@
 # context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
 # this back into the task below reintroduces "'lxc_ip_cidr' is undefined" at the first
 # guest creation.
+# Storage is a property of the LAB, not of the app: which pool holds container rootfs is
+# the same answer for every guest on a node, and it cannot be guessed in a git-managed
+# default — a stock Proxmox `local` carries vztmpl/iso/backup and rejects a rootfs with
+# "storage 'local' does not support container directories". So app-defaults pin nothing and
+# the lab-wide value, discovered and written by bootstrap-rundeck.sh, fills in here. An app
+# that genuinely needs its own pool still sets proxmox.disk_volume.storage and wins.
+- name: Default the rootfs storage to the lab-wide storage
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': {'disk_volume': {
+           'storage': (homelabinfra_config.proxmox.storage | default('local'))
+         }}}, recursive=True) }}
+  when: (homelabinfra_instance.lxc.disk_volume | default({})).storage is not defined
+
 - name: Resolve the LXC address in CIDR form
   ansible.builtin.set_fact:
     lxc_ip_cidr: >-

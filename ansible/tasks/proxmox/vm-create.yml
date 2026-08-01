@@ -35,6 +35,17 @@
           )
         }, recursive=True) }}
 
+# See the note in lxc-create.yml: storage is a lab property, not an app property, so
+# app-defaults pin nothing and the lab-wide value fills in here. An app that needs its own
+# pool sets proxmox.vm.storage and wins.
+- name: Default the VM disk storage to the lab-wide storage
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'vm': {
+           'storage': (homelabinfra_config.proxmox.storage | default('local'))
+         }}, recursive=True) }}
+  when: homelabinfra_instance.vm.storage is not defined
+
 # Deliberately its own task: keys set by one set_fact are templated against the variable
 # context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
 # this back into the task below reintroduces "'vm_ip_cidr' is undefined" at the first

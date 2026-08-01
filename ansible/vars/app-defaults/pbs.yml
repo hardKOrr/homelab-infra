@@ -15,7 +15,6 @@ pbs_defaults:
       cores: 2
       memory: 2048              # MB — PBS wants headroom for deduplication
       disk_size: 64             # GB — the OS disk; the datastore path can be separate
-      storage: local-lvm        # storage the cloned disk lands on
       agent: 1
       onboot: true
       description: "Proxmox Backup Server, created by homelab-infra"
@@ -30,7 +29,6 @@ pbs_defaults:
       vmid: 9000
       name: debian-12-cloud
       image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
-      storage: local-lvm
 
   app:
     port: 8007                  # PBS web UI and REST API (HTTPS, self-signed by default)
