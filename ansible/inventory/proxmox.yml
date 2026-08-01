@@ -38,6 +38,25 @@ want_facts: true
 #
 # Nodes are distinguished from guests by `proxmox_node`: the plugin sets it on every guest
 # (the node hosting it) and publishes no hostvars at all for node entries.
+# Give every guest an address to connect to. The plugin does NOT set ansible_host for
+# guests from their configured address — it only does so via the QEMU guest agent, which an
+# LXC does not have — so without this a guest reached through the inventory has an EMPTY
+# ansible_host and the connection fails with "Could not resolve hostname :". That is what
+# stopped the first re-run that successfully reused an existing guest.
+#
+# Shape comes from the plugin's own documented example: net0 (LXC) and ipconfig0 (VM) are
+# parsed into dicts, so .ip is "192.168.0.10/20" and the prefix is stripped here. A DHCP
+# guest yields an empty string rather than the literal "dhcp", so it fails as a missing
+# value instead of as a bogus hostname; DHCP guests are resolved at create time by
+# lxc-create.yml's lease discovery.
+compose:
+  ansible_host: >-
+    (proxmox_ipconfig0.ip
+      | default(proxmox_net0.ip, true)
+      | default('', true)
+      | regex_replace('^dhcp.*$', '')
+      | regex_replace('/.*$', ''))
+
 groups:
   proxmox_nodes: "proxmox_node is not defined"
   proxmox_clients: "proxmox_node is defined"
