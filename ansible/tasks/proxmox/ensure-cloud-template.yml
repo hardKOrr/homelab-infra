@@ -28,6 +28,11 @@
 # Output:
 #   homelabinfra_cloud_template.{vmid,name,created}
 
+# Node names are not resolvable on their own — see the file's header. Every delegate_to
+# below depends on this having run.
+- name: Make Proxmox nodes addressable for delegation
+  ansible.builtin.import_tasks: register-nodes.yml
+
 - name: Cloud template | Set build facts
   ansible.builtin.set_fact:
     _ct_vmid: "{{ cloud_template_vmid | default(9000) | int }}"

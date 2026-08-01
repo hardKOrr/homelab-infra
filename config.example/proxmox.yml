@@ -32,6 +32,17 @@ proxmox:
   # proxmox.disk_volume.storage (LXC) or proxmox.vm.storage (VM).
   storage: ""           # e.g. local-lvm, tank-zfs (required — bootstrap fills this in)
 
+  # Node name -> address, for every node in the cluster. bootstrap-rundeck.sh discovers this
+  # from `pvesh get /cluster/status`.
+  #
+  # Why it is needed: guest creation uses the API, but the readiness checks that follow run
+  # node-local `pct`/`qm` over SSH via `delegate_to: <node name>`. A Proxmox node name does
+  # not resolve on its own — the dynamic inventory gives nodes no ansible_host, and your
+  # resolver has no reason to know them. tasks/proxmox/register-nodes.yml turns this map
+  # into addressable hosts. Omit it on a single-node lab and api_host is used instead.
+  # nodes:
+  #   pve: 192.168.1.10
+
   # Verify the Proxmox API's TLS certificate. Defaults to false, because a stock Proxmox
   # node serves a self-signed certificate and every guest-creating task would otherwise
   # fail with CERTIFICATE_VERIFY_FAILED. The dynamic inventory makes the same assumption

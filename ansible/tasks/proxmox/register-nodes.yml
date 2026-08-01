@@ -1,0 +1,55 @@
+---
+# Make Proxmox nodes addressable, so `delegate_to: <node name>` can reach them.
+#
+# Fifteen tasks across lxc-create.yml, vm-create.yml, vm-clone.yml and
+# ensure-cloud-template.yml delegate to homelabinfra_config.proxmox.node to run node-local
+# `pct`/`qm` readiness checks — work the Proxmox API cannot do. That value is a Proxmox
+# NODE NAME, and by default nothing resolves it:
+#
+#   - the community.proxmox inventory plugin puts nodes in proxmox_nodes with no hostvars
+#     at all, so they carry no ansible_host even with want_facts: true
+#   - a runner's DNS has no reason to know PVE node names, and the lab's resolver usually
+#     does not serve them
+#
+# Without this file every delegated task fails with "Could not resolve hostname <node>",
+# which is what stopped the first guest this platform ever created — the container was
+# built, then the readiness wait could not reach the node to confirm it.
+#
+# Inputs:
+#   homelabinfra_config.proxmox.nodes    — {node_name: address}, written by
+#                                          bootstrap-rundeck.sh from `pvesh get /cluster/status`
+#   homelabinfra_config.proxmox.node     — the node this deploy targets
+#   homelabinfra_config.proxmox.api_host — fallback address, used when the target node has
+#                                          no entry in the map
+#   homelabinfra_config.ansible.ssh_user — connection user (default root)
+#
+# Adds hosts to the `proxmox_delegates` group. Idempotent: add_host on an existing name
+# updates that host in place, so importing this from several task files in one play is safe.
+#
+# The private key comes from ANSIBLE_PRIVATE_KEY_FILE, exported by scripts/lab-run.sh, so
+# it is not set per-host here. bootstrap-rundeck.sh authorises that key for root on the node.
+
+- name: Register Proxmox nodes as delegation targets
+  ansible.builtin.add_host:
+    name: "{{ item.key }}"
+    ansible_host: "{{ item.value }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    groups: proxmox_delegates
+  loop: "{{ (homelabinfra_config.proxmox.nodes | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} -> {{ item.value }}"
+  changed_when: false
+  run_once: true
+
+# A single-node lab, and any config/proxmox.yml written before `nodes:` existed, still needs
+# the node this deploy targets to be addressable. api_host is by definition an address that
+# reaches Proxmox, and on a one-node lab it is that node.
+- name: Register the target node from api_host when the map does not cover it
+  ansible.builtin.add_host:
+    name: "{{ homelabinfra_config.proxmox.node }}"
+    ansible_host: "{{ homelabinfra_config.proxmox.api_host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    groups: proxmox_delegates
+  when: homelabinfra_config.proxmox.node not in (homelabinfra_config.proxmox.nodes | default({}))
+  changed_when: false
+  run_once: true

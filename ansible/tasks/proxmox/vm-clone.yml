@@ -26,6 +26,11 @@
 #   homelabinfra_instance.vm_ansible_host    — address later plays connect to
 #   homelabinfra_instance.network.ip_address — replaced with the leased IP when DHCP
 
+# Node names are not resolvable on their own — see the file's header. Every delegate_to
+# below depends on this having run.
+- name: Make Proxmox nodes addressable for delegation
+  ansible.builtin.import_tasks: register-nodes.yml
+
 - name: VM clone | Assert required inputs
   ansible.builtin.assert:
     that:

@@ -562,6 +562,19 @@ else
   LAB_SSH_PUBKEY="$(in_ct cat "${LAB_SSH_KEY}.pub" 2>/dev/null || true)"
   [ -n "$LAB_SSH_PUBKEY" ] || die "the platform SSH key was not generated at ${LAB_SSH_KEY}.pub"
 
+  # Every cluster node's address, as YAML lines ready to nest under `nodes:`. A single-node
+  # install still reports itself here, so there is no special case. If the query fails,
+  # fall back to this node alone — register-nodes.yml also falls back to api_host.
+  PVE_NODE_MAP="$(pvesh get /cluster/status --output-format json 2>/dev/null \
+    | tr '{' '\n' \
+    | sed -n 's/.*"ip":"\([^"]*\)".*"name":"\([^"]*\)".*/    \2: "\1"/p')"
+  if [ -z "$PVE_NODE_MAP" ]; then
+    PVE_NODE_MAP="    ${PVE_NODE}: \"${PVE_API_HOST}\""
+    warn "could not read /cluster/status — recording only this node in proxmox.nodes"
+  fi
+  info "cluster nodes:"
+  printf '%s\n' "$PVE_NODE_MAP" | sed 's/^    /        /'
+
   STAGE="$(newtmp)"
 
   # NOTE the absent api_token_secret. That is the point: the secret is minted below and
@@ -594,6 +607,14 @@ proxmox:
   # app, so no app-default pins it. An app that genuinely needs its own pool sets
   # proxmox.disk_volume.storage (LXC) or proxmox.vm.storage (VM) in its instance file.
   storage: "$CT_STORAGE"
+
+  # Node name -> address, for every node in the cluster. The provisioning tasks reach
+  # node-local pct/qm over SSH with \`delegate_to: <node name>\`, and a Proxmox node name is
+  # not resolvable on its own: the dynamic inventory gives nodes no ansible_host, and a
+  # resolver has no reason to know them. tasks/proxmox/register-nodes.yml turns this map
+  # into addressable hosts. Discovered from \`pvesh get /cluster/status\`.
+  nodes:
+$PVE_NODE_MAP
 
 networks:
   default:
