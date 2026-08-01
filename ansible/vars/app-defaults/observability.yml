@@ -15,3 +15,25 @@ observability_defaults:
   # compete for disk with the login path on core_stack.
   stack: monitoring_stack
 
+  app:
+    # The user-facing piece is Grafana, so app.port is Grafana's — it is what the
+    # reverse proxy routes to and what the uptime monitor checks.
+    port: 3000
+    prometheus_port: 9090       # internal only; never published through the proxy
+    node_exporter_port: 9100
+
+    data_path: /opt/observability/data
+    config_path: /opt/observability/config
+
+    admin_user: admin
+    retention: 30d              # how long Prometheus keeps samples
+    scrape_interval: 30s
+
+    grafana_image: "docker.io/grafana/grafana:latest"
+    prometheus_image: "docker.io/prom/prometheus:latest"
+    node_exporter_image: "quay.io/prometheus/node-exporter:latest"
+
+  routing:
+    proxy: internal
+    identity: catalog           # catalog tile only — Grafana has its own login and user
+                                # model; set forward_auth to put Authentik in front as well
