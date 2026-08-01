@@ -259,10 +259,17 @@
 
 - name: PBS | Set backup job facts
   ansible.builtin.set_fact:
+    # Templates are excluded even though they carry the homelab-infra tag. The tag is what
+    # lets tasks/proxmox/ensure-cloud-template.yml recognise its own template rather than
+    # adopting a stranger's, so a template is legitimately "ours" — but it is not a guest
+    # to back up. It never changes, and it is rebuildable from its image URL by deleting it
+    # and re-running, which is exactly what that task documents. Without this the nightly
+    # job carried the 3 GB cloud-init template forever.
     _backup_vmids: >-
       {{ _pve_guests.json.data
          | selectattr('tags', 'defined')
          | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
+         | rejectattr('template', 'equalto', 1)
          | map(attribute='vmid') | sort | join(',') }}
     # infrastructure.yml keywords → PVE calendar events; custom values pass through
     _backup_schedule: >-
