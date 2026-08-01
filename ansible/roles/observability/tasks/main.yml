@@ -48,7 +48,13 @@
          + [{'name': item,
              'address': hostvars[item].ansible_host
                         | default(hostvars[item].ansible_default_ipv4.address | default(''))}] }}
-  loop: "{{ groups['tag_homelab_infra'] | default([]) }}"
+  # Sorted, because the dynamic inventory does not promise a stable order for a group and
+  # this list is rendered straight into prometheus.yml. Unsorted, a no-op re-run produced a
+  # file that differed only in the ORDER of its scrape targets, which marked the template
+  # changed and fired the handler — so every bootstrap pass restarted Prometheus and put a
+  # gap in the metrics it exists to collect. Sorting makes the render a pure function of
+  # which guests exist, not of how the inventory happened to enumerate them.
+  loop: "{{ groups['tag_homelab_infra'] | default([]) | sort }}"
   when: >-
     hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address | default(''))
     | length > 0
