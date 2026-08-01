@@ -303,9 +303,27 @@
       when: _ak_mode in ['oidc', 'forward_auth']
 
     # ── Application (all modes; catalog gets a tile with no provider) ─────────
+    # superuser_full_list=true is REQUIRED, not a tuning flag. Authentik's application
+    # list is filtered by per-object view permission, so a token that has just CREATED an
+    # application cannot see it back on the next run. The response is doubly misleading:
+    # pagination.count honours the ?slug= filter while results does not, so a lookup for
+    # 'ntfy' came back count=1 with a body containing 'vaultwarden'. Measured live:
+    #
+    #   ?slug=ntfy                            count=1  results=['vaultwarden']
+    #   ?slug=ntfy&superuser_full_list=true   count=1  results=['ntfy']
+    #   ?slug=nope&superuser_full_list=true   count=0  results=[]
+    #
+    # Without it the lookup never matched, so every app's SECOND deploy tried to create an
+    # application that already existed and failed the whole deploy on
+    # "Application with this slug already exists" — the Authentik wiring was never
+    # idempotent.
+    #
+    # Only this endpoint needs it. Verified live that /flows/instances/,
+    # /outposts/instances/ and /providers/* return count == len(results) and filter
+    # correctly; superuser_full_list is specific to Authentik's ApplicationViewSet.
     - name: Wire Authentik | Find existing application
       ansible.builtin.uri:
-        url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}"
+        url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}&superuser_full_list=true"
         method: GET
         headers: "{{ _ak_headers }}"
         status_code: 200
