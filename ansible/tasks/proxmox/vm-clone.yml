@@ -46,6 +46,17 @@
       Required inputs: homelabinfra_cloud_template.vmid, ansible[ssh_public_key],
       proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name]].
 
+# validate_certs is part of the connection, not an afterthought: Proxmox serves a
+# self-signed certificate out of the box, so the module's default of verifying it fails
+# every call with
+#
+#   SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] ...
+#   unable to get local issuer certificate'))
+#
+# The rest of the repo already assumes this — inventory/proxmox.yml sets it, and slice
+# 012's blocker 8 added it to the lxc-create and vm-create module allowlists. This file
+# was missed by that fix because it builds its module arguments by hand instead of
+# filtering them through an allowlist, so there was no list to add the key to.
 - name: VM clone | Set connection facts
   ansible.builtin.set_fact:
     _vmc_api:
@@ -54,6 +65,7 @@
       api_user: "{{ homelabinfra_config.proxmox.api_user }}"
       api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
       api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
+      validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
       node: "{{ homelabinfra_config.proxmox.node }}"
     _vmc_vmid: "{{ homelabinfra_config.proxmox.vm.vmid | int }}"
 
@@ -100,6 +112,7 @@
     api_user: "{{ _vmc_api.api_user }}"
     api_token_id: "{{ _vmc_api.api_token_id }}"
     api_token_secret: "{{ _vmc_api.api_token_secret }}"
+    validate_certs: "{{ _vmc_api.validate_certs }}"
     node: "{{ _vmc_api.node }}"
     # On a clone, `vmid` is the SOURCE template and `newid` is the VM being made.
     clone: "{{ homelabinfra_cloud_template.name }}"
@@ -120,6 +133,7 @@
     api_user: "{{ _vmc_api.api_user }}"
     api_token_id: "{{ _vmc_api.api_token_id }}"
     api_token_secret: "{{ _vmc_api.api_token_secret }}"
+    validate_certs: "{{ _vmc_api.validate_certs }}"
     node: "{{ _vmc_api.node }}"
     vmid: "{{ _vmc_vmid | int }}"
     update: true
