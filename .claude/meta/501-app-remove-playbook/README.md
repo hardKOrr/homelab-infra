@@ -1,6 +1,6 @@
 # 501 — App removal playbook
 
-**Status:** built — implemented and gate-verified; awaiting live acceptance. Decisions and deviations from the approach below are in notes.md.
+**Status:** open — ran live 2026-08-02 against the whole baseline. Four acceptance items met, item 3 disproved: removal aborts mid-way when a platform provider is unreachable. Findings and the required fix are in notes.md.
 **Depends on:** 300-305 (unwire halves of each wiring slice)
 **Blocks:** Remove App job in Semaphore/Rundeck
 
@@ -41,8 +41,18 @@ How to detect Docker vs native? Read `app_config.proxmox.type` if set, OR check 
 
 ## Acceptance
 
-- [ ] Removing a Docker app stops + removes the container, unwires Caddy/Authentik/Kuma/DNS
-- [ ] Removing a native LXC app stops the service, unwires everything
-- [ ] Re-running remove on an already-removed app is idempotent
-- [ ] `config/apps/<instance>.yml` survives
-- [ ] Ntfy notification fires
+- [x] Removing a Docker app stops + removes the container, unwires Caddy/Authentik/Kuma/DNS
+      — met 2026-08-02, except the Kuma monitor (see below)
+- [x] Removing a native LXC app stops the service, unwires everything — met 2026-08-02
+- [ ] Re-running remove on an already-removed app is idempotent — **false when a provider
+      is unreachable.** `unwiring/caddy.yml` and `unwiring/authentik.yml` fail the playbook
+      on a connection error instead of degrading like `unwiring/uptime-kuma.yml` does
+- [x] `config/apps/<instance>.yml` survives — met 2026-08-02
+- [x] Ntfy notification fires — met 2026-08-02
+
+Re-opened by the live run. Closing it needs the probe-first stance from
+`unwiring/uptime-kuma.yml` applied to the Caddy and Authentik unwire halves, and
+`no_log: true` off the Authentik lookup that currently censors its own failure. The Kuma
+monitor delete is a separate defect owned by slice 404: `GET /api/monitors` answers 200
+with the SPA's HTML, so the probe, the delete and the verify assert all pass without
+touching a monitor.

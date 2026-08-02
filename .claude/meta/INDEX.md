@@ -16,7 +16,19 @@ Gates (current as of 2026-08-01): `wsl bash -lc 'bash .claude/gate/lint.sh'` pas
 Jinja expression in `ansible/`; `.claude/gate/test.sh` syntax-checks every playbook clean.
 **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **14 done · 28 built · 3 open.**
+Counts: **15 done · 27 built · 4 open.**
+
+**`Remove App` ran green-ish on 2026-08-02** — executions 13–21, API-triggered, against
+the whole live baseline as step 0 of a deliberate teardown. Four of slice 501's five
+acceptance items are met, including both the Docker and native LXC paths. The fifth is
+disproved and re-opens **501**: removal is idempotent only while every platform provider
+is still answering. `unwiring/caddy.yml` and `unwiring/authentik.yml` fail the playbook on
+a connection error, so removing a proxy or an SSO provider strands every removal after it —
+aborting exactly between unwiring and stopping the app, which is what the unwire-first
+ordering exists to prevent. `unwiring/uptime-kuma.yml` is the only one of the four that
+degrades correctly, and it is the pattern the other two need. Separately, **404** gains a
+sharper fact: `GET /api/monitors` returns **200 `text/html`** (the SPA catch-all), so the
+Kuma probe, delete and verify-assert all pass without a monitor ever existing.
 
 **`Bootstrap Platform` ran green on 2026-08-01** — executions 7, 8 and 9, API-triggered, all
 seven baseline services, converging to `changed=0` on the hosts that can reach it. That is
@@ -81,6 +93,7 @@ No further work. Listed for provenance only.
 | 006 | [generate-ip combine](006-generate-ip-combine/README.md) |
 | 007 | [requirements.yml collections](007-requirements-collections/README.md) |
 | 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) |
+| 016 | [routing.access split](016-routing-access-split/README.md) |
 | 100 | [unattended-upgrades dedupe](100-unattended-upgrades-dedupe/README.md) |
 | 101 | [Stack key guard in template](101-stack-key-guard/README.md) |
 | 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) |

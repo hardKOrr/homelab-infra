@@ -85,3 +85,30 @@ the structure (probe, degrade, warn) does not change.
 - `facts.yml` `monitoring` block has host, token, notification_id.
 - Re-run is idempotent (no duplicate notification channel, no password rotation).
 - Confirm or correct each endpoint listed above.
+
+## 2026-08-02 — the 200 that is not an API
+
+Measured on the live lab (`louislam/uptime-kuma:2` on `monitoring-stack`):
+
+```
+$ curl -o /dev/null -w '%{http_code} %{content_type}' -H Accept:application/json \
+    http://localhost:3001/api/monitors
+200 text/html; charset=utf-8
+```
+
+`/api/monitors` is not a route. Kuma serves the Vue SPA's `index.html` as the catch-all
+for anything it does not recognise, with a 200. Every probe in this slice and in 303 that
+concludes "the REST API is usable" from `status == 200` concludes it wrongly, against
+every version, with or without a token.
+
+The consequence in the unwire half is worse than a silent no-op. In
+`tasks/unwiring/uptime-kuma.yml` the probe passes, `_kuma_probe.json` is absent so the
+monitor selection defaults to `{}`, the delete is skipped, and
+`Assert monitor removed` re-fetches the same HTML and passes **vacuously**. A live
+teardown on 2026-08-02 removed six apps and reported every monitor cleanly deleted
+without a monitor ever existing (slice 501 notes).
+
+Whatever replaces the REST calls here — socket.io, as this slice already accepts — must
+key its "is the API usable?" check on the content type or the shape of the body, never on
+the status code alone. `facts.yml` `monitoring.token` was empty on the live lab for the
+same underlying reason: nothing this role calls over HTTP can create an API key.

@@ -54,3 +54,76 @@ deploy converges that same guest back, which is the restore story
   and a re-deploy finds its data.
 - The `'could not be found'` message match for an absent systemd unit — that string is
   the module's, and it is the one assumption here that a live run could falsify.
+
+## 2026-08-02 — live acceptance run (partial)
+
+`Remove App` was driven from the Rundeck API against the whole live baseline as the
+first step of a deliberate teardown. Executions 13–21 on the runner. **Four of the five
+acceptance items are met; the fifth is false.**
+
+Met: Docker app removal (observability, uptime-kuma, authentik — Compose down, Caddy
+route deleted, Authentik application deleted), native LXC removal (ntfy, vaultwarden,
+caddy — unit stopped and disabled, data path deleted under `delete_data=true`),
+`config/apps/<instance>.yml` survived, and the Ntfy notification fired while Ntfy was
+still up. `docker_compose_v2 state: absent` and the `'could not be found'` systemd
+message match both behaved as assumed — no surprises in Play 2.
+
+### Removal is only idempotent while every platform provider is still up
+
+Acceptance item 3 ("re-running remove on an already-removed app is idempotent") holds
+only in the narrow case the note above imagined: the guest is gone but Caddy, Authentik
+and Kuma are all still answering. Play 1 runs *before* the host lookup, so a re-run
+reaches the unwire tasks unconditionally, and two of the four abort the playbook when
+their provider is unreachable:
+
+- **`tasks/unwiring/caddy.yml`, `Check for existing route`** — `uri` with
+  `status_code: [200, 404]` fails on a connection error (`status: -1`), so removal dies
+  before Play 2. Execution 21: re-running `remove vaultwarden` after Caddy was removed
+  failed with `Connection refused` on `http://192.168.0.12:2019/id/route_vaultwarden`.
+- **`tasks/unwiring/authentik.yml`, `Find proxy provider`** — same shape, and worse to
+  diagnose because the task carries `no_log: true`: the operator sees only
+  `Result code was 2`. Executions 16 and 17 (`pbs`, `ntfy`) both died here once
+  Authentik had been removed.
+
+`unwiring/uptime-kuma.yml` is the one that gets this right — it probes with
+`failed_when: false` and degrades to a `debug` that names the stale monitor and tells
+the operator to delete it by hand. That probe-first stance is the pattern the Caddy and
+Authentik unwire halves need; the header comment in `unwiring/uptime-kuma.yml` already
+argues for it in general terms ("a stale monitor is a smaller problem than a removal
+that aborts halfway") but only that one file implements it.
+
+This is not a teardown-only edge case. Any app removed while its reverse proxy is down
+for maintenance hits it, and the failure mode is the one the unwire-first ordering
+exists to prevent: the playbook aborts *between* unwiring and stopping the app.
+
+### Teardown has no ordering contract
+
+Removing the baseline in an arbitrary order strands the rest. `authentik` was removed
+third, which broke `pbs` and `ntfy` immediately; the run was only unblocked by hand-
+editing `sso.provider: none` into `config/.generated/facts.yml`. Nothing in the job,
+the playbook header or the docs says removal must run in reverse bootstrap order
+(PBS → observability → Uptime Kuma → Authentik → proxy → Ntfy → Vaultwarden), and a
+one-click UI offers no way to express that dependency. Once the two unwire halves above
+degrade gracefully, order stops mattering — which is the better fix than documenting an
+order the operator has to remember.
+
+### Uptime Kuma's probe accepts the SPA as a working REST API
+
+`GET /api/monitors` on Uptime Kuma 2.x returns **200 with `text/html`** — the Vue SPA's
+index page, served as the catch-all for unknown routes. The probe only checks
+`status == 200`, so it concludes the REST API is usable, `_kuma_probe.json` is absent,
+the monitor selection falls through to `{}`, the delete is skipped, and
+`Assert monitor removed` passes **vacuously** against another page of HTML. Every
+removal therefore reported the monitor gone without ever having looked for one.
+
+Slice 404 already records that Kuma has no REST write API. What is new here is that the
+*unwire* half reports success rather than reaching its own "Report unusable API" branch.
+Whatever replaces this (socket.io, per 404) must not treat a 200 as proof of an API —
+the check needs to be the content type or the shape of the body.
+
+### The removed baseline
+
+observability, uptime-kuma, authentik (Docker); ntfy, vaultwarden, caddy (native LXC).
+`pbs` was never removed — execution 16 died at the Authentik unwire before reaching it,
+and by then the teardown had its finding. Guests were destroyed manually afterwards, as
+designed: removal never destroys a guest.
