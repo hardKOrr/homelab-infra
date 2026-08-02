@@ -10,10 +10,11 @@ scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
 ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
 ```
 
-By default the command returns with both the automation runner and the preliminary
-Vaultwarden LXC online. Open the URL it prints and run **Bootstrap Platform**; that job
-reuses/reconciles Vaultwarden and deploys the remaining baseline. There are no UI steps
-to perform first.
+By default the command returns with the automation runner, Caddy, and HTTPS Vaultwarden
+online. Open the URL it prints, complete **Vaultwarden Enrollment**, stage the three
+automation-account credentials in the named encrypted Key Storage entries, run
+**Vaultwarden Cutover**, and only then run **Bootstrap Platform**. Password choice and
+personal API-key creation are deliberately human Vaultwarden actions.
 
 ### What it does
 
@@ -27,7 +28,7 @@ to perform first.
 | **Config** | writes `config/proxmox.yml`, `config/infrastructure.yml` and `config/apps/rundeck.yml` |
 | **Rundeck** | random admin password, non-expiring API token, the `homelab-infra` project, every job in `jobs/` imported, Key Storage staged |
 | **Wiring** | `/etc/homelab-infra/lab-run.env` and a `/usr/local/bin/lab-run` symlink into the checkout |
-| **Vaultwarden** | invokes `playbooks/apps/vaultwarden.yml` inside the finished runner; Ansible creates the LXC with `homelab-infra` and `vaultwarden` tags |
+| **Vaultwarden** | deploys Caddy first, then Vaultwarden and its HTTPS route; invites the exact owner/automation addresses with public signups disabled |
 
 Everything is idempotent — re-running converges an existing container, rotates no
 credential, and overwrites no answer you already gave. Override any default with an
@@ -41,17 +42,17 @@ refreshes find `tag_vaultwarden` and reuse that guest.
 
 ### What it asks
 
-Six questions plus the provider choices, all defaulted except the domain, and every one
+The network/provider questions plus owner and automation email addresses, all defaulted except the domain and owner, and every one
 also readable from an environment variable — so `NONINTERACTIVE=1` scripts the lot:
 
 `LAB_DOMAIN`, `LAB_NET_CIDR`, `LAB_NET_GATEWAY`, `LAB_NET_DNS`, `LAB_TIMEZONE`,
 `LAB_IP_OFFSET`, `LAB_REVERSE_PROXY`, `LAB_SSO`, `LAB_NOTIFICATIONS`, `LAB_DNS`,
-`LAB_BACKUP_PATH`.
+`LAB_BACKUP_PATH`, `VAULTWARDEN_OWNER_EMAIL`, `VAULTWARDEN_AUTOMATION_EMAIL`.
 
 Everything else is discovered from the node it runs on: the node name, the API address,
 storages, bridges, template storage, the timezone.
 
-Credentials land in `/root/.rundeck-bootstrap` (0600) inside the container:
+Recovery handover values land in `/root/.rundeck-bootstrap` (0600) inside the container:
 `pct exec <vmid> -- cat /root/.rundeck-bootstrap`.
 
 **Debian 13 is not incidental.** `community.proxmox` 2.0.0 requires ansible-core >= 2.17,
@@ -97,11 +98,13 @@ done
 ```
 
 `rd` is not required — the REST API accepts the same YAML
-(`POST /api/47/project/<p>/jobs/import?fileformat=yaml&dupeOption=update&uuidOption=preserve`).
+(`POST /api/58/project/<p>/jobs/import?fileformat=yaml&dupeOption=update&uuidOption=preserve`).
 Job UUIDs are stable, so re-loading updates the existing jobs instead of duplicating them.
 
 | Group | Job | Playbook | Options |
 |---|---|---|---|
+| Bootstrap | Vaultwarden Enrollment | `playbooks/maintenance/vaultwarden-enroll.yml` | none |
+| Bootstrap | Vaultwarden Cutover | `playbooks/maintenance/vaultwarden-cutover.yml` | none |
 | Bootstrap | Bootstrap Platform | `playbooks/bootstrap.yml` | none |
 | Config | Config Doctor | `playbooks/maintenance/config-doctor.yml` | none |
 | Config | Configure App | `playbooks/maintenance/configure-app.yml` | `instance` + a dozen optional overrides + `extra_yaml` |
@@ -109,7 +112,7 @@ Job UUIDs are stable, so re-loading updates the existing jobs instead of duplica
 | Config | Reimport Jobs | — (calls the Rundeck API directly) | none |
 | Apps | Deploy Vaultwarden | `playbooks/apps/vaultwarden.yml` | none — `instance=vaultwarden` is baked in |
 | Apps | Deploy Ntfy | `playbooks/apps/ntfy.yml` | none |
-| Apps | Deploy Caddy | `playbooks/apps/caddy.yml` | none |
+| Apps | Deploy Caddy | `playbooks/apps/caddy.yml` | optional encrypted Cloudflare Seed token and optional Vaultwarden credentials; the runner enforces whichever lifecycle state is active |
 | Apps | Deploy Authentik | `playbooks/apps/authentik.yml` | none |
 | Apps | Deploy Uptime Kuma | `playbooks/apps/uptime-kuma.yml` | none |
 | Apps | Deploy Observability | `playbooks/apps/observability.yml` | none |
@@ -121,6 +124,7 @@ Job UUIDs are stable, so re-loading updates the existing jobs instead of duplica
 | Maintenance | Tail App Log | `playbooks/maintenance/tail-applog.yml` | `instance`, `lines` |
 | Maintenance | Rollback Container | `playbooks/stacks/rollback-container.yml` | `stack`, `container`, `image_tag` (optional) |
 | Maintenance | Wire Media Stack | `playbooks/stacks/wire-media-stack.yml` | none |
+| Maintenance | Vaultwarden Recovery | `playbooks/maintenance/vaultwarden-recovery.yml` | exact break-glass confirmation |
 
 **One job per app, no typing.** Each Deploy job hard-codes `instance=<app>`, so deploying
 is one click. A second instance of an app means copying its job file, changing that
@@ -141,14 +145,15 @@ exec lab-run playbooks/apps/caddy.yml -e instance=caddy
 clone; only the symlink and `/etc/homelab-infra/lab-run.env` live on the host. It:
 
 1. resolves `LAB_REPO`, `LAB_VENV` and `LAB_BRANCH` from that env file
-2. sources the runner's secrets from `/etc/homelab-infra/secrets.env` and every
-   `*.env` in `/etc/homelab-infra/secrets.d/`
-3. selects the runner's dedicated SSH key for guest connections and delegated PVE-node
-   `pct`/`qm` waits
+2. permits temporary seed files only for the explicit Caddy/Vaultwarden enrollment,
+   cutover, and recovery playbooks before the durable marker exists
+3. in Vault mode, logs in and unlocks the dedicated automation account, synchronizes all
+   canonical items, and writes the runner SSH key only to execution-private state
 4. **refreshes the checkout** to `origin/$LAB_BRANCH` and echoes the resolved commit into
    the job log, then re-execs itself from the refreshed copy
 5. runs `config-doctor` — a missing key fails here, at the front door
-6. execs `ansible-playbook` through `with-proxmox-env.sh`
+6. runs `ansible-playbook` through `with-proxmox-env.sh`, then locks/logs out and removes
+   all temporary CLI/session state while preserving the playbook exit status
 
 This is why a fix pushed to the repo is executed by the next click with no human action,
 and why a change to *how* jobs run is one edit rather than eighteen. That lesson was paid
@@ -184,39 +189,32 @@ edited in the UI; if you edit one there, the next Reimport Jobs overwrites it.
 
 ## Credentials
 
-`config/proxmox.yml` on the runner carries the **shape** of the Proxmox connection — host,
-port, node, user, token id — and deliberately **not** the token secret. The secret lives in
-two places, both written by `bootstrap-rundeck.sh` and neither of them inside the git
-checkout or inside `config/`:
+`config/proxmox.yml` carries connection shape only. Before cutover, the bootstrap script
+uses minimum temporary seed files. After exact Vaultwarden readback, the files are removed
+and ordinary jobs cannot read replacements.
 
 | Where | What | Role |
 |---|---|---|
-| Key Storage `keys/proxmox/api-token` | the token secret | the durable copy; restore point |
-| `/etc/homelab-infra/secrets.env` (0640 root:rundeck) | the same value as `PROXMOX_API_TOKEN` | sourced by `lab-run.sh` into every job's environment |
-| `/etc/homelab-infra/secrets.d/` (0700 rundeck:rundeck) | `VAULTWARDEN_ADMIN_TOKEN` | written by the Vaultwarden deploy; sourced the same way |
+| Key Storage `keys/project/homelab-infra/vaultwarden-machine/client-id` | automation API client ID | secure option on vault-backed jobs |
+| `.../client-secret` | automation API client secret | secure option on vault-backed jobs |
+| `.../master-password` | automation master password | secure option on vault-backed jobs |
+| `.../admin-token` | Vaultwarden server administration token | enrollment/cutover only |
+| `keys/project/homelab-infra/rundeck/api-token` | Rundeck API token | job import/cutover only |
+| `keys/project/homelab-infra/bootstrap/cloudflare-api-token` | temporary token scoped to Zone Read and DNS Edit | Caddy Seed bootstrap and cutover; deleted after exact Vaultwarden readback |
 
-The file is what actually feeds a running job. Rundeck OSS has no way to put a Key Storage
-value into a plain script step's environment without adding a secure option to every job
-file — precisely the per-job duplication this design removes — and a root-owned file the
-`rundeck` user can read achieves the same isolation with none of it. It is outside the
-checkout, so `git reset --hard` never sees it, and outside `config/`, so `Get Config` never
-archives it.
+Rundeck OSS exposes Key Storage values to scripts through secure job options. Source job
+files stay uncluttered: `render-job.py` centrally adds the required project-scoped options
+at import. The wrapper consumes only their `RD_OPTION_*` environment variables; neither
+secret interpolation nor ordinary option values are used.
 
-`secrets.d/` differs from `secrets.env` in owner and in direction. `secrets.env` holds what
-an operator supplied and is written once, by the bootstrap script, as root. `secrets.d/`
-holds what the **platform generated for itself** — today only the Vaultwarden admin token,
-which the first Vaultwarden deploy writes there so bootstrap finishes in one pass instead of
-halting for a paste (slice 013). A playbook runs as `rundeck` and has to create that file
-without sudo, so the directory is owned by the job user; `0700` keeps it as private as the
-root-owned file beside it. Both are outside the checkout and outside `config/`.
+The full `/keys` tree uses Rundeck 6.0's AES-256-GCM converter. Its password file is
+`/etc/rundeck/.storage-password` (`root:rundeck`, `0440`) and the generated handover copy
+must be backed up separately. Encryption protects stored values; root on a running runner
+can still access the converter key and job memory.
 
-Key Storage also holds:
-
-- `keys/rundeck/homelab-ssh` — the private key Ansible connects to guests with, generated
-  by the bootstrap script. Its public half is in `config/proxmox.yml` under
-  `ansible.ssh_public_key` and is deployed to every guest the platform creates.
-
-`VAULTWARDEN_ADMIN_TOKEN` is read the same way once bootstrap step 1 has produced it.
+The pre-cutover `keys/proxmox/api-token`, `keys/rundeck/homelab-ssh`, and Cloudflare
+bootstrap entries are imported into their canonical Vaultwarden items, verified, then
+deleted. Recovery is documented in [VAULTWARDEN-RECOVERY.md](VAULTWARDEN-RECOVERY.md).
 
 ## Reading and changing config from the UI
 

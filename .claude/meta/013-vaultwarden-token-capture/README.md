@@ -1,18 +1,17 @@
 # 013 — Vaultwarden admin token self-capture: collapse the two-pass bootstrap
 
-**Status:** built — **sink verified live 2026-08-01**
+**Status:** done — accepted live 2026-08-01
 
 The mechanism this slice exists for is observed: `bootstrap-rundeck.sh` deployed Vaultwarden
 through the runner, `roles/vaultwarden` generated the admin token and wrote it to
 `/etc/homelab-infra/secrets.d/vaultwarden.env` (0600 `rundeck:rundeck`), and the script
 returned **exit 0 in a single pass with no human paste and no re-run**. The token was not
 printed to the log, which is correct — the console copy exists only when the sink write
-fails. Not yet observed: the *consumer* half — no later bootstrap step has read
-`VAULTWARDEN_ADMIN_TOKEN` back out of the sink, because nothing after Vaultwarden has run.
-That clears on the `Bootstrap Platform` click.
+fails. The later `Bootstrap Platform` run then consumed `VAULTWARDEN_ADMIN_TOKEN` from that
+sink, passed the gate, deployed all six remaining baseline services, and converged on
+repeated clicks. Both producer and consumer halves are now observed.
 **Depends on:** 400 (Vaultwarden app), 500 (bootstrap plays)
-**Blocks:** 010 (config provenance) — the unattended bootstrap path; 014 (Vaultwarden as
-the generated-secret store)
+**Unblocked:** 010's unattended bootstrap path and 014's prerequisite
 
 ## Problem
 
@@ -72,8 +71,8 @@ to notice a stall.
 
 ## Acceptance
 
-- [ ] `bootstrap.yml` runs from an empty lab to a deployed Vaultwarden and past the gate in
-      **one execution**, with no human input — *needs a live run*
+- [x] The fresh-run workflow deploys Vaultwarden and passes the gate with no human token
+      input — observed across `bootstrap-rundeck.sh` and the subsequent UI bootstrap click
 - [x] The admin token is readable from the sink after that run — round-tripped on both
       sink paths (`secrets.d/`, `config/.generated/`) and through `lab-run.sh`
 - [x] The admin token does **not** appear in the job execution log — the plaintext print
@@ -114,12 +113,13 @@ to notice a stall.
   fires only when the sink write failed, which is the one case where the log is the token's
   only surviving copy.
 
-## Verified locally, not on the runner
+## Verification
 
-Round trip on both sink paths, precedence across all four combinations, `lab-run.sh`
+Local verification covered round trips on both sink paths, precedence across all four combinations, `lab-run.sh`
 sourcing in four runner states, config-doctor in four states, and the failed-write branch.
-`ansible-lint` and `--syntax-check` pass. **Nothing here has run against live Proxmox** —
-the first bootstrap on real hardware is still the experiment.
+`ansible-lint` and `--syntax-check` pass. Live verification on 2026-08-01 covered token
+generation, the 0600 runner sink, absence from the job log, readback through `lab-run.sh`,
+the bootstrap gate, and repeated convergent platform runs.
 
 One defect was caught in testing and fixed: the sink write originally used
 `failed_when: false`, which forces `.failed` to `False` even when the module errored. That

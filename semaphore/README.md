@@ -80,34 +80,39 @@ deploying is one click with nothing to fill in. Running a *second* instance of a
 There is no `Reimport Jobs` template: Semaphore keeps its templates in its own database,
 and they change when you re-import `project.json`.
 
-Semaphore also needs no `lab-run.sh`. It clones the repository itself before every task, so
-the checkout is current by construction — the problem `lab-run.sh` solves for Rundeck does
-not exist here, and Semaphore's templates name the playbook directly.
+Mutating Semaphore templates must be **Shell/Bash** templates that execute
+`ansible/scripts/semaphore-run.sh` with the ansible-relative playbook as the first argument,
+for example `playbooks/apps/caddy.yml -e instance=caddy`. Repository refresh is disabled
+because Semaphore already checks out the requested revision, but this still uses the same
+Seed/Vault guard, Bitwarden CLI preflight, runtime mapping, and cleanup as Rundeck. Direct
+Ansible templates bypass that preflight and are not a supported Vault-mode execution path.
+
+`project.json` is the legacy Ansible-template backup and remains useful for its views,
+surveys and read-only Config/Status templates. Convert each mutating template to Shell/Bash
+with the wrapper above after import; backup schema varies by Semaphore release, so this repo
+does not pretend an unverified `app` value is portable. The initial one-command adoption
+path is Rundeck.
 
 ## Environment
 
-The `Homelab` environment carries:
+The `Homelab` variable group carries non-secret values below. Add the three `BW_*` values
+and the admin token as Semaphore **secret variables**, never in `project.json`'s exported
+plain environment JSON.
 
 | Variable | Purpose |
 |---|---|
 | `ANSIBLE_ROLES_PATH=ansible/roles` | Semaphore runs from the repo root; `ansible/ansible.cfg` sets `roles_path` relative to `ansible/`, so roles are only found with this set |
 | `ANSIBLE_HOST_KEY_CHECKING=False` | fresh guests have unknown host keys |
-| `PROXMOX_API_HOST` / `_PORT` / `_USER` / `_TOKEN_ID` / `_TOKEN_SECRET` | read by the dynamic inventory |
-| `PROXMOX_API_TOKEN` | the same secret as `_TOKEN_SECRET`, read by `load-user-vars.yml` and `with-proxmox-env.sh` |
-| `VAULTWARDEN_ADMIN_TOKEN` | fill in once bootstrap step 1 has produced it |
+| `BW_SERVER` | public HTTPS Vaultwarden URL |
+| `BW_CLIENTID` / `BW_CLIENTSECRET` / `BW_PASSWORD` | dedicated automation account login/unlock; all three are secret variables |
+| `VAULTWARDEN_ADMIN_TOKEN` | external server-control secret used only by enrollment/cutover/recovery |
+| `LAB_STATE_DIR` | durable service-user-writable marker directory outside ephemeral checkouts |
 
-`PROXMOX_API_TOKEN_SECRET` and `PROXMOX_API_TOKEN` hold the **same value** and exist
-separately only because they have different readers: the dynamic inventory plugin cannot
-receive its connection details via `-e` extra vars (see `ansible/inventory/proxmox.yml`)
-and reads `_TOKEN_SECRET` from the process environment, while the playbooks and the shell
-wrapper read `PROXMOX_API_TOKEN`. Set both.
-
-**This environment is where the Proxmox secret belongs — not in `config/proxmox.yml`.**
-The config file carries the connection's *shape* so it can be read, diffed, reviewed and
-handed around by the Get Config job; the secret stays in exactly one place. Leaving
-`api_token_secret` out of the file entirely is the recommended shape, and the environment
-wins over the file when both are set. See `config.example/proxmox.yml` and
-`ansible/vars/CONTRACT.md` §5.
+After cutover, the wrapper resolves the Proxmox token and runner SSH identity from
+Vaultwarden before the dynamic inventory or playbook starts. Temporary Proxmox variables
+are Seed/recovery inputs only, not permanent Semaphore environment values. Install the
+official `bw` CLI on every Semaphore runner and separately back up Semaphore's own access
+key encryption key; losing it makes its encrypted variables unrecoverable.
 
 The Proxmox user itself should be a dedicated `homelab-infra@pve` with a scoped role rather
 than `root@pam`. `rundeck/bootstrap-rundeck.sh` creates that user and role with `pveum`; on

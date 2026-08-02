@@ -16,7 +16,7 @@ Gates (current as of 2026-08-01): `wsl bash -lc 'bash .claude/gate/lint.sh'` pas
 Jinja expression in `ansible/`; `.claude/gate/test.sh` syntax-checks every playbook clean.
 **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 29 built · 4 open.**
+Counts: **14 done · 28 built · 3 open.**
 
 **`Bootstrap Platform` ran green on 2026-08-01** — executions 7, 8 and 9, API-triggered, all
 seven baseline services, converging to `changed=0` on the hosts that can reach it. That is
@@ -66,7 +66,7 @@ nothing reads, so no service could record an endpoint another could load.
 
 ---
 
-## Done (12)
+## Done (14)
 
 No further work. Listed for provenance only.
 
@@ -80,6 +80,7 @@ No further work. Listed for provenance only.
 | 005 | [Instance config schema contradiction](005-instance-config-schema/README.md) |
 | 006 | [generate-ip combine](006-generate-ip-combine/README.md) |
 | 007 | [requirements.yml collections](007-requirements-collections/README.md) |
+| 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) |
 | 100 | [unattended-upgrades dedupe](100-unattended-upgrades-dedupe/README.md) |
 | 101 | [Stack key guard in template](101-stack-key-guard/README.md) |
 | 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) |
@@ -108,7 +109,7 @@ each slice's `notes.md` or in a "Built" section of its README.
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API creds |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open — see below |
-| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | **deployed live 2026-08-01** — 1.37.1 serving on its own LXC, admin-token sink written in one pass (013). Wiring legs still unobserved: no reverse proxy, SSO or monitor existed to wire into |
+| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | **deployed live and convergent 2026-08-01** — 1.37.1 serving on its own LXC, admin-token sink written in one pass (013), Caddy route present. Still needs the public-domain path and three `lab-*` maintenance commands exercised explicitly |
 | 401 | [Ntfy](401-app-ntfy/README.md) | bootstrap step 2 |
 | 402 | [Caddy](402-app-caddy/README.md) | bootstrap step 3 |
 | 403 | [Authentik](403-app-authentik/README.md) | bootstrap step 4 — one item blocked on 306 |
@@ -146,21 +147,19 @@ Carried caveats:
 
 ## Open (4)
 
-011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 013 and
-014 were split out of 010 on 2026-07-27; 015 was raised on 2026-08-01 during the first
+011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 014 was
+split out of 010 on 2026-07-27; 015 was raised on 2026-08-01 during the first
 from-scratch runner bootstrap. All are design defects in shipped code or gaps between the
 documented model and the implemented one — none are new features.
 
 | # | Slice | Why now |
 |---|---|---|
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
-| 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | Bootstrap halts mid-run for a human to paste a console-printed token. A UI-driven bootstrap has no one to paste, and the secret's only durable copy is a clipboard. |
 | 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | CLAUDE.md's secrets model is unimplemented — `community.general.bitwarden` exists only as `todo/` stubs. Every generated token lives solely in `facts.yml` on the runner, and PBS's is unrecoverable if lost. |
 | 015 | [Wildcard DNS as the default path](015-wildcard-dns-default/README.md) | A lab on a stock ISP router has no DNS API. `none` already works as a silent no-op, but nothing documents it — README promises a DNS record per app, `config.example` presumes OPNsense, and one wildcard record would serve the whole lab. Separately, choosing a credentialed DNS provider at bootstrap authors a config that cannot work, because nothing collects its API key. |
 
-**013 and 014 gate the shareability claim** (010 and 012 landed 2026-07-26) and **011 gates
-the first provisioning run** — the first deploy that allocates an address bakes in whatever
-the current model produces.
+**014 still gates the secret-durability claim** (010 and 012 landed 2026-07-26). Slice 013's
+one-pass token capture is complete and was observed live on 2026-08-01.
 
 ## Recommended order
 
@@ -173,11 +172,11 @@ the current model produces.
    They stayed two documents because their acceptance criteria do not interleave — 010's is
    "config exists, travels and validates", 012's is "one command and one click, and the
    runner runs current `master`".
-3. **013 before the live bootstrap run.** It is small and it is the difference between a
-   bootstrap that completes unattended and one that stops halfway waiting for a paste.
-   Doing it after the live run means running the two-pass flow once and then deleting it.
-4. **Live bootstrap run** — one event converts 26 of the `built` slices. Still the largest
-   single risk-reducer in the backlog, but see the parallel-instance caveat below.
+3. **~~013 before the live bootstrap run.~~** **Landed and accepted 2026-08-01** — the
+   generated admin token was written to the runner sink and bootstrap continued without a
+   paste or re-run.
+4. **~~Live bootstrap run.~~** **Completed 2026-08-01** — the full platform converged; the
+   remaining per-slice exceptions are recorded above rather than inferred away wholesale.
 5. **014 after the lab holds real secrets.** It is a durability change, not a correctness
    one, and its acceptance test (delete `facts.yml`, restore from the vault) is only
    meaningful once there is something in `facts.yml` worth losing.
@@ -187,13 +186,15 @@ the current model produces.
 
 ### The config model, decided 2026-07-27 — implemented 2026-07-26
 
-Three provenance classes, three homes — the shape 010/013/014 build toward:
+Three provenance classes, three homes — 010 and 013 are implemented; 014 is the remaining
+cutover needed to make the third row true at runtime:
 
-| Class | Home | Why |
+| Class | Current home | Target after 014 |
 |---|---|---|
-| `proxmox.yml`, `infrastructure.yml`, `apps/*.yml` | the **runner's `config/`**, reached from the UI both ways | must pre-date the vault; humans edit it; transport is Configure App / Get Config, not a repo |
-| Proxmox token, Vaultwarden admin token | Rundeck **Key Storage** / Semaphore env | two values, never in a file, minted by bootstrap itself |
-| `.generated/facts.yml` (~10 service tokens) | **Vaultwarden**, file demoted to a cache | machine-written, never hand-edited, read by machines |
+| `proxmox.yml`, `infrastructure.yml`, `apps/*.yml` | the **runner's `config/`**, reached from the UI both ways | unchanged; these must pre-date the vault and remain human-editable |
+| Proxmox token | Rundeck **Key Storage** / Semaphore env | unchanged; it bootstraps access to Proxmox |
+| Vaultwarden admin token | runner `secrets.d/` / Semaphore env | remains external; Vaultwarden cannot store its own bootstrap credential |
+| generated service credentials in `.generated/facts.yml` | the runner's gitignored `config/.generated/facts.yml` | **Vaultwarden** at job preflight; facts file becomes non-secret topology only |
 
 **Two bootstrap layers, no manual seam.** `bootstrap-rundeck.sh` on a PVE node runs as root,
 so it discovers what is discoverable (`pvesm`, `ip -o link`, hostname), prompts for the six

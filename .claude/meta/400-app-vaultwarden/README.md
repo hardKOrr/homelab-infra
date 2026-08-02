@@ -1,6 +1,8 @@
 # 400 — Vaultwarden role + playbook
 
-**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Install mechanism deviates from the approach below: upstream ships no GitHub binary assets — see notes.md.
+**Status:** built — deployed live and convergent 2026-08-01. The public-domain path and
+three maintenance commands still need explicit observation. Install mechanism deviates from
+the original approach below because upstream ships no GitHub binary assets.
 **Depends on:** 004 (proxmox keys), 005 (instance config), 200 (write-generated-facts); transitively 000-003 foundation
 **Blocks:** 500 (bootstrap), every secret-using slice (anything that does a `community.general.bitwarden` lookup)
 
@@ -48,11 +50,23 @@ Play 3 wires Caddy + Uptime Kuma + DNS — **skips Authentik** (`routing.auth: f
 
 Bootstrap chicken-and-egg: on first deploy, admin token is generated locally and printed; user pastes into `config/infrastructure.yml` (per CLAUDE.md). On subsequent deploys, the token comes from there.
 
+## Live result (2026-08-01)
+
+The fresh runner workflow created the tagged Vaultwarden LXC at 192.168.0.10, installed
+Vaultwarden 1.37.1, returned HTTP 200, and installed the three `lab-*` commands. The admin
+token was generated into the slice-013 sink in one pass and did not appear in the log.
+`Bootstrap Platform` then reconciled the same guest repeatedly; by execution 11 the
+Vaultwarden play reported `changed=0`. Caddy has the route and correct upstream, but the
+public hostname was not exercised from a browser/client, and installation alone is not an
+execution test of the maintenance commands.
+
 ## Acceptance
 
 - [ ] Fresh deploy creates LXC, installs Vaultwarden, web vault loads at the wired domain
-- [ ] Admin token printed clearly on first run (and only first run)
-- [ ] Subsequent re-runs are idempotent
+      — LXC/install/direct HTTP and Caddy route observed; public hostname still unobserved
+- [x] First deploy preserves the admin token exactly once without exposing it in the log
+      — slice 013 superseded the original console-print mechanism with a durable sink
+- [x] Subsequent re-runs are idempotent
 - [ ] `lab-update-check` reports installed vs latest correctly
 - [ ] `lab-restart-app` restarts the service
 - [ ] `lab-tail-applog` shows journalctl output

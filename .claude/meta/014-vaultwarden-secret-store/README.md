@@ -4,6 +4,19 @@
 **Depends on:** 013 (Vaultwarden admin token self-capture), 200 (write-generated-facts)
 **Blocks:** the durability half of 010; every deploy after the bootstrap cutover
 
+## Implementation status (2026-08-02)
+
+Construction is present and locally gated; the slice remains **open** until a live
+enrollment/cutover and fail-closed observation are approved and completed.
+
+- Local: all 25 playbooks pass syntax check, lint is clean, and focused tests cover item
+  mapping, secret-field rejection/sanitization, Seed/Vault guards, preflight failure,
+  private CLI cleanup, and child exit propagation.
+- Live compatibility: the operator confirmed Rundeck package `6.0.1.20260715-1`, which
+  satisfies the guarded 6.0+ AES-GCM requirement.
+- Live migration: not run. No live secret was read, rotated, deleted, or printed. The
+  exact field-name-only manifest must be inventoried and approved before cutover.
+
 ## Goal
 
 Bring Vaultwarden up as early as possible, move the secrets needed to bootstrap it out of
@@ -68,14 +81,15 @@ files happen to exist.
 The fresh-lab order is:
 
 1. create the runner and its temporary seed files;
-2. deploy Vaultwarden first;
-3. configure and verify machine access to the vault;
-4. import the Proxmox token, Vaultwarden admin token, and any other secret already present
+2. deploy Caddy so the enrollment endpoint is HTTPS;
+3. deploy Vaultwarden and invite the exact owner and automation addresses;
+4. complete the human owner/automation-account ceremony and verify machine access;
+5. import the Proxmox token, Vaultwarden admin token, and any other secret already present
    at bootstrap;
-5. read every imported value back and compare it without logging it;
-6. write the cutover marker;
-7. remove the seed files;
-8. continue the platform bootstrap in Vault mode.
+6. read every imported value back and compare it without logging it;
+7. write the cutover marker;
+8. remove the seed files;
+9. continue the platform bootstrap in Vault mode.
 
 The transition must be resumable. A failure before verified cutover leaves seed mode intact;
 a failure after the marker never silently falls back to files.
@@ -138,8 +152,8 @@ when the vault is down.
   application secrets and merge the in-memory vault values into the runtime contract.
 - `ansible/tasks/bootstrap/write-generated-facts.yml` — write non-secret registry facts
   only; reject secret-shaped fields.
-- `ansible/playbooks/bootstrap.yml` — deploy Vaultwarden first, import and verify seed
-  secrets, cut over, remove seed files, then continue.
+- `rundeck/bootstrap-rundeck.sh` and maintenance jobs — deploy Caddy then Vaultwarden,
+  enroll, import and verify seed secrets, cut over, remove seed files, then continue.
 - `ansible/playbooks/maintenance/` — add an explicit Vaultwarden recovery/bootstrap path;
   do not add a job that restores secrets to `facts.yml`.
 - `rundeck/bootstrap-rundeck.sh` — make its secret files temporary bootstrap inputs and
@@ -189,17 +203,14 @@ when the vault is down.
 - **Recovery is explicit.** Vaultwarden bootstrap/recovery may use seed material; ordinary
   deploys may not.
 
-## Open questions
+## Decisions
 
-- **Machine authentication mechanism.** Select the supported unattended Bitwarden client
-  flow and its exact Key Storage/Semaphore fields. This must be settled before construction;
-  the Vaultwarden admin token alone is not treated as item-vault authentication.
-- **Cutover marker location.** It must survive repository refreshes, contain no secret, and
-  be available before Ansible starts. Prefer runner state under `/etc/homelab-infra/`.
-- **Break-glass recovery.** Define how an operator supplies temporary seed material and
-  deliberately re-enters recovery mode without weakening the normal-job guard.
-- **Write failure compensation.** For APIs that reveal a secret only after mutation, define
-  whether a failed vault write triggers immediate token revocation or leaves the job failed
-  with a named manual recovery action.
+- **Machine authentication:** Bitwarden CLI personal API-key login plus master-password
+  unlock for a dedicated automation account; three individually encrypted job secrets.
+- **Cutover marker:** `/etc/homelab-infra/state/vault-mode`.
+- **Break glass:** confirmation-gated recovery job and
+  `rundeck/VAULTWARDEN-RECOVERY.md`; no implicit fallback.
+- **Write compensation:** PBS revokes a newly created token when vault persistence fails;
+  generate-before-apply producers store and verify before mutation.
 - **Rotation.** Item storage makes rotation possible but does not schedule it; automated
   rotation remains out of scope for this slice.

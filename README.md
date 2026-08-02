@@ -20,11 +20,14 @@ the rest of the documentation obvious.
 |---|---|---|
 | **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
 | **Where** | as root on a Proxmox node | in the Rundeck/Semaphore UI |
-| **Builds** | the machine that runs the automation, then invokes Ansible for the preliminary secret store | the remaining services the automation manages |
-| **Produces** | an LXC with Rundeck, Ansible, this repo, your Proxmox credential, your config and every job imported; plus the tagged Vaultwarden LXC | reconciled Vaultwarden, Ntfy, Caddy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
+| **Builds** | the runner, Caddy, and Vaultwarden in temporary Seed mode | the remaining services in mandatory Vault mode |
+| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, and explicit enrollment/cutover jobs | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
 | **Run it** | once, by hand | once, by clicking |
 
-There is no manual step between them.
+Between them is one unavoidable human ceremony: choose the owner and automation-account
+master passwords inside Vaultwarden, create the automation API key, stage its three values
+as encrypted job secrets, and run the verified cutover. The initial script brings up every
+component needed to perform that ceremony; it never asks for those passwords.
 
 ### 1. Stand up the runner
 
@@ -35,7 +38,7 @@ scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
 ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
 ```
 
-It will ask you about six things it cannot discover — your lab domain, the guest network,
+It asks for the lab domain, first-owner and automation-account email addresses, the guest network,
 a timezone, and which reverse proxy / SSO / notification / DNS providers you want. Every
 answer has a default except the domain, and every answer can be supplied as an environment
 variable instead, so the whole thing scripts:
@@ -50,20 +53,22 @@ Proxmox user with a scoped role, mints that user's API token and puts it straigh
 Rundeck Key Storage, generates the SSH key the platform will use to reach its guests,
 writes `config/proxmox.yml` and `config/infrastructure.yml`, creates the Rundeck project,
 imports every job, and tags its own container so the platform manages it like any other
-guest it created. Its last deployment step invokes the normal Vaultwarden app playbook
-inside the new runner, so the command returns with the secret-store LXC online and tagged
-for inventory adoption. Set `DEPLOY_VAULTWARDEN=0` only when you deliberately need a
-runner-only recovery.
+guest it created. Its last deployment sequence brings up Caddy first, then Vaultwarden and
+its HTTPS route, and sends the exact owner invitations while keeping public signups off.
+Set `DEPLOY_VAULTWARDEN=0` only for deliberate runner-only recovery.
 
 Re-running it converges: it rotates no credential and overwrites no answer you already
 gave.
 
 ### 2. Stand up the lab
 
-Open the Rundeck URL it printed and run **Bootstrap Platform**.
+Open the Rundeck URL it printed. Complete **Vaultwarden Enrollment**, create the dedicated
+automation account, `homelab-infra` organization and `platform-secrets` collection, then
+stage the account's client ID, client secret and master password in the named encrypted
+Key Storage entries. Run **Vaultwarden Cutover**; it imports and reads back every seed
+secret before writing the marker and deleting seed files. Then run **Bootstrap Platform**.
 
-That reconciles the already-tagged Vaultwarden LXC first—using the same idempotent
-playbook that created it—then deploys Ntfy, the reverse proxy, Authentik, Uptime Kuma,
+That reconciles the already-tagged Caddy and Vaultwarden LXCs, then deploys Ntfy, Authentik, Uptime Kuma,
 Prometheus + Grafana and PBS. Each step records its own connection details before the next
 one needs them, so the run is resumable: if something fails, fix it and run the job again.
 
@@ -120,13 +125,16 @@ group do it from the UI:
 
 | Secret | Home |
 |---|---|
-| Proxmox API token | Rundeck Key Storage / Semaphore environment — minted by the bootstrap script, never written to a config file |
-| Vaultwarden admin token | the same, produced by bootstrap step 1 |
-| Everything else | Vaultwarden, generated automatically |
+| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage, or Semaphore encrypted secret variables |
+| Vaultwarden admin token | AES-GCM-encrypted external runner storage; it administers the server but cannot decrypt vault items |
+| Cloudflare DNS-01 token | temporary AES-GCM runner storage during Seed mode, then `homelab-infra/reverse_proxy` in Vaultwarden |
+| Proxmox, runner SSH, and generated service credentials | canonical organization-owned Vaultwarden items after verified cutover |
+| Rundeck API token | AES-GCM Key Storage, injected only into control-plane jobs |
 
-There is **no Ansible Vault**, ever. `config/proxmox.yml` carries the shape of your
-Proxmox connection and deliberately not its secret, so the file can be read, reviewed,
-diffed and copied around while the one privileged value stays in exactly one place.
+There is **no Ansible Vault**, ever. Seed files exist only while bringing up Caddy and
+Vaultwarden. After the explicit cutover marker, every mutating job unlocks Vaultwarden
+before Ansible starts and fails closed if it cannot. `config/.generated/facts.yml` contains
+topology only; secret-shaped fields are rejected.
 
 ## What this project will and will not do
 
@@ -145,6 +153,7 @@ diffed and copied around while the one privileged value stays in exactly one pla
 - Proxmox VE 8 or 9, with root on a node
 - One free IP and VMID for the runner
 - A domain you control (it does not need to be public; internal-only labs work)
+- A Cloudflare API token scoped to Zone Read plus DNS Edit for that domain when using the default Caddy DNS-01 setup; no public app records or inbound WAN ports are required
 
 Debian 13 for the runner is not incidental: `community.proxmox` needs ansible-core ≥ 2.17,
 which needs a Python 3.11+ controller.
