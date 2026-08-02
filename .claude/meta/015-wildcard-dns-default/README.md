@@ -1,103 +1,114 @@
-# 015 — Wildcard DNS as the default path
+# 015 — Caddy-first wildcard HTTPS bootstrap
 
 **Status:** open
-**Depends on:** none (docs, defaults and one prompt; no wiring logic changes)
-**Blocks:** any honest claim that a lab on a consumer router is supported
+**Depends on:** 402 (Caddy app), 407 (Caddy DNS-01), 500 (bootstrap plays)
+**Blocks:** 016 (Vaultwarden identities), 014 (Vaultwarden secret store), every honest
+Vaultwarden or Authentik live-acceptance claim
 
 ## Problem
 
-A homelab on a stock ISP router — GFiber, an Eero, a carrier gateway — has no DNS API.
-The platform supports that lab perfectly well at the code level and tells it nothing.
+The live run deployed Vaultwarden before Caddy and proved only Vaultwarden's direct health
+endpoint and admin-token sink. The web vault needs an HTTPS secure context, while the current
+bootstrap neither establishes wildcard DNS/certificate trust first nor collects the DNS-01
+credential its Caddy implementation expects. Authentik has the same unproved external-origin
+boundary. A green bootstrap can therefore leave the control plane present but unusable.
 
-Mechanically, `none` is already a clean no-op: all nine wiring call sites guard with
-`homelabinfra_infra.dns.provider | default('none') != 'none'`, and `bootstrap-rundeck.sh`
-already defaults `LAB_DNS` to `none`. Nothing is forced. **The defect is entirely in what
-the project presents**, and it presents DNS automation as part of the core promise:
+## Goal
 
-| Where | What it says |
-|---|---|
-| `README.md:6` | the headline promise — "…adds an uptime monitor and **creates its DNS record** — in one job" |
-| `README.md:74` | Deploy Sonarr yields an app "…and **resolvable in DNS**" |
-| `config.example/infrastructure.yml:dns` | ships `provider: opnsense` with a live IP — the example presumes an API-driven resolver |
-| `bootstrap-rundeck.sh:521` | prompt reads `pihole \| adguard \| opnsense \| none` — three API providers and a bare escape hatch |
-| *nowhere* | **what a `none` lab does instead.** "wildcard" appears once in the repo, in 407, about certificates |
+Make a serving wildcard HTTPS route the first platform service established after the
+Rundeck runner. Vaultwarden and Authentik must be reached through that route before their
+web vault, account bootstrap, API authentication, or SSO behavior is tested.
 
-So the consumer-router operator answers `none`, clicks Deploy Sonarr, gets a working Caddy
-route at `sonarr.example.com`, and it does not resolve — with no error, because the no-op is
-correct, and no document explaining the missing half. The one-click promise silently
-delivers three of its four parts.
+The fresh-lab order becomes:
 
-**The supported path is simpler than the automated one, which is why this is a
-presentation bug and not a feature request.** One wildcard record — `*.<domain> A <proxy-ip>`
-— created once by hand at the router or registrar, resolves every app the platform will ever
-deploy. No API, no credential, no per-deploy DNS write, and it does not drift as apps come
-and go. For most labs that is not a degraded fallback; it is fewer moving parts than
-reconciling a record per app.
+1. create the runner and temporary bootstrap keys;
+2. deploy Caddy;
+3. establish wildcard name resolution for `*.domain` to Caddy;
+4. issue and verify the selected wildcard certificate;
+5. deploy and wire Vaultwarden through Caddy;
+6. initialize Vaultwarden identities (016);
+7. continue the remaining baseline services in Vault mode (014).
 
-### Second defect, same seam: a declared provider with no way to credential it
+This replaces the current `Vaultwarden -> Ntfy -> Caddy` order. Caddy and its certificate
+path must no-op cleanly when Ntfy is not present; notifications are not a bootstrap
+dependency.
 
-`bootstrap-rundeck.sh` offers `opnsense` at the `LAB_DNS` prompt and writes `dns.provider`
-and `dns.host`, but **never prompts for `dns.api_key` / `dns.api_secret`**, and no bootstrap
-task writes them into `.generated/facts.yml`. `tasks/wiring/opnsense.yml:60-61` hard-asserts
-both. So answering `opnsense` at that prompt authors a config that is guaranteed to abort at
-the first app's wiring step.
+## Modes
 
-The assert is correct and must stay — `specs/provider-noop-wiring.md` makes absent/`none` a
-silent no-op, and a provider the operator explicitly declared but that cannot work should
-fail loudly rather than ship apps with no DNS record and no signal. **The script is the
-thing that is wrong**: it must collect the credential alongside the provider choice, exactly
-as it already does for the Proxmox token. `ansible/vars/CONTRACT.md:189` compounds this by
-marking `dns.api_key` "optional" when it is mandatory for every credentialed provider.
+Bootstrap asks for one explicit HTTPS mode and writes the matching config.
+
+### Public certificate (`acme-dns01`)
+
+- Collect the DNS provider, zone/domain, ACME email, and a zone-scoped DNS-edit token.
+- Store the token as a password entry in Rundeck Key Storage, not in config files.
+- Inject it only into the Caddy deploy through a secure Key-Storage-backed job option.
+- Validate the selected `caddy-dns` module's real credential field; the present generic
+  `api_token` shape is not assumed to work for every provider.
+- Create or verify wildcard DNS and issue `domain` + `*.domain` certificates through DNS-01
+  without exposing port 80.
+
+### Private certificate (`internal`)
+
+- Create or verify the wildcard record in LAN DNS, or emit the exact record the operator
+  must add when the DNS service has no supported API.
+- Export Caddy's root CA as a Rundeck execution artifact and print its SHA-256 fingerprint,
+  target trust stores, and exact installation commands.
+- Stop before Vaultwarden account setup until the runner trusts that CA and an HTTPS probe
+  through the public hostname succeeds.
+
+`none` remains a valid DNS automation provider. It means "emit and verify the required
+manual wildcard record," not "continue with an unresolvable hostname."
+
+## Automation and manual handoff
+
+The bootstrap performs every supported action itself. When a provider or client trust store
+cannot be changed safely, it exits at a named checkpoint with a non-secret handoff containing:
+
+- exact DNS record name, type, and value;
+- certificate mode and expected issuer;
+- CA artifact path and fingerprint for internal mode;
+- a copy/paste verification command;
+- the exact job or command to resume.
+
+No output contains a DNS API token, certificate private key, or other credential.
 
 ## Files
 
-- `README.md:6,74` — stop promising an automatic DNS record unconditionally. State the two
-  paths: one wildcard record (default), or a DNS provider that writes a record per app.
-- `README.md` setup section — name the single record to create, before the reader hits it.
-- `config.example/infrastructure.yml` — ship `provider: none` with the wildcard explained in
-  place; demote `opnsense` to the commented alternative, with its `api_key`/`api_secret`
-  uncommented as required-when-used.
-- `rundeck/bootstrap-rundeck.sh:521` — reword the prompt so `none` reads as a real choice
-  ("wildcard — one manual record") rather than an opt-out.
-- `rundeck/bootstrap-rundeck.sh:522-524` — when a credentialed provider IS chosen, prompt for
-  `api_key`/`api_secret` and stage them the way the Proxmox token is staged.
-- `ansible/playbooks/apps/caddy.yml` — after the proxy's address is known, emit the exact
-  record the operator must create (`*.<domain> A <proxy-ip>`) to the job log, and via
-  `tasks/notify.yml` when notifications are configured.
-- `ansible/vars/CONTRACT.md:189` — `dns.api_key` is required when `dns.provider` is a
-  credentialed provider, not "optional".
-
-## Approach
-
-- **Reframe, do not rebuild.** No wiring task changes. The no-op path already works; this
-  slice makes it the documented, named, defaulted path.
-- **The platform already knows the answer.** Caddy's IP is in `homelabinfra_infra` by the
-  time any app wires. Print the record rather than making the operator derive it.
-- **A declared provider must be credentialable at the moment it is declared.** Provider
-  choice and credential are one decision; splitting them across two layers is what produced
-  the guaranteed-abort config.
-- **Be honest about the limit of the zero-API story.** A real public domain still needs a
-  registrar API token for Caddy's DNS-01 challenge (slice 407). Wildcard DNS removes the
-  per-app record, not every credential. HTTP-01 or an internal CA is the true zero-API TLS
-  path and should be named as such.
+- `rundeck/bootstrap-rundeck.sh` — collect HTTPS mode and public inputs; stage the DNS token
+  in Key Storage; deploy Caddy before Vaultwarden; support resumable checkpoints.
+- `rundeck/jobs/bootstrap.yaml` and the Caddy job — expose only the required
+  Key-Storage-backed secure option.
+- `ansible/playbooks/bootstrap.yml` — order Caddy before Vaultwarden and gate every later
+  service on the HTTPS preflight.
+- `ansible/playbooks/apps/caddy.yml`, `ansible/roles/caddy/` — consume the selected mode,
+  reconcile wildcard policy, and verify certificate issuance without logging credentials.
+- `ansible/tasks/wiring/caddy.yml` — wire Vaultwarden immediately after deployment and verify
+  its external HTTPS origin.
+- `config.example/infrastructure.yml`, `config.example/apps/caddy.example.yml` — keep provider
+  choice and identifiers only; replace inline token examples with Key Storage paths.
+- `rundeck/README.md` and root documentation — describe both modes and the manual checkpoint.
 
 ## Acceptance
 
-- [ ] A reader on a stock ISP router can go from clone to a resolving app using only
-      `README.md`, and the one manual record is stated before they need it
-- [ ] `config.example/infrastructure.yml` defaults to the wildcard path
-- [ ] The bootstrap prompt presents the wildcard path as a first-class choice
-- [ ] Choosing `opnsense` (or any credentialed provider) at bootstrap collects its
-      credentials, and a subsequent app deploy wires DNS successfully — no config that
-      parses but cannot work
-- [ ] A Caddy deploy names the exact wildcard record to create, in the job log
-- [ ] `CONTRACT.md` states `dns.api_key` is required for credentialed providers
+- [ ] A fresh bootstrap deploys Caddy before Vaultwarden, with no Ntfy dependency
+- [ ] `https://vaultwarden.<domain>/alive` succeeds from the runner with hostname and
+      certificate verification enabled before identity bootstrap starts
+- [ ] Public mode issues a certificate covering the apex and wildcard via DNS-01 without
+      exposing port 80
+- [ ] Internal mode exports the CA, reports its fingerprint, and pauses until runner trust is
+      verified
+- [ ] A provider with no supported API receives an exact wildcard-DNS handoff and a resumable
+      checkpoint rather than a misleading success
+- [ ] Re-running after the manual action resumes at verification and does not rotate the
+      certificate, DNS token, or Caddy identity
+- [ ] No DNS credential or certificate private key appears in config, logs, artifacts, or
+      generated facts
 
-## Notes
+## Decisions
 
-Raised by the operator 2026-08-01, during the first from-scratch runner bootstrap, on
-the observation that requiring a DNS provider and host up front "could be very rough if
-we're requiring usage… what if someone doesn't run OPNsense and just the standard GFiber
-or whatever router". The credential gap was found in the same session while choosing
-`LAB_DNS` for that run; `none` was selected precisely because the credentialed path could
-not have worked.
+- **HTTPS is a prerequisite, not wiring polish.** Vaultwarden's web vault requires a secure
+  context, and Authentik's browser behavior is evaluated only through its HTTPS origin.
+- **Wildcard is the bootstrap DNS contract.** Per-app DNS writes may remain, but a single
+  wildcard record is sufficient to bring up the platform control plane.
+- **Manual work is a checkpoint.** Unsupported DNS and client trust changes produce exact,
+  verifiable output and an explicit resume action.

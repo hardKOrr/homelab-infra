@@ -1,4 +1,4 @@
-# 016 — Split routing.proxy into proxy selection and access
+# 017 — Split routing.proxy into proxy selection and access
 
 **Status:** done — implemented 2026-08-02, both gates green. Hard rename, no alias.
 **Depends on:** 300 (Caddy wiring), 005 (instance-file schema)
