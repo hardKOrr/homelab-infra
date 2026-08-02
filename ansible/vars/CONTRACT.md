@@ -294,7 +294,8 @@ domains:
     domain: foxglove.example.com
     dns_challenge:                 # optional — per-estate ACME DNS-01 (caddy role)
       provider: cloudflare         # any github.com/caddy-dns/<provider> module
-      api_token: "..."             # scoped to THIS domain; referenced only from its
+      api_token: "..."             # provider-specific fields retain native names;
+                                   # scoped to THIS domain; referenced only from its
                                    # own TLS policy (third deliberate secret exception,
                                    # alongside dns.host and vaultwarden.admin_token)
 ```

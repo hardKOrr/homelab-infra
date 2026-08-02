@@ -774,6 +774,21 @@ VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-$(in_ct "$VENV_DIR
 [ -n "$VAULTWARDEN_AUTOMATION_EMAIL" ] || VAULTWARDEN_AUTOMATION_EMAIL="homelab-infra@$LAB_DOMAIN"
 in_ct sh -c "grep -q '^BW_SERVER=' '$LAB_ETC/lab-run.env' || printf '%s\\n' 'BW_SERVER=https://vaultwarden.$LAB_DOMAIN' >> '$LAB_ETC/lab-run.env'"
 
+# A converged pre-cutover rerun keeps the authored provider choice, but still needs
+# its temporary credential to reconcile Caddy and restage Key Storage. The guided
+# bootstrap currently knows how to collect Cloudflare's option schema; manually
+# authored providers retain their own options and use their normal recovery path.
+LAB_REVERSE_PROXY="${LAB_REVERSE_PROXY:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("reverse_proxy") or {}).get("provider", "none"))' "$CONFIG_INFRA")}"
+LAB_ACME_DNS_PROVIDER="${LAB_ACME_DNS_PROVIDER:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])) or {}; print((((d.get("reverse_proxy") or {}).get("dns_challenge") or {}).get("provider", "")))' "$CONFIG_INFRA")}"
+if [ "$DEPLOY_VAULTWARDEN" = "1" ] \
+   && ! ct_file_exists "$LAB_ETC/state/vault-mode" \
+   && [ "$LAB_REVERSE_PROXY" = "caddy" ] \
+   && [ "$LAB_ACME_DNS_PROVIDER" = "cloudflare" ] \
+   && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  ask_secret CLOUDFLARE_API_TOKEN \
+    "Cloudflare API token (Zone Read + DNS Edit for the lab zone)"
+fi
+
 # ── Describe the runner as an instance ─────────────────────────────────────────
 # The runner is a guest this platform now manages, so it gets an instance file like any
 # other. Nothing deploys from it — the script owns the runner's creation, because it must:
@@ -1211,7 +1226,7 @@ info "recorded the runner registry key in config/.generated/facts.yml"
 # app deployment into the host bootstrap so the script returns with the secret
 # store online. apps/vaultwarden.yml refreshes dynamic inventory, creates the LXC
 # when absent, and reuses `tag_vaultwarden` on every later run.
-if [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
+if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ! ct_file_exists "$LAB_ETC/state/vault-mode"; then
   log "Seed phase: deploy Caddy, Vaultwarden and the HTTPS Vaultwarden route"
   if ! ct_file_exists "$LAB_ETC/secrets.env"; then
     die "cannot deploy Vaultwarden: $LAB_ETC/secrets.env is absent.
@@ -1219,14 +1234,17 @@ The Proxmox token secret cannot be re-read; re-run with ROTATE_PROXMOX_TOKEN=1
 to mint a token the runner can use."
   fi
 
-  LAB_REVERSE_PROXY="${LAB_REVERSE_PROXY:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("reverse_proxy") or {}).get("provider", "none"))' "$CONFIG_INFRA")}"
   [ "$LAB_REVERSE_PROXY" = "caddy" ] || die "first-owner enrollment requires Caddy HTTPS; infrastructure.reverse_proxy.provider is '$LAB_REVERSE_PROXY'"
 
-  in_ct sudo -u rundeck env \
+  # Carry the secret on stdin, then expose it only in the child process environment.
+  # pct/sudo command arguments and the Ansible extra-vars list remain non-secret.
+  printf '%s\n' "${CLOUDFLARE_API_TOKEN:-}" | in_ct sudo -u rundeck env \
     HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
-    CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}" \
-    ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" \
-    /usr/local/bin/lab-run playbooks/apps/caddy.yml -e instance=caddy
+    ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" bash -c '
+      IFS= read -r CLOUDFLARE_API_TOKEN
+      export CLOUDFLARE_API_TOKEN
+      exec /usr/local/bin/lab-run playbooks/apps/caddy.yml -e instance=caddy
+    '
 
   # Vaultwarden comes up behind an already-live proxy. Its wiring pass adds the
   # HTTPS route immediately, so the enrollment URL is the first supported entry.
@@ -1263,6 +1281,8 @@ to mint a token the runner can use."
   else
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
   fi
+elif [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
+  info "Vault mode is already active — skipping the preliminary Seed-only app phase"
 else
   warn "DEPLOY_VAULTWARDEN=0 — runner created without the preliminary secret store"
 fi

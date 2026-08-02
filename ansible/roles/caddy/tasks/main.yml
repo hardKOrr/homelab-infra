@@ -81,7 +81,7 @@
 
 # ── DNS-challenge TLS (per-estate) ────────────────────────────────────────────
 # Estates declared in config/infrastructure.yml `domains:` may carry a
-# dns_challenge block (provider + api_token); single-domain labs declare the
+# dns_challenge block (provider + provider-specific options); single-domain labs declare the
 # provider under infrastructure.reverse_proxy.dns_challenge. The token is supplied
 # temporarily by CLOUDFLARE_API_TOKEN in Seed mode and by the canonical
 # homelab-infra/reverse_proxy Vaultwarden item after cutover. app.dns_challenge is
@@ -111,12 +111,24 @@
     that:
       - item.domain | default('') | length > 0
       - item.dns_challenge.provider | default('') | length > 0
-      - item.dns_challenge.api_token | default('') | length > 0
+      - _caddy_provider_options | length > 0
     fail_msg: >-
-      Caddy DNS-01 needs a domain, provider and API token. During Seed mode supply
-      CLOUDFLARE_API_TOKEN; after cutover store dns_api_token in
-      homelab-infra/reverse_proxy.
+      Caddy DNS-01 needs a domain, provider, and that provider's configuration
+      fields. The guided Cloudflare path receives api_token from
+      CLOUDFLARE_API_TOKEN in Seed mode and homelab-infra/reverse_proxy after
+      cutover; other modules retain their own option names.
   loop: "{{ _caddy_dns_domains }}"
+  vars:
+    _caddy_challenge_option_names:
+      - resolvers
+      - ttl
+      - propagation_delay
+      - propagation_timeout
+      - override_domain
+    _caddy_provider_options: >-
+      {{ item.dns_challenge | dict2items
+         | rejectattr('key', 'in', ['provider'] + _caddy_challenge_option_names)
+         | list | items2dict }}
   no_log: true
 
 - name: List installed Caddy modules
@@ -147,15 +159,30 @@
            'subjects': ['*.' ~ item.domain, item.domain],
            'issuers': [ {'module': 'acme',
                          'challenges': {'dns': {
-                           'provider': {'name': item.dns_challenge.provider,
-                                        'api_token': item.dns_challenge.api_token},
-                           'resolvers': item.dns_challenge.resolvers
-                                        | default(['1.1.1.1:53', '1.0.0.1:53'])}}
+                           'provider': ({'name': item.dns_challenge.provider}
+                                        | combine(_caddy_provider_options, recursive=True))}
+                           | combine(_caddy_challenge_options, recursive=True)}}
                         | combine({'email': app_config.app.acme_email}
                                   if app_config.app.acme_email | default('') | length > 0
                                   else {}) ]
          } ] }}
   loop: "{{ _caddy_dns_domains }}"
+  vars:
+    _caddy_challenge_option_names:
+      - resolvers
+      - ttl
+      - propagation_delay
+      - propagation_timeout
+      - override_domain
+    _caddy_provider_options: >-
+      {{ item.dns_challenge | dict2items
+         | rejectattr('key', 'in', ['provider'] + _caddy_challenge_option_names)
+         | list | items2dict }}
+    _caddy_challenge_options: >-
+      {{ {'resolvers': ['1.1.1.1:53', '1.0.0.1:53']}
+         | combine(item.dns_challenge | dict2items
+                   | selectattr('key', 'in', _caddy_challenge_option_names)
+                   | list | items2dict, recursive=True) }}
   no_log: true   # policy bodies carry API tokens
 
 # ── Base configuration ────────────────────────────────────────────────────────
@@ -232,7 +259,6 @@
       ExecStart=
       ExecStart=/usr/bin/caddy run --config {{ caddy_config_file }} --resume
       ExecReload=
-      ExecReload=/usr/bin/caddy reload --config {{ caddy_config_file }} --force
   notify: Restart caddy
 
 # ── Make sure the base configuration can actually be applied ──────────────────

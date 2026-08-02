@@ -36,7 +36,8 @@ domain: "homelab.example.com"
 #     domain: "second-domain.example.com"
 #     dns_challenge:               # optional — public certs without opening port 80
 #       provider: cloudflare       # any github.com/caddy-dns/<provider> module
-#       # api_token is read from homelab-infra/estates/foxglove/dns after cutover
+#       # Provider-specific fields stay flat in this block. For Cloudflare,
+#       # api_token is read from homelab-infra/estates/foxglove/dns after cutover.
 
 # ── Reverse Proxy ──────────────────────────────────────────────────────────────
 # provider: caddy | nginx | none
@@ -58,6 +59,8 @@ reverse_proxy:
   # homelab-infra/reverse_proxy field dns_api_token.
   dns_challenge:
     provider: cloudflare
+    # Provider-specific fields stay flat beside provider. The guided Cloudflare
+    # path injects api_token; other caddy-dns modules keep their native field names.
     # Public resolvers keep ACME propagation checks independent of local Unbound
     # overrides in a split-horizon lab.
     resolvers:

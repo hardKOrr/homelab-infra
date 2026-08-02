@@ -120,7 +120,7 @@
          if _env_vw_token | length > 0 else {} }}
     _env_reverse_proxy: >-
       {{ {'infrastructure': {'reverse_proxy': {'dns_challenge': {
-           'provider': 'cloudflare', 'api_token': _env_cf_token}}}}
+           'api_token': _env_cf_token}}}}
          if _env_cf_token | length > 0 else {} }}
   no_log: true
 
@@ -129,7 +129,6 @@
     homelabinfra_config: >-
       {{ homelabinfra_config
          | combine({'infrastructure': {'reverse_proxy': {'dns_challenge': {
-             'provider': 'cloudflare',
              'api_token': homelabinfra_vault.reverse_proxy.dns_api_token}}}}, recursive=True) }}
   when:
     - homelabinfra_vault.reverse_proxy.dns_api_token | default('') | length > 0

@@ -42,6 +42,18 @@ options = {item["name"]: item for item in job["options"]}
 for name in ("cloudflare_api_token", "bw_clientid", "bw_clientsecret", "bw_password"):
     assert options[name]["required"] is False, name
 PY
+
+# Provider selection stays authored and provider-specific fields are passed through
+# without forcing every caddy-dns module into Cloudflare's api_token schema.
+! grep -A4 '_env_reverse_proxy:' "$repo/ansible/tasks/load-user-vars.yml" \
+  | grep -q "'provider': 'cloudflare'" \
+  || fail "the Cloudflare secret overlay rewrites the selected DNS provider"
+grep -q "rejectattr('key', 'in', \['provider'\] + _caddy_challenge_option_names)" \
+  "$repo/ansible/roles/caddy/tasks/main.yml" \
+  || fail "Caddy does not preserve provider-specific DNS module options"
+grep -q '^      ExecReload=$' "$repo/ansible/roles/caddy/tasks/main.yml" \
+  || fail "Caddy reload can reapply the empty-route base config"
+
 python3 "$repo/rundeck/render-job.py" \
   "$repo/rundeck/jobs/vaultwarden-cutover.yaml" > "$work/cutover-job.yml"
 grep -q 'storagePath: keys/project/homelab-infra/bootstrap/cloudflare-api-token' \

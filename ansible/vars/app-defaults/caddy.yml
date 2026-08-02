@@ -44,7 +44,8 @@ caddy_defaults:
     # from its own domain's TLS policy.
     # dns_challenge:
     #   provider: cloudflare    # any github.com/caddy-dns/<provider> module
-    #   api_token: ""           # legacy Seed/recovery input only; never commit it
+    #   api_token: ""           # provider-specific fields retain native names;
+    #                           # legacy Seed/recovery input only; never commit it
 
   update:
     github_repo: caddyserver/caddy   # used by lab-update-check for the release notes link
