@@ -29,6 +29,33 @@ master passwords inside Vaultwarden, create the automation API key, stage its th
 as encrypted job secrets, and run the verified cutover. The initial script brings up every
 component needed to perform that ceremony; it never asks for those passwords.
 
+### 0. Make the lab domain reach the lab Caddy
+
+One network prerequisite has to be true before the ceremony in the middle is possible, and
+it is the only thing this project cannot arrange for you.
+
+Layer 1 finishes by putting Vaultwarden behind an HTTPS route on the Caddy it just built,
+and the enrollment ceremony is performed in a browser at `https://vaultwarden.<your
+domain>`. That URL has to resolve — from the runner and from your workstation — to the new
+Caddy LXC, and the path to it on ports 80/443 has to be open. So:
+
+- **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy
+  LXC in whatever resolver your LAN uses. Once `dns.provider` is configured and Vaultwarden
+  holds its API key, later app deploys create their own records automatically — this first
+  one is the exception, because it is what the cutover that unlocks that key depends on.
+- **Reachability.** If clients and the Caddy LXC sit on different VLANs or subnets, the
+  router has to permit that traffic to 80/443. Same-subnet labs have nothing to do.
+- **Source networks.** Caddy enforces `reverse_proxy.internal_cidrs` on every app whose
+  `routing.access` is `internal` (the default), so list the subnets your clients actually
+  come from. Split DNS is not treated as an access control. An app is reachable from
+  anywhere only when you set `routing.access: public` on it deliberately.
+
+None of this involves the public internet. Certificates are obtained over **DNS-01**
+(`reverse_proxy.dns_challenge`), which proves domain control through your DNS provider's
+API — the CA never connects to your lab, so no public A record and no inbound WAN port is
+required. If you already run a reverse proxy on your WAN's 80/443, it keeps those ports and
+is untouched: the lab Caddy listens on its own address.
+
 ### 1. Stand up the runner
 
 On any Proxmox node, as root:
@@ -154,6 +181,7 @@ topology only; secret-shaped fields are rejected.
 - One free IP and VMID for the runner
 - A domain you control (it does not need to be public; internal-only labs work)
 - A Cloudflare API token scoped to Zone Read plus DNS Edit for that domain when using the default Caddy DNS-01 setup; no public app records or inbound WAN ports are required
+- A LAN resolver entry pointing the domain tree at the Caddy LXC, and router rules allowing your clients to reach it on 80/443 — see [step 0](#0-make-the-lab-domain-reach-the-lab-caddy)
 
 Debian 13 for the runner is not incidental: `community.proxmox` needs ansible-core ≥ 2.17,
 which needs a Python 3.11+ controller.

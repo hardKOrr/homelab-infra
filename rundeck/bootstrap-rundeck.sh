@@ -1246,6 +1246,14 @@ to mint a token the runner can use."
       exec /usr/local/bin/lab-run playbooks/apps/caddy.yml -e instance=caddy
     '
 
+  # The address every lab hostname has to resolve to. Read back from the registry key
+  # the deploy just wrote, so the guidance below names a real IP rather than a shape.
+  CADDY_ADDR="$(in_ct "$VENV_DIR/bin/python3" -c 'import re,sys,yaml
+d = yaml.safe_load(open(sys.argv[1])) or {}
+print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host") or "")))' \
+    "$REPO_DIR/config/.generated/facts.yml" 2>/dev/null || true)"
+  CADDY_ADDR="${CADDY_ADDR:-}"
+
   # Vaultwarden comes up behind an already-live proxy. Its wiring pass adds the
   # HTTPS route immediately, so the enrollment URL is the first supported entry.
   in_ct sudo -u rundeck env \
@@ -1276,7 +1284,12 @@ to mint a token the runner can use."
         /usr/local/bin/lab-run playbooks/maintenance/vaultwarden-enroll.yml
     else
       warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
-      info "create/verify DNS and certificate reachability, then run Vaultwarden Enrollment"
+      info "Caddy is up${CADDY_ADDR:+ at $CADDY_ADDR} — the name has to resolve there and"
+      info "the path to it on 443 has to be open before enrollment can run. Point"
+      info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
+      info "allow client subnets to reach it, then run the Vaultwarden Enrollment job."
+      info "Certificates come from DNS-01, so no public record and no inbound WAN port"
+      info "are involved."
     fi
   else
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
@@ -1299,6 +1312,11 @@ cat <<EOF
     Proxmox    $PVE_USER (role $PVE_ROLE), token secret in Key Storage
     Vaultwarden $([ "$DEPLOY_VAULTWARDEN" = "1" ] && printf '%s' 'deployed with Caddy; enrollment/cutover required' || printf '%s' 'skipped (runner-only mode)')
     Creds      pct exec $VMID -- cat $CRED_FILE
+
+    NETWORK: every lab hostname is served by Caddy${CADDY_ADDR:+ at $CADDY_ADDR}. Lab
+    hostnames must resolve there in your LAN resolver and client subnets must be allowed
+    to reach it on 80/443. Certificates are issued over DNS-01, so no public record and no
+    inbound WAN port are involved, and an existing internet-facing proxy keeps its ports.
 
     NEXT: open $RD_URL, finish Vaultwarden Enrollment, stage the three automation
     credentials, and run Vaultwarden Cutover. Only then run Bootstrap Platform;
