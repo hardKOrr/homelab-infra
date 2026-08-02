@@ -16,7 +16,7 @@ Gates (current as of 2026-08-01): `wsl bash -lc 'bash .claude/gate/lint.sh'` pas
 Jinja expression in `ansible/`; `.claude/gate/test.sh` syntax-checks every playbook clean.
 **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **12 done · 29 built · 4 open.**
+Counts: **13 done · 29 built · 4 open.**
 
 **`Bootstrap Platform` ran green on 2026-08-01** — executions 7, 8 and 9, API-triggered, all
 seven baseline services, converging to `changed=0` on the hosts that can reach it. That is
@@ -25,6 +25,13 @@ blockers** (16–40) on top of the fifteen below; full account in
 [012's notes](012-runner-onboarding/notes.md). Live layout: Vaultwarden .10, Ntfy .11,
 Caddy .12, Authentik on `sso-stack` .16, Uptime Kuma + Prometheus/Grafana on
 `monitoring-stack` .14, PBS .15 (VM).
+
+**That run proves resources exist and converge; it does not prove the platform is usable
+end to end.** Vaultwarden's web vault requires HTTPS, and Authentik's browser path should be
+judged through its HTTPS origin. The deployed Caddy, DNS-01 code, Vaultwarden token sink, and
+Authentik containers are component proofs, not proof of wildcard DNS, certificate issuance,
+account login, vault CRUD, or SSO. Slices 015 and 016 now name that missing control-plane
+bootstrap explicitly.
 
 **The session's finding is that almost nothing here was idempotent.** Six of the
 twenty-five (32, 36, 37, 38, 39, 40) are one defect in six costumes — an "is it already
@@ -66,7 +73,7 @@ nothing reads, so no service could record an endpoint another could load.
 
 ---
 
-## Done (12)
+## Done (13)
 
 No further work. Listed for provenance only.
 
@@ -86,12 +93,12 @@ No further work. Listed for provenance only.
 | 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) |
 | 200 | [write-generated-facts](200-write-generated-facts/README.md) |
 
-## Built — awaiting live acceptance (28)
+## Built — awaiting live acceptance (29)
 
-Every one of these is code-complete and gate-verified. **All but 504 clear on the same
-event: a live bootstrap run against the lab** (slice 500's acceptance); 504 needs a
-populated `config/` on the runner instead. Per-slice deviations and open questions live in
-each slice's `notes.md` or in a "Built" section of its README.
+Every one of these is code-complete and gate-verified. The 2026-08-01 bootstrap supplied
+component and convergence evidence for many of them, but each row keeps its unobserved
+external, browser, credential, or mutation leg explicit. Per-slice deviations and open
+questions live in each slice's `notes.md` or in a "Built" section of its README.
 
 | # | Slice | What live acceptance needs |
 |---|---|---|
@@ -99,6 +106,7 @@ each slice's `notes.md` or in a "Built" section of its README.
 | 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | one app deployed per mode |
 | 010 | [Config provenance](010-config-provenance/README.md) | the bootstrap script run on a node. The Config job group (Configure App / Get Config / Config Doctor) is verified on the workstation; nothing the script does is |
 | 012 | [Runner onboarding](012-runner-onboarding/README.md) | **first criterion observed 2026-08-01** — one command yields project + 19/19 jobs + Key Storage + config + a serving Vaultwarden. Remaining: the `Bootstrap Platform` click, Configure App / Get Config from the UI, and a job run naming its commit |
+| 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | sink write/readback proved live; HTTPS, vault identities, and item CRUD belong to 015/016/014 |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | Ntfy running (401) |
 | 202 | [configure-pbs](202-configure-pbs/README.md) | PBS running (406) |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | Caddy running (402) |
@@ -146,61 +154,59 @@ Carried caveats:
 
 ## Open (4)
 
-011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 013 and
-014 were split out of 010 on 2026-07-27; 015 was raised on 2026-08-01 during the first
-from-scratch runner bootstrap. All are design defects in shipped code or gaps between the
-documented model and the implemented one — none are new features.
+011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 014 was
+split out of 010 on 2026-07-27; 015 was reworked and 016 raised on 2026-08-02 after the first
+live run showed that component existence was being mistaken for usable HTTPS and credential
+bootstrap. All are design defects in shipped code or gaps between the documented model and
+the implemented one — none are new features.
 
 | # | Slice | Why now |
 |---|---|---|
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
-| 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | Bootstrap halts mid-run for a human to paste a console-printed token. A UI-driven bootstrap has no one to paste, and the secret's only durable copy is a clipboard. |
 | 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | CLAUDE.md's secrets model is unimplemented — `community.general.bitwarden` exists only as `todo/` stubs. Every generated token lives solely in `facts.yml` on the runner, and PBS's is unrecoverable if lost. |
-| 015 | [Wildcard DNS as the default path](015-wildcard-dns-default/README.md) | A lab on a stock ISP router has no DNS API. `none` already works as a silent no-op, but nothing documents it — README promises a DNS record per app, `config.example` presumes OPNsense, and one wildcard record would serve the whole lab. Separately, choosing a credentialed DNS provider at bootstrap authors a config that cannot work, because nothing collects its API key. |
+| 015 | [Caddy-first wildcard HTTPS bootstrap](015-wildcard-dns-default/README.md) | Vaultwarden and Authentik were deployed before their HTTPS prerequisite. Bootstrap must establish wildcard DNS, a trusted certificate, and an external probe before either identity flow starts. |
+| 016 | [Vaultwarden identities and Rundeck bootstrap keyring](016-vaultwarden-identity-bootstrap/README.md) | The admin-panel token is not a vault client credential. Establish a human owner, a limited automation account, and the small fixed Key Storage root set before 014 can move application secrets. |
 
-**013 and 014 gate the shareability claim** (010 and 012 landed 2026-07-26) and **011 gates
-the first provisioning run** — the first deploy that allocates an address bakes in whatever
-the current model produces.
+**015, 016, and 014 gate the usable/shareable platform claim** and **011 gates future
+provisioning correctness** — the next deploy that allocates an address bakes in whatever the
+current model produces.
 
 ## Recommended order
 
-1. **011 before any provisioning job runs.** The moment Deploy Vaultwarden allocates an
-   address, the flat model's output is on the wire and in the inventory. Cheaper to fix the
-   allocator than to renumber guests.
-2. **~~010 alongside it~~** and **~~012 with 010~~** — **both landed 2026-07-26**, as one
-   change, for the reason recorded here: they shared `bootstrap-rundeck.sh`, both UI job
-   sets and both READMEs, and landing them apart would have meant rewriting all four twice.
-   They stayed two documents because their acceptance criteria do not interleave — 010's is
-   "config exists, travels and validates", 012's is "one command and one click, and the
-   runner runs current `master`".
-3. **013 before the live bootstrap run.** It is small and it is the difference between a
-   bootstrap that completes unattended and one that stops halfway waiting for a paste.
-   Doing it after the live run means running the two-pass flow once and then deleting it.
-4. **Live bootstrap run** — one event converts 26 of the `built` slices. Still the largest
-   single risk-reducer in the backlog, but see the parallel-instance caveat below.
-5. **014 after the lab holds real secrets.** It is a durability change, not a correctness
-   one, and its acceptance test (delete `facts.yml`, restore from the vault) is only
-   meaningful once there is something in `facts.yml` worth losing.
+1. **015 first: make Caddy the control-plane front door.** Establish wildcard resolution,
+   a trusted certificate, and a verified Vaultwarden route. This is the shortest path from
+   "containers exist" to a platform a browser and CLI can actually use.
+2. **016 next: establish Vaultwarden identities and bounded root keys.** Prove human login
+   and machine canary CRUD, with Rundeck holding only the credentials required to open the
+   vault and its prerequisites.
+3. **014 after 016: cut application secrets over to Vaultwarden.** Replace secret-bearing
+   facts and runner files only after the real vault client path is proven.
+4. **011 before the next new guest allocation.** Existing addresses are already live; fix
+   the allocator before another deploy makes the flat model harder to unwind.
+5. **Re-run live acceptance through external origins.** Exercise Vaultwarden login/item
+   CRUD, Authentik browser sign-in, and an authenticated app route. Record component
+   existence and end-to-end usability as separate evidence.
 6. **A media app role** — 504 wires the media stack but nothing deploys it. A `sonarr` role
    writing `media.<instance>` on deploy closes the loop; until then media apps join the
    wiring through the `app.media_kind` discovery path.
 
 ### The config model, decided 2026-07-27 — implemented 2026-07-26
 
-Three provenance classes, three homes — the shape 010/013/014 build toward:
+Three provenance classes, three homes — the shape 010/013/015/016/014 builds toward:
 
 | Class | Home | Why |
 |---|---|---|
 | `proxmox.yml`, `infrastructure.yml`, `apps/*.yml` | the **runner's `config/`**, reached from the UI both ways | must pre-date the vault; humans edit it; transport is Configure App / Get Config, not a repo |
-| Proxmox token, Vaultwarden admin token | Rundeck **Key Storage** / Semaphore env | two values, never in a file, minted by bootstrap itself |
+| Bootstrap roots (Proxmox, Caddy DNS-01, Rundeck SSH, Vaultwarden admin + owner/automation unlock) | Rundeck **Key Storage** / Semaphore secret env | small fixed set that must open systems before Vaultwarden can serve application secrets; exact paths in 016 |
 | `.generated/facts.yml` (~10 service tokens) | **Vaultwarden**, file demoted to a cache | machine-written, never hand-edited, read by machines |
 
-**Two bootstrap layers, no manual seam.** `bootstrap-rundeck.sh` on a PVE node runs as root,
+**Two bootstrap layers with resumable manual checkpoints.** `bootstrap-rundeck.sh` on a PVE node runs as root,
 so it discovers what is discoverable (`pvesm`, `ip -o link`, hostname), prompts for the six
 things it cannot know, issues its own Proxmox token via `pveum` rather than asking for one,
 **writes the first class**, imports the jobs and stages Key Storage. `Bootstrap Platform` in
-the UI then builds the lab. One command, one click. Authored config is never fused with a
-secret again.
+the UI then builds the lab. DNS providers, certificate trust, and Vaultwarden account actions
+are automated when supported; otherwise the job stops with exact redacted instructions and a
+resume action. Authored config is never fused with a secret again.
 
 **No lab repo.** The morning's decision to carry the authored shape in a private git repo
 cloned into `config/` was reversed the same day: it bought only transport, and the Config

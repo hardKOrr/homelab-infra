@@ -11,8 +11,9 @@ fails. Not yet observed: the *consumer* half — no later bootstrap step has rea
 `VAULTWARDEN_ADMIN_TOKEN` back out of the sink, because nothing after Vaultwarden has run.
 That clears on the `Bootstrap Platform` click.
 **Depends on:** 400 (Vaultwarden app), 500 (bootstrap plays)
-**Blocks:** 010 (config provenance) — the unattended bootstrap path; 014 (Vaultwarden as
-the generated-secret store)
+**Blocks:** 010 (config provenance) — the unattended bootstrap path; 016 (Vaultwarden
+identities). It does not by itself unblock 014: the admin-panel token cannot authenticate a
+Bitwarden vault client.
 
 ## Problem
 
@@ -113,6 +114,11 @@ to notice a stall.
   convenience and also asked that the token not reach the log; those conflict. It now
   fires only when the sink write failed, which is the one case where the log is the token's
   only surviving copy.
+- **This is capture, not a complete credential design.** The live proof establishes that a
+  generated admin token survives a single play and can be read back by the runner. Slice 016
+  moves it into bounded Rundeck Key Storage after HTTPS exists and separately establishes the
+  human owner plus automation vault credentials. Until then, `secrets.d/vaultwarden.env` is a
+  temporary bootstrap sink, not the intended steady state.
 
 ## Verified locally, not on the runner
 
