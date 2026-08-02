@@ -46,7 +46,10 @@ APP_NAME_defaults:
 
   # ── Routing ─────────────────────────────────────────────────────────────────
   routing:
-    proxy: internal      # internal | external — which reverse proxy handles this app
+    proxy: internal      # internal | external — WHICH reverse proxy handles this app
+    access: internal     # internal | public — WHO may reach it. internal restricts the
+                         #   route to reverse_proxy.internal_cidrs; public opens it to
+                         #   every source address, i.e. the internet on a WAN-facing proxy
     identity: catalog    # none | catalog | oidc | forward_auth — how Authentik fronts this app
                          #   none         — no Authentik object at all (platform infrastructure)
                          #   catalog      — Authentik Application tile only; the app keeps its own login

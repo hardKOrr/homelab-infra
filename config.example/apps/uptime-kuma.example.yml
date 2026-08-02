@@ -39,5 +39,6 @@
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal  # internal | external
+#   access: internal # internal | public
 #   # auth stays false — forward-auth in front would also intercept /api, which is
 #   # how every app registers its monitor.

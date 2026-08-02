@@ -204,7 +204,7 @@
       {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.identity
          | default('catalog') }}
     wiring_access: >-
-      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.proxy
+      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.access
          | default('internal') }}
 
   tasks:

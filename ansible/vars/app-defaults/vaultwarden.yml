@@ -28,5 +28,6 @@ vaultwarden_defaults:
 
   routing:
     proxy: internal
+    access: internal            # LAN-only: the vault is the platform's root of trust
     identity: catalog           # catalog tile only — Vaultwarden has its own auth
                                 # (master-password E2E); never wrap it in forward_auth

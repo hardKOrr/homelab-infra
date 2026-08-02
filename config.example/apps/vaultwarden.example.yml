@@ -27,4 +27,6 @@
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal  # internal | external
+#   access: internal # internal | public. The vault is the platform's root of trust;
+#                    # publishing it puts that front door on the internet.
 #   # auth stays false — Vaultwarden has its own login; do not put Authentik in front.

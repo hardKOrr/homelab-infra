@@ -60,6 +60,11 @@
     required: false
     values: ['', 'internal', 'external']
     enforced: true
+  - name: access
+    description: 'Who may reach this app. internal restricts the route to reverse_proxy.internal_cidrs; public opens it to every source address — on a WAN-facing reverse proxy that means the internet. Blank keeps the current value.'
+    required: false
+    values: ['', 'internal', 'public']
+    enforced: true
   - name: estate
     description: Multi-domain labs only — the named estate from infrastructure.yml this app belongs to. Blank uses the default estate.
     required: false
@@ -87,7 +92,7 @@
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
-          for opt in stack network vmid cores memory disk port subdomain identity proxy estate; do
+          for opt in stack network vmid cores memory disk port subdomain identity proxy access estate; do
             var="RD_OPTION_$(printf '%s' "$opt" | tr '[:lower:]' '[:upper:]')"
             value="${!var:-}"
             [ -n "$value" ] && ARGS+=(-e "$opt=$value")

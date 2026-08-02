@@ -28,5 +28,7 @@ authentik_defaults:
 
   routing:
     proxy: internal
+    access: internal            # LAN-only by default. Set public only when remote users
+                                # must sign in from off-LAN — it is the front door to SSO
     identity: none              # Authentik IS the SSO provider — never wrap it in itself
     subdomain: auth             # default hostname auth.<domain>; override per instance

@@ -27,6 +27,7 @@ uptime_kuma_defaults:
 
   routing:
     proxy: internal
+    access: internal            # LAN-only: an uptime dashboard maps the whole estate
     identity: catalog             # catalog tile only — Uptime Kuma has its own login;
                                   # forward_auth would block the REST calls that
                                   # register monitors

@@ -232,7 +232,7 @@
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _pbs_deploy_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _pbs_deploy_host.app_config.routing.proxy | default('internal') }}"
+    wiring_access: "{{ _pbs_deploy_host.app_config.routing.access | default('internal') }}"
 
   tasks:
     # Datastore, retention, Ntfy routing, PVE storage backend and the vzdump job.

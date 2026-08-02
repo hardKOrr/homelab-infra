@@ -47,11 +47,17 @@ domain: "homelab.example.com"
 #   internal: { provider: caddy, instance: caddy }
 #   external: { provider: nginx, instance: nginx-ext }
 # Apps default to 'internal'. Override per-app with routing.proxy: external
+#
+# routing.proxy picks WHICH proxy. It says nothing about who may reach the app:
+# that is routing.access (internal | public, default internal), set per app in
+# config/apps/<instance>.yml. Nothing an app declares about its proxy can publish it.
 reverse_proxy:
   provider: caddy
   instance: caddy
-  # Caddy enforces these source networks for every app whose routing.proxy is
-  # internal. Split DNS alone is not treated as an access control.
+  # Caddy enforces these source networks for every app whose routing.access is
+  # internal. Split DNS alone is not treated as an access control. Apps with
+  # routing.access: public get no source matcher and are reachable from anywhere
+  # this proxy is.
   internal_cidrs:
     - "192.168.1.0/24"
   # DNS-01 obtains publicly trusted certificates without public A/AAAA records or

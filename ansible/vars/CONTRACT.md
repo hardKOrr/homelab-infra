@@ -182,7 +182,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `domains` | optional | map of named estates — see below |
 | `reverse_proxy.provider` | required | `caddy \| nginx \| none` |
 | `reverse_proxy.instance` | required unless provider `none` | |
-| `reverse_proxy.internal_cidrs` | required for Caddy internal routes | source CIDRs allowed to reach apps with `routing.proxy: internal` |
+| `reverse_proxy.internal_cidrs` | required for Caddy internal routes | source CIDRs allowed to reach apps with `routing.access: internal` |
 | `reverse_proxy.dns_challenge.provider` | recommended for Caddy ACME | `cloudflare` enables DNS-01 without public app records or WAN port forwarding; the token is external/Vaultwarden material |
 | `reverse_proxy.dns_challenge.resolvers` | optional | public resolvers used for DNS-01 propagation checks; defaults to Cloudflare's public resolvers so split-horizon Unbound cannot mask the temporary TXT record |
 | `sso.provider` | required | `authentik \| none` |
@@ -335,7 +335,16 @@ Caddy subdomain, and Authentik app name. Its top-level keys mirror the `<app>_de
 `vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
 as `media_stack`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
 (`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`,
-`identity`, plus optional `subdomain` and `estate`). `routing.identity` is the identity-mode
+`access`, `identity`, plus optional `subdomain` and `estate`). `routing.proxy`
+(`internal | external | none`) selects **which** reverse proxy serves the app in a two-proxy
+topology; `none` means the app is not routed at all, which is how the reverse proxy itself
+avoids routing itself. `routing.access` (`internal | public`, default `internal`) is a
+separate axis: it decides **who** may reach the app through that proxy. `internal` makes
+`tasks/wiring/caddy.yml` add a `remote_ip` matcher restricting the route to
+`reverse_proxy.internal_cidrs`; `public` emits the route with no source matcher, which on a
+WAN-facing Caddy publishes the app to the internet. The two were one flag until 2026-08-02,
+and `routing.proxy: external` no longer widens access — exposure is only ever
+`routing.access`. `routing.identity` is the identity-mode
 enum `none | catalog | oidc | forward_auth` (default `catalog`): `none` skips Authentik
 entirely, `catalog` creates an Application tile only, `oidc` creates an OAuth2 provider +
 Application (client_id/secret handed back to the deploy as `authentik_oidc_client_id/_secret`

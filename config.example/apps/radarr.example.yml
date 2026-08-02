@@ -23,5 +23,7 @@ app:
 
 # ── Routing ────────────────────────────────────────────────────────────────────
 # routing:
-#   proxy: internal            # internal | external (which reverse proxy handles this app)
+#   proxy: internal            # internal | external (WHICH reverse proxy handles this app)
+#   access: internal           # internal | public (WHO may reach it — public means the
+#                              # internet on a WAN-facing proxy)
 #   identity: catalog          # none | catalog | oidc | forward_auth (default from app-defaults)

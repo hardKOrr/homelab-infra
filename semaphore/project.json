@@ -213,6 +213,27 @@
           ]
         },
         {
+          "name": "access",
+          "title": "Access",
+          "description": "Who may reach this app. internal restricts the route to reverse_proxy.internal_cidrs; public opens it to every source address — on a WAN-facing reverse proxy that means the internet. Blank keeps the current value.",
+          "required": false,
+          "type": "enum",
+          "values": [
+            {
+              "name": "",
+              "value": ""
+            },
+            {
+              "name": "internal",
+              "value": "internal"
+            },
+            {
+              "name": "public",
+              "value": "public"
+            }
+          ]
+        },
+        {
           "name": "estate",
           "title": "Estate",
           "description": "Multi-domain labs only: the named estate from infrastructure.yml. Blank uses the default estate.",

@@ -51,5 +51,6 @@
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal
+#   access: internal
 #   # auth stays false — PBS has its own login, and forward-auth would also
 #   # intercept the API that the backup configuration and PVE storage backend use.

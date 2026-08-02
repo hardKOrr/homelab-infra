@@ -52,4 +52,5 @@ caddy_defaults:
 
   routing:
     proxy: none                 # Caddy IS the reverse proxy — never route it through itself
+    access: internal            # unused while proxy is none; kept so the key is never absent
     identity: none              # the admin API is LAN-only; Authentik in front would break wiring

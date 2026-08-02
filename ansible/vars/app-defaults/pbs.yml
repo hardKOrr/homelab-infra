@@ -39,4 +39,5 @@ pbs_defaults:
 
   routing:
     proxy: internal
+    access: internal            # LAN-only: PBS holds every backup
     identity: catalog           # catalog tile only — PBS has its own login and API tokens

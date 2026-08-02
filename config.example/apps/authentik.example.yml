@@ -39,6 +39,8 @@
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal    # internal | external
+#   access: internal   # internal | public. Authentik is the front door to SSO — make it
+#                      # public only when people must sign in from off-LAN
 #   subdomain: auth    # hostname is <subdomain>.<domain>; default auth
 #   estate: foxglove   # deploy a second estate's Authentik: set its estate name
 #                      # and its sso facts land under estates.<name>

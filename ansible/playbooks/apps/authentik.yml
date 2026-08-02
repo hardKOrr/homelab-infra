@@ -196,7 +196,7 @@
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/-/health/live/"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _authentik_deploy_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _authentik_deploy_host.app_config.routing.proxy | default('internal') }}"
+    wiring_access: "{{ _authentik_deploy_host.app_config.routing.access | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy

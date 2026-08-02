@@ -195,7 +195,7 @@
     wiring_interval: "{{ _kuma_deploy_host.app_config.app.monitor_interval | default(60) }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _kuma_deploy_host.app_config.routing.identity | default('catalog') }}"
-    wiring_access: "{{ _kuma_deploy_host.app_config.routing.proxy | default('internal') }}"
+    wiring_access: "{{ _kuma_deploy_host.app_config.routing.access | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy

@@ -37,5 +37,6 @@ observability_defaults:
 
   routing:
     proxy: internal
+    access: internal            # LAN-only: Grafana exposes metrics for every guest
     identity: catalog           # catalog tile only — Grafana has its own login and user
                                 # model; set forward_auth to put Authentik in front as well

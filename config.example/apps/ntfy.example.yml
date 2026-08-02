@@ -30,5 +30,7 @@
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
 #   proxy: internal  # internal | external
+#   access: internal # internal | public. public is the usual reason to change this — it
+#                    # is what gets phone notifications off-LAN without a VPN.
 #   # auth stays false — Ntfy has its own token auth; Authentik in front would
 #   # break every tool that publishes with a bearer token.

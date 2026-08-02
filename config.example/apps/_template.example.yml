@@ -22,7 +22,10 @@
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
-#   proxy: internal        # internal | external
+#   proxy: internal        # internal | external — WHICH reverse proxy handles this app
+#   access: internal       # internal | public — who may reach it. internal keeps the
+#                          # route inside reverse_proxy.internal_cidrs; public opens it to
+#                          # every source address, i.e. the internet on a WAN-facing proxy
 #   identity: catalog      # none | catalog | oidc | forward_auth
 #                          #   none         — no Authentik object at all
 #                          #   catalog      — Authentik launch tile; app keeps its own login

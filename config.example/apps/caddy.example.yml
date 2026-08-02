@@ -44,5 +44,6 @@
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
-#   # Both stay as they are. proxy: none keeps Caddy from routing itself, and
-#   # identity: none keeps Authentik off the admin API that every app deploy writes to.
+#   # All three stay as they are. proxy: none keeps Caddy from routing itself,
+#   # identity: none keeps Authentik off the admin API that every app deploy writes to,
+#   # and access is unused while proxy is none.

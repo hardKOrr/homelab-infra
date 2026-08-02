@@ -36,7 +36,9 @@
 #   port        app.port
 #   subdomain   routing.subdomain — defaults to the instance name
 #   identity    routing.identity — none | catalog | oidc | forward_auth
-#   proxy       routing.proxy — internal | external
+#   proxy       routing.proxy — internal | external (WHICH reverse proxy serves it)
+#   access      routing.access — internal | public (WHO may reach it: internal keeps the
+#               route inside reverse_proxy.internal_cidrs, public opens it to any source)
 #   estate      routing.estate — a named estate from infrastructure.yml
 #   extra_yaml  free-form YAML deep-merged last; wins over everything above
 #   reset       true discards the existing file instead of merging over it
@@ -76,6 +78,16 @@
         that: proxy in ['internal', 'external']
         fail_msg: "proxy must be internal or external. Got: {{ proxy }}"
       when: proxy is defined and proxy | length > 0
+
+    # Separate from proxy on purpose: proxy picks the server, access decides who reaches
+    # the app through it. Publishing something is never a side effect of choosing a proxy.
+    - name: Assert access is a recognised value
+      ansible.builtin.assert:
+        that: access in ['internal', 'public']
+        fail_msg: >-
+          access must be internal or public — it is the app's exposure, not its proxy.
+          Got: {{ access }}
+      when: access is defined and access | length > 0
 
     - name: Set the target path
       ansible.builtin.set_fact:
@@ -145,6 +157,7 @@
              | combine({'subdomain': subdomain} if (subdomain | default('')) | length > 0 else {})
              | combine({'identity': identity} if (identity | default('')) | length > 0 else {})
              | combine({'proxy': proxy} if (proxy | default('')) | length > 0 else {})
+             | combine({'access': access} if (access | default('')) | length > 0 else {})
              | combine({'estate': estate} if (estate | default('')) | length > 0 else {}) }}
 
     - name: Merge existing, authored and extra layers
