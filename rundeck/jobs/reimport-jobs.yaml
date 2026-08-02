@@ -35,12 +35,8 @@
           # Read the same paths lab-run reads, so this file carries no path either.
           # shellcheck disable=SC1091
           . /etc/homelab-infra/lab-run.env
-          # RUNDECK_URL / _PROJECT / _API_TOKEN were written into the checkout's .env by
-          # rundeck/bootstrap-rundeck.sh — the job authenticates to its own Rundeck.
-          # shellcheck disable=SC1091
-          . "$LAB_REPO/.env"
-
-          : "${RUNDECK_API_TOKEN:?no RUNDECK_API_TOKEN in $LAB_REPO/.env — re-run bootstrap-rundeck.sh}"
+          RUNDECK_API_TOKEN="${RD_OPTION_RUNDECK_API_TOKEN:-}"
+          : "${RUNDECK_API_TOKEN:?Rundeck API token was not supplied by secure Key Storage}"
           RUNDECK_URL="${RUNDECK_URL:-http://localhost:4440}"
           RUNDECK_PROJECT="${RUNDECK_PROJECT:-homelab-infra}"
 
@@ -55,10 +51,10 @@
           imported=0; failed=0
           for job in "$LAB_REPO"/rundeck/jobs/*.yaml; do
             [ -f "$job" ] || continue
-            resp="$(curl -s -m 60 -X POST \
+            resp="$("$LAB_VENV/bin/python3" "$LAB_REPO/rundeck/render-job.py" "$job" | curl -s -m 60 -X POST \
               -H "X-Rundeck-Auth-Token: $RUNDECK_API_TOKEN" \
               -H "Accept: application/json" -H "Content-Type: application/yaml" \
-              --data-binary "@$job" \
+              --data-binary @- \
               "$RUNDECK_URL/api/47/project/$RUNDECK_PROJECT/jobs/import?fileformat=yaml&dupeOption=update&uuidOption=preserve")"
             if printf '%s' "$resp" | grep -q '"succeeded"'; then
               imported=$((imported + 1))

@@ -8,17 +8,17 @@
 # web-vault from the official Alpine image via skopeo. No container runtime is
 # installed; skopeo is just a downloader. See .claude/meta/400-app-vaultwarden/notes.md.
 #
-# Admin token (spec: .claude/specs/secrets-handling.md — VAULTWARDEN_ADMIN_TOKEN is
-# one of the two secrets that live outside Vaultwarden):
+# Admin token (spec: .claude/specs/secrets-handling.md — server-control credentials
+# remain outside the item vault to avoid a recovery circle):
 #   source order: VAULTWARDEN_ADMIN_TOKEN env var
 #              -> homelabinfra_config.infrastructure.vaultwarden.admin_token
 #              -> the controller-side token sink (tasks/vaultwarden/token-sink.yml)
 #              -> hash already present on the guest (token continuity across re-runs)
-#              -> first bootstrap: generate and WRITE TO THE SINK, so bootstrap
-#                 continues in one pass with no human in the loop (slice 013).
+#              -> first bootstrap: generate and WRITE TO THE TEMPORARY SEED SINK
+#                 before the human account-enrollment ceremony (slice 013).
 # Only the hash ever touches the guest filesystem; the plaintext goes to the sink on
-# the controller and nowhere else. It is printed to the console only when the sink
-# write failed, because then the console is the sole surviving copy.
+# the controller and nowhere else. A failed sink write stops before Vaultwarden is
+# configured, so a generated token is never exposed in a job log or silently lost.
 #
 # Variables available:
 #   app_config         — merged defaults + user config (from Play 1)
@@ -161,11 +161,7 @@
   delegate_to: localhost
   become: false
   register: _vw_sink_write
-  # ignore_errors, NOT failed_when: false. The latter forces .failed to False even when
-  # the module errored, which would make the fallback print below unreachable and the
-  # success message a lie. ignore_errors keeps the real status readable while letting
-  # the play continue to the gate, which is what turns an unwritable sink into an
-  # actionable failure instead of a silent one.
+  # Preserve the module result long enough to emit a secret-free actionable failure.
   ignore_errors: true  # noqa: ignore-errors
   no_log: true
   when: _admin_token_generated | default(false)
@@ -181,25 +177,17 @@
     - _admin_token_generated | default(false)
     - not (_vw_sink_write.failed | default(true))
 
-# The sink is the mechanism; this print is the fallback for when the mechanism failed.
-# Then the console is the token's only surviving copy and showing it is the lesser
-# harm — a plaintext secret in a job log, versus an unreachable /admin panel.
-- name: FIRST BOOTSTRAP — token sink unwritable, save this token now
-  ansible.builtin.debug:
-    msg:
-      - "════════════════════════════════════════════════════════════════════"
-      - "Could not write {{ vaultwarden_token_sink }}:"
-      - "  {{ _vw_sink_write.msg | default('unknown error') }}"
-      - ""
-      - "Vaultwarden admin token (shown ONCE — only its hash is stored):"
-      - "  {{ _admin_token_plain }}"
-      - ""
-      - "Save it in config/infrastructure.yml under vaultwarden.admin_token, or set"
-      - "the VAULTWARDEN_ADMIN_TOKEN env var, then re-run bootstrap."
-      - "════════════════════════════════════════════════════════════════════"
+- name: Stop before deployment when the generated token cannot be persisted
+  ansible.builtin.assert:
+    that:
+      - not (_vw_sink_write.failed | default(true))
+    fail_msg: >-
+      Vaultwarden was not configured because its generated admin token could not be
+      written to the controller-side recovery sink. Correct permissions for
+      {{ vaultwarden_token_sink }} and retry; no secret was printed or installed.
   when:
     - _admin_token_generated | default(false)
-    - _vw_sink_write.failed | default(true)
+  no_log: false
 
 # Deterministic salt (derived from the token itself) keeps the PHC string stable
 # across runs, so the env template stays idempotent — a random salt would rewrite

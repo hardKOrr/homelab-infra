@@ -51,7 +51,10 @@
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.ntfy_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.ntfy_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
   tasks:
     # PATH B: NATIVE LXC APP — dedicated container per instance. Mirrors
@@ -203,9 +206,6 @@
           instance: "{{ instance }}"
           host: "http://{{ _ntfy_deploy_host.ansible_host }}:{{ _ntfy_deploy_host.app_config.app.port }}"
           topic: "{{ _ntfy_deploy_host.app_config.app.topic }}"
-          user: "{{ _ntfy_deploy_host.ntfy_publish_user }}"
-          password: "{{ _ntfy_deploy_host.ntfy_publish_password }}"
-          token: "{{ _ntfy_deploy_host.ntfy_publish_token }}"
 
     # Re-read so the wiring tasks below see the key just written.
     - name: Reload infrastructure facts
@@ -238,6 +238,7 @@
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/v1/health"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _ntfy_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _ntfy_deploy_host.app_config.routing.proxy | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy

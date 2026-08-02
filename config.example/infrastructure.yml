@@ -7,13 +7,14 @@
 # under homelabinfra_config.infrastructure — e.g. domain → homelabinfra_config.infrastructure.domain,
 # reverse_proxy.provider → homelabinfra_config.infrastructure.reverse_proxy.provider.
 #
-# This file declares ROLES and PROVIDER CHOICES only — not IPs or tokens — with two
-# deliberate exceptions:
+# This file declares roles, provider choices, and non-secret connection shape. Seed
+# credentials may be supplied during initial runner bootstrap but are removed after
+# verified Vaultwarden cutover. The durable file should contain no secret.
+# Two non-secret/control-plane details need special mention:
 #   1. Connection details for hosts NOT in the Proxmox inventory (e.g. dns.host for an
 #      external OPNsense) — homelab-infra cannot resolve them, so you supply the IP here.
-#   2. vaultwarden.admin_token — Vaultwarden IS the secrets store, so its own admin token
-#      cannot live inside it (bootstrap chicken-and-egg). Paste it here after bootstrap
-#      step 1, or supply it as the VAULTWARDEN_ADMIN_TOKEN env var.
+#   2. Vaultwarden's admin token is external because it controls the server; Rundeck
+#      injects it from AES-GCM Key Storage for enrollment/cutover/recovery.
 # Everything else (connection details for managed services) is written automatically to
 # config/.generated/facts.yml by the bootstrap playbook after each service is deployed.
 
@@ -35,7 +36,7 @@ domain: "homelab.example.com"
 #     domain: "second-domain.example.com"
 #     dns_challenge:               # optional — public certs without opening port 80
 #       provider: cloudflare       # any github.com/caddy-dns/<provider> module
-#       api_token: ""              # DNS-edit token scoped to THIS domain only
+#       # api_token is read from homelab-infra/estates/foxglove/dns after cutover
 
 # ── Reverse Proxy ──────────────────────────────────────────────────────────────
 # provider: caddy | nginx | none
@@ -48,6 +49,20 @@ domain: "homelab.example.com"
 reverse_proxy:
   provider: caddy
   instance: caddy
+  # Caddy enforces these source networks for every app whose routing.proxy is
+  # internal. Split DNS alone is not treated as an access control.
+  internal_cidrs:
+    - "192.168.1.0/24"
+  # DNS-01 obtains publicly trusted certificates without public A/AAAA records or
+  # inbound WAN ports. Store only the provider here; the token belongs in
+  # homelab-infra/reverse_proxy field dns_api_token.
+  dns_challenge:
+    provider: cloudflare
+    # Public resolvers keep ACME propagation checks independent of local Unbound
+    # overrides in a split-horizon lab.
+    resolvers:
+      - "1.1.1.1:53"
+      - "1.0.0.1:53"
 
 # ── SSO ────────────────────────────────────────────────────────────────────────
 # provider: authentik | none
@@ -74,7 +89,7 @@ notifications:
 dns:
   provider: opnsense
   host: "192.168.1.1"       # OPNsense/external DNS host IP
-  # api_key: ""             # OPNsense API key (stored in Vaultwarden after bootstrap)
+  # api_key is read from homelab-infra/dns after cutover
   # instance: pihole        # for pihole/adguard: Proxmox hostname
 
 # ── Backups ────────────────────────────────────────────────────────────────────
@@ -91,16 +106,7 @@ backups:
 # ── Vaultwarden ────────────────────────────────────────────────────────────────
 # Vaultwarden is enforced — it is always deployed as the platform secrets store.
 #
-# admin_token is an OPTIONAL OVERRIDE. Leave it empty: bootstrap generates the token
-# on first deploy and writes it to the runner itself, then reads it back to finish in
-# one pass. You will find it at /etc/homelab-infra/secrets.d/vaultwarden.env on the
-# runner (or config/.generated/vaultwarden.env for a workstation run).
-#
-# Set it only to pin a token you already have — from an older lab, or one you rotated
-# by hand. Resolution order is: VAULTWARDEN_ADMIN_TOKEN env var, then this key, then
-# the sink. A value here wins over what the platform stored for itself.
 vaultwarden:
-  admin_token: ""       # leave empty — bootstrap generates and stores it
   instance: vaultwarden # Proxmox hostname
 
 # ── Stack host sizing (optional) ───────────────────────────────────────────────

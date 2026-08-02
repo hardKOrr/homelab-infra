@@ -359,3 +359,4 @@
       host: "{{ pbs_api_host }}"
       datastore: "{{ _pbs_datastore }}"
       datastore_path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+      api_token_id: "{{ pbs_api_token_id }}"

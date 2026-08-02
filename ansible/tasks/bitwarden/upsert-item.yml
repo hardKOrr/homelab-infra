@@ -1,0 +1,167 @@
+---
+# Canonical organization-owned item upsert with exact readback verification.
+# Inputs:
+#   vault_item_name          homelab-infra/<role> or homelab-infra/media/<instance>
+#   vault_item_fields        mapping of field names to values
+#   vault_item_secret_fields names stored as hidden fields (default: every field)
+# Optional: vault_organization_name, vault_collection_name
+
+- name: Vault | Assert upsert inputs
+  ansible.builtin.assert:
+    that:
+      - vault_item_name is defined
+      - vault_item_name is match('^homelab-infra/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+){0,2}$')
+      - vault_item_fields is mapping
+      - vault_item_fields | length > 0
+    fail_msg: "Vault item upsert requires a canonical item name and non-empty field mapping."
+  no_log: true
+
+- name: Vault | Verify the execution session
+  ansible.builtin.import_tasks: authenticate.yml
+
+- name: Vault | List accessible organizations
+  ansible.builtin.command:
+    argv: [bw, list, organizations]
+  register: _vault_orgs
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Resolve the canonical organization
+  ansible.builtin.set_fact:
+    _vault_org_id: >-
+      {{ (_vault_orgs.stdout | from_json
+          | selectattr('name', 'equalto', vault_organization_name | default('homelab-infra'))
+          | map(attribute='id') | list | first) | default('') }}
+  no_log: true
+
+- name: Vault | Assert the canonical organization exists
+  ansible.builtin.assert:
+    that: _vault_org_id | length > 0
+    fail_msg: >-
+      The automation account cannot see organization
+      {{ vault_organization_name | default('homelab-infra') }}.
+
+- name: Vault | List organization collections
+  ansible.builtin.command:
+    argv: [bw, list, org-collections, --organizationid, "{{ _vault_org_id }}"]
+  register: _vault_collections
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Resolve the canonical collection
+  ansible.builtin.set_fact:
+    _vault_collection_id: >-
+      {{ (_vault_collections.stdout | from_json
+          | selectattr('name', 'equalto', vault_collection_name | default('platform-secrets'))
+          | map(attribute='id') | list | first) | default('') }}
+  no_log: true
+
+- name: Vault | Assert the canonical collection exists
+  ansible.builtin.assert:
+    that: _vault_collection_id | length > 0
+    fail_msg: >-
+      The automation account cannot see collection
+      {{ vault_collection_name | default('platform-secrets') }}.
+
+- name: Vault | List exact-name item candidates
+  ansible.builtin.command:
+    argv: [bw, list, items, --search, "{{ vault_item_name }}"]
+  register: _vault_candidates
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Resolve existing canonical item
+  ansible.builtin.set_fact:
+    _vault_existing_items: >-
+      {{ _vault_candidates.stdout | from_json
+         | selectattr('name', 'equalto', vault_item_name) | list }}
+  no_log: true
+
+- name: Vault | Reject duplicate canonical items
+  ansible.builtin.assert:
+    that: _vault_existing_items | length <= 1
+    fail_msg: "More than one Vaultwarden item is named {{ vault_item_name }}."
+
+- name: Vault | Build canonical item payload
+  ansible.builtin.set_fact:
+    _vault_item_payload: >-
+      {{ ((_vault_existing_items | first | default({}))
+          | combine({
+              'type': 2,
+              'name': vault_item_name,
+              'notes': 'Managed by homelab-infra. Do not rename fields.',
+              'organizationId': _vault_org_id,
+              'collectionIds': [_vault_collection_id],
+              'secureNote': {'type': 0},
+              'fields': _vault_fields
+            }, recursive=False)) | to_json }}
+  vars:
+    _vault_fields: >-
+      {% set result = [] %}
+      {% set hidden = vault_item_secret_fields | default(vault_item_fields.keys() | list) %}
+      {% for entry in vault_item_fields | dict2items %}
+      {% set _ = result.append({'name': entry.key,
+                                'value': entry.value | string,
+                                'type': 1 if entry.key in hidden else 0}) %}
+      {% endfor %}
+      {{ result }}
+  no_log: true
+
+# The Bitwarden CLI requires encoded item JSON as a positional value. Keeping the
+# plaintext in an environment variable avoids command-line exposure; no_log hides
+# both the reversible encoded value and all command results from Ansible output.
+- name: Vault | Create or update the canonical item
+  ansible.builtin.shell: |
+    set -euo pipefail
+    encoded="$(printf '%s' "$VAULT_ITEM_JSON" | bw encode)"
+    if [ -n "$VAULT_ITEM_ID" ]; then
+      bw edit item "$VAULT_ITEM_ID" "$encoded"
+    else
+      bw create item "$encoded"
+    fi
+  args:
+    executable: /bin/bash
+  environment:
+    VAULT_ITEM_JSON: "{{ _vault_item_payload }}"
+    VAULT_ITEM_ID: "{{ (_vault_existing_items | first | default({})).id | default('') }}"
+  register: _vault_upsert
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Synchronize after write
+  ansible.builtin.command:
+    argv: [bw, sync]
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Read the stored item back
+  ansible.builtin.command:
+    argv: [bw, get, item, "{{ (_vault_upsert.stdout | from_json).id }}"]
+  register: _vault_readback
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Verify exact field readback
+  ansible.builtin.assert:
+    that:
+      - _vault_readback_fields == vault_item_fields
+    fail_msg: "Vaultwarden readback verification failed for {{ vault_item_name }}."
+  vars:
+    _vault_readback_fields: >-
+      {{ dict((_vault_readback.stdout | from_json).fields | default([])
+              | map(attribute='name')
+              | zip((_vault_readback.stdout | from_json).fields | default([])
+                    | map(attribute='value'))) }}
+  no_log: true

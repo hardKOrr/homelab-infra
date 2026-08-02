@@ -1,0 +1,21 @@
+- id: e04bfd76-e7c9-5bec-979e-7335b76b460d
+  uuid: e04bfd76-e7c9-5bec-979e-7335b76b460d
+  name: Vaultwarden Cutover
+  group: Bootstrap
+  description: Import and verify every seed credential, sanitize generated facts, write the durable Vault-mode marker and remove temporary seed files. Run only after the human enrollment ceremony is complete.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Verify imports and activate Vault mode
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          export LAB_SEED_MODE=1
+          export LAB_VAULT_PREFLIGHT=1
+          exec lab-run playbooks/maintenance/vaultwarden-cutover.yml

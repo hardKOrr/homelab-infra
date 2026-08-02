@@ -295,6 +295,16 @@
             authentik_oidc_client_secret: "{{ _ak_oauth_detail.json.client_secret }}"
           no_log: true
 
+        - name: Wire Authentik | Store OAuth2 client credentials immediately
+          ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
+          vars:
+            vault_item_name: "homelab-infra/apps/{{ wiring_app_name }}"
+            vault_item_fields:
+              identity_provider: authentik
+              oidc_client_id: "{{ authentik_oidc_client_id }}"
+              oidc_client_secret: "{{ authentik_oidc_client_secret }}"
+            vault_item_secret_fields: [oidc_client_secret]
+
     - name: Wire Authentik | Assert provider pk resolved
       ansible.builtin.assert:
         that:

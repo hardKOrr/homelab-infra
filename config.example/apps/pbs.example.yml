@@ -15,8 +15,8 @@
 # The datastore PATH and retention live in config/infrastructure.yml under
 # `backups:`, not here — they are platform-level settings.
 #
-# The API token is generated on first deploy and recorded in
-# config/.generated/facts.yml (gitignored, mode 0600) under backups.api_token_secret.
+# The API token is generated on first deploy and immediately stored and verified in
+# `homelab-infra/backups`. Generated facts retain only its non-secret token ID.
 
 # ── VM resources ───────────────────────────────────────────────────────────────
 # proxmox:

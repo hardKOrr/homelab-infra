@@ -125,6 +125,25 @@
                    true) }}
   no_log: true
 
+- name: Store Authentik secrets before applying them
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/sso
+    vault_item_fields:
+      provider: authentik
+      instance: "{{ instance }}"
+      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      token: "{{ _authentik_api_token }}"
+      admin_user: "{{ authentik_admin_user }}"
+      admin_password: "{{ _authentik_admin_password }}"
+      postgres_password: "{{ _authentik_pg_pass }}"
+      secret_key: "{{ _authentik_secret_key }}"
+    vault_item_secret_fields:
+      - token
+      - admin_password
+      - postgres_password
+      - secret_key
+
 # ── Compose ───────────────────────────────────────────────────────────────────
 - name: Write the compose environment file
   ansible.builtin.template:
@@ -195,7 +214,7 @@
       AUTHENTIK_BOOTSTRAP_TOKEN is consumed only on the very first start, so a token
       changed after that never took effect. Issue a fresh token for
       {{ authentik_admin_user }} in the Authentik UI and put it in
-      config/.generated/facts.yml under sso.token.
+      the canonical Vaultwarden item homelab-infra/sso.
 
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the API endpoint to the playbook

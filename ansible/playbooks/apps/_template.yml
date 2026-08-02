@@ -51,7 +51,10 @@
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.APP_NAME_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.APP_NAME_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
   tasks:
     # ── CHOOSE ONE PROVISIONING PATH — delete the other ───────────────────────
@@ -200,6 +203,9 @@
     wiring_identity_mode: >-
       {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.identity
          | default('catalog') }}
+    wiring_access: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.proxy
+         | default('internal') }}
 
   tasks:
     - name: Wire reverse proxy

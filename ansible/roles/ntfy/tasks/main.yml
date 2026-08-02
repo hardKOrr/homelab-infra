@@ -7,14 +7,14 @@
 # contrast roles/vaultwarden, which has no binary assets upstream.
 #
 # Credentials (spec: .claude/specs/secrets-handling.md): the publish account's
-# password and access token are generated on first deploy and live ONLY in
-# gitignored config/.generated/facts.yml on the controller. The guest keeps a
+# password and access token are generated on first deploy and stored in the
+# canonical `homelab-infra/notifications` item. The guest keeps a
 # bcrypt hash in ntfy's own auth database — no plaintext secret is written to the
-# guest filesystem. On re-run the existing values come back from facts.yml, so the
+# guest filesystem. On re-run the existing values come from Vaultwarden, so the
 # credentials every other tool was configured with stay valid.
 #
-# Recovery: if facts.yml is lost, the password is regenerated and reset on the
-# account, and the labelled token is recovered from the guest when still present.
+# A new password is stored and verified before apply; an API-returned token is stored
+# immediately after creation.
 #
 # Variables available:
 #   app_config         — merged defaults + user config (from Play 1)
@@ -143,6 +143,19 @@
       {{ '^user ' ~ (app_config.app.user | default('homelab') | regex_escape) ~ '(\s|$)' }}
   no_log: true
 
+- name: Store publish account secret before applying it
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/notifications
+    vault_item_fields:
+      provider: ntfy
+      instance: "{{ instance }}"
+      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      topic: "{{ app_config.app.topic }}"
+      user: "{{ _ntfy_user }}"
+      password: "{{ _ntfy_password }}"
+    vault_item_secret_fields: [password]
+
 - name: List existing ntfy users
   ansible.builtin.command:
     cmd: ntfy user list
@@ -170,9 +183,9 @@
   changed_when: true
   no_log: true
 
-# Only fires when facts.yml no longer holds the password — resets the account to
-# the freshly generated one so the recorded credential is authoritative again.
-- name: Reset publish account password (recovering a lost facts.yml)
+# Only fires when the canonical item did not hold a password; the newly generated value
+# was already stored and verified before this reset.
+- name: Reset publish account password after creating its vault value
   ansible.builtin.command:
     cmd: "ntfy user change-pass {{ _ntfy_user }}"
   environment:
@@ -239,6 +252,20 @@
     fail_msg: >-
       Could not obtain an ntfy access token for {{ _ntfy_user }}. Check
       `ntfy token list {{ _ntfy_user }}` on the guest.
+
+- name: Store and verify the effective publish credentials
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/notifications
+    vault_item_fields:
+      provider: ntfy
+      instance: "{{ instance }}"
+      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      topic: "{{ app_config.app.topic }}"
+      user: "{{ _ntfy_user }}"
+      password: "{{ _ntfy_password }}"
+      token: "{{ _ntfy_token }}"
+    vault_item_secret_fields: [password, token]
 
 # ── Prove the closed-by-default policy actually holds ─────────────────────────
 - name: Verify authenticated publish succeeds

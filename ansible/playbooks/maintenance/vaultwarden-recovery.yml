@@ -1,0 +1,39 @@
+---
+- name: Vaultwarden | Enter explicit recovery mode
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _recovery_state_dir: "{{ lookup('ansible.builtin.env', 'LAB_STATE_DIR') | default('/etc/homelab-infra/state', true) }}"
+  tasks:
+    - name: Require the exact break-glass confirmation
+      ansible.builtin.assert:
+        that:
+          - vault_recovery_confirm | default('') == 'ENTER-SEED-RECOVERY'
+        fail_msg: >-
+          Recovery was not entered. Read the recovery runbook, restore the external
+          Key Storage encryption key and temporary seed inputs, then type the exact
+          confirmation ENTER-SEED-RECOVERY.
+
+    - name: Verify Vault mode is currently active
+      ansible.builtin.stat:
+        path: "{{ _recovery_state_dir }}/vault-mode"
+      register: _recovery_marker
+
+    - name: Require an existing cutover marker
+      ansible.builtin.assert:
+        that: _recovery_marker.stat.exists
+        fail_msg: >-
+          The runner is already in Seed mode; no marker was changed.
+
+    - name: Remove the marker only after explicit confirmation
+      ansible.builtin.file:
+        path: "{{ _recovery_state_dir }}/vault-mode"
+        state: absent
+
+    - name: Report the bounded recovery state
+      ansible.builtin.debug:
+        msg: >-
+          Explicit Seed recovery is active. Ordinary jobs remain disabled. Restore
+          or redeploy Caddy and Vaultwarden with LAB_SEED_MODE=1, complete enrollment
+          if required, then run Vaultwarden Cutover to verify imports and restore
+          the marker. Seed files are not created or populated by this job.

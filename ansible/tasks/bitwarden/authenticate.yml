@@ -1,0 +1,25 @@
+---
+# Authentication is deliberately performed by lab-run before inventory parsing
+# or any Ansible mutation. This task is the reusable Ansible-side assertion used
+# by plays that write vault items.
+- name: Vault | Assert an unlocked execution session exists
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.env', 'BW_SESSION') | length > 0
+      - lookup('ansible.builtin.env', 'BITWARDENCLI_APPDATA_DIR') | length > 0
+    fail_msg: >-
+      No unlocked Bitwarden execution session is present. Invoke this play only
+      through lab-run's mandatory Vaultwarden preflight.
+  no_log: true
+
+- name: Vault | Verify the CLI session is unlocked
+  ansible.builtin.command:
+    argv: [bw, status]
+  register: _bw_status
+  changed_when: false
+  failed_when: >-
+    (_bw_status.rc != 0) or
+    ((_bw_status.stdout | from_json).status | default('') != 'unlocked')
+  delegate_to: localhost
+  become: false
+  no_log: true

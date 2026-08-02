@@ -33,9 +33,8 @@
 # Any `host` value written here is a full base URL including scheme
 # (e.g. http://192.168.1.20) — consumers concatenate paths onto it directly.
 #
-# All writes happen on the control node (delegate_to: localhost) regardless of the
-# calling play's hosts. config/.generated/ is gitignored; re-running bootstrap
-# regenerates it. Mode is restricted — the file holds tokens.
+# All writes happen on the control node. The file is topology only; credential-
+# shaped fields are rejected before the existing file is touched.
 
 - name: Generated facts | Assert inputs
   ansible.builtin.assert:
@@ -55,6 +54,17 @@
 - name: Generated facts | Resolve output path
   ansible.builtin.set_fact:
     _generated_facts_file: "{{ generated_facts_file }}"
+
+- name: Generated facts | Reject credential-shaped fields
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ _generated_facts_file | dirname | dirname | dirname }}/ansible/scripts/secret-shape.py"
+    stdin: "{{ generated_facts_data | to_json }}"
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
 
 # Estate scoping: mirror of tasks/resolve-estate.yml's default-estate rule — the
 # entry with `default: true`, else the first declared entry, else '' (no map).
@@ -78,11 +88,11 @@
          | default(_generated_facts_infra_cfg.domains | default({}) | list | first
                    | default(''), true) }}
 
-- name: Generated facts | Ensure config/.generated exists (0700 — holds tokens)
+- name: Generated facts | Ensure config/.generated exists
   ansible.builtin.file:
     path: "{{ _generated_facts_file | dirname }}"
     state: directory
-    mode: "0700"
+    mode: "0750"
   become: false
   delegate_to: localhost
 

@@ -81,8 +81,11 @@
 
 # ── DNS-challenge TLS (per-estate) ────────────────────────────────────────────
 # Estates declared in config/infrastructure.yml `domains:` may carry a
-# dns_challenge block (provider + api_token); single-domain labs put the same
-# block in app.dns_challenge. Each token is referenced only from its own domain's
+# dns_challenge block (provider + api_token); single-domain labs declare the
+# provider under infrastructure.reverse_proxy.dns_challenge. The token is supplied
+# temporarily by CLOUDFLARE_API_TOKEN in Seed mode and by the canonical
+# homelab-infra/reverse_proxy Vaultwarden item after cutover. app.dns_challenge is
+# retained as a backwards-compatible input. Each token is referenced only from its own domain's
 # TLS automation policy — the sanctioned per-estate separation. The stock apt
 # binary ships no DNS provider modules, so the matching caddy-dns package is
 # installed with `caddy add-package` (which swaps the binary in place; an apt
@@ -93,9 +96,28 @@
       {{ ((homelabinfra_config.infrastructure.domains | default({})).values()
           | selectattr('dns_challenge', 'defined') | list)
          + ([{'domain': homelabinfra_config.infrastructure.domain | default(''),
-              'dns_challenge': app_config.app.dns_challenge}]
-            if app_config.app.dns_challenge is defined else []) }}
+              'dns_challenge': _caddy_default_dns_challenge}]
+            if _caddy_default_dns_challenge.provider | default('') | length > 0 else []) }}
+  vars:
+    _caddy_infra_challenge: >-
+      {{ homelabinfra_config.infrastructure.reverse_proxy.dns_challenge | default({}) }}
+    _caddy_legacy_challenge: "{{ app_config.app.dns_challenge | default({}) }}"
+    _caddy_default_dns_challenge: >-
+      {{ _caddy_legacy_challenge | combine(_caddy_infra_challenge, recursive=True) }}
   no_log: true   # entries carry API tokens
+
+- name: Validate DNS-challenge configuration
+  ansible.builtin.assert:
+    that:
+      - item.domain | default('') | length > 0
+      - item.dns_challenge.provider | default('') | length > 0
+      - item.dns_challenge.api_token | default('') | length > 0
+    fail_msg: >-
+      Caddy DNS-01 needs a domain, provider and API token. During Seed mode supply
+      CLOUDFLARE_API_TOKEN; after cutover store dns_api_token in
+      homelab-infra/reverse_proxy.
+  loop: "{{ _caddy_dns_domains }}"
+  no_log: true
 
 - name: List installed Caddy modules
   ansible.builtin.command:
@@ -124,9 +146,11 @@
       {{ _caddy_dns_policies | default([]) + [ {
            'subjects': ['*.' ~ item.domain, item.domain],
            'issuers': [ {'module': 'acme',
-                         'challenges': {'dns': {'provider':
-                            {'name': item.dns_challenge.provider,
-                             'api_token': item.dns_challenge.api_token}}}}
+                         'challenges': {'dns': {
+                           'provider': {'name': item.dns_challenge.provider,
+                                        'api_token': item.dns_challenge.api_token},
+                           'resolvers': item.dns_challenge.resolvers
+                                        | default(['1.1.1.1:53', '1.0.0.1:53'])}}
                         | combine({'email': app_config.app.acme_email}
                                   if app_config.app.acme_email | default('') | length > 0
                                   else {}) ]

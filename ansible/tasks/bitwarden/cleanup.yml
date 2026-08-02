@@ -1,0 +1,12 @@
+---
+# lab-run owns the lifecycle so cleanup also runs when inventory parsing or an
+# Ansible task fails. This task exists for direct playbook authors and never logs
+# the session.
+- name: Vault | Lock the execution session
+  ansible.builtin.command:
+    argv: [bw, lock]
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true

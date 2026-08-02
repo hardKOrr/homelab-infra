@@ -121,6 +121,19 @@
                    true) }}
   no_log: true
 
+- name: Store the Grafana password before applying it
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/metrics
+    vault_item_fields:
+      provider: prometheus_grafana
+      instance: "{{ instance }}"
+      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      prometheus_host: "http://127.0.0.1:{{ app_config.app.prometheus_port }}"
+      admin_user: "{{ app_config.app.admin_user | default('admin') }}"
+      admin_password: "{{ _observability_admin_password }}"
+    vault_item_secret_fields: [admin_password]
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 - name: Write the compose environment file
   ansible.builtin.template:

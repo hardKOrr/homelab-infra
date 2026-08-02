@@ -26,23 +26,25 @@ caddy_defaults:
     service_name: caddy         # systemd unit — playbooks/apps/remove.yml stops this
 
     # tls_mode: acme | internal
-    #   acme     — public certificates via Let's Encrypt. Needs each app domain to
-    #              resolve publicly and reach this host on port 80 (HTTP-01).
+    #   acme     — public certificates via Let's Encrypt. With the recommended
+    #              infrastructure.reverse_proxy.dns_challenge configuration this
+    #              uses DNS-01, so public records and inbound WAN ports are unnecessary.
     #   internal — Caddy's built-in CA issues certificates. Correct for labs with no
     #              public DNS; browsers warn until you trust the root at
     #              /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
     tls_mode: acme
     acme_email: ""              # optional; recommended for expiry notices from the CA
 
-    # Optional DNS-01 challenge for the default domain — lets Caddy issue public
-    # certificates without being reachable from the internet on port 80. The role
-    # installs the matching caddy-dns module (caddy add-package) on deploy.
+    # Legacy location for DNS-01. New configurations declare the non-secret provider
+    # in infrastructure.reverse_proxy.dns_challenge and keep dns_api_token in the
+    # canonical homelab-infra/reverse_proxy Vaultwarden item. The role installs the
+    # matching caddy-dns module (caddy add-package) on deploy.
     # Estates declared in config/infrastructure.yml `domains:` carry their own
     # dns_challenge block there instead — each estate's token is referenced only
     # from its own domain's TLS policy.
     # dns_challenge:
     #   provider: cloudflare    # any github.com/caddy-dns/<provider> module
-    #   api_token: ""           # scoped DNS-edit token for this domain only
+    #   api_token: ""           # legacy Seed/recovery input only; never commit it
 
   update:
     github_repo: caddyserver/caddy   # used by lab-update-check for the release notes link

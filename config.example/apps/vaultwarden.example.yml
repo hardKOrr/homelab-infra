@@ -9,9 +9,9 @@
 #
 # Vaultwarden usually needs no overrides at all — an empty file (or no file) is fine.
 #
-# The admin token is NOT set here. It is generated on first deploy, printed to the
-# job console, and then lives in config/infrastructure.yml under
-# vaultwarden.admin_token (or the VAULTWARDEN_ADMIN_TOKEN env var).
+# The admin token is not set here. Seed mode generates it into a temporary controller
+# sink, stages a recovery copy in encrypted control-plane storage, and removes the sink
+# only after Vaultwarden cutover. It is never printed.
 
 # ── Proxmox resource overrides ─────────────────────────────────────────────────
 # proxmox:

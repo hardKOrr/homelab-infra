@@ -10,9 +10,10 @@
 #      from the environment, or from its own location
 #   2. refreshes the checkout to origin/<branch> and echoes the resolved commit,
 #      so every job log records the revision that produced the run
-#   3. runs config-doctor.sh — a missing key fails here, at the front door,
+#   3. enforces Seed/Vault mode and unlocks Vaultwarden before mutation
+#   4. runs config-doctor.sh — a missing key fails here, at the front door,
 #      instead of as a stack trace mid-provision
-#   4. execs ansible-playbook through with-proxmox-env.sh, which exports the
+#   5. runs ansible-playbook through with-proxmox-env.sh, which exports the
 #      PROXMOX_API_* environment the community.proxmox dynamic inventory reads
 #
 # Job files therefore carry a playbook name and its arguments and nothing else.
@@ -32,10 +33,11 @@
 #   LAB_SSH_KEY    private key used for guests and delegated PVE node commands
 #                  (default: unset; bootstrapped runner supplies it)
 #   LAB_ENV_FILE   env file to source              (default: /etc/homelab-infra/lab-run.env)
-#   LAB_SECRETS_FILE  operator-supplied secrets    (default: <env dir>/secrets.env)
-#   LAB_SECRETS_DIR   platform-written secrets     (default: <env dir>/secrets.d)
-#   PROXMOX_API_TOKEN, VAULTWARDEN_ADMIN_TOKEN — from the files above, Key Storage,
-#                  or the Semaphore environment; anything already exported wins
+#   LAB_SECRETS_FILE  temporary Seed input          (default: <env dir>/secrets.env)
+#   LAB_SECRETS_DIR   temporary generated Seed data (default: <env dir>/secrets.d)
+#   LAB_STATE_DIR     durable non-secret state      (default: <env dir>/state)
+#   BW_SERVER         public HTTPS Vaultwarden URL
+#   BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD — secure runner inputs for Vault mode
 
 set -euo pipefail
 
@@ -54,27 +56,18 @@ if [ -r "$LAB_ENV_FILE" ]; then
   _lab_configured=1
   while IFS='=' read -r _key _value; do
     case "$_key" in
-      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR|LAB_SSH_KEY)
+      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR|LAB_SSH_KEY|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)
         [ -n "${!_key:-}" ] || printf -v "$_key" '%s' "$_value" ;;
     esac
-  done < <(grep -E '^LAB_[A-Z_]+=' "$LAB_ENV_FILE" || true)
+  done < <(grep -E '^(LAB_[A-Z_]+|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)=' "$LAB_ENV_FILE" || true)
 fi
 
-# The runner's secrets live OUTSIDE the checkout and outside config/, in a file only the
-# job user can read (0640 root:rundeck, written by rundeck/bootstrap-rundeck.sh). That is
-# what keeps config/proxmox.yml secret-free: the shape is a reviewable, copyable,
-# diffable file, and the token is not in it. Rundeck Key Storage holds the same value at
-# keys/proxmox/api-token as the durable copy. Anything already exported wins, so a job or
-# an operator can override for one run.
-#
-# secrets.env is written once by the bootstrap script and holds what a human supplied.
-# secrets.d/ holds what the PLATFORM generated for itself — today just the Vaultwarden
-# admin token, which roles/vaultwarden writes there on first deploy (slice 013). They
-# are separate directories because they have different owners and different lifetimes:
-# secrets.env is root-owned and never rewritten by a job, secrets.d/ is owned by the
-# job user precisely so a job can write into it without privilege escalation.
+# These files are a bounded Seed-mode bridge only. After the marker exists they are never
+# sourced; Vaultwarden supplies the Proxmox token, admin token, and runner SSH identity.
 LAB_SECRETS_FILE="${LAB_SECRETS_FILE:-${LAB_ENV_FILE%/*}/secrets.env}"
 LAB_SECRETS_DIR="${LAB_SECRETS_DIR:-${LAB_ENV_FILE%/*}/secrets.d}"
+LAB_STATE_DIR="${LAB_STATE_DIR:-${LAB_ENV_FILE%/*}/state}"
+LAB_VAULT_MARKER="${LAB_VAULT_MARKER:-$LAB_STATE_DIR/vault-mode}"
 
 _lab_load_secrets() {
   [ -r "$1" ] || return 0
@@ -86,10 +79,23 @@ _lab_load_secrets() {
   done < <(grep -E '^[A-Z_]+=' "$1" || true)
 }
 
-_lab_load_secrets "$LAB_SECRETS_FILE"
-for _secret_file in "$LAB_SECRETS_DIR"/*.env; do
-  _lab_load_secrets "$_secret_file"
-done
+# Seed files are inaccessible to ordinary jobs after cutover, even if somebody
+# recreates them. Explicit recovery removes the marker before invoking Seed mode.
+if [ ! -f "$LAB_VAULT_MARKER" ] && [ "${LAB_SEED_MODE:-0}" = "1" ]; then
+  _lab_load_secrets "$LAB_SECRETS_FILE"
+  for _secret_file in "$LAB_SECRETS_DIR"/*.env; do
+    _lab_load_secrets "$_secret_file"
+  done
+fi
+
+# Key-Storage-backed secure options arrive as environment variables in Rundeck
+# OSS. Never interpolate them into an inline script or a command argument.
+[ -n "${BW_CLIENTID:-}" ] || export BW_CLIENTID="${RD_OPTION_BW_CLIENTID:-}"
+[ -n "${BW_CLIENTSECRET:-}" ] || export BW_CLIENTSECRET="${RD_OPTION_BW_CLIENTSECRET:-}"
+[ -n "${BW_PASSWORD:-}" ] || export BW_PASSWORD="${RD_OPTION_BW_PASSWORD:-}"
+[ -n "${VAULTWARDEN_ADMIN_TOKEN:-}" ] || export VAULTWARDEN_ADMIN_TOKEN="${RD_OPTION_VAULTWARDEN_ADMIN_TOKEN:-}"
+[ -n "${RUNDECK_API_TOKEN:-}" ] || export RUNDECK_API_TOKEN="${RD_OPTION_RUNDECK_API_TOKEN:-}"
+[ -n "${CLOUDFLARE_API_TOKEN:-}" ] || export CLOUDFLARE_API_TOKEN="${RD_OPTION_CLOUDFLARE_API_TOKEN:-}"
 
 # Fall back to this script's own location: ansible/scripts/lab-run.sh -> repo root.
 _self_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -97,6 +103,8 @@ LAB_REPO="${LAB_REPO:-$_self_repo}"
 LAB_VENV="${LAB_VENV:-/opt/homelab-ansible}"
 LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
+BW_SERVER="${BW_SERVER:-}"
+export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR
 if [ -n "${LAB_SSH_KEY:-}" ]; then
   [ -r "$LAB_SSH_KEY" ] || die "LAB_SSH_KEY is not readable: $LAB_SSH_KEY"
   export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$LAB_SSH_KEY}"
@@ -147,7 +155,7 @@ if [ "$LAB_REFRESH" = "1" ] && [ -z "${LAB_REFRESHED:-}" ]; then
       || die "git fetch failed — set LAB_REFRESH=0 to run the on-disk checkout unchanged"
     git -C "$LAB_REPO" checkout --quiet -B "$LAB_BRANCH" "origin/$LAB_BRANCH"
     git -C "$LAB_REPO" reset --hard --quiet "origin/$LAB_BRANCH"
-    export LAB_REFRESHED=1 LAB_REPO LAB_VENV LAB_BRANCH LAB_REFRESH LAB_DOCTOR
+    export LAB_REFRESHED=1 LAB_REPO LAB_VENV LAB_BRANCH LAB_REFRESH LAB_DOCTOR BW_SERVER RUNDECK_URL RUNDECK_PROJECT
     export LAB_SSH_KEY="${LAB_SSH_KEY:-}"
     exec bash "$LAB_REPO/ansible/scripts/lab-run.sh" "$@"
   fi
@@ -162,6 +170,109 @@ fi
 
 cd "$LAB_REPO/ansible"
 
+# ── Seed/cutover guard and Vaultwarden preflight ──
+playbook="$1"
+_lab_seed_allowed=0
+_lab_recovery=0
+case "$playbook" in
+  playbooks/apps/vaultwarden.yml|playbooks/apps/caddy.yml|\
+  playbooks/maintenance/vaultwarden-enroll.yml|\
+  playbooks/maintenance/vaultwarden-cutover.yml|\
+  playbooks/maintenance/vaultwarden-recovery.yml)
+    _lab_seed_allowed=1 ;;
+esac
+[ "$playbook" = "playbooks/maintenance/vaultwarden-recovery.yml" ] && _lab_recovery=1
+
+if [ ! -f "$LAB_VAULT_MARKER" ]; then
+  if [ "${LAB_SEED_MODE:-0}" != "1" ] || [ "$_lab_seed_allowed" != "1" ]; then
+    die "runner is in Seed mode; ordinary jobs are disabled. Complete Vaultwarden enrollment and run Vaultwarden Cutover."
+  fi
+  log "Seed mode — allowing explicit bootstrap/recovery playbook $playbook"
+elif [ "${LAB_SEED_MODE:-0}" = "1" ] && [ "$playbook" != "playbooks/maintenance/vaultwarden-recovery.yml" ]; then
+  die "runner is already in Vault mode; LAB_SEED_MODE cannot bypass Vaultwarden"
+fi
+
+_vault_tmp=""
+_vault_cleanup() {
+  if [ -n "$_vault_tmp" ]; then
+    bw lock >/dev/null 2>&1 || true
+    bw logout >/dev/null 2>&1 || true
+    rm -rf -- "$_vault_tmp"
+  fi
+  unset BW_SESSION HOMELABINFRA_VAULT_JSON
+}
+
+_vault_preflight() {
+  command -v bw >/dev/null 2>&1 || die "Bitwarden CLI (bw) is not installed"
+  [ -n "$BW_SERVER" ] || die "BW_SERVER is not configured"
+  [ -n "${BW_CLIENTID:-}" ] || die "BW_CLIENTID was not supplied by secure job storage"
+  [ -n "${BW_CLIENTSECRET:-}" ] || die "BW_CLIENTSECRET was not supplied by secure job storage"
+  [ -n "${BW_PASSWORD:-}" ] || die "BW_PASSWORD was not supplied by secure job storage"
+
+  _vault_tmp="$(mktemp -d "${TMPDIR:-/tmp}/homelab-bw.XXXXXX")"
+  chmod 0700 "$_vault_tmp"
+  export BITWARDENCLI_APPDATA_DIR="$_vault_tmp"
+  trap _vault_cleanup EXIT
+  trap 'exit 130' HUP INT TERM
+
+  bw config server "$BW_SERVER" >/dev/null 2>&1 \
+    || die "Vaultwarden preflight failed while configuring the server URL"
+  bw login --apikey >/dev/null 2>&1 \
+    || die "Vaultwarden preflight failed during API-key authentication"
+  BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw 2>/dev/null)" \
+    || die "Vaultwarden preflight failed while unlocking the automation vault"
+  [ -n "$BW_SESSION" ] || die "Vaultwarden returned an empty vault session"
+  export BW_SESSION
+  bw sync >/dev/null 2>&1 || die "Vaultwarden preflight failed while synchronizing"
+
+  _vault_items="$(bw list items 2>/dev/null)" \
+    || die "Vaultwarden preflight could not read canonical items"
+  _vault_require=()
+  if [ -f "$LAB_VAULT_MARKER" ]; then
+    _vault_require=(
+      --require homelab-infra/proxmox
+      --require homelab-infra/runner
+      --require homelab-infra/vaultwarden
+    )
+  fi
+  HOMELABINFRA_VAULT_JSON="$(printf '%s' "$_vault_items" \
+    | "$LAB_REPO/ansible/scripts/vault-runtime.py" "${_vault_require[@]}")" \
+    || die "Vaultwarden preflight rejected the canonical item set"
+  unset _vault_items
+  export HOMELABINFRA_VAULT_JSON
+
+  eval "$(printf '%s' "$HOMELABINFRA_VAULT_JSON" | python3 -c '
+import json, shlex, sys
+d=json.load(sys.stdin)
+p=d.get("proxmox", {})
+v=d.get("vaultwarden", {})
+for key, value in (("PROXMOX_API_TOKEN", p.get("api_token_secret", "")),
+                   ("VAULTWARDEN_ADMIN_TOKEN", v.get("admin_token", ""))):
+    if value:
+        print("export %s=%s" % (key, shlex.quote(value)))
+')"
+
+  _vault_ssh_key="$_vault_tmp/ssh-key"
+  if printf '%s' "$HOMELABINFRA_VAULT_JSON" | python3 -c '
+import json, sys
+value=json.load(sys.stdin).get("runner", {}).get("ssh_private_key", "")
+if not value:
+    raise SystemExit(3)
+sys.stdout.write(value.rstrip("\n") + "\n")
+' > "$_vault_ssh_key"; then
+    chmod 0600 "$_vault_ssh_key"
+    export ANSIBLE_PRIVATE_KEY_FILE="$_vault_ssh_key"
+  elif [ -f "$LAB_VAULT_MARKER" ]; then
+    die "homelab-infra/runner has no ssh_private_key field"
+  fi
+  log "Vaultwarden preflight complete"
+}
+
+if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
+   && [ "$_lab_recovery" != "1" ]; then
+  _vault_preflight
+fi
+
 # ── Validate config before anything mutates ───────────────────────────────────
 if [ "$LAB_DOCTOR" != "0" ]; then
   PYTHON="${PYTHON:-$LAB_VENV/bin/python3}" \
@@ -174,5 +285,5 @@ playbook="$1"; shift
 [ -f "$playbook" ] || die "playbook not found: $LAB_REPO/ansible/$playbook"
 
 log "ansible-playbook $playbook $*"
-exec bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
+bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
   "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@"

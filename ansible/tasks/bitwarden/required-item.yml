@@ -1,0 +1,31 @@
+---
+# Inputs: vault_required_item, vault_required_fields (optional list)
+- name: Vault | Assert required-item inputs
+  ansible.builtin.assert:
+    that:
+      - vault_required_item is defined
+      - vault_required_item is match('^homelab-infra/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+){0,2}$')
+
+- name: Vault | Resolve required item from the in-memory contract
+  ansible.builtin.set_fact:
+    _vault_required_value: >-
+      {{ (homelabinfra_vault.media[vault_required_item.split('/', 2)[2]]
+          if vault_required_item is match('^homelab-infra/media/')
+          else homelabinfra_vault[vault_required_item.split('/', 1)[1]]) | default({}) }}
+  no_log: true
+
+- name: Vault | Assert required item fields are populated
+  ansible.builtin.assert:
+    that:
+      - _vault_required_value | length > 0
+      - >-
+        (vault_required_fields | default([])
+         | difference(_vault_required_value.keys() | list)) | length == 0
+      - >-
+        _vault_required_value | dict2items
+        | selectattr('key', 'in', vault_required_fields | default([]))
+        | selectattr('value', 'equalto', '') | list | length == 0
+    fail_msg: >-
+      Required Vaultwarden item {{ vault_required_item }} is absent or incomplete.
+      Required fields: {{ vault_required_fields | default([]) | join(', ') }}.
+  no_log: true

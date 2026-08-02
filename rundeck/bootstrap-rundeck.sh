@@ -2,8 +2,8 @@
 # bootstrap-rundeck.sh — stand up the whole homelab-infra runner from nothing.
 #
 # Run this ON a Proxmox node, as root. By default it returns a working automation
-# runner AND the preliminary Vaultwarden LXC. Open Rundeck and click Bootstrap
-# Platform to reconcile Vaultwarden and deploy the remaining baseline services.
+# runner, Caddy, and HTTPS Vaultwarden. Open Rundeck, complete the human enrollment
+# ceremony and verified cutover, then click Bootstrap Platform for the baseline.
 #
 #   ./bootstrap-rundeck.sh
 #   VMID=13228 CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh
@@ -15,12 +15,13 @@
 #   1. THIS SCRIPT, on a PVE node — builds the runner and everything the UI needs to
 #      exist: the LXC, Java, Rundeck, an ansible venv, the repo clone, the platform's
 #      Proxmox credential, the authored config, Key Storage, the project and the jobs.
-#      It then invokes the normal Ansible app playbook to deploy Vaultwarden first.
-#   2. BOOTSTRAP PLATFORM, in the UI — reconciles the already-tagged Vaultwarden guest,
-#      then builds Ntfy, the reverse proxy, Authentik, Uptime Kuma,
+#      It invokes normal playbooks to deploy Caddy and then Vaultwarden in Seed mode.
+#   2. ENROLLMENT/CUTOVER, in the UI — the owner chooses passwords in Vaultwarden,
+#      stages the automation API credentials, and verifies every imported seed secret.
+#   3. BOOTSTRAP PLATFORM, in the UI — reconciles Caddy/Vaultwarden, then builds Ntfy, Authentik, Uptime Kuma,
 #      Prometheus + Grafana and PBS.
 #
-# One command produces the runner and its secret store; one click finishes the platform.
+# One command produces the enrollment surface; the explicit cutover establishes Vault mode.
 #
 # What it produces:
 #   - Unprivileged Debian 13 LXC, tagged homelab-infra so the platform manages it like
@@ -76,11 +77,11 @@ MANAGED_TAG="${MANAGED_TAG:-homelab-infra}"
 PVE_USER="${PVE_USER:-homelab-infra@pve}"
 PVE_ROLE="${PVE_ROLE:-HomelabInfra}"
 PVE_TOKEN_NAME="${PVE_TOKEN_NAME:-automation}"
-# A token secret is displayed once, at creation, and can never be re-read. Re-runs
-# therefore keep the existing token; set this to 1 to deliberately rotate it.
+# A Proxmox token secret can be captured only at creation. It is never printed; re-runs
+# keep the existing token unless deliberate rotation is requested.
 ROTATE_PROXMOX_TOKEN="${ROTATE_PROXMOX_TOKEN:-0}"
 
-# Deploy the preliminary Vaultwarden LXC before this script returns. The script
+# Deploy Caddy and the preliminary Vaultwarden LXC before this script returns. The script
 # deliberately invokes Ansible rather than duplicating app provisioning in Bash:
 # later inventory refreshes find the `vaultwarden` tag and the same playbook adopts
 # and reconciles the guest. Set to 0 only for runner-only recovery/diagnostics.
@@ -108,7 +109,7 @@ RD_HOST="${CT_IP%%/*}"
 RD_PORT="${RD_PORT:-4440}"
 RD_URL="http://${RD_HOST}:${RD_PORT}"
 RD_PROJECT="${RD_PROJECT:-homelab-infra}"
-RD_API="${RD_API:-47}"
+RD_API="${RD_API:-58}"
 
 # Set NONINTERACTIVE=1 to take every default and fail rather than prompt for anything
 # that has none. This is the scripted path; the interactive path stays humane.
@@ -162,6 +163,25 @@ ask() {
       read -r -p "    $__prompt: " __reply || true
     done
   fi
+  printf -v "$__var" '%s' "$__reply"
+}
+
+# ask_secret <var-name> <prompt> — like ask, but never echoes either an environment
+# value or an interactive reply. Secrets have no useful default: a non-interactive
+# first bootstrap must supply them explicitly in the environment.
+ask_secret() {
+  local __var="$1" __prompt="$2" __reply=""
+  if [ -n "${!__var:-}" ]; then
+    info "$__var supplied by the environment"
+    return 0
+  fi
+  if [ "$NONINTERACTIVE" = "1" ] || [ ! -t 0 ]; then
+    die "$__var is required and cannot be prompted for. Supply it in the environment."
+  fi
+  while [ -z "$__reply" ]; do
+    read -r -s -p "    $__prompt: " __reply || true
+    printf '\n'
+  done
   printf -v "$__var" '%s' "$__reply"
 }
 
@@ -332,6 +352,7 @@ apt-get -y -qq upgrade
 # most: every job runs on it.
 apt-get install -y -qq \
   ca-certificates curl gnupg git jq rsync sudo \
+  nodejs npm \
   openssh-client openssh-server python3-venv python3-pip \
   unattended-upgrades apt-transport-https prometheus-node-exporter >/dev/null
 
@@ -379,7 +400,16 @@ fi
 
 say "rundeck package"
 apt-get install -y -qq rundeck >/dev/null
-say "rundeck $(dpkg-query -W -f='${Version}' rundeck)"
+RUNDECK_PACKAGE_VERSION="$(dpkg-query -W -f='${Version}' rundeck)"
+dpkg --compare-versions "$RUNDECK_PACKAGE_VERSION" ge 6.0 \
+  || { echo "Rundeck 6.0+ is required for AES-GCM Key Storage" >&2; exit 1; }
+say "rundeck $RUNDECK_PACKAGE_VERSION (AES-GCM capable)"
+
+# Official Bitwarden CLI. Vault mode cannot start without it, so install it as
+# runner infrastructure rather than lazily during the first deploy.
+say "Bitwarden CLI"
+npm install -g --silent @bitwarden/cli >/dev/null
+say "bw $(bw --version)"
 
 # -- rundeck config -------------------------------------------------------------
 say "configuring $RD_URL"
@@ -403,6 +433,32 @@ grep -q '^rundeck.api.tokens.duration.max' /etc/rundeck/rundeck-config.propertie
 # the whole job import.
 grep -q '^rundeck.security.apiCookieAccess.enabled' /etc/rundeck/rundeck-config.properties \
   || echo 'rundeck.security.apiCookieAccess.enabled=true' >> /etc/rundeck/rundeck-config.properties
+
+# Rundeck 6.0+ ships the AES-256-GCM converter. Encrypt the complete Key Storage
+# tree. The converter password is deliberately outside Key Storage to avoid a
+# circular dependency and is included in the root-only handover file so the
+# operator can back it up separately.
+STORAGE_PASSWORD_FILE=/etc/rundeck/.storage-password
+if [ ! -s "$STORAGE_PASSWORD_FILE" ]; then
+  storage_pool="$(head -c 128 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+  storage_password="${storage_pool:0:48}"
+  install -m 0440 -o root -g rundeck /dev/null "$STORAGE_PASSWORD_FILE"
+  printf '%s\n' "$storage_password" > "$STORAGE_PASSWORD_FILE"
+  touch "$CRED_FILE"; chmod 0600 "$CRED_FILE"
+  printf 'RUNDECK_STORAGE_PASSWORD=%s\n' "$storage_password" >> "$CRED_FILE"
+  unset storage_pool storage_password
+fi
+chown root:rundeck "$STORAGE_PASSWORD_FILE"
+chmod 0440 "$STORAGE_PASSWORD_FILE"
+touch "$CRED_FILE"; chmod 0600 "$CRED_FILE"
+if ! grep -q '^RUNDECK_STORAGE_PASSWORD=' "$CRED_FILE"; then
+  printf 'RUNDECK_STORAGE_PASSWORD=%s\n' "$(cat "$STORAGE_PASSWORD_FILE")" >> "$CRED_FILE"
+fi
+grep -q '^rundeck.storage.converter.1.type=' /etc/rundeck/rundeck-config.properties || cat >> /etc/rundeck/rundeck-config.properties <<'EOF'
+rundeck.storage.converter.1.type=aes-gcm-encryption
+rundeck.storage.converter.1.path=keys
+rundeck.storage.converter.1.config.passwordFile=/etc/rundeck/.storage-password
+EOF
 
 # Jobs inherit the service environment, so pin the locale for the ansible plugin too.
 mkdir -p /etc/systemd/system/rundeckd.service.d
@@ -494,6 +550,8 @@ cat > "$LAB_ETC/lab-run.env" <<EOF
 LAB_REPO=$REPO_DIR
 LAB_VENV=$VENV_DIR
 LAB_BRANCH=$REPO_BRANCH
+RUNDECK_URL=$RD_URL
+RUNDECK_PROJECT=$RD_PROJECT
 # 1 = refresh the checkout to origin/\$LAB_BRANCH before every job, so a commit pushed to
 # the repo is executed by the next click with no human action. 0 pins the on-disk tree.
 LAB_REFRESH=1
@@ -504,6 +562,7 @@ LAB_DOCTOR=1
 LAB_SSH_KEY=$LAB_SSH_KEY
 EOF
 chmod 0644 "$LAB_ETC/lab-run.env"
+install -d -m 0700 -o rundeck -g rundeck "$LAB_ETC/state"
 ln -sfn "$REPO_DIR/ansible/scripts/lab-run.sh" /usr/local/bin/lab-run
 say "installed /usr/local/bin/lab-run -> $REPO_DIR/ansible/scripts/lab-run.sh"
 
@@ -549,8 +608,10 @@ else
   # is right there.
   DEFAULT_CIDR="$(printf '%s' "$CT_IP" | awk -F/ '{split($1,o,"."); print o[1]"."o[2]"."o[3]".0/"$2}')"
 
-  info "answer six questions; everything else was discovered from this node"
+  info "answer the lab and first-owner questions; everything else was discovered"
   ask LAB_DOMAIN      "Lab domain (apps are published as <app>.<domain>)"     ""
+  ask VAULTWARDEN_OWNER_EMAIL "First Vaultwarden owner email"                 ""
+  ask VAULTWARDEN_AUTOMATION_EMAIL "Dedicated automation account email"       "homelab-infra@$LAB_DOMAIN"
   ask LAB_NET_CIDR    "Guest network CIDR"                                    "$DEFAULT_CIDR"
   ask LAB_NET_GATEWAY "Guest network gateway"                                 "$CT_GW"
   ask LAB_NET_DNS     "DNS server for guests"                                 "$CT_GW"
@@ -559,6 +620,11 @@ else
 
   info "provider choices — each may be 'none'"
   ask LAB_REVERSE_PROXY "Reverse proxy (caddy | nginx | none)"                "caddy"
+  if [ "$LAB_REVERSE_PROXY" = "caddy" ]; then
+    LAB_ACME_DNS_PROVIDER=cloudflare
+    info "Caddy ACME DNS provider = cloudflare"
+    ask_secret CLOUDFLARE_API_TOKEN "Cloudflare API token (Zone Read + DNS Edit for the lab zone)"
+  fi
   ask LAB_SSO           "SSO (authentik | none)"                              "authentik"
   ask LAB_NOTIFICATIONS "Notifications (ntfy | gotify | discord | none)"      "ntfy"
   ask LAB_DNS           "DNS provider (pihole | adguard | opnsense | none)"   "none"
@@ -654,7 +720,15 @@ domain: "$LAB_DOMAIN"
 reverse_proxy:
   provider: $LAB_REVERSE_PROXY
 EOF
-    [ "$LAB_REVERSE_PROXY" != "none" ] && echo "  instance: $LAB_REVERSE_PROXY"
+    if [ "$LAB_REVERSE_PROXY" != "none" ]; then
+      echo "  instance: $LAB_REVERSE_PROXY"
+      echo "  internal_cidrs:"
+      echo "    - \"$LAB_NET_CIDR\""
+    fi
+    if [ "$LAB_REVERSE_PROXY" = "caddy" ]; then
+      echo "  dns_challenge:"
+      echo "    provider: $LAB_ACME_DNS_PROVIDER"
+    fi
     cat <<EOF
 
 sso:
@@ -681,6 +755,8 @@ backups:
 # vaultwarden.admin_token is produced by bootstrap step 1, not authored here.
 vaultwarden:
   instance: vaultwarden
+  owner_email: "$VAULTWARDEN_OWNER_EMAIL"
+  automation_email: "$VAULTWARDEN_AUTOMATION_EMAIL"
 EOF
   } > "$STAGE/infrastructure.yml"
 
@@ -689,6 +765,14 @@ EOF
   in_ct chown rundeck:rundeck "$CONFIG_PROXMOX" "$CONFIG_INFRA"
   info "wrote config/proxmox.yml and config/infrastructure.yml"
 fi
+
+# Resolve the enrollment metadata on both fresh and converged runs. These values
+# are identifiers, not credentials; master passwords never enter this script.
+LAB_DOMAIN="$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])) or {}).get("domain", ""))' "$CONFIG_INFRA")"
+VAULTWARDEN_OWNER_EMAIL="${VAULTWARDEN_OWNER_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("owner_email", ""))' "$CONFIG_INFRA")}"
+VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("automation_email", ""))' "$CONFIG_INFRA")}"
+[ -n "$VAULTWARDEN_AUTOMATION_EMAIL" ] || VAULTWARDEN_AUTOMATION_EMAIL="homelab-infra@$LAB_DOMAIN"
+in_ct sh -c "grep -q '^BW_SERVER=' '$LAB_ETC/lab-run.env' || printf '%s\\n' 'BW_SERVER=https://vaultwarden.$LAB_DOMAIN' >> '$LAB_ETC/lab-run.env'"
 
 # ── Describe the runner as an instance ─────────────────────────────────────────
 # The runner is a guest this platform now manages, so it gets an instance file like any
@@ -850,6 +934,16 @@ else
   info "a token secret cannot be re-read; rotate with ROTATE_PROXMOX_TOKEN=1"
 fi
 
+# A runner created before the AES-GCM converter may still have the existing token in its
+# temporary Seed file. Recover it without printing so ks_put below rewrites the known
+# Key Storage entry through the converter. After cutover this file is gone and the old
+# Key Storage path is gone with it.
+if [ -z "$PVE_TOKEN_SECRET" ] && ct_file_exists "$LAB_ETC/secrets.env"; then
+  PVE_TOKEN_SECRET="$(in_ct sed -n 's/^PROXMOX_API_TOKEN=//p' "$LAB_ETC/secrets.env")"
+  [ -z "$PVE_TOKEN_SECRET" ] \
+    || info "existing Proxmox seed recovered for AES-GCM Key Storage rewrite"
+fi
+
 # ── Wait for Rundeck ───────────────────────────────────────────────────────────
 log "Wait for Rundeck to accept connections"
 for i in $(seq 1 60); do
@@ -917,11 +1011,10 @@ fi
 # rather than telling the operator to copy it across by hand.
 if [ -n "$RD_TOKEN" ]; then
   STAGE3="$(newtmp)"
-  cat > "$STAGE3/env" <<EOF
+cat > "$STAGE3/env" <<EOF
 # Written by rundeck/bootstrap-rundeck.sh. Gitignored.
 RUNDECK_URL=$RD_URL
 RUNDECK_PROJECT=$RD_PROJECT
-RUNDECK_API_TOKEN=$RD_TOKEN
 EOF
   push_file "$STAGE3/env" "$REPO_DIR/.env" 0600
   in_ct chown rundeck:rundeck "$REPO_DIR/.env"
@@ -981,12 +1074,24 @@ else
   }
 
   STAGE5="$(newtmp)"
+  printf '%s' "$RD_TOKEN" > "$STAGE5/rundeck-api-token"
+  chmod 0600 "$STAGE5/rundeck-api-token"
+  ks_put "keys/project/$RD_PROJECT/rundeck/api-token" \
+    "application/x-rundeck-data-password" "$STAGE5/rundeck-api-token"
+
   if [ -n "$PVE_TOKEN_SECRET" ]; then
     printf '%s' "$PVE_TOKEN_SECRET" > "$STAGE5/proxmox-token"
     chmod 0600 "$STAGE5/proxmox-token"
     ks_put "keys/proxmox/api-token" "application/x-rundeck-data-password" "$STAGE5/proxmox-token"
   else
     info "keys/proxmox/api-token left as-is — the existing token's secret cannot be re-read"
+  fi
+
+  if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+    printf '%s' "$CLOUDFLARE_API_TOKEN" > "$STAGE5/cloudflare-api-token"
+    chmod 0600 "$STAGE5/cloudflare-api-token"
+    ks_put "keys/project/$RD_PROJECT/bootstrap/cloudflare-api-token" \
+      "application/x-rundeck-data-password" "$STAGE5/cloudflare-api-token"
   fi
 
   # Ansible needs the private half as a file to connect to guests with; Key Storage is
@@ -1007,14 +1112,14 @@ else
   # to be present and to match what the jobs will execute.
   log "Import jobs"
   in_ct env RD_URL="$RD_URL" RD_TOKEN="$RD_TOKEN" RD_PROJECT="$RD_PROJECT" \
-    RD_API="$RD_API" REPO_DIR="$REPO_DIR" bash -s <<'IMPORT'
+    RD_API="$RD_API" REPO_DIR="$REPO_DIR" VENV_DIR="$VENV_DIR" bash -s <<'IMPORT'
 set -euo pipefail
 n=0; f=0
 for job in "$REPO_DIR"/rundeck/jobs/*.yaml; do
   [ -f "$job" ] || continue
-  resp="$(curl -s -m 60 -X POST \
+  resp="$("$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/render-job.py" "$job" | curl -s -m 60 -X POST \
     -H "X-Rundeck-Auth-Token: $RD_TOKEN" -H "Accept: application/json" \
-    -H "Content-Type: application/yaml" --data-binary "@$job" \
+    -H "Content-Type: application/yaml" --data-binary @- \
     "$RD_URL/api/$RD_API/project/$RD_PROJECT/jobs/import?fileformat=yaml&dupeOption=update&uuidOption=preserve")"
   if printf '%s' "$resp" | grep -q '"succeeded"'; then
     n=$((n+1))
@@ -1026,13 +1131,10 @@ echo "    $n job(s) imported, $f failed"
 IMPORT
 fi
 
-# ── The runner's secrets, outside the checkout ─────────────────────────────────
-# Key Storage is where Rundeck keeps these, but a job step is a plain shell script and
-# the most reliable way to put a secret in its environment without adding per-job
-# plumbing to every job file is a root-owned file the rundeck user can read. It is
-# outside the git checkout, so `git reset --hard` never sees it; outside config/, so
-# Get Config never archives it; and 0640 root:rundeck, so only the job user reads it.
-log "Runner secrets"
+# ── Temporary Seed material, outside the checkout ─────────────────────────────
+# These files exist only long enough to bring up Caddy/Vaultwarden and complete verified
+# cutover. The marker makes recreated copies inert for every ordinary job.
+log "Temporary Seed material"
 if [ -n "$PVE_TOKEN_SECRET" ]; then
   STAGE6="$(newtmp)"
   cat > "$STAGE6/secrets.env" <<EOF
@@ -1053,13 +1155,11 @@ else
   fi
 fi
 
-# secrets.d/ is where the PLATFORM writes secrets it generated for itself — currently
-# the Vaultwarden admin token, which roles/vaultwarden writes on first deploy so
-# bootstrap completes in one pass instead of halting for a paste (slice 013).
+# secrets.d/ receives the admin token generated by the first Vaultwarden deploy.
 #
 # Owned by the job user, not root: a playbook running as rundeck has to create a file
-# here without sudo, and 0700 keeps it as private as the root-owned secrets.env beside
-# it. lab-run.sh sources every *.env in this directory.
+# here without sudo; cutover removes it after the encrypted recovery copy and canonical
+# item both verify.
 in_ct mkdir -p "$LAB_ETC/secrets.d"
 in_ct chown rundeck:rundeck "$LAB_ETC/secrets.d"
 in_ct chmod 0700 "$LAB_ETC/secrets.d"
@@ -1112,21 +1212,57 @@ info "recorded the runner registry key in config/.generated/facts.yml"
 # store online. apps/vaultwarden.yml refreshes dynamic inventory, creates the LXC
 # when absent, and reuses `tag_vaultwarden` on every later run.
 if [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
-  log "Deploy preliminary Vaultwarden through the automation runner"
+  log "Seed phase: deploy Caddy, Vaultwarden and the HTTPS Vaultwarden route"
   if ! ct_file_exists "$LAB_ETC/secrets.env"; then
     die "cannot deploy Vaultwarden: $LAB_ETC/secrets.env is absent.
 The Proxmox token secret cannot be re-read; re-run with ROTATE_PROXMOX_TOKEN=1
 to mint a token the runner can use."
   fi
 
+  LAB_REVERSE_PROXY="${LAB_REVERSE_PROXY:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("reverse_proxy") or {}).get("provider", "none"))' "$CONFIG_INFRA")}"
+  [ "$LAB_REVERSE_PROXY" = "caddy" ] || die "first-owner enrollment requires Caddy HTTPS; infrastructure.reverse_proxy.provider is '$LAB_REVERSE_PROXY'"
+
   in_ct sudo -u rundeck env \
-    HOME=/var/lib/rundeck \
-    LAB_REFRESH=0 \
-    LAB_DOCTOR=1 \
+    HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+    CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}" \
     ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" \
-    /usr/local/bin/lab-run \
-      playbooks/apps/vaultwarden.yml -e instance=vaultwarden
-  info "Vaultwarden is online and tagged for Ansible inventory adoption"
+    /usr/local/bin/lab-run playbooks/apps/caddy.yml -e instance=caddy
+
+  # Vaultwarden comes up behind an already-live proxy. Its wiring pass adds the
+  # HTTPS route immediately, so the enrollment URL is the first supported entry.
+  in_ct sudo -u rundeck env \
+    HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+    ANSIBLE_PRIVATE_KEY_FILE="$LAB_SSH_KEY" \
+    /usr/local/bin/lab-run playbooks/apps/vaultwarden.yml -e instance=vaultwarden
+  info "Vaultwarden and Caddy are online; the HTTPS route is configured"
+
+  # Preserve the generated admin token in encrypted Key Storage before asking a
+  # human to enroll. The temporary sink remains until verified Vault cutover.
+  if [ -n "$RD_TOKEN" ] && declare -F ks_put >/dev/null 2>&1; then
+    STAGE8="$(newtmp)"
+    in_ct sed -n 's/^VAULTWARDEN_ADMIN_TOKEN=//p' "$LAB_ETC/secrets.d/vaultwarden.env" > "$STAGE8/admin-token"
+    chmod 0600 "$STAGE8/admin-token"
+    if [ -s "$STAGE8/admin-token" ]; then
+      ks_put "keys/project/$RD_PROJECT/vaultwarden-machine/admin-token" \
+        "application/x-rundeck-data-password" "$STAGE8/admin-token"
+    fi
+  fi
+
+  if [ -n "$VAULTWARDEN_OWNER_EMAIL" ]; then
+    info "attempting first-owner invitations through the HTTPS admin facility"
+    if in_ct curl -fsS --max-time 15 "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
+      in_ct sudo -u rundeck env \
+        HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+        VAULTWARDEN_OWNER_EMAIL="$VAULTWARDEN_OWNER_EMAIL" \
+        VAULTWARDEN_AUTOMATION_EMAIL="$VAULTWARDEN_AUTOMATION_EMAIL" \
+        /usr/local/bin/lab-run playbooks/maintenance/vaultwarden-enroll.yml
+    else
+      warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
+      info "create/verify DNS and certificate reachability, then run Vaultwarden Enrollment"
+    fi
+  else
+    warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
+  fi
 else
   warn "DEPLOY_VAULTWARDEN=0 — runner created without the preliminary secret store"
 fi
@@ -1141,11 +1277,12 @@ cat <<EOF
     Ansible    $VENV_DIR/bin/ansible
     Config     $REPO_DIR/config/{proxmox.yml,infrastructure.yml,apps/rundeck.yml}
     Proxmox    $PVE_USER (role $PVE_ROLE), token secret in Key Storage
-    Vaultwarden $([ "$DEPLOY_VAULTWARDEN" = "1" ] && printf '%s' 'deployed through Ansible' || printf '%s' 'skipped (runner-only mode)')
+    Vaultwarden $([ "$DEPLOY_VAULTWARDEN" = "1" ] && printf '%s' 'deployed with Caddy; enrollment/cutover required' || printf '%s' 'skipped (runner-only mode)')
     Creds      pct exec $VMID -- cat $CRED_FILE
 
-    NEXT: open $RD_URL and run Bootstrap Platform. It will reuse the tagged
-    Vaultwarden LXC and deploy the remaining baseline services.
+    NEXT: open $RD_URL, finish Vaultwarden Enrollment, stage the three automation
+    credentials, and run Vaultwarden Cutover. Only then run Bootstrap Platform;
+    it will reuse Caddy and Vaultwarden and deploy the remaining baseline services.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

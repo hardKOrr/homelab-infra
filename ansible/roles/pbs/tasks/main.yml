@@ -217,6 +217,34 @@
       Could not obtain a PBS API token secret for {{ _pbs_token_id }}. Check
       `proxmox-backup-manager user list-tokens {{ pbs_auth_id }}` on the PBS VM.
 
+- name: Store and verify the PBS token immediately
+  block:
+    - name: Store the PBS token in Vaultwarden
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/backups
+        vault_item_fields:
+          instance: "{{ instance }}"
+          host: "https://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+          api_token_id: "{{ _pbs_token_id }}"
+          api_token_secret: "{{ _pbs_token_secret }}"
+        vault_item_secret_fields: [api_token_secret]
+  rescue:
+    - name: Revoke a newly created token whose vault write failed
+      ansible.builtin.command:
+        cmd: >-
+          proxmox-backup-manager user delete-token {{ pbs_auth_id }}
+          {{ app_config.app.api_token_name | default('ansible') }}
+      when: not (_pbs_token_usable | bool)
+      changed_when: true
+      no_log: true
+
+    - name: Fail after PBS token compensation
+      ansible.builtin.fail:
+        msg: >-
+          Vaultwarden storage or readback failed for homelab-infra/backups.
+          A token created by this run was revoked; an existing token was left intact.
+
 # Datastore creation, backup jobs and notification routing all need write access
 # across the tree, so the token is granted Admin at the root path.
 - name: Grant the token Admin on the datastore tree

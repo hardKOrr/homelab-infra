@@ -1,0 +1,20 @@
+- id: 9fa6c03f-72db-5baf-8d8d-3b98774e4f74
+  uuid: 9fa6c03f-72db-5baf-8d8d-3b98774e4f74
+  name: Vaultwarden Enrollment
+  group: Bootstrap
+  description: Invite the exact first-owner and dedicated automation addresses after Caddy HTTPS is reachable. Human registration, master-password choice, organization creation and collection grants remain in the web vault.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Invite enrollment identities
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          export LAB_SEED_MODE=1
+          exec lab-run playbooks/maintenance/vaultwarden-enroll.yml

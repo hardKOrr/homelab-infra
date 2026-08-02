@@ -8,23 +8,18 @@
 #   - Proxmox API token is set (config/proxmox.yml or env PROXMOX_API_TOKEN)
 #
 # What this deploys (in order):
-#   1. Vaultwarden   — secrets store (ENFORCED, always deployed)
-#   2. Ntfy          — notification hub
-#   3. Reverse proxy — Caddy or Nginx per infrastructure.yml
+#   1. Caddy         — HTTPS entry point required for safe Vaultwarden enrollment
+#   2. Vaultwarden   — mandatory runtime secret store
+#   3. Ntfy          — notification hub
 #   4. Authentik     — SSO (if infrastructure.sso.provider: authentik)
 #   5. Uptime Kuma   — uptime monitoring
 #   6. Grafana stack — Prometheus + Grafana
 #   7. PBS           — Proxmox Backup Server (VM)
 #
-# ONE PASS, NO HUMAN IN THE LOOP (slice 013):
-#   Vaultwarden deploys first and has no prior secret to authenticate with — the
-#   chicken-and-egg this playbook has to solve. Its admin token is generated during
-#   the deploy and written to the controller-side sink
-#   (tasks/vaultwarden/token-sink.yml); the gate below reads it back and the run
-#   continues straight into step 2. Nothing is pasted and nothing is re-run.
-#
-#   The gate still fails hard if no token is readable — that means the sink write
-#   failed, and the role prints the token in exactly that case so it is not lost.
+# The one-click runner bootstrap deploys Caddy and Vaultwarden in explicit Seed
+# mode, then pauses for the inherently human owner/automation-account ceremony and
+# verified Vaultwarden Cutover. This full platform playbook is a Vault-mode job: it
+# cannot run until lab-run has unlocked the automation vault and resolved secrets.
 #
 # Re-running after any failure is safe — each step finds-or-creates its guest and
 # re-applies config without destructive operations.
@@ -94,7 +89,12 @@
         generated_facts_data: "{{ homelabinfra_config.infrastructure.domain }}"
 
 
-# ── Step 1: Vaultwarden — secrets store (enforced) ────────────────────────────
+# ── Steps 1-2: Caddy HTTPS, then Vaultwarden (enforced) ───────────────────────
+- import_playbook: apps/caddy.yml
+  vars:
+    instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('caddy') }}"
+  when: hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') == 'caddy'
+
 - import_playbook: apps/vaultwarden.yml
   vars:
     instance: vaultwarden
@@ -121,10 +121,8 @@
              | default(vaultwarden_token_stored, true) }}
       no_log: true
 
-    # A hard fail, so Semaphore/Rundeck surface the job as "needs attention" with the
-    # instructions in the output. Ntfy cannot carry this message — it does not exist
-    # until step 2. Reaching this now means the sink write failed, which is rare and
-    # is why the role prints the token in that case and only that case.
+    # A hard fail, so UI-driven runs surface a missing external administration
+    # credential without allowing later producers to mutate their services.
     - name: Halt if no Vaultwarden admin token is available
       ansible.builtin.assert:
         that: _bootstrap_vw_token | length > 0
@@ -135,14 +133,9 @@
 
           Expected sink: {{ vaultwarden_token_sink }}
 
-          If the Vaultwarden deploy above printed a token, save it now — either in
-          config/infrastructure.yml under vaultwarden.admin_token, or as the
-          VAULTWARDEN_ADMIN_TOKEN env var on this Semaphore/Rundeck job — and re-run.
-          Bootstrap is idempotent: it skips what is already deployed.
-
-          If nothing was printed, the guest already had a token whose plaintext is
-          lost. Reset it: clear ADMIN_TOKEN from /etc/vaultwarden.env on the
-          Vaultwarden guest, then re-run this job to generate a fresh one.
+          In Vault mode this is supplied by the canonical vault item. During the
+          enrollment/cutover jobs it is supplied by encrypted external Key Storage.
+          Follow the recovery runbook if neither source is available; no job prints it.
 
     # Later plays read the merged config off localhost, so put the resolved token
     # where they expect it. Without this, a one-pass run would have the token in the
@@ -157,7 +150,7 @@
       no_log: true
 
 
-# ── Step 2: Ntfy — notification hub ───────────────────────────────────────────
+# ── Step 3: Ntfy — notification hub ───────────────────────────────────────────
 # Records `notifications` itself (host, topic, and the publish credentials every
 # later notifier authenticates with — Ntfy ships closed by default).
 - import_playbook: apps/ntfy.yml
@@ -173,11 +166,6 @@
 # The nginx import stays staged: slice 301 shipped the nginx WIRING pair, but no
 # nginx app playbook exists yet. import_playbook is parsed at load time, so
 # importing a missing file would break --syntax-check for this whole playbook.
-- import_playbook: apps/caddy.yml
-  vars:
-    instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('caddy') }}"
-  when: hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.provider | default('none') == 'caddy'
-
 # - import_playbook: apps/nginx.yml
 #   vars:
 #     instance: "{{ hostvars['localhost'].homelabinfra_config.infrastructure.reverse_proxy.instance | default('nginx') }}"

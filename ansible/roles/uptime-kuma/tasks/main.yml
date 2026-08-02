@@ -85,6 +85,18 @@
     _kuma_base: "http://localhost:{{ app_config.app.port }}"
   no_log: true
 
+- name: Store the monitoring password before first-time setup
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/monitoring
+    vault_item_fields:
+      provider: uptime_kuma
+      instance: "{{ instance }}"
+      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      admin_user: "{{ _kuma_user }}"
+      admin_password: "{{ _kuma_password }}"
+    vault_item_secret_fields: [admin_password]
+
 # Kuma refuses this once a user exists, which is exactly the idempotency signal:
 # a re-run gets a non-2xx here and moves on with the recorded password.
 - name: Run first-time setup
@@ -149,6 +161,20 @@
       {{ (_kuma_probe.status | default(0)) == 200
          and 'json' in (_kuma_probe.content_type | default('')) }}
 
+- name: Store and verify the monitoring API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: homelab-infra/monitoring
+    vault_item_fields:
+      provider: uptime_kuma
+      instance: "{{ instance }}"
+      host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+      token: "{{ _kuma_api_key }}"
+      admin_user: "{{ _kuma_user }}"
+      admin_password: "{{ _kuma_password }}"
+    vault_item_secret_fields: [token, admin_password]
+  when: _kuma_api_key | length > 0
+
 # The one step this role cannot script: Uptime Kuma issues API keys only to an
 # authenticated UI session, and there is no documented endpoint to mint the first
 # one. Rather than fail the deploy, say exactly what to do and carry on — the
@@ -162,10 +188,9 @@
       - ""
       - "One-time step:"
       - "  1. Open https://{{ instance }}.{{ _kuma_domain }} and sign in as"
-      - "     {{ _kuma_user }} (password is in config/.generated/facts.yml under"
-      - "     monitoring.admin_password)."
+      - "     {{ _kuma_user }} (password is in homelab-infra/monitoring)."
       - "  2. Profile -> API Keys -> Add API Key, name it '{{ uptime_kuma_api_key_name }}'."
-      - "  3. Put the key in config/apps/{{ instance }}.yml as app.api_key and"
+      - "  3. Add it as field token in Vaultwarden item homelab-infra/monitoring and"
       - "     re-run this deploy. Everything after this point then runs scripted."
       - "════════════════════════════════════════════════════════════════════"
   vars:

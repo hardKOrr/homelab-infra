@@ -22,10 +22,8 @@
 #   PROXMOX_API_TOKEN        <- proxmox.api_token_secret
 #   VAULTWARDEN_ADMIN_TOKEN  <- infrastructure vaultwarden.admin_token
 #
-# The Vaultwarden admin token also resolves from the slice-013 token sink, which is
-# where the platform writes it for itself and therefore the usual place it lives:
-# $VAULTWARDEN_TOKEN_SINK, else <secrets.d>/vaultwarden.env, else
-# <config>/.generated/vaultwarden.env.
+# In Seed mode the Vaultwarden admin token may resolve from the temporary slice-013
+# sink. In Vault mode lab-run exports the canonical vault value before this doctor runs.
 
 set -euo pipefail
 
@@ -217,10 +215,8 @@ else:
 
     need(infra, "infrastructure.yml", "backups.datastore_path")
 
-    # Produced by bootstrap step 1, so absence before the first bootstrap is normal.
-    # The token's normal home since slice 013 is the sink, not this file — a lab that
-    # never pasted anything is correctly configured, so a readable sink satisfies the
-    # check the same way the env var does.
+    # Produced during Seed mode, then supplied from encrypted control-plane storage or
+    # the canonical vault item. It never needs to remain in authored config.
     if not vaultwarden_token_sink_holds_a_token():
         need(infra, "infrastructure.yml", "vaultwarden.admin_token",
              env_var="VAULTWARDEN_ADMIN_TOKEN", severity="WARN")

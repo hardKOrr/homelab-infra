@@ -9,9 +9,9 @@
 # app-defaults) — override routing.subdomain below to use anything else.
 #
 # Authentik usually needs no overrides. Credentials are NOT set here: the admin
-# password and API token are generated on first deploy and recorded in
-# config/.generated/facts.yml (gitignored, mode 0600) under sso.admin_password
-# and sso.token. Sign in as akadmin with that password.
+# Passwords, the bootstrap token, and OIDC client secrets are generated into canonical
+# Vaultwarden items before use. Sign in as akadmin with the password in
+# `homelab-infra/sso`.
 
 # ── Stack placement ────────────────────────────────────────────────────────────
 # Which stack host these containers run on. Authentik gets its own by default

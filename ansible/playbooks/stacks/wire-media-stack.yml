@@ -96,9 +96,8 @@
         msg: >-
           Could not read an API key for {{ inventory_hostname }} from
           {{ mw_config_path | default('(no app.config_path declared)') }}/config.xml.
-          Record it as app.api_key in config/apps/{{ inventory_hostname }}.yml, or
-          under media.{{ inventory_hostname }}.api_key in
-          config/.generated/facts.yml. This app is not being wired.
+          The key could not be captured into
+          homelab-infra/media/{{ inventory_hostname }}. This app is not being wired.
       when: mw_api_key | default('') | length == 0
 
 
@@ -109,6 +108,9 @@
   gather_facts: false
 
   pre_tasks:
+    - name: Load platform vars and the in-memory vault contract
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
     - name: Load the media wiring table
       ansible.builtin.include_vars:
         file: ../../vars/media-wiring.yml
@@ -148,6 +150,17 @@
          | selectattr('state', 'equalto', 'failed') | list }}
 
   tasks:
+    - name: Store and verify every discovered API key before wiring
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/media/{{ item }}"
+        vault_item_fields:
+          api_key: "{{ hostvars[item].mw_api_key }}"
+        vault_item_secret_fields: [api_key]
+      loop: "{{ groups['media_discover'] | default([]) }}"
+      when: hostvars[item].mw_api_key | default('') | length > 0
+      no_log: true
+
     # Play 2 ran on the app guests; its findings live in their hostvars.
     - name: Fold discovered API keys back into the registry
       ansible.builtin.set_fact:

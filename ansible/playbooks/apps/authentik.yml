@@ -56,7 +56,10 @@
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.authentik_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.authentik_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
   tasks:
     # PATH A: DOCKER APP — app runs as containers on a shared stack host.
@@ -160,12 +163,7 @@
           provider: authentik
           instance: "{{ instance }}"
           host: "{{ _authentik_deploy_host.authentik_api_url }}"
-          token: "{{ _authentik_deploy_host.authentik_api_token }}"
-          # Recorded so the operator can actually sign in — akadmin's password is
-          # generated, never prompted. Provider-specific optional fields per
-          # CONTRACT.md §3.
           admin_user: "{{ _authentik_deploy_host.authentik_admin_username }}"
-          admin_password: "{{ _authentik_deploy_host.authentik_admin_password }}"
 
     # Re-read so the wiring tasks below see the key just written.
     - name: Reload infrastructure facts
@@ -198,6 +196,7 @@
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/-/health/live/"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _authentik_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _authentik_deploy_host.app_config.routing.proxy | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy

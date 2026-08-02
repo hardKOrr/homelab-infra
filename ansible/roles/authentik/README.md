@@ -13,8 +13,8 @@ Authentik UI. The role creates none of them, so a re-deploy never overwrites a
 decision made there.
 
 The admin account is `akadmin`, created by `AUTHENTIK_BOOTSTRAP_*` on first start.
-Its generated password and API token are recorded in `config/.generated/facts.yml`
-under `sso.admin_password` / `sso.token`. Rename it in the UI if you like — the
+Its generated password and API token are stored in `homelab-infra/sso` under
+`admin_password` / `token`. Rename it in the UI if you like — the
 role only asserts the recorded token still belongs to it, and that assert names the
 account it expected, so a rename shows up as an actionable failure rather than a
 silent one.

@@ -37,24 +37,24 @@ consumers concatenate paths onto it directly; consumers needing a bare hostname 
 shoutrrr URL) strip the scheme themselves.
 
 ```yaml
-# config/.generated/facts.yml, loaded whole into homelabinfra_infra
+# config/.generated/facts.yml topology, overlaid in memory with Vaultwarden fields
 domain: homelab.example.com          # copied from infrastructure.yml
-reverse_proxy: { provider, instance, host, port }
-sso:           { provider, instance, host, token }
+reverse_proxy: { provider, instance, host, port, internal_cidrs }
+sso:           { provider, instance, host, admin_user }
 notifications: { provider, instance, host, topic }   # NOT ntfy_url — consumers build {{ host }}/{{ topic }}
-monitoring:    { provider, instance, host, token, notification_id }
-metrics:       { provider, instance, host, prometheus_host, admin_user, admin_password }
-dns:           { provider, host, api_key }
-backups:       { instance, host, datastore, datastore_path }
-vaultwarden:   { host, port }        # populated after bootstrap step 1
+monitoring:    { provider, instance, host, admin_user, notification_id }
+metrics:       { provider, instance, host, prometheus_host, admin_user }
+dns:           { provider, host }
+backups:       { instance, host, datastore, datastore_path, api_token_id }
+vaultwarden:   { host, port }
 media:                               # optional — app-to-app wiring for the media stack
-  <instance>: { app, host, api_key, ... }   # see the media registry note below
+  <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
 runner:                              # the host this platform runs FROM — see below
   { provider, instance, host, vmid, node, checkout_path, venv_path, branch }
 estates:                             # optional — only when infrastructure.yml declares domains:
   <estate-name>:                     # non-default estates only; the default estate uses
-    sso: { provider, instance, host, token }   # the top-level keys above
-    dns: { provider, host, api_key }           # optional — global dns serves the estate if absent
+    sso: { provider, instance, host }          # the top-level keys above
+    dns: { provider, host }                    # optional — global dns serves the estate if absent
 ```
 
 **`runner` — the host the platform runs from (slice 010).** Written by
@@ -84,6 +84,7 @@ read only by that provider's wiring tasks (slices 301–305):
 | `reverse_proxy` | `token` | nginx | pre-issued NPM JWT; skips the login round-trip |
 | `reverse_proxy` | `admin_user`, `admin_password` | nginx | NPM admin login, exchanged for a JWT per run |
 | `reverse_proxy` | `letsencrypt_email` | nginx | when set, new proxy hosts request a LE certificate and force SSL; omit for internal-only labs |
+| `reverse_proxy` | `dns_api_token` | caddy | DNS-01 credential, normally a Cloudflare token scoped to Zone Read plus DNS Edit for the one lab zone; stored only in Vaultwarden after cutover |
 | `sso` | `admin_user`, `admin_password` | authentik | akadmin's generated sign-in credentials; nothing reads them, they are recorded so the operator can log in |
 | `notifications` | `user`, `password` | ntfy | publish account; `configure-watchtower.yml` needs the basic-auth pair because shoutrrr authenticates that way |
 | `notifications` | `token` | ntfy | publish-only access token on `topic`; every `uri`/`curl` consumer sends it as `Authorization: Bearer` |
@@ -181,6 +182,9 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `domains` | optional | map of named estates — see below |
 | `reverse_proxy.provider` | required | `caddy \| nginx \| none` |
 | `reverse_proxy.instance` | required unless provider `none` | |
+| `reverse_proxy.internal_cidrs` | required for Caddy internal routes | source CIDRs allowed to reach apps with `routing.proxy: internal` |
+| `reverse_proxy.dns_challenge.provider` | recommended for Caddy ACME | `cloudflare` enables DNS-01 without public app records or WAN port forwarding; the token is external/Vaultwarden material |
+| `reverse_proxy.dns_challenge.resolvers` | optional | public resolvers used for DNS-01 propagation checks; defaults to Cloudflare's public resolvers so split-horizon Unbound cannot mask the temporary TXT record |
 | `sso.provider` | required | `authentik \| none` |
 | `sso.instance` | required if provider `authentik`, else optional | |
 | `notifications.provider` | required | `ntfy \| gotify \| discord \| none` |
@@ -194,31 +198,49 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |
 | `backups.retention` | optional | |
-| `vaultwarden.admin_token` | required *in file or env* | secret; produced by bootstrap step 1, or supplied as `VAULTWARDEN_ADMIN_TOKEN` |
+| `vaultwarden.admin_token` | Seed/recovery override only | removed from authored config after cutover |
 | `vaultwarden.instance` | optional | |
 
-### Secrets from the environment (slice 010)
+### Runtime secrets and external unlock material (slice 014)
 
-Two values may be supplied through the process environment instead of a config file, and
-the environment wins when both are present:
+`lab-run.sh` constructs `homelabinfra_vault` in memory from canonical organization-owned
+Vaultwarden items, then recursively overlays it on topology as `homelabinfra_infra`.
+The canonical top-level items are:
+
+| Item | Representative fields |
+|---|---|
+| `homelab-infra/proxmox` | `api_token_secret` |
+| `homelab-infra/runner` | `ssh_private_key` |
+| `homelab-infra/vaultwarden` | `admin_token` |
+| `homelab-infra/notifications` | `password`, `token` |
+| `homelab-infra/sso` | `token`, `admin_password`, `postgres_password`, `secret_key` |
+| `homelab-infra/monitoring` | `api_key`, `admin_password` |
+| `homelab-infra/metrics` | `admin_password` |
+| `homelab-infra/backups` | `api_token_secret` |
+| `homelab-infra/dns` | `api_key`, `api_secret` |
+| `homelab-infra/reverse_proxy` | `dns_api_token` |
+| `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
+| `homelab-infra/apps/<instance>` | instance-specific secret fields |
+| `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields |
+
+The following process variables are external control-plane inputs. Rundeck injects them
+through per-job secure options backed by AES-GCM Key Storage; they are not ordinary job
+options or config-file values:
 
 | Env var | Overrides | Read by |
 |---|---|---|
-| `PROXMOX_API_TOKEN` | `proxmox.api_token_secret` | `scripts/with-proxmox-env.sh`, `tasks/load-user-vars.yml` |
-| `PROXMOX_API_TOKEN_ID` | `proxmox.api_token_id` | both of the above |
-| `PROXMOX_API_USER` | `proxmox.api_user` | both of the above |
-| `VAULTWARDEN_ADMIN_TOKEN` | `infrastructure.vaultwarden.admin_token` | `tasks/load-user-vars.yml` |
+| `BW_CLIENTID` | automation-account API client ID | `bw login --apikey` |
+| `BW_CLIENTSECRET` | automation-account API client secret | `bw login --apikey` |
+| `BW_PASSWORD` | automation-account master password | `bw unlock --passwordenv` |
+| `VAULTWARDEN_ADMIN_TOKEN` | server administration, enrollment and recovery | admin API only |
+| `RUNDECK_API_TOKEN` | job import/cutover control-plane calls | selected maintenance jobs only |
 
-This is what keeps **shape** and **secret** in separate homes. `config/proxmox.yml` and
-`config/infrastructure.yml` describe the lab and are meant to be read, diffed, copied and
-handed around by the `Get Config` job; the two genuinely privileged values live in Rundeck
-Key Storage / the Semaphore environment and reach a run as environment variables. On a
-bootstrapped Rundeck runner, `scripts/lab-run.sh` sources them from
-`/etc/homelab-infra/secrets.env` (0640 root:rundeck) — outside the git checkout, so the
-per-run `git reset --hard` never sees them, and outside `config/`, so `Get Config` never
-archives them.
+In Seed mode, the older Proxmox/admin environment variables remain temporary inputs. Once
+`/etc/homelab-infra/state/vault-mode` exists, `lab-run.sh` will not source seed files even
+if they are recreated. It obtains Proxmox and SSH material from Vaultwarden and cleans the
+vault session and temporary key after the child playbook exits.
 
-### The Vaultwarden admin token sink (slice 013)
+### The temporary Vaultwarden admin token sink (Seed mode)
 
 `VAULTWARDEN_ADMIN_TOKEN` differs from the Proxmox token in one way that matters: **the
 platform generates it rather than receiving it.** Vaultwarden has no admin token until its
@@ -234,20 +256,18 @@ reads it back two plays later and continues without stopping for a human.
 | 2 | `/etc/homelab-infra/secrets.d/vaultwarden.env` | on a runner — the directory exists and is writable |
 | 3 | `<config>/.generated/vaultwarden.env` | bare CLI runs, where there is no `/etc/homelab-infra` |
 
-`secrets.d/` is owned by the job user at `0700`, not root, because a playbook running as
-`rundeck` has to create a file in it without privilege escalation. `secrets.env` beside it
-stays root-owned: operator-supplied secrets and platform-generated ones have different
-writers and different lifetimes. `lab-run.sh` sources both, and anything already exported
-wins over either.
+`secrets.d/` is owned by the job user at `0700` so the first Vaultwarden deploy can write
+the generated token. The cutover job verifies it in the canonical vault item and preserves
+an AES-GCM Key Storage recovery copy before removing the sink. Neither seed directory is a
+normal runtime source after the marker.
 
 Resolution order for the token's **value** is the same everywhere it is read
 (`roles/vaultwarden`, the bootstrap gate): env var, then
 `infrastructure.vaultwarden.admin_token`, then the sink. The config key remains an accepted
 override so a lab that pasted a token before this slice is unaffected by a `git pull`.
 
-The plaintext token is printed to the job log **only when the sink write fails**, because
-then the console is its only surviving copy. On the normal path it does not appear in the
-log at all.
+The plaintext token is never printed. If the sink is unwritable, the role stops before
+installing the generated token on Vaultwarden so the next run can safely generate another.
 
 ### `config/.backups/` and `config/apps/.backups/`
 

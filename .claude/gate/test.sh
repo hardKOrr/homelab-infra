@@ -31,4 +31,7 @@ for pb in "${playbooks[@]}"; do
     echo "== $pb"
     "$HOME/.venvs/homelab-ansible/bin/ansible-playbook" --syntax-check -i localhost, "$pb" || rc=1
 done
+
+cd ..
+bash .claude/gate/test-vaultwarden.sh || rc=1
 exit $rc

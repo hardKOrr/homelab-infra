@@ -5,7 +5,8 @@
 #   2. config/proxmox.yml               (top-level proxmox/networks/ansible keys, injected as-is)
 #   3. config/infrastructure.yml        (whole file wrapped under .infrastructure)
 #   4. user_vars_file / pre-set homelabinfra_config  (legacy back-compat; wins on conflict)
-#   5. PROXMOX_API_TOKEN / _TOKEN_ID / _USER and VAULTWARDEN_ADMIN_TOKEN from the
+#   5. PROXMOX_API_TOKEN / _TOKEN_ID / _USER, VAULTWARDEN_ADMIN_TOKEN and
+#      CLOUDFLARE_API_TOKEN from the
 #      environment (slice 010; secrets only, and only when actually set)
 # config/ is gitignored and may be absent on a clean checkout, so the two config includes use
 # `failed_when: false` and default to {} in the merge. Required-key validation is the CALLER's job
@@ -43,6 +44,23 @@
 - name: Derive the config directory
   ansible.builtin.set_fact:
     _luv_config_dir: "{{ _luv_vars_file | dirname | dirname | dirname }}/config"
+
+- name: Load non-secret generated topology if present
+  ansible.builtin.include_vars:
+    file: "{{ _luv_config_dir }}/.generated/facts.yml"
+    name: _luv_generated_facts
+  failed_when: false
+
+- name: Resolve the in-memory Vaultwarden contract
+  ansible.builtin.set_fact:
+    homelabinfra_vault: >-
+      {{ (lookup('ansible.builtin.env', 'HOMELABINFRA_VAULT_JSON')
+          | default('{}', true) | from_json) }}
+    homelabinfra_infra: >-
+      {{ (_luv_generated_facts | default({}))
+         | combine((lookup('ansible.builtin.env', 'HOMELABINFRA_VAULT_JSON')
+                    | default('{}', true) | from_json), recursive=True) }}
+  no_log: true
 
 - name: Load homelabinfra defaults
   ansible.builtin.include_vars:
@@ -84,12 +102,14 @@
     homelabinfra_config: >-
       {{ homelabinfra_config
          | combine(_env_proxmox, recursive=True)
-         | combine(_env_vaultwarden, recursive=True) }}
+         | combine(_env_vaultwarden, recursive=True)
+         | combine(_env_reverse_proxy, recursive=True) }}
   vars:
     _env_token: "{{ lookup('env', 'PROXMOX_API_TOKEN') | default('', true) }}"
     _env_token_id: "{{ lookup('env', 'PROXMOX_API_TOKEN_ID') | default('', true) }}"
     _env_user: "{{ lookup('env', 'PROXMOX_API_USER') | default('', true) }}"
     _env_vw_token: "{{ lookup('env', 'VAULTWARDEN_ADMIN_TOKEN') | default('', true) }}"
+    _env_cf_token: "{{ lookup('env', 'CLOUDFLARE_API_TOKEN') | default('', true) }}"
     _env_proxmox: >-
       {{ {'proxmox': {}
           | combine({'api_token_secret': _env_token} if _env_token | length > 0 else {})
@@ -98,4 +118,40 @@
     _env_vaultwarden: >-
       {{ {'infrastructure': {'vaultwarden': {'admin_token': _env_vw_token}}}
          if _env_vw_token | length > 0 else {} }}
+    _env_reverse_proxy: >-
+      {{ {'infrastructure': {'reverse_proxy': {'dns_challenge': {
+           'provider': 'cloudflare', 'api_token': _env_cf_token}}}}
+         if _env_cf_token | length > 0 else {} }}
+  no_log: true
+
+- name: Overlay canonical reverse-proxy secrets into authored provider shape
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config
+         | combine({'infrastructure': {'reverse_proxy': {'dns_challenge': {
+             'provider': 'cloudflare',
+             'api_token': homelabinfra_vault.reverse_proxy.dns_api_token}}}}, recursive=True) }}
+  when:
+    - homelabinfra_vault.reverse_proxy.dns_api_token | default('') | length > 0
+    - lookup('env', 'CLOUDFLARE_API_TOKEN') | default('', true) | length == 0
+  no_log: true
+
+- name: Overlay canonical DNS secrets into authored provider shape
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config
+         | combine({'infrastructure': {
+             'dns': homelabinfra_vault.dns | default({}),
+             'notifications': homelabinfra_vault.notifications | default({}),
+             'domains': _vault_estate_domains
+           }}, recursive=True) }}
+  vars:
+    _vault_estate_domains: >-
+      {% set result = {} %}
+      {% for estate in (homelabinfra_vault.estates | default({}) | dict2items) %}
+      {% if estate.value.dns is defined %}
+      {% set _ = result.update({estate.key: {'dns_challenge': estate.value.dns}}) %}
+      {% endif %}
+      {% endfor %}
+      {{ result }}
   no_log: true

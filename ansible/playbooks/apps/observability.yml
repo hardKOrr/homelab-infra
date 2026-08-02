@@ -54,7 +54,10 @@
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.observability_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.observability_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
   tasks:
     # PATH A: DOCKER APP — app runs as containers on a shared stack host.
@@ -158,7 +161,6 @@
           host: "{{ _obs_deploy_host.observability_grafana_url }}"
           prometheus_host: "{{ _obs_deploy_host.observability_prometheus_url }}"
           admin_user: "{{ _obs_deploy_host.observability_admin_username }}"
-          admin_password: "{{ _obs_deploy_host.observability_admin_password }}"
 
     # Re-read so the wiring tasks below see the key just written.
     - name: Reload infrastructure facts
@@ -190,6 +192,7 @@
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/api/health"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _obs_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _obs_deploy_host.app_config.routing.proxy | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy
@@ -230,7 +233,7 @@
         notify_message: >-
           Grafana is at https://{{ instance }}.{{ homelabinfra_infra.domain }},
           signed in as {{ _obs_deploy_host.observability_admin_username }}
-          (password in config/.generated/facts.yml under metrics.admin_password).
+          (password in Vaultwarden item homelab-infra/metrics).
           Prometheus is scraping
           {{ _obs_deploy_host.observability_scrape_target_count }} host(s);
           re-run this deploy after adding guests to pick them up.

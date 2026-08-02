@@ -1,0 +1,264 @@
+---
+# Explicit, approval-bearing Seed -> Vault transition. lab-run authenticates and
+# unlocks the automation account before this play starts, but does not require the
+# canonical items until this play has imported them.
+- name: Vaultwarden | Verify imports and cut over the runner
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _cutover_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    _cutover_state_dir: "{{ lookup('ansible.builtin.env', 'LAB_STATE_DIR') | default('/etc/homelab-infra/state', true) }}"
+    _cutover_ssh_file: "{{ lookup('ansible.builtin.env', 'ANSIBLE_PRIVATE_KEY_FILE') }}"
+  pre_tasks:
+    - name: Load platform vars and current runtime data
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert cutover seed inputs still exist
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_config.proxmox.api_token_secret | default('') | length > 0
+          - homelabinfra_config.infrastructure.vaultwarden.admin_token | default('') | length > 0
+          - _cutover_ssh_file | length > 0
+        fail_msg: >-
+          Cutover seed material is incomplete. No files are removed and no marker
+          is written; restore the explicit recovery inputs and retry.
+      no_log: true
+
+    - name: Assert the Caddy DNS-01 credential is present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'CLOUDFLARE_API_TOKEN') | length > 0
+        fail_msg: >-
+          Caddy is configured for Cloudflare DNS-01, but the encrypted bootstrap
+          Cloudflare token was not supplied. No cutover data has been removed.
+      when: >-
+        homelabinfra_config.infrastructure.reverse_proxy.dns_challenge.provider
+        | default('') == 'cloudflare'
+      no_log: true
+
+  tasks:
+    - name: Import and verify the Proxmox credential
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/proxmox
+        vault_item_fields:
+          api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
+        vault_item_secret_fields: [api_token_secret]
+
+    - name: Import and verify the runner SSH identity
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/runner
+        vault_item_fields:
+          ssh_private_key: "{{ lookup('ansible.builtin.file', _cutover_ssh_file) }}"
+        vault_item_secret_fields: [ssh_private_key]
+
+    - name: Import and verify the Vaultwarden admin credential
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/vaultwarden
+        vault_item_fields:
+          admin_token: "{{ homelabinfra_config.infrastructure.vaultwarden.admin_token }}"
+        vault_item_secret_fields: [admin_token]
+
+    - name: Import and verify the reverse-proxy DNS credential
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/reverse_proxy
+        vault_item_fields:
+          dns_api_token: "{{ lookup('ansible.builtin.env', 'CLOUDFLARE_API_TOKEN') }}"
+        vault_item_secret_fields: [dns_api_token]
+      when: lookup('ansible.builtin.env', 'CLOUDFLARE_API_TOKEN') | length > 0
+      no_log: true
+
+    - name: Build the existing generated-secret migration set
+      ansible.builtin.set_fact:
+        _cutover_generated_items:
+          - {name: notifications, fields: [password, token]}
+          - {name: sso, fields: [token, admin_password]}
+          - {name: monitoring, fields: [token, admin_password]}
+          - {name: metrics, fields: [admin_password]}
+          - {name: backups, fields: [api_token_secret]}
+          - {name: dns, fields: [api_key, api_secret]}
+          - {name: reverse_proxy, fields: [token, admin_password]}
+
+    - name: Import and verify existing generated service secrets
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/{{ item.name }}"
+        vault_item_fields: >-
+          {{ (homelabinfra_infra[item.name] | default({}) | dict2items
+              | selectattr('key', 'in', item.fields)
+              | rejectattr('value', 'equalto', '') | list | items2dict) }}
+        vault_item_secret_fields: "{{ item.fields }}"
+      loop: "{{ _cutover_generated_items }}"
+      when: >-
+        homelabinfra_infra[item.name] | default({}) | dict2items
+        | selectattr('key', 'in', item.fields)
+        | rejectattr('value', 'equalto', '') | list | length > 0
+      no_log: true
+
+    - name: Import and verify existing media secrets
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/media/{{ item.key }}"
+        vault_item_fields: >-
+          {{ item.value | dict2items
+             | selectattr('key', 'in', ['api_key', 'password', 'arl'])
+             | rejectattr('value', 'equalto', '') | list | items2dict }}
+        vault_item_secret_fields: [api_key, password, arl]
+      loop: "{{ homelabinfra_infra.media | default({}) | dict2items }}"
+      when: >-
+        item.value | dict2items
+        | selectattr('key', 'in', ['api_key', 'password', 'arl'])
+        | rejectattr('value', 'equalto', '') | list | length > 0
+      no_log: true
+
+    - name: Import and verify authored DNS credentials
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/dns
+        vault_item_fields: >-
+          {{ homelabinfra_config.infrastructure.dns | default({}) | dict2items
+             | selectattr('key', 'in', ['api_key', 'api_secret', 'token'])
+             | rejectattr('value', 'equalto', '') | list | items2dict }}
+        vault_item_secret_fields: [api_key, api_secret, token]
+      when: >-
+        homelabinfra_config.infrastructure.dns | default({}) | dict2items
+        | selectattr('key', 'in', ['api_key', 'api_secret', 'token'])
+        | rejectattr('value', 'equalto', '') | list | length > 0
+      no_log: true
+
+    - name: Import and verify authored notification credentials
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/notifications
+        vault_item_fields: >-
+          {{ homelabinfra_config.infrastructure.notifications | default({}) | dict2items
+             | selectattr('key', 'in', ['webhook_url', 'token', 'password'])
+             | rejectattr('value', 'equalto', '') | list | items2dict }}
+        vault_item_secret_fields: [webhook_url, token, password]
+      when: >-
+        homelabinfra_config.infrastructure.notifications | default({}) | dict2items
+        | selectattr('key', 'in', ['webhook_url', 'token', 'password'])
+        | rejectattr('value', 'equalto', '') | list | length > 0
+      no_log: true
+
+    - name: Import and verify estate-scoped DNS credentials
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/estates/{{ item.key }}/dns"
+        vault_item_fields: >-
+          {{ item.value.dns_challenge | default({}) | dict2items
+             | selectattr('key', 'in', ['api_token', 'api_key', 'api_secret'])
+             | rejectattr('value', 'equalto', '') | list | items2dict }}
+        vault_item_secret_fields: [api_token, api_key, api_secret]
+      loop: "{{ homelabinfra_config.infrastructure.domains | default({}) | dict2items }}"
+      when: >-
+        item.value.dns_challenge | default({}) | dict2items
+        | selectattr('key', 'in', ['api_token', 'api_key', 'api_secret'])
+        | rejectattr('value', 'equalto', '') | list | length > 0
+      no_log: true
+
+    - name: Extract authored per-app credentials without logging values
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../scripts/secret-shape.py"
+          - --extract
+          - "{{ item }}"
+      loop: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../../config/apps/*.yml') }}"
+      register: _cutover_app_secret_sets
+      changed_when: false
+      no_log: true
+
+    - name: Import and verify authored per-app credentials
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: >-
+          homelab-infra/apps/{{ item.item | basename | regex_replace('\.yml$', '') }}
+        vault_item_fields: "{{ item.stdout | from_json }}"
+        vault_item_secret_fields: "{{ (item.stdout | from_json).keys() | list }}"
+      loop: "{{ _cutover_app_secret_sets.results | default([]) }}"
+      when: item.stdout | from_json | length > 0
+      no_log: true
+
+    - name: Remove superseded Proxmox and SSH Key Storage copies
+      ansible.builtin.uri:
+        url: >-
+          {{ lookup('ansible.builtin.env', 'RUNDECK_URL') }}/api/58/storage/{{ item }}
+        method: DELETE
+        headers:
+          X-Rundeck-Auth-Token: "{{ lookup('ansible.builtin.env', 'RUNDECK_API_TOKEN') }}"
+        status_code: [204, 404]
+      loop:
+        - keys/proxmox/api-token
+        - keys/rundeck/homelab-ssh
+        - keys/project/homelab-infra/bootstrap/cloudflare-api-token
+      when:
+        - lookup('ansible.builtin.env', 'RUNDECK_URL') | length > 0
+        - lookup('ansible.builtin.env', 'RUNDECK_API_TOKEN') | length > 0
+      no_log: true
+
+    - name: Remove any legacy API token from the checkout environment file
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../../.env"
+        regexp: '^RUNDECK_API_TOKEN='
+        state: absent
+      no_log: true
+
+    - name: Remove credentials from generated topology facts
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../scripts/secret-shape.py"
+          - --sanitize
+          - "{{ _cutover_facts_file }}"
+      changed_when: true
+      no_log: true
+
+    - name: Remove verified credentials from authored config and its local history
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../scripts/secret-shape.py"
+          - --sanitize
+          - "{{ item }}"
+      loop: >-
+        {{ ([playbook_dir ~ '/../../../config/proxmox.yml',
+             playbook_dir ~ '/../../../config/infrastructure.yml']
+            + query('ansible.builtin.fileglob', playbook_dir ~ '/../../../config/apps/*.yml')
+            + query('ansible.builtin.fileglob', playbook_dir ~ '/../../../config/.backups/*')
+            + query('ansible.builtin.fileglob', playbook_dir ~ '/../../../config/apps/.backups/*')) }}
+      changed_when: true
+      no_log: true
+
+    - name: Ensure durable runner state exists
+      ansible.builtin.file:
+        path: "{{ _cutover_state_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Write the Vault-mode marker after every readback succeeded
+      ansible.builtin.copy:
+        dest: "{{ _cutover_state_dir }}/vault-mode"
+        mode: "0600"
+        content: |
+          version=1
+          source=vaultwarden
+
+    - name: Remove temporary seed files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/homelab-infra/secrets.env
+        - /etc/homelab-infra/secrets.d/vaultwarden.env
+        - "{{ _cutover_ssh_file }}"
+      no_log: true
+
+    - name: Report successful cutover
+      ansible.builtin.debug:
+        msg: >-
+          Vault mode is active. Seed files were removed only after every imported
+          item passed exact readback. Ordinary jobs now fail closed on Vaultwarden.

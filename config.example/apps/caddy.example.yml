@@ -40,7 +40,7 @@
 #   # config/infrastructure.yml carry their own dns_challenge block there instead.
 #   dns_challenge:
 #     provider: cloudflare    # any github.com/caddy-dns/<provider> module
-#     api_token: ""           # DNS-edit token scoped to this domain only
+#     api_token: ""           # legacy token: Zone Read + DNS Edit on this domain only
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:

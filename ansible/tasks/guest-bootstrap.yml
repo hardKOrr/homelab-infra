@@ -80,8 +80,8 @@
 # NOTE: configure-unattended-upgrades.yml is deliberately NOT imported here.
 # This file runs once, guarded by the homelab_bootstrapped marker, but that task's
 # Ntfy notify hook is conditional on homelabinfra_infra.notifications — which does
-# not exist yet when the first two baseline guests bootstrap (Vaultwarden is step 1,
-# and Ntfy's own guest bootstraps before its Play 3 records the key). Under the
+# not exist yet when Caddy/Vaultwarden bootstrap in Seed mode, and Ntfy's own guest
+# bootstraps before its Play 3 records the key. Under the
 # marker they would never get the hook, and a re-run would not repair it because the
 # marker already exists. App playbooks call it unconditionally in Play 2 instead; all
 # its tasks are idempotent copy/file operations, so it is safe every run and

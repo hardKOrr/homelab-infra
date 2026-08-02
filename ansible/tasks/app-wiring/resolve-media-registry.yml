@@ -4,8 +4,8 @@
 #
 # Two sources, in precedence order:
 #
-#   1. `homelabinfra_infra.media` — the registry key media app deploys write via
-#      tasks/bootstrap/write-generated-facts.yml (ansible/vars/CONTRACT.md §3).
+#   1. `homelabinfra_infra.media` — topology from generated facts recursively
+#      overlaid with the in-memory `homelab-infra/media/<instance>` vault items.
 #      Authoritative: an entry here is used as-is.
 #
 #   2. Discovery from `config/apps/<instance>.yml` — any instance file declaring
@@ -25,8 +25,7 @@
 #   media_registry_needs_key  {<instance>: {...}} — entries handed to Play 2
 #   media_registry_skipped    [{instance, reason}] — reported, never fatal
 #
-# Nothing here fails a run: an empty media stack resolves to an empty registry and
-# the playbook no-ops (slice 504 acceptance 1).
+# Newly discovered keys are written to Vaultwarden and verified before wiring.
 
 - name: Media registry | Seed from the infrastructure registry
   ansible.builtin.set_fact:

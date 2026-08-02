@@ -1,0 +1,25 @@
+- id: 54cfeee4-12c4-510e-bd42-1fe069de55f9
+  uuid: 54cfeee4-12c4-510e-bd42-1fe069de55f9
+  name: Vaultwarden Recovery
+  group: Maintenance
+  description: Explicit break-glass transition. Read rundeck/VAULTWARDEN-RECOVERY.md and restore seed inputs before confirming.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: confirm
+    description: Type ENTER-SEED-RECOVERY after completing the recovery runbook prerequisites.
+    required: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Show the guarded recovery requirements
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          export LAB_SEED_MODE=1
+          exec lab-run playbooks/maintenance/vaultwarden-recovery.yml \
+            -e vault_recovery_confirm='@option.confirm@'

@@ -7,8 +7,8 @@
 # Filename = instance name. The filename you choose becomes the Caddy subdomain
 # (uptime-kuma.yourdomain.com) and the monitor name.
 #
-# The admin password is generated on first deploy and recorded in
-# config/.generated/facts.yml (gitignored, mode 0600) under monitoring.admin_password.
+# The admin password and API key are generated into `homelab-infra/monitoring`; generated
+# facts retain only topology and the non-secret notification ID.
 
 # ── The one field worth setting ────────────────────────────────────────────────
 # Uptime Kuma issues REST API keys only to a signed-in browser session, so the

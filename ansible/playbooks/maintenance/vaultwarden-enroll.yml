@@ -1,0 +1,76 @@
+---
+# Seed-only invitation step. Account registration, master-password choice,
+# organization creation and collection grants remain deliberately human actions.
+- name: Vaultwarden | Invite first owner and automation principal
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _vault_public_url: "{{ lookup('ansible.builtin.env', 'BW_SERVER') | trim }}"
+    _vault_admin_token: "{{ lookup('ansible.builtin.env', 'VAULTWARDEN_ADMIN_TOKEN') }}"
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Resolve enrollment identities
+      ansible.builtin.set_fact:
+        _vault_owner_email: >-
+          {{ lookup('ansible.builtin.env', 'VAULTWARDEN_OWNER_EMAIL')
+             | default(homelabinfra_config.infrastructure.vaultwarden.owner_email
+                       | default(''), true) }}
+        _vault_automation_email: >-
+          {{ lookup('ansible.builtin.env', 'VAULTWARDEN_AUTOMATION_EMAIL')
+             | default(homelabinfra_config.infrastructure.vaultwarden.automation_email
+                       | default('homelab-infra@' ~ homelabinfra_config.infrastructure.domain), true) }}
+
+    - name: Assert enrollment inputs
+      ansible.builtin.assert:
+        that:
+          - _vault_public_url is match('^https://')
+          - _vault_owner_email is match('^[^@ ]+@[^@ ]+$')
+          - _vault_automation_email is match('^[^@ ]+@[^@ ]+$')
+          - _vault_owner_email != _vault_automation_email
+          - _vault_admin_token | length > 0
+        fail_msg: >-
+          Enrollment needs an HTTPS BW_SERVER, a distinct owner and automation
+          email, and the Vaultwarden admin token.
+      no_log: true
+
+  tasks:
+    - name: Authenticate to the Vaultwarden admin facility
+      ansible.builtin.uri:
+        url: "{{ _vault_public_url }}/admin"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          token: "{{ _vault_admin_token }}"
+        follow_redirects: all
+        status_code: [200, 303]
+      register: _vault_admin_login
+      no_log: true
+
+    - name: Invite the exact enrollment identities
+      ansible.builtin.uri:
+        url: "{{ _vault_public_url }}/admin/invite"
+        method: POST
+        headers:
+          Cookie: "{{ _vault_admin_login.cookies_string }}"
+        body_format: json
+        body:
+          Email: "{{ item }}"
+        status_code: [200, 400]
+      loop:
+        - "{{ _vault_owner_email }}"
+        - "{{ _vault_automation_email }}"
+      no_log: true
+
+    - name: Publish the human enrollment ceremony
+      ansible.builtin.debug:
+        msg:
+          - "Vaultwarden is available at {{ _vault_public_url }}."
+          - "Open {{ _vault_public_url }}/#/register and register the invited owner address."
+          - "Choose the owner master password only in the web vault."
+          - "Register the dedicated automation address separately."
+          - "As the owner, create organization 'homelab-infra' and collection 'platform-secrets'."
+          - "Grant the owner recovery access and the automation account only the collection access it needs."
+          - "From the automation account, create a personal API key and stage BW_CLIENTID, BW_CLIENTSECRET and BW_PASSWORD in Rundeck Key Storage."
+          - "Then run the Vaultwarden Cutover job. Ordinary deploys remain disabled until it succeeds."

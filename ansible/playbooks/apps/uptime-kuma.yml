@@ -52,7 +52,10 @@
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.uptime_kuma_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.uptime_kuma_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
   tasks:
     # PATH A: DOCKER APP — app runs as a container on a shared stack host.
@@ -156,9 +159,7 @@
                'provider': 'uptime_kuma',
                'instance': instance,
                'host': _kuma_deploy_host.kuma_url,
-               'token': _kuma_deploy_host.kuma_api_key,
                'admin_user': _kuma_deploy_host.kuma_admin_username,
-               'admin_password': _kuma_deploy_host.kuma_admin_password,
              }
              | combine({'notification_id': _kuma_deploy_host.kuma_notification_id}
                        if _kuma_deploy_host.kuma_notification_id | string | length > 0
@@ -194,6 +195,7 @@
     wiring_interval: "{{ _kuma_deploy_host.app_config.app.monitor_interval | default(60) }}"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
     wiring_identity_mode: "{{ _kuma_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _kuma_deploy_host.app_config.routing.proxy | default('internal') }}"
 
   tasks:
     - name: Wire reverse proxy
@@ -236,7 +238,7 @@
         notify_message: >-
           Monitoring is at https://{{ instance }}.{{ homelabinfra_infra.domain }},
           signed in as {{ _kuma_deploy_host.kuma_admin_username }}
-          (password in config/.generated/facts.yml under monitoring.admin_password).
+          (password in Vaultwarden item homelab-infra/monitoring).
           {{ 'Apps register their monitors automatically from their next deploy onward.'
              if homelabinfra_infra.monitoring.token | default('') | length > 0
              else 'No API key yet — add one in the UI and re-run this deploy to enable automatic monitor registration.' }}

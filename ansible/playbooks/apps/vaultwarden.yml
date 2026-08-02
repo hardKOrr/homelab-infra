@@ -10,9 +10,9 @@
 # If the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
 # Bootstrap chicken-and-egg: on first deploy the admin token is generated and written
-# to the controller-side sink (tasks/vaultwarden/token-sink.yml), which bootstrap reads
-# back to continue in one pass — no paste, no re-run (slice 013). Re-runs resolve it
-# from the VAULTWARDEN_ADMIN_TOKEN env var, config/infrastructure.yml or that sink.
+# to the temporary controller-side Seed sink without appearing in logs (slice 013).
+# Enrollment/cutover preserves its encrypted external recovery copy before removing
+# the sink. Re-runs resolve it from the environment or in-memory vault contract.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to provision or locate the guest. The node-local
@@ -51,7 +51,10 @@
 
     - name: Merge app config (instance overrides defaults)
       ansible.builtin.set_fact:
-        app_config: "{{ _app_defaults.vaultwarden_defaults | combine(_instance_config | default({}), recursive=True) }}"
+        app_config: >-
+          {{ _app_defaults.vaultwarden_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
   tasks:
     # PATH B: NATIVE LXC APP — dedicated container per instance. Mirrors
@@ -239,6 +242,9 @@
     wiring_identity_mode: >-
       {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.identity
          | default('catalog') }}
+    wiring_access: >-
+      {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.proxy
+         | default('internal') }}
 
   tasks:
     - name: Wire reverse proxy

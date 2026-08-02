@@ -7,6 +7,8 @@
 #   wiring_upstream_host:  IP or hostname of the app container
 #   wiring_upstream_port:  port the app listens on
 #   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com)
+#   wiring_access:         internal | external (default: internal). Internal routes
+#                          are restricted to reverse_proxy.internal_cidrs at Caddy.
 #   wiring_identity_mode:  catalog | oidc | forward_auth | none (default: catalog).
 #                          Only `forward_auth` changes this file's output — that mode
 #                          fronts the app with the Authentik outpost (see below).
@@ -47,6 +49,13 @@
       {{ homelabinfra_infra.reverse_proxy.host }}:{{
          homelabinfra_infra.reverse_proxy.port | default(2019) }}
     _caddy_route_id: "route_{{ wiring_app_name }}"
+    _caddy_access: "{{ wiring_access | default('internal') }}"
+    _caddy_internal_cidrs: >-
+      {{ homelabinfra_infra.reverse_proxy.internal_cidrs | default([]) }}
+    _caddy_route_match: >-
+      {{ {'host': [wiring_domain]}
+         | combine({'remote_ip': {'ranges': _caddy_internal_cidrs}}
+                   if _caddy_access == 'internal' else {}) }}
 
     # Enforce at the proxy only for forward_auth apps backed by an Authentik.
     # Any other identity mode, or no SSO provider, keeps the plain route.
@@ -129,8 +138,7 @@
     _caddy_route:
       "@id": "route_{{ wiring_app_name }}"
       match:
-        - host:
-            - "{{ wiring_domain }}"
+        - "{{ _caddy_route_match }}"
       handle: "{{ _caddy_handle }}"
       terminal: true
   block:
@@ -141,9 +149,20 @@
           - wiring_upstream_host is defined and wiring_upstream_host | length > 0
           - wiring_upstream_port is defined and wiring_upstream_port | string | length > 0
           - wiring_domain is defined and wiring_domain | length > 0
+          - _caddy_access in ['internal', 'external']
         fail_msg: >-
           wiring/caddy.yml needs the wiring contract vars: wiring_app_name,
           wiring_upstream_host, wiring_upstream_port, wiring_domain.
+
+    - name: Wire Caddy | Assert internal route CIDRs are configured
+      ansible.builtin.assert:
+        that:
+          - _caddy_internal_cidrs | length > 0
+        fail_msg: >-
+          {{ wiring_app_name }} is an internal route, but
+          reverse_proxy.internal_cidrs is empty. Configure the lab CIDR before
+          publishing the route.
+      when: _caddy_access == 'internal'
 
     # forward_auth without a reachable outpost would produce a route that proxies
     # every request to nothing — fail the deploy instead of publishing it.

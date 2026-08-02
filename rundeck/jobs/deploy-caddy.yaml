@@ -11,7 +11,9 @@
   name: Deploy Caddy
   group: Apps
   description: |-
-    Deploy or update Caddy, the reverse proxy every app route is written to (native LXC).
+    Deploy or update Caddy, including Cloudflare DNS-01 TLS. Before Vaultwarden
+    cutover it uses the temporary encrypted Cloudflare input; afterwards it reads
+    the canonical reverse-proxy credential from Vaultwarden.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -27,6 +29,12 @@
           set -euo pipefail
           ARGS=()
           ARGS+=(-e "instance=caddy")
+
+          # Caddy is deliberately one of the few playbooks allowed before the
+          # Vaultwarden marker exists: it must provide HTTPS for enrollment.
+          if [ ! -f /etc/homelab-infra/state/vault-mode ]; then
+            export LAB_SEED_MODE=1
+          fi
 
           # lab-run refreshes the checkout, runs config-doctor, and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
