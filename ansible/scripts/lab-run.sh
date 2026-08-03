@@ -105,9 +105,18 @@ LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
 BW_SERVER="${BW_SERVER:-}"
 export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR
+# In Vault mode the runner key is deliberately absent from disk: cutover removes it
+# once the canonical item verifies, and the preflight below writes it into the
+# session temp directory on every run. An unreadable path is therefore the expected
+# state after cutover, and only Seed mode can insist on the file. A Vault-mode run
+# that reaches the preflight without a key in the vault still dies there, naming the
+# missing field.
 if [ -n "${LAB_SSH_KEY:-}" ]; then
-  [ -r "$LAB_SSH_KEY" ] || die "LAB_SSH_KEY is not readable: $LAB_SSH_KEY"
-  export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$LAB_SSH_KEY}"
+  if [ -r "$LAB_SSH_KEY" ]; then
+    export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$LAB_SSH_KEY}"
+  elif [ ! -f "$LAB_VAULT_MARKER" ]; then
+    die "LAB_SSH_KEY is not readable: $LAB_SSH_KEY"
+  fi
 fi
 
 # THE REFRESH DEFAULTS TO OFF, AND ONLY A BOOTSTRAPPED RUNNER TURNS IT ON.
