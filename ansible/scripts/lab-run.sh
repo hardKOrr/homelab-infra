@@ -233,8 +233,30 @@ _vault_preflight() {
 
   bw config server "$BW_SERVER" >/dev/null 2>&1 \
     || die "Vaultwarden preflight failed while configuring the server URL"
-  bw login --apikey >/dev/null 2>&1 \
-    || die "Vaultwarden preflight failed during API-key authentication"
+
+  # `bw config server` only writes local app data, so it succeeds even when Vaultwarden is
+  # down. The failure then surfaced at `bw login` as "API-key authentication", which points
+  # the reader at a rotated credential when the real cause is a stopped service — it caused
+  # exactly that misdiagnosis on 2026-08-03, during the run that deliberately stopped
+  # Vaultwarden to prove this guard works.
+  #
+  # The probe DIAGNOSES ONLY — it never decides whether to continue. A reachability check
+  # that could veto the run would be a second, weaker gate standing in front of the real
+  # one, and it would stop a lab whose vault serves the API but not /alive, or that reaches
+  # it by a path curl does not share. `bw login` stays the sole arbiter; the probe only
+  # chooses which explanation is printed when login fails. It is skipped when curl is
+  # absent, so the preflight gains no new runtime dependency.
+  _vault_reachable=1
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 10 -o /dev/null "${BW_SERVER%/}/alive" >/dev/null 2>&1 \
+      || _vault_reachable=0
+  fi
+
+  if ! bw login --apikey >/dev/null 2>&1; then
+    [ "$_vault_reachable" -eq 1 ] \
+      || die "Vaultwarden at $BW_SERVER did not answer. Vault mode is fail-closed, so this deploy stops here having changed nothing. Start Vaultwarden, or use the explicit recovery workflow."
+    die "Vaultwarden preflight failed during API-key authentication — the server answered, so this is a credential problem, not an outage"
+  fi
   BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw 2>/dev/null)" \
     || die "Vaultwarden preflight failed while unlocking the automation vault"
   [ -n "$BW_SESSION" ] || die "Vaultwarden returned an empty vault session"

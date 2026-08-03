@@ -156,7 +156,7 @@ questions live in each slice's `notes.md` or in a "Built" section of its README.
 | 012 | [Runner onboarding](012-runner-onboarding/README.md) | **four criteria observed** — the one-command onboarding (2026-08-01), and on 2026-08-03 the `Bootstrap Platform` click landing green plus a pushed commit executed by the next run with the log naming it. Remaining: Configure App / Get Config from the UI, `LAB_REFRESH=0`, a no-op re-run of the bootstrap script, and the root README |
 | 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | sink write/readback proved live; HTTPS, vault identities, and item CRUD belong to 015/016/014 |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | Ntfy running (401) |
-| 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | **moved from `open` 2026-08-03.** Cutover done, vault-mode bootstrap green, `facts.yml` secret-free, 9 org items written, no leakage in 4,909 log lines. Remaining are all fault-injection: stop Vaultwarden and prove every deploy fails in preflight; recreate a seed file; seed re-entry outside recovery; runner rebuild from Key Storage |
+| 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | **moved from `open` 2026-08-03.** Cutover done, vault-mode bootstrap green, `facts.yml` secret-free, 9 org items written, no leakage in 4,909 log lines — and **the fail-closed guarantee tested by injection the same day and passed**: Vaultwarden stopped, deploy died before Ansible started. Remaining: recreate a seed file; seed re-entry outside recovery; runner rebuild from Key Storage |
 | 202 | [configure-pbs](202-configure-pbs/README.md) | **5 of 6 observed 2026-08-03.** Only a triggered backup remains — the datastore holds zero snapshots, so nothing has proved a backup completes |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | Caddy running (402) |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists; see below |
@@ -226,12 +226,11 @@ allocates an address baking in whatever the current model produces.
 Rewritten 2026-08-03: the green vault-mode bootstrap did most of steps 1–3 as originally
 written, so what is left of each is narrower and differently ordered.
 
-1. **Prove 014 fails closed.** Stop Vaultwarden, run any deploy, and confirm it dies in
-   preflight before touching infrastructure. This is one command against a live lab, it
-   needs no code, and it tests the guarantee the whole secrets model rests on — currently a
-   design intent with no observation behind it. Then the other three injections: a
-   recreated seed file, seed re-entry outside recovery, and a runner rebuild from Key
-   Storage.
+1. **014's remaining injections.** Fail-closed was proved on 2026-08-03 — Vaultwarden
+   stopped, deploy died before Ansible started, nothing changed. Three left, none needing
+   code: a recreated seed file, seed re-entry outside recovery, and a runner rebuild from
+   Key Storage. Note the lesson from the first one: the guard worked and its *message* was
+   wrong, which is a class of defect the gates cannot see and only injection finds.
 2. **Fix 015's certificate model.** DNS-01 and verified HTTPS work; the wildcard does not
    exist. Give Caddy a site whose host is `*.<domain>` so one certificate covers the estate,
    rather than one per app with a DNS-01 challenge per deploy.

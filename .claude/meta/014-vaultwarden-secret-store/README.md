@@ -2,9 +2,10 @@
 
 **Status:** built — the implementation landed and cutover completed 2026-08-03; the first
 full vault-mode bootstrap ran green the same day (Rundeck execution 12, revision `bb84574`,
-seven services, `failed=0`). Six acceptance items are observed. The five that remain are all
-fault-injection or rebuild tests: nothing has yet proved the fail-closed guarantee actually
-fails closed. See the acceptance list.
+seven services, `failed=0`). **The fail-closed guarantee was then tested by injection the
+same day and passed** — with Vaultwarden stopped, a deploy died before Ansible started.
+Seven acceptance items are observed; the four that remain are the other injections and the
+runner-rebuild test. See the acceptance list.
 **Depends on:** 015 (Caddy-first wildcard HTTPS), 016 (Vaultwarden identities and Rundeck
 bootstrap keyring), 200 (write-generated-facts)
 **Blocks:** the durability half of 010; every deploy after the bootstrap cutover
@@ -182,9 +183,19 @@ closed, and no failure has been injected to test that.
       of a seed secret — **not tested.** Resumability after failure *is* well evidenced for
       vault mode: executions 10, 11 and 12 each resumed cleanly after a mid-run failure.
       The pre-cutover case is the untested one
-- [ ] After cutover, stopping Vaultwarden causes every deploy to fail in preflight before
-      making any infrastructure or service change — **not tested.** This is the single most
-      important unobserved item in the slice: it is the fail-closed guarantee itself
+- [x] After cutover, stopping Vaultwarden causes every deploy to fail in preflight before
+      making any infrastructure or service change — **observed 2026-08-03, and it holds
+      more strongly than the criterion asks.** The operator stopped Vaultwarden and ran
+      `Deploy Observability`; it died in roughly six seconds at
+      `_vault_preflight` (`lab-run.sh:237`) with exit 1. `_vault_preflight` is called at
+      line 293 and `ansible-playbook` is not invoked until line 307, and the log carries no
+      `[lab-run] ansible-playbook` line — so **Ansible never started at all**. The criterion
+      asks for failure before any infrastructure change; what actually happens is failure
+      before any play is loaded.
+
+      Scope of the evidence: one job was tested, not "every deploy". Recorded as met
+      because the preflight lives in `lab-run.sh`, which every job invokes identically —
+      the mechanism is shared, not per-playbook. A second job would test the same code path
 - [ ] After cutover, recreating a seed file does not make an ordinary deploy bypass
       Vaultwarden — **not tested**
 - [ ] The explicit recovery workflow is the only path that can re-enter seed mode —
@@ -212,10 +223,24 @@ closed, and no failure has been injected to test that.
 
 ### To close this slice
 
-Four deliberate tests, none of which need new code — stop Vaultwarden and run any deploy;
-recreate a seed file and run any deploy; attempt seed re-entry outside the recovery
-workflow; rebuild the runner from config plus a Key Storage backup. Until the first of
-those runs, "no Vaultwarden means no deploy" is a design intent, not an observed property.
+Three deliberate tests, none of which need new code — recreate a seed file and run any
+deploy; attempt seed re-entry outside the recovery workflow; rebuild the runner from config
+plus a Key Storage backup. **The fourth and most important, fail-closed, was run on
+2026-08-03 and passed.** "No Vaultwarden means no deploy" is now an observed property.
+
+### Diagnostics defect found by that test, fixed 2026-08-03
+
+The guard worked; its error message did not. `bw config server` only writes local app data,
+so it succeeds with Vaultwarden down, and the failure surfaced one line later as
+`Vaultwarden preflight failed during API-key authentication`. That sends the reader after a
+rotated credential when the cause is a stopped service — it produced exactly that
+misdiagnosis during this very test, from someone who had the passing result in hand.
+
+`lab-run.sh` now probes `$BW_SERVER/alive` before authenticating and reports an unreachable
+server as what it is, naming the fail-closed guard so the stop reads as designed behaviour
+rather than a fault. The authentication message now states that the server answered, so the
+two causes can no longer be confused. The probe is skipped when `curl` is absent, so the
+preflight gains no new runtime dependency.
 
 ## Decided
 
