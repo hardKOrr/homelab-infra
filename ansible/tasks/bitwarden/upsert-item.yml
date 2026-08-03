@@ -43,14 +43,26 @@
       The automation account cannot see organization
       {{ vault_organization_name | default('homelab-infra') }}.
 
+# stderr carries the CLI's diagnostic string, never the listed items, so reporting a
+# bounded slice of it is safe and is the only way to see why a read was refused.
 - name: Vault | List organization collections
   ansible.builtin.command:
     argv: [bw, list, org-collections, --organizationid, "{{ _vault_org_id }}"]
   register: _vault_collections
+  failed_when: false
   changed_when: false
   delegate_to: localhost
   become: false
   no_log: true
+
+- name: Vault | Report a refused collection listing
+  ansible.builtin.fail:
+    msg: >-
+      Vaultwarden refused to list collections for organization
+      {{ vault_organization_name | default('homelab-infra') }}
+      (rc={{ _vault_collections.rc }}):
+      {{ (_vault_collections.stderr | default('') | trim)[:500] }}
+  when: _vault_collections.rc != 0
 
 - name: Vault | Resolve the canonical collection
   ansible.builtin.set_fact:
