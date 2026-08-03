@@ -7,9 +7,28 @@
 # un-parenthesized `a ~ b | int` casts only b and strips its zero-padding
 # (per .claude/specs/jinja-string-typing.md). prefix-octet = second octet unless 0, else first.
 
+#
+# A derived VMID records the IP it came from in `vmid_source_ip`, and is re-derived as
+# soon as that no longer matches the guest's current IP. This is what keeps one run from
+# creating a second guest on top of the first.
+#
+# homelabinfra_config is NOT rebuilt from scratch per play: load-user-vars.yml merges the
+# previous play's dict on top of the freshly loaded layers (its legacy `user_vars_file`
+# precedence rule). So a VMID derived while deploying app N is still sitting in
+# proxmox.lxc.vmid when app N+1 derives its own — and "vmid is already defined" made this
+# task skip, leaving app N+1 pointed at app N's container. community.proxmox then finds
+# that VMID, takes its UPDATE branch, and rewrites the earlier guest's config with the new
+# guest's hostname, sizing and network. Observed live in bootstrap run 10: the second
+# Docker stack host of the run inherited sso-stack's 168000013.
+#
+# An operator-authored VMID carries no vmid_source_ip, so it is still honored untouched.
 - name: Set VMID from IP for {{ guest_type }}
   ansible.builtin.set_fact:
-    homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {guest_type: {'vmid': vmid_from_ip}}}, recursive=True) }}"
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {guest_type: {
+           'vmid': vmid_from_ip,
+           'vmid_source_ip': guest_ip
+         }}}, recursive=True) }}
   vars:
     guest_ip: "{{ homelabinfra_config.proxmox[guest_type].ip_address | default(homelabinfra_config.proxmox[guest_type].ansible_host) }}"
     octets: "{{ guest_ip.split('.') | map('int') | list }}"
@@ -17,7 +36,10 @@
     vmid_from_ip: "{{ ((prefix_octet | string) ~ ('%03d' | format(octets[2] | int)) ~ ('%03d' | format(octets[3] | int))) | int }}"
   when:
     - homelabinfra_config.proxmox[guest_type].ip_address is defined or homelabinfra_config.proxmox[guest_type].ansible_host is defined
-    - homelabinfra_config.proxmox[guest_type].vmid is not defined or homelabinfra_config.proxmox[guest_type].vmid | int == 0
+    - >-
+      homelabinfra_config.proxmox[guest_type].vmid is not defined
+      or homelabinfra_config.proxmox[guest_type].vmid | int == 0
+      or (homelabinfra_config.proxmox[guest_type].vmid_source_ip | default('')) not in ['', guest_ip]
     - (homelabinfra_config.proxmox[guest_type].ip_address | default(homelabinfra_config.proxmox[guest_type].ansible_host)) | lower != 'dhcp'
 
 - name: Assert VMID is provided when using DHCP for {{ guest_type }}

@@ -30,7 +30,8 @@
 #   homelabinfra_infra                  — optional; forwarded to the host if defined
 #
 # Mutates (create path only, except .stack):
-#   homelabinfra_config.proxmox.lxc.{hostname,tags,features,ip_address,vmid}
+#   homelabinfra_config.proxmox.lxc.{hostname,tags,stack_tag,features,ip_address,vmid,
+#                                    vmid_source_ip}
 #   homelabinfra_instance.{network,lxc}                — via generate-ip / lxc-create
 #   homelabinfra_instance.stack.{hostname,ip_address}  — both paths
 #
@@ -138,10 +139,8 @@
                 'proxmox': {
                   'lxc': _stack_sizing | combine({
                     'hostname': stack_name | replace('_', '-'),
-                    'tags': (
-                      homelabinfra_config.proxmox.lxc.tags
-                      | default(['homelab-infra'])
-                    ) + [stack_name],
+                    'tags': _stack_tags,
+                    'stack_tag': stack_name,
                     'features': _stack_lxc_features
                   }, recursive=True)
                 }
@@ -150,6 +149,18 @@
             )
           }}
       vars:
+        # The tag list is APPENDED to, and homelabinfra_config survives from the previous
+        # play (load-user-vars.yml merges the old dict over the freshly loaded layers). Two
+        # stack hosts in one bootstrap therefore gave the second one the first one's stack
+        # tag as well as its own — and `Check for existing stack host` matches on exactly
+        # that tag, so from the next run on, both stacks would resolve to whichever host
+        # inventory listed first. `stack_tag` records what this task last appended so the
+        # next call can drop it; a lab-wide tag in config/proxmox.yml is left alone.
+        _stack_prior_tag: "{{ homelabinfra_config.proxmox.lxc.stack_tag | default('') }}"
+        _stack_base_tags: >-
+          {{ (homelabinfra_config.proxmox.lxc.tags | default(['homelab-infra']))
+             | reject('eq', _stack_prior_tag) | list }}
+        _stack_tags: "{{ (_stack_base_tags + [stack_name]) | unique }}"
         _stack_existing_lxc_features: >-
           {{ homelabinfra_config.proxmox.lxc.features | default([]) }}
         _stack_lxc_features: >-
