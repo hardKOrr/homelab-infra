@@ -105,20 +105,6 @@ LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
 BW_SERVER="${BW_SERVER:-}"
 export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR
-# In Vault mode the runner key is deliberately absent from disk: cutover removes it
-# once the canonical item verifies, and the preflight below writes it into the
-# session temp directory on every run. An unreadable path is therefore the expected
-# state after cutover, and only Seed mode can insist on the file. A Vault-mode run
-# that reaches the preflight without a key in the vault still dies there, naming the
-# missing field.
-if [ -n "${LAB_SSH_KEY:-}" ]; then
-  if [ -r "$LAB_SSH_KEY" ]; then
-    export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$LAB_SSH_KEY}"
-  elif [ ! -f "$LAB_VAULT_MARKER" ]; then
-    die "LAB_SSH_KEY is not readable: $LAB_SSH_KEY"
-  fi
-fi
-
 # THE REFRESH DEFAULTS TO OFF, AND ONLY A BOOTSTRAPPED RUNNER TURNS IT ON.
 #
 # The refresh is a `git reset --hard`, which destroys uncommitted work in whatever
@@ -175,6 +161,27 @@ fi
 
 if [ -d "$LAB_REPO/.git" ]; then
   log "revision $(git -C "$LAB_REPO" log --oneline -1 2>/dev/null || echo unknown)"
+fi
+
+# EVERY FATAL CHECK BELONGS BELOW THE REFRESH, NEVER ABOVE IT.
+#
+# The refresh re-execs this script from the tree it just reset, so anything above it
+# runs from the copy the runner already had. A check that exits above the refresh can
+# never be repaired by pushing a commit — the runner dies before it fetches the fix,
+# and the only way out is editing the checkout by hand on the runner. That is exactly
+# how the Vault-mode key check below stranded the first job after cutover.
+#
+# In Vault mode the runner key is deliberately absent from disk: cutover removes it
+# once the canonical item verifies, and the Vaultwarden preflight writes it into the
+# session temp directory on every run. An unreadable path is therefore the expected
+# state after cutover, and only Seed mode can insist on the file. A Vault-mode run
+# whose vault has no key still dies in that preflight, naming the missing field.
+if [ -n "${LAB_SSH_KEY:-}" ]; then
+  if [ -r "$LAB_SSH_KEY" ]; then
+    export ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-$LAB_SSH_KEY}"
+  elif [ ! -f "$LAB_VAULT_MARKER" ]; then
+    die "LAB_SSH_KEY is not readable: $LAB_SSH_KEY"
+  fi
 fi
 
 cd "$LAB_REPO/ansible"
