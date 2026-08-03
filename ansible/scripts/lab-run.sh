@@ -235,9 +235,13 @@ _vault_preflight() {
       --require homelab-infra/vaultwarden
     )
   fi
+  # Run through the interpreter rather than relying on the exec bit. vault-runtime.py is
+  # mode 644 in git, so executing it directly fails with "Permission denied" — and that
+  # failure then reports itself as a rejected item set, which it is not. Every other
+  # script here is likewise invoked as `bash x.sh` / `python3 x.py`.
   HOMELABINFRA_VAULT_JSON="$(printf '%s' "$_vault_items" \
-    | "$LAB_REPO/ansible/scripts/vault-runtime.py" "${_vault_require[@]}")" \
-    || die "Vaultwarden preflight rejected the canonical item set"
+    | python3 "$LAB_REPO/ansible/scripts/vault-runtime.py" "${_vault_require[@]}")" \
+    || die "Vaultwarden preflight failed (item set rejected, or vault-runtime.py could not run) — see the error above"
   unset _vault_items
   export HOMELABINFRA_VAULT_JSON
 
