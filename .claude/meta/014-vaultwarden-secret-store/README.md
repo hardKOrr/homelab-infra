@@ -1,6 +1,10 @@
 # 014 — Make Vaultwarden the mandatory secret store
 
-**Status:** open
+**Status:** built — the implementation landed and cutover completed 2026-08-03; the first
+full vault-mode bootstrap ran green the same day (Rundeck execution 12, revision `bb84574`,
+seven services, `failed=0`). Six acceptance items are observed. The five that remain are all
+fault-injection or rebuild tests: nothing has yet proved the fail-closed guarantee actually
+fails closed. See the acceptance list.
 **Depends on:** 015 (Caddy-first wildcard HTTPS), 016 (Vaultwarden identities and Rundeck
 bootstrap keyring), 200 (write-generated-facts)
 **Blocks:** the durability half of 010; every deploy after the bootstrap cutover
@@ -161,27 +165,57 @@ when the vault is down.
 
 ## Acceptance
 
-- [ ] A fresh runner uses only bounded Key Storage roots to establish HTTPS, deploy
-      Vaultwarden, and initialize its identities
-- [ ] Bootstrap imports every application seed secret, verifies each by readback, records
-      cutover, and removes all seed files before deploying the next service
+Evidence dated 2026-08-03 unless noted. The unchecked items share one shape: **every
+observation so far is of the happy path.** The model's central claim is that it fails
+closed, and no failure has been injected to test that.
+
+- [x] A fresh runner uses only bounded Key Storage roots to establish HTTPS, deploy
+      Vaultwarden, and initialize its identities — observed for the *cutover* path on this
+      runner. Recorded as met with a caveat: the runner was not rebuilt from bare metal for
+      this run, so "fresh" is inferred from the seed-mode → cutover → vault-mode sequence
+      rather than from a from-scratch onboarding
+- [x] Bootstrap imports every application seed secret, verifies each by readback, records
+      cutover, and removes all seed files before deploying the next service — cutover
+      completed and `/etc/homelab-infra/state/vault-mode` is written; the subsequent
+      bootstrap ran entirely in vault mode
 - [ ] Interrupting bootstrap before cutover is resumable and does not delete the only copy
-      of a seed secret
+      of a seed secret — **not tested.** Resumability after failure *is* well evidenced for
+      vault mode: executions 10, 11 and 12 each resumed cleanly after a mid-run failure.
+      The pre-cutover case is the untested one
 - [ ] After cutover, stopping Vaultwarden causes every deploy to fail in preflight before
-      making any infrastructure or service change
+      making any infrastructure or service change — **not tested.** This is the single most
+      important unobserved item in the slice: it is the fail-closed guarantee itself
 - [ ] After cutover, recreating a seed file does not make an ordinary deploy bypass
-      Vaultwarden
-- [ ] The explicit recovery workflow is the only path that can re-enter seed mode
-- [ ] `config/.generated/facts.yml` contains no token, password, private key, API key, API
-      secret, or other credential value
-- [ ] Every generated or rotated secret is present in its canonical Vaultwarden item before
-      the producing job can succeed
+      Vaultwarden — **not tested**
+- [ ] The explicit recovery workflow is the only path that can re-enter seed mode —
+      **not tested**
+- [x] `config/.generated/facts.yml` contains no token, password, private key, API key, API
+      secret, or other credential value — verified field by field. The only match for a
+      credential-shaped grep is `api_token_id: root@pam!ansible`, which is an identifier,
+      not a secret
+- [x] Every generated or rotated secret is present in its canonical Vaultwarden item before
+      the producing job can succeed — nine organization-owned items exist under org
+      `homelab-infra`, all written during this bootstrap; the last landed at 15:49:41,
+      immediately before the PBS success notification at 15:50:10. The ordering is the
+      point: the write precedes the job's success
 - [ ] Rebuilding the runner from non-secret config plus a backup of the bounded Key Storage
-      roots restores access to all platform secrets without redeploying or rotating a service
-- [ ] No secret or vault session appears in a job log, artifact, diff, Ansible cache, or
-      managed-guest metadata
-- [ ] Documentation describes Vaultwarden as a mandatory runtime dependency, not a
-      durability mirror or optional restore source
+      roots restores access to all platform secrets without redeploying or rotating a
+      service — **not tested**
+- [x] No secret or vault session appears in a job log, artifact, diff, Ansible cache, or
+      managed-guest metadata — scanned all 4,909 lines of the execution-12 log: no
+      credential-shaped assignments, no bootstrap credential variable names, and the single
+      long base64-ish match is a filesystem path. No `BW_SESSION` in any live process
+      environment
+- [x] Documentation describes Vaultwarden as a mandatory runtime dependency, not a
+      durability mirror or optional restore source — `.claude/CLAUDE.md` states the seed →
+      cutover → vault-mode model and the fail-closed rule
+
+### To close this slice
+
+Four deliberate tests, none of which need new code — stop Vaultwarden and run any deploy;
+recreate a seed file and run any deploy; attempt seed re-entry outside the recovery
+workflow; rebuild the runner from config plus a Key Storage backup. Until the first of
+those runs, "no Vaultwarden means no deploy" is a design intent, not an observed property.
 
 ## Decided
 

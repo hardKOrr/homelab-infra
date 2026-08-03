@@ -118,13 +118,20 @@ the acceptance bar, not a reduction to some smaller number of chores.
       project created, 19/19 jobs imported, both Key Storage entries staged, config
       authored, and Vaultwarden deployed and serving. Took fifteen fixes to get there;
       see [notes.md](notes.md)
-- [ ] **The whole onboarding path is one command and one click**: run the script on the
+- [x] **The whole onboarding path is one command and one click**: run the script on the
       node, then run `Bootstrap Platform`. Every one of the fourteen steps above is
-      performed by one layer or the other, and the root README says so in that order
+      performed by one layer or the other, and the root README says so in that order —
+      **the click landed green 2026-08-03** (execution 12, all seven services). Recorded
+      as met for the path; note that reaching it took a Vaultwarden cutover and three
+      failed executions' worth of fixes, so "one click" is true of the finished artifact
+      and was not true of the journey
 - [ ] Config authored on the runner is editable and readable from the UI alone — no SSH
       session appears anywhere in the documented path (010's Configure App / Get Config)
-- [ ] A commit pushed to `master` is executed by the next job run with no human action,
-      and the job log names the commit
+- [x] A commit pushed to `master` is executed by the next job run with no human action,
+      and the job log names the commit — observed repeatedly 2026-08-03; execution 12's
+      log opens with `[lab-run] refreshing … to origin/master` then
+      `[lab-run] revision bb84574 fix(proxmox): find the cloud template by name and tag,
+      not by vmid`, a commit pushed minutes earlier
 - [ ] `LAB_REFRESH=0` runs the on-disk checkout unchanged
 - [ ] Re-running the bootstrap script against a configured Rundeck changes nothing and
       rotates no credential

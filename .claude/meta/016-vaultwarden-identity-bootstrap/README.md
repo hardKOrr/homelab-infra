@@ -1,6 +1,8 @@
 # 016 — Vaultwarden identities and Rundeck bootstrap keyring
 
-**Status:** open
+**Status:** open — enrollment and cutover completed live 2026-08-03 and the automation
+account drives every vault read and write in the green bootstrap. Three items are observed;
+the collection-scoping item needs a decision rather than a test (see below).
 **Depends on:** 013 (admin-token capture), 015 (Caddy-first wildcard HTTPS)
 **Blocks:** 014 (Vaultwarden secret store)
 
@@ -106,13 +108,32 @@ but every imported job declares only the credentials it actually needs.
 
 ## Acceptance
 
-- [ ] Human owner and automation identities are distinct and authenticate over verified HTTPS
-- [ ] Automation login + unlock performs canary create/read/update/delete without interaction
-- [ ] The automation account can access only the intended organization/collection
-- [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password
-- [ ] Every Key Storage secret is loaded through a secure option; none is copied into a normal
-      option, command argument, config file, generated fact, or log
-- [ ] CLI state and `BW_SESSION` are absent after success and after an injected failure
+- [x] Human owner and automation identities are distinct and authenticate over verified
+      HTTPS — observed 2026-08-03; Vaultwarden is reached over a verified Let's Encrypt
+      origin (see 015)
+- [x] Automation login + unlock performs canary create/read/update/delete without
+      interaction — proved by the stronger case rather than a canary: the automation
+      account performed nine real item upserts with readback across the unattended
+      bootstrap, no human present
+- [ ] The automation account can access only the intended organization/collection —
+      **needs a decision, not a test.** `users_collections` is empty; the account reads the
+      organization purely by being an Admin with
+      `allowAdminAccessToAllCollectionItems`. There is one organization and the account
+      cannot reach outside it, so the *organization* half holds. The *collection* half does
+      not: the account has org-wide access rather than a grant scoped to
+      `platform-secrets`. Decide whether that satisfies the intent or whether the criterion
+      requires a per-collection grant
+- [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password —
+      not tested
+- [ ] Every Key Storage secret is loaded through a secure option; none is copied into a
+      normal option, command argument, config file, generated fact, or log — the log and
+      generated-facts halves are verified (see 014); the Key Storage and command-argument
+      halves are not
+- [x] CLI state and `BW_SESSION` are absent after success — no `BW_SESSION` in any live
+      process environment, and the job user (`rundeck`) leaves no CLI state at all. The
+      only residue is `/root/.config/Bitwarden CLI/data.json` from the manual bootstrap
+      path, containing `{"stateVersion": 82}` — version metadata, no session, no
+      credential. **The injected-failure half is untested**
 - [ ] A browser-only step produces a redacted handoff with an exact resume action
 - [ ] Re-running adopts existing accounts, organization, collection, and keys without rotation
       or duplication

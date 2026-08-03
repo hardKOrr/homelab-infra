@@ -1,6 +1,6 @@
 # 202 — Implement configure-pbs
 
-**Status:** built (implementation complete; live acceptance blocked on 406)
+**Status:** built — ran live 2026-08-03 in the green bootstrap; five of six acceptance items observed. The sixth needs a backup job actually triggered: the datastore holds zero snapshots, so nothing has yet proved a backup completes end to end.
 **Depends on:** 200, 406 (PBS VM must exist)
 **Blocks:** backup story for the platform
 
@@ -34,9 +34,26 @@ PBS API docs: https://pbs.proxmox.com/docs/api-viewer/index.html
 
 ## Acceptance
 
-- [ ] Datastore exists on PBS
-- [ ] PVE node registered as source
-- [ ] Backup job scheduled, visible in PBS UI
-- [ ] Manual trigger of the backup job produces a snapshot
-- [ ] Notifications land in Ntfy
-- [ ] `config/.generated/facts.yml` has `pbs:` block with endpoint
+Observed 2026-08-03 unless noted.
+
+- [x] Datastore exists on PBS — `homelab`, reachable from PVE, 62 GB available
+- [x] PVE node registered as source — storage `pbs-homelab`, type `pbs`,
+      server `192.168.0.15`, `active=1`
+- [x] Backup job scheduled — job `08ee3016-…` at 02:00 to `pbs-homelab`, carrying the
+      explicit vmid list of all seven tagged guests. Recorded as met on the PVE side; the
+      criterion said "visible in PBS UI", but vzdump jobs live on PVE, which is where the
+      implementation correctly puts it
+- [ ] Manual trigger of the backup job produces a snapshot — **not observed.** The
+      datastore contains zero items. Nothing has proved a backup actually completes,
+      which is the only criterion that tests the backup story rather than its wiring
+- [x] Notifications land in Ntfy — `PBS backups configured` at 15:50:03,
+      "Datastore 'homelab' ready; backup job covers 7 guest(s)"
+- [x] `config/.generated/facts.yml` has the block with endpoint — under `backups:`
+
+### Open question raised by the live run
+
+The vmid list includes **168000015, PBS itself**, because PBS is tagged `homelab-infra`
+like every other guest this platform creates. A PBS VM whose only backup lives inside its
+own datastore is not recoverable from that backup. Worth deciding whether the job should
+exclude the backup server. Separately, template 9001 is tagged `homelab-infra` but is not
+in the list, so the tag-to-vmid expansion is already filtering something — confirm what.

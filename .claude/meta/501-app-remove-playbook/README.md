@@ -1,6 +1,6 @@
 # 501 — App removal playbook
 
-**Status:** open — ran live 2026-08-02 against the whole baseline. Four acceptance items met, item 3 disproved: removal aborts mid-way when a platform provider is unreachable. Findings and the required fix are in notes.md.
+**Status:** built — ran live 2026-08-02 against the whole baseline; four acceptance items met, item 3 disproved. **The disproving defect is fixed** (2026-08-03): `unwiring/caddy.yml` and `unwiring/authentik.yml` now probe first and degrade on an unreachable provider, matching `unwiring/uptime-kuma.yml`. Gate-verified, not yet re-observed live — a removal against a stopped Caddy or Authentik is what closes this. Findings in notes.md.
 **Depends on:** 300-305 (unwire halves of each wiring slice)
 **Blocks:** Remove App job in Semaphore/Rundeck
 

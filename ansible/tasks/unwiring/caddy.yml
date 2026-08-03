@@ -14,6 +14,14 @@
 # reverse proxy provider is not caddy. The route is deleted whole, so a
 # forward_auth app's outpost handler chain (slice 306) goes with it — this file
 # needs no knowledge of the identity mode.
+#
+# An unreachable Caddy warns and skips rather than failing the removal. remove.yml unwires
+# BEFORE it stops the app, precisely so a half-removed app is never left serving traffic
+# through a route that still points at it — and a hard failure here inverted that: removing
+# the reverse proxy itself, or removing anything after it, aborted between unwire and stop
+# and stranded every removal queued behind it. A stale route on a proxy that is gone is a
+# smaller problem than a removal that cannot proceed. Same stance, same reason, as
+# unwiring/uptime-kuma.yml.
 
 - name: Unwire Caddy | Remove route
   when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
@@ -34,14 +42,29 @@
         url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
         method: GET
         status_code: [200, 404]
+        timeout: 10
       register: _caddy_existing
+      failed_when: false
+      changed_when: false
+
+    # `status` is absent entirely on a connection error, which is what distinguishes an
+    # unreachable admin API from a 404 route-not-found. default(0) makes that case explicit
+    # rather than an undefined-variable crash in the conditions below.
+    - name: Unwire Caddy | Report unreachable admin API
+      ansible.builtin.debug:
+        msg: >-
+          Caddy's admin API at {{ _caddy_admin_url }} did not answer
+          (got {{ _caddy_existing.status | default('no response') }}) — the route for
+          {{ wiring_app_name }} was left in place. Remove it from the Caddy config if the
+          proxy is still serving.
+      when: _caddy_existing.status | default(0) not in [200, 404]
 
     - name: Unwire Caddy | Delete route
       ansible.builtin.uri:
         url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
         method: DELETE
         status_code: 200
-      when: _caddy_existing.status == 200
+      when: _caddy_existing.status | default(0) == 200
       changed_when: true
 
     - name: Unwire Caddy | Verify route gone
@@ -49,3 +72,5 @@
         url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
         method: GET
         status_code: 404
+      when: _caddy_existing.status | default(0) in [200, 404]
+      changed_when: false

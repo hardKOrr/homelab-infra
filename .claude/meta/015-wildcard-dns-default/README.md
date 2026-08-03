@@ -1,6 +1,8 @@
 # 015 — Caddy-first wildcard HTTPS bootstrap
 
-**Status:** open
+**Status:** open — Caddy-first ordering and verified HTTPS are observed live 2026-08-03, but
+**item 3 is disproved as written**: the lab issues one Let's Encrypt certificate *per
+hostname* via DNS-01, not a single apex + wildcard certificate. See the acceptance list.
 **Depends on:** 402 (Caddy app), 407 (Caddy DNS-01), 500 (bootstrap plays)
 **Blocks:** 016 (Vaultwarden identities), 014 (Vaultwarden secret store), every honest
 Vaultwarden or Authentik live-acceptance claim
@@ -90,19 +92,42 @@ No output contains a DNS API token, certificate private key, or other credential
 
 ## Acceptance
 
-- [ ] A fresh bootstrap deploys Caddy before Vaultwarden, with no Ntfy dependency
-- [ ] `https://vaultwarden.<domain>/alive` succeeds from the runner with hostname and
-      certificate verification enabled before identity bootstrap starts
+- [x] A fresh bootstrap deploys Caddy before Vaultwarden, with no Ntfy dependency —
+      observed 2026-08-03: execution 12 runs Caddy (15:40:38) before Vaultwarden (15:41:01)
+      before Ntfy (15:42:08)
+- [x] `https://vaultwarden.<domain>/alive` succeeds from the runner with hostname and
+      certificate verification enabled before identity bootstrap starts — verified from
+      the runner with verification on (no `-k`): HTTP 200, `ssl_verify_result=0`, Let's
+      Encrypt issuer, valid 2026-08-03 → 2026-11-01. `https://ntfy.<domain>/v1/health`
+      likewise
 - [ ] Public mode issues a certificate covering the apex and wildcard via DNS-01 without
-      exposing port 80
+      exposing port 80 — **disproved as written, 2026-08-03.** DNS-01 is genuinely in use
+      (the ACME issuer carries a `dns` module and no port 80 is exposed), but Caddy's
+      certificate store holds `vaultwarden.<domain>.crt` and `ntfy.<domain>.crt` — two
+      per-hostname certificates. No wildcard certificate was ever issued.
+
+      The cause is a misreading of Caddy's JSON model. The automation policy does carry
+      `subjects: ["*.<domain>", "<domain>"]`, but in Caddy that list *selects which managed
+      names this policy governs*; it does not cause one wildcard certificate to be
+      obtained. Caddy manages a certificate for each site address it actually serves, so
+      naming each app's hostname as its site address yields one certificate per app.
+      Obtaining a real wildcard requires a site whose host *is* `*.<domain>`.
+
+      Consequences, and why this is worth fixing rather than redefining: every app deploy
+      now performs its own DNS-01 challenge, so each one depends on the DNS provider API
+      being reachable at deploy time, and the lab accumulates certificates against Let's
+      Encrypt's 50-per-registered-domain-per-week limit. A homelab adding apps one at a
+      time will not hit the limit, but the failure mode is silent until it does, and the
+      per-deploy DNS dependency is exactly what a wildcard was chosen to avoid.
 - [ ] Internal mode exports the CA, reports its fingerprint, and pauses until runner trust is
       verified
 - [ ] A provider with no supported API receives an exact wildcard-DNS handoff and a resumable
       checkpoint rather than a misleading success
 - [ ] Re-running after the manual action resumes at verification and does not rotate the
       certificate, DNS token, or Caddy identity
-- [ ] No DNS credential or certificate private key appears in config, logs, artifacts, or
-      generated facts
+- [x] No DNS credential or certificate private key appears in config, logs, artifacts, or
+      generated facts — `config/.generated/facts.yml` has no `dns_challenge`, no API token
+      and no private key; the execution-12 log has none either
 
 ## Decisions
 

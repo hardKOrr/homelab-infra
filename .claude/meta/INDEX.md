@@ -16,7 +16,41 @@ Gates (current as of 2026-08-01): `wsl bash -lc 'bash .claude/gate/lint.sh'` pas
 Jinja expression in `ansible/`; `.claude/gate/test.sh` syntax-checks every playbook clean.
 **Both gates are green** — slice 502 closed the last red one.
 
-Counts: **14 done · 28 built · 5 open.**
+Counts: **15 done · 29 built · 3 open.**
+
+**`Bootstrap Platform` ran green in vault mode on 2026-08-03** — Rundeck execution 12 at
+revision `bb84574`, all seven baseline services, `failed=0` on every host, **PBS included
+for the first time**. This is the first end-to-end run of the fresh-bootstrap path after the
+Vaultwarden cutover, and it closes **406** and the disproving half of **501**, moves **014**
+out of `open`, and supplies observed criteria to **012**, **015**, **016**, **202** and
+**500**. Live layout: Caddy .10, Vaultwarden .11, Ntfy .12, Authentik on `sso-stack` .13,
+Uptime Kuma + Prometheus/Grafana on `monitoring-stack` .14, PBS .15 (VM), each guest tagged
+with its own stack and nothing else.
+
+It cost three more defects, all found live and all in provisioning rather than in the apps:
+
+- **Two stack hosts in one run collided.** `homelabinfra_config` is not rebuilt per play —
+  `load-user-vars.yml` merges the previous play's dict over the freshly loaded layers — so a
+  derived `proxmox.lxc.vmid` and an appended stack tag both leaked forward. The second stack
+  host of a run was created with the first's VMID, and carried the first's tag. Only an
+  upstream `community.proxmox` bug (its update branch forgets to strip its own
+  `cmode: default` sentinel) turned that into a 400 instead of silently rewriting
+  `sso-stack`'s hostname, sizing and network. Fixed in `ffc64dd`: a derived VMID records the
+  IP it came from and is re-derived when that stops matching; the tag task records what it
+  last appended so the next call drops it.
+- **The platform could not find the template it had built.** `ensure-cloud-template.yml`
+  judged identity by name but still discovered by vmid, so it demanded 9000 — the
+  operator's hand-built `debian12-cloudinit` — while its own tagged `debian-12-cloud` sat at
+  9001. Fixed in `bb84574`: discovery is by name plus the `homelab-infra` tag, adopted at
+  whatever vmid it occupies.
+- **Wildcard HTTPS is not what 015 specifies.** DNS-01 works, but Caddy issues one
+  certificate *per hostname*, not one apex + wildcard. Details in 015; it is the reason that
+  slice stays open.
+
+**The recurring pattern is state surviving a boundary the code assumed was fresh** —
+`homelabinfra_config` across plays, a template across runs, and (from the cutover sessions)
+an artifact deleted by one step that the next still expected. Three of a kind now. Suspect it
+first on any "already exists" or "missing file" error.
 
 **`Remove App` ran live on 2026-08-02** — executions 13–21, API-triggered, against the whole
 baseline as step 0 of a deliberate teardown. Four of slice 501's five acceptance items are
@@ -85,7 +119,7 @@ nothing reads, so no service could record an endpoint another could load.
 
 ---
 
-## Done (14)
+## Done (15)
 
 No further work. Listed for provenance only.
 
@@ -105,8 +139,9 @@ No further work. Listed for provenance only.
 | 102 | [Restart/tail assert ordering](102-restart-tail-assert-order/README.md) |
 | 103 | [find-or-create-host docs](103-find-or-create-host-docs/README.md) |
 | 200 | [write-generated-facts](200-write-generated-facts/README.md) |
+| 406 | [PBS](406-app-pbs/README.md) — deployed live 2026-08-03; all four items observed, and the VM provisioning machinery ran for the first time |
 
-## Built — awaiting live acceptance (28)
+## Built — awaiting live acceptance (29)
 
 Every one of these is code-complete and gate-verified. The 2026-08-01 bootstrap supplied
 component and convergence evidence for many of them, but each row keeps its unobserved
@@ -118,10 +153,11 @@ questions live in each slice's `notes.md` or in a "Built" section of its README.
 | 008 | [Estate / multi-domain contract](008-estate-contract/README.md) | a second-domain deploy |
 | 009 | [Identity-mode contract (routing.identity)](009-identity-modes/README.md) | one app deployed per mode |
 | 010 | [Config provenance](010-config-provenance/README.md) | the bootstrap script run on a node. The Config job group (Configure App / Get Config / Config Doctor) is verified on the workstation; nothing the script does is |
-| 012 | [Runner onboarding](012-runner-onboarding/README.md) | **first criterion observed 2026-08-01** — one command yields project + 19/19 jobs + Key Storage + config + a serving Vaultwarden. Remaining: the `Bootstrap Platform` click, Configure App / Get Config from the UI, and a job run naming its commit |
+| 012 | [Runner onboarding](012-runner-onboarding/README.md) | **four criteria observed** — the one-command onboarding (2026-08-01), and on 2026-08-03 the `Bootstrap Platform` click landing green plus a pushed commit executed by the next run with the log naming it. Remaining: Configure App / Get Config from the UI, `LAB_REFRESH=0`, a no-op re-run of the bootstrap script, and the root README |
 | 013 | [Vaultwarden admin token self-capture](013-vaultwarden-token-capture/README.md) | sink write/readback proved live; HTTPS, vault identities, and item CRUD belong to 015/016/014 |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | Ntfy running (401) |
-| 202 | [configure-pbs](202-configure-pbs/README.md) | PBS running (406) |
+| 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | **moved from `open` 2026-08-03.** Cutover done, vault-mode bootstrap green, `facts.yml` secret-free, 9 org items written, no leakage in 4,909 log lines. Remaining are all fault-injection: stop Vaultwarden and prove every deploy fails in preflight; recreate a seed file; seed re-entry outside recovery; runner rebuild from Key Storage |
+| 202 | [configure-pbs](202-configure-pbs/README.md) | **5 of 6 observed 2026-08-03.** Only a triggered backup remains — the datastore holds zero snapshots, so nothing has proved a backup completes |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | Caddy running (402) |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists; see below |
 | 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | Authentik running (403) |
@@ -130,14 +166,14 @@ questions live in each slice's `notes.md` or in a "Built" section of its README.
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open — see below |
 | 400 | [Vaultwarden](400-app-vaultwarden/README.md) | **deployed live 2026-08-01** — 1.37.1 serving on its own LXC, admin-token sink written in one pass (013). Wiring legs still unobserved: no reverse proxy, SSO or monitor existed to wire into |
-| 401 | [Ntfy](401-app-ntfy/README.md) | bootstrap step 2 |
-| 402 | [Caddy](402-app-caddy/README.md) | bootstrap step 3 |
-| 403 | [Authentik](403-app-authentik/README.md) | bootstrap step 4 — one item blocked on 306 |
-| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | bootstrap step 5 |
-| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | bootstrap step 6 |
-| 406 | [PBS](406-app-pbs/README.md) | bootstrap step 7 — VM path never run live |
+| 401 | [Ntfy](401-app-ntfy/README.md) | deployed green 2026-08-03 and is the sink every other step notifies through — 17 messages cached, covering the whole bootstrap sequence. Per-slice items still need their own pass |
+| 402 | [Caddy](402-app-caddy/README.md) | deployed green 2026-08-03, first in bootstrap order, serving verified Let's Encrypt HTTPS — but per-hostname, not wildcard; see 015 |
+| 403 | [Authentik](403-app-authentik/README.md) | deployed green 2026-08-03 on `sso-stack` — one item blocked on 306 |
+| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | deployed green 2026-08-03 on `monitoring-stack`; its premise remains false — no REST write API, so monitor auto-registration still cannot work as designed |
+| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | deployed green 2026-08-03 on `monitoring-stack` |
+| 501 | [App remove playbook](501-app-remove-playbook/README.md) | **moved from `open` 2026-08-03** — the defect that re-opened it is fixed; `unwiring/caddy.yml` and `unwiring/authentik.yml` now probe first and degrade. Needs a removal run against a stopped Caddy or Authentik to confirm |
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | a real public domain + DNS token |
-| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | the full run — the event above |
+| 500 | [Bootstrap plays](500-bootstrap-plays/README.md) | **3 of 4 observed 2026-08-03** — the full seven-service run is green and resumability is well evidenced. Remaining: a re-run converging to `changed=0`; the two-pass criterion is superseded by 014's cutover model |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
 | 503 | [Lab status](503-lab-status/README.md) | ran green via Rundeck 2026-07-26 but against 0 tagged guests — re-observe once anything is deployed |
 | 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs `config/` on a runner for the full play chain + Ntfy |
@@ -149,7 +185,8 @@ Carried caveats:
 - **301/305 have no live target.** The lab runs Caddy + OPNsense. These two stay `built`
   indefinitely unless a second lab appears; that is expected, not a stall.
 - **406's VM provisioning machinery** (`tasks/proxmox/ensure-cloud-template.yml`,
-  `vm-clone.yml`) has never executed. Highest live-run risk in the set.
+  `vm-clone.yml`) ran for the first time on 2026-08-03 and worked, after one fix. It was
+  correctly called the highest live-run risk in the set; 406 is now `done`.
 - **403 acceptance item 3** — 306 landed and the Caddy enforcement is verified live, so
   the fail-open gap is closed. The item still needs an app actually deployed with
   `routing.identity: forward_auth` to be observed end to end.
@@ -164,39 +201,45 @@ Carried caveats:
   and none of it — `pveum` role creation, config authoring, project creation, Key Storage
   staging, job import — has run against a real node. Treat the first run as an experiment.
 
-## Open (5)
+## Open (3)
 
-011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 014 was
-split out of 010 on 2026-07-27; 015 was reworked and 016 raised on 2026-08-02 after the first
-live run showed that component existence was being mistaken for usable HTTPS and credential
-bootstrap; 501 was re-opened on 2026-08-02 by its own live run. All are design defects in
-shipped code or gaps between the documented model and the implemented one — none are new
+011 was raised by the operator on 2026-07-26 reviewing the Rundeck runner handover; 015 was
+reworked and 016 raised on 2026-08-02 after the first live run showed that component
+existence was being mistaken for usable HTTPS and credential bootstrap. **014 and 501 left
+this section on 2026-08-03** — 014 to `built` on the green vault-mode bootstrap, 501 to
+`built` once the defect that re-opened it was fixed. All three remaining are design defects
+in shipped code or gaps between the documented model and the implemented one — none are new
 features.
 
 | # | Slice | Why now |
 |---|---|---|
-| 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. |
-| 014 | [Vaultwarden as the generated-secret store](014-vaultwarden-secret-store/README.md) | CLAUDE.md's secrets model is unimplemented — `community.general.bitwarden` exists only as `todo/` stubs. Every generated token lives solely in `facts.yml` on the runner, and PBS's is unrecoverable if lost. |
-| 015 | [Caddy-first wildcard HTTPS bootstrap](015-wildcard-dns-default/README.md) | Vaultwarden and Authentik were deployed before their HTTPS prerequisite. Bootstrap must establish wildcard DNS, a trusted certificate, and an external probe before either identity flow starts. |
-| 016 | [Vaultwarden identities and Rundeck bootstrap keyring](016-vaultwarden-identity-bootstrap/README.md) | The admin-panel token is not a vault client credential. Establish a human owner, a limited automation account, and the small fixed Key Storage root set before 014 can move application secrets. |
-| 501 | [App remove playbook](501-app-remove-playbook/README.md) | **Re-opened 2026-08-02 by its own live run.** Four acceptance items met; removal aborts mid-way when a platform provider is unreachable, because two of the four unwire halves fail on a connection error instead of degrading. |
+| 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. **Six addresses are now allocated under the flat model** (.10–.15), so the unwind cost is no longer hypothetical. |
+| 015 | [Caddy-first wildcard HTTPS bootstrap](015-wildcard-dns-default/README.md) | **Narrowed by live evidence 2026-08-03.** Caddy-first ordering and verified HTTPS are observed and met. What remains is one disproved item: the lab issues a certificate *per hostname* via DNS-01, never an apex + wildcard, because a Caddy automation policy's `subjects` selects which names a policy governs rather than causing a wildcard to be obtained. Every app deploy therefore performs its own DNS-01 challenge. |
+| 016 | [Vaultwarden identities and Rundeck bootstrap keyring](016-vaultwarden-identity-bootstrap/README.md) | Enrollment and cutover are done and the automation account drives every vault write in the green bootstrap. What remains is mostly one decision: `users_collections` is empty, so the account reads the org by being an Admin with `allowAdminAccessToAllCollectionItems` — org-scoped, not collection-scoped. Decide whether that meets the criterion. |
 
-**015, 016, and 014 gate the usable/shareable platform claim** and **011 gates future
-provisioning correctness** — the next deploy that allocates an address bakes in whatever the
-current model produces.
+**015 and 016 gate the usable/shareable platform claim; 014 now depends on tests rather than
+code** — and **011 gates future provisioning correctness**, with the next deploy that
+allocates an address baking in whatever the current model produces.
 
 ## Recommended order
 
-1. **015 first: make Caddy the control-plane front door.** Establish wildcard resolution,
-   a trusted certificate, and a verified Vaultwarden route. This is the shortest path from
-   "containers exist" to a platform a browser and CLI can actually use.
-2. **016 next: establish Vaultwarden identities and bounded root keys.** Prove human login
-   and machine canary CRUD, with Rundeck holding only the credentials required to open the
-   vault and its prerequisites.
-3. **014 after 016: cut application secrets over to Vaultwarden.** Replace secret-bearing
-   facts and runner files only after the real vault client path is proven.
-4. **011 before the next new guest allocation.** Existing addresses are already live; fix
-   the allocator before another deploy makes the flat model harder to unwind.
+Rewritten 2026-08-03: the green vault-mode bootstrap did most of steps 1–3 as originally
+written, so what is left of each is narrower and differently ordered.
+
+1. **Prove 014 fails closed.** Stop Vaultwarden, run any deploy, and confirm it dies in
+   preflight before touching infrastructure. This is one command against a live lab, it
+   needs no code, and it tests the guarantee the whole secrets model rests on — currently a
+   design intent with no observation behind it. Then the other three injections: a
+   recreated seed file, seed re-entry outside recovery, and a runner rebuild from Key
+   Storage.
+2. **Fix 015's certificate model.** DNS-01 and verified HTTPS work; the wildcard does not
+   exist. Give Caddy a site whose host is `*.<domain>` so one certificate covers the estate,
+   rather than one per app with a DNS-01 challenge per deploy.
+3. **Decide 016's collection scoping.** The automation account is org-scoped via
+   `allowAdminAccessToAllCollectionItems`, not scoped to `platform-secrets`. Either grant
+   per-collection and tighten, or amend the criterion to match the decision.
+4. **011 before the next new guest allocation.** Six addresses (.10–.15) are already live
+   under the flat model; fix the allocator before another deploy makes it harder to unwind.
 5. **Re-run live acceptance through external origins.** Exercise Vaultwarden login/item
    CRUD, Authentik browser sign-in, and an authenticated app route. Record component
    existence and end-to-end usability as separate evidence.

@@ -21,6 +21,14 @@
 # delete the application (which takes its policy bindings with it), then delete
 # whichever provider exists. Idempotent: every step is skipped when its object is
 # already gone. Silent no-op when the configured SSO provider is not authentik.
+#
+# An unreachable Authentik warns and skips rather than failing the removal. remove.yml
+# unwires BEFORE it stops the app, precisely so a half-removed app is never left serving
+# traffic that still resolves through SSO — and a hard failure here inverted that: removing
+# the SSO provider itself, or removing anything after it, aborted between unwire and stop
+# and stranded every removal queued behind it. A stale application on an Authentik that is
+# gone is a smaller problem than a removal that cannot proceed. Same stance, same reason,
+# as unwiring/uptime-kuma.yml.
 
 - name: Unwire Authentik | Remove application and provider
   when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
@@ -41,109 +49,138 @@
           unwiring/authentik.yml needs wiring_app_name, plus sso.host + sso.token in
           config/.generated/facts.yml.
 
-    - name: Unwire Authentik | Find proxy provider
+    # `status` is absent entirely on a connection error, which is what distinguishes an
+    # unreachable Authentik from an authentication failure. default(0) makes that case
+    # explicit rather than an undefined-variable crash in the condition below.
+    - name: Unwire Authentik | Probe the API
       ansible.builtin.uri:
-        url: "{{ _ak_api }}/providers/proxy/?name={{ wiring_app_name | urlencode }}"
+        url: "{{ _ak_api }}/core/applications/?page_size=1"
         method: GET
         headers: "{{ _ak_headers }}"
-        status_code: 200
-      register: _ak_provider_list
+        status_code: [200, 401, 403, 404]
+        timeout: 10
+      register: _ak_probe
+      failed_when: false
+      changed_when: false
       no_log: true
 
-    - name: Unwire Authentik | Select proxy provider
-      ansible.builtin.set_fact:
-        _ak_provider: >-
-          {{ (_ak_provider_list.json.results | default([]))
-             | selectattr('name', 'equalto', wiring_app_name)
-             | list | first | default({}) }}
+    - name: Unwire Authentik | Report unusable API
+      ansible.builtin.debug:
+        msg: >-
+          Authentik at {{ homelabinfra_infra.sso.host }} did not answer
+          GET /api/v3/core/applications/ with 200
+          (got {{ _ak_probe.status | default('no response') }}) — the application and
+          provider for {{ wiring_app_name }} were left in place. Remove them from the
+          Authentik UI if it is still serving.
+      when: _ak_probe.status | default(0) != 200
 
-    - name: Unwire Authentik | Find outpost
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/outposts/instances/?name={{ _ak_outpost_name | urlencode }}"
-        method: GET
-        headers: "{{ _ak_headers }}"
-        status_code: 200
-      register: _ak_outpost_list
-      no_log: true
+    - name: Unwire Authentik | Remove objects through the API
+      when: _ak_probe.status | default(0) == 200
+      block:
+        - name: Unwire Authentik | Find proxy provider
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/providers/proxy/?name={{ wiring_app_name | urlencode }}"
+            method: GET
+            headers: "{{ _ak_headers }}"
+            status_code: 200
+          register: _ak_provider_list
+          no_log: true
 
-    - name: Unwire Authentik | Select outpost
-      ansible.builtin.set_fact:
-        _ak_outpost: >-
-          {{ (_ak_outpost_list.json.results | default([]))
-             | selectattr('name', 'equalto', _ak_outpost_name)
-             | list | first | default({}) }}
+        - name: Unwire Authentik | Select proxy provider
+          ansible.builtin.set_fact:
+            _ak_provider: >-
+              {{ (_ak_provider_list.json.results | default([]))
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list | first | default({}) }}
 
-    - name: Unwire Authentik | Detach provider from outpost
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
-        method: PATCH
-        headers: "{{ _ak_headers }}"
-        body_format: json
-        body: >-
-          {{ {'providers': (_ak_outpost.providers | default([]))
-                           | reject('equalto', _ak_provider.pk | int) | list} }}
-        status_code: 200
-      when:
-        - _ak_provider.pk is defined
-        - _ak_outpost.pk is defined
-        - (_ak_provider.pk | int) in (_ak_outpost.providers | default([]))
-      changed_when: true
-      no_log: true
+        - name: Unwire Authentik | Find outpost
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/outposts/instances/?name={{ _ak_outpost_name | urlencode }}"
+            method: GET
+            headers: "{{ _ak_headers }}"
+            status_code: 200
+          register: _ak_outpost_list
+          no_log: true
 
-    # Deleting the application cascades to its policy bindings — no separate unbind step.
-    - name: Unwire Authentik | Delete application
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
-        method: DELETE
-        headers: "{{ _ak_headers }}"
-        status_code: [204, 404]
-      register: _ak_app_delete
-      changed_when: _ak_app_delete.status == 204
-      no_log: true
+        - name: Unwire Authentik | Select outpost
+          ansible.builtin.set_fact:
+            _ak_outpost: >-
+              {{ (_ak_outpost_list.json.results | default([]))
+                 | selectattr('name', 'equalto', _ak_outpost_name)
+                 | list | first | default({}) }}
 
-    - name: Unwire Authentik | Delete proxy provider
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/providers/proxy/{{ _ak_provider.pk | default(0) }}/"
-        method: DELETE
-        headers: "{{ _ak_headers }}"
-        status_code: [204, 404]
-      register: _ak_provider_delete
-      when: _ak_provider.pk is defined
-      changed_when: _ak_provider_delete.status | default(404) == 204
-      no_log: true
+        - name: Unwire Authentik | Detach provider from outpost
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
+            method: PATCH
+            headers: "{{ _ak_headers }}"
+            body_format: json
+            body: >-
+              {{ {'providers': (_ak_outpost.providers | default([]))
+                               | reject('equalto', _ak_provider.pk | int) | list} }}
+            status_code: 200
+          when:
+            - _ak_provider.pk is defined
+            - _ak_outpost.pk is defined
+            - (_ak_provider.pk | int) in (_ak_outpost.providers | default([]))
+          changed_when: true
+          no_log: true
 
-    # oidc-mode apps have an OAuth2 provider under the same name instead.
-    - name: Unwire Authentik | Find OAuth2 provider
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/providers/oauth2/?name={{ wiring_app_name | urlencode }}"
-        method: GET
-        headers: "{{ _ak_headers }}"
-        status_code: 200
-      register: _ak_oauth_list
-      no_log: true
+        # Deleting the application cascades to its policy bindings — no separate unbind step.
+        - name: Unwire Authentik | Delete application
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+            method: DELETE
+            headers: "{{ _ak_headers }}"
+            status_code: [204, 404]
+          register: _ak_app_delete
+          changed_when: _ak_app_delete.status == 204
+          no_log: true
 
-    - name: Unwire Authentik | Select OAuth2 provider
-      ansible.builtin.set_fact:
-        _ak_oauth: >-
-          {{ (_ak_oauth_list.json.results | default([]))
-             | selectattr('name', 'equalto', wiring_app_name)
-             | list | first | default({}) }}
+        - name: Unwire Authentik | Delete proxy provider
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/providers/proxy/{{ _ak_provider.pk | default(0) }}/"
+            method: DELETE
+            headers: "{{ _ak_headers }}"
+            status_code: [204, 404]
+          register: _ak_provider_delete
+          when: _ak_provider.pk is defined
+          changed_when: _ak_provider_delete.status | default(404) == 204
+          no_log: true
 
-    - name: Unwire Authentik | Delete OAuth2 provider
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/providers/oauth2/{{ _ak_oauth.pk | default(0) }}/"
-        method: DELETE
-        headers: "{{ _ak_headers }}"
-        status_code: [204, 404]
-      register: _ak_oauth_delete
-      when: _ak_oauth.pk is defined
-      changed_when: _ak_oauth_delete.status | default(404) == 204
-      no_log: true
+        # oidc-mode apps have an OAuth2 provider under the same name instead.
+        - name: Unwire Authentik | Find OAuth2 provider
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/providers/oauth2/?name={{ wiring_app_name | urlencode }}"
+            method: GET
+            headers: "{{ _ak_headers }}"
+            status_code: 200
+          register: _ak_oauth_list
+          no_log: true
 
-    - name: Unwire Authentik | Verify application is gone
-      ansible.builtin.uri:
-        url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
-        method: GET
-        headers: "{{ _ak_headers }}"
-        status_code: 404
-      no_log: true
+        - name: Unwire Authentik | Select OAuth2 provider
+          ansible.builtin.set_fact:
+            _ak_oauth: >-
+              {{ (_ak_oauth_list.json.results | default([]))
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list | first | default({}) }}
+
+        - name: Unwire Authentik | Delete OAuth2 provider
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/providers/oauth2/{{ _ak_oauth.pk | default(0) }}/"
+            method: DELETE
+            headers: "{{ _ak_headers }}"
+            status_code: [204, 404]
+          register: _ak_oauth_delete
+          when: _ak_oauth.pk is defined
+          changed_when: _ak_oauth_delete.status | default(404) == 204
+          no_log: true
+
+        - name: Unwire Authentik | Verify application is gone
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/core/applications/{{ wiring_app_name }}/"
+            method: GET
+            headers: "{{ _ak_headers }}"
+            status_code: 404
+          changed_when: false
+          no_log: true
