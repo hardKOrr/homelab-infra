@@ -1298,8 +1298,9 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
       info "the path to it on 443 has to be open before enrollment can run. Point"
       info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
       info "allow client subnets to reach it, then run the Vaultwarden Enrollment job."
-      info "Certificates come from DNS-01, so no public record and no inbound WAN port"
-      info "are involved."
+      info "Certificate issuance uses DNS-01, so getting the certificate needs no public"
+      info "record and no inbound WAN port. Publishing an app to the internet later is a"
+      info "separate choice that does require inbound 443."
     fi
   else
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
@@ -1325,12 +1326,30 @@ cat <<EOF
 
     NETWORK: every lab hostname is served by Caddy${CADDY_ADDR:+ at $CADDY_ADDR}. Lab
     hostnames must resolve there in your LAN resolver and client subnets must be allowed
-    to reach it on 80/443. Certificates are issued over DNS-01, so no public record and no
-    inbound WAN port are involved, and an existing internet-facing proxy keeps its ports.
+    to reach it on 80/443. Certificate ISSUANCE uses DNS-01, so obtaining a certificate
+    needs no public record and no inbound WAN port. Publishing an app to the internet is
+    a separate and deliberate choice (routing.access: public) and does require inbound
+    443 forwarded here. An existing internet-facing proxy keeps its own ports either way.
 
-    NEXT: open $RD_URL, finish Vaultwarden Enrollment, stage the three automation
-    credentials, and run Vaultwarden Cutover. Only then run Bootstrap Platform;
-    it will reuse Caddy and Vaultwarden and deploy the remaining baseline services.
+    NEXT: two Rundeck jobs, with one browser session between them. Open $RD_URL.
+
+      1. DNS FIRST. Point vaultwarden.$LAB_DOMAIN at ${CADDY_ADDR:-the Caddy LXC} in your
+         LAN resolver. Nothing below works until that name resolves.
+      2. Run the "Vaultwarden Enrollment" JOB (Bootstrap group). It sends the two
+         invitations and needs no input from you — its admin token is already staged.
+         Skip it if the invitations above already succeeded.
+      3. In a BROWSER at https://vaultwarden.$LAB_DOMAIN, register the owner address and
+         the automation address. YOU CHOOSE both master passwords here; nothing in this
+         project generates, stores or prints them. Then, as the owner, create the
+         organization 'homelab-infra' and the collection 'platform-secrets', and grant
+         the automation account access to that collection.
+      4. Signed in as the automation account, open Settings > Security > Keys and view
+         its API key. Put that client id and client secret, plus the master password you
+         chose in step 3, into Rundeck Key Storage under
+         keys/project/$RD_PROJECT/vaultwarden-machine/ as client-id, client-secret and
+         master-password.
+      5. Run the "Vaultwarden Cutover" JOB, then the "Bootstrap Platform" JOB. Bootstrap
+         Platform reuses Caddy and Vaultwarden and deploys the remaining services.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

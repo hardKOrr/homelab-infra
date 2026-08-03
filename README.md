@@ -89,11 +89,23 @@ gave.
 
 ### 2. Stand up the lab
 
-Open the Rundeck URL it printed. Complete **Vaultwarden Enrollment**, create the dedicated
-automation account, `homelab-infra` organization and `platform-secrets` collection, then
-stage the account's client ID, client secret and master password in the named encrypted
-Key Storage entries. Run **Vaultwarden Cutover**; it imports and reads back every seed
-secret before writing the marker and deleting seed files. Then run **Bootstrap Platform**.
+Open the Rundeck URL it printed. Two jobs, with one browser session between them.
+
+Layer 1 already sent the owner and automation invitations itself. The **Vaultwarden
+Enrollment** job re-sends them, and you click it only if that attempt failed — which
+happens when `vaultwarden.<domain>` did not yet resolve to the Caddy LXC.
+
+In the web vault at `https://vaultwarden.<domain>`, register the owner address and the
+automation address. **You choose both master passwords here** — nothing in this project
+generates, stores or prints them, which is why the job output has no password in it. Then,
+as the owner, create the `homelab-infra` organization and `platform-secrets` collection and
+grant the automation account access.
+
+Signed in as the automation account, view its personal API key (Settings → Security → Keys).
+Stage that client ID and client secret, plus the master password you chose, in the named
+encrypted Key Storage entries. Run **Vaultwarden Cutover**; it imports and reads back every
+seed secret before writing the marker and deleting seed files. Then run **Bootstrap
+Platform**.
 
 That reconciles the already-tagged Caddy and Vaultwarden LXCs, then deploys Ntfy, Authentik, Uptime Kuma,
 Prometheus + Grafana and PBS. Each step records its own connection details before the next
