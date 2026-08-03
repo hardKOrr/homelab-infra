@@ -145,12 +145,18 @@
              'domains': _vault_estate_domains
            }}, recursive=True) }}
   vars:
-    _vault_estate_domains: >-
-      {% set result = {} %}
-      {% for estate in (homelabinfra_vault.estates | default({}) | dict2items) %}
-      {% if estate.value.dns is defined %}
-      {% set _ = result.update({estate.key: {'dns_challenge': estate.value.dns}}) %}
-      {% endif %}
-      {% endfor %}
-      {{ result }}
+    # Serialized deliberately. A template carrying {% %} statement blocks is not a single
+    # full-expression template, so Ansible renders it to a STRING rather than converting it
+    # back to a dict — `domains` then arrives as "  {}" and every consumer that expects a
+    # mapping breaks on it (caddy's .values(), cutover's dict2items). Emitting JSON and
+    # parsing it back in a full-expression template restores the real type.
+    _vault_estate_domains_json: >-
+      {%- set result = {} -%}
+      {%- for estate in (homelabinfra_vault.estates | default({}) | dict2items) -%}
+      {%- if estate.value.dns is defined -%}
+      {%- set _ = result.update({estate.key: {'dns_challenge': estate.value.dns}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+    _vault_estate_domains: "{{ _vault_estate_domains_json | from_json }}"
   no_log: true

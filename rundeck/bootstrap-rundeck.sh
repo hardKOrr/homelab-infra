@@ -310,6 +310,7 @@ log "Provision guest (packages, Java, Rundeck, Ansible)"
 in_ct env \
   RD_URL="$RD_URL" \
   RD_HOST="$RD_HOST" \
+  RD_PROJECT="$RD_PROJECT" \
   CT_HOSTNAME="$CT_HOSTNAME" \
   REPO_URL="$REPO_URL" \
   REPO_BRANCH="$REPO_BRANCH" \
@@ -324,6 +325,11 @@ in_ct env \
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
+# `pct exec` hands the guest a PATH of /sbin:/bin:/usr/sbin:/usr/bin — no /usr/local/bin.
+# Anything this script installs there (npm -g puts the Bitwarden CLI at /usr/local/bin/bw)
+# is otherwise invisible to the very steps that install it. Rundeck's own jobs are
+# unaffected: systemd's default PATH does include it.
+export PATH=/usr/local/sbin:/usr/local/bin:$PATH
 
 say() { printf '    %s\n' "$*"; }
 
@@ -409,7 +415,11 @@ say "rundeck $RUNDECK_PACKAGE_VERSION (AES-GCM capable)"
 # runner infrastructure rather than lazily during the first deploy.
 say "Bitwarden CLI"
 npm install -g --silent @bitwarden/cli >/dev/null
-say "bw $(bw --version)"
+# Verify explicitly. `say "bw $(bw --version)"` would swallow a missing binary: command
+# substitution failing inside an argument leaves `say` itself returning 0, so set -e never
+# fires and the run continues to fail much later, at cutover, for no visible reason.
+command -v bw >/dev/null || { echo "bitwarden CLI not on PATH after install" >&2; exit 1; }
+say "bw $(bw --version 2>/dev/null)"
 
 # -- rundeck config -------------------------------------------------------------
 say "configuring $RD_URL"
