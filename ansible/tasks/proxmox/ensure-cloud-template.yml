@@ -11,12 +11,16 @@
 # Everything here runs on the Proxmox node itself (delegate_to), because the image
 # import is a local disk operation the API does not expose.
 #
-# Idempotent: if a VM with cloud_template_vmid already exists, this is a no-op. It
-# never rebuilds or overwrites an existing template — deleting the template VM is
-# the way to force a rebuild.
+# Idempotent: a template named cloud_template_name and tagged `homelab-infra` on the
+# target node is adopted wherever it sits, so this is a no-op on every run after the
+# first even if it was not built at cloud_template_vmid. It never rebuilds or
+# overwrites an existing template — deleting the template VM is the way to force a
+# rebuild.
 #
 # Inputs:
-#   cloud_template_vmid     — vmid to create the template as (default 9000)
+#   cloud_template_vmid     — vmid to BUILD the template at when none exists yet
+#                             (default 9000); an already-built template is found by
+#                             name and tag regardless of this value
 #   cloud_template_name     — template name other tasks clone by (default debian-12-cloud)
 #   cloud_template_image_url— cloud image to build from (default Debian 12 genericcloud)
 #   cloud_template_storage  — storage for the imported disk; defaults to the lab-wide
@@ -54,6 +58,45 @@
     fail_msg: >-
       ensure-cloud-template.yml requires proxmox.node and ansible.ssh_public_key
       in config/proxmox.yml.
+
+# Identity is the NAME plus this platform's tag — so that is what we search for, rather than
+# assuming the template sits at the configured vmid. The two had drifted apart: the assert
+# below already judged identity by name, while discovery still only looked at
+# cloud_template_vmid. A lab whose 9000 is a hand-built template therefore got a hard stop on
+# every PBS deploy even once homelab-infra had successfully built its own template elsewhere
+# — which is exactly the state the live lab reached (our `debian-12-cloud` at 9001, the
+# operator's `debian12-cloudinit` at 9000).
+#
+# Adopting on name alone would break the manages-only-what-it-creates rule, so the tag this
+# task stamps on the template it builds is required too. A hand-built VM that happens to
+# share the name is not ours, is not adopted, and still falls through to the vmid assert.
+#
+# `min` rather than `first`: identical templates on a node are pathological, but picking
+# deterministically keeps a run from cloning a different one each time.
+- name: Cloud template | Look for a template this platform already built
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/resources --type vm --output-format json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _ct_resources
+  changed_when: false
+
+- name: Cloud template | Adopt the vmid of the template we already built
+  ansible.builtin.set_fact:
+    _ct_vmid: "{{ _ct_discovered | map('int') | min }}"
+  vars:
+    # `tags` is absent from the resource entry when a guest carries none, so it is filtered
+    # for definedness before the tag match.
+    _ct_discovered: >-
+      {{ (_ct_resources.stdout | from_json)
+         | selectattr('node', 'eq', homelabinfra_config.proxmox.node)
+         | selectattr('template', 'defined')
+         | selectattr('template', 'eq', 1)
+         | selectattr('name', 'defined')
+         | selectattr('name', 'eq', _ct_name)
+         | selectattr('tags', 'defined')
+         | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
+         | map(attribute='vmid') | list }}
+  when: _ct_discovered | length > 0
 
 - name: Cloud template | Check whether the template already exists
   ansible.builtin.command:
