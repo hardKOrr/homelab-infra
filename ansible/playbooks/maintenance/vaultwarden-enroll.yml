@@ -56,7 +56,12 @@
           Cookie: "{{ _vault_admin_login.cookies_string }}"
         body_format: json
         body:
-          Email: "{{ item }}"
+          # camelCase. Vaultwarden's admin InviteData deserializes `email`; the
+          # PascalCase `Email` of the Bitwarden-compatible APIs is rejected here with
+          # 422 Unprocessable Entity. Verified live against 2026.x: {"Email":...} -> 422,
+          # {"email":...} -> 200.
+          email: "{{ item }}"
+        # 400 is the already-invited case, which makes re-running the job idempotent.
         status_code: [200, 400]
       loop:
         - "{{ _vault_owner_email }}"
