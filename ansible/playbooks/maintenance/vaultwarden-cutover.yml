@@ -247,15 +247,45 @@
           version=1
           source=vaultwarden
 
+    # Every readback has already passed and the marker is written, so cutover has
+    # succeeded by the time these files are removed. A file the job user cannot
+    # unlink must not fail the run and must not pass silently either: unlinking
+    # needs write permission on the containing directory, which the unprivileged
+    # job user does not hold over root-owned /etc/homelab-infra. Runners
+    # bootstrapped before the seed moved into secrets.d/ therefore keep
+    # secrets.env, and the operator is told to remove it as root.
     - name: Remove temporary seed files
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
+        - /etc/homelab-infra/secrets.d/proxmox.env
         - /etc/homelab-infra/secrets.env
         - /etc/homelab-infra/secrets.d/vaultwarden.env
         - "{{ _cutover_ssh_file }}"
+      register: _cutover_seed_removal
+      failed_when: false
       no_log: true
+
+    - name: Confirm which seed files survived removal
+      ansible.builtin.stat:
+        path: "{{ item.item }}"
+      loop: "{{ _cutover_seed_removal.results }}"
+      register: _cutover_seed_survivors
+      no_log: true
+
+    - name: Report seed files the job user could not remove
+      ansible.builtin.debug:
+        msg: >-
+          Cutover succeeded, but {{ _cutover_seed_paths | join(', ') }} could not be
+          removed by the unprivileged job user. Delete it on the runner as root; it
+          still holds seed secrets. Ordinary jobs already ignore it — the vault-mode
+          marker is written.
+      vars:
+        _cutover_seed_paths: >-
+          {{ _cutover_seed_survivors.results
+             | selectattr('stat.exists') | map(attribute='item.item') | list }}
+      when: _cutover_seed_paths | length > 0
 
     - name: Report successful cutover
       ansible.builtin.debug:
