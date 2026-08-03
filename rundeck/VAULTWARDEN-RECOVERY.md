@@ -40,8 +40,9 @@ defence against a compromised runner root account.
    `LAB_SEED_MODE=1`. Prefer restoring the complete Vaultwarden guest/database from PBS;
    a blank replacement vault does not contain the platform secrets.
 7. Confirm the HTTPS `/alive` endpoint, sign in as the human owner, and confirm the
-   automation account can see the `homelab-infra` organization and `platform-secrets`
-   collection. Never pass the owner's master password through a job.
+   automation account is a confirmed Admin of the `homelab-infra` organization. Cutover
+   recreates the `platform-secrets` collection if the restore did not carry it. Never pass
+   the owner's master password through a job.
 8. Run **Vaultwarden Cutover**. It authenticates as the automation account, imports any
    restored seed values, verifies exact readback, writes the marker, and only then removes
    temporary seed files.

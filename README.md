@@ -98,8 +98,14 @@ happens when `vaultwarden.<domain>` did not yet resolve to the Caddy LXC.
 In the web vault at `https://vaultwarden.<domain>`, register the owner address and the
 automation address. **You choose both master passwords here** — nothing in this project
 generates, stores or prints them, which is why the job output has no password in it. Then,
-as the owner, create the `homelab-infra` organization and `platform-secrets` collection and
-grant the automation account access.
+as the owner, create the `homelab-infra` organization and invite the automation account
+into it as an **Admin**.
+
+That is the whole manual step. Do not create any collection: the platform creates its own
+`platform-secrets` collection on first write and grants every confirmed member manage
+rights on it. The web vault's auto-created "Default Collection" is ignored, and Admin
+membership is what lets the automation account read the organization — no per-collection
+grant is required.
 
 Signed in as the automation account, view its personal API key (Settings → Security → Keys).
 Stage that client ID and client secret, plus the master password you chose, in the named

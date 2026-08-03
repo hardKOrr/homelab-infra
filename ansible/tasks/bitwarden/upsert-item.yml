@@ -60,12 +60,80 @@
           | map(attribute='id') | list | first) | default('') }}
   no_log: true
 
+# A freshly created organization contains only the web vault's auto-created
+# "Default Collection". Requiring the operator to hand-create a collection named
+# exactly platform-secrets made enrollment depend on an instruction that appeared
+# only in job output. The canonical collection is platform state, so the platform
+# creates it. Confirmed members are granted manage rights so the human owner keeps
+# recovery access to everything stored here.
+- name: Vault | List organization members
+  ansible.builtin.command:
+    argv: [bw, list, org-members, --organizationid, "{{ _vault_org_id }}"]
+  register: _vault_members
+  when: _vault_collection_id | length == 0
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+# The collection payload is assembled by python3 rather than Jinja: a {% %} loop
+# renders to a string, and to_json would then emit the member list as a JSON
+# string instead of an array. Status 2 is Confirmed; invited or accepted members
+# cannot hold collection rights yet.
+- name: Vault | Create the canonical collection
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 -c '
+    import json, os, sys
+    members = json.loads(os.environ["VAULT_ORG_MEMBERS"])
+    json.dump({
+        "organizationId": os.environ["VAULT_ORG_ID"],
+        "name": os.environ["VAULT_COLLECTION_NAME"],
+        "externalId": None,
+        "groups": [],
+        "users": [{"id": m["id"], "readOnly": False,
+                   "hidePasswords": False, "manage": True}
+                  for m in members if m.get("status") == 2],
+    }, sys.stdout)
+    ' | bw encode | bw create org-collection --organizationid "$VAULT_ORG_ID"
+  args:
+    executable: /bin/bash
+  environment:
+    VAULT_ORG_ID: "{{ _vault_org_id }}"
+    VAULT_COLLECTION_NAME: "{{ vault_collection_name | default('platform-secrets') }}"
+    VAULT_ORG_MEMBERS: "{{ _vault_members.stdout }}"
+  when: _vault_collection_id | length == 0
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Re-list organization collections after creation
+  ansible.builtin.command:
+    argv: [bw, list, org-collections, --organizationid, "{{ _vault_org_id }}"]
+  register: _vault_collections_recheck
+  when: _vault_collection_id | length == 0
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Resolve the created collection
+  ansible.builtin.set_fact:
+    _vault_collection_id: >-
+      {{ (_vault_collections_recheck.stdout | from_json
+          | selectattr('name', 'equalto', vault_collection_name | default('platform-secrets'))
+          | map(attribute='id') | list | first) | default('') }}
+  when: _vault_collection_id | length == 0
+  no_log: true
+
 - name: Vault | Assert the canonical collection exists
   ansible.builtin.assert:
     that: _vault_collection_id | length > 0
     fail_msg: >-
-      The automation account cannot see collection
-      {{ vault_collection_name | default('platform-secrets') }}.
+      Collection {{ vault_collection_name | default('platform-secrets') }} is
+      neither visible to nor creatable by the automation account in organization
+      {{ vault_organization_name | default('homelab-infra') }}.
 
 - name: Vault | List exact-name item candidates
   ansible.builtin.command:
@@ -88,38 +156,32 @@
     that: _vault_existing_items | length <= 1
     fail_msg: "More than one Vaultwarden item is named {{ vault_item_name }}."
 
-- name: Vault | Build canonical item payload
-  ansible.builtin.set_fact:
-    _vault_item_payload: >-
-      {{ ((_vault_existing_items | first | default({}))
-          | combine({
-              'type': 2,
-              'name': vault_item_name,
-              'notes': 'Managed by homelab-infra. Do not rename fields.',
-              'organizationId': _vault_org_id,
-              'collectionIds': [_vault_collection_id],
-              'secureNote': {'type': 0},
-              'fields': _vault_fields
-            }, recursive=False)) | to_json }}
-  vars:
-    _vault_fields: >-
-      {% set result = [] %}
-      {% set hidden = vault_item_secret_fields | default(vault_item_fields.keys() | list) %}
-      {% for entry in vault_item_fields | dict2items %}
-      {% set _ = result.append({'name': entry.key,
-                                'value': entry.value | string,
-                                'type': 1 if entry.key in hidden else 0}) %}
-      {% endfor %}
-      {{ result }}
-  no_log: true
-
-# The Bitwarden CLI requires encoded item JSON as a positional value. Keeping the
-# plaintext in an environment variable avoids command-line exposure; no_log hides
-# both the reversible encoded value and all command results from Ansible output.
+# The Bitwarden CLI requires encoded item JSON as a positional value. The payload
+# is assembled by python3 for the same typing reason as the collection payload,
+# and because it keeps the plaintext out of both the command line and Ansible's
+# recorded module arguments. Field values are read from a JSON environment
+# variable, so no secret is interpolated into the script text.
 - name: Vault | Create or update the canonical item
   ansible.builtin.shell: |
     set -euo pipefail
-    encoded="$(printf '%s' "$VAULT_ITEM_JSON" | bw encode)"
+    payload="$(python3 -c '
+    import json, os, sys
+    existing = json.loads(os.environ["VAULT_EXISTING_ITEM"])
+    values = json.loads(os.environ["VAULT_ITEM_FIELDS"])
+    hidden = set(json.loads(os.environ["VAULT_SECRET_FIELDS"]))
+    existing.update({
+        "type": 2,
+        "name": os.environ["VAULT_ITEM_NAME"],
+        "notes": "Managed by homelab-infra. Do not rename fields.",
+        "organizationId": os.environ["VAULT_ORG_ID"],
+        "collectionIds": [os.environ["VAULT_COLLECTION_ID"]],
+        "secureNote": {"type": 0},
+        "fields": [{"name": k, "value": str(v), "type": 1 if k in hidden else 0}
+                   for k, v in values.items()],
+    })
+    json.dump(existing, sys.stdout)
+    ')"
+    encoded="$(printf '%s' "$payload" | bw encode)"
     if [ -n "$VAULT_ITEM_ID" ]; then
       bw edit item "$VAULT_ITEM_ID" "$encoded"
     else
@@ -128,13 +190,33 @@
   args:
     executable: /bin/bash
   environment:
-    VAULT_ITEM_JSON: "{{ _vault_item_payload }}"
+    VAULT_ITEM_NAME: "{{ vault_item_name }}"
+    VAULT_ORG_ID: "{{ _vault_org_id }}"
+    VAULT_COLLECTION_ID: "{{ _vault_collection_id }}"
+    VAULT_EXISTING_ITEM: "{{ _vault_existing_items | first | default({}) | to_json }}"
     VAULT_ITEM_ID: "{{ (_vault_existing_items | first | default({})).id | default('') }}"
+    VAULT_ITEM_FIELDS: "{{ vault_item_fields | to_json }}"
+    VAULT_SECRET_FIELDS: >-
+      {{ (vault_item_secret_fields | default(vault_item_fields.keys() | list)) | to_json }}
   register: _vault_upsert
-  changed_when: true
+  failed_when: false
+  changed_when: _vault_upsert.rc == 0
   delegate_to: localhost
   become: false
   no_log: true
+
+# no_log on the write hides the real rejection reason and turns every CLI error
+# into an uninformative censored failure. The CLI reports errors as short
+# diagnostic strings and never echoes the submitted item, so surfacing a bounded
+# slice of stderr is safe and is the only way to debug a rejected write.
+- name: Vault | Report a rejected canonical item write
+  ansible.builtin.fail:
+    msg: >-
+      Vaultwarden rejected the write for {{ vault_item_name }}
+      (rc={{ _vault_upsert.rc }}):
+      {{ (_vault_upsert.stderr | default('') | trim)[:500] }}
+      {{ (_vault_upsert.stdout | default('') | trim)[:200] }}
+  when: _vault_upsert.rc != 0
 
 - name: Vault | Synchronize after write
   ansible.builtin.command:
