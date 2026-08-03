@@ -61,8 +61,10 @@
           # 422 Unprocessable Entity. Verified live against 2026.x: {"Email":...} -> 422,
           # {"email":...} -> 200.
           email: "{{ item }}"
-        # 400 is the already-invited case, which makes re-running the job idempotent.
-        status_code: [200, 400]
+        # 409 {"message":"User already exists"} is the already-invited case, and accepting
+        # it is what makes re-running the job idempotent. 400 is deliberately NOT accepted:
+        # a malformed address returns 400, and swallowing that would silently enroll nobody.
+        status_code: [200, 409]
       loop:
         - "{{ _vault_owner_email }}"
         - "{{ _vault_automation_email }}"
