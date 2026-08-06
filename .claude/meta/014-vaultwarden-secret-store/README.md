@@ -161,7 +161,7 @@ when the vault is down.
   `config/.generated/facts.yml` — consume the in-memory vault contract instead.
 - `ansible/vars/CONTRACT.md` — split non-secret generated facts from the secret runtime
   contract and name every canonical vault item and field.
-- `.claude/CLAUDE.md`, `.claude/specs/secrets-handling.md`, runner documentation — state
+- `AGENTS.md`, `.claude/specs/secrets-handling.md`, runner documentation — state
   the seed/cutover model and the hard deployment dependency accurately.
 
 ## Acceptance

@@ -6,7 +6,7 @@ Ansible-based homelab automation platform: one click in Semaphore/Rundeck deploy
 configured, cross-wired application on Proxmox. Designed to be cloned by others — fill in two
 config files, run bootstrap, have a working lab. Fire-and-forget provisioning: create correct
 once, never police drift. This file is the map; contract detail lives in [specs/](specs/) and
-`.claude/CLAUDE.md`.
+`AGENTS.md` at the repo root.
 
 ## Modules
 
