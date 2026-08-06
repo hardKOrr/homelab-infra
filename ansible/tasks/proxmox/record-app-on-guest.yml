@@ -1,9 +1,14 @@
 ---
 # Record a deployed app instance on the Proxmox guest it landed on.
 #
-# Writes two things, doing deliberately different jobs:
+# Writes three things, doing deliberately different jobs:
 #   - the tag `app_<instance>`, which gives the Proxmox guest tree a filter and the dynamic
 #     inventory a `tag_app_<instance>` group
+#   - the tag `kind_<docker|native>`, which says how the app is installed. A guest's identity
+#     tag is written at creation (`ntfy` for a native app's own LXC, `sso_stack` for a shared
+#     Docker host), so before this the only clue to install type was a hostname convention.
+#     The kind tags are rendered from the notes table, so a shared host carries one per kind
+#     present and loses it when the last app of that kind is removed.
 #   - a row in the marker-delimited region of the guest's notes, which says what the guest
 #     actually runs
 #

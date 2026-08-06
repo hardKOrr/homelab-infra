@@ -10,10 +10,15 @@ the same endpoint, so read and write are symmetric and one code path serves lxc 
 MANY WRITERS, ONE FIELD
     Every app deployed onto a shared stack host mutates the same guest's description and tag
     list, and a removal must withdraw one app's entry while its siblings stay byte-identical.
-    So both writes are read-modify-write keyed by instance: parse the guest's current state,
-    replace only this instance's row and only this instance's tag, re-render, and write back.
-    A blind append is the bug that once gave a second stack host the first one's stack tag,
-    after which both stacks resolved to whichever host inventory listed first.
+    So the write is read-modify-write keyed by instance: parse the guest's current state,
+    replace only this instance's row, and render both the description and the managed tags
+    from the resulting rows. A blind append is the bug that once gave a second stack host the
+    first one's stack tag, after which both stacks resolved to whichever host inventory
+    listed first.
+
+    Deriving the tags from the table is what makes them survive a shared host. `kind_docker`
+    is withdrawn when the last Docker app leaves and kept while a sibling of that kind
+    remains, which no per-instance tag edit could decide on its own.
 
 IDEMPOTENCY
     Rows are emitted sorted by instance so a re-run never reshuffles the table, and an
@@ -144,7 +149,12 @@ def cell(value):
     return (value or "").replace("|", "/").strip() or EMPTY_CELL
 
 
-def merge_description(description, instance, kind, url, date, withdraw):
+def merge_rows(description, instance, kind, url, date, withdraw):
+    """Apply this instance's change to the guest's table, returning the surrounding text.
+
+    The row set is the single source of truth for both writes: the description renders from
+    it, and so do the managed tags. One parse, one merge, two renderings that cannot disagree.
+    """
     before, body, after = split_region(description)
     rows = parse_rows(body)
 
@@ -159,6 +169,10 @@ def merge_description(description, instance, kind, url, date, withdraw):
             wanted[3] = current[3]
         rows[instance] = wanted
 
+    return before, rows, after
+
+
+def render_description(before, rows, after):
     # An emptied region leaves no markers and no heading behind — a bare table header on a
     # guest that runs nothing is worse than no region at all.
     return compose(before, render_region(rows) if rows else "", after)
@@ -174,14 +188,37 @@ def tag_list(tags):
     return sorted({t.strip() for t in (tags or "").split(";") if t.strip()})
 
 
-def merge_tags(tags, instance, withdraw):
-    """Reject this app's tag, then add it back — never a blind append."""
-    app_tag = "app_%s" % re.sub(r"[^A-Za-z0-9_]", "_", instance)
-    kept = [t for t in tag_list(tags) if t != app_tag]
-    if not withdraw:
-        kept.append(app_tag)
+def tag_token(value):
+    """PVE tags accept a restricted alphabet; anything else becomes an underscore."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", value)
+
+
+MANAGED_TAG_PREFIXES = ("app_", "kind_")
+
+
+def merge_tags(tags, rows):
+    """Render the managed tags from the merged row set, never a blind append.
+
+    Two families are managed here and nothing else is touched — a lab-wide tag, the guest's
+    identity tag (`ntfy`, `sso_stack`) and any hand-applied tag all survive untouched:
+
+        app_<instance>  tenancy — what runs on this guest
+        kind_<kind>     install type — how it runs, so `docker` vs `native` is a filter in
+                        the UI and a `tag_kind_docker` inventory group, rather than something
+                        an operator infers from a hostname that happens to end in `-stack`
+
+    Both are derived from the table rather than edited in place, which is what makes a
+    withdrawal correct on a shared host: removing the last Docker app drops `kind_docker`,
+    while a sibling of the same kind keeps it. A blind append is the bug that once gave a
+    second stack host the first one's stack tag.
+    """
+    managed = {tag_token("app_%s" % instance) for instance in rows}
+    managed |= {
+        tag_token("kind_%s" % row[1]) for row in rows.values() if row[1] not in ("", EMPTY_CELL)
+    }
+    kept = [t for t in tag_list(tags) if not t.startswith(MANAGED_TAG_PREFIXES)]
     # PVE stores tags sorted; sorting here keeps the comparison stable.
-    return ";".join(sorted(set(kept)))
+    return ";".join(sorted(set(kept) | managed))
 
 
 def main():
@@ -212,10 +249,11 @@ def main():
     description = config.get("description", "") or ""
     tags = config.get("tags", "") or ""
 
-    new_description = merge_description(
+    before, rows, after = merge_rows(
         description, args.instance, args.kind, args.url, args.date, args.withdraw
     )
-    new_tags = merge_tags(tags, args.instance, args.withdraw)
+    new_description = render_description(before, rows, after)
+    new_tags = merge_tags(tags, rows)
 
     if new_description == description.strip() and new_tags == ";".join(tag_list(tags)):
         state = "already absent from" if args.withdraw else "already recorded on"
