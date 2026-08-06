@@ -38,9 +38,11 @@
 # keeps the plain single-handler route, byte-identical to what it was before.
 #
 # Routes are stored under the srv0 server (the caddy role templates a single
-# HTTPS server named srv0 with an empty route table). TLS comes from Caddy's
-# automatic HTTPS: adding a host matcher on srv0 makes Caddy issue an ACME cert
-# for that domain — the route carries no TLS config of its own.
+# HTTPS server named srv0 with an empty route table). The route carries no TLS
+# config of its own: on an estate with a DNS-01 challenge the caddy role already
+# holds a wildcard certificate covering this hostname, and Caddy serves the route
+# from it without issuing anything at wire time (slice 015). On an estate without
+# one, automatic HTTPS falls back to issuing per hostname from this host matcher.
 #
 # Idempotent: existing identical route → no change; drifted route → PATCH in
 # place; absent route → POST. Silent no-op when the configured reverse proxy

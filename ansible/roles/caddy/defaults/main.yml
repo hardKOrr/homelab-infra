@@ -7,6 +7,9 @@ caddy_config_file: /etc/caddy/caddy.json
 # service user's XDG config dir; the packaged unit runs as `caddy`, whose home is
 # /var/lib/caddy.
 caddy_autosave_file: /var/lib/caddy/.config/caddy/autosave.json
+# Where Caddy files managed certificates, one directory per issuer. The wildcard gate
+# searches this tree by certificate name rather than assembling an issuer path.
+caddy_cert_dir: /var/lib/caddy/.local/share/caddy/certificates
 caddy_apt_key_url: "https://dl.cloudsmith.io/public/caddy/stable/gpg.key"
 caddy_apt_repo_url: "https://dl.cloudsmith.io/public/caddy/stable/deb/debian"
 caddy_apt_keyring: /etc/apt/keyrings/caddy-stable.gpg

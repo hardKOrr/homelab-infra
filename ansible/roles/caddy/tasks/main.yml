@@ -18,8 +18,13 @@
 #
 # Drift: per CLAUDE.md ("fire-and-forget provisioning — we do not police drift")
 # this role does not rewrite a healthy running config. It creates the base config
-# when no srv0 exists, and otherwise reconciles only the two subtrees it owns
-# (srv0 listeners, TLS automation policies) in place, never touching routes.
+# when no srv0 exists, and otherwise reconciles only the three subtrees it owns
+# (srv0 listeners, TLS automation policies, and the automated certificate names)
+# in place, never touching routes.
+#
+# Certificates: one wildcard per estate, requested through the `automate` loader and
+# issued by that estate's DNS-01 policy. Apps are served from it and issue nothing of
+# their own — see the comment above "Collect the estate wildcards to automate".
 #
 # Updating: re-running this playbook IS the update mechanism — apt state: latest
 # upgrades Caddy in place and reports changed only when it actually moves.
@@ -185,6 +190,28 @@
                    | list | items2dict, recursive=True) }}
   no_log: true   # policy bodies carry API tokens
 
+# A policy's `subjects` selects which managed names that policy governs; it does not
+# ask for a certificate. Caddy manages a certificate for each name it is told to serve,
+# so naming every app's own hostname as a site address yields one certificate per app —
+# a DNS-01 challenge on every deploy, and a slow walk toward Let's Encrypt's
+# 50-certificates-per-registered-domain-per-week limit (slice 015).
+#
+# The `automate` certificate loader is what asks for a name. Listing `*.<domain>` there
+# obtains one wildcard per estate, and Caddy 2.10+ then serves every subdomain from it:
+# TLS.Manage skips issuing for a subject already covered by a managed wildcard, and the
+# automate list is one of the three sources it consults for that coverage. The wildcard
+# is matched by the estate's own DNS-01 policy above, so each estate's token issues only
+# for its own tree.
+#
+# The apex is deliberately absent — a wildcard does not cover it, nothing in the baseline
+# serves it, and each automate name is a separate certificate. The policy subjects still
+# carry the apex, so a future apex route issues under the same DNS-01 token.
+- name: Collect the estate wildcards to automate
+  ansible.builtin.set_fact:
+    _caddy_automate_names: >-
+      {{ _caddy_dns_domains | map(attribute='domain')
+         | map('regex_replace', '^', '*.') | unique | list }}
+
 # ── Base configuration ────────────────────────────────────────────────────────
 - name: Resolve the admin API bind address
   ansible.builtin.set_fact:
@@ -211,10 +238,14 @@
                },
              },
              'tls': {'automation': {'policies':
-               (_caddy_dns_policies | default([])) + [{'issuers': [_caddy_issuer]}]}},
+               (_caddy_dns_policies | default([])) + [{'issuers': [_caddy_issuer]}]}}
+               | combine(_caddy_certificates),
            },
          } }}
   vars:
+    _caddy_certificates: >-
+      {{ {'certificates': {'automate': _caddy_automate_names}}
+         if _caddy_automate_names | length > 0 else {} }}
     _caddy_issuer: >-
       {{ {'module': 'internal'}
          if app_config.app.tls_mode | default('acme') == 'internal'
@@ -348,6 +379,8 @@
     _caddy_admin_url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}"
     _caddy_desired_listen: "{{ _caddy_base_config.apps.http.servers.srv0.listen }}"
     _caddy_desired_policies: "{{ _caddy_base_config.apps.tls.automation.policies }}"
+    _caddy_desired_certificates: >-
+      {{ _caddy_base_config.apps.tls.certificates | default({}) }}
   block:
     # PATCH, not PUT on the parent: replacing srv0 wholesale would take its routes
     # with it.
@@ -383,11 +416,74 @@
       changed_when: true
       no_log: "{{ _caddy_dns_domains | length > 0 }}"   # body may embed DNS tokens
 
+    # A running Caddy from before slice 015 has no `certificates` key at all, so this
+    # creates as well as replaces — POST is the only method that does both (PATCH
+    # requires the path to exist, PUT requires it not to).
+    - name: Read the running automated certificate names
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/certificates"
+        status_code: [200, 404, 500]
+        return_content: true
+      register: _caddy_certificates_running
+      changed_when: false
+      when: _caddy_desired_certificates | length > 0
+
+    - name: Update the automated certificate names
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/tls/certificates"
+        method: POST
+        body_format: json
+        body: "{{ _caddy_desired_certificates }}"
+        status_code: 200
+      when:
+        - _caddy_desired_certificates | length > 0
+        - >-
+          _caddy_certificates_running.status != 200
+          or (_caddy_certificates_running.json | default({})) != _caddy_desired_certificates
+      changed_when: true
+
 - name: Verify the route table is reachable
   ansible.builtin.uri:
     url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/http/servers/srv0/routes"
     status_code: 200
   changed_when: false
+
+# ── Gate the deploy on the wildcard actually existing ─────────────────────────
+# Under the per-hostname model each app deploy carried its own issuance, so a broken
+# DNS-01 credential surfaced on that app. Under the wildcard model nothing issues at
+# wire time — every app is served from this certificate — so an estate whose challenge
+# never completes produces routes that no certificate can serve, and the failure would
+# otherwise appear as an unexplained TLS error on the next app's deploy.
+#
+# Caddy sanitizes `*.<domain>` to `wildcard_.<domain>` on disk and files it under the
+# issuer's directory, so the name is matched rather than a full path assembled.
+- name: Wait for each estate wildcard certificate to be issued
+  ansible.builtin.find:
+    paths: "{{ caddy_cert_dir }}"
+    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
+    recurse: true
+  loop: "{{ _caddy_automate_names }}"
+  register: _caddy_wildcard_cert
+  until: _caddy_wildcard_cert.matched | default(0) > 0
+  retries: 30
+  delay: 10
+  changed_when: false
+  # The assert below reports which estate failed and why; a bare retry timeout does not.
+  failed_when: false
+
+- name: Assert every estate wildcard was issued
+  ansible.builtin.assert:
+    that:
+      - item.matched | default(0) > 0
+    fail_msg: >-
+      Caddy never obtained a certificate for {{ item.item }} after five minutes.
+      The DNS-01 challenge for that estate did not complete — check the estate's
+      dns_challenge provider and token, and `journalctl -u {{ caddy_service_name }}`
+      on this host for the ACME error. No app can be served over HTTPS on this
+      estate until the wildcard exists.
+  loop: "{{ _caddy_wildcard_cert.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 # ── Hand the admin endpoint back to the playbook ──────────────────────────────
 - name: Export the admin endpoint to the playbook

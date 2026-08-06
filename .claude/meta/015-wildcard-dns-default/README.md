@@ -119,6 +119,16 @@ No output contains a DNS API token, certificate private key, or other credential
       Encrypt's 50-per-registered-domain-per-week limit. A homelab adding apps one at a
       time will not hit the limit, but the failure mode is silent until it does, and the
       per-deploy DNS dependency is exactly what a wildcard was chosen to avoid.
+
+      **Fixed in code 2026-08-06, unobserved.** `roles/caddy` now requests `*.<domain>`
+      per estate through Caddy's `automate` certificate loader
+      (`apps.tls.certificates.automate`), which is the thing that asks for a name;
+      the DNS-01 policy's `subjects` keeps its existing job of selecting which policy —
+      and therefore which estate token — governs that wildcard. Caddy 2.10+ then serves
+      every subdomain from it: `TLS.Manage` skips issuing for a subject already covered by
+      a managed wildcard, and `managingWildcardFor` consults the automate list for that
+      coverage. Apps issue nothing at wire time. Verify live by deploying a second app to
+      an estate and confirming the certificate store gains no new per-hostname directory.
 - [ ] Internal mode exports the CA, reports its fingerprint, and pauses until runner trust is
       verified
 - [ ] A provider with no supported API receives an exact wildcard-DNS handoff and a resumable
@@ -128,6 +138,19 @@ No output contains a DNS API token, certificate private key, or other credential
 - [x] No DNS credential or certificate private key appears in config, logs, artifacts, or
       generated facts — `config/.generated/facts.yml` has no `dns_challenge`, no API token
       and no private key; the execution-12 log has none either
+
+## Decisions taken 2026-08-06
+
+- **Wildcard only, no apex, in the automate list.** Each automate name is a separate
+  certificate; a wildcard does not cover the apex, and nothing in the baseline serves it.
+  The policy `subjects` still carry the apex, so a future apex route issues under the same
+  DNS-01 token without a config change.
+- **The Caddy deploy blocks until each estate wildcard is on disk** (30 × 10 s, then a
+  named assert). Under the old model a broken DNS-01 credential surfaced on the app that
+  tripped over it; now nothing issues at wire time, so an estate whose challenge never
+  completes would otherwise appear as an unexplained TLS error on some later app.
+- **Pre-015 per-hostname certificates are left in place.** They fall out of Caddy's
+  managed set, stop renewing, and expire unused. Deleting them is not worth a task.
 
 ## Decisions
 

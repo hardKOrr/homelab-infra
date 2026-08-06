@@ -36,6 +36,9 @@ separation — one leaked token must not be able to issue for another estate).
 - [ ] Lab with no dns_challenge anywhere: base config byte-identical (single
       catch-all policy), no module install attempted
 - [ ] Estate with dns_challenge: policy list carries its subjects + provider +
-      token ahead of the catch-all; wildcard/apex certs issue via DNS-01
+      token ahead of the catch-all; the estate wildcard issues via DNS-01.
+      **A policy's `subjects` never requested a certificate** — it only selects
+      which names that policy governs. Slice 015 added the `automate` loader that
+      asks for `*.<domain>`; this criterion is judged against that.
 - [ ] Second estate's token appears only in its own policy
 - [ ] Re-run is idempotent (module present → skip; policies undrifted → no PATCH)

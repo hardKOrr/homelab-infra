@@ -214,7 +214,7 @@ features.
 | # | Slice | Why now |
 |---|---|---|
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20; a flat allocator ignores that and erodes it on every deploy. **Six addresses are now allocated under the flat model** (.10–.15), so the unwind cost is no longer hypothetical. |
-| 015 | [Caddy-first wildcard HTTPS bootstrap](015-wildcard-dns-default/README.md) | **Narrowed by live evidence 2026-08-03.** Caddy-first ordering and verified HTTPS are observed and met. What remains is one disproved item: the lab issues a certificate *per hostname* via DNS-01, never an apex + wildcard, because a Caddy automation policy's `subjects` selects which names a policy governs rather than causing a wildcard to be obtained. Every app deploy therefore performs its own DNS-01 challenge. |
+| 015 | [Caddy-first wildcard HTTPS bootstrap](015-wildcard-dns-default/README.md) | **Narrowed by live evidence 2026-08-03, and the certificate model fixed in code 2026-08-06 (unobserved).** Caddy-first ordering and verified HTTPS are observed and met. The per-hostname defect — a policy's `subjects` selects which names a policy governs rather than asking for a wildcard — is now addressed by requesting `*.<domain>` per estate through Caddy's `automate` certificate loader, with the deploy blocking until each wildcard is on disk. Stays open on the three internal-mode / manual-handoff / resume items and on live observation of the wildcard. |
 | 016 | [Vaultwarden identities and Rundeck bootstrap keyring](016-vaultwarden-identity-bootstrap/README.md) | Enrollment and cutover are done and the automation account drives every vault write in the green bootstrap. What remains is mostly one decision: `users_collections` is empty, so the account reads the org by being an Admin with `allowAdminAccessToAllCollectionItems` — org-scoped, not collection-scoped. Decide whether that meets the criterion. |
 
 **015 and 016 gate the usable/shareable platform claim; 014 now depends on tests rather than
@@ -231,9 +231,13 @@ written, so what is left of each is narrower and differently ordered.
    code: a recreated seed file, seed re-entry outside recovery, and a runner rebuild from
    Key Storage. Note the lesson from the first one: the guard worked and its *message* was
    wrong, which is a class of defect the gates cannot see and only injection finds.
-2. **Fix 015's certificate model.** DNS-01 and verified HTTPS work; the wildcard does not
-   exist. Give Caddy a site whose host is `*.<domain>` so one certificate covers the estate,
-   rather than one per app with a DNS-01 challenge per deploy.
+2. ~~**Fix 015's certificate model.**~~ **Done in code 2026-08-06** — `roles/caddy` lists
+   `*.<domain>` per estate in `apps.tls.certificates.automate`, which is the lever that
+   asks for a name; Caddy 2.10+ then serves every subdomain from that wildcard and issues
+   nothing at wire time. The deploy blocks until each estate wildcard is on disk, because
+   a failed challenge no longer surfaces on the app that would have tripped over it.
+   **Observe it live**: redeploy Caddy, then deploy a second app to the estate and confirm
+   the certificate store gains no new per-hostname directory.
 3. **Decide 016's collection scoping.** The automation account is org-scoped via
    `allowAdminAccessToAllCollectionItems`, not scoped to `platform-secrets`. Either grant
    per-collection and tighten, or amend the criterion to match the decision.
