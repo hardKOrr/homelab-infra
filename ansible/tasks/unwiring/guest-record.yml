@@ -1,0 +1,48 @@
+---
+# Withdraw an app instance's record from the Proxmox guest it ran on — the inverse of
+# tasks/proxmox/record-app-on-guest.yml, and the reason removal does not leave a stack host
+# claiming to run an app that is gone.
+#
+# Deletes this instance's row and its `app_<instance>` tag, leaving every sibling app's row
+# byte-identical; when the withdrawal empties the region the markers and heading go too,
+# rather than leaving an empty table behind. The merge is the same read-modify-write engine
+# the deploy path uses — files/proxmox/guest-app-record.py, run with --withdraw.
+#
+# Inputs:
+#   record_guest_name      — guest to withdraw from (required; remove.yml passes the host it
+#                            located, which is the only place that knows whether this was a
+#                            shared stack host or the app's own LXC)
+#   record_guest_instance  — instance name (default: `instance`)
+#
+# Best-effort and never fatal: by the time removal runs, the guest may already have been
+# destroyed by hand. Unwiring the rest of the estate is what matters, and it has already run.
+
+- name: Resolve the guest to withdraw from
+  ansible.builtin.set_fact:
+    _rug_instance: "{{ record_guest_instance | default(instance) }}"
+    _rug_name: "{{ record_guest_name | default('') }}"
+
+- name: Withdraw the app from its Proxmox guest
+  when: _rug_name | length > 0
+  block:
+    - name: Make Proxmox nodes addressable for delegation
+      ansible.builtin.import_tasks: ../proxmox/register-nodes.yml
+
+    - name: Remove this instance from the guest's tags and notes
+      ansible.builtin.script:
+        cmd: >-
+          {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
+          --instance "{{ _rug_instance }}"
+          --guest "{{ _rug_name }}"
+          --withdraw
+        executable: /usr/bin/python3
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _rug_result
+      changed_when: _rug_result.stdout is defined and _rug_result.stdout.startswith('CHANGED')
+      failed_when: false
+      ignore_unreachable: true
+
+    - name: Report a guest record that could not be withdrawn
+      ansible.builtin.debug:
+        msg: "Guest record not withdrawn — {{ _rug_result.stdout | default('the node was unreachable') | trim }}"
+      when: not (_rug_result.stdout | default('') is search('^(CHANGED|OK)'))

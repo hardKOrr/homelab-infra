@@ -23,8 +23,9 @@
 #      a. Caddy/Nginx route      d. DNS record
 #      b. Authentik application + provider
 #      c. Uptime Kuma monitor
-#   3. Stop and remove the app on its host (compose down, or stop+disable the service)
-#   4. Notify via Ntfy: "<instance> removed"
+#   3. Withdraw the instance's row and app_<instance> tag from its Proxmox guest
+#   4. Stop and remove the app on its host (compose down, or stop+disable the service)
+#   5. Notify via Ntfy: "<instance> removed"
 #
 # Traffic is drained before the backend disappears, and the uptime monitor is gone
 # before the app stops answering — so removal does not page the operator.
@@ -167,6 +168,16 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
         remove_kind: "{{ _rm_kind }}"
+      when: _rm_hosts | length > 0
+
+    # Withdrawn here rather than beside the other unwiring steps, because this is the
+    # only point in the play that knows WHICH guest ran the app - _rm_hosts resolves the
+    # shared stack host and the native app's own LXC through the same lookup, so the
+    # withdrawal does not have to re-derive that distinction and get it subtly wrong.
+    - name: Withdraw the app's record from its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/unwiring/guest-record.yml
+      vars:
+        record_guest_name: "{{ _rm_hosts[0] }}"
       when: _rm_hosts | length > 0
 
 

@@ -226,6 +226,11 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
+    # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the UI
+    # shows what each host actually runs. Defaults cover every input - see the task file.
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
     - name: Notify deployment complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:

@@ -1,0 +1,87 @@
+---
+# Record a deployed app instance on the Proxmox guest it landed on.
+#
+# Writes two things, doing deliberately different jobs:
+#   - the tag `app_<instance>`, which gives the Proxmox guest tree a filter and the dynamic
+#     inventory a `tag_app_<instance>` group
+#   - a row in the marker-delimited region of the guest's notes, which says what the guest
+#     actually runs
+#
+# Until this existed nothing after guest creation ever touched a guest's tags or notes, so a
+# stack host running twelve apps and one running a single app were indistinguishable in the
+# UI — the only record of what lived where was config/apps/<instance>.yml on the control node
+# and `docker ps` at runtime.
+#
+# Both writes are read-modify-write keyed by instance, because a shared stack host has many
+# writers on one field; the merge itself lives in files/proxmox/guest-app-record.py, which
+# documents that constraint and the idempotency rules. Called at the end of the Wire play.
+#
+# Inputs — all defaulted, so the normal call passes nothing at all:
+#   record_guest_name      — guest to record on (default: the deploy_<instance> group member)
+#   record_guest_instance  — instance name (default: `instance`)
+#   record_guest_kind      — docker | native (default: derived from app_config.stack)
+#   record_guest_url       — public URL (default: the wired domain, or empty when unrouted)
+#
+# Best-effort and never fatal: a guest that has vanished, or a Proxmox that refuses the
+# update, must not fail an otherwise successful deploy. This is bookkeeping, not the deploy.
+
+- name: Resolve the guest to record on
+  ansible.builtin.set_fact:
+    _rg_instance: "{{ record_guest_instance | default(instance) }}"
+    _rg_name: >-
+      {{ record_guest_name
+         | default(groups['deploy_' ~ (record_guest_instance | default(instance))][0]
+                   | default('')) }}
+    _rg_url: "{{ record_guest_url | default('') }}"
+
+- name: Derive the hosting kind from the deploy target
+  ansible.builtin.set_fact:
+    _rg_kind: >-
+      {{ record_guest_kind
+         | default('docker' if hostvars[_rg_name].app_config.stack is defined else 'native') }}
+  when: _rg_name in hostvars
+
+# The URL is only meaningful once a reverse proxy has published the app; on a lab with
+# routing disabled the column stays empty rather than advertising an address that answers
+# nothing. Guarded rather than inlined above because homelabinfra_infra is absent entirely on
+# a pre-bootstrap run.
+- name: Derive the published URL from the wiring contract
+  ansible.builtin.set_fact:
+    _rg_url: "https://{{ wiring_domain }}"
+  when:
+    - record_guest_url is not defined
+    - wiring_domain is defined
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.reverse_proxy is defined
+    - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+- name: Record the app on its Proxmox guest
+  when: _rg_name | length > 0
+  block:
+    - name: Make Proxmox nodes addressable for delegation
+      ansible.builtin.import_tasks: register-nodes.yml
+
+    # Delegated to the configured node rather than to the guest's own node: pvesh answers
+    # cluster-wide from any node, and the script resolves which node actually holds the
+    # guest. Runs there because the decoded description is only readable through pvesh.
+    - name: Merge this instance into the guest's tags and notes
+      ansible.builtin.script:
+        cmd: >-
+          {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
+          --instance "{{ _rg_instance }}"
+          --guest "{{ _rg_name }}"
+          --kind "{{ _rg_kind | default('native') }}"
+          --url "{{ _rg_url }}"
+        executable: /usr/bin/python3
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _rg_result
+      changed_when: _rg_result.stdout is defined and _rg_result.stdout.startswith('CHANGED')
+      failed_when: false
+      ignore_unreachable: true
+
+    # Surfaced rather than swallowed: the deploy still succeeds, but an operator who wonders
+    # why the Proxmox UI disagrees with reality gets told here.
+    - name: Report a guest record that could not be written
+      ansible.builtin.debug:
+        msg: "Guest record not updated — {{ _rg_result.stdout | default('the node was unreachable') | trim }}"
+      when: not (_rg_result.stdout | default('') is search('^(CHANGED|OK)'))

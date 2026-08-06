@@ -267,6 +267,23 @@ backups:
 `community.proxmox` plugin → groups: `proxmox_nodes`, `proxmox_clients`, `tag_<tagname>`.
 All resources created by this system are tagged `homelab-infra`. Existing untagged resources are never touched.
 
+## What a Guest Records About Itself
+
+Every app deploy stamps the guest it lands on, and every removal withdraws that stamp
+(`tasks/proxmox/record-app-on-guest.yml` and `tasks/unwiring/guest-record.yml`, both driving
+`files/proxmox/guest-app-record.py`):
+
+- the tag `app_<instance>` alongside the guest's existing tags, which yields a
+  `tag_app_<instance>` inventory group and a filter in the Proxmox guest tree
+- a row in a marker-delimited region of the guest's notes, listing instance, hosting kind,
+  published URL and the date the record was written
+
+A shared stack host therefore has many writers on one description field, so both writes are
+read-modify-write keyed by instance: rows and tags belonging to other apps come back
+byte-identical, and a re-deploy that changes nothing writes nothing. Everything above the
+markers is operator-owned text and is never rewritten. The record is bookkeeping — a guest
+that has vanished or a Proxmox that refuses the update never fails a deploy.
+
 ## Verifying a Change
 
 Two gates, both registered in `.isotope/isotope.json` and both invoked from the repo root:
