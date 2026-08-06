@@ -100,8 +100,18 @@ No output contains a DNS API token, certificate private key, or other credential
       the runner with verification on (no `-k`): HTTP 200, `ssl_verify_result=0`, Let's
       Encrypt issuer, valid 2026-08-03 → 2026-11-01. `https://ntfy.<domain>/v1/health`
       likewise
-- [ ] Public mode issues a certificate covering the apex and wildcard via DNS-01 without
-      exposing port 80 — **disproved as written, 2026-08-03.** DNS-01 is genuinely in use
+- [x] Public mode issues a certificate covering the wildcard via DNS-01 without exposing
+      port 80 — **met 2026-08-06** (apex deliberately excluded, see Decisions). Caddy's
+      store holds `wildcard_.<domain>`, `CN=*.<domain>`, issuer Let's Encrypt YE2, valid
+      2026-08-06 → 2026-11-04. Six estate hostnames — vaultwarden, ntfy, auth,
+      uptime-kuma, observability, pbs — all answer over HTTPS from the runner with full
+      certificate verification (`ssl_verify_result=0`); `auth`, `uptime-kuma`,
+      `observability` and `pbs` had never had certificates of their own. Two consecutive
+      deploys (executions 23, 24) created no new per-hostname directory, and 24 converged
+      to `changed=0` on the Caddy host. The original text is kept below because getting
+      here cost three findings.
+
+      **Original defect, 2026-08-03.** DNS-01 is genuinely in use
       (the ACME issuer carries a `dns` module and no port 80 is exposed), but Caddy's
       certificate store holds `vaultwarden.<domain>.crt` and `ntfy.<domain>.crt` — two
       per-hostname certificates. No wildcard certificate was ever issued.
@@ -127,8 +137,38 @@ No output contains a DNS API token, certificate private key, or other credential
       and therefore which estate token — governs that wildcard. Caddy 2.10+ then serves
       every subdomain from it: `TLS.Manage` skips issuing for a subject already covered by
       a managed wildcard, and `managingWildcardFor` consults the automate list for that
-      coverage. Apps issue nothing at wire time. Verify live by deploying a second app to
-      an estate and confirming the certificate store gains no new per-hostname directory.
+      coverage. Apps issue nothing at wire time.
+
+      **Two further findings from the live run, both worth keeping.**
+
+      *The propagation check cannot work in a homelab.* The wildcard would not issue:
+      Caddy wrote the TXT record to Cloudflare — confirmed present through the provider
+      API — then timed out "waiting for record to fully propagate". The lab redirects all
+      outbound port 53 to its own resolver, so `dig CH TXT id.server @1.1.1.1` answered
+      `"OPNsense.home.arpa"`, as did a query aimed at the zone's own Cloudflare
+      nameserver. The configured `resolvers` were decorative. That resolver held a
+      negative cache entry for `_acme-challenge.<domain>` with the zone's 1800s SOA
+      minimum, against a 120s propagation window. Per-hostname certificates had escaped
+      this by ordering luck — a first-ever query for `_acme-challenge.<app>` happened to
+      land after the record existed. So the role now defaults `propagation_timeout: -1`
+      with a 30s `propagation_delay`: Let's Encrypt validates from the public internet,
+      where the record genuinely is. The operator separately exempted the Caddy guest
+      from the DNS redirect, after which the wildcard issued in 41 seconds.
+
+      *The cutover unloads working certificates.* Adding the wildcard to `automate` drops
+      every per-hostname name from Caddy's managed set immediately — which also unloads
+      their existing, valid certificates. On a lab that is already serving, that takes
+      HTTPS down from the moment the config applies until the wildcard is obtained, and
+      it is what the deploy gate detected rather than prevented: the gate runs after the
+      config is written. A fresh lab never sees this, because Caddy is deployed before
+      any app and holds no certificates yet. **Migrating an already-serving lab is a
+      one-time outage window** — see the open item below.
+- [ ] **Migration to the wildcard does not interrupt an already-serving estate.** Raised
+      by the 2026-08-06 outage above. The fix is a two-phase reconcile: write the
+      wildcard into `automate` while pinning the currently-managed hostnames in
+      `automatic_https.force_automate`, so their certificates stay loaded; wait for the
+      wildcard; then drop the pin in a second config write. Fresh labs are unaffected,
+      so this gates migrations only
 - [ ] Internal mode exports the CA, reports its fingerprint, and pauses until runner trust is
       verified
 - [ ] A provider with no supported API receives an exact wildcard-DNS handoff and a resumable
@@ -151,6 +191,12 @@ No output contains a DNS API token, certificate private key, or other credential
   completes would otherwise appear as an unexplained TLS error on some later app.
 - **Pre-015 per-hostname certificates are left in place.** They fall out of Caddy's
   managed set, stop renewing, and expire unused. Deleting them is not worth a task.
+- **Propagation checking is off by default** (`propagation_timeout: -1`,
+  `propagation_delay: 30s`), overridable per estate. A homelab is the one place the
+  question "can I see the record I just wrote?" cannot be answered honestly — the lab
+  domain is captured by the local resolver and outbound :53 is commonly redirected. The
+  role's own gate, which waits for the certificate to appear on disk, is a stronger check
+  because it verifies the outcome rather than an intermediate step.
 
 ## Decisions
 
