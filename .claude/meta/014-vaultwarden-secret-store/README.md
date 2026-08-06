@@ -196,10 +196,25 @@ closed, and no failure has been injected to test that.
       Scope of the evidence: one job was tested, not "every deploy". Recorded as met
       because the preflight lives in `lab-run.sh`, which every job invokes identically —
       the mechanism is shared, not per-playbook. A second job would test the same code path
-- [ ] After cutover, recreating a seed file does not make an ordinary deploy bypass
-      Vaultwarden — **not tested**
-- [ ] The explicit recovery workflow is the only path that can re-enter seed mode —
-      **not tested**
+- [x] After cutover, recreating a seed file does not make an ordinary deploy bypass
+      Vaultwarden — **observed 2026-08-06.** `/etc/homelab-infra/secrets.env` was
+      recreated with a deliberately invalid `PROXMOX_API_TOKEN`, owned and moded exactly
+      as the cutover had left it. `Deploy Ntfy` (execution 25) then ran green,
+      `failed=0` — so the file was never sourced and the token came from the vault. Had
+      it been sourced it would have won, because `_lab_load_secrets` exports only when
+      the variable is unset and it runs long before the preflight. Independent
+      confirmation the same hour: with that file in place, `config-doctor` reported
+      `proxmox token NOT RESOLVED`. The remaining leg is the same injection with
+      Vaultwarden stopped, which needs an operator to stop the service
+- [x] The explicit recovery workflow is the only path that can re-enter seed mode —
+      **observed 2026-08-06**, in three parts. `LAB_SEED_MODE=1` on an ordinary playbook
+      (`apps/ntfy.yml`) is refused at `lab-run.sh:207` with "runner is already in Vault
+      mode". `LAB_SEED_MODE=1` on a *seed-allowed* bootstrap playbook (`apps/caddy.yml`)
+      is refused identically — the allowlist is not a back door, because it only applies
+      while the marker is absent. And the recovery playbook itself refuses without the
+      exact `ENTER-SEED-RECOVERY` string, failing at its first assert with the marker
+      intact and `changed=0`. Two defects had to be fixed before that third part could
+      run at all; see below
 - [x] `config/.generated/facts.yml` contains no token, password, private key, API key, API
       secret, or other credential value — verified field by field. The only match for a
       credential-shaped grep is `api_token_id: root@pam!ansible`, which is an identifier,
@@ -223,10 +238,43 @@ closed, and no failure has been injected to test that.
 
 ### To close this slice
 
-Three deliberate tests, none of which need new code — recreate a seed file and run any
-deploy; attempt seed re-entry outside the recovery workflow; rebuild the runner from config
-plus a Key Storage backup. **The fourth and most important, fail-closed, was run on
-2026-08-03 and passed.** "No Vaultwarden means no deploy" is now an observed property.
+Updated 2026-08-06. Two of the three remaining tests were run and passed; both are now
+checked above, and the second cost two code fixes. What is left:
+
+1. **The seed-file injection with Vaultwarden stopped.** The half already observed proves
+   an ordinary deploy ignores a recreated seed file while the vault is healthy. The other
+   half — that the file does not become a fallback when the vault is *down* — needs the
+   service stopped by an operator.
+2. **The runner rebuild** from non-secret config plus a Key Storage backup. Untouched;
+   it is the one remaining item that needs real setup rather than an injection.
+
+**Fail-closed was run on 2026-08-03 and passed.** "No Vaultwarden means no deploy" is an
+observed property.
+
+### Break-glass was unreachable — found by injection, fixed 2026-08-06
+
+The recovery workflow could not run at all in Vault mode, which is the only mode it
+exists for. Two layers, the same shape:
+
+1. `config-doctor` failed on a missing `proxmox.api_token_secret` before the playbook
+   loaded.
+2. With that exempted, `with-proxmox-env.sh` failed resolving the same token.
+
+Both because recovery skips the vault preflight by design, so no token is resolved — and
+restoring a seed file does not help, since seed files are ignored while the marker
+exists and removing that marker is precisely what recovery does. The marker needs the
+job, the job needed a token, the token needed either the vault that is down or a file
+that is ignored.
+
+`lab-run.sh` now exempts the recovery playbook from both. It reads no config and reaches
+no Proxmox API: it asserts a typed confirmation and removes one file. Every other
+playbook keeps the doctor and the wrapper. Commits `285787f` and `22ee254`.
+
+**This contradicts the note below that these tests need no new code.** Two of the three
+did not; this one found a defect that only an attempt to use the path could reveal, in
+the same way the 2026-08-03 fail-closed test found a misleading error message. The
+pattern is now twice-confirmed: the guards work, and the paths *around* the guards are
+where the defects live.
 
 ### Diagnostics defect found by that test, fixed 2026-08-03
 
