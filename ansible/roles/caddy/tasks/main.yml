@@ -183,8 +183,26 @@
       {{ item.dns_challenge | dict2items
          | rejectattr('key', 'in', ['provider'] + _caddy_challenge_option_names)
          | list | items2dict }}
+    # Propagation checking is off by default, and `resolvers` therefore only takes
+    # effect for a lab that turns it back on with a positive propagation_timeout.
+    #
+    # The check asks a resolver whether the TXT record it just wrote is visible, and a
+    # homelab is the one place that question cannot be answered honestly: the lab domain
+    # is typically captured by the local resolver — split-horizon, so app hostnames stay
+    # on the LAN — which makes that resolver authoritative for a zone whose real records
+    # live at the public provider. It answers NODATA for `_acme-challenge` and caches
+    # that negative for the zone's SOA minimum, which is routinely longer than the whole
+    # propagation window. Firewalls that redirect all outbound :53 make `resolvers`
+    # cosmetic on top of that — the query is answered locally whatever address it names.
+    #
+    # Skipping the check costs nothing real: Let's Encrypt validates from the public
+    # internet, where the record genuinely is. The delay is what the check was standing
+    # in for. Set a positive propagation_timeout per estate to restore it, and give it
+    # resolvers your network does not intercept.
     _caddy_challenge_options: >-
-      {{ {'resolvers': ['1.1.1.1:53', '1.0.0.1:53']}
+      {{ {'resolvers': ['1.1.1.1:53', '1.0.0.1:53'],
+          'propagation_delay': '30s',
+          'propagation_timeout': -1}
          | combine(item.dns_challenge | dict2items
                    | selectattr('key', 'in', _caddy_challenge_option_names)
                    | list | items2dict, recursive=True) }}

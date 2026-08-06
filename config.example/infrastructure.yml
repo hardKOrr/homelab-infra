@@ -67,11 +67,16 @@ reverse_proxy:
     provider: cloudflare
     # Provider-specific fields stay flat beside provider. The guided Cloudflare
     # path injects api_token; other caddy-dns modules keep their native field names.
-    # Public resolvers keep ACME propagation checks independent of local Unbound
-    # overrides in a split-horizon lab.
-    resolvers:
-      - "1.1.1.1:53"
-      - "1.0.0.1:53"
+    #
+    # Caddy's propagation check ("can I see the TXT record I just wrote?") is
+    # disabled by default, because a split-horizon lab cannot answer it: the local
+    # resolver is authoritative for the lab domain and never learns the ACME record,
+    # and a firewall that redirects outbound :53 makes naming a public resolver
+    # cosmetic. Let's Encrypt validates from the public internet, where the record
+    # really is, so nothing is lost. Restore the check with a positive
+    # propagation_timeout plus resolvers your network does not intercept.
+    propagation_delay: 30s
+    propagation_timeout: -1
 
 # ── SSO ────────────────────────────────────────────────────────────────────────
 # provider: authentik | none
