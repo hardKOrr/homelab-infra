@@ -316,7 +316,14 @@ if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
 fi
 
 # ── Validate config before anything mutates ───────────────────────────────────
-if [ "$LAB_DOCTOR" != "0" ]; then
+# Recovery is exempt, and must be: it is the one path back to Seed mode, and it runs
+# precisely when Vaultwarden cannot be reached. It skips the vault preflight by design,
+# so no Proxmox token is resolved, so the doctor fails on a missing api_token_secret —
+# which made break-glass unreachable exactly when it was needed. Restoring the token from
+# a seed file does not help either: seed files are ignored while the marker exists, and
+# removing the marker is what recovery is for. The playbook reads no config; it asserts a
+# typed confirmation and removes the marker, touching no infrastructure.
+if [ "$LAB_DOCTOR" != "0" ] && [ "$_lab_recovery" != "1" ]; then
   PYTHON="${PYTHON:-$LAB_VENV/bin/python3}" \
     bash scripts/config-doctor.sh "$LAB_REPO/config" \
     || die "config-doctor found errors — nothing was changed. Fix them with the Configure App job, or see Get Config."
