@@ -334,5 +334,13 @@ playbook="$1"; shift
 [ -f "$playbook" ] || die "playbook not found: $LAB_REPO/ansible/$playbook"
 
 log "ansible-playbook $playbook $*"
-bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
+# Recovery runs without the Proxmox wrapper for the same reason it runs without the
+# doctor: it reaches no Proxmox API and cannot resolve a token when the vault is down,
+# which is when it runs. Every other playbook goes through the wrapper, which resolves
+# the connection and fails loudly if it cannot.
+if [ "$_lab_recovery" = "1" ]; then
   "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@"
+else
+  bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
+    "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@"
+fi
