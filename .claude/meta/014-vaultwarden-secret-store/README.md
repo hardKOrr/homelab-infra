@@ -204,8 +204,15 @@ closed, and no failure has been injected to test that.
       it been sourced it would have won, because `_lab_load_secrets` exports only when
       the variable is unset and it runs long before the preflight. Independent
       confirmation the same hour: with that file in place, `config-doctor` reported
-      `proxmox token NOT RESOLVED`. The remaining leg is the same injection with
-      Vaultwarden stopped, which needs an operator to stop the service
+      `proxmox token NOT RESOLVED`.
+
+      **The vault-down half was then run and passed.** With Vaultwarden's service
+      stopped and the same valid-looking `secrets.env` in the exact location the
+      pre-cutover code read from, `Deploy Ntfy` (execution 26) died at the preflight —
+      and the log carries no `[lab-run] ansible-playbook` line, so Ansible never loaded.
+      The file did not become a fallback in either direction: healthy vault, ignored;
+      unreachable vault, still ignored and the deploy refused. Cleanup verified —
+      the planted file removed, the service restarted, execution 27 green
 - [x] The explicit recovery workflow is the only path that can re-enter seed mode —
       **observed 2026-08-06**, in three parts. `LAB_SEED_MODE=1` on an ordinary playbook
       (`apps/ntfy.yml`) is refused at `lab-run.sh:207` with "runner is already in Vault
@@ -238,15 +245,20 @@ closed, and no failure has been injected to test that.
 
 ### To close this slice
 
-Updated 2026-08-06. Two of the three remaining tests were run and passed; both are now
-checked above, and the second cost two code fixes. What is left:
+Updated 2026-08-06. **Two of the three remaining tests were run and passed**, including
+both directions of the seed-file injection; the recovery test cost two code fixes. One
+item is left:
 
-1. **The seed-file injection with Vaultwarden stopped.** The half already observed proves
-   an ordinary deploy ignores a recreated seed file while the vault is healthy. The other
-   half — that the file does not become a fallback when the vault is *down* — needs the
-   service stopped by an operator.
-2. **The runner rebuild** from non-secret config plus a Key Storage backup. Untouched;
-   it is the one remaining item that needs real setup rather than an injection.
+- **The runner rebuild** from non-secret config plus a Key Storage backup. It is the only
+  remaining item that needs real setup rather than an injection. Preferred shape: clone
+  the runner to a scratch VMID and rebuild the copy, so a failure leaves the working
+  runner untouched and the restore path is still exercised honestly.
+
+Adjacent finding, not part of this slice: `Deploy Ntfy` reports `changed=4` on a
+converged re-run. Three are `changed_when` omissions — `Grant read-write access on the
+homelab topic`, `Vault | Create or update the canonical item`, and `Verify authenticated
+publish succeeds`, the last being a pure verification step. They are cosmetic rather than
+drift, but they defeat slice 500's open "re-run converges to `changed=0`" criterion.
 
 **Fail-closed was run on 2026-08-03 and passed.** "No Vaultwarden means no deploy" is an
 observed property.

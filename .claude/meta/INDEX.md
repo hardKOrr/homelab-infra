@@ -226,11 +226,16 @@ allocates an address baking in whatever the current model produces.
 Rewritten 2026-08-03: the green vault-mode bootstrap did most of steps 1–3 as originally
 written, so what is left of each is narrower and differently ordered.
 
-1. **014's remaining injections.** Fail-closed was proved on 2026-08-03 — Vaultwarden
-   stopped, deploy died before Ansible started, nothing changed. Three left, none needing
-   code: a recreated seed file, seed re-entry outside recovery, and a runner rebuild from
-   Key Storage. Note the lesson from the first one: the guard worked and its *message* was
-   wrong, which is a class of defect the gates cannot see and only injection finds.
+1. ~~**014's remaining injections.**~~ **Two of three done 2026-08-06.** A recreated seed
+   file is ignored in both directions — vault healthy, deploy green on the vault's own
+   token; vault stopped, deploy refused at preflight with Ansible never loading. Seed
+   re-entry is refused for ordinary *and* seed-allowed playbooks, and recovery refuses
+   without its typed confirmation. **Only the runner rebuild is left.** The claim that
+   these needed no code was wrong: break-glass turned out to be unreachable in Vault mode
+   (`config-doctor` and then `with-proxmox-env.sh` both demanded a token recovery cannot
+   resolve), fixed in `285787f` and `22ee254`. That is the second time here that the guard
+   worked and the path *around* it did not — a class of defect the gates cannot see and
+   only injection finds.
 2. ~~**Fix 015's certificate model.**~~ **Done and observed live 2026-08-06** —
    `roles/caddy` lists `*.<domain>` per estate in `apps.tls.certificates.automate`, the
    lever that actually asks for a name; Caddy 2.10+ serves every subdomain from that
