@@ -92,7 +92,12 @@
       "Bash(timeout 30 ssh -o ConnectTimeout=8 root@192.168.13.247 'pct exec 13228 -- rm -f /root/.ssh/authorized_keys')",
       "Bash(timeout 15 ssh -o ConnectTimeout=6 -o BatchMode=yes root@192.168.13.228 'echo reachable')",
       "Bash(timeout 900 ssh -o ConnectTimeout=8 root@192.168.13.247 '/root/bootstrap-rundeck.sh')",
-      "Bash(ssh *)"
+      "Bash(ssh *)",
+      "Bash(cp C:/Users/korr/.claude/CLAUDE.md C:/Users/korr/.codex/AGENTS.md)",
+      "Bash(cp C:/Users/korr/.claude/CLAUDE.md C:/Users/korr/.gemini/GEMINI.md)",
+      "Read(//c/Users/korr/.gemini/**)",
+      "PowerShell(ollama *)",
+      "PowerShell(\\(Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | Format-Table -AutoSize | Out-String\\); \\(Get-CimInstance Win32_ComputerSystem\\).TotalPhysicalMemory)"
     ]
   }
 }
