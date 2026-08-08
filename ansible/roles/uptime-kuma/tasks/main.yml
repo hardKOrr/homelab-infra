@@ -342,19 +342,15 @@
     # Kuma reveals the key exactly once, at creation — like a PBS token. If it is not
     # captured here it cannot be read back, and the only recovery is to delete the key
     # in the UI and re-run.
+    # Captured under its own name, not straight into _kuma_api_key. A block-level
+    # `when` is evaluated per task at that task's runtime, so assigning the variable
+    # the condition tests would switch off every remaining task in this block.
     - name: Capture the minted key
       ansible.builtin.set_fact:
-        _kuma_api_key: >-
+        _kuma_minted_key: >-
           {{ (_kuma_key_ack.content | regex_search('"key":"([^"]+)"', '\1') | first)
              | default('') }}
       no_log: true
-
-    - name: Report the minted key
-      ansible.builtin.debug:
-        msg: >-
-          {{ 'Uptime Kuma REST API key minted and recorded in the vault.'
-             if _kuma_api_key | length > 0
-             else 'Uptime Kuma did not return an API key; the manual step below still applies.' }}
   rescue:
     - name: Report that minting the API key did not work
       ansible.builtin.debug:
@@ -364,6 +360,21 @@
   vars:
     _kuma_key_url: >-
       {{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_key_sid | default('') }}
+
+- name: Adopt a freshly minted key
+  ansible.builtin.set_fact:
+    _kuma_api_key: "{{ _kuma_minted_key }}"
+  when: _kuma_minted_key | default('') | length > 0
+  no_log: true
+
+- name: Report the key's provenance
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Uptime Kuma REST API key minted this run and recorded in the vault.'
+         if _kuma_minted_key | default('') | length > 0
+         else ('Using the Uptime Kuma API key already on record.'
+               if _kuma_api_key | length > 0
+               else 'Uptime Kuma has no API key; see the one-time step below.') }}
 
 - name: Probe the REST API with the resolved key
   ansible.builtin.uri:
@@ -404,29 +415,43 @@
     vault_item_secret_fields: [token, admin_password]
   when: _kuma_api_key | length > 0
 
-# The one step this role cannot script: Uptime Kuma issues API keys only to an
-# authenticated UI session, and there is no documented endpoint to mint the first
-# one. Rather than fail the deploy, say exactly what to do and carry on — the
-# wiring tasks already skip monitor registration with a warning until a key exists.
+# Only when minting genuinely did not produce a key. It is NOT conditioned on the REST
+# probe: that probe fails even with a perfectly good key, because the monitor REST API
+# it looks for does not exist in any Uptime Kuma version. Telling an operator to go and
+# create a key they already have is worse than saying nothing.
 - name: Report the manual API key step
   ansible.builtin.debug:
     msg:
       - "════════════════════════════════════════════════════════════════════"
-      - "Uptime Kuma is deployed, but has no usable REST API key yet, so app"
-      - "deploys will skip monitor registration (with a warning) until it does."
+      - "Uptime Kuma is deployed but has no API key, and minting one automatically"
+      - "did not work. App deploys will skip monitor registration until it has one."
       - ""
       - "One-time step:"
       - "  1. Open https://{{ instance }}.{{ _kuma_domain }} and sign in as"
       - "     {{ _kuma_user }} (password is in homelab-infra/monitoring)."
       - "  2. Profile -> API Keys -> Add API Key, name it '{{ uptime_kuma_api_key_name }}'."
       - "  3. Add it as field token in Vaultwarden item homelab-infra/monitoring and"
-      - "     re-run this deploy. Everything after this point then runs scripted."
+      - "     re-run this deploy."
       - "════════════════════════════════════════════════════════════════════"
   vars:
     _kuma_domain: >-
       {{ homelabinfra_infra.domain
          | default(homelabinfra_config.infrastructure.domain, true) }}
-  when: not (_kuma_api_usable | bool)
+  when: _kuma_api_key | length == 0
+
+# Separate from the key: Uptime Kuma exposes no REST endpoint for monitor CRUD in any
+# version, so a valid key still cannot register a monitor. Monitors are a socket.io
+# event, the same transport this role now uses for setup and for the key. Reworking
+# tasks/wiring/uptime-kuma.yml onto it is slice 303.
+- name: Report that monitor registration is not yet wired
+  ansible.builtin.debug:
+    msg: >-
+      Uptime Kuma has a working API key, but monitor registration still skips: its
+      monitor API is socket.io-only, and the wiring tasks speak REST. Monitors must be
+      added in the UI until slice 303 moves that wiring onto socket.io.
+  when:
+    - _kuma_api_key | length > 0
+    - not (_kuma_api_usable | bool)
 
 # ── Ntfy notification channel ─────────────────────────────────────────────────
 # Attached to every monitor the wiring tasks create, so a DOWN event reaches the
