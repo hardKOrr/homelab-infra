@@ -18,7 +18,10 @@ services:
       - "--storage.tsdb.retention.time={{ app_config.app.retention | default('30d') }}"
       - "--web.enable-lifecycle"
     volumes:
-      - "{{ app_config.app.config_path }}/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+      # The config DIRECTORY, never the file: Ansible replaces a templated file by
+      # rename, so a single-file bind mount keeps serving the old inode and no scrape
+      # config change ever reaches the running Prometheus. See tasks/main.yml.
+      - "{{ app_config.app.config_path }}/prometheus:/etc/prometheus:ro"
       - "{{ app_config.app.data_path }}/prometheus:/prometheus"
     ports:
       - "127.0.0.1:{{ app_config.app.prometheus_port }}:9090"

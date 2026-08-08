@@ -80,6 +80,7 @@
   loop:
     - ""
     - dashboards
+    - prometheus
     - provisioning/datasources
     - provisioning/dashboards
 
@@ -145,12 +146,28 @@
   no_log: true
   notify: Restart observability
 
+# Written into its own directory, which is what the compose file bind-mounts.
+# Mounting the FILE instead silently breaks every config change after the first:
+# `template` writes a temp file and renames it into place, so the path gets a new
+# inode while the container's mount stays bound to the old one. The container then
+# reads a file that no longer exists at that path, the reload below succeeds, and
+# Prometheus loads the config it already had. Observed live 2026-08-08 — Prometheus
+# had been scraping a five-day-old target list, missing the PBS guest, while the
+# file on the host had listed it the whole time. Mounting the directory means a
+# replaced file inside it is visible immediately.
 - name: Write the Prometheus config
   ansible.builtin.template:
     src: prometheus.yml.j2
-    dest: "{{ app_config.app.config_path }}/prometheus.yml"
+    dest: "{{ app_config.app.config_path }}/prometheus/prometheus.yml"
     mode: "0644"
   notify: Reload prometheus
+
+# The single-file mount above lived at config_path/prometheus.yml. Left behind it is
+# a file that looks authoritative and is not read by anything.
+- name: Remove the pre-directory Prometheus config
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}/prometheus.yml"
+    state: absent
 
 - name: Write the Grafana datasource provisioning
   ansible.builtin.template:
@@ -193,6 +210,13 @@
   community.docker.docker_compose_v2_pull:
     project_src: "{{ observability_project_dir }}"
     policy: missing
+  # Under `missing` this task can only make images exist locally — it never touches a
+  # running container, and "Start the observability stack" below reports any container
+  # that actually moved. Its own changed flag is not trustworthy anyway: with images
+  # already present, `docker compose pull` emits the same Pulling/Pulled events here as
+  # it does for the pinned-tag roles, yet the module calls this one changed and those
+  # not. Reporting on the container, once, is the honest signal.
+  changed_when: false
 
 - name: Start the observability stack
   community.docker.docker_compose_v2:
