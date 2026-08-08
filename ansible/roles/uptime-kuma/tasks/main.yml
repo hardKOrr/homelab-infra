@@ -75,6 +75,16 @@
   delay: 5
   changed_when: false
 
+# ── Admin account ─────────────────────────────────────────────────────────────
+- name: Resolve admin credentials
+  ansible.builtin.set_fact:
+    _kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
+    _kuma_password: >-
+      {{ homelabinfra_infra.monitoring.admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _kuma_base: "http://localhost:{{ app_config.app.port }}"
+  no_log: true
+
 # ── Database backend ──────────────────────────────────────────────────────────
 # Uptime Kuma 2 will not start its real server until it is told which database to
 # use. Until that happens it runs a stub that serves its setup page for EVERY path,
@@ -119,21 +129,12 @@
   delay: 5
   changed_when: false
 
-# ── Admin account ─────────────────────────────────────────────────────────────
-- name: Resolve admin credentials
-  ansible.builtin.set_fact:
-    _kuma_user: "{{ app_config.app.admin_user | default('admin') }}"
-    _kuma_password: >-
-      {{ homelabinfra_infra.monitoring.admin_password
-         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
-    _kuma_base: "http://localhost:{{ app_config.app.port }}"
-  no_log: true
-
-# Merges rather than replaces, for the same reason as ntfy's pre-apply write: the
-# API key is stored by the second write below, this one does not know it, and a
-# canonical write here would delete the key a previous run recorded. That matters
-# more here than for ntfy — the key can only be minted by a human in the Kuma UI,
-# so deleting it is not self-healing.
+# Stored BEFORE the account below is created, so a generated password is never applied
+# without being recorded first. Merges rather than replaces, for the same reason as
+# ntfy's pre-apply write: the API key is stored by a second write further down, this one
+# does not know it, and a canonical write here would delete the key a previous run
+# recorded. That matters more here than for ntfy — only a human can mint that key, so
+# deleting it is not self-healing.
 - name: Store the monitoring password before first-time setup
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:

@@ -46,9 +46,9 @@ Two open questions:
       seed → cutover → vault-mode model; execution 12 was a single unattended pass with no
       token paste. The criterion no longer describes the shipped design
 - [x] Subsequent re-runs are idempotent — no destructive operations — **observed
-      2026-08-08.** `changed=0` on every host. It took four consecutive re-runs
-      (executions 29–32) and eight fixes to get there, because almost nothing that
-      reported `changed` was reporting it for the same reason:
+      2026-08-08, execution 34: `changed=0` on every one of the seven hosts.** It took
+      six consecutive re-runs (executions 29–34) and eight fixes to get there, because
+      almost nothing that reported `changed` was reporting it for the same reason:
 
       | Cause | Where |
       |---|---|
