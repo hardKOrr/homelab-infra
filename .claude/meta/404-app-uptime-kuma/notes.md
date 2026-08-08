@@ -112,3 +112,54 @@ Whatever replaces the REST calls here — socket.io, as this slice already accep
 key its "is the API usable?" check on the content type or the shape of the body, never on
 the status code alone. `facts.yml` `monitoring.token` was empty on the live lab for the
 same underlying reason: nothing this role calls over HTTP can create an API key.
+
+## 2026-08-08 — live: Kuma has been sitting on its setup screen since it was deployed
+
+Uptime Kuma 2.5.0 has never initialized. Five days after a green deploy it was still
+printing, every restart:
+
+```
+[SETUP-DATABASE] db-config.json is not found or invalid: ENOENT ... 'data/db-config.json'
+[SETUP-DATABASE] Starting Setup Database
+[SETUP-DATABASE] Waiting for user action...
+```
+
+Its data directory held no database at all — no admin user, no monitors, no API key,
+nothing for the wiring to write to. Everything downstream follows from that, and each
+symptom had been recorded separately as its own puzzle:
+
+- `GET /api/monitors` returning **200 `text/html`** is not a "SPA catch-all quirk". In
+  setup mode Kuma serves the setup page for every path, so the probe, the delete and
+  the verify-assert all pass against a server that has no API.
+- Lab Status's MONITORS section reporting "unavailable" was accurate the whole time.
+- The role's own step already says so: "Uptime Kuma setup endpoint returned 404
+  (NOT initialised — 2.x has no POST /setup)". That message has been in every run's
+  output since 2026-08-03 and reads as a tolerated deviation rather than the app
+  never having started.
+
+**Kuma 2 adds a database-selection step before the admin-user step**, and the role only
+implements the latter. The deploy is green because nothing in it asserts the app is
+usable — the container is up and healthy, and that is all it checks.
+
+### The initialization IS drivable over plain HTTP
+
+The assumption that this needs socket.io is wrong, at least for the first step.
+Verified live against 2.5.0:
+
+```
+POST /setup-database  {"dbConfig":{"type":"sqlite"}}   -> {"ok":true}
+```
+
+Kuma then restarts itself into the normal server and the admin-user step becomes
+reachable. The payload shape matters: `{}` and `{"dbType":"sqlite"}` both return
+`"Invalid dbConfig"`, so it must be `dbConfig.type`.
+
+What the admin-user creation and API-key minting need is still unproved — those are
+the next thing to establish, and the API key may genuinely require socket.io.
+
+**Care taken while testing this**: running `sqlite3 /app/data/kuma.db` to inspect the
+schema CREATED the file as a side effect, and Kuma then found a pre-existing empty
+database and skipped its schema bootstrap, failing with `no such table: setting`. The
+files were moved to `/opt/uptime-kuma/preinit-20260808-171202/` rather than deleted and
+Kuma restarted to its exact prior state — still waiting for setup, nothing lost. Worth
+remembering: on a database-backed app, a read-only-looking client can be a write.

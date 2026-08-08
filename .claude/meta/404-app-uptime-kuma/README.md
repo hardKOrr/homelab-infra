@@ -1,6 +1,6 @@
 # 404 — Uptime Kuma role + playbook
 
-**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md.
+**Status:** open — **reopened 2026-08-08.** The container has been deployed and healthy since 2026-08-03, and the application has never initialized: Kuma 2 asks for a database backend before it will do anything, the role does not answer that, and it has been sitting on its setup screen ever since. No admin user, no monitors, no API key, no database. The good news from the same session is that the missing step is drivable over plain HTTP after all — details in notes.md.
 **Depends on:** 303 (wiring), 401 (ntfy)
 **Blocks:** auto-registered monitoring per CLAUDE.md
 
@@ -52,7 +52,21 @@ Implementation decision: lock in Kuma v1 + python lib, OR Kuma v2 if stable. Doc
 
 ## Acceptance
 
-- [ ] Kuma UI loads, initial admin user created without human intervention
-- [ ] Ntfy notification channel configured and visible
-- [ ] facts.yml has api_url, api_token, ntfy_notification_id
-- [ ] Re-run is idempotent
+- [ ] Kuma UI loads, initial admin user created without human intervention — **the UI
+      serves only its setup page, and no admin user exists.** The role must first
+      `POST /setup-database {"dbConfig":{"type":"sqlite"}}`, which is verified to work,
+      then create the admin user against the server that comes up behind it
+- [ ] Ntfy notification channel configured and visible — unreachable until the above
+- [ ] facts.yml records the monitoring endpoint and key — partially superseded by 014:
+      the endpoint belongs in `monitoring` (which holds `host`, `provider`, `instance`,
+      `admin_user` today) and the key belongs in the vault, not in facts.yml
+- [ ] Re-run is idempotent — the role converges (`changed=0` on executions 31 and 32),
+      but converging on an uninitialized app is not the property this criterion wants
+
+### What this slice must add
+
+1. Answer the database-selection step, which is what actually blocks everything else.
+2. Create the admin user through whatever endpoint the initialized server exposes.
+3. Assert the app is *usable* — not merely that its container is healthy. A deploy that
+   goes green against an application waiting for a human is the failure mode here, and
+   it held for five days across four green runs.

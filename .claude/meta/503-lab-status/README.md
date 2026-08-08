@@ -1,8 +1,10 @@
 # 503 — Lab status playbook
 
-**Status:** built — ran green on the live lab 2026-07-26 via Rundeck, but against **zero
-tagged guests**, so every section rendered its empty-state line. The play chain is proven;
-the report content is not. Decisions and deviations from the approach below are in notes.md.
+**Status:** done — ran green against a populated lab on 2026-08-08 (Rundeck execution 33)
+and rendered every section with real content. Getting there took one fix: the guest play
+had no connection user, so no guest had ever been reachable and two sections had been
+quietly reporting healthy empty states. Decisions and deviations from the approach below
+are in notes.md.
 **Depends on:** none (read-only across whatever exists)
 **Blocks:** nothing critical
 
@@ -37,10 +39,12 @@ Best-effort throughout — if Kuma or PBS is down, that section reports "unreach
 
 ## Acceptance
 
-- [ ] `ansible-playbook playbooks/maintenance/status.yml` produces a useful overview
-      without modifying anything — ran clean (Rundeck execution 2, 2026-07-26) and changed
-      nothing, but with 0 tagged guests every section was an empty-state line. Re-observe
-      once something is deployed with the tag.
+- [x] `status.yml` produces a useful overview without modifying anything — observed
+      2026-08-08, execution 33, `changed=0` everywhere. Eight tagged guests with state,
+      vmid, node and IP; seven containers across the two stack hosts with image and
+      state; six guests' newest PBS snapshot. MONITORS still reports unavailable, which
+      is **correct** — Uptime Kuma has no API key because it was never initialized at
+      all (slice 404, reopened the same day)
 - [x] No notification fires — confirmed, no notify task in the run
 - [x] Tolerates any one provider being unavailable — Uptime Kuma and PBS were both absent
       (no `config/.generated/facts.yml` at all); both sections reported unavailable and the

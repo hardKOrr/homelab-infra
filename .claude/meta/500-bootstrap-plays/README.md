@@ -1,6 +1,6 @@
 # 500 — Bootstrap playbook plays
 
-**Status:** built — all seven steps implemented and gate-verified; 401–406 landed 2026-07-25 and their imports are now active. Only `apps/nginx.yml` remains staged (no nginx app playbook exists yet — slice 301 shipped only the nginx wiring pair). Fact-writing moved out of this playbook into each app's Play 3. **Ran green in vault mode 2026-08-03** (Rundeck execution 12, revision `bb84574`) — all seven services, `failed=0` on every host, PBS included for the first time. Three of four acceptance items observed; full convergence still needs a clean re-run (see notes.md).
+**Status:** done — all four acceptance items observed. The seven-service run went green in vault mode on 2026-08-03 (execution 12), and on **2026-08-08 a re-run converged to `changed=0` on every host** (execution 34), which was the last item. Only `apps/nginx.yml` remains staged, and it is staged because no nginx app playbook exists — slice 301 shipped the wiring pair only. Fact-writing lives in each app's Play 3, not here.
 **Depends on:** 400, 401, 402, 403, 404, 405, 406
 **Blocks:** the "one click to set up the platform" promise; 600 (Semaphore), 601 (Rundeck)
 
@@ -45,10 +45,30 @@ Two open questions:
       basis.** The Vaultwarden two-pass this criterion describes was replaced by 014's
       seed → cutover → vault-mode model; execution 12 was a single unattended pass with no
       token paste. The criterion no longer describes the shipped design
-- [ ] Subsequent re-runs are idempotent — no destructive operations — **not yet.** Execution
-      12 still shows `changed` on every host (caddy 0, sso-stack 1, monitoring-stack 2,
-      ntfy 4, vaultwarden 5, pbs 23), and pbs is high because it was created in that run.
-      Convergence to `changed=0` needs one more clean re-run over the now-complete estate
+- [x] Subsequent re-runs are idempotent — no destructive operations — **observed
+      2026-08-08.** `changed=0` on every host. It took four consecutive re-runs
+      (executions 29–32) and eight fixes to get there, because almost nothing that
+      reported `changed` was reporting it for the same reason:
+
+      | Cause | Where |
+      |---|---|
+      | Unconditional vault writes | `tasks/bitwarden/upsert-item.yml` now compares first |
+      | Declarative re-asserts hardcoded `changed_when: true` | `ntfy access`, `proxmox-backup-manager acl update` |
+      | A probe counted as a convergence step | ntfy's authenticated-publish check |
+      | `add_host` always reports changed | five guest-reuse calls |
+      | `:latest` pulled with policy `always` | observability — every re-run was a silent unreviewed Prometheus/Grafana upgrade |
+      | A module's changed flag that disagrees with identical compose output | observability's pull |
+
+      Two of the eight were not cosmetic. The vault write **deleted a field that a later
+      write in the same run restored** — unrecoverable for Uptime Kuma's API key, which
+      only a human can mint. And Prometheus **could not receive a config change at all**:
+      its config was bind-mounted as a file, Ansible replaces files by rename, so the
+      container held the old inode and the reload handler kept reloading the config it
+      already had. Full accounts in 405 and in the commits `8d31ba4`, `f9c758a`, `64ec867`.
+
+      The lesson worth carrying: convergence is not a tidiness property. Chasing
+      `changed=0` is what surfaced both of those, and neither was visible to the gates or
+      to any single-app test.
 - [x] Bootstrap can be re-run safely after any failure point — strongly evidenced:
       executions 10, 11 and 12 each resumed after a mid-run failure at a different step
       (second stack host, PBS template, then green) with no manual cleanup between them
