@@ -30,6 +30,37 @@ makes the play slower (a GitHub call per native app) but keeps the promise.
 escaped blob. Note `splitlines()`, not `split("\n")` — the latter does not survive YAML
 quoting and silently returns a one-element list (observed, then fixed).
 
+## 2026-08-08 — second live run, against a populated lab
+
+Rundeck execution 28, the first run with guests actually tagged. It confirmed the
+riskiest assumption and exposed one defect.
+
+**Confirmed.** The `proxmox_status` / `proxmox_vmid` / `proxmox_node` hostvar names are
+right — all eight tagged guests rendered with state, vmid, node and IP. The PBS snapshot
+shape is right: six `backup-id` rows with `backup-time` formatted. The run changed
+nothing and exited green, and the two absent providers degraded rather than failing.
+
+**Defect: the guest play had no connection user, so no guest was ever reachable.** Every
+tagged guest returned `Permission denied (publickey,password)` for `rundeck@…`. The
+Proxmox dynamic inventory supplies no `ansible_user`, and unlike the deploy playbooks —
+which `add_host` each guest with `homelabinfra_config.ansible.ssh_user` — this play
+inherits the account running Ansible, which on a runner is `rundeck`. The platform SSH
+key is correctly installed for `root` on every guest; nothing was ever going to accept
+`rundeck`. Fixed in `8d31ba4` by setting `ansible_user` from the loaded config on the
+guest play.
+
+That is why CONTAINERS said "no Docker host reported a container" while two stack hosts
+were running containers, and why NATIVE APP UPDATES claimed everything was current: both
+sections are fed by facts that only a reachable guest can set, and an empty result is
+indistinguishable from a healthy one in the rendered report. `check-native-updates.yml`
+had the identical defect and is fixed the same way — meaning that playbook has never
+checked an update on a runner either.
+
+**Worth noting for the report's design:** the guest table does mark unreachable rows, so
+the evidence was on screen; the two sections below it silently render their empty-state
+line instead. A section whose input hosts were unreachable should say so rather than
+report an empty set.
+
 ### What live acceptance must confirm
 
 - The `proxmox_status` / `proxmox_vmid` / `proxmox_node` hostvar names against a real

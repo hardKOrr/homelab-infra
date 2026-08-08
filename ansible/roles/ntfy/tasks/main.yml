@@ -143,10 +143,17 @@
       {{ '^user ' ~ (app_config.app.user | default('homelab') | regex_escape) ~ '(\s|$)' }}
   no_log: true
 
+# The item is stored twice in a run: here, before `ntfy user change-pass` applies the
+# password (so a generated password is never applied without being recorded), and again
+# below once the access token exists. This first write must therefore MERGE — it does
+# not know the token, and a canonical write would delete the token the previous run
+# stored, leaving the vault without it until the second write lands and permanently if
+# the run failed in between.
 - name: Store publish account secret before applying it
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: homelab-infra/notifications
+    vault_item_merge: true
     vault_item_fields:
       provider: ntfy
       instance: "{{ instance }}"

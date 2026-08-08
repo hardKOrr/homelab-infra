@@ -5,6 +5,11 @@
 #   vault_item_fields        mapping of field names to values
 #   vault_item_secret_fields names stored as hidden fields (default: every field)
 # Optional: vault_organization_name, vault_collection_name
+#   vault_item_merge         when true, fields already stored under names this call
+#                            does not mention are preserved instead of dropped.
+#                            Default false: the item is exactly vault_item_fields.
+#                            Set it when a role writes the same item more than once
+#                            in a run, each time with part of the field set.
 
 - name: Vault | Assert upsert inputs
   ansible.builtin.assert:
@@ -168,35 +173,50 @@
     that: _vault_existing_items | length <= 1
     fail_msg: "More than one Vaultwarden item is named {{ vault_item_name }}."
 
-# The write below replaces `fields` wholesale, so a stored item whose field names,
-# values and hidden-ness already equal the desired set is byte-identical to what the
-# write would produce. Comparing first is what makes a re-run converge: without it
-# every bootstrap pass re-encrypts and re-uploads every platform secret, reporting
-# `changed` forever and rewriting items that nothing asked to change.
-# Values are compared as strings because the payload stringifies them (`str(v)`).
-- name: Vault | Compare the stored item with the desired one
+# The write replaces `fields` wholesale, so what it would store has to be resolved
+# before it can be compared or sent. Under merge, fields already present under names
+# this call does not mention are carried forward at their stored value and hidden-ness;
+# otherwise the effective set is exactly what the caller asked for.
+# Values are strings throughout because the payload stringifies them (`str(v)`).
+- name: Vault | Resolve the stored and effective field sets
   ansible.builtin.set_fact:
-    _vault_item_matches: >-
-      {{ _vault_existing_items | length == 1
-         and (_vault_stored | default({})).name | default('') == vault_item_name
-         and _vault_collection_id in ((_vault_stored | default({})).collectionIds | default([]))
-         and _vault_stored_values == _vault_desired_values
-         and _vault_stored_hidden == _vault_desired_hidden }}
-  vars:
-    _vault_stored: "{{ _vault_existing_items | first | default({}) }}"
-    _vault_stored_fields: "{{ (_vault_existing_items | first | default({})).fields | default([]) }}"
     _vault_stored_values: >-
       {{ dict(_vault_stored_fields | map(attribute='name') | list
               | zip(_vault_stored_fields | map(attribute='value') | map('string') | list)) }}
     _vault_stored_hidden: >-
       {{ _vault_stored_fields | selectattr('type', 'equalto', 1)
          | map(attribute='name') | sort | list }}
+    _vault_effective_values: >-
+      {{ (dict(_vault_stored_fields | map(attribute='name') | list
+               | zip(_vault_stored_fields | map(attribute='value') | map('string') | list))
+           | combine(_vault_desired_values))
+         if (vault_item_merge | default(false) | bool) else _vault_desired_values }}
+    _vault_effective_hidden: >-
+      {{ (((_vault_stored_fields | selectattr('type', 'equalto', 1) | map(attribute='name') | list)
+            | reject('in', vault_item_fields.keys() | list) | list)
+          + _vault_desired_hidden) | unique | sort
+         if (vault_item_merge | default(false) | bool) else _vault_desired_hidden }}
+  vars:
+    _vault_stored_fields: "{{ (_vault_existing_items | first | default({})).fields | default([]) }}"
     _vault_desired_values: >-
       {{ dict(vault_item_fields.keys() | list
               | zip(vault_item_fields.values() | map('string') | list)) }}
     _vault_desired_hidden: >-
       {{ (vault_item_secret_fields | default(vault_item_fields.keys() | list))
          | sort | list }}
+  no_log: true
+
+# Comparing before writing is what makes a re-run converge: without it every
+# bootstrap pass re-encrypts and re-uploads every platform secret, reporting
+# `changed` forever and rewriting items that nothing asked to change.
+- name: Vault | Compare the stored item with the effective one
+  ansible.builtin.set_fact:
+    _vault_item_matches: >-
+      {{ _vault_existing_items | length == 1
+         and (_vault_existing_items | first).name | default('') == vault_item_name
+         and _vault_collection_id in ((_vault_existing_items | first).collectionIds | default([]))
+         and _vault_stored_values == _vault_effective_values
+         and _vault_stored_hidden == _vault_effective_hidden }}
   no_log: true
 
 # The Bitwarden CLI requires encoded item JSON as a positional value. The payload
@@ -238,9 +258,8 @@
     VAULT_COLLECTION_ID: "{{ _vault_collection_id }}"
     VAULT_EXISTING_ITEM: "{{ _vault_existing_items | first | default({}) | to_json }}"
     VAULT_ITEM_ID: "{{ (_vault_existing_items | first | default({})).id | default('') }}"
-    VAULT_ITEM_FIELDS: "{{ vault_item_fields | to_json }}"
-    VAULT_SECRET_FIELDS: >-
-      {{ (vault_item_secret_fields | default(vault_item_fields.keys() | list)) | to_json }}
+    VAULT_ITEM_FIELDS: "{{ _vault_effective_values | to_json }}"
+    VAULT_SECRET_FIELDS: "{{ _vault_effective_hidden | to_json }}"
   register: _vault_upsert
   failed_when: false
   changed_when: _vault_upsert.rc == 0
@@ -271,9 +290,21 @@
   no_log: true
   when: not _vault_item_matches
 
+# The readback and its assert run on every pass, including one that skipped the
+# write: verifying what the vault actually holds is the point, and a converged run
+# is exactly when an unnoticed drift would hide. The id therefore comes from the
+# write when one happened and from the item already found when one did not.
+- name: Vault | Resolve the stored item's id
+  ansible.builtin.set_fact:
+    _vault_item_id: >-
+      {{ (_vault_upsert.stdout | from_json).id
+         if (_vault_upsert.stdout | default('') | length > 0)
+         else (_vault_existing_items | first).id }}
+  no_log: true
+
 - name: Vault | Read the stored item back
   ansible.builtin.command:
-    argv: [bw, get, item, "{{ (_vault_upsert.stdout | from_json).id }}"]
+    argv: [bw, get, item, "{{ _vault_item_id }}"]
   register: _vault_readback
   changed_when: false
   delegate_to: localhost
@@ -283,7 +314,7 @@
 - name: Vault | Verify exact field readback
   ansible.builtin.assert:
     that:
-      - _vault_readback_fields == vault_item_fields
+      - _vault_readback_fields == _vault_effective_values
     fail_msg: "Vaultwarden readback verification failed for {{ vault_item_name }}."
   vars:
     _vault_readback_fields: >-

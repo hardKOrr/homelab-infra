@@ -85,10 +85,16 @@
     _kuma_base: "http://localhost:{{ app_config.app.port }}"
   no_log: true
 
+# Merges rather than replaces, for the same reason as ntfy's pre-apply write: the
+# API key is stored by the second write below, this one does not know it, and a
+# canonical write here would delete the key a previous run recorded. That matters
+# more here than for ntfy — the key can only be minted by a human in the Kuma UI,
+# so deleting it is not self-healing.
 - name: Store the monitoring password before first-time setup
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
     vault_item_name: homelab-infra/monitoring
+    vault_item_merge: true
     vault_item_fields:
       provider: uptime_kuma
       instance: "{{ instance }}"

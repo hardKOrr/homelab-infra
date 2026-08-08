@@ -1,6 +1,6 @@
 # 202 — Implement configure-pbs
 
-**Status:** built — ran live 2026-08-03 in the green bootstrap; five of six acceptance items observed. The sixth needs a backup job actually triggered: the datastore holds zero snapshots, so nothing has yet proved a backup completes end to end.
+**Status:** done — all six acceptance items observed. Five landed in the green bootstrap of 2026-08-03; the sixth was confirmed on 2026-08-08, when the nightly job proved to have been completing all along. Closing it also cost one defect: the job was backing up the PBS VM into its own datastore, which fails every night (fixed in `8d31ba4`).
 **Depends on:** 200, 406 (PBS VM must exist)
 **Blocks:** backup story for the platform
 
@@ -43,17 +43,36 @@ Observed 2026-08-03 unless noted.
       explicit vmid list of all seven tagged guests. Recorded as met on the PVE side; the
       criterion said "visible in PBS UI", but vzdump jobs live on PVE, which is where the
       implementation correctly puts it
-- [ ] Manual trigger of the backup job produces a snapshot — **not observed.** The
-      datastore contains zero items. Nothing has proved a backup actually completes,
-      which is the only criterion that tests the backup story rather than its wiring
+- [x] The backup job produces a snapshot — **observed 2026-08-08, and no manual
+      trigger was needed.** `pvesm list pbs-homelab` returns 30 snapshots: five
+      consecutive nightly runs (2026-08-04 through 08-08) for each of the six LXC
+      guests, 0.9–3.1 GB each. The backup story is proved end to end, on a schedule,
+      unattended. The 2026-08-03 reading of "zero snapshots" was taken hours after the
+      job was created and before its first 02:00 fire
 - [x] Notifications land in Ntfy — `PBS backups configured` at 15:50:03,
       "Datastore 'homelab' ready; backup job covers 7 guest(s)"
 - [x] `config/.generated/facts.yml` has the block with endpoint — under `backups:`
 
-### Open question raised by the live run
+### Resolved: PBS was backing itself up, and it failed every night
 
-The vmid list includes **168000015, PBS itself**, because PBS is tagged `homelab-infra`
-like every other guest this platform creates. A PBS VM whose only backup lives inside its
-own datastore is not recoverable from that backup. Worth deciding whether the job should
-exclude the backup server. Separately, template 9001 is tagged `homelab-infra` but is not
-in the list, so the tag-to-vmid expansion is already filtering something — confirm what.
+The 2026-08-03 run raised this as a question — the vmid list included **168000015, PBS
+itself**, and a PBS VM whose only backup lives inside its own datastore is not
+recoverable from it. The 2026-08-08 evidence settles it as a defect rather than a
+judgement call: the guest has **zero snapshots while the other six have five each**, and
+the nightly task log ends
+
+```
+INFO: Starting Backup of VM 168000015 (qemu)
+ERROR: Backup of VM 168000015 failed - VM 168000015 qmp command 'backup' failed -
+       backup connect failed: command error: http upgrade request timed out
+INFO: Backup job finished with errors
+```
+
+QEMU cannot stream a backup into the datastore hosted by the VM being snapshotted, so
+the attempt hangs until it times out and **fails the whole nightly job** — the job has
+reported errors every night since it was created, which is also why the criterion above
+looked unmet. `configure-pbs.yml` now rejects guests carrying the tag of the PBS
+instance being configured, so a second PBS under a different name is still covered.
+
+The template question is answered: template 9001 is excluded by the explicit
+`rejectattr('template', 'equalto', 1)` already in that task, not by anything implicit.

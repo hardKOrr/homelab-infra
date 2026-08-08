@@ -110,6 +110,14 @@
 
   vars:
     _st_guests: "{{ groups['tag_homelab_infra'] | default([]) | sort }}"
+    # Play 2 sets _st_containers on every guest it reached, so its absence is the
+    # reachability signal. The sections below distinguish "read nothing" from "read
+    # an empty set" — those rendered identically before, and an unreachable estate
+    # reported as a healthy one with nothing to say.
+    _st_unreachable: >-
+      {{ _st_guests | map('extract', hostvars)
+         | rejectattr('_st_containers', 'defined')
+         | map(attribute='inventory_hostname') | list }}
 
   tasks:
     # ── Uptime Kuma ────────────────────────────────────────────────────────────
@@ -180,7 +188,8 @@
           LAB STATUS — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
           ══════════════════════════════════════════════════════════════════
 
-          GUESTS ({{ _st_guests | length }} tagged homelab-infra)
+          GUESTS ({{ _st_guests | length }} tagged homelab-infra{{
+            ', %d unreachable' | format(_st_unreachable | length) if _st_unreachable | length > 0 else '' }})
           {% if _st_guests | length == 0 %}
             none — has bootstrap run? (or Proxmox credentials are not exported)
           {% endif %}
@@ -193,7 +202,9 @@
           {% for h in _st_guests if hostvars[h]._st_containers | default([]) | length > 0 %}
           {% set _ = _ctr_hosts.append(h) %}
           {% endfor %}
-          {% if _ctr_hosts | length == 0 %}
+          {% if _ctr_hosts | length == 0 and _st_unreachable | length == _st_guests | length %}
+            unknown — no guest was reachable, so nothing could be read
+          {% elif _ctr_hosts | length == 0 %}
             none — no Docker host reported a container
           {% endif %}
           {% for h in _ctr_hosts %}
@@ -205,7 +216,9 @@
 
           NATIVE APP UPDATES
           {% set _updates = hostvars.values() | selectattr('_st_update', 'defined') | map(attribute='_st_update') | selectattr('update_available', 'equalto', true) | list %}
-          {% if _updates | length == 0 %}
+          {% if _updates | length == 0 and _st_unreachable | length == _st_guests | length %}
+            unknown — no guest was reachable, so nothing could be read
+          {% elif _updates | length == 0 %}
             all native apps are current (or none report a version)
           {% endif %}
           {% for u in _updates %}
