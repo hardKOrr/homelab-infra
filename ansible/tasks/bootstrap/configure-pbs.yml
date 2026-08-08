@@ -265,11 +265,19 @@
     # to back up. It never changes, and it is rebuildable from its image URL by deleting it
     # and re-running, which is exactly what that task documents. Without this the nightly
     # job carried the 3 GB cloud-init template forever.
+    #
+    # This PBS instance is excluded from its own job (matched by its instance tag —
+    # every guest this platform creates is tagged with its instance name). A snapshot
+    # of the PBS VM stored inside that VM's own datastore cannot restore it, and the
+    # attempt does not even complete: QEMU's backup stream to the datastore it is
+    # snapshotting times out ("http upgrade request timed out"), failing the nightly
+    # job every night. A second PBS instance under a different name is still included.
     _backup_vmids: >-
       {{ _pve_guests.json.data
          | selectattr('tags', 'defined')
          | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
          | rejectattr('template', 'equalto', 1)
+         | rejectattr('tags', 'search', '(^|;)' ~ (pbs_instance | regex_escape) ~ '(;|$)')
          | map(attribute='vmid') | sort | join(',') }}
     # infrastructure.yml keywords → PVE calendar events; custom values pass through
     _backup_schedule: >-

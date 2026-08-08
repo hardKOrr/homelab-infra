@@ -183,9 +183,16 @@
   notify: Restart observability
 
 # ── Run ───────────────────────────────────────────────────────────────────────
+# Prometheus and Grafana are pulled at `:latest`, so the default `always` policy
+# re-pulls whatever the tag points at today and recreates the containers under it.
+# That makes every re-run of a deploy a silent, unreviewed upgrade of the monitoring
+# stack, and it is Watchtower's job in this platform (see the day-2 model in
+# AGENTS.md) — a deploy ensures the images are present, Watchtower moves them
+# forward and reports it. `missing` also lets a converged re-run reach changed=0.
 - name: Pull images
   community.docker.docker_compose_v2_pull:
     project_src: "{{ observability_project_dir }}"
+    policy: missing
 
 - name: Start the observability stack
   community.docker.docker_compose_v2:

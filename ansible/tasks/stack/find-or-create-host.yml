@@ -87,6 +87,9 @@
     homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
     homelabinfra_stack_host_created: false
   when: _stack_hosts | length > 0
+  # Inventory bookkeeping, not a lab change: add_host always reports changed,
+  # which alone keeps a fully converged re-run off changed=0.
+  changed_when: false
 
 # A reused stack host is not necessarily a RUNNING one — this branch skips the
 # provisioning block below, which is where starting lives. See the header of

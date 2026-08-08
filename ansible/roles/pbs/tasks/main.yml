@@ -246,10 +246,24 @@
           A token created by this run was revoked; an existing token was left intact.
 
 # Datastore creation, backup jobs and notification routing all need write access
-# across the tree, so the token is granted Admin at the root path.
+# across the tree, so the token is granted Admin at the root path. The ACL is
+# declarative, so it is read first and updated only when the grant is absent —
+# re-applying it otherwise reports `changed` on every re-run.
+- name: Read the current PBS ACL
+  ansible.builtin.command:
+    cmd: "proxmox-backup-manager acl list --output-format json"
+  register: _pbs_acl_list
+  changed_when: false
+
 - name: Grant the token Admin on the datastore tree
   ansible.builtin.command:
     cmd: "proxmox-backup-manager acl update / Admin --auth-id '{{ _pbs_token_id }}'"
+  when: >-
+    (_pbs_acl_list.stdout | from_json)
+    | selectattr('path', 'equalto', '/')
+    | selectattr('roleid', 'equalto', 'Admin')
+    | selectattr('ugid', 'equalto', _pbs_token_id)
+    | list | length == 0
   changed_when: true
 
 # ── Hand the endpoint and token back to the playbook ──────────────────────────

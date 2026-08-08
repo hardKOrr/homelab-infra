@@ -168,6 +168,37 @@
     that: _vault_existing_items | length <= 1
     fail_msg: "More than one Vaultwarden item is named {{ vault_item_name }}."
 
+# The write below replaces `fields` wholesale, so a stored item whose field names,
+# values and hidden-ness already equal the desired set is byte-identical to what the
+# write would produce. Comparing first is what makes a re-run converge: without it
+# every bootstrap pass re-encrypts and re-uploads every platform secret, reporting
+# `changed` forever and rewriting items that nothing asked to change.
+# Values are compared as strings because the payload stringifies them (`str(v)`).
+- name: Vault | Compare the stored item with the desired one
+  ansible.builtin.set_fact:
+    _vault_item_matches: >-
+      {{ _vault_existing_items | length == 1
+         and (_vault_stored | default({})).name | default('') == vault_item_name
+         and _vault_collection_id in ((_vault_stored | default({})).collectionIds | default([]))
+         and _vault_stored_values == _vault_desired_values
+         and _vault_stored_hidden == _vault_desired_hidden }}
+  vars:
+    _vault_stored: "{{ _vault_existing_items | first | default({}) }}"
+    _vault_stored_fields: "{{ (_vault_existing_items | first | default({})).fields | default([]) }}"
+    _vault_stored_values: >-
+      {{ dict(_vault_stored_fields | map(attribute='name') | list
+              | zip(_vault_stored_fields | map(attribute='value') | map('string') | list)) }}
+    _vault_stored_hidden: >-
+      {{ _vault_stored_fields | selectattr('type', 'equalto', 1)
+         | map(attribute='name') | sort | list }}
+    _vault_desired_values: >-
+      {{ dict(vault_item_fields.keys() | list
+              | zip(vault_item_fields.values() | map('string') | list)) }}
+    _vault_desired_hidden: >-
+      {{ (vault_item_secret_fields | default(vault_item_fields.keys() | list))
+         | sort | list }}
+  no_log: true
+
 # The Bitwarden CLI requires encoded item JSON as a positional value. The payload
 # is assembled by python3 for the same typing reason as the collection payload,
 # and because it keeps the plaintext out of both the command line and Ansible's
@@ -216,6 +247,7 @@
   delegate_to: localhost
   become: false
   no_log: true
+  when: not _vault_item_matches
 
 # no_log on the write hides the real rejection reason and turns every CLI error
 # into an uninformative censored failure. The CLI reports errors as short
@@ -228,7 +260,7 @@
       (rc={{ _vault_upsert.rc }}):
       {{ (_vault_upsert.stderr | default('') | trim)[:500] }}
       {{ (_vault_upsert.stdout | default('') | trim)[:200] }}
-  when: _vault_upsert.rc != 0
+  when: _vault_upsert.rc | default(0) != 0
 
 - name: Vault | Synchronize after write
   ansible.builtin.command:
@@ -237,6 +269,7 @@
   delegate_to: localhost
   become: false
   no_log: true
+  when: not _vault_item_matches
 
 - name: Vault | Read the stored item back
   ansible.builtin.command:

@@ -82,6 +82,9 @@
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       when: _existing_hosts | length > 0
+      # Inventory bookkeeping, not a lab change: add_host always reports changed,
+      # which alone keeps a fully converged re-run off changed=0.
+      changed_when: false
 
     # A reused guest is not necessarily a RUNNING guest — this branch skips
     # lxc-create.yml/vm-create.yml, which is where starting lives. See the header of

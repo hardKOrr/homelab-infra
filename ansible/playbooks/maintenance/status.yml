@@ -44,6 +44,14 @@
   gather_facts: false
   ignore_unreachable: true
 
+  vars:
+    # The Proxmox dynamic inventory carries no connection user, and unlike the deploy
+    # playbooks nothing here add_hosts these guests with one — without this the play
+    # connects as the account running Ansible (rundeck on a runner) and every guest
+    # is unreachable. Play 1 loaded homelabinfra_config on localhost.
+    ansible_user: >-
+      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
+
   tasks:
     - name: Check whether this guest runs Docker
       ansible.builtin.stat:

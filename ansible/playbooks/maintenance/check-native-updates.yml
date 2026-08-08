@@ -6,11 +6,24 @@
 #
 # Schedule: weekly via Semaphore/Rundeck.
 
+# Load config before the guest play so its connection user is available: the Proxmox
+# dynamic inventory carries no ansible_user, and connecting as the account running
+# Ansible (rundeck on a runner) leaves every guest unreachable.
+- name: Load platform vars
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
 - name: Gather update status from managed hosts
   # Verified community.proxmox keyed_groups output for homelab-infra: tag_homelab_infra.
   hosts: tag_homelab_infra
   gather_facts: false
   ignore_unreachable: true
+  vars:
+    ansible_user: >-
+      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
   tasks:
     - name: Check if lab-update-check is installed
       ansible.builtin.stat:

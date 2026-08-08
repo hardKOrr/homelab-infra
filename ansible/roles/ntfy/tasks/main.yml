@@ -196,10 +196,24 @@
   changed_when: true
   no_log: true
 
-# ntfy access is declarative — re-applying the same grant is a no-op.
+# ntfy access is declarative — re-applying the same grant is a no-op — so the grant
+# is read first and applied only when it is missing. `ntfy access <user>` prints one
+# header line per user followed by an indented line per grant:
+#   user homelab (role: user, tier: none)
+#   - read-write access to topic homelab
+- name: Read the publish account's current topic access
+  ansible.builtin.command:
+    cmd: "ntfy access {{ _ntfy_user }}"
+  register: _ntfy_access_list
+  changed_when: false
+
 - name: Grant read-write access on the homelab topic
   ansible.builtin.command:
     cmd: "ntfy access {{ _ntfy_user }} {{ app_config.app.topic }} rw"
+  vars:
+    _ntfy_access_re: >-
+      ^-\s+read-write access to topic {{ app_config.app.topic | regex_escape }}\s*$
+  when: not (_ntfy_access_list.stdout is search(_ntfy_access_re, multiline=True))
   changed_when: true
 
 # ── Access token ──────────────────────────────────────────────────────────────
@@ -278,7 +292,9 @@
     body: "{{ instance }} is up — homelab-infra notifications route to this topic."
     body_format: raw
     status_code: 200
-  changed_when: true
+  # A probe, not a convergence step: it proves the token works and leaves a message
+  # in the topic, but changes no managed state, so a re-run must not report `changed`.
+  changed_when: false
   no_log: true
 
 - name: Verify anonymous publish is denied
