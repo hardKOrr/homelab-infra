@@ -75,6 +75,50 @@
   delay: 5
   changed_when: false
 
+# ── Database backend ──────────────────────────────────────────────────────────
+# Uptime Kuma 2 will not start its real server until it is told which database to
+# use. Until that happens it runs a stub that serves its setup page for EVERY path,
+# which is why an uninitialised instance answers 200 on / and 200 text/html on
+# /api/monitors — it looks healthy and has no API at all. A deploy that only checks
+# the container is up cannot tell the difference, and one sat like this for five days.
+#
+# `/api/entry-page` is the honest probe: {"type":"setup-database"} until the choice
+# is made, {"type":"entryPage",...} afterwards.
+- name: Determine which stage Uptime Kuma is at
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/api/entry-page"
+    return_content: true
+  register: _kuma_stage
+  changed_when: false
+
+# sqlite because this role gives Kuma no other database and the alternative
+# (embedded MariaDB) is a second thing to back up for a monitor that holds no data
+# worth restoring. The payload shape is exact: {} and {"dbType":"sqlite"} are both
+# rejected as "Invalid dbConfig". Verified against 2.5.0.
+- name: Choose the database backend
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/setup-database"
+    method: POST
+    body_format: json
+    body:
+      dbConfig:
+        type: sqlite
+    status_code: 200
+  when: _kuma_stage.json.type | default('') == 'setup-database'
+  changed_when: true
+
+# Kuma restarts itself into the real server once the choice lands, so the port stops
+# answering for a few seconds before it comes back on the other side of the stub.
+- name: Wait for the real server to replace the setup stub
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/api/entry-page"
+    return_content: true
+  register: _kuma_stage_after
+  until: _kuma_stage_after.json.type | default('') != 'setup-database'
+  retries: 30
+  delay: 5
+  changed_when: false
+
 # ── Admin account ─────────────────────────────────────────────────────────────
 - name: Resolve admin credentials
   ansible.builtin.set_fact:
@@ -103,34 +147,95 @@
       admin_password: "{{ _kuma_password }}"
     vault_item_secret_fields: [admin_password]
 
-# Kuma refuses this once a user exists, which is exactly the idempotency signal:
-# a re-run gets a non-2xx here and moves on with the recorded password.
-- name: Run first-time setup
+# ── Admin account, over socket.io ─────────────────────────────────────────────
+# There is no POST /setup in Kuma 2 — the route does not exist ("Cannot POST /setup"),
+# and the previous implementation read that 404 as a benign "already initialised"
+# signal, so every run reported success while no account was ever created.
+#
+# Account creation is a socket.io event. That does NOT require a socket.io client:
+# engine.io v4's long-polling transport is plain HTTP, and the four requests below are
+# the whole conversation. Keeping it in `uri` avoids putting a Python socket.io library
+# on the controller, which is what slice 303 rejected v1 to avoid.
+- name: Open a socket.io session
   ansible.builtin.uri:
-    url: "{{ _kuma_base }}/setup"
+    url: "{{ _kuma_base }}/socket.io/?EIO=4&transport=polling"
+    return_content: true
+  register: _kuma_sio_open
+  changed_when: false
+
+- name: Resolve the socket.io session id
+  ansible.builtin.set_fact:
+    _kuma_sid: >-
+      {{ (_kuma_sio_open.content | regex_search('"sid":"([^"]+)"', '\1') | first) | default('') }}
+
+- name: Assert the socket.io session opened
+  ansible.builtin.assert:
+    that: _kuma_sid | length > 0
+    fail_msg: "Uptime Kuma did not return a socket.io session id; it may still be starting."
+
+- name: Attach to the default socket.io namespace
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_sid }}"
     method: POST
-    body_format: json
-    body:
-      username: "{{ _kuma_user }}"
-      password: "{{ _kuma_password }}"
-    status_code: [200, 201, 400, 403, 404]
-  register: _kuma_setup
-  failed_when: false
-  changed_when: _kuma_setup.status | default(0) in [200, 201]
+    body: "40"
+    body_format: raw
+    headers:
+      Content-Type: "text/plain;charset=UTF-8"
+  changed_when: false
+
+# On connect Kuma announces which state it is in: `42["setup"]` when no account
+# exists, `42["loginRequired"]` when one does. That is the idempotency signal, and it
+# is read rather than inferred from an error code.
+- name: Read what Uptime Kuma asks for on connect
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_sid }}"
+    return_content: true
+  register: _kuma_sio_hello
+  changed_when: false
+
+- name: Record whether an admin account still has to be created
+  ansible.builtin.set_fact:
+    _kuma_needs_setup: "{{ _kuma_sio_hello.content is search('42\\[\"setup\"\\]') }}"
+
+# `42` is an event, `0` is the acknowledgement id the reply comes back on. The
+# password reaches the server only inside this body, so this one task is no_log.
+- name: Create the admin account
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_sid }}"
+    method: POST
+    body: '420{{ ["setup", _kuma_user, _kuma_password] | to_json }}'
+    body_format: raw
+    headers:
+      Content-Type: "text/plain;charset=UTF-8"
+  when: _kuma_needs_setup | bool
+  changed_when: true
   no_log: true
 
-- name: Report first-time setup outcome
+# The acknowledgement carries no credential — `430[{"ok":true}]` or an error such as
+# `430[{"ok":false,"msg":"passwordTooWeak"}]` — so it is safe to surface, and it is the
+# only thing that distinguishes an account that was created from one that was not.
+- name: Read the setup acknowledgement
+  ansible.builtin.uri:
+    url: "{{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_sid }}"
+    return_content: true
+  register: _kuma_sio_ack
+  when: _kuma_needs_setup | bool
+  changed_when: false
+
+- name: Assert the admin account was created
+  ansible.builtin.assert:
+    that: _kuma_sio_ack.content is search('"ok":true')
+    fail_msg: >-
+      Uptime Kuma refused to create its admin account:
+      {{ _kuma_sio_ack.content | default('no acknowledgement') | trim }}
+  when: _kuma_needs_setup | bool
+
+- name: Report the admin account state
   ansible.builtin.debug:
     msg: >-
-      Uptime Kuma setup endpoint returned
-      {{ _kuma_setup.status | default('no response') }}
-      {{ '(admin account created)' if _kuma_setup.status | default(0) in [200, 201]
-         else '(NOT initialised — 2.x has no POST /setup; see below)' }}.
-      {{ '' if _kuma_setup.status | default(0) in [200, 201] else
-         'Uptime Kuma 2.x performs first-run setup over socket.io, not REST: POST /setup
-          answers 404 and GET /api/entry-page reports {"type":"setup-database"} until a
-          human completes the wizard. Open ' ~ _kuma_base ~ ' and finish setup to make this
-          instance usable. Verified against 2.5.0.' }}
+      {{ 'Uptime Kuma admin account created — credentials are in the vault under
+          homelab-infra/monitoring.' if _kuma_needs_setup | bool
+         else 'Uptime Kuma already has an admin account; using the recorded password.' }}
 
 # ── REST API key ──────────────────────────────────────────────────────────────
 - name: Resolve the API key
