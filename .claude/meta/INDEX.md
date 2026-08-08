@@ -15,7 +15,7 @@ Gates: `wsl bash -lc 'bash .claude/gate/lint.sh'` (ansible-lint on the `producti
 profile plus `jinja-parse.py`, which compiles every Jinja expression in `ansible/`) and
 `.claude/gate/test.sh` (`--syntax-check` over every playbook). **Both green.**
 
-Counts: **20 done · 23 built · 4 open.**
+Counts: **20 done · 24 built · 3 open.**
 
 ## Where the platform stands
 
@@ -28,14 +28,21 @@ all tagged `homelab-infra`, all built by this repo:
 | **Serves HTTPS** | One `*.wasitacatisaw.cc` Let's Encrypt certificate via Cloudflare DNS-01 covers all six estate hostnames; every one verifies. |
 | **Keeps its secrets in the vault** | Vault mode, `facts.yml` secret-free, the automation account drives every write, and the fail-closed guarantee has been tested by injection. |
 | **Backs itself up** | PBS holds 30 snapshots — five consecutive nights for each of six guests, unattended. |
-| **Is monitored, partly** | Prometheus scrapes all seven guests. **Uptime Kuma has never initialized** — see below. |
+| **Is monitored** | Prometheus scrapes all seven guests. Uptime Kuma is initialized and holds an API key, but registers no monitors yet — see below. |
 
-**The one thing that is not working is Uptime Kuma**, and it is the sharpest lesson
-available right now: it has been deployed, healthy and green since 2026-08-03 while
-sitting on its "choose a database" setup screen, with no admin user, no monitors and no
-database. Four green bootstrap runs passed over it. Nothing in the deploy asserts that an
-application is *usable* — only that its container is up — so an app waiting for a human
-is indistinguishable from a working one. Slice **404** is reopened on that basis.
+**The sharpest lesson of 2026-08-08 came from Uptime Kuma.** It had been deployed,
+healthy and green since 2026-08-03 while sitting on its "choose a database" setup screen
+— no admin user, no monitors, no database — and four green bootstrap runs passed over it.
+Nothing in a deploy asserts that an application is *usable*, only that its container is
+up, so an app waiting for a human is indistinguishable from a working one. Worse, the
+role read Kuma's `404 Cannot POST /setup` as "already initialised": **an error code
+interpreted as success**.
+
+It is initialized now, with its account and API key both minted by the role. The
+remaining gap moved to **303**: Kuma has no REST monitor API in any version, so that
+slice's wiring has been probing the front end's catch-all route. 404 proved socket.io is
+drivable from Ansible with four `uri` tasks and no Python client — which is the
+dependency 303 rejected Kuma v1 to avoid — so the rework is unblocked.
 
 ## Standing lessons
 
@@ -100,7 +107,7 @@ No further work. Listed for provenance only.
 | 500 | [Bootstrap plays](500-bootstrap-plays/README.md) — 2026-08-08; `changed=0` on every host |
 | 503 | [Lab status](503-lab-status/README.md) — 2026-08-08; a fully populated report |
 
-## Built — awaiting live acceptance (23)
+## Built — awaiting live acceptance (24)
 
 Code-complete and gate-verified. Each row keeps its unobserved external, browser,
 credential, or mutation leg explicit.
@@ -117,12 +124,13 @@ credential, or mutation leg explicit.
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | wiring runs every bootstrap; unwire needs a removal run |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists; see below |
 | 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | second-deploy lookup fixed; browser sign-in leg open |
-| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | blocked on 404 — there is no initialized Kuma to wire into |
+| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | **needs rework, not acceptance.** Kuma has no REST monitor API in any version, so this slice's probe, delete and verify have been passing against the front end's catch-all route. 404 proved socket.io is drivable from Ansible with no new dependency; the events to move onto are in its notes |
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API creds |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open |
 | 400 | [Vaultwarden](400-app-vaultwarden/README.md) | serving, converging and driving every vault write; browser vault CRUD unobserved |
 | 403 | [Authentik](403-app-authentik/README.md) | one app deployed with `routing.identity: forward_auth`, observed end to end |
+| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | reopened and largely closed 2026-08-08 — initialized, admin account and API key all scripted after five days of doing nothing. Only the Ntfy notification channel is unobserved |
 | 405 | [Grafana + Prometheus](405-app-grafana/README.md) | five of six observed 2026-08-08; only admin sign-in remains |
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | running live on the real domain; a second estate would close it |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | a removal run against a stopped Caddy or Authentik, to confirm the degradation fix |
@@ -143,26 +151,28 @@ Carried caveats:
   config authoring, project creation, Key Storage staging and job import are all
   unexercised. Treat the first run as an experiment.
 
-## Open (4)
+## Open (3)
 
-All four are design defects in shipped code or gaps between the documented model and the
+All three are design defects in shipped code or gaps between the documented model and the
 implemented one. None are new features.
 
 | # | Slice | Why now |
 |---|---|---|
-| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | **Reopened 2026-08-08.** The app has never initialized — Kuma 2 asks for a database backend before anything else and the role does not answer. No admin user, no monitors, no API key. The missing step turns out to be drivable over plain HTTP (`POST /setup-database {"dbConfig":{"type":"sqlite"}}` → `{"ok":true}`), so this is closable rather than blocked. It also blocks 303. |
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset. The live lab addresses by function across three bands in a single /20. **Six addresses are already allocated under the flat model** (.10–.15), so the unwind cost is no longer hypothetical. |
 | 015 | [Caddy-first wildcard HTTPS bootstrap](015-wildcard-dns-default/README.md) | Certificate model fixed and observed live 2026-08-06 — one wildcard serves all six hostnames. Stays open on internal mode, the no-API-provider handoff, the resume item, and migrating an already-serving estate without interrupting HTTPS. |
 | 016 | [Vaultwarden identities and Rundeck bootstrap keyring](016-vaultwarden-identity-bootstrap/README.md) | Enrollment and cutover are done and the automation account drives every vault write. What remains is one decision: `users_collections` is empty, so the account reads the org as an Admin with `allowAdminAccessToAllCollectionItems` — org-scoped, not collection-scoped. |
 
 ## Recommended order
 
-1. **Finish Uptime Kuma (404), then close 303.** It is the only baseline service that does
-   not work, the fix path is known, and one monitoring provider being dead is why the
-   MONITORS section of every status report says "unavailable".
+1. **Rework 303's wiring onto socket.io.** Uptime Kuma is initialized and holds an API
+   key, but no monitor has ever been registered and the current REST implementation
+   cannot register one. The event sequence is recorded in 303's notes. This is the last
+   thing standing between the platform and the monitoring half of its day-2 promise.
 2. **Make a deploy assert usability, not liveness.** Kuma passed four green runs while
    unstarted because "container healthy" was the whole test. Every app role wants one
-   check that only an initialized application can pass.
+   check that only an initialized application can pass — for Kuma that turned out to be
+   `GET /api/entry-page`. Treat any place a role reads an error status as a success
+   signal as the same bug.
 3. **Decide 016's collection scoping.** Either grant per-collection and tighten, or amend
    the criterion to match the decision that has already been made in practice.
 4. **011 before the next new guest allocation.** Six addresses are live under the flat

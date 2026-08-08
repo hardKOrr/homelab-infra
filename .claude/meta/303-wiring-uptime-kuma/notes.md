@@ -60,3 +60,41 @@ deploys through that window. Do not remove it.
 
 Still not verified live — the v2 endpoints this file targets are unconfirmed against
 a running Kuma. See 404's notes.md for the specific list to check.
+
+## 2026-08-08 — the REST premise is dead, and socket.io is now proven from Ansible
+
+Slice 404 established two things that decide this slice's direction.
+
+**The REST monitor API does not exist in any Uptime Kuma version.** Choosing v2 to keep
+this slice's REST implementation was based on a surface that is not there. `GET
+/api/monitors` returns 200 `text/html` because the Vue front end is served from a
+catch-all route, so this slice's probe, delete and verify-assert have all been passing
+against a page rather than an API — including against an instance that had no database
+at all. A valid API key does not change that; the key authenticates `/metrics` and the
+badge endpoints, not monitor CRUD.
+
+**Socket.io is drivable from Ansible with no new dependency.** This is the finding that
+unblocks the rework. Engine.io v4's long-polling transport is plain HTTP, and 404 now
+drives account creation, sign-in and API-key minting with four `uri` tasks each. The
+sequence, verified live against 2.5.0:
+
+```
+GET  /socket.io/?EIO=4&transport=polling            -> 0{"sid":"..."}
+POST /socket.io/?EIO=4&transport=polling&sid=<sid>   body: 40          (attach namespace)
+GET  /socket.io/?EIO=4&transport=polling&sid=<sid>   -> 42["setup"] | 42["loginRequired"]
+POST ...  body: 420["login",{"username":..,"password":..}]
+GET  ...  -> 430[{"ok":true,"token":"..."}]
+POST ...  body: 421["addAPIKey",{"name":..,"expires":null,"active":true}]
+GET  ...  -> 431[{"ok":true,"key":"uk1_..."}]
+```
+
+`42` is an event, the digit after it is the acknowledgement id the reply comes back on,
+and `43<id>` is that reply. Every later event on the same socket is authorised once
+`login` has been acked.
+
+So the rework is: sign in over a socket, then use Kuma's own monitor events (`add`,
+`editMonitor`, `deleteMonitor`, `getMonitorList`) instead of REST, keeping the existing
+degradation contract — a monitoring provider must never fail an app deploy.
+
+**Do not take the Python `uptime-kuma-api` dependency.** Avoiding it is why v2 was
+chosen over v1, and 404 shows the transport does not require it.
