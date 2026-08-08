@@ -248,6 +248,123 @@
          | default(homelabinfra_infra.monitoring.token | default(''), true) }}
   no_log: true
 
+# Minting the first key was the one step this role could not do, on the belief that
+# Kuma issues keys only to a browser session. It issues them to an authenticated
+# SOCKET, and the long-polling transport used for account creation above reaches it
+# just as well. Only runs when nothing already holds a key, so the key minted here is
+# found in the vault on the next run and never duplicated.
+#
+# Every step tolerates failure: if any of it does not work the key stays empty and the
+# manual instruction at the end of this block prints exactly as it did before. This is
+# an attempt to remove a manual step, never a new way for a deploy to fail.
+- name: Mint the first REST API key
+  when: _kuma_api_key | length == 0
+  block:
+    - name: Open a socket.io session for the API key
+      ansible.builtin.uri:
+        url: "{{ _kuma_base }}/socket.io/?EIO=4&transport=polling"
+        return_content: true
+      register: _kuma_key_open
+      changed_when: false
+
+    - name: Resolve the API key socket.io session id
+      ansible.builtin.set_fact:
+        _kuma_key_sid: >-
+          {{ (_kuma_key_open.content | regex_search('"sid":"([^"]+)"', '\1') | first)
+             | default('') }}
+
+    - name: Attach to the default namespace for the API key
+      ansible.builtin.uri:
+        url: "{{ _kuma_key_url }}"
+        method: POST
+        body: "40"
+        body_format: raw
+        headers:
+          Content-Type: "text/plain;charset=UTF-8"
+      changed_when: false
+
+    - name: Drain the connect events
+      ansible.builtin.uri:
+        url: "{{ _kuma_key_url }}"
+        return_content: true
+      changed_when: false
+
+    # Authenticates the socket itself; the ack carries a JWT that nothing here needs,
+    # because every later event on this same socket is already authorised.
+    - name: Sign in over the socket
+      ansible.builtin.uri:
+        url: "{{ _kuma_key_url }}"
+        method: POST
+        body: >-
+          420{{ ["login", {"username": _kuma_user, "password": _kuma_password}] | to_json }}
+        body_format: raw
+        headers:
+          Content-Type: "text/plain;charset=UTF-8"
+      changed_when: false
+      no_log: true
+
+    - name: Read the sign-in acknowledgement
+      ansible.builtin.uri:
+        url: "{{ _kuma_key_url }}"
+        return_content: true
+      register: _kuma_login_ack
+      changed_when: false
+
+    - name: Assert the sign-in succeeded
+      ansible.builtin.assert:
+        that: _kuma_login_ack.content is search('"ok":true')
+        fail_msg: >-
+          Uptime Kuma rejected the recorded admin credentials:
+          {{ _kuma_login_ack.content | default('no acknowledgement') | trim }}
+
+    # `expires: null` because a key that silently expires takes monitor registration
+    # down months later with no deploy to correlate it against.
+    - name: Create the API key
+      ansible.builtin.uri:
+        url: "{{ _kuma_key_url }}"
+        method: POST
+        body: >-
+          421{{ ["addAPIKey", {"name": uptime_kuma_api_key_name,
+                               "expires": None, "active": true}] | to_json }}
+        body_format: raw
+        headers:
+          Content-Type: "text/plain;charset=UTF-8"
+      changed_when: true
+
+    - name: Read the API key acknowledgement
+      ansible.builtin.uri:
+        url: "{{ _kuma_key_url }}"
+        return_content: true
+      register: _kuma_key_ack
+      changed_when: false
+      no_log: true
+
+    # Kuma reveals the key exactly once, at creation — like a PBS token. If it is not
+    # captured here it cannot be read back, and the only recovery is to delete the key
+    # in the UI and re-run.
+    - name: Capture the minted key
+      ansible.builtin.set_fact:
+        _kuma_api_key: >-
+          {{ (_kuma_key_ack.content | regex_search('"key":"([^"]+)"', '\1') | first)
+             | default('') }}
+      no_log: true
+
+    - name: Report the minted key
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Uptime Kuma REST API key minted and recorded in the vault.'
+             if _kuma_api_key | length > 0
+             else 'Uptime Kuma did not return an API key; the manual step below still applies.' }}
+  rescue:
+    - name: Report that minting the API key did not work
+      ansible.builtin.debug:
+        msg: >-
+          Could not mint an Uptime Kuma API key automatically; falling back to the
+          manual step below. The deploy is unaffected.
+  vars:
+    _kuma_key_url: >-
+      {{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_key_sid | default('') }}
+
 - name: Probe the REST API with the resolved key
   ansible.builtin.uri:
     url: "{{ _kuma_base }}/api/monitors"
