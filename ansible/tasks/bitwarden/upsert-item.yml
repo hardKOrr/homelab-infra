@@ -268,10 +268,27 @@
     - _vault_collection_users
       | selectattr('id', 'equalto', _vault_self_member_id)
       | selectattr('manage', 'defined') | selectattr('manage') | list | length == 0
-  changed_when: true
+  register: _vault_grant_write
+  failed_when: false
+  changed_when: _vault_grant_write.rc == 0
   delegate_to: localhost
   become: false
   no_log: true
+
+# Same reasoning as the item write below, and the reason this slice spent a run
+# knowing only that the grant failed: under no_log every refusal reads `censored`.
+# The CLI reports errors as short diagnostic strings and the collection object
+# carries encrypted names, member ids and grant flags — no item material — so a
+# bounded slice of stderr is safe and is the only way to see why a write was refused.
+- name: Vault | Report a rejected collection grant
+  ansible.builtin.fail:
+    msg: >-
+      Vaultwarden refused the collection grant for
+      {{ vault_collection_name | default('platform-secrets') }}
+      (rc={{ _vault_grant_write.rc }}):
+      {{ (_vault_grant_write.stderr | default('') | trim)[:500] }}
+      {{ (_vault_grant_write.stdout | default('') | trim)[:200] }}
+  when: _vault_grant_write.rc | default(0) != 0
 
 - name: Vault | Read the grants back
   ansible.builtin.command:
