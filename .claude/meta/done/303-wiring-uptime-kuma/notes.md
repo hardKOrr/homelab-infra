@@ -187,3 +187,47 @@ both the role and the wiring can read (a role default cannot reach the wiring).
 
 Both gates green. Still unobserved: a real DOWN/UP transition reaching Ntfy — the
 rehearsal used a dummy token, so acceptance item 2 needs the lab's real channel.
+
+## 2026-08-09 — acceptance on the lab's own instance
+
+The rehearsal instance proved the mechanism; this proved it against .0.14, which had held
+zero monitors since it was deployed on 2026-08-03.
+
+Sequence, driven through the Rundeck API rather than the UI: `Deploy Uptime Kuma` (39),
+`Deploy Ntfy` (40), `Deploy Observability` (41). Every check below was made in the
+receiving system's own SQLite, never in the job log — the whole point of this slice is
+that a green run proves nothing about whether anything arrived.
+
+| Before | After |
+|---|---|
+| 0 notification channels | 1 — `homelab-infra ntfy`, active, default |
+| 0 monitors | 3 — `uptime-kuma`, `ntfy`, `observability`, all bound to channel 1 |
+| 0 heartbeats | all three UP, `200 - OK`, through the public HTTPS names |
+| `monitoring.notification_id` absent | `'1'` |
+
+**The alert path was untestable until a third service existed.** With only `uptime-kuma`
+and `ntfy` registered there is no valid experiment: stopping Ntfy kills the notifier,
+stopping Kuma kills the detector, and each would have produced a plausible-looking failure
+that proved nothing. `observability` was deployed specifically to be the expendable third
+party. This is a property of the estate, not of the code — a two-monitor lab cannot verify
+its own alerting.
+
+The transition, with Kuma and Ntfy both healthy throughout:
+
+```
+03:04:45  docker stop observability-grafana
+03:05:02  Kuma: status 2 (PENDING), "Request failed with status code 502"
+03:07:02  Ntfy: "observability Down [Uptime-Kuma]"  prio 5  red_circle
+03:07:17  Kuma: status 0, important=1        (cache 47 -> 48)
+03:07:40  docker start observability-grafana
+03:08:02  Ntfy: "observability Up [Uptime-Kuma]"    prio 5  green_circle
+03:08:20  Kuma: status 1, important=1        (cache 48 -> 49)
+```
+
+Two things fell out that were not the objective. Kuma held the failure through ~2 minutes
+of retries before promoting PENDING to DOWN, so a single blip will not page anyone — the
+correct default, previously unobserved. And the deploy notification now reads "signed in as
+admin (password in Vaultwarden)" where it used to point at an API key it does not use,
+closing the fourth of the four silent failures the REST premise caused.
+
+Grafana was down for about three minutes. Prometheus scraped throughout; nothing was lost.

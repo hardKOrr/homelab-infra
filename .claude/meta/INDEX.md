@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**27 live · 21 archived in [done/](done/).** Statuses: `open` = not started, abandoned, or
+**25 live · 23 archived in [done/](done/).** Statuses: `open` = not started, abandoned, or
 reopened by evidence. `built` = code written, both gates green, acceptance not yet observed
 live. Archived slices are finished; do not reopen without a new slice.
 
@@ -13,12 +13,11 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | Run a deploy against the lab's own Uptime Kuma — .0.14 still holds zero monitors. One deploy registers one; a DOWN/UP closes both slices. | 303, 404 |
-| 2 | Make deploys assert usability, not liveness. One check per app role that only an initialized app can pass. | all app slices |
-| 3 | Decide 016's collection scoping — grant per-collection, or amend the criterion to the decision already made. | 016 |
-| 4 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model. | 011 |
-| 5 | The browser legs — Vaultwarden vault CRUD, Authentik sign-in, one app behind `forward_auth`. Needs a human at a browser. | 400, 403, 405, 306 |
-| 6 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
+| 1 | Make deploys assert usability, not liveness. One check per app role that only an initialized app can pass. | all app slices |
+| 2 | Decide 016's collection scoping — grant per-collection, or amend the criterion to the decision already made. | 016 |
+| 3 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model. | 011 |
+| 4 | The browser legs — Vaultwarden vault CRUD, Authentik sign-in, one app behind `forward_auth`. Needs a human at a browser. | 400, 403, 405, 306 |
+| 5 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
 
 ## By subject
 
@@ -27,7 +26,6 @@ wiring task / bootstrap play). Look up the subject, then read only those slices.
 
 | Subject | Slices |
 |---|---|
-| Uptime Kuma | app **404**, wiring **303** |
 | Vaultwarden | app **400**, secret store **014**, token capture **013**, identities **016** |
 | Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
 | Authentik / identity | app **403**, wiring **302**, forward_auth **306**, modes **009** |
@@ -49,7 +47,7 @@ one. None are new features.
 | 015 | [Caddy-first wildcard HTTPS](015-wildcard-dns-default/README.md) | Certificate model observed live 2026-08-06. Open on internal mode, the no-API-provider handoff, the resume item, and migrating an already-serving estate without interrupting HTTPS. |
 | 016 | [Vaultwarden identities + keyring](016-vaultwarden-identity-bootstrap/README.md) | One decision: `users_collections` is empty, so the automation account reads the org as an Admin with `allowAdminAccessToAllCollectionItems` — org-scoped, not collection-scoped. |
 
-## Built — awaiting live acceptance (24)
+## Built — awaiting live acceptance (22)
 
 Code-complete and gate-verified. Each row names the unobserved leg.
 
@@ -65,20 +63,18 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | wiring runs every bootstrap; unwire needs a removal run |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists |
 | 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | second-deploy lookup fixed; browser sign-in leg open |
-| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | reworked onto socket.io 2026-08-08 and exercised against a throwaway 2.5.0 — create, re-wire, drift, unwire, re-unwire and three degradation paths all checked in Kuma's database. Only a real DOWN/UP reaching Ntfy is unobserved |
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API credentials |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open |
 | 400 | [Vaultwarden](400-app-vaultwarden/README.md) | serving, converging and driving every vault write; browser vault CRUD unobserved |
 | 403 | [Authentik](403-app-authentik/README.md) | one app deployed with `routing.identity: forward_auth`, observed end to end |
-| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | initialized, admin account and API key all scripted. Its Ntfy channel was proved on a throwaway instance; unobserved on the lab's own |
 | 405 | [Grafana + Prometheus](405-app-grafana/README.md) | five of six observed 2026-08-08; only admin sign-in remains |
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | running live on the real domain; a second estate would close it |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | a removal run against a stopped Caddy or Authentik, to confirm the degradation fix |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
 | 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs the full play chain + Ntfy |
 | 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | a restore into a fresh Semaphore |
-| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | 22/22 imported and API-driven. Bootstrap Platform, Lab Status, Remove App and the Vaultwarden jobs have run; the per-app Deploy jobs, Restart, Tail Log, Rollback, Check Updates, Wire Media Stack and the whole Config group have not |
+| 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | 22/22 imported and API-driven. Bootstrap Platform, Lab Status, Remove App, the Vaultwarden jobs and the Deploy jobs for Uptime Kuma / Ntfy / Observability have run; the remaining per-app Deploy jobs, Restart, Tail Log, Rollback, Check Updates, Wire Media Stack and the whole Config group have not |
 
 ## Carried caveats
 

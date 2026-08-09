@@ -197,3 +197,21 @@ and the REST surface named in step 7 does not exist in any version — `GET /api
 answers 200 `text/html` from the front end's catch-all route, which is exactly why the
 probe, the delete and the verify-assert all passed against nothing. Slice 303 rebuilt the
 wiring on socket.io.
+
+## 2026-08-09 — the Ntfy channel, observed on the lab's own instance
+
+Execution 39 (`Deploy Uptime Kuma`, driven through the Rundeck API) created notification
+id 1 on .0.14 — `homelab-infra ntfy`, active and default — and wrote
+`monitoring.notification_id: '1'` into `facts.yml`. That field had never been written on
+this instance: the old REST probe guarding the channel could not pass, so the role skipped
+provisioning and recorded nothing, silently.
+
+It was accepted by use rather than by inspection. The same channel carried both messages
+of 303's DOWN/UP acceptance a few minutes later, which is a stronger result than finding
+the row present — a channel can exist and still be misconfigured, and this one demonstrably
+delivered to a real Ntfy with a real token.
+
+Re-running the role against an already-initialized instance was the one case the old code
+had never faced: for five days it only ever met an app sitting on its setup screen, which
+is what let it read `404 Cannot POST /setup` as "already set up". Executions 39 and 41 both
+converged against a live, initialized, monitor-holding Kuma without disturbing it.

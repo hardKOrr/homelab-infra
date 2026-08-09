@@ -1,6 +1,6 @@
 # 404 — Uptime Kuma role + playbook
 
-**Status:** built
+**Status:** done
 **Subject:** Uptime Kuma
 **Related:** 303 (monitor registration over socket.io), 401 (Ntfy)
 
@@ -24,9 +24,11 @@ drivable from Ansible with four `uri` tasks and no Python client.
 
 ## Remaining
 
-- [ ] Ntfy notification channel configured and visible — reachable now that the app is
-      initialized, and proved on a throwaway instance by 303, but unobserved on the lab's
-      own instance
+- [x] Ntfy notification channel configured and visible — met 2026-08-09 on the lab's own
+      instance. Execution 39 created notification id 1, `homelab-infra ntfy`, active and
+      default, and wrote `monitoring.notification_id: '1'` — the field the dead REST probe
+      had silently never written. Proved by use, not by inspection: it carried the DOWN and
+      UP messages for 303's acceptance the same night
 - [x] Kuma UI loads, admin user created without human intervention — execution 36. The
       instance now reports `42["loginRequired"]` on connect where it reported `42["setup"]`,
       and its database went from absent to 286 KB

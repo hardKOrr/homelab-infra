@@ -41,6 +41,15 @@ vendor's own source in the running container and then rehearse against a throwaw
 of the same image; both together cost under an hour here and produced facts no amount of
 reasoning would have.
 
+**Some properties are untestable until the estate is large enough to test them.** Proving
+that a monitor's DOWN alert reaches Ntfy needs three services, not two: with only Kuma and
+Ntfy registered, stopping Ntfy kills the notifier and stopping Kuma kills the detector, and
+either experiment produces a plausible failure that proves nothing. A third, expendable
+target had to be deployed before the alert path could be exercised at all (2026-08-09,
+slice 303). This is a property of the lab, not of the code — when acceptance stays open for
+a long time, check whether the estate can express the test before assuming the code is at
+fault. The same shape applies to 301/305, which have no live target of any kind.
+
 **A guard can work while the path around it does not.** Break-glass recovery was
 unreachable in vault mode twice — `config-doctor` and then `with-proxmox-env.sh` each
 demanded a token that recovery exists precisely to do without. The gates cannot see this
@@ -70,7 +79,7 @@ tagged `homelab-infra`, all built by this repo:
 | **Serves HTTPS** | One `*.wasitacatisaw.cc` Let's Encrypt certificate via Cloudflare DNS-01 covers all six estate hostnames; every one verifies. |
 | **Keeps its secrets in the vault** | Vault mode, `facts.yml` secret-free, the automation account drives every write, and the fail-closed guarantee has been tested by injection. |
 | **Backs itself up** | PBS holds 30 snapshots — five consecutive nights for each of six guests, unattended. |
-| **Is monitored** | Prometheus scrapes all seven guests. Uptime Kuma is initialized, holds an API key, and its wiring registers monitors over socket.io — verified end to end against 2.5.0, though not yet on the lab's own instance. |
+| **Is monitored, and says so** | Prometheus scrapes all seven guests. Uptime Kuma holds three monitors registered by deploys over socket.io, and on 2026-08-09 a real Grafana outage produced a DOWN and a recovery message in Ntfy's own database — the first time the platform has been observed telling anyone that something broke. |
 
 ## The config model, decided 2026-07-27 — implemented 2026-07-26
 

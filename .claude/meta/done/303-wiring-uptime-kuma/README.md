@@ -1,6 +1,6 @@
 # 303 — Uptime Kuma wire + unwire
 
-**Status:** built
+**Status:** done
 **Subject:** Uptime Kuma
 **Related:** 404 (the app role and its initialization), 200 (registry facts)
 
@@ -27,15 +27,25 @@ endpoints only, and can neither sign a socket in nor touch a monitor.
 
 ## Remaining
 
-- [ ] Down/up state changes trigger Ntfy messages — needs a real Ntfy token and a monitor
-      that actually transitions; the rehearsal used a dummy token
+- [x] Down/up state changes trigger Ntfy messages — met 2026-08-09 on the lab's own
+      instance. Grafana stopped at 03:04:45; Kuma held the failure at status 2 for two
+      minutes of retries, then wrote status 0 `important=1` and Ntfy received
+      *"observability Down [Uptime-Kuma]"* (priority 5, `red_circle`) at 03:07:02.
+      Restart at 03:07:40 produced *"observability Up"* (`green_circle`) at 03:08:02.
+      Both messages confirmed in Ntfy's own `cache.db`, not in Kuma's acknowledgement
 - [x] Wire creates the monitor with the correct URL and the Ntfy channel attached
 - [x] Re-wire is idempotent
 - [x] Unwire deletes the monitor; idempotent on missing
 - [x] Unreachable Kuma skips with a warning rather than aborting the deploy
 
-Every ticked item was observed against a live Uptime Kuma 2.5.0 on 2026-08-08 and confirmed
-in its database, not just in the acknowledgement.
+The first four were observed against a throwaway Uptime Kuma 2.5.0 on 2026-08-08 and
+confirmed in its database. The fifth was observed on the lab's own instance (.0.14) on
+2026-08-09, after executions 39/40/41 took it from zero monitors to three.
+
+**Testing the alert path needed a third monitored service.** With only `uptime-kuma` and
+`ntfy` registered, the transition is untestable in principle: stopping Ntfy kills the
+notifier, stopping Kuma kills the detector. Deploying `observability` supplied a target
+whose outage obstructs neither. Any estate that wants to prove this leg needs the same.
 
 ## Links
 
