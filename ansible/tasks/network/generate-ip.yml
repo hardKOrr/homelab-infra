@@ -73,6 +73,16 @@
         - hostvars[item] is defined
         - hostvars[item].ansible_host is defined or hostvars[item].ip is defined or hostvars[item].ip_address is defined
 
+    # A guest can be in the inventory with the KEY present and the value empty — a
+    # template, or anything Proxmox reports no address for. `is defined` above says
+    # nothing about that, and the allocator is strict on purpose: it refused the
+    # whole run with "in-use address '' is not an address, range or CIDR" rather
+    # than guessing. An unknown address occupies nothing, so drop it here.
+    - name: Drop inventory entries that carry no address
+      ansible.builtin.set_fact:
+        proxmox_client_ips: >-
+          {{ proxmox_client_ips | default([]) | reject('equalto', '') | list }}
+
     # A pool named in config is a requirement; a pool inherited from the app's stack
     # is advisory. That asymmetry is what lets a lab adopt pools one band at a time
     # while every stack keeps deploying, and still refuses a config that names a pool
