@@ -1,0 +1,44 @@
+---
+# Default stack and app configuration for Sonarr — TV series management.
+# Users override specific values in config/apps/sonarr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# Sonarr, Radarr, Lidarr, Readarr and Prowlarr share the `servarr` role: they are
+# the same application with a different media type. Only these per-app files and
+# the playbooks differ. See roles/servarr/tasks/main.yml for why.
+
+sonarr_defaults:
+  # Docker app: no `proxmox:` block. The stack host is found or created by tag on
+  # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
+  stack: media_stack
+
+  app:
+    # media_kind is load-bearing, not a label: it is the key slice 504's
+    # ansible/vars/media-wiring.yml looks this app up by, and it is what makes the
+    # deployed instance discoverable to wire-media-stack.yml.
+    media_kind: sonarr
+
+    image: "lscr.io/linuxserver/sonarr:latest"
+    port: 8989
+    container_port: 8989
+
+    config_path: "/opt/{{ instance }}/config"
+    # Which subdirectory of media_storage.library this app owns. The library
+    # itself is configured once for the lab in config/infrastructure.yml — an app
+    # says what part of it is its own, not where storage lives.
+    library_subpath: tv
+
+    # LinuxServer images run the app as this uid/gid and chown /config to it.
+    puid: 1000
+    pgid: 1000
+
+  routing:
+    proxy: internal
+    access: internal
+    # forward_auth, not catalog, and it is coupled to the app's own auth method:
+    # the role configures Sonarr with AuthenticationMethod External, meaning the
+    # app trusts the reverse proxy to have identified the user and runs no second
+    # login. Authentik at the edge is therefore the only thing standing in front
+    # of the UI. Set identity to something else only after setting
+    # app.auth_method to Forms and creating a user in the app.
+    identity: forward_auth

@@ -1,0 +1,37 @@
+---
+# Default stack and app configuration for Prowlarr — indexer management.
+# Users override specific values in config/apps/prowlarr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# Shares the `servarr` role with Sonarr, Radarr, Lidarr and Readarr; see
+# vars/app-defaults/sonarr.yml for the annotated copy of these keys.
+#
+# Prowlarr is the one app slice 504's wiring treats as a hub: it owns the indexer
+# list and pushes it outward, so every *arr in the lab becomes a Prowlarr
+# Application entry. A media stack with no Prowlarr wires nothing.
+
+prowlarr_defaults:
+  stack: media_stack
+
+  app:
+    media_kind: prowlarr
+
+    image: "lscr.io/linuxserver/prowlarr:latest"
+    port: 9696
+    container_port: 9696
+
+    config_path: "/opt/{{ instance }}/config"
+    # No library_subpath, and the role reads that as "owns no part of the
+    # library": Prowlarr manages indexers and never touches a file, so it gets
+    # neither a root folder nor a mount into the library.
+    library_subpath: ""
+
+    puid: 1000
+    pgid: 1000
+
+  routing:
+    proxy: internal
+    access: internal
+    # Coupled to AuthenticationMethod External — the reverse proxy is the only
+    # authentication in front of this UI. See sonarr.yml.
+    identity: forward_auth

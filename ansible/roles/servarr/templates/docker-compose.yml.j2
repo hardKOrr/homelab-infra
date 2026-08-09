@@ -1,0 +1,49 @@
+# docker-compose.yml for {{ _servarr_kind }} ({{ instance }})
+# Managed by homelab-infra — changes made here are overwritten on the next deploy.
+# To make permanent changes, edit config/apps/{{ instance }}.yml.
+#
+# The {{ _servarr_prefix }}__ variables are Servarr's own configuration overrides:
+# every config.xml element can be set as <APP>__<SECTION>__<KEY>. They are what
+# makes this deploy declarative — the API key and the authentication method are
+# decided here rather than left to whoever opens the web UI first.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1000) }}
+      - PGID={{ app_config.app.pgid | default(1000) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      # Both spellings on purpose: the API key moved from <APP>__APIKEY to
+      # <APP>__AUTH__APIKEY across the v3→v4 line, and an unrecognised override is
+      # ignored rather than rejected. The role does not trust either to have been
+      # honoured — it reads config.xml back and uses whatever key is actually there.
+      - {{ _servarr_prefix }}__APIKEY={{ _servarr_api_key }}
+      - {{ _servarr_prefix }}__AUTH__APIKEY={{ _servarr_api_key }}
+      # External: the reverse proxy authenticates the UI (routing.identity), so the
+      # app does not run a second login of its own. Enabled, not
+      # DisabledForLocalAddresses: the API must demand its key from every caller,
+      # including one on the stack host — that refusal is what the role asserts.
+      - {{ _servarr_prefix }}__AUTH__METHOD={{ app_config.app.auth_method | default('External') }}
+      - {{ _servarr_prefix }}__AUTH__REQUIRED={{ app_config.app.auth_required | default('Enabled') }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+{% for mount in _servarr_mounts %}
+      # Same path inside as outside. That is deliberate: a database migrated from
+      # another machine carries absolute paths, and identical paths on both sides
+      # mean it keeps resolving them with nothing rewritten. It also keeps library
+      # and downloads on one mount namespace, so imports are hardlinks rather than
+      # copies.
+      - "{{ mount.path }}:{{ mount.path }}"
+{% endfor %}
+    ports:
+      # container_port is the app's stock port and is fixed inside the image;
+      # app.port is what the stack host publishes. They differ whenever two apps
+      # on one stack would otherwise collide.
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"

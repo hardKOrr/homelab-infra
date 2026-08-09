@@ -1,0 +1,35 @@
+# Deploy Lidarr — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/deploy-lidarr.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 6edfcf84-162a-5368-9a79-e46ec196a0dc
+  uuid: 6edfcf84-162a-5368-9a79-e46ec196a0dc
+  name: Deploy Lidarr
+  group: Apps
+  description: |-
+    Deploy or update Lidarr — music management (Docker on media_stack).
+    Registers the app in the media registry; run Wire Media Stack afterwards to
+    connect it to the rest of the stack.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/lidarr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          ARGS+=(-e "instance=lidarr")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/lidarr.yml "${ARGS[@]}"

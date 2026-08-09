@@ -1,0 +1,35 @@
+# Deploy Readarr — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/deploy-readarr.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 812f7745-76c5-5338-a662-5b7f815ae06e
+  uuid: 812f7745-76c5-5338-a662-5b7f815ae06e
+  name: Deploy Readarr
+  group: Apps
+  description: |-
+    Deploy or update Readarr — book management (Docker on media_stack).
+    Registers the app in the media registry; run Wire Media Stack afterwards to
+    connect it to the rest of the stack.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/readarr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          ARGS+=(-e "instance=readarr")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/readarr.yml "${ARGS[@]}"

@@ -1,0 +1,11 @@
+---
+# Role-internal defaults for the servarr role. Everything a user would tune lives
+# in vars/app-defaults/<app>.yml instead — these are paths and timings the role
+# needs and nobody overrides.
+
+servarr_project_dir: "/opt/{{ instance }}"
+
+# How long to wait for the container to write its config.xml. A Servarr app
+# generates that file on first start, several seconds after the port opens.
+servarr_config_retries: 30
+servarr_config_delay: 5

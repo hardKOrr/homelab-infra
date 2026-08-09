@@ -1,0 +1,307 @@
+---
+# Migrate an existing Sonarr/Radarr/Lidarr/Readarr/Prowlarr into a lab instance.
+#
+# A Servarr app keeps everything in one directory: history, the whole library with
+# its file paths, quality profiles, custom formats, indexers, download clients,
+# tags and its API key are all in <config>/<app>.db and config.xml. Migrating is
+# therefore a directory copy, not a per-record export — there is no partial
+# "movie history only" migration to do, because the history lives in the same
+# database as everything else and moving that database brings the history with it.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/migrate-servarr.yml \
+#     -e instance=radarr-1080p \
+#     -e source_host=192.168.1.15 \
+#     -e source_config_path=/var/lib/radarr
+#
+# Then run the app's Deploy job. This playbook only stages the configuration; the
+# deploy is what starts the app on it and asserts it came up usable. That split is
+# deliberate — the deploy is idempotent and already owns every check, and the role
+# adopts an API key it finds in an existing config.xml, so the migrated app keeps
+# the key every Prowlarr Application and Bazarr connection already points at.
+#
+# NON-DESTRUCTIVE. The source is read, never rewritten. Its service is stopped for
+# the copy — a SQLite database copied out from under a running writer is how you
+# get a corrupt one — and started again afterwards even if the copy fails. Nothing
+# on the source is deleted, and the source app is left running and intact, so the
+# old instance stays a working fallback until you decide otherwise.
+
+# ── Play 1: Resolve both ends ──────────────────────────────────────────────────
+- name: "Migrate Servarr | Resolve"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert the migration inputs are provided
+      ansible.builtin.assert:
+        that:
+          - instance is defined and instance | length > 0
+          - source_host is defined and source_host | length > 0
+          - source_config_path is defined and source_config_path | length > 0
+        fail_msg: >-
+          Provide all three: -e instance=<new instance name>
+          -e source_host=<address of the existing app>
+          -e source_config_path=<its config directory, e.g. /var/lib/radarr>
+
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+  tasks:
+    - name: Add the source app to the migration group
+      ansible.builtin.add_host:
+        name: migrate_source
+        groups: migrate_source
+        ansible_host: "{{ source_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+      changed_when: false
+
+    # The target is the stack host the app runs on, found the same way a deploy
+    # finds it. A migration onto a stack host that does not exist yet is a
+    # migration onto nothing, so this refuses rather than creating one — run the
+    # app's Deploy job first, then migrate onto it.
+    - name: Locate the media stack host
+      ansible.builtin.set_fact:
+        _ms_stack_hosts: >-
+          {{ groups['tag_' + ((stack | default('media_stack'))
+                              | regex_replace('[^A-Za-z0-9_]', '_'))] | default([]) }}
+
+    - name: Assert the stack host exists
+      ansible.builtin.assert:
+        that: _ms_stack_hosts | length > 0
+        fail_msg: >-
+          No {{ stack | default('media_stack') }} host exists yet. Run the app's
+          Deploy job first — it creates the stack host, mounts the lab's storage
+          onto it and stands the app up — then migrate the old configuration onto
+          it and deploy once more.
+
+    - name: Add the stack host to the migration target group
+      ansible.builtin.add_host:
+        name: "{{ _ms_stack_hosts[0] }}"
+        groups: migrate_target
+        ansible_host: "{{ hostvars[_ms_stack_hosts[0]].ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+      changed_when: false
+
+
+# ── Play 2: Archive the source ─────────────────────────────────────────────────
+- name: "Migrate Servarr | Archive the source configuration"
+  hosts: migrate_source
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Assert the source configuration directory exists
+      ansible.builtin.stat:
+        path: "{{ source_config_path }}/config.xml"
+      register: _ms_source_config
+
+    - name: Fail when the source is not a Servarr configuration directory
+      ansible.builtin.assert:
+        that: _ms_source_config.stat.exists
+        fail_msg: >-
+          {{ source_config_path }}/config.xml does not exist on {{ source_host }}.
+          That path is the app's configuration directory — /var/lib/<app> on a
+          package install, /config inside a container.
+
+    # Read before anything is stopped: these are the paths the migrated database
+    # will expect to find its files at, and Play 4 checks them against the target.
+    # A migration that lands a 2,589-film database on a host where the library is
+    # mounted somewhere else produces an app that reports every film missing.
+    - name: Read the source app's root folders
+      ansible.builtin.shell: |
+        set -euo pipefail
+        key=$(grep -o '<ApiKey>[^<]*</ApiKey>' "{{ source_config_path }}/config.xml" \
+              | sed 's/<[^>]*>//g')
+        port=$(grep -o '<Port>[^<]*</Port>' "{{ source_config_path }}/config.xml" \
+               | sed 's/<[^>]*>//g' | head -1)
+        curl -sf -H "X-Api-Key: $key" \
+          "http://localhost:${port}/api/v3/rootfolder" 2>/dev/null \
+          || curl -sf -H "X-Api-Key: $key" "http://localhost:${port}/api/v1/rootfolder"
+      args:
+        executable: /bin/bash
+      register: _ms_source_rootfolders
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Record the source root folder paths
+      ansible.builtin.set_fact:
+        ms_source_root_paths: >-
+          {{ (_ms_source_rootfolders.stdout | from_json | map(attribute='path') | list)
+             if (_ms_source_rootfolders.stdout | default('') | length > 0)
+             else [] }}
+      failed_when: false
+
+    - name: Report the source root folders
+      ansible.builtin.debug:
+        msg: >-
+          {{ source_host }} root folders:
+          {{ ms_source_root_paths | join(', ') | default('none readable', true) }}
+
+    # Stopped for the copy and started again in `always`, including on failure.
+    # A SQLite database copied while its writer is running is how a migration
+    # produces a corrupt database that only shows itself weeks later.
+    - name: Copy the configuration with the app stopped
+      block:
+        - name: Identify the source service
+          ansible.builtin.shell: |
+            set -euo pipefail
+            systemctl list-units --type=service --plain --no-legend \
+              | awk '{print $1}' \
+              | grep -iE '^(sonarr|radarr|lidarr|readarr|prowlarr)\.service$' \
+              | head -1
+          args:
+            executable: /bin/bash
+          register: _ms_service
+          changed_when: false
+          failed_when: false
+
+        - name: Stop the source app
+          ansible.builtin.systemd_service:
+            name: "{{ _ms_service.stdout | trim }}"
+            state: stopped
+          when: _ms_service.stdout | default('') | trim | length > 0
+
+        # MediaCover is regenerated from the metadata servers, logs and Backups
+        # describe a machine being left behind, and Sentry is crash telemetry.
+        # Excluding them turns a multi-gigabyte transfer into a small one and
+        # loses nothing the new instance needs.
+        - name: Archive the configuration
+          community.general.archive:
+            path: "{{ source_config_path }}/"
+            dest: "/tmp/servarr-migrate-{{ instance }}.tar.gz"
+            format: gz
+            exclude_path:
+              - "{{ source_config_path }}/MediaCover"
+              - "{{ source_config_path }}/logs"
+              - "{{ source_config_path }}/Backups"
+              - "{{ source_config_path }}/Sentry"
+              - "{{ source_config_path }}/UpdateLogs"
+            mode: "0600"
+
+        - name: Fetch the archive to the control node
+          ansible.builtin.fetch:
+            src: "/tmp/servarr-migrate-{{ instance }}.tar.gz"
+            dest: "/tmp/servarr-migrate-{{ instance }}.tar.gz"
+            flat: true
+
+      always:
+        - name: Start the source app again
+          ansible.builtin.systemd_service:
+            name: "{{ _ms_service.stdout | trim }}"
+            state: started
+          when: _ms_service.stdout | default('') | trim | length > 0
+
+        - name: Remove the archive from the source
+          ansible.builtin.file:
+            path: "/tmp/servarr-migrate-{{ instance }}.tar.gz"
+            state: absent
+
+
+# ── Play 3: Restore onto the stack host ────────────────────────────────────────
+- name: "Migrate Servarr | Restore onto the lab instance"
+  hosts: migrate_target
+  become: true
+  gather_facts: true
+
+  vars:
+    _ms_config_path: "/opt/{{ instance }}/config"
+
+  tasks:
+    # The container is stopped rather than left running: the app would be writing
+    # to the database being replaced underneath it. Absent container, absent
+    # problem — this is also the normal case, when the migration runs before the
+    # first deploy.
+    - name: Stop the target container if it is already running
+      community.docker.docker_container:
+        name: "{{ instance }}"
+        state: stopped
+      failed_when: false
+
+    - name: Ensure the instance configuration directory exists
+      ansible.builtin.file:
+        path: "{{ _ms_config_path }}"
+        state: directory
+        owner: "{{ puid | default(1000) }}"
+        group: "{{ pgid | default(1000) }}"
+        mode: "0750"
+
+    # Kept, not deleted. If this migration turns out to be wrong, the previous
+    # configuration is still on the host to put back — and the source app is still
+    # running and untouched regardless.
+    - name: Preserve any existing configuration
+      ansible.builtin.command:
+        cmd: "mv {{ _ms_config_path }} {{ _ms_config_path }}.replaced-{{ ansible_date_time.epoch }}"
+      args:
+        removes: "{{ _ms_config_path }}/config.xml"
+      register: _ms_preserved
+      changed_when: _ms_preserved.rc == 0
+
+    - name: Recreate the instance configuration directory
+      ansible.builtin.file:
+        path: "{{ _ms_config_path }}"
+        state: directory
+        owner: "{{ puid | default(1000) }}"
+        group: "{{ pgid | default(1000) }}"
+        mode: "0750"
+
+    - name: Restore the source configuration
+      ansible.builtin.unarchive:
+        src: "/tmp/servarr-migrate-{{ instance }}.tar.gz"
+        dest: "{{ _ms_config_path }}"
+        owner: "{{ puid | default(1000) }}"
+        group: "{{ pgid | default(1000) }}"
+
+    # The container runs as this uid regardless of what owned the files on the
+    # source, which was very likely a different one.
+    - name: Give the configuration to the container's user
+      ansible.builtin.file:
+        path: "{{ _ms_config_path }}"
+        state: directory
+        owner: "{{ puid | default(1000) }}"
+        group: "{{ pgid | default(1000) }}"
+        recurse: true
+
+    # This is the check that decides whether the migration is trustworthy. The
+    # restored database refers to its files by absolute path; if those paths are
+    # not present on this host, the app will start cleanly and report its entire
+    # library missing.
+    - name: Verify the source's root folders exist on this host
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: _ms_root_check
+      loop: "{{ hostvars['migrate_source'].ms_source_root_paths | default([]) }}"
+
+    - name: Assert every source root folder resolves here
+      ansible.builtin.assert:
+        that: item.stat.exists and item.stat.isdir
+        fail_msg: >-
+          The migrated database expects its library at {{ item.item }}, which does
+          not exist on this stack host. Add it to media_storage.mounts in
+          config/infrastructure.yml at the SAME path it has on the Proxmox node,
+          re-run the app's Deploy job to attach it, then migrate again. Until the
+          paths match, the app will start and report every item missing.
+      loop: "{{ _ms_root_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Remove the archive from the control node
+      ansible.builtin.file:
+        path: "/tmp/servarr-migrate-{{ instance }}.tar.gz"
+        state: absent
+      delegate_to: localhost
+      become: false
+
+    - name: Report what to do next
+      ansible.builtin.debug:
+        msg: >-
+          {{ instance }} now holds the configuration from {{ source_host }},
+          including its API key and its
+          {{ hostvars['migrate_source'].ms_source_root_paths | length }} root
+          folder(s). Run the Deploy job for this app: it starts the app on the
+          migrated database and asserts it came up usable. The source app on
+          {{ source_host }} is running and unchanged.

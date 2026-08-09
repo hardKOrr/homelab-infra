@@ -106,6 +106,33 @@ dns:
   # api_key is read from homelab-infra/dns after cutover
   # instance: pihole        # for pihole/adguard: Proxmox hostname
 
+# ── Media storage ──────────────────────────────────────────────────────────────
+# Where the media apps find the library and the downloads. Configured once here
+# for the whole lab; an app says only which subdirectory of the library it owns
+# (app.library_subpath in vars/app-defaults/<app>.yml).
+#
+# This platform does NOT create, export, format or manage this storage. Your node
+# already has it mounted — an NFS export from a NAS, a ZFS dataset, a disk. All
+# this does is attach those existing directories to the media stack host as
+# Proxmox mountpoints, and mount them into the app containers.
+#
+# `host` is the path on the Proxmox node. `path` is where the guest and the
+# containers see it. KEEP THEM IDENTICAL unless you have a reason not to: an app
+# database records absolute file paths, so identical paths on both sides are what
+# lets an app migrated from another machine keep resolving its library with
+# nothing rewritten, and what keeps imports as hardlinks instead of copies.
+#
+# Omit the whole block on a lab with no media apps.
+# media_storage:
+#   library: /mnt/data/media      # the root the app libraries live under, as the
+#                                 # containers see it. app.library_subpath hangs
+#                                 # off this: movies, tv, movies/4k, and so on
+#   mounts:
+#     - host: /mnt/media          # the NFS export mounted on the node
+#       path: /mnt/data/media
+#     - host: /mnt/downloads      # where the download clients put things
+#       path: /mnt/downloads
+
 # ── Backups ────────────────────────────────────────────────────────────────────
 # PBS is deployed as a VM by bootstrap. Configure the datastore path here.
 # Bootstrap will configure the backup schedule — PBS runs backups autonomously.

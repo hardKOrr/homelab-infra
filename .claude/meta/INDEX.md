@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**25 live · 23 archived in [done/](done/).** Statuses: `open` = not started, abandoned, or
+**26 live · 23 archived in [done/](done/).** Statuses: `open` = not started, abandoned, or
 reopened by evidence. `built` = code written, both gates green, acceptance not yet observed
 live. Archived slices are finished; do not reopen without a new slice.
 
@@ -20,7 +20,7 @@ metrics are things the lab does not have today, and every app that follows rides
 |---|---|---|
 | 1 | The browser legs, in one sitting at a browser: Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 400, 403, 405, 306 |
 | 2 | Resume the network work the Vaultwarden detour interrupted: migrate the lab's `config/proxmox.yml` onto declared pools, deploy one guest from a pool and one from a pin, then wire OPNsense + Unbound. | 011, 304 |
-| 3 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
+| 3 | Deploy the media stack: Prowlarr plus one *arr onto `media_stack`, migrate one existing Radarr onto it, then Wire Media Stack. Closes 505's live legs and 504's last two. | 505, 504 |
 
 **Parked, deliberately.** 016's Admin → Manager demotion is hardening on a path that already
 works. It is researched and shipped; the browser leg waits until the estate is stable.
@@ -37,7 +37,7 @@ wiring task / bootstrap play). Look up the subject, then read only those slices.
 | Authentik / identity | app **403**, wiring **302**, forward_auth **306**, modes **009** |
 | Config model | provenance **010**, onboarding **012**, estates **008** |
 | Networking | IP allocation **011** |
-| Media | wiring **504** |
+| Media | apps **505**, wiring **504** |
 | Runners / UI | Rundeck **601**, Semaphore **600** |
 | Day-2 ops | watchtower **201**, remove **501**, rollback **502** |
 | No live target | nginx **301**, pihole **305** |
@@ -51,7 +51,7 @@ one. None are new features.
 |---|---|---|
 | 015 | [Caddy-first wildcard HTTPS](015-wildcard-dns-default/README.md) | Certificate model observed live 2026-08-06. Open on internal mode, the no-API-provider handoff, the resume item, and migrating an already-serving estate without interrupting HTTPS. |
 
-## Built — awaiting live acceptance (24)
+## Built — awaiting live acceptance (25)
 
 Code-complete and gate-verified. Each row names the unobserved leg.
 
@@ -78,7 +78,8 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | running live on the real domain; a second estate would close it |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | a removal run against a stopped Caddy or Authentik, to confirm the degradation fix |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
-| 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs the full play chain + Ntfy |
+| 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs the full play chain + Ntfy. 505 now supplies the deployed apps it had none of |
+| 505 | [Servarr app roles](505-app-servarr/README.md) | one deploy observed live, and with it the two vendor facts the role deliberately does not trust — the `<APP>__AUTH__APIKEY` spelling the current image honours, and that an unkeyed API call really is refused. Both are asserted, so a wrong guess fails the deploy rather than shipping a wrong key or an open API. Also unobserved: a mountpoint attached to a stack host, and one `migrate-servarr` run against the lab's existing Radarrs |
 | 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | a restore into a fresh Semaphore |
 | 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | 22/22 imported and API-driven. Bootstrap Platform, Lab Status, Remove App, the Vaultwarden jobs and the Deploy jobs for Uptime Kuma / Ntfy / Observability have run; the remaining per-app Deploy jobs, Restart, Tail Log, Rollback, Check Updates, Wire Media Stack and the whole Config group have not |
 

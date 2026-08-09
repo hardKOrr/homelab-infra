@@ -1,0 +1,160 @@
+---
+# Attach existing host directories to a guest as Proxmox mountpoints.
+#
+# The platform does not create, export or manage storage. The lab already has its
+# library and download directories mounted on the Proxmox node — an NFS export, a
+# ZFS dataset, whatever it is — and this makes them reachable from the guest that
+# runs the apps. Declaring where they already are is configuration; provisioning
+# them would be replicating a job the node already does.
+#
+# Idempotent and additive: a mountpoint already present is left exactly as it is,
+# an unrelated mpN belonging to something else is never touched, and nothing is
+# ever removed. Mountpoints are matched on the (host path, guest path) pair, not
+# on index — PVE assigns indices in its own order.
+#
+# Inputs:
+#   attach_mounts_guest — guest hostname to attach to
+#   attach_mounts_list  — [{host: /mnt/media, path: /mnt/data/media}, ...]
+#                         `host` is the path on the Proxmox node, `path` is where
+#                         the guest sees it. Keeping them identical is what lets a
+#                         migrated app database keep resolving its file paths.
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+# The caller guards on an empty list — see the servarr playbooks. This file always
+# has work to do by the time it is included.
+#
+# JSON from pvesh rather than columns from `pct list`: that command's Lock column
+# is empty for most containers, so a positional split yields three fields for some
+# guests and four for others, and the name lands in a different position depending
+# on whether the guest happens to be locked.
+- name: Host mounts | List the node's containers
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/lxc --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_lxc_list
+  changed_when: false
+
+- name: Host mounts | Extract the vmid for {{ attach_mounts_guest }}
+  ansible.builtin.set_fact:
+    _am_vmid: >-
+      {{ (_am_lxc_list.stdout | from_json
+          | selectattr('name', 'defined')
+          | selectattr('name', 'equalto', attach_mounts_guest)
+          | map(attribute='vmid') | list | first) | default('') | string }}
+
+- name: Host mounts | Assert the guest was found
+  ansible.builtin.assert:
+    that: _am_vmid | length > 0
+    fail_msg: >-
+      No container named {{ attach_mounts_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. Mountpoints cannot be attached to a
+      guest that `pct list` does not show.
+
+# The paths are the lab's, and the lab is where they are mounted. A typo would
+# otherwise produce a guest with an empty directory where its library should be,
+# and an app that reports every file missing.
+- name: Host mounts | Verify the host paths exist on the node
+  ansible.builtin.stat:
+    path: "{{ item.host }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_host_paths
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.host }}"
+
+- name: Host mounts | Assert every host path is a directory on the node
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.host }} does not exist as a directory on
+      {{ homelabinfra_config.proxmox.node }}. This platform attaches storage the
+      lab already provides; it does not create or mount it. Mount it on the node
+      first, then re-run.
+  loop: "{{ _am_host_paths.results }}"
+  loop_control:
+    label: "{{ item.item.host }}"
+
+- name: Host mounts | Read the guest's current configuration
+  ansible.builtin.command:
+    cmd: "pct config {{ _am_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_config
+  changed_when: false
+
+- name: Host mounts | Resolve which mountpoints are already attached
+  ansible.builtin.set_fact:
+    # Existing pairs as "<host>|<guest path>", and the indices already in use so a
+    # new mountpoint claims a free one instead of overwriting somebody else's.
+    _am_existing_pairs: >-
+      {{ _am_mp_lines
+         | map('regex_replace', '^mp[0-9]+:\s*([^,]+),.*mp=([^,]+).*$', '\1|\2')
+         | list }}
+    _am_used_indices: >-
+      {{ _am_mp_lines | map('regex_replace', '^mp([0-9]+):.*$', '\1')
+         | map('int') | list }}
+  vars:
+    _am_mp_lines: >-
+      {{ _am_config.stdout_lines | select('match', '^mp[0-9]+:') | list }}
+
+- name: Host mounts | Resolve the mountpoints still missing
+  ansible.builtin.set_fact:
+    _am_missing: >-
+      {{ attach_mounts_list
+         | rejectattr('host', 'in', _am_matched_hosts) | list }}
+  vars:
+    # A pair counts as present only when BOTH sides match: the same host path
+    # attached at a different guest path is not the mount this app asked for.
+    _am_matched_hosts: >-
+      {{ attach_mounts_list
+         | selectattr('host', 'defined')
+         | selectattr('path', 'defined')
+         | selectattr('host', 'in',
+             _am_existing_pairs | map('regex_replace', '\|.*$', '') | list)
+         | selectattr('path', 'in',
+             _am_existing_pairs | map('regex_replace', '^.*\|', '') | list)
+         | map(attribute='host') | list }}
+
+- name: Host mounts | Attach the missing mountpoints
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ _am_vmid }}
+      -mp{{ _am_next_index }} {{ item.host }},mp={{ item.path }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _am_missing }}"
+  loop_control:
+    label: "{{ item.host }} -> {{ item.path }}"
+    index_var: _am_loop_index
+  vars:
+    _am_next_index: >-
+      {{ ((_am_used_indices + range(0, 256) | list) | unique
+          | difference(_am_used_indices))[_am_loop_index] }}
+  changed_when: true
+
+# PVE writes the mountpoint into the guest config immediately, but a RUNNING
+# container does not see it until it restarts. Without this the deploy that added
+# the mount would find an empty directory, configure a root folder inside it, and
+# the app would report every file missing — while the next deploy, on a container
+# that had been restarted for some unrelated reason, would work. Only restarted
+# when something was actually attached.
+- name: Host mounts | Restart the guest so it sees the new mountpoints
+  ansible.builtin.command:
+    cmd: "pct reboot {{ _am_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _am_missing | length > 0
+  changed_when: true
+
+- name: Host mounts | Wait for the guest to answer SSH again
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[attach_mounts_guest].ansible_host }}"
+    port: 22
+    delay: 5
+    timeout: 300
+  when: _am_missing | length > 0
+
+- name: Host mounts | Report what is attached
+  ansible.builtin.debug:
+    msg: >-
+      {{ attach_mounts_guest }} (vmid {{ _am_vmid }}):
+      {{ _am_missing | length }} mountpoint(s) attached this run,
+      {{ attach_mounts_list | length - (_am_missing | length) }} already present.

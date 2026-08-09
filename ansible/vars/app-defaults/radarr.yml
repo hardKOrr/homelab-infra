@@ -1,0 +1,33 @@
+---
+# Default stack and app configuration for Radarr — film management.
+# Users override specific values in config/apps/radarr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# Shares the `servarr` role with Sonarr, Lidarr, Readarr and Prowlarr; see
+# vars/app-defaults/sonarr.yml for the annotated copy of these keys.
+
+radarr_defaults:
+  stack: media_stack
+
+  app:
+    media_kind: radarr
+
+    image: "lscr.io/linuxserver/radarr:latest"
+    port: 7878
+    container_port: 7878
+
+    config_path: "/opt/{{ instance }}/config"
+    # Which subdirectory of media_storage.library this app owns. The library
+    # itself is configured once for the lab in config/infrastructure.yml — an app
+    # says what part of it is its own, not where storage lives.
+    library_subpath: movies
+
+    puid: 1000
+    pgid: 1000
+
+  routing:
+    proxy: internal
+    access: internal
+    # Coupled to AuthenticationMethod External — the reverse proxy is the only
+    # authentication in front of this UI. See sonarr.yml.
+    identity: forward_auth

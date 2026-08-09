@@ -1,0 +1,46 @@
+# Migrate Servarr — bring an existing Sonarr/Radarr/Lidarr/Readarr/Prowlarr's
+# configuration onto a lab instance. Load with:
+#   rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/migrate-servarr.yaml
+#
+# Non-destructive: the source app is stopped only for the copy, started again
+# afterwards even on failure, and never modified. Run the app's Deploy job after
+# this one — it starts the app on the migrated database and verifies it.
+
+- id: 086482e8-59a6-57f1-8c4f-f0f3f9d86a39
+  uuid: 086482e8-59a6-57f1-8c4f-f0f3f9d86a39
+  name: Migrate Servarr
+  group: Apps
+  description: |-
+    Copy an existing Servarr app's configuration — history, library, profiles,
+    indexers and its API key — onto a lab instance. Run the app's Deploy job
+    afterwards. The source app is left running and unchanged.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: "Target lab instance name, e.g. radarr-1080p"
+    required: true
+  - name: source_host
+    description: "Address of the existing app, e.g. 192.168.1.15"
+    required: true
+  - name: source_config_path
+    description: "Its configuration directory, e.g. /var/lib/radarr"
+    required: true
+    value: /var/lib/radarr
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/migrate-servarr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          ARGS+=(-e "instance=${option.instance}")
+          ARGS+=(-e "source_host=${option.source_host}")
+          ARGS+=(-e "source_config_path=${option.source_config_path}")
+
+          exec lab-run playbooks/apps/migrate-servarr.yml "${ARGS[@]}"

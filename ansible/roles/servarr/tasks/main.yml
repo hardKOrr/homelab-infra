@@ -1,0 +1,340 @@
+---
+# servarr role — one Servarr application (Sonarr, Radarr, Lidarr, Readarr or
+# Prowlarr) as a Docker container on a stack host. Called from Play 2 of
+# playbooks/apps/<app>.yml. Target: the media_stack host.
+#
+# ONE ROLE, FIVE APPS. These five are the same program with a different media
+# type: same image family, same /config layout, same config.xml, same
+# /api/<v>/system/status contract. What differs between them — API version,
+# Prowlarr implementation name, download-client category field — is already a
+# table in ansible/vars/media-wiring.yml, which slice 504's wiring reads. Copying
+# the role five times would mean five places to fix every Servarr behaviour and a
+# second table describing the same apps. Each app still has its own playbook, its
+# own app-defaults file and its own one-click job, which is what the platform's
+# "one click per app" rule is about. Decision record:
+# .claude/meta/505-app-servarr/notes.md.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name (e.g. sonarr, sonarr-anime)
+#   homelabinfra_infra — infrastructure facts (may be absent pre-bootstrap)
+#
+# Exports (read by Play 3 to write the `media` registry key):
+#   servarr_media_kind, servarr_media_host, servarr_media_config_path
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind
+  ansible.builtin.set_fact:
+    _servarr_kind: "{{ app_config.app.media_kind }}"
+    # Servarr reads configuration overrides from <APPNAME>__SECTION__KEY.
+    _servarr_prefix: "{{ app_config.app.media_kind | upper }}"
+
+# The kind is not decoration: slice 504 refuses to wire an app whose kind is not
+# in this table, so a typo here would deploy an app that silently never joins the
+# media stack. Failing at deploy time names the problem where it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that: _servarr_kind in media_wiring.kinds
+    fail_msg: >-
+      app.media_kind is "{{ _servarr_kind }}", which ansible/vars/media-wiring.yml
+      does not define. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+- name: Resolve the app's API version from the wiring table
+  ansible.builtin.set_fact:
+    _servarr_api: "{{ media_wiring.kinds[_servarr_kind].api }}"
+
+# Storage is configured once for the lab in config/infrastructure.yml under
+# media_storage, not restated by every app. An app contributes one thing: which
+# subdirectory of the library it owns.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    # An app that owns no part of the library has no reason to see it: Prowlarr
+    # declares no library_subpath and therefore gets no mounts at all. app.mounts
+    # overrides both ways, which is how an app that needs the downloads directory
+    # without owning a library subpath would ask for it.
+    _servarr_mounts: >-
+      {{ app_config.app.mounts
+         | default([] if (app_config.app.library_subpath | default('') | length == 0)
+                   else ((app_config.media_storage | default({})).mounts | default([])),
+                   true) }}
+    _servarr_root_folders: >-
+      {{ [((app_config.media_storage | default({})).library | default('') ~ '/'
+           ~ (app_config.app.library_subpath | default('')))]
+         if ((app_config.media_storage | default({})).library | default('') | length > 0
+             and app_config.app.library_subpath | default('') | length > 0)
+         else (app_config.app.root_folders | default([])) }}
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ servarr_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid, not root: the app writes its own config.xml and
+# database here on first start.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# The library and download directories are not this platform's to create. They are
+# mounted on the Proxmox node, attached to the stack host as mountpoints by Play 1,
+# and mounted into the container at the SAME path they have on the host. Identical
+# paths on both sides are what let an app database migrated from another machine
+# keep resolving its files without a single path rewrite.
+#
+# This checks they arrived. A container started against a missing bind source gets
+# an empty directory, the root folder below is created inside it, and the app
+# reports its entire library missing — which reads like data loss and is not.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _servarr_mount_check
+  loop: "{{ _servarr_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared in
+      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      either the attach did not happen or the guest has not restarted since. This
+      platform attaches storage the lab already provides; it never creates it.
+  loop: "{{ _servarr_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# ── API key continuity ────────────────────────────────────────────────────────
+# The key is declared by this deploy rather than discovered after it, so the
+# credential exists before the container that uses it. On a re-run the key
+# already in config.xml wins: it is what the app answers to today and what every
+# Prowlarr Application and Bazarr connection in the lab was wired with, so
+# regenerating it would break wiring this platform itself created.
+- name: Read the existing config.xml (key continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.config_path }}/config.xml"
+  register: _servarr_config_existing
+  failed_when: false
+  no_log: true
+
+- name: Resolve the API key
+  ansible.builtin.set_fact:
+    _servarr_api_key: >-
+      {{ (_servarr_config_existing.content | default('') | b64decode
+          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join(''))
+         | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+  no_log: true
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ servarr_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true      # the compose file carries the API key
+  notify: Restart servarr
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/observability — a deploy ensures the image is
+# present, Watchtower is what moves it forward and reports it. Re-pulling :latest
+# on every deploy would make each run a silent, unreviewed upgrade.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ servarr_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ servarr_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+# ── Prove the app is USABLE, not merely alive ─────────────────────────────────
+# A Servarr container opens its port well before it has written config.xml, and a
+# v4 app that never had an authentication method chosen serves its setup screen
+# on every UI path while looking perfectly healthy from outside. Three checks,
+# each failing a state the port alone cannot distinguish:
+#
+#   1. config.xml exists and names an authentication method — not the "choose one"
+#      state that leaves the web UI stuck on a setup page.
+#   2. /api/<v>/system/status answers with the app's own name, authenticated with
+#      the key this deploy declared. That proves the key is live, which is the one
+#      thing every piece of media wiring depends on.
+#   3. the same call WITHOUT the key is refused. Without this, an app configured
+#      DisabledForLocalAddresses looks identical to a secured one from the stack
+#      host, and the lab ships an unauthenticated API on the LAN.
+- name: Wait for the app to write its config.xml
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.config_path }}/config.xml"
+  register: _servarr_config
+  until: _servarr_config.content is defined
+  retries: "{{ servarr_config_retries }}"
+  delay: "{{ servarr_config_delay }}"
+  failed_when: false
+  no_log: true
+
+- name: Read the effective API key and authentication method
+  ansible.builtin.set_fact:
+    # config.xml is the authority, not the compose environment: the override
+    # spelling differs across Servarr versions, and an ignored override must not
+    # leave the registry holding a key the app never adopted.
+    _servarr_effective_key: >-
+      {{ (_servarr_config.content | default('') | b64decode
+          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join('')) }}
+    _servarr_auth_method: >-
+      {{ (_servarr_config.content | default('') | b64decode
+          | regex_search('<AuthenticationMethod>([^<]+)</AuthenticationMethod>', '\1')
+          | default([], true) | join('')) }}
+  no_log: true
+
+- name: Assert the app wrote a usable configuration
+  ansible.builtin.assert:
+    that:
+      - _servarr_effective_key | length > 0
+      - _servarr_auth_method | length > 0
+      - _servarr_auth_method != 'None'
+    fail_msg: >-
+      {{ instance }} came up but has not configured itself:
+      config.xml at {{ app_config.app.config_path }} carries
+      {{ 'no API key' if _servarr_effective_key | length == 0 else 'no authentication method' }}.
+      A Servarr app in that state serves its first-run setup page on every UI
+      path while the port answers normally. Check the container log
+      (`docker logs {{ instance }}`) and that
+      {{ _servarr_prefix }}__AUTH__METHOD is a spelling this image honours.
+
+- name: Query the app's own status endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_status
+  until: _servarr_status.status | default(0) == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: Assert the app identifies itself as {{ _servarr_kind }}
+  ansible.builtin.assert:
+    that: (_servarr_status.json.appName | default('') | lower) == _servarr_kind
+    fail_msg: >-
+      {{ app_config.app.port }} answered the {{ _servarr_kind }} status endpoint
+      as "{{ _servarr_status.json.appName | default('nothing') }}". Either
+      app.image and app.media_kind disagree, or another container already holds
+      that port on this stack host.
+
+- name: Call the status endpoint with no API key
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+    status_code: [200, 401]
+  register: _servarr_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses an unauthenticated caller
+  ansible.builtin.assert:
+    that: _servarr_unauthenticated.status == 401
+    fail_msg: >-
+      {{ instance }} served its API to a caller with no key. Its
+      AuthenticationRequired is "{{ app_config.app.auth_required | default('Enabled') }}"
+      as this deploy asked, but the running app answered anyway — anything on the
+      LAN can read and rewrite this app's library. Confirm the setting took in
+      {{ app_config.app.config_path }}/config.xml.
+
+# ── Point the app at its library ──────────────────────────────────────────────
+# A Servarr app with no root folder accepts nothing: every add, every import and
+# every search needs somewhere to put the result. Configuring it here is the
+# difference between a deployed app and a usable one.
+#
+# The directory is asserted, never created. It lives on storage the lab already
+# provides and this platform does not write into it — a missing path is a
+# configuration answer the operator owns, not something to invent on their NFS.
+- name: Verify the root folder exists
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: _servarr_root_check
+  loop: "{{ _servarr_root_folders }}"
+
+- name: Assert the root folder exists before configuring it
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item }} does not exist inside {{ instance }}. It is
+      media_storage.library plus app.library_subpath. Either create that
+      directory on the library, or correct app.library_subpath in
+      config/apps/{{ instance }}.yml. Nothing is created here — this is the
+      lab's storage, not the platform's.
+  loop: "{{ _servarr_root_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Read the root folders the app already has
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_rootfolders
+  changed_when: false
+  no_log: true
+  when: _servarr_root_folders | length > 0
+
+# Added, never reconciled: an operator who adds a second root folder in the UI
+# keeps it. This deploy owns the one it configures and nothing else — the same
+# fire-and-forget rule the rest of the platform follows.
+- name: Configure the root folder
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
+    method: POST
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    body_format: json
+    body:
+      path: "{{ item }}"
+    status_code: 201
+  loop: "{{ _servarr_root_folders }}"
+  when:
+    - _servarr_root_folders | length > 0
+    - item not in (_servarr_rootfolders.json | default([]) | map(attribute='path') | list)
+  no_log: true
+
+# ── Store the credential ──────────────────────────────────────────────────────
+# Written under the same canonical item name wire-media-stack.yml reads, so the
+# stack wiring finds the key without the config.xml discovery pass. Stored after
+# the app has proven the key works, never before.
+- name: Store and verify the API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _servarr_effective_key }}"
+    vault_item_secret_fields: [api_key]
+
+# ── Hand the endpoint back to the playbook ────────────────────────────────────
+# config_path is the HOST path, not the container's /config: it is what
+# wire-media-stack.yml slurps config.xml from when it falls back to discovery.
+- name: Export the media registry entry to the playbook
+  ansible.builtin.set_fact:
+    servarr_media_kind: "{{ _servarr_kind }}"
+    servarr_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
+    servarr_media_config_path: "{{ app_config.app.config_path }}"

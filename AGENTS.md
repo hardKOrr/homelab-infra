@@ -20,6 +20,7 @@ ansible/
     apps/
       <app>.yml                    # deploy app (idempotent — re-run = update config/binary)
       remove.yml                   # remove app: stop container, unwire Caddy/Authentik/Uptime Kuma/DNS
+      migrate-servarr.yml          # stage an existing Servarr app's config onto a lab instance
     proxmox/
       create-lxc.yml
       create-vm.yml
@@ -40,6 +41,7 @@ ansible/
       lxc-create.yml
       vm-create.yml
       ip-to-vmid.yml
+      attach-host-mounts.yml       # attach storage the node already mounts to a guest
     wiring/                        # platform wiring tasks (conditional on provider)
       caddy.yml
       nginx.yml
@@ -71,6 +73,8 @@ ansible/
     docker/                        # installs Docker Engine (Debian only)
     _template-native/              # copy for new native LXC apps; includes files/ with lab script placeholders
     _template-docker/              # copy for new Docker apps
+    servarr/                       # Sonarr/Radarr/Lidarr/Readarr/Prowlarr — one role, five apps
+                                   # (same program, different media type; see the role header)
     <app>/                         # one role per deployable app; ships files/lab-* scripts
   vars/
     homelabinfra-defaults.yml      # global defaults (git-managed)

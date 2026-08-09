@@ -1,0 +1,37 @@
+---
+# Default stack and app configuration for Lidarr — music management.
+# Users override specific values in config/apps/lidarr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# Shares the `servarr` role with Sonarr, Radarr, Readarr and Prowlarr; see
+# vars/app-defaults/sonarr.yml for the annotated copy of these keys.
+
+lidarr_defaults:
+  stack: media_stack
+
+  app:
+    media_kind: lidarr
+
+    # Mainline, not the plugins branch. Deemix and Slskd are plugins-branch
+    # download clients: wiring either one to a mainline Lidarr fails, and slice
+    # 504 reports that rather than posting a client the app cannot use. Set
+    # image to a plugins tag here if the lab runs those clients.
+    image: "lscr.io/linuxserver/lidarr:latest"
+    port: 8686
+    container_port: 8686
+
+    config_path: "/opt/{{ instance }}/config"
+    # Which subdirectory of media_storage.library this app owns. The library
+    # itself is configured once for the lab in config/infrastructure.yml — an app
+    # says what part of it is its own, not where storage lives.
+    library_subpath: music
+
+    puid: 1000
+    pgid: 1000
+
+  routing:
+    proxy: internal
+    access: internal
+    # Coupled to AuthenticationMethod External — the reverse proxy is the only
+    # authentication in front of this UI. See sonarr.yml.
+    identity: forward_auth

@@ -5,9 +5,7 @@
 # Caddy subdomain (radarr.yourdomain.com), and Authentik app name.
 # For multiple instances, use unique filenames: radarr-4k.yml, radarr-hd.yml, radarr-kids.yml.
 #
-# Only set values that differ from the defaults. Radarr's defaults live in
-# vars/app-defaults/radarr.yml, added by the radarr app contribution
-# (see playbooks/apps/README.md for the contributor guide).
+# Only set values that differ from the defaults in vars/app-defaults/radarr.yml.
 # This file persists after removal — it is your restore point.
 
 # ── Stack assignment (Docker app) ──────────────────────────────────────────────
@@ -17,7 +15,12 @@ stack: media_stack     # which Docker stack host this app runs on
 
 # ── App config ─────────────────────────────────────────────────────────────────
 app:
-  root_folder: /media/movies   # path inside the container to your movie library
+  library_subpath: movies      # which subdirectory of media_storage.library this
+                               # instance owns — it becomes Radarr's root folder.
+                               # Separate instances own separate subpaths, e.g.
+                               # movies/sqp-1-1080p and movies/sqp-1-2160p.
+                               # media_storage itself is configured once for the
+                               # lab in config/infrastructure.yml.
   # port: 7878                 # override the default port only when running
   #                            # multiple Radarr instances on the same stack host
 

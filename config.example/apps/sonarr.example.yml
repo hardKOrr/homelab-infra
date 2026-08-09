@@ -1,0 +1,46 @@
+---
+# Sonarr instance config.
+# Copy to config/apps/sonarr.yml (or sonarr-anime.yml, sonarr-4k.yml, etc.).
+# The filename you choose IS the instance name: it becomes the hostname,
+# Caddy subdomain (sonarr.yourdomain.com), and Authentik app name.
+#
+# Only set values that differ from the defaults in vars/app-defaults/sonarr.yml.
+# This file persists after removal — it is your restore point.
+#
+# Nothing below is required. An empty file deploys a working Sonarr.
+
+# ── Stack assignment (Docker app) ──────────────────────────────────────────────
+# Sonarr runs on a shared Docker stack host, so its CPU/RAM belong to that host,
+# not to this file. The per-app knob is which stack host to place it on.
+stack: media_stack
+
+# ── App config ─────────────────────────────────────────────────────────────────
+# app:
+#   library_subpath: tv      # which subdirectory of media_storage.library this
+#                            # instance owns — it becomes the app's root folder.
+#                            # A second Sonarr for anime would set tv/anime.
+#                            # The library itself is configured once for the lab
+#                            # in config/infrastructure.yml under media_storage;
+#                            # this platform never creates or manages that storage,
+#                            # it only attaches what the node already mounts.
+#   port: 8989               # override only when running two Sonarrs on one stack host
+#   image: "lscr.io/linuxserver/sonarr:latest"   # pin a tag to stop Watchtower moving it
+#   puid: 1000               # uid/gid the app runs as; must be able to write the library
+#   pgid: 1000
+#   extra_env: {}            # any additional container environment variables
+
+# ── Routing ────────────────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal          # internal | external — WHICH reverse proxy handles this app
+#   access: internal         # internal | public — WHO may reach it
+#   identity: forward_auth   # none | catalog | oidc | forward_auth
+#
+# forward_auth is the default for this app and it is not arbitrary: the deploy
+# configures Sonarr with AuthenticationMethod External, meaning Sonarr runs no
+# login of its own and trusts the reverse proxy to have identified the user. If
+# you change identity away from forward_auth, set app.auth_method to Forms and
+# create a user inside the app, or the UI is open to anyone who can reach the route.
+#   app:
+#     auth_method: External  # External | Forms | Basic
+#     auth_required: Enabled # Enabled | DisabledForLocalAddresses. Enabled is what
+#                            # makes the API demand its key from every caller.

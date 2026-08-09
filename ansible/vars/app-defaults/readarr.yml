@@ -1,0 +1,33 @@
+---
+# Default stack and app configuration for Readarr — book management.
+# Users override specific values in config/apps/readarr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# Shares the `servarr` role with Sonarr, Radarr, Lidarr and Prowlarr; see
+# vars/app-defaults/sonarr.yml for the annotated copy of these keys.
+
+readarr_defaults:
+  stack: media_stack
+
+  app:
+    media_kind: readarr
+
+    image: "lscr.io/linuxserver/readarr:develop"
+    port: 8787
+    container_port: 8787
+
+    config_path: "/opt/{{ instance }}/config"
+    # Which subdirectory of media_storage.library this app owns. The library
+    # itself is configured once for the lab in config/infrastructure.yml — an app
+    # says what part of it is its own, not where storage lives.
+    library_subpath: books
+
+    puid: 1000
+    pgid: 1000
+
+  routing:
+    proxy: internal
+    access: internal
+    # Coupled to AuthenticationMethod External — the reverse proxy is the only
+    # authentication in front of this UI. See sonarr.yml.
+    identity: forward_auth
