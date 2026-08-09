@@ -299,6 +299,19 @@
       {{ (_vault_grant_write.stdout | default('') | trim)[:200] }}
   when: _vault_grant_write.rc | default(0) != 0
 
+# `bw get` answers from the CLI's local vault cache, so a readback issued straight
+# after a successful write re-reads the pre-write copy and reports the grant
+# missing. The item write below already sequences its readback behind a sync for
+# the same reason.
+- name: Vault | Synchronize after the collection grant
+  ansible.builtin.command:
+    argv: [bw, sync]
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: _vault_grant_write is changed
+
 - name: Vault | Read the grants back
   ansible.builtin.command:
     argv:
