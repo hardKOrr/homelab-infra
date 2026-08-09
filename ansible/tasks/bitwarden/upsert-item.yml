@@ -97,6 +97,14 @@
 # renders to a string, and to_json would then emit the member list as a JSON
 # string instead of an array. Status 2 is Confirmed; invited or accepted members
 # cannot hold collection rights yet.
+#
+# `| from_json | to_json` on a captured stdout is load-bearing, not decoration, and
+# every environment variable in this file that carries JSON needs it. Ansible
+# converts a rendered template that parses as a data structure back INTO one, then
+# stringifies it for the environment — so `{{ result.stdout }}` holding
+# `{"a": "b"}` arrives at python as `{'a': 'b'}` and json.loads dies at column 2.
+# Round-tripping through to_json marks the value as text and it survives intact.
+# (This is why the item write below already works: its values are to_json output.)
 - name: Vault | Create the canonical collection
   ansible.builtin.shell: |
     set -euo pipefail
@@ -118,7 +126,7 @@
   environment:
     VAULT_ORG_ID: "{{ _vault_org_id }}"
     VAULT_COLLECTION_NAME: "{{ vault_collection_name | default('platform-secrets') }}"
-    VAULT_ORG_MEMBERS: "{{ _vault_members.stdout }}"
+    VAULT_ORG_MEMBERS: "{{ _vault_members.stdout | from_json | to_json }}"
   when: _vault_collection_id | length == 0
   changed_when: true
   delegate_to: localhost
@@ -260,7 +268,7 @@
     executable: /bin/bash
   environment:
     VAULT_COLLECTION_ID: "{{ _vault_collection_id }}"
-    VAULT_COLLECTION_JSON: "{{ _vault_collection_detail.stdout }}"
+    VAULT_COLLECTION_JSON: "{{ _vault_collection_detail.stdout | from_json | to_json }}"
     VAULT_ORG_ID: "{{ _vault_org_id }}"
     VAULT_SELF_MEMBER_ID: "{{ _vault_self_member_id }}"
   when:
