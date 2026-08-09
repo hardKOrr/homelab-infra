@@ -312,8 +312,8 @@
     VAULT_ORG_ID: "{{ _vault_org_id }}"
     VAULT_SELF_MEMBER_ID: "{{ _vault_self_member_id }}"
   when:
-    - not (_vault_collection_grant_verified | default(false))
-    - _vault_collection_users
+    - _vault_grant_check_due | default(false)
+    - _vault_collection_users | default([])
       | selectattr('id', 'equalto', _vault_self_member_id)
       | selectattr('manage', 'defined') | selectattr('manage') | list | length == 0
   register: _vault_grant_write
