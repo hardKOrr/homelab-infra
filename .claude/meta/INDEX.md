@@ -28,7 +28,7 @@ all tagged `homelab-infra`, all built by this repo:
 | **Serves HTTPS** | One `*.wasitacatisaw.cc` Let's Encrypt certificate via Cloudflare DNS-01 covers all six estate hostnames; every one verifies. |
 | **Keeps its secrets in the vault** | Vault mode, `facts.yml` secret-free, the automation account drives every write, and the fail-closed guarantee has been tested by injection. |
 | **Backs itself up** | PBS holds 30 snapshots — five consecutive nights for each of six guests, unattended. |
-| **Is monitored** | Prometheus scrapes all seven guests. Uptime Kuma is initialized and holds an API key, but registers no monitors yet — see below. |
+| **Is monitored** | Prometheus scrapes all seven guests. Uptime Kuma is initialized, holds an API key, and its wiring now registers monitors over socket.io — verified end to end against 2.5.0, though not yet on the lab's own instance. |
 
 **The sharpest lesson of 2026-08-08 came from Uptime Kuma.** It had been deployed,
 healthy and green since 2026-08-03 while sitting on its "choose a database" setup screen
@@ -38,11 +38,14 @@ up, so an app waiting for a human is indistinguishable from a working one. Worse
 role read Kuma's `404 Cannot POST /setup` as "already initialised": **an error code
 interpreted as success**.
 
-It is initialized now, with its account and API key both minted by the role. The
-remaining gap moved to **303**: Kuma has no REST monitor API in any version, so that
-slice's wiring has been probing the front end's catch-all route. 404 proved socket.io is
-drivable from Ansible with four `uri` tasks and no Python client — which is the
-dependency 303 rejected Kuma v1 to avoid — so the rework is unblocked.
+It is initialized now, with its account and API key both minted by the role, and 303's
+wiring was rebuilt on socket.io the same day. That rework found the same class of defect
+three more times: the role's Ntfy channel sat behind a REST probe that could never pass,
+so `monitoring.notification_id` was never written and no monitor could have notified
+anyone; `status.yml` read monitors from an endpoint that returns HTML, so Lab Status could
+only ever report zero; and the deploy notification told the operator registration waited
+on an API key it does not use. **One dead premise had produced four separate silent
+failures, in four files, none of which any gate could see.**
 
 ## Standing lessons
 
@@ -66,6 +69,15 @@ gates green, eleven of them in the seam between the repo and the machine that ru
 Uptime Kuma is the same lesson one level up: the run was green, the app was not started.
 Worth adding to the gates: a smoke target that provisions one throwaway guest,
 `shellcheck` over `rundeck/*.sh` + `ansible/scripts/*.sh`, and a file-mode assertion.
+
+**A wrong premise about an external API does not stay in one file.** "Uptime Kuma has a
+REST API" was wrong, and it independently broke the wiring, the role's notification
+channel, the Lab Status report and a deploy notification — four silent failures, each of
+which looked like working code in review. When a premise about a third-party surface turns
+out to be false, grep for every reader of that surface before closing the slice. The cheap
+way to establish the truth is to read the vendor's own source in the running container and
+then rehearse against a throwaway instance of the same image; both together cost under an
+hour here and produced facts no amount of reasoning would have.
 
 **Convergence was the least-verified property in the repo**, despite being the one the
 day-2 model leans on hardest ("re-running a deploy IS the update mechanism"). It was
@@ -124,13 +136,13 @@ credential, or mutation leg explicit.
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | wiring runs every bootstrap; unwire needs a removal run |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists; see below |
 | 302 | [Authentik wire/unwire](302-wiring-authentik/README.md) | second-deploy lookup fixed; browser sign-in leg open |
-| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | **needs rework, not acceptance.** Kuma has no REST monitor API in any version, so this slice's probe, delete and verify have been passing against the front end's catch-all route. 404 proved socket.io is drivable from Ansible with no new dependency; the events to move onto are in its notes |
+| 303 | [Uptime Kuma wire/unwire](303-wiring-uptime-kuma/README.md) | reworked onto socket.io 2026-08-08 and exercised live against a throwaway 2.5.0 — create, re-wire, drift, unwire, re-unwire and three degradation paths all checked in Kuma's database. Only a real DOWN/UP reaching Ntfy is unobserved, and it needs the lab's own instance and a real token |
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API creds |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open |
 | 400 | [Vaultwarden](400-app-vaultwarden/README.md) | serving, converging and driving every vault write; browser vault CRUD unobserved |
 | 403 | [Authentik](403-app-authentik/README.md) | one app deployed with `routing.identity: forward_auth`, observed end to end |
-| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | reopened and largely closed 2026-08-08 — initialized, admin account and API key all scripted after five days of doing nothing. Only the Ntfy notification channel is unobserved |
+| 404 | [Uptime Kuma](404-app-uptime-kuma/README.md) | initialized, admin account and API key all scripted after five days of doing nothing. Its Ntfy channel was moved off the dead REST path by 303 and proved on a throwaway instance; unobserved on the lab's own |
 | 405 | [Grafana + Prometheus](405-app-grafana/README.md) | five of six observed 2026-08-08; only admin sign-in remains |
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | running live on the real domain; a second estate would close it |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | a removal run against a stopped Caddy or Authentik, to confirm the degradation fix |
@@ -164,10 +176,9 @@ implemented one. None are new features.
 
 ## Recommended order
 
-1. **Rework 303's wiring onto socket.io.** Uptime Kuma is initialized and holds an API
-   key, but no monitor has ever been registered and the current REST implementation
-   cannot register one. The event sequence is recorded in 303's notes. This is the last
-   thing standing between the platform and the monitoring half of its day-2 promise.
+1. **Run a deploy against the lab's own Uptime Kuma.** 303's wiring is proved against a
+   throwaway 2.5.0, not against .0.14 — which still holds zero monitors. One app deploy
+   registers one, and a DOWN/UP on it closes the last acceptance item on both 303 and 404.
 2. **Make a deploy assert usability, not liveness.** Kuma passed four green runs while
    unstarted because "container healthy" was the whole test. Every app role wants one
    check that only an initialized application can pass — for Kuma that turned out to be
@@ -259,6 +270,12 @@ would be wrong without them.
 
 **Registry and wiring**
 
+- **Uptime Kuma is driven over socket.io, never REST** — no version has a REST monitor
+  API, and its catch-all route answers any unmatched path with 200 `text/html`, so a
+  status-only check reports an API that is not there. `ansible/tasks/kuma/` holds the
+  shared conversation (session, call, poll, drain); the credential is
+  `monitoring.admin_password`, not the API key. Any new Kuma reader goes through those
+  helpers.
 - **Registry keys** (CONTRACT.md §3): `monitoring` (renamed from `uptime_kuma` by 303),
   `metrics`, `backups`, `runner` (written by `bootstrap-rundeck.sh`, not a playbook),
   `media` (instance-keyed, not role-keyed, because a lab runs several Sonarrs).

@@ -1,0 +1,109 @@
+---
+# Open an authenticated Uptime Kuma socket.io session over engine.io long polling.
+# Included by tasks/wiring/uptime-kuma.yml, tasks/unwiring/uptime-kuma.yml and the
+# uptime-kuma role. Event mechanics and the frame grammar: tasks/kuma/call.yml.
+#
+# Inputs:
+#   kuma_base      — full base URL including scheme, e.g. http://192.168.0.14:3001
+#   kuma_user      — admin username
+#   kuma_password  — admin password
+#
+# Outputs:
+#   kuma_session_ready   — true only when the socket is open AND signed in
+#   kuma_session_url     — the polling URL including sid, consumed by tasks/kuma/call.yml
+#   kuma_session_reason  — why it is not ready, for the caller's warning
+#   kuma_session_frames  — every frame seen so far. The notification list is guaranteed
+#                          to be among them once the session is ready; other pushes from
+#                          the sign-in burst may or may not have arrived yet.
+#
+# NEVER fails. Uptime Kuma is a monitoring add-on: an instance that is unreachable, still
+# on its setup screen, or holding different credentials must degrade to a warning, never
+# take an app deploy down with it (slice 303 acceptance).
+
+- name: Kuma session | Reset the session state
+  ansible.builtin.set_fact:
+    kuma_session_ready: false
+    kuma_session_url: ""
+    kuma_session_reason: ""
+    kuma_session_frames: []
+
+- name: Kuma session | Sign in over socket.io
+  block:
+    - name: Kuma session | Open the engine.io session
+      ansible.builtin.uri:
+        url: "{{ kuma_base }}/socket.io/?EIO=4&transport=polling"
+        return_content: true
+        status_code: 200
+        timeout: 15
+      register: _kuma_open
+      changed_when: false
+
+    # regex_findall, not regex_search: regex_search returns None when nothing matches and
+    # `| first` on None raises a templating error rather than producing the clean
+    # "no session id" message below. An Uptime Kuma that has not chosen a database yet
+    # reaches exactly that path — its setup stub serves the setup page for EVERY route,
+    # /socket.io/ included, so the handshake comes back as HTML with no sid in it.
+    - name: Kuma session | Resolve the session id
+      ansible.builtin.set_fact:
+        kuma_session_url: >-
+          {{ kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{
+             (_kuma_open.content | regex_findall('"sid":"([^"]+)"') | first) | default('') }}
+
+    - name: Kuma session | Assert the session opened
+      ansible.builtin.assert:
+        that: kuma_session_url is not search('sid=$')
+        fail_msg: >-
+          {{ kuma_base }} answered the engine.io handshake with no session id — it is
+          most likely still on its setup screen and has no database yet.
+
+    # Engine.io opens the transport; this attaches to the default socket.io namespace,
+    # which is what makes events addressable at all.
+    - name: Kuma session | Attach to the default namespace
+      ansible.builtin.uri:
+        url: "{{ kuma_session_url }}"
+        method: POST
+        body: "40"
+        body_format: raw
+        headers:
+          Content-Type: "text/plain;charset=UTF-8"
+        status_code: 200
+        timeout: 15
+      changed_when: false
+
+    # No drain between the attach and the sign-in: the connect frames are collected by the
+    # sign-in's own poll loop and kept in kuma_session_frames, so nothing is thrown away.
+    #
+    # Authenticates the SOCKET. An Uptime Kuma REST API key cannot do this — it authorises
+    # /metrics and the badge endpoints only — which is why the wiring reads
+    # monitoring.admin_user and monitoring.admin_password rather than monitoring.token.
+    - name: Kuma session | Sign in
+      ansible.builtin.include_tasks: call.yml
+      vars:
+        kuma_call_event: login
+        kuma_call_args:
+          - username: "{{ kuma_user }}"
+            password: "{{ kuma_password }}"
+        kuma_call_ack_id: 0
+        kuma_call_secret: true
+
+    - name: Kuma session | Record the signed-in session
+      ansible.builtin.set_fact:
+        kuma_session_ready: "{{ kuma_call_ok | bool }}"
+        kuma_session_reason: "{{ '' if kuma_call_ok | bool else kuma_call_reason }}"
+
+    # The sign-in acknowledgement is queued BEFORE the account's lists, so the session is
+    # not fully described until the notification list has actually landed. Waiting for it
+    # here means every caller can read it out of kuma_session_frames without racing.
+    # tasks/kuma/drain.yml carries the full account.
+    - name: Kuma session | Wait for the notification list to be pushed
+      ansible.builtin.include_tasks: drain.yml
+      vars:
+        kuma_await_pattern: '42\["notificationList",'
+      when: kuma_session_ready | bool
+  rescue:
+    - name: Kuma session | Record why the session could not be opened
+      ansible.builtin.set_fact:
+        kuma_session_ready: false
+        kuma_session_reason: >-
+          {{ kuma_base }} did not complete a socket.io handshake
+          ({{ ansible_failed_result.msg | default('no detail') | trim }})

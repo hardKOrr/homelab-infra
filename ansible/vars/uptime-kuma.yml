@@ -1,0 +1,13 @@
+---
+# Names the uptime-kuma role creates and the wiring tasks look objects up by.
+#
+# They live here rather than in roles/uptime-kuma/defaults/main.yml because both sides
+# need them and a role default is not visible to tasks/wiring/uptime-kuma.yml. One
+# definition, two readers: the role includes this file at the top of its tasks, the
+# wiring halves include it before they resolve a notification channel.
+#
+# Changing a name here orphans whatever the previous name created — Uptime Kuma keeps the
+# old object, and the next run creates a second one alongside it.
+
+uptime_kuma_notification_name: "homelab-infra ntfy"
+uptime_kuma_api_key_name: "homelab-infra"

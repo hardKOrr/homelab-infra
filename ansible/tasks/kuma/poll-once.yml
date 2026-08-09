@@ -1,0 +1,79 @@
+---
+# One long-poll read of an Uptime Kuma socket.io session. Looped by tasks/kuma/call.yml
+# and tasks/kuma/drain.yml; not useful on its own. `kuma_done_pattern` is what the caller
+# is waiting for — an acknowledgement frame for a call, a server push for a drain.
+#
+# Every task here is a no-op once the acknowledgement has arrived (kuma_call_done) or the
+# transport has gone (kuma_call_dead), so the caller's loop can be a plain fixed range
+# instead of loop state built across `until` retries (.claude/specs/jinja-string-typing.md).
+
+- name: Kuma poll | Read pending frames
+  ansible.builtin.uri:
+    url: "{{ kuma_session_url }}"
+    return_content: true
+    status_code: 200
+    timeout: "{{ kuma_poll_timeout | default(40) | int }}"
+  register: _kuma_poll
+  failed_when: false
+  changed_when: false
+  when:
+    - not (kuma_call_done | bool)
+    - not (kuma_call_dead | bool)
+
+# Engine.io separates the frames in one poll response with 0x1e. The escape is left for
+# the REGEX engine to resolve rather than written as a Jinja "\x1e" string literal: Jinja
+# passes that through as four literal characters, which silently splits nothing and makes
+# every batch look like one unmatchable frame.
+- name: Kuma poll | Split the batch into frames
+  ansible.builtin.set_fact:
+    kuma_batch: "{{ (_kuma_poll.content | default('')) | regex_findall('[^\\x1e]+') }}"
+  when:
+    - not (kuma_call_done | bool)
+    - not (kuma_call_dead | bool)
+
+# The server pings every 25 seconds and closes the session when the pong does not come
+# back. A poll loop that only reads therefore kills its own socket part-way through a
+# conversation — observed live, two polls after the ping.
+- name: Kuma poll | Answer the engine.io ping
+  ansible.builtin.uri:
+    url: "{{ kuma_session_url }}"
+    method: POST
+    body: "3"
+    body_format: raw
+    headers:
+      Content-Type: "text/plain;charset=UTF-8"
+    status_code: 200
+    timeout: 15
+  failed_when: false
+  changed_when: false
+  when:
+    - not (kuma_call_done | bool)
+    - not (kuma_call_dead | bool)
+    - "'2' in kuma_batch"
+
+# Both accumulators grow here, and they grow BEFORE the transport check below, so a batch
+# that carries the acknowledgement alongside a close frame is still read.
+# `kuma_frames` is scoped to the call in flight; `kuma_session_frames` keeps everything
+# the session has seen, because Uptime Kuma delivers its notification and monitor lists as
+# unsolicited pushes that may land against a different call's poll than the one that asked
+# for them.
+- name: Kuma poll | Accumulate the frames
+  ansible.builtin.set_fact:
+    kuma_frames: "{{ kuma_frames + kuma_batch }}"
+    kuma_session_frames: "{{ (kuma_session_frames | default([])) + kuma_batch }}"
+    kuma_call_done: >-
+      {{ (kuma_frames + kuma_batch)
+         | select('match', kuma_done_pattern) | list | length > 0 }}
+  when:
+    - not (kuma_call_done | bool)
+    - not (kuma_call_dead | bool)
+
+# `1` is the engine.io close frame, and a non-200 means the sid is no longer known. Either
+# way the conversation is over and every later poll would block for its full timeout.
+- name: Kuma poll | Notice a transport that has gone away
+  ansible.builtin.set_fact:
+    kuma_call_dead: true
+  when:
+    - not (kuma_call_done | bool)
+    - not (kuma_call_dead | bool)
+    - (_kuma_poll.status | default(0)) != 200 or ('1' in kuma_batch)

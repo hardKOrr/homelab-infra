@@ -12,15 +12,17 @@ uptime_kuma_defaults:
     port: 3001
     data_path: /opt/uptime-kuma/data
 
-    # Uptime Kuma 2.x. Version 1 exposes no REST API at all (socket.io only), and
-    # tasks/wiring/uptime-kuma.yml registers monitors over REST — see slice 404
-    # notes.md for the decision record. Pin a patch tag here to freeze upgrades.
+    # Uptime Kuma 2.x. Neither version has a REST API for monitors — the wiring drives
+    # socket.io either way — so what the 2.x pin buys is the scripted database setup.
+    # See slice 404 notes.md. Pin a patch tag here to freeze upgrades.
     image_tag: "2"
 
+    # Signs the socket in: this is the credential the wiring authenticates with.
     admin_user: admin
 
-    # Paste an API key created under Profile -> API Keys in the Uptime Kuma UI to
-    # skip the scripted key provisioning entirely. Leave empty for the normal path.
+    # Paste an API key created under Profile -> API Keys in the Uptime Kuma UI to skip
+    # the scripted key provisioning. The key authorises /metrics and the badge endpoints
+    # only — monitor registration does not use it. Leave empty for the normal path.
     api_key: ""
 
     monitor_interval: 60          # seconds between checks, applied to every monitor
@@ -29,5 +31,5 @@ uptime_kuma_defaults:
     proxy: internal
     access: internal            # LAN-only: an uptime dashboard maps the whole estate
     identity: catalog             # catalog tile only — Uptime Kuma has its own login;
-                                  # forward_auth would block the REST calls that
-                                  # register monitors
+                                  # forward_auth would block the socket.io session the
+                                  # wiring signs in with to register monitors

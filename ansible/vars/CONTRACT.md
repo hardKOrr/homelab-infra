@@ -88,10 +88,10 @@ read only by that provider's wiring tasks (slices 301–305):
 | `sso` | `admin_user`, `admin_password` | authentik | akadmin's generated sign-in credentials; nothing reads them, they are recorded so the operator can log in |
 | `notifications` | `user`, `password` | ntfy | publish account; `configure-watchtower.yml` needs the basic-auth pair because shoutrrr authenticates that way |
 | `notifications` | `token` | ntfy | publish-only access token on `topic`; every `uri`/`curl` consumer sends it as `Authorization: Bearer` |
-| `monitoring` | `notification_id` | uptime_kuma | id of the Ntfy notification channel attached to every monitor; written only when one was actually provisioned, because the wiring task gates on `is defined` |
+| `monitoring` | `notification_id` | uptime_kuma | id of the Ntfy notification channel attached to every monitor. A hint, not a dependency: the wiring resolves the channel by NAME from the live instance and accepts this id only if that instance still has it, because a rebuilt Uptime Kuma reuses ids from 1 and attaching a stale one fails the monitor's foreign key after the monitor row is already written |
 | `metrics` | `prometheus_host` | prometheus_grafana | loopback URL on the stack host; Prometheus is deliberately not routable, so this is for humans and on-host debugging |
 | `metrics` | `admin_user`, `admin_password` | prometheus_grafana | Grafana's generated sign-in credentials |
-| `monitoring` | `admin_user`, `admin_password` | uptime_kuma | generated sign-in credentials; nothing reads them, they are recorded so the operator can log in and mint the first API key |
+| `monitoring` | `admin_user`, `admin_password` | uptime_kuma | generated sign-in credentials, and the credential the WIRING authenticates with: Uptime Kuma has no REST monitor API in any version, so monitors are socket.io events and only an admin sign-in can emit them. An API key cannot. Without these two fields every app deploy skips monitor registration |
 | `backups` | `api_token_id`, `api_token_secret` | pbs | PBS API token the backup configuration authenticates with; PBS reveals a secret only at creation, so a lost secret forces token rotation |
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
@@ -214,7 +214,7 @@ The canonical top-level items are:
 | `homelab-infra/vaultwarden` | `admin_token` |
 | `homelab-infra/notifications` | `password`, `token` |
 | `homelab-infra/sso` | `token`, `admin_password`, `postgres_password`, `secret_key` |
-| `homelab-infra/monitoring` | `api_key`, `admin_password` |
+| `homelab-infra/monitoring` | `api_key`, `admin_password` (the wiring needs `admin_password`, not the key) |
 | `homelab-infra/metrics` | `admin_password` |
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |

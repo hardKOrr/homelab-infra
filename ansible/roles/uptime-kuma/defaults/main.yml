@@ -1,7 +1,9 @@
 ---
 # Role-internal defaults — not user-facing. User-facing knobs live in
 # vars/app-defaults/uptime-kuma.yml and config/apps/<instance>.yml.
+#
+# The names of the objects this role creates in Uptime Kuma are NOT here: the wiring
+# tasks need them too and a role default is invisible to them, so they live in
+# ansible/vars/uptime-kuma.yml, which this role includes as its first task.
 uptime_kuma_project_dir: "/opt/{{ instance }}"
 uptime_kuma_env_file: "/opt/{{ instance }}/.env"
-uptime_kuma_notification_name: "homelab-infra ntfy"
-uptime_kuma_api_key_name: "homelab-infra"

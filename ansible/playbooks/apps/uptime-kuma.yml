@@ -11,9 +11,11 @@
 #
 # Play 3 records the `monitoring` registry key (CONTRACT.md §3) BEFORE wiring, so a
 # standalone deploy registers Uptime Kuma exactly as a bootstrap run does. Every
-# later app deploy reads host + token from there to register its monitor.
+# later app deploy reads host + admin credentials from there to sign a socket.io session
+# in and register its monitor.
 #
-# Version 2.x is locked in — version 1 has no REST API. See the role header and
+# Version 2.x is locked in for its scripted database setup, not for an API: no version of
+# Uptime Kuma exposes REST monitor CRUD. See the role header and
 # .claude/meta/404-app-uptime-kuma/notes.md.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
@@ -244,6 +246,4 @@
           Monitoring is at https://{{ instance }}.{{ homelabinfra_infra.domain }},
           signed in as {{ _kuma_deploy_host.kuma_admin_username }}
           (password in Vaultwarden item homelab-infra/monitoring).
-          {{ 'Apps register their monitors automatically from their next deploy onward.'
-             if homelabinfra_infra.monitoring.token | default('') | length > 0
-             else 'No API key yet — add one in the UI and re-run this deploy to enable automatic monitor registration.' }}
+          Apps register their monitors automatically from their next deploy onward.

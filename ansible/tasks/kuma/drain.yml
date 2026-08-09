@@ -1,0 +1,35 @@
+---
+# Keep polling an Uptime Kuma socket.io session until a given server PUSH arrives.
+# Included by tasks/kuma/open-session.yml. Frame grammar: tasks/kuma/call.yml.
+#
+# Uptime Kuma answers some requests with an acknowledgement and delivers others as an
+# unsolicited push. Where a push is queued BEFORE its acknowledgement — `getMonitorList`
+# awaits sendMonitorList and only then calls back — reading the acknowledgement is enough,
+# because polls deliver in order. Sign-in is the opposite: the login handler calls back
+# first and pushes the account's notification, monitor and API-key lists afterwards, so a
+# session that stops polling at the login acknowledgement may never see them.
+#
+# That race is not theoretical. It produced a SECOND notification channel with the same
+# name on a lab that already had one: the channel list had not arrived yet, the existing
+# channel looked absent, and the run created a duplicate.
+#
+# Inputs:
+#   kuma_await_pattern — regex matching the frame to wait for, anchored at frame start
+#   kuma_await_polls   — poll budget (default 2; the push is one poll behind at most)
+
+- name: Kuma drain | Reset the poll state
+  ansible.builtin.set_fact:
+    kuma_frames: []
+    kuma_call_dead: false
+    kuma_done_pattern: "{{ kuma_await_pattern }}"
+    # Already there — nothing to wait for, and no poll spent finding that out.
+    kuma_call_done: >-
+      {{ (kuma_session_frames | default([]))
+         | select('match', kuma_await_pattern) | list | length > 0 }}
+
+- name: Kuma drain | Poll until the push arrives
+  ansible.builtin.include_tasks: poll-once.yml
+  loop: "{{ range(0, kuma_await_polls | default(2) | int) | list }}"
+  loop_control:
+    loop_var: kuma_poll_attempt
+    label: "drain poll {{ kuma_poll_attempt | int + 1 }}"

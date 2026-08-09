@@ -98,3 +98,92 @@ degradation contract — a monitoring provider must never fail an app deploy.
 
 **Do not take the Python `uptime-kuma-api` dependency.** Avoiding it is why v2 was
 chosen over v1, and 404 shows the transport does not require it.
+
+## 2026-08-08 (later) — reworked onto socket.io and exercised live
+
+Implemented and verified against a throwaway Uptime Kuma 2.5.0 (same image as the lab's,
+run on the monitoring-stack host on port 3999 and removed afterwards). Every claim below
+was checked in Kuma's sqlite database, not read off an acknowledgement.
+
+### What shipped
+
+Four shared task files under `ansible/tasks/kuma/`, because the role and both wiring
+halves were all going to need the same conversation:
+
+| File | Does |
+|---|---|
+| `open-session.yml` | handshake, attach namespace, sign in, wait for the notification list. Never fails |
+| `call.yml` | emit one event, poll until its `43<ack>` frame, decode it |
+| `poll-once.yml` | one long-poll read: split frames, pong, accumulate, notice a dead transport |
+| `drain.yml` | poll until a named server PUSH lands |
+
+Plus `ansible/vars/uptime-kuma.yml`, so the channel and key names have one definition that
+both the role and the wiring can read (a role default cannot reach the wiring).
+
+### Four defects the live rehearsal found that no gate could
+
+1. **`'{{ "\x1e" }}'` is not an escape.** Jinja passed the four literal characters through,
+   so the frame separator never matched, nothing ever split, and every acknowledgement was
+   invisible. Fixed by leaving the escape to the regex engine —
+   `regex_findall('[^\x1e]+')` — which does interpret it.
+2. **A read-only poll loop kills its own socket.** Engine.io pings every 25s and closes
+   the session when no pong comes back; observed dying two polls after the ping. Every
+   poll now answers a `2` with a `3`.
+3. **The sign-in acknowledgement is queued BEFORE the account's lists.** So a session that
+   stops polling at the login ack may never see `notificationList`. This is not
+   theoretical — it created a SECOND notification channel with the same name, because the
+   existing one looked absent. `drain.yml` exists for exactly this. Note the asymmetry:
+   `getMonitorList` awaits its push *before* calling back, so monitors never need it.
+4. **`regex_search(...) | first` raises on no match.** An Uptime Kuma still on its setup
+   screen serves the setup page for every path including `/socket.io/`, so the handshake
+   has no sid, and the operator got a templating traceback instead of "it has no database
+   yet". `regex_findall` degrades cleanly.
+
+### Payload facts, read out of 2.5.0's own server source
+
+- `add(monitor, cb)` requires `accepted_statuscodes` present and all strings.
+- `add` writes the monitor row and THEN attaches notifications, so a bad
+  `notificationIDList` returns `ok:false` over a monitor that exists. The wiring therefore
+  only ever attaches a channel id the live instance still reports, and verifies by reading
+  the list back rather than trusting the ack.
+- `editMonitor` assigns every column from the payload instead of merging — a partial
+  object blanks out everything it does not mention. The wiring lays its fields over the
+  full monitor object as Kuma reports it.
+- `deleteMonitor(id, deleteChildren, cb)` — `false` is passed explicitly so a group is
+  never cascaded into.
+- Notification config is **flat**. `Notification.save()` serialises the whole object it is
+  handed into the `config` column, so the old REST-shaped payload with a nested `config`
+  JSON string would have stored every provider setting one level too deep. The auth method
+  literal is `accessToken`; the old code said `token`, which silently sends unauthenticated
+  and an Ntfy that ships closed (401) rejects.
+
+### Scope taken beyond the wiring, and why
+
+- **The role's Ntfy channel was dead code.** It sat behind `_kuma_api_usable`, which could
+  never be true, so `monitoring.notification_id` was never written and no monitor this
+  platform registered could have notified anyone. 303 cannot meet acceptance item 1 with
+  it broken, so it moved onto socket.io too.
+- **`status.yml` could only ever report zero monitors** — it GETs `/api/monitors`, gets
+  HTML, finds no `.json`, and defaults to `[]`. Lab Status (503, marked done, "a fully
+  populated report") now reads through the same helpers.
+- Removed the REST probe, `_kuma_api_usable`, and the "monitor registration is not yet
+  wired" notice. The API key is still minted and stored — it authorises `/metrics` and the
+  badges — but nothing in the wiring path needs it, and the deploy notification no longer
+  claims registration depends on it.
+
+### Verified live
+
+| Scenario | Result |
+|---|---|
+| First wire | `changed=1`; monitor row created, `monitor_notification` row attached |
+| Re-wire | `changed=0` |
+| Drift (url + interval) | `changed=1`; url, interval, retry_interval, timeout all updated, channel still attached |
+| Unwire | monitor row gone |
+| Unwire again | `changed=0` |
+| Host refusing connections | warning, `failed=0`, deploy continues |
+| Wrong password | warning naming `authIncorrectCreds`, `failed=0` |
+| Kuma still on its setup screen | warning naming the setup screen, `failed=0` |
+| Channel provisioning run twice | exactly one channel — the duplicate is gone |
+
+Both gates green. Still unobserved: a real DOWN/UP transition reaching Ntfy — the
+rehearsal used a dummy token, so acceptance item 2 needs the lab's real channel.

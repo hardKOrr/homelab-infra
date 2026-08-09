@@ -2,21 +2,21 @@
 # uptime-kuma role — Docker Compose deployment on a stack host.
 # Called from Play 2 of playbooks/apps/uptime-kuma.yml. Target: the monitoring_stack host.
 #
-# VERSION — Uptime Kuma 2.x, locked by slice 404. Version 1 has no REST API at all
-# (socket.io only) and tasks/wiring/uptime-kuma.yml registers monitors over REST.
-# Full decision record in .claude/meta/404-app-uptime-kuma/notes.md.
+# VERSION — Uptime Kuma 2.x, locked by slice 404. Full record in that slice's notes.md.
+# The version choice is no longer about a REST API: NEITHER version has one for monitors,
+# notifications or accounts. Everything below that mutates Uptime Kuma is a socket.io
+# event carried over engine.io long polling with plain `uri` calls — see
+# tasks/kuma/call.yml. What the 2.x pin actually buys is the database-setup step.
 #
-# CREDENTIALS — the admin password is generated once and reused from the registry
-# on re-run; it is recorded in gitignored config/.generated/facts.yml so the
-# operator can sign in. The REST API key is what the wiring tasks authenticate
-# with.
+# CREDENTIALS — the admin password is generated once and reused from the registry on
+# re-run, and it is what signs a socket in. The REST API key is a separate thing that
+# authorises /metrics and the badge endpoints; nothing in the wiring path needs it.
 #
-# DEGRADED PATH — every REST call below tolerates a non-2xx answer and reports it
-# instead of failing the deploy. If the scripted setup cannot obtain a working API
-# key, the role records everything it does know, prints the exact manual step, and
-# leaves monitoring.token empty; tasks/wiring/uptime-kuma.yml already probes the
-# API and skips monitor registration with a warning when it is unusable (slice 303).
-# Monitoring is an add-on and must never be the thing that fails an app deploy.
+# DEGRADED PATH — an Uptime Kuma that will not answer, will not sign in, or refuses the
+# notification channel produces a warning and a recorded gap, never a failed deploy.
+# Monitoring is an add-on and must never be the thing that fails an app deploy. The one
+# thing this role does fail on is an admin account it was told to create and could not:
+# reading an error as success is what let this app sit unusable for five days.
 #
 # Variables available:
 #   app_config         — merged defaults + user config (from Play 1)
@@ -26,6 +26,10 @@
 # Exports (read by Play 3 to write the monitoring registry key):
 #   kuma_url, kuma_api_key, kuma_admin_username, kuma_admin_password,
 #   kuma_notification_id
+
+- name: Load the Uptime Kuma object names
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/uptime-kuma.yml"
 
 # ── Directories ───────────────────────────────────────────────────────────────
 - name: Create project directory
@@ -376,31 +380,6 @@
                if _kuma_api_key | length > 0
                else 'Uptime Kuma has no API key; see the one-time step below.') }}
 
-- name: Probe the REST API with the resolved key
-  ansible.builtin.uri:
-    url: "{{ _kuma_base }}/api/monitors"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ _kuma_api_key }}"
-      Accept: "application/json"
-    status_code: [200, 401, 403, 404]
-    timeout: 10
-  register: _kuma_probe
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when: _kuma_api_key | length > 0
-
-# The content type is load-bearing, not belt-and-braces: Uptime Kuma serves its Vue front
-# end from a catch-all route, so every unmatched path answers 200 with index.html. Checking
-# the status alone reports a REST API that is not there. Verified on 2.5.0 — GET
-# /api/monitors is 200 text/html and POST /api/monitors is "404 Cannot POST".
-- name: Record whether the REST API is usable
-  ansible.builtin.set_fact:
-    _kuma_api_usable: >-
-      {{ (_kuma_probe.status | default(0)) == 200
-         and 'json' in (_kuma_probe.content_type | default('')) }}
-
 - name: Store and verify the monitoring API key
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
@@ -415,10 +394,10 @@
     vault_item_secret_fields: [token, admin_password]
   when: _kuma_api_key | length > 0
 
-# Only when minting genuinely did not produce a key. It is NOT conditioned on the REST
-# probe: that probe fails even with a perfectly good key, because the monitor REST API
-# it looks for does not exist in any Uptime Kuma version. Telling an operator to go and
-# create a key they already have is worse than saying nothing.
+# Only when minting genuinely did not produce a key. Nothing here checks the key by
+# calling a monitor endpoint, because no such endpoint exists in any Uptime Kuma version;
+# telling an operator to go and create a key they already hold is worse than saying
+# nothing.
 - name: Report the manual API key step
   ansible.builtin.debug:
     msg:
@@ -439,107 +418,127 @@
          | default(homelabinfra_config.infrastructure.domain, true) }}
   when: _kuma_api_key | length == 0
 
-# Separate from the key: Uptime Kuma exposes no REST endpoint for monitor CRUD in any
-# version, so a valid key still cannot register a monitor. Monitors are a socket.io
-# event, the same transport this role now uses for setup and for the key. Reworking
-# tasks/wiring/uptime-kuma.yml onto it is slice 303.
-- name: Report that monitor registration is not yet wired
-  ansible.builtin.debug:
-    msg: >-
-      Uptime Kuma has a working API key, but monitor registration still skips: its
-      monitor API is socket.io-only, and the wiring tasks speak REST. Monitors must be
-      added in the UI until slice 303 moves that wiring onto socket.io.
-  when:
-    - _kuma_api_key | length > 0
-    - not (_kuma_api_usable | bool)
-
 # ── Ntfy notification channel ─────────────────────────────────────────────────
-# Attached to every monitor the wiring tasks create, so a DOWN event reaches the
-# same Ntfy topic as everything else (CLAUDE.md feedback loop).
+# Attached to every monitor the wiring tasks create, so a DOWN event reaches the same
+# Ntfy topic as everything else (CLAUDE.md feedback loop).
+#
+# Over socket.io, like every other mutation. This block used to POST /api/notifications
+# behind a REST probe that could never pass, so the channel was never created and
+# monitoring.notification_id was never written — meaning no monitor this platform
+# registered could ever have notified anyone. Found and fixed by slice 303.
+#
+# The payload is FLAT, not a nested `config` string: Notification.save() serialises the
+# whole object it is handed into the config column itself. Nesting a `config` key inside
+# it stores a channel whose provider settings are one level too deep, and the send path
+# reads undefined for every one of them.
 - name: Provision the Ntfy notification channel
   when:
-    - _kuma_api_usable | bool
     - homelabinfra_infra.notifications is defined
     - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
-  vars:
-    _kuma_headers:
-      Authorization: "Bearer {{ _kuma_api_key }}"
-      Accept: "application/json"
   block:
-    - name: List existing notification channels
-      ansible.builtin.uri:
-        url: "{{ _kuma_base }}/api/notifications"
-        method: GET
-        headers: "{{ _kuma_headers }}"
-        status_code: [200, 404]
-      register: _kuma_notifications
-      failed_when: false
-      changed_when: false
-      no_log: true
+    - name: Open a socket.io session for the notification channel
+      ansible.builtin.include_tasks: ../../../tasks/kuma/open-session.yml
+      vars:
+        kuma_base: "{{ _kuma_base }}"
+        kuma_user: "{{ _kuma_user }}"
+        kuma_password: "{{ _kuma_password }}"
 
-    - name: Select the existing homelab-infra channel
-      ansible.builtin.set_fact:
-        _kuma_existing_notification: >-
-          {{ ((_kuma_notifications.json.notifications
-               | default(_kuma_notifications.json | default([]), true))
-              | selectattr('name', 'defined')
-              | selectattr('name', 'equalto', uptime_kuma_notification_name)
-              | list | first | default({})) }}
-
-    - name: Build the notification payload
-      ansible.builtin.set_fact:
-        # One dict expression keeps bools as bools in the JSON body
-        # (.claude/specs/jinja-string-typing.md). Kuma nests provider settings in
-        # `config` as a JSON string.
-        _kuma_notification_payload: >-
-          {{ {
-               'name': uptime_kuma_notification_name,
-               'type': 'ntfy',
-               'isDefault': true,
-               'applyExisting': true,
-               'config': {
-                 'name': uptime_kuma_notification_name,
-                 'type': 'ntfy',
-                 'ntfyserverurl': homelabinfra_infra.notifications.host,
-                 'ntfytopic': homelabinfra_infra.notifications.topic | default('homelab'),
-                 'ntfyPriority': 5,
-                 'ntfyAuthenticationMethod': 'token',
-                 'ntfyaccesstoken': homelabinfra_infra.notifications.token | default(''),
-               } | to_json,
-             } }}
-      no_log: true
-
-    - name: Create the notification channel
-      ansible.builtin.uri:
-        url: "{{ _kuma_base }}/api/notifications"
-        method: POST
-        headers: "{{ _kuma_headers }}"
-        body_format: json
-        body: "{{ _kuma_notification_payload }}"
-        status_code: [200, 201]
-      register: _kuma_notification_create
-      when: _kuma_existing_notification.id is not defined
-      failed_when: false
-      changed_when: _kuma_notification_create.status | default(0) in [200, 201]
-      no_log: true
-
-    - name: Resolve the notification channel id
-      ansible.builtin.set_fact:
-        _kuma_notification_id: >-
-          {{ _kuma_existing_notification.id
-             | default(_kuma_notification_create.json.id
-                       | default(_kuma_notification_create.json.notificationID | default('')),
-                       true) }}
-
-    - name: Report an unprovisioned notification channel
+    - name: Report a notification channel that cannot be provisioned
       ansible.builtin.debug:
         msg: >-
-          Could not create the '{{ uptime_kuma_notification_name }}' notification
-          channel (status
-          {{ _kuma_notification_create.status | default('not attempted') }}).
-          Monitors will still be registered; they just will not notify until the
-          channel is added in the Uptime Kuma UI.
-      when: _kuma_notification_id | default('') | string | length == 0
+          Could not sign in to Uptime Kuma to provision the
+          '{{ uptime_kuma_notification_name }}' notification channel
+          ({{ kuma_session_reason | default('no detail') | trim }}). Monitors will still
+          be registered; they just will not notify until the channel is added in the UI.
+      when: not (kuma_session_ready | bool)
+
+    - name: Save the notification channel
+      when: kuma_session_ready | bool
+      block:
+        # Uptime Kuma pushes the channel list on sign-in; there is no event that returns
+        # it in an acknowledgement, so it is read out of the session's frames.
+        - name: Read the notification channels pushed on sign-in
+          ansible.builtin.set_fact:
+            _kuma_existing_notification: >-
+              {{ ((kuma_session_frames | select('match', '42\["notificationList",') | list
+                   | last | default('42["notificationList",[]]'))
+                  | regex_replace('^42', '') | from_json | last)
+                 | selectattr('name', 'defined')
+                 | selectattr('name', 'equalto', uptime_kuma_notification_name)
+                 | list | first | default({}) }}
+
+        - name: Build the notification payload
+          ansible.builtin.set_fact:
+            # One dict expression keeps bools as bools in the JSON body
+            # (.claude/specs/jinja-string-typing.md).
+            _kuma_notification_payload: >-
+              {{ {
+                   'name': uptime_kuma_notification_name,
+                   'type': 'ntfy',
+                   'isDefault': true,
+                   'applyExisting': true,
+                   'ntfyserverurl': homelabinfra_infra.notifications.host,
+                   'ntfytopic': homelabinfra_infra.notifications.topic | default('homelab'),
+                   'ntfyPriority': 5,
+                   'ntfyAuthenticationMethod':
+                     ('accessToken' if _kuma_ntfy_token | length > 0 else 'none'),
+                   'ntfyaccesstoken': _kuma_ntfy_token,
+                 } }}
+          vars:
+            # 'accessToken' is the exact literal the ntfy provider compares against; any
+            # other spelling silently sends the notification unauthenticated, which an
+            # Ntfy that ships closed (slice 401) then rejects.
+            _kuma_ntfy_token: "{{ homelabinfra_infra.notifications.token | default('') }}"
+          no_log: true
+
+        # Compared before writing, so a converged run reports no change. Kuma stores the
+        # payload verbatim in `config` after forcing applyExisting off, which is exactly
+        # what makes the comparison possible.
+        - name: Decide whether the channel needs writing
+          ansible.builtin.set_fact:
+            _kuma_notification_drifted: >-
+              {{ (_kuma_existing_notification.config | default('{}') | from_json)
+                 != (_kuma_notification_payload | combine({'applyExisting': false})) }}
+          no_log: true
+
+        # addNotification both creates and updates: a null id creates, an existing id
+        # updates that channel in place.
+        - name: Write the notification channel
+          ansible.builtin.include_tasks: ../../../tasks/kuma/call.yml
+          vars:
+            kuma_call_event: addNotification
+            kuma_call_args:
+              - "{{ _kuma_notification_payload }}"
+              - "{{ _kuma_existing_notification.id | default(None) }}"
+            kuma_call_ack_id: 1
+            kuma_call_secret: true
+          when: _kuma_notification_drifted | bool
+
+        - name: Resolve the notification channel id
+          ansible.builtin.set_fact:
+            _kuma_notification_id: >-
+              {{ (kuma_call_result.id | default('')
+                  if _kuma_notification_drifted | bool
+                  else _kuma_existing_notification.id | default('')) }}
+
+        - name: Report the notification channel
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'Saved' if _kuma_notification_drifted | bool else 'Confirmed' }} the
+              '{{ uptime_kuma_notification_name }}' Ntfy notification channel
+              (id {{ _kuma_notification_id }}), attached to every monitor the wiring
+              registers.
+          when: _kuma_notification_id | string | length > 0
+          changed_when: _kuma_notification_drifted | bool
+
+        - name: Report a notification channel Uptime Kuma refused
+          ansible.builtin.debug:
+            msg: >-
+              Uptime Kuma refused the '{{ uptime_kuma_notification_name }}' notification
+              channel ({{ kuma_call_reason | default('no detail') | trim }}). Monitors
+              will still be registered; they just will not notify until the channel is
+              added in the UI.
+          when: _kuma_notification_id | string | length == 0
 
 # ── Hand the endpoint and credentials back to the playbook ────────────────────
 - name: Export the monitoring endpoint to the playbook

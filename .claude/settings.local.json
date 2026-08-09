@@ -97,7 +97,8 @@
       "Bash(cp C:/Users/korr/.claude/CLAUDE.md C:/Users/korr/.gemini/GEMINI.md)",
       "Read(//c/Users/korr/.gemini/**)",
       "PowerShell(ollama *)",
-      "PowerShell(\\(Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | Format-Table -AutoSize | Out-String\\); \\(Get-CimInstance Win32_ComputerSystem\\).TotalPhysicalMemory)"
+      "PowerShell(\\(Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | Format-Table -AutoSize | Out-String\\); \\(Get-CimInstance Win32_ComputerSystem\\).TotalPhysicalMemory)",
+      "Bash(base64 -w0 /tmp/chk.sh)"
     ]
   }
 }

@@ -1,0 +1,92 @@
+---
+# Emit one Uptime Kuma socket.io event and read its acknowledgement.
+# Included by tasks/kuma/open-session.yml and by both Uptime Kuma wiring halves.
+#
+# Uptime Kuma exposes NO REST API for monitors, notifications or accounts in any
+# version — every one of those is a socket.io event. That does not require a socket.io
+# client library: engine.io v4's long-polling transport is plain HTTP, so `uri` speaks
+# it directly. Avoiding the Python `uptime-kuma-api` dependency is why slice 303 exists
+# in this shape.
+#
+# Frame grammar (verified live against Uptime Kuma 2.5.0):
+#   42<ack><json-array>   client emits an event, <ack> is the id its reply comes back on
+#   43<ack><json-array>   the server's acknowledgement for that <ack>
+#   42<json-array>        a server push with no acknowledgement (monitorList, info, …)
+#   2 / 3                 engine.io ping / pong
+#   1                     engine.io close
+# Multiple frames arrive in one poll response, separated by 0x1e.
+#
+# Inputs:
+#   kuma_session_url  — the polling URL including sid (from open-session.yml)
+#   kuma_call_event   — event name, e.g. "add"
+#   kuma_call_args    — list of arguments to the event (default [])
+#   kuma_call_ack_id  — acknowledgement id, unique within the session
+#   kuma_call_secret  — true when the arguments hold a credential (default false)
+#   kuma_call_polls   — how many polls to wait for the acknowledgement (default 6)
+#
+# Outputs:
+#   kuma_call_result  — the acknowledgement object, e.g. {"ok": true, "monitorID": 4}
+#   kuma_call_ok      — true only when an acknowledgement arrived AND reported ok
+#   kuma_call_reason  — why it did not, for the caller's warning
+#   kuma_frames       — every frame seen while waiting for this acknowledgement
+#   kuma_session_frames — every frame seen since the session opened, pushes included
+#
+# The acknowledgement is NOT reliably in the first poll after the emit: a login ack was
+# observed arriving one poll behind its own push burst. Hence the poll loop rather than a
+# single read.
+
+- name: Kuma call | Reset the acknowledgement state
+  ansible.builtin.set_fact:
+    kuma_frames: []
+    kuma_call_done: false
+    kuma_call_dead: false
+    kuma_call_result: {}
+    kuma_call_ok: false
+    kuma_call_reason: ""
+    kuma_done_pattern: '43{{ kuma_call_ack_id }}\['
+
+- name: Kuma call | Emit {{ kuma_call_event }}
+  ansible.builtin.uri:
+    url: "{{ kuma_session_url }}"
+    method: POST
+    body: "42{{ kuma_call_ack_id }}{{ ([kuma_call_event] + (kuma_call_args | default([]))) | to_json }}"
+    body_format: raw
+    headers:
+      Content-Type: "text/plain;charset=UTF-8"
+    status_code: 200
+    timeout: 15
+  changed_when: false
+  no_log: "{{ kuma_call_secret | default(false) | bool }}"
+
+- name: Kuma call | Wait for the acknowledgement to {{ kuma_call_event }}
+  ansible.builtin.include_tasks: poll-once.yml
+  loop: "{{ range(0, kuma_call_polls | default(6) | int) | list }}"
+  loop_control:
+    loop_var: kuma_poll_attempt
+    label: "poll {{ kuma_poll_attempt | int + 1 }}"
+
+- name: Kuma call | Decode the acknowledgement to {{ kuma_call_event }}
+  ansible.builtin.set_fact:
+    kuma_call_result: >-
+      {{ (kuma_frames | select('match', '43' ~ kuma_call_ack_id ~ '\[') | list | first
+          | default('43' ~ kuma_call_ack_id ~ '[{}]'))
+         | regex_replace('^43[0-9]+', '') | from_json | first | default({}) }}
+  no_log: "{{ kuma_call_secret | default(false) | bool }}"
+
+# `ok` is read from the acknowledgement rather than inferred from an HTTP status. Uptime
+# Kuma answers 200 to the POST that carries a rejected event, and it serves its Vue front
+# end from a catch-all route, so no HTTP status from this server distinguishes success
+# from failure. Reading an error code as success is precisely the defect this slice and
+# slice 404 were reopened for.
+- name: Kuma call | Summarise the outcome of {{ kuma_call_event }}
+  ansible.builtin.set_fact:
+    kuma_call_ok: "{{ (kuma_call_done | bool) and (kuma_call_result.ok | default(false) | bool) }}"
+    # Empty on success, so a caller that reports the reason of a skipped call does not
+    # print a refusal that never happened.
+    kuma_call_reason: >-
+      {{ '' if (kuma_call_done | bool) and (kuma_call_result.ok | default(false) | bool)
+         else 'the socket.io transport stopped answering' if kuma_call_dead | bool
+         else ('no acknowledgement to ' ~ kuma_call_event ~ ' within '
+               ~ (kuma_call_polls | default(6)) ~ ' polls')
+              if not (kuma_call_done | bool)
+         else (kuma_call_result.msg | default('Uptime Kuma refused ' ~ kuma_call_event)) }}

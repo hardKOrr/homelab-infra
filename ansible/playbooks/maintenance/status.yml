@@ -121,29 +121,44 @@
 
   tasks:
     # ── Uptime Kuma ────────────────────────────────────────────────────────────
-    - name: Query Uptime Kuma monitors
-      ansible.builtin.uri:
-        url: "{{ homelabinfra_infra.monitoring.host }}/api/monitors"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ homelabinfra_infra.monitoring.token | default('') }}"
-          Accept: "application/json"
-        status_code: [200, 401, 403, 404]
-        timeout: 10
-      register: _st_kuma
-      failed_when: false
-      changed_when: false
-      no_log: true
+    # Over socket.io. This used to GET /api/monitors with the API key, which could only
+    # ever report zero monitors: Uptime Kuma has no REST monitor API in any version, and
+    # its catch-all route answers that path with the front end's HTML, so `.json` was
+    # always absent and the list always empty. Slice 303 rebuilt the wiring on the
+    # transport that does work, and this report reads through the same helpers.
+    - name: Start with no monitors
+      ansible.builtin.set_fact:
+        _st_monitors: []
+
+    - name: Read the Uptime Kuma monitors
       when:
         - homelabinfra_infra.monitoring is defined
         - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
         - homelabinfra_infra.monitoring.host | default('') | length > 0
+        - homelabinfra_infra.monitoring.admin_user | default('') | length > 0
+        - homelabinfra_infra.monitoring.admin_password | default('') | length > 0
+      block:
+        - name: Open an authenticated socket to Uptime Kuma
+          ansible.builtin.include_tasks: ../../tasks/kuma/open-session.yml
+          vars:
+            kuma_base: "{{ homelabinfra_infra.monitoring.host }}"
+            kuma_user: "{{ homelabinfra_infra.monitoring.admin_user }}"
+            kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
 
-    - name: Normalise the monitor list
-      ansible.builtin.set_fact:
-        _st_monitors: >-
-          {{ (_st_kuma.json.monitors | default(_st_kuma.json | default([]), true))
-             if (_st_kuma.status | default(0)) == 200 else [] }}
+        - name: Ask for the monitor list
+          ansible.builtin.include_tasks: ../../tasks/kuma/call.yml
+          vars:
+            kuma_call_event: getMonitorList
+            kuma_call_ack_id: 1
+          when: kuma_session_ready | bool
+
+        - name: Normalise the monitor list
+          ansible.builtin.set_fact:
+            _st_monitors: >-
+              {{ ((kuma_session_frames | select('match', '42\["monitorList",') | list
+                   | last | default('42["monitorList",{}]'))
+                  | regex_replace('^42', '') | from_json | last).values() | list }}
+          when: kuma_session_ready | bool
 
     # ── PBS ────────────────────────────────────────────────────────────────────
     - name: Query PBS snapshots
@@ -227,7 +242,8 @@
 
           MONITORS
           {% if _st_monitors | length == 0 %}
-            unavailable — Uptime Kuma is not configured, not reachable, or has no API key
+            unavailable — Uptime Kuma is not configured, not reachable, has no admin
+            credentials on record, or has registered no monitors yet
           {% endif %}
           {% for m in _st_monitors %}
             {{ '%-24s' | format(m.name | default('?')) }} {{ 'active' if m.active | default(false) else 'paused' }}   {{ m.url | default('') }}

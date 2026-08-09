@@ -1,5 +1,5 @@
 ---
-# Remove an app monitor from Uptime Kuma via its REST API.
+# Remove an app monitor from Uptime Kuma over socket.io.
 # Inverse of tasks/wiring/uptime-kuma.yml. Called by playbooks/apps/remove.yml.
 # Spec: .claude/specs/provider-noop-wiring.md.
 #
@@ -7,24 +7,25 @@
 #   wiring_app_name:  app instance name — matches the monitor's friendly name
 #
 # Reads from homelabinfra_infra (Shape B, see ansible/vars/CONTRACT.md §3):
-#   monitoring.provider  — uptime_kuma | none
-#   monitoring.host      — full base URL including scheme
-#   monitoring.token     — Uptime Kuma API key
+#   monitoring.provider        — uptime_kuma | none
+#   monitoring.host            — full base URL including scheme
+#   monitoring.admin_user      — admin username, overlaid from Vaultwarden
+#   monitoring.admin_password  — admin password, overlaid from Vaultwarden
 #
-# Same probe-first stance as the wire half: an unreachable or v1 (socket.io-only) Kuma
-# warns and skips rather than failing the removal — a stale monitor is a smaller problem
-# than a removal that aborts halfway. Idempotent: absent monitor → no-op success. Silent
-# no-op when the configured monitoring provider is not uptime_kuma.
+# Same transport and the same reason for it as the wire half: Uptime Kuma has no REST
+# monitor API in any version, and monitoring.token cannot sign a socket in. Mechanics in
+# tasks/kuma/call.yml.
+#
+# DEGRADATION — more forgiving than the wire half, deliberately. Where wiring fails on a
+# monitor Uptime Kuma actively refuses, removal only warns: a stale monitor left in the
+# dashboard is a smaller problem than a removal that aborts half-way through tearing an
+# app down, and playbooks/apps/remove.yml is built around that (slice 501). Idempotent:
+# absent monitor → no-op success. Silent no-op when the provider is not uptime_kuma.
 
 - name: Unwire Uptime Kuma | Remove monitor
   when:
     - homelabinfra_infra.monitoring is defined
     - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
-  vars:
-    _kuma_api: "{{ homelabinfra_infra.monitoring.host }}/api"
-    _kuma_headers:
-      Authorization: "Bearer {{ homelabinfra_infra.monitoring.token | default('') }}"
-      Accept: "application/json"
   block:
     - name: Unwire Uptime Kuma | Assert wiring contract vars
       ansible.builtin.assert:
@@ -32,64 +33,100 @@
           - wiring_app_name is defined and wiring_app_name | length > 0
         fail_msg: "unwiring/uptime-kuma.yml needs wiring_app_name to identify the monitor."
 
-    - name: Unwire Uptime Kuma | Probe the REST API
-      ansible.builtin.uri:
-        url: "{{ _kuma_api }}/monitors"
-        method: GET
-        headers: "{{ _kuma_headers }}"
-        status_code: [200, 401, 403, 404]
-        timeout: 10
-      register: _kuma_probe
-      failed_when: false
-      changed_when: false
-      no_log: true
+    - name: Unwire Uptime Kuma | Record what the registry supplies
+      ansible.builtin.set_fact:
+        _kuma_credentialed: >-
+          {{ (homelabinfra_infra.monitoring.host | default('') | length > 0)
+             and (homelabinfra_infra.monitoring.admin_user | default('') | length > 0)
+             and (homelabinfra_infra.monitoring.admin_password | default('') | length > 0) }}
 
-    - name: Unwire Uptime Kuma | Report unusable API
+    - name: Unwire Uptime Kuma | Open an authenticated socket
+      ansible.builtin.include_tasks: ../kuma/open-session.yml
+      vars:
+        kuma_base: "{{ homelabinfra_infra.monitoring.host }}"
+        kuma_user: "{{ homelabinfra_infra.monitoring.admin_user }}"
+        kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
+      when: _kuma_credentialed | bool
+
+    - name: Unwire Uptime Kuma | Report a monitor left behind
       ansible.builtin.debug:
         msg: >-
-          Uptime Kuma at {{ homelabinfra_infra.monitoring.host }} did not answer
-          GET /api/monitors with 200 (got {{ _kuma_probe.status | default('no response') }}) —
-          the monitor for {{ wiring_app_name }} was left in place. Remove it from the Kuma UI.
-      when: _kuma_probe.status | default(0) != 200
+          Could not sign in to Uptime Kuma at
+          {{ homelabinfra_infra.monitoring.host | default('an unrecorded host') }}
+          ({{ kuma_session_reason
+              | default('the monitoring registry key has no admin credentials') | trim }}) —
+          the monitor for {{ wiring_app_name }} was left in place. Remove it from the
+          Uptime Kuma UI.
+      when: not (kuma_session_ready | default(false) | bool)
 
-    - name: Unwire Uptime Kuma | Delete monitor against the REST API
-      when: _kuma_probe.status | default(0) == 200
+    - name: Unwire Uptime Kuma | Delete the monitor
+      when: kuma_session_ready | default(false) | bool
       block:
-        - name: Unwire Uptime Kuma | Select existing monitor
+        - name: Unwire Uptime Kuma | Ask for the monitor list
+          ansible.builtin.include_tasks: ../kuma/call.yml
+          vars:
+            kuma_call_event: getMonitorList
+            kuma_call_ack_id: 1
+
+        - name: Unwire Uptime Kuma | Select the existing monitor
           ansible.builtin.set_fact:
             _kuma_existing: >-
-              {{ (_kuma_probe.json.monitors | default(_kuma_probe.json | default([]), true))
+              {{ ((kuma_session_frames | select('match', '42\["monitorList",') | list
+                   | last | default('42["monitorList",{}]'))
+                  | regex_replace('^42', '') | from_json | last).values() | list
                  | selectattr('name', 'defined')
                  | selectattr('name', 'equalto', wiring_app_name)
                  | list | first | default({}) }}
 
-        - name: Unwire Uptime Kuma | Delete monitor
-          ansible.builtin.uri:
-            url: "{{ _kuma_api }}/monitors/{{ _kuma_existing.id | default(0) }}"
-            method: DELETE
-            headers: "{{ _kuma_headers }}"
-            status_code: [200, 204, 404]
-          register: _kuma_delete
+        # `false` is the deleteChildren argument. Passing it explicitly rather than
+        # relying on the handler's backward-compatible two-argument form keeps the intent
+        # in the payload: never cascade into monitors this platform did not create.
+        - name: Unwire Uptime Kuma | Delete the monitor
+          ansible.builtin.include_tasks: ../kuma/call.yml
+          vars:
+            kuma_call_event: deleteMonitor
+            kuma_call_args: ["{{ _kuma_existing.id | int }}", false]
+            kuma_call_ack_id: 2
           when: _kuma_existing.id is defined
-          changed_when: _kuma_delete.status | default(404) in [200, 204]
-          no_log: true
 
-        - name: Unwire Uptime Kuma | Verify monitor gone
-          ansible.builtin.uri:
-            url: "{{ _kuma_api }}/monitors"
-            method: GET
-            headers: "{{ _kuma_headers }}"
-            status_code: 200
-          register: _kuma_verify
-          changed_when: false
-          no_log: true
+        - name: Unwire Uptime Kuma | Report a monitor Uptime Kuma would not delete
+          ansible.builtin.debug:
+            msg: >-
+              Uptime Kuma refused to delete the monitor for {{ wiring_app_name }}
+              ({{ kuma_call_reason | default('no detail') | trim }}) — remove it from the
+              Uptime Kuma UI. The removal continues.
+          when:
+            - _kuma_existing.id is defined
+            - not (kuma_call_ok | bool)
 
-        - name: Unwire Uptime Kuma | Assert monitor removed
+        - name: Unwire Uptime Kuma | Report the deleted monitor
+          ansible.builtin.debug:
+            msg: "Deleted the Uptime Kuma monitor for {{ wiring_app_name }}."
+          when:
+            - _kuma_existing.id is defined
+            - kuma_call_ok | bool
+          changed_when: true
+
+        - name: Unwire Uptime Kuma | Ask for the monitor list again
+          ansible.builtin.include_tasks: ../kuma/call.yml
+          vars:
+            kuma_call_event: getMonitorList
+            kuma_call_ack_id: 3
+          when:
+            - _kuma_existing.id is defined
+            - kuma_call_ok | bool
+
+        - name: Unwire Uptime Kuma | Assert the monitor is gone
           ansible.builtin.assert:
             that:
               - >-
-                (_kuma_verify.json.monitors | default(_kuma_verify.json | default([]), true))
+                ((kuma_session_frames | select('match', '42\["monitorList",') | list
+                  | last | default('42["monitorList",{}]'))
+                 | regex_replace('^42', '') | from_json | last).values() | list
                 | selectattr('name', 'defined')
                 | selectattr('name', 'equalto', wiring_app_name)
                 | list | length == 0
             fail_msg: "Uptime Kuma still has a monitor named {{ wiring_app_name }} after unwiring."
+          when:
+            - _kuma_existing.id is defined
+            - kuma_call_ok | bool

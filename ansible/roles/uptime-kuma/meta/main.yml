@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: uptime-kuma
-  description: "Deploys Uptime Kuma via Docker Compose on a stack host and provisions its REST credentials"
+  description: "Deploys Uptime Kuma via Docker Compose on a stack host, initialises it, and provisions its credentials and Ntfy channel"
   min_ansible_version: "2.15"
 
 dependencies: []
