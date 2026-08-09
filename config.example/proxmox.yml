@@ -65,18 +65,55 @@ proxmox:
 
 # Network definitions. Add as many as you need.
 # Apps reference a network by name (e.g. network: default).
+#
+# Addressing is static. Every guest this platform creates is given an address it
+# chose, so it can wire, route and monitor that guest afterwards. DHCP happens only
+# where you write the literal 'dhcp' below, and then you must supply the VMID
+# yourself, because the VMID is otherwise derived from the address.
 networks:
   default:
     cidr: "192.168.1.0/24"   # set to 'dhcp' for DHCP (VMID must be provided manually)
-    gateway: "192.168.1.1"
+    gateway: "192.168.1.1"   # never allocated, whether or not it is listed under reserved
     dns_servers:
       - "192.168.1.1"
     bridge: "vmbr0"
     vlan: 0             # 0 = no VLAN tag
-    ip_offset: 10       # start allocating IPs from .10
-    max_hosts: 200      # optional: cap on allocated IPs in this subnet
 
-  # Example VLAN network (uncomment and fill in when ready):
+    # Spans this platform must never hand out: your NAS, switches, printers, the
+    # DHCP range your router serves, anything Proxmox does not know about. Each
+    # entry is an address, an "a-b" range, or a CIDR.
+    reserved:
+      - "192.168.1.200-192.168.1.254"   # the router's DHCP range
+
+    # ── Pools: address by function ────────────────────────────────────────────
+    # Optional. Without pools, allocation walks the whole subnet from ip_offset —
+    # which is fine for a small flat lab and wrong for one that groups guests by
+    # function. A pool is a named span inside this network; a guest allocated into
+    # a pool never lands outside it.
+    #
+    # An app reaches a pool two ways: it inherits the pool named after its stack
+    # (a Docker app on `stack: media_stack` uses a pool called media_stack if one
+    # is defined here), or it names one outright with `pool:` in its instance file
+    # — config/apps/<instance>.yml, so two instances of the same app can sit in
+    # different pools. A pool named there must exist; an inherited one that does
+    # not is simply not used.
+    #
+    # pools:
+    #   infra:         {range: "192.168.1.10-192.168.1.39"}
+    #   apps:          {range: "192.168.1.40-192.168.1.99"}
+    #   media_stack:   {range: "192.168.1.100-192.168.1.149"}
+    # default_pool: apps   # what a guest naming no pool uses
+
+    # Used only when no pool applies. At a /24 `ip_offset: 10` means .10, which is
+    # what most labs read it as — but it is an index into the whole host range, so
+    # at a /20 the same 10 means x.0.10 and a /20's guests can run to x.15.254.
+    # Pools express the same intent unambiguously at any prefix length.
+    ip_offset: 10
+    max_hosts: 200      # optional: cap on how far past ip_offset allocation walks
+
+  # Example VLAN network. One network per VLAN: the tag, the subnet and the
+  # gateway travel together, and an app moves between VLANs by changing the single
+  # `network:` name in its instance file.
   # iot:
   #   cidr: "10.10.20.0/24"
   #   gateway: "10.10.20.1"

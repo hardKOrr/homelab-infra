@@ -1,12 +1,12 @@
-# 011 — IP allocation: a flat +1 walk cannot express a real lab's addressing
+# 011 — IP allocation: pools, pins, reservations, and one network per VLAN
 
-**Status:** open
+**Status:** built
 **Subject:** Networking
 **Related:** 006 (generate-ip combine)
 
 ## Goal
 
-`tasks/network/generate-ip.yml` allocates one way: subnet base, plus a single global
+`tasks/network/generate-ip.yml` allocated one way: subnet base, plus a single global
 `ip_offset`, walk upward by one, skip what Proxmox already knows, take the first hit. Real
 labs do not address that way and this one demonstrably does not — inside a single
 `192.168.0.0/20` the live lab is organised by function:
@@ -23,48 +23,78 @@ already paid the workaround cost: `config/proxmox.yml` needed an invented
 `ip_offset: 2305` / `max_hosts: 2560` to fence allocation into an unused-looking band — one
 global integer asked to encode a policy that is actually per-app.
 
-**Six addresses (.10–.15) are already allocated under the flat model**, so fix the allocator
-before another deploy makes the unwind harder.
+**VLANs are the destination** (decided 2026-08-09). The lab runs flat today and migrates to
+VLANs later, so the model has to serve both: named networks each carry their own `vlan` tag,
+subnet and gateway, and pools express function bands inside a network for as long as the lab
+is flat. An app moves between VLANs by changing one name in its instance file.
 
-Three secondary gaps in the same file: no pinning path for an app that must hold a known
-address; `ip_offset` documented as "start allocating from .10", which is true at /24 and
-silently means a 12-bit host index at /20; and exclusions drawn only from `proxmox_clients`,
-so a NAS, switch, appliance or DHCP range is invisible and allocatable — the lab's gateway
-at `192.168.13.1` sits inside the same flat span.
+**Addressing is static, by decision.** Every guest gets an address this platform chose, so
+it can wire, route and monitor that guest afterwards. DHCP happens only where a network's
+`cidr` says the literal `dhcp` — never as a fallback when allocation is hard.
 
-**Planned design:**
+## What shipped
 
-- **Named pools inside a network** —
-  `networks.default.pools: {infra: {range: "…"}, apps: {…}, media: {…}}`. An app names a
-  pool the way it names a stack today; allocation walks that pool only. Absent pool falls
-  back to current behaviour, so existing configs keep working.
-- **Explicit pin wins** — `network.ip_address` in an instance file used as-is, with a
-  conflict assert against the inventory rather than a silent overwrite.
-- **Reserved ranges per network** — CIDRs never allocated, so exclusion stops depending on
-  Proxmox knowing about a device.
-- **Fix the offset wording**, or retire `ip_offset` for pool ranges, which express the same
-  intent unambiguously at any prefix length.
+- **Named pools inside a network** — `networks.<name>.pools.{<pool>: {range | cidr}}`.
+  Selection, highest first: `proxmox.pool` in the instance file, which must exist or the run
+  fails; the pool named after the app's `stack`, used only when the network defines it;
+  `default_pool`; otherwise the old `ip_offset` walk. That asymmetry between a demanded pool
+  and an inherited one is what lets a lab adopt pools one band at a time while every stack
+  keeps deploying.
+- **The override is per instance, not per app** — it lives in `config/apps/<instance>.yml`,
+  the file a deploy job names, so two instances of one app can sit in different pools or
+  different VLANs.
+- **An exhausted pool fails, naming the pool.** It never spills into the wider subnet:
+  spilling is how a guest lands in the wrong VLAN once the estate is segmented.
+- **Explicit pin wins** — `proxmox.ip_address` is honoured exactly, or refused with the
+  conflict named (already held / reserved / outside the pool).
+- **Reserved spans per network** — `networks.<name>.reserved`, each an address, an `a-b`
+  range, or a CIDR, so exclusion stops depending on Proxmox knowing about a device. The
+  gateway is always reserved whether or not it is listed — the lab's own gateway sat inside
+  the span the flat allocator walked.
+- **`ip_offset` is documented as what it is**: an index into the host range, not a last
+  octet. At a /20, `10` means `x.0.10`.
 
-Two questions to settle first: whether a pool is declared per app, per stack, or derived
-from the stack with a per-app override; and whether the lab's existing three bands should be
-codified into `config/proxmox.yml`, which makes the scheme enforced but freezes an
-arrangement that grew by hand.
+The decision itself is `ansible/scripts/allocate-ip.py`, not Jinja: the allocator compares
+addresses across four sources and has to say *which one* refused a request. A template can
+compute the answer but cannot explain its absence, and "No available IPs found in
+192.168.0.0/20" is the message that made the flat allocator hard to operate.
 
 ## Remaining
 
-- [ ] An app declaring `pool: media` lands inside the media range on a lab whose next flat
-      address would have been outside it
-- [ ] A pinned `network.ip_address` is honoured exactly, and a pin colliding with a known
-      host fails the run with a named conflict
-- [ ] An address inside a reserved range is never allocated, even when Proxmox has no guest
-      holding it
-- [ ] An existing single-network config with no pools allocates exactly as it does today
-- [ ] `config.example/proxmox.yml` describes offset/pool behaviour correctly for a /20
+- [x] An app declaring a pool lands inside that pool's range on a lab whose next flat
+      address would have been outside it — probed offline through the task file: a
+      `monitoring_stack` hint allocated `192.168.2.0` where the flat walk offered
+      `192.168.0.10`
+- [x] A pinned address is honoured exactly, and a pin colliding with a known host, a
+      reserved span or the pool boundary fails with a named conflict
+- [x] An address inside a reserved range is never allocated, even when Proxmox has no guest
+      holding it — including the gateway
+- [x] An existing single-network config with no pools allocates exactly as it does today
+- [x] `config.example/proxmox.yml` describes offset/pool behaviour correctly for a /20
+- [ ] **Live:** one deploy allocating from a pool on the lab, and one from a pinned address
+- [ ] **Live:** the lab's own `config/proxmox.yml` migrated off the invented
+      `ip_offset: 2305` / `max_hosts: 2560` fence onto declared pools. That file lives on the
+      runner, so it is a human edit through the Configure App job, not a repo change. The six
+      addresses already allocated under the flat model (.10–.15) keep working — they are
+      recorded on their guests, and nothing re-derives them
+
+## The bug the offline probe caught
+
+Worth keeping: `homelabinfra_instance.network` was merged with `combine(recursive=True)`, and
+`create-docker-host.yml` calls the allocator twice in one play. The second call came back
+wearing the first call's keys — a guest allocated with no pool carried the previous guest's
+`pool`, and the same would have happened to `gateway`, `vlan` and `bridge` when two calls
+name different networks. Every key in that sub-dict is derived fresh from the network config,
+so a stale one is never right; the sub-dict is now replaced wholesale while its siblings under
+`homelabinfra_instance` stay merged.
+
+Both gates were green before the probe ran. Syntax-check does not execute a task file — this
+is "green is not working" ([../LESSONS.md](../LESSONS.md)) inside a single play.
 
 ## Links
 
-- `ansible/tasks/network/generate-ip.yml` — pool selection, pinning, reservations
-- `ansible/vars/CONTRACT.md` §2 — `networks.<name>.pools` schema
-- `config.example/proxmox.yml` — document pools; correct the `ip_offset` wording
-- `ansible/vars/app-defaults/<app>.yml`, `_template.yml`,
-  `config.example/apps/_template.example.yml` — declare a pool per app
+- `ansible/scripts/allocate-ip.py` — the decision, with a reason for every refusal
+- `.claude/gate/test-allocate-ip.sh` — pools, pins, reservations, exhaustion, malformed input
+- `ansible/tasks/network/generate-ip.yml` — pool resolution, the script call, instance facts
+- `ansible/vars/CONTRACT.md` §2 — `networks.<name>` schema and the selection order
+- `config.example/proxmox.yml`, `config.example/apps/_template.example.yml`

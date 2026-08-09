@@ -156,6 +156,13 @@ their owning slices. What follows is the structural knowledge that lives nowhere
   jobs failed identically at config parse.
 - **`tasks/config/`** — `write-config-file.yml` (the one path any playbook writes into
   `config/`: backup, write, diff, prune to 20) and `run-doctor.yml`.
+- **Addressing is static, and a VLAN is a network.** Every guest gets an address the
+  platform chose; DHCP happens only where a network's `cidr` says the literal `dhcp`, never
+  as a fallback when allocation is hard. `networks.<name>` carries its own tag, subnet and
+  gateway, so an app changes VLAN by changing one name in its instance file, and pools
+  (`networks.<name>.pools`) express function bands inside a network while a lab is still
+  flat. `scripts/allocate-ip.py` decides and explains every refusal; an exhausted pool
+  fails rather than spilling into the wider subnet. Slice 011.
 - **Secrets may come from the environment** (CONTRACT.md §5): `PROXMOX_API_TOKEN`,
   `PROXMOX_API_TOKEN_ID`, `PROXMOX_API_USER`, `VAULTWARDEN_ADMIN_TOKEN`, environment
   winning over file. The recommended `config/proxmox.yml` omits `api_token_secret`.

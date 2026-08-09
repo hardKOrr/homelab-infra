@@ -15,6 +15,9 @@
       ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
       vars:
         network_name: "{{ homelabinfra_config.proxmox.vm.network | default('default') }}"
+        pool_name: "{{ homelabinfra_config.proxmox.vm.pool | default('') }}"
+        pool_hint: "{{ homelabinfra_config.proxmox.vm.stack_tag | default('') }}"
+        requested_ip_address: "{{ homelabinfra_config.proxmox.vm.ip_address | default('') }}"
 
     - name: Set VM IP Address fact
       ansible.builtin.set_fact:

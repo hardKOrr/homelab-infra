@@ -12,6 +12,13 @@
 # proxmox:
 #   cores: 2
 #   memory: 2048    # MB
+#   network: default  # which `networks:` entry in config/proxmox.yml — one per VLAN
+#   pool: apps        # which pool inside that network to allocate from. Must be
+#                     # declared there; a Docker app otherwise inherits the pool
+#                     # named after its stack, if one exists
+#   ip_address: ""    # pin this instance to an exact address. Honoured as written or
+#                     # refused with the conflict named — never quietly replaced.
+#                     # Leave unset unless something outside the lab points at it
 
 # ── Stack override (Docker apps only) ──────────────────────────────────────────
 # stack: media_stack   # override which stack host this app runs on

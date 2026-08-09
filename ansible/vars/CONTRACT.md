@@ -168,9 +168,19 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `networks.<name>.gateway` | required | per named subnet |
 | `networks.<name>.dns_servers` | required | per named subnet |
 | `networks.<name>.bridge` | required | per named subnet |
-| `networks.<name>.vlan` | optional | |
-| `networks.<name>.ip_offset` | optional | |
-| `networks.<name>.max_hosts` | optional | |
+| `networks.<name>.vlan` | optional | Proxmox VLAN tag; `0` or absent means untagged. One network per VLAN — the tag, subnet and gateway travel together, so an app changes VLAN by changing its `proxmox.network` name |
+| `networks.<name>.reserved` | optional | list of spans never allocated: an address, `"a-b"`, or a CIDR. Independent of Proxmox — this is how a NAS, a switch or a router's DHCP range stays unallocatable |
+| `networks.<name>.pools` | optional | `{<pool>: {range: "a-b"}}` or `{<pool>: {cidr: "..."}}`; each pool must sit inside `cidr`. A guest allocated into a pool never lands outside it, and an exhausted pool fails the run rather than spilling into the wider subnet |
+| `networks.<name>.default_pool` | optional | pool used by a guest that names none and inherits none |
+| `networks.<name>.ip_offset` | optional | fallback walk only (no pool applies). An index into the host range, not a last octet: at a /20, `10` is `x.0.10` and the range runs to `x.15.254` |
+| `networks.<name>.max_hosts` | optional | fallback walk only: how far past `ip_offset` allocation may walk |
+
+Pool selection, highest first: `proxmox.pool` in the instance file (must exist, or the
+run fails); the pool named after the app's `stack`, used only if the network defines it;
+`default_pool`; otherwise the `ip_offset`/`max_hosts` walk. `proxmox.ip_address` in an
+instance file pins an exact address — honoured as written or refused with the conflict
+named, never quietly replaced. `ansible/scripts/allocate-ip.py` decides; every refusal
+carries its reason.
 | `ansible.ssh_user` | required | |
 | `ansible.ssh_public_key` | required | |
 

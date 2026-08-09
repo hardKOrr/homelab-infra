@@ -46,6 +46,8 @@
           ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
           vars:
             network_name: "{{ homelabinfra_config.proxmox.lxc.network | default('default') }}"
+            pool_name: "{{ homelabinfra_config.proxmox.lxc.pool | default('') }}"
+            pool_hint: "{{ homelabinfra_config.proxmox.lxc.stack_tag | default('') }}"
 
         - name: Set LXC IP Address fact
           ansible.builtin.set_fact:
@@ -65,6 +67,12 @@
           ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
           vars:
             network_name: "{{ homelabinfra_config.proxmox.vm.network | default('default') }}"
+            pool_name: "{{ homelabinfra_config.proxmox.vm.pool | default('') }}"
+            # find-or-create-host records the stack it is building under proxmox.lxc,
+            # which is where the stack sizing lands regardless of host type.
+            pool_hint: >-
+              {{ homelabinfra_config.proxmox.vm.stack_tag
+                 | default(homelabinfra_config.proxmox.lxc.stack_tag | default(''), true) }}
 
         - name: Set VM IP Address fact
           ansible.builtin.set_fact:

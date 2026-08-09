@@ -1,22 +1,33 @@
 ---
 # Allocate an IP address for a new guest: 'dhcp' pass-through when the network's
-# cidr is the string 'dhcp', otherwise the first static IP in the subnet not
-# already held by a proxmox_clients inventory host.
+# cidr is the string 'dhcp', otherwise a static address chosen by
+# scripts/allocate-ip.py from the pool the app belongs to.
+#
+# Addressing is static by decision. DHCP happens only where a network's cidr says
+# the literal 'dhcp', never as a fallback when allocation is hard — a guest whose
+# address the platform did not choose is a guest it cannot wire, route or monitor.
 #
 # Inputs:
 #   network_name (optional, default 'default') — key into homelabinfra_config.networks
+#   pool_name    (optional) — a pool the caller demands; absent from the network is an error
+#   pool_hint    (optional) — usually the app's stack name; used only when the network
+#                             defines a pool of that name, so a pool-less lab is untouched
+#   requested_ip_address (optional) — an exact address to pin; honoured or refused, never
+#                             quietly replaced
 #   homelabinfra_config.networks.<name>.cidr   — required; subnet CIDR or 'dhcp'
 #   homelabinfra_config.networks.<name>.{gateway,dns_servers,bridge,vlan,
-#     searchdomain,ip_offset,max_hosts}         — optional; merged over networks.default
+#     searchdomain,ip_offset,max_hosts,pools,reserved,default_pool}
+#                                              — optional; merged over networks.default
 #   groups['proxmox_clients'] hostvars          — existing IPs excluded from allocation
 #
 # Mutates (combine recursive per specs/namespace-merge-discipline.md):
 #   homelabinfra_instance.network.{name,cidr,ip_address}  — always
+#   homelabinfra_instance.network.pool                    — when a pool was used
 #   homelabinfra_instance.network.{gateway,dns_servers,bridge,vlan,searchdomain}
 #     — only the keys the effective network config defines (never omit placeholders)
 #
 # Scratch facts left behind: network_name, network_config, final_ip_address,
-# proxmox_client_ips — a second call in the same play overwrites them.
+# proxmox_client_ips, effective_pool_name — a second call in the same play overwrites them.
 
 - name: Set network selector
   ansible.builtin.set_fact:
@@ -41,6 +52,7 @@
 - name: Use DHCP for IP allocation
   ansible.builtin.set_fact:
     final_ip_address: "dhcp"
+    effective_pool_name: ""
   when: network_config.cidr is string and network_config.cidr | lower == 'dhcp'
   run_once: true
 
@@ -61,27 +73,55 @@
         - hostvars[item] is defined
         - hostvars[item].ansible_host is defined or hostvars[item].ip is defined or hostvars[item].ip_address is defined
 
-    - name: Set IP allocation bounds
+    # A pool named in config is a requirement; a pool inherited from the app's stack
+    # is advisory. That asymmetry is what lets a lab adopt pools one band at a time
+    # while every stack keeps deploying, and still refuses a config that names a pool
+    # the network has never heard of.
+    - name: Resolve which pool this guest allocates from
       ansible.builtin.set_fact:
-        ip_offset: "{{ network_config.ip_offset | default(1) | int }}"
-        max_hosts: "{{ network_config.max_hosts | default((network_config.cidr | ansible.utils.ipaddr('size') | int) - 2) | int }}"
+        effective_pool_name: >-
+          {{ pool_name | default('', true)
+             if (pool_name | default('', true) | length > 0)
+             else (pool_hint
+                   if (pool_hint | default('', true) | length > 0
+                       and pool_hint in (network_config.pools | default({})))
+                   else network_config.default_pool | default('', true)) }}
 
-    - name: Allocate first available static IP in subnet
+    - name: Assert the requested pool is defined on this network
+      ansible.builtin.assert:
+        that: effective_pool_name in (network_config.pools | default({}))
+        fail_msg: >-
+          Network {{ network_name }} defines no pool named
+          {{ effective_pool_name }}. Declared pools:
+          {{ (network_config.pools | default({})).keys() | list }}.
+      when: effective_pool_name | length > 0
+
+    - name: Choose the address
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../scripts/allocate-ip.py"
+        stdin: >-
+          {{ {
+               'cidr': network_config.cidr,
+               'gateway': network_config.gateway | default(''),
+               'in_use': proxmox_client_ips | default([]),
+               'reserved': network_config.reserved | default([]),
+               'offset': network_config.ip_offset | default(1),
+               'max_hosts': network_config.max_hosts | default(''),
+               'pin': requested_ip_address | default('', true),
+               'pool': ({'name': effective_pool_name}
+                        | combine((network_config.pools | default({}))[effective_pool_name]))
+                       if effective_pool_name | length > 0 else none,
+             } | to_json }}
+      register: ip_allocation
+      changed_when: false
+      delegate_to: localhost
+      become: false
+
+    - name: Take the allocated address
       ansible.builtin.set_fact:
-        final_ip_address: >-
-          {{ (range((network_base_int | int) + (ip_offset | int),
-                    (network_base_int | int) + (max_hosts | int) + 1)
-              | map('ansible.utils.ipaddr')
-              | reject('in', proxmox_client_ips | default([]))
-              | list | first | default('')) }}
-      vars:
-        network_address: "{{ (network_config.cidr | ansible.utils.ipaddr('network')).split('/')[0] }}"
-        network_octets: "{{ network_address.split('.') }}"
-        network_base_int: >-
-          {{ (network_octets[0] | int) * 16777216
-             + (network_octets[1] | int) * 65536
-             + (network_octets[2] | int) * 256
-             + (network_octets[3] | int) }}
+        final_ip_address: "{{ (ip_allocation.stdout | from_json).ip_address }}"
 
     - name: Assert an available IP was found in the subnet
       ansible.builtin.assert:
@@ -89,6 +129,15 @@
           - final_ip_address | length > 0
         fail_msg: "No available IPs found in {{ network_config.cidr }}"
 
+# The `network` sub-dict is REPLACED, not merged into — the one deliberate exception
+# to the recursive-combine rule, and it is still recursive at the level that matters:
+# sibling keys of homelabinfra_instance survive untouched.
+#
+# create-docker-host.yml calls this twice in one play, and a merge left the second
+# call wearing the first's keys: a guest allocated with no pool came back carrying
+# the previous guest's `pool`, and the same would happen to gateway, vlan and bridge
+# when two calls name different networks. Every key here is derived fresh from
+# network_config, so a stale one is never right.
 - name: Set network instance facts
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
@@ -98,10 +147,11 @@
               'cidr': network_config.cidr,
               'ip_address': final_ip_address
             }
+            | combine((effective_pool_name | default('') | length > 0) | ternary({'pool': effective_pool_name}, {}))
             | combine((network_config.gateway is defined) | ternary({'gateway': network_config.gateway}, {}))
             | combine((network_config.dns_servers is defined) | ternary({'dns_servers': network_config.dns_servers}, {}))
             | combine((network_config.bridge is defined) | ternary({'bridge': network_config.bridge}, {}))
             | combine((network_config.vlan is defined) | ternary({'vlan': network_config.vlan}, {}))
             | combine((network_config.searchdomain is defined) | ternary({'searchdomain': network_config.searchdomain}, {}))
-        }, recursive=True) }}
+        }) }}
   run_once: true
