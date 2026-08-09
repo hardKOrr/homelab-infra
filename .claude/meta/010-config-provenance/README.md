@@ -33,19 +33,23 @@ The accepted cost: history is point-in-time, not per-commit-with-message. See
 
 ## Remaining
 
-Everything outstanding needs the bootstrap script run against a real node — `pveum`, Key
-Storage staging, tagging and job import are all unexercised. Treat the first run as an
-experiment.
+The bootstrap script has run against real nodes — from a full wipe of the old runner and
+its predecessor on 2026-08-01, exit 0 on three consecutive runs, and again since. `pveum`,
+Key Storage staging, tagging and job import are all exercised. Evidence and the 15 defects
+that run surfaced: [../012-runner-onboarding/notes.md](../012-runner-onboarding/notes.md).
 
-- [ ] `bash rundeck/bootstrap-rundeck.sh` on a bare node produces a runner whose
-      `proxmox.yml` and `infrastructure.yml` are complete, with no human editing either
+- [x] `bash rundeck/bootstrap-rundeck.sh` on a bare node produces a runner whose
+      `proxmox.yml` and `infrastructure.yml` are complete, with no human editing either —
+      observed 2026-08-01, alongside `apps/rundeck.yml`
 - [ ] That `proxmox.yml` contains **no secret**, and Lab Status runs green with
       `PROXMOX_API_TOKEN` supplied only from Key Storage
-- [ ] The platform's Proxmox credential is `homelab-infra@pve`, not `root@pam`, and its
-      secret exists in exactly one place
+- [x] The platform's Proxmox credential is `homelab-infra@pve`, not `root@pam`, and its
+      secret exists in exactly one place — role `HomelabInfra`, minted and rotated cleanly
+      2026-08-01
 - [ ] The runner LXC carries the `homelab-infra` tag, appears in Lab Status, and its vmid is
       in the PVE backup job created by `configure-pbs.yml`
-- [ ] `config/apps/rundeck.yml` and the `runner` registry key describe the running host
+- [x] `config/apps/rundeck.yml` and the `runner` registry key describe the running host —
+      both authored 2026-08-01; `.generated/facts.yml` carries `runner` at the correct path
 - [ ] `config-doctor` on the live runner's populated `config/` exits zero
 - [ ] `Bootstrap Platform` aborts at the doctor play — not mid-provision — on a missing key
 - [ ] Restoring the runner LXC from PBS yields a working runner with `config/` intact

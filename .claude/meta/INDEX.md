@@ -13,9 +13,17 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | The browser legs, in one sitting at a browser: lower the automation account to Manager and re-run a deploy, Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 016, 400, 403, 405, 306 |
-| 2 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
-| 3 | Migrate the lab's `config/proxmox.yml` onto declared pools, then deploy one guest from a pool and one from a pin. | 011 |
+The plumbing comes first on purpose: Ntfy, Authentik authenticating everywhere and real
+metrics are things the lab does not have today, and every app that follows rides on them.
+
+| Order | Do this | Slices |
+|---|---|---|
+| 1 | The browser legs, in one sitting at a browser: Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 400, 403, 405, 306 |
+| 2 | Resume the network work the Vaultwarden detour interrupted: migrate the lab's `config/proxmox.yml` onto declared pools, deploy one guest from a pool and one from a pin, then wire OPNsense + Unbound. | 011, 304 |
+| 3 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
+
+**Parked, deliberately.** 016's Admin → Manager demotion is hardening on a path that already
+works. It is researched and shipped; the browser leg waits until the estate is stable.
 
 ## By subject
 
@@ -32,7 +40,7 @@ wiring task / bootstrap play). Look up the subject, then read only those slices.
 | Media | wiring **504** |
 | Runners / UI | Rundeck **601**, Semaphore **600** |
 | Day-2 ops | watchtower **201**, remove **501**, rollback **502** |
-| No live target | nginx **301**, pihole **305**, opnsense **304** |
+| No live target | nginx **301**, pihole **305** |
 
 ## Open (1)
 
@@ -76,8 +84,11 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 
 ## Carried caveats
 
-- **301/305 have no live target.** The lab runs Caddy + OPNsense. These stay `built`
-  indefinitely unless a second lab appears; that is expected, not a stall.
+- **301/305 have no live target, and never will here.** The lab runs Caddy, so nginx is
+  settled; DNS is OPNsense + Unbound, so Pihole is settled. Both stay `built` indefinitely
+  unless a second lab appears; that is expected, not a stall. **304 is not in this
+  category** — OPNsense is the lab's router and 304 is queued work, blocked only on API
+  credentials.
 - **500's one staged import is `apps/nginx.yml`**, which does not exist — 301 shipped the
   wiring pair only, no app playbook.
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
@@ -88,6 +99,9 @@ Code-complete and gate-verified. Each row names the unobserved leg.
   `Grant the token Admin on the datastore tree` all skipped. The rotation path the check was
   written for — create, store, grant, then verify — is still unexercised live. Deleting the
   token on the PBS side would force it, and is the way to close this.
-- **010/012's bootstrap script has never run against a real node.** `pveum` role creation,
-  config authoring, project creation, Key Storage staging and job import are all
-  unexercised. Treat the first run as an experiment.
+- **010/012's bootstrap script is the proven path, not an experiment.** It has run from a
+  full wipe — old runner and predecessor destroyed, then exit 0 on three consecutive runs,
+  2026-08-01 — and the current lab was built by it. `pveum` role creation, config authoring,
+  project creation, Key Storage staging, tagging and job import are all exercised. What is
+  still unobserved is narrow: `config-doctor` on the live runner, Lab Status green with the
+  token supplied only from Key Storage, and the runner's vmid inside the PBS backup job.
