@@ -82,6 +82,13 @@ before anything is stopped, and asserted to exist on the target. A database that
 library at a path the new host does not have produces an app that starts perfectly and
 reports every item missing.
 
+**Not ready for a live cutover.** The copy is sound; what follows it is not written. A
+migrated database keeps its peer connections as addresses, `wire-media-stack.yml` locates
+records by name and would duplicate rather than repair them, and the source keeps running —
+two instances writing one library. The full audit, with the live evidence and the two pieces
+that close it, is in [notes.md](notes.md). Safe against a throwaway instance; not as a
+cutover.
+
 The migrated `config.xml` carries the source's API key, and the role prefers a key it finds
 over one it would generate — so the migrated instance keeps the key every existing Prowlarr
 Application and Bazarr connection already points at.

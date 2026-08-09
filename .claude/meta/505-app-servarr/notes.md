@@ -43,6 +43,48 @@ a `vars/app-defaults/` file, a playbook and two job definitions.
 - **Prowlarr gets no media mount.** It manages indexers and never touches files.
 - **Readarr pins `develop`.** There is no current stable Readarr tag.
 
+## Migration leaves peer references stale — open, and larger than it looks
+
+Found by auditing the live estate on 2026-08-09, after the role was written. A migrated
+database carries every peer connection the source had, and those are addresses. Read off the
+running apps:
+
+- **Prowlarr** holds seven Applications, one per *arr, each an IP:
+  `Radarr-1015-1080p` → `http://192.168.1.15:7878`, and six more.
+- **Each Radarr** holds six download clients (`SABnzbd` → `192.168.1.72:7777`,
+  `qBittorrent-1032`–`1035`, `css-qBittorrent-download`), one `PlexServer` notification
+  (`192.168.1.4:32400`) and a `RadarrImport` import list pointing at the 4k instance.
+- Remote path mappings are **empty**, and stay irrelevant: the mount design gives every host
+  identical paths.
+
+Three distinct problems, in order of severity:
+
+1. **`wire-media-stack.yml` would duplicate rather than repair.** It locates an existing
+   record by NAME — `selectattr('name', 'equalto', mw_client_name)` in
+   `tasks/app-wiring/arr-download-client.yml` and `prowlarr-application.yml` — and the name it
+   looks for is the registry instance name. The live records are named `Radarr-1015-1080p` and
+   `SABnzbd`; a new instance named `radarr-1080p` matches neither, so wiring creates an eighth
+   Application and leaves seven broken ones behind.
+2. **Whole categories have no wiring task at all**: `/notification`, `/importlist`,
+   `/indexerproxy`, `/remotepathmapping`. Plex and FlareSolverr are not moving, so leaving
+   them alone is correct — but that has to be a decision the code makes, not an omission.
+3. **Both instances stay live.** Migration is additive by design, so after it two Radarrs
+   manage one library, both talking to the same download clients and both importing. The
+   stale URL is not the hazard; the second live writer is.
+
+What closes it, neither of which is written:
+
+- `playbooks/stacks/remap-media-hosts.yml` — rewrite peer references whose host matches a
+  migrated app's old address, leave every other reference untouched. The old address can be
+  carried automatically: have `migrate-servarr.yml` write `media.<instance>.migrated_from`,
+  which survives the deploy's own facts write because that merge is `recursive=True`.
+- Host-fallback matching in those two wiring task files, so a record found by host is
+  RENAMED to the canonical instance name instead of duplicated. Without this the remap alone
+  still converges to duplicates.
+
+A cutover step — stopping and unwiring the source once the new instance is verified — is the
+third piece, and is the one that touches the live estate.
+
 ## Unverified
 
 Nothing here has run against a live Servarr. Both gates are green, which covers syntax and

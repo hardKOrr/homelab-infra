@@ -20,6 +20,17 @@
 # adopts an API key it finds in an existing config.xml, so the migrated app keeps
 # the key every Prowlarr Application and Bazarr connection already points at.
 #
+# NOT READY FOR A LIVE MIGRATION — read .claude/meta/505-app-servarr/notes.md,
+# "Migration leaves peer references stale", before running this against an app you
+# care about. The copy itself is sound; what is missing is everything that happens
+# after it. A migrated database keeps its peer connections as ADDRESSES — the live
+# lab's Prowlarr holds seven Applications pointing at *arrs by IP, and each Radarr
+# holds six download clients, a Plex notification and an import list the same way.
+# Nothing rewrites those yet, `wire-media-stack.yml` locates records by name and so
+# would add duplicates rather than repair them, and the source app keeps running,
+# which leaves two instances writing one library. Safe to run against a throwaway
+# instance to exercise the path; not safe as a cutover.
+#
 # NON-DESTRUCTIVE. The source is read, never rewritten. Its service is stopped for
 # the copy — a SQLite database copied out from under a running writer is how you
 # get a corrupt one — and started again afterwards even if the copy fails. Nothing

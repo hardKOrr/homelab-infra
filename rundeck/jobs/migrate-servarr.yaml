@@ -11,6 +11,10 @@
   name: Migrate Servarr
   group: Apps
   description: |-
+    NOT READY FOR A LIVE CUTOVER — see .claude/meta/505-app-servarr/notes.md.
+    Peer references are not rewritten, wiring would duplicate rather than repair,
+    and the source keeps running. Exercise it against a throwaway instance.
+
     Copy an existing Servarr app's configuration — history, library, profiles,
     indexers and its API key — onto a lab instance. Run the app's Deploy job
     afterwards. The source app is left running and unchanged.

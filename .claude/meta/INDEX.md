@@ -11,16 +11,14 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 ## Start here
 
-| Order | Do this | Slices |
-|---|---|---|
 The plumbing comes first on purpose: Ntfy, Authentik authenticating everywhere and real
 metrics are things the lab does not have today, and every app that follows rides on them.
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | The browser legs, in one sitting at a browser: Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 400, 403, 405, 306 |
-| 2 | Resume the network work the Vaultwarden detour interrupted: migrate the lab's `config/proxmox.yml` onto declared pools, deploy one guest from a pool and one from a pin, then wire OPNsense + Unbound. | 011, 304 |
-| 3 | Deploy the media stack: Prowlarr plus one *arr onto `media_stack`, migrate one existing Radarr onto it, then Wire Media Stack. Closes 505's live legs and 504's last two. | 505, 504 |
+| 1 | **Start here.** The network work, interrupted twice now — by the Vaultwarden detour and again by the media detour of 2026-08-09: migrate the lab's `config/proxmox.yml` onto declared pools, deploy one guest from a pool and one from a pin, then wire OPNsense + Unbound. 304 is blocked only on OPNsense API credentials. | 011, 304 |
+| 2 | The browser legs, in one sitting at a browser: Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 400, 403, 405, 306 |
+| 3 | Media. Read `505-app-servarr/notes.md` first — the reconciliation gap found on 2026-08-09 is written up there and is not code yet. Deploy Prowlarr plus one *arr onto `media_stack`, then Wire Media Stack. Do **not** migrate a live Radarr until the remap and the host-fallback matching exist: today it would duplicate seven Prowlarr Applications and leave two Radarrs writing one library. | 505, 504 |
 
 **Parked, deliberately.** 016's Admin → Manager demotion is hardening on a path that already
 works. It is researched and shipped; the browser leg waits until the estate is stable.
@@ -78,7 +76,7 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | running live on the real domain; a second estate would close it |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | a removal run against a stopped Caddy or Authentik, to confirm the degradation fix |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
-| 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs the full play chain + Ntfy. 505 now supplies the deployed apps it had none of |
+| 504 | [Wire media stack](504-wire-media-stack/README.md) | wiring verified live read-only; needs the full play chain + Ntfy. 505 now supplies the deployed apps it had none of. **Defect on record:** records are located by name, so an adopted or migrated app gets a duplicate rather than a repair |
 | 505 | [Servarr app roles](505-app-servarr/README.md) | one deploy observed live, and with it the two vendor facts the role deliberately does not trust — the `<APP>__AUTH__APIKEY` spelling the current image honours, and that an unkeyed API call really is refused. Both are asserted, so a wrong guess fails the deploy rather than shipping a wrong key or an open API. Also unobserved: a mountpoint attached to a stack host, and one `migrate-servarr` run against the lab's existing Radarrs |
 | 600 | [Semaphore project.json](600-semaphore-project-json/README.md) | a restore into a fresh Semaphore |
 | 601 | [Rundeck jobs](601-rundeck-jobs/README.md) | 22/22 imported and API-driven. Bootstrap Platform, Lab Status, Remove App, the Vaultwarden jobs and the Deploy jobs for Uptime Kuma / Ntfy / Observability have run; the remaining per-app Deploy jobs, Restart, Tail Log, Rollback, Check Updates, Wire Media Stack and the whole Config group have not |

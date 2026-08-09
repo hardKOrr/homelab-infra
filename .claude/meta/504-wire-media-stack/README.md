@@ -34,6 +34,14 @@ the loop.
 
 ## Remaining
 
+- [ ] **Records are located by name, which duplicates instead of repairing.** Both
+      `arr-download-client.yml` and `prowlarr-application.yml` select the existing entry with
+      `selectattr('name', 'equalto', ...)` against the registry instance name. A lab whose
+      records were named by hand — the live one names them `Radarr-1015-1080p` and `SABnzbd`
+      — matches nothing, so wiring creates a second record and leaves the first pointing
+      wherever it pointed. Harmless on apps this platform deployed, wrong on every app it
+      adopted or migrated. Needs a host-based fallback that renames the record it finds.
+      Evidence and the rest of the reconciliation gap: `../505-app-servarr/notes.md`
 - [ ] End-to-end run of the playbook itself, Plays 1–3 including discovery over SSH — needs
       `config/` populated on the runner; only the wiring plays have been exercised
 - [ ] The "Media stack wired: N connections confirmed" Ntfy notification fires — needs a lab
