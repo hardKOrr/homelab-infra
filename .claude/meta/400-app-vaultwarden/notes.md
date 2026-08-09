@@ -1,5 +1,23 @@
 # 400 — notes
 
+## 2026-08-09 — the usability assertions ran live
+
+Rundeck execution 42 (`Deploy Vaultwarden`, revision `f9347b3`) — succeeded,
+`vaultwarden ok=49 changed=0`, a converged re-run.
+
+All three checks added in `f9347b3` executed and passed:
+
+- **Verify the web vault is served** — the static vault, not just the API process
+  that answers `/alive`.
+- **Assert the API layer is serving** — `api/config` returned JSON.
+- **Assert the running server loaded this deploy's domain** — `environment.vault`
+  from the live process matched the `DOMAIN` this run templated. This is the one that
+  catches a restart-less deploy: the file on disk can be right while the process still
+  holds the old value.
+
+Still unobserved: **vault CRUD from a browser** at the public hostname, and the three
+`lab-*` commands, which are installed but unrun.
+
 ## Superseded planning text (moved from README, 2026-08-08)
 
 The original install approach, kept for provenance. It does **not** describe what shipped:

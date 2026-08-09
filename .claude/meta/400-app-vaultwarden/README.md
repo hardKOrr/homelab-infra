@@ -19,6 +19,11 @@ Deployed live and convergent 2026-08-01: the fresh runner workflow created the t
 192.168.0.10, installed Vaultwarden 1.37.1, returned HTTP 200, and installed the three
 `lab-*` commands. By execution 11 the play reported `changed=0`.
 
+Since `f9347b3` the deploy also proves the app is *usable*: the web vault is served, the API
+layer returns JSON, and the running process's `environment.vault` matches the `DOMAIN` this
+run templated — the check a restart-less deploy would otherwise hide. All three ran green on
+execution 42, 2026-08-09.
+
 ## Remaining
 
 Installation is not an execution test — the three maintenance commands are present but

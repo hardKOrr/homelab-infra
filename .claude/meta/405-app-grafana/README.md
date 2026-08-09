@@ -28,7 +28,10 @@ Deployed green 2026-08-03; five of six acceptance items observed 2026-08-08.
       wildcard, so the UI is served and reachable. Nobody has signed in; the generated admin
       password sits in the vault unused. This is the browser-credential leg 015/016 name,
       not a defect in this slice
-- [x] Prometheus datasource pre-configured — the role's own verify step passes every run
+- [x] Prometheus datasource pre-configured — the role's own verify step passes every run,
+      and since `f9347b3` it also queries `/api/datasources/uid/prometheus/health`, so the
+      datasource is proved *queryable* rather than only provisioned (observed exec 43,
+      2026-08-09, alongside the target-set assertion the bind-mount defect below motivated)
 - [x] Default dashboard shows data from at least one host — seven scrape targets `up`, six
       guests plus itself
 - [x] node_exporter running on all `homelab-infra` guests — all seven, including the PBS

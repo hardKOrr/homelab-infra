@@ -98,6 +98,29 @@ marks superseded — same correction slices 300 and 302 already made to their RE
 
 ---
 
+## 2026-08-09 — the usability assertions ran live
+
+Rundeck execution 43 (`Deploy Observability`, revision `f9347b3`) — succeeded,
+`monitoring-stack ok=76 changed=0`, so the assertions landed on an already-converged
+stack rather than on a fresh install.
+
+Both checks added in `f9347b3` executed and passed:
+
+- **Assert Prometheus is scraping the targets this deploy rendered** — the active
+  target set from `/api/v1/targets` matched the list this run wrote. This is the probe
+  for the 2026-08-08 single-file bind-mount failure, which `/-/ready` reported 200
+  through.
+- **Assert Grafana can query Prometheus** — `/api/datasources/uid/prometheus/health`
+  answered, proving the query path and not only that provisioning wrote a file.
+
+`changed=0` on the same run is the idempotence half: the Grafana admin password was
+not rotated by a re-run.
+
+Still unobserved: **admin sign-in from a browser**, and that the default dashboard
+renders real data to a human. Those need a person at a browser, not a deploy.
+
+---
+
 ## Superseded planning text (moved from README, 2026-08-08)
 
 The original option A / option B framing and the pre-build approach, kept for provenance.

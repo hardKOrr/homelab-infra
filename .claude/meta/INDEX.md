@@ -13,11 +13,10 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | Run a deploy of Vaultwarden, Observability and PBS. Every app role now carries a usability assertion; the three added 2026-08-09 have never executed. | 400, 405 |
-| 2 | Decide 016's collection scoping — grant per-collection, or amend the criterion to the decision already made. | 016 |
-| 3 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model. | 011 |
-| 4 | The browser legs — Vaultwarden vault CRUD, Authentik sign-in, one app behind `forward_auth`. Needs a human at a browser. | 400, 403, 405, 306 |
-| 5 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
+| 1 | Decide 016's collection scoping — grant per-collection, or amend the criterion to the decision already made. | 016 |
+| 2 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model. | 011 |
+| 3 | The browser legs — Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. Every remaining app-role acceptance item now needs a human at a browser. | 400, 403, 405, 306 |
+| 4 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
 
 ## By subject
 
@@ -66,9 +65,9 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 | 304 | [OPNsense wire/unwire](304-wiring-opnsense/README.md) | OPNsense API credentials |
 | 305 | [Pihole wire/unwire](305-wiring-pihole/README.md) | a Pihole — user runs OPNsense; low priority |
 | 306 | [Reverse-proxy forward_auth](306-wiring-forward-auth/README.md) | Caddy path verified live 2026-07-25; browser sign-in leg + nginx path open |
-| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | serving, converging and driving every vault write; browser vault CRUD unobserved |
+| 400 | [Vaultwarden](400-app-vaultwarden/README.md) | serving, converging, asserting its own web vault and API layer live (exec 42, 2026-08-09); browser vault CRUD and the three `lab-*` commands unobserved |
 | 403 | [Authentik](403-app-authentik/README.md) | one app deployed with `routing.identity: forward_auth`, observed end to end |
-| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | five of six observed 2026-08-08; only admin sign-in remains |
+| 405 | [Grafana + Prometheus](405-app-grafana/README.md) | five of six observed 2026-08-08; the scrape-set and datasource-health assertions ran green 2026-08-09 (exec 43); only browser admin sign-in remains |
 | 407 | [Caddy per-estate DNS-01](407-caddy-dns-challenge/README.md) | running live on the real domain; a second estate would close it |
 | 501 | [App remove playbook](501-app-remove-playbook/README.md) | a removal run against a stopped Caddy or Authentik, to confirm the degradation fix |
 | 502 | [Rollback container](502-rollback-container/README.md) | roll a Docker app back a tag |
@@ -84,6 +83,12 @@ Code-complete and gate-verified. Each row names the unobserved leg.
   wiring pair only, no app playbook.
 - **600's backup schema is reconstructed, not exported** from a running Semaphore. If the
   restore rejects it, dump `GET /api/project/<id>/backup` and commit the server's output.
+- **PBS's new token check ran against an inherited token, not a created one.** Exec 44
+  (2026-08-09) verified the effective token after the ACL grant and passed, but the recorded
+  token still authenticated, so `Remove the unusable API token`, `Create the API token` and
+  `Grant the token Admin on the datastore tree` all skipped. The rotation path the check was
+  written for — create, store, grant, then verify — is still unexercised live. Deleting the
+  token on the PBS side would force it, and is the way to close this.
 - **010/012's bootstrap script has never run against a real node.** `pveum` role creation,
   config authoring, project creation, Key Storage staging and job import are all
   unexercised. Treat the first run as an experiment.

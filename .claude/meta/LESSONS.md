@@ -100,6 +100,7 @@ tagged `homelab-infra`, all built by this repo:
 | **Keeps its secrets in the vault** | Vault mode, `facts.yml` secret-free, the automation account drives every write, and the fail-closed guarantee has been tested by injection. |
 | **Backs itself up** | PBS holds 30 snapshots — five consecutive nights for each of six guests, unattended. |
 | **Is monitored, and says so** | Prometheus scrapes all seven guests. Uptime Kuma holds three monitors registered by deploys over socket.io, and on 2026-08-09 a real Grafana outage produced a DOWN and a recovery message in Ntfy's own database — the first time the platform has been observed telling anyone that something broke. |
+| **Checks that it is usable, not merely up** | Every app role ends on a probe of the application layer. All seven ran green live on 2026-08-09 (executions 42/43/44 for Vaultwarden, Observability and PBS; the other four in earlier bootstraps). |
 
 ## The config model, decided 2026-07-27 — implemented 2026-07-26
 
