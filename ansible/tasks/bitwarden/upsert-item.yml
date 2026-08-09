@@ -336,9 +336,11 @@
         | selectattr('manage', 'defined') | selectattr('manage')
         | list | length == 1
     fail_msg: >-
-      The automation account still holds no explicit grant on collection
-      {{ vault_collection_name | default('platform-secrets') }}. Until it does,
-      its access depends on the organization-wide admin flag.
+      The automation account ({{ _vault_self_member_id }}) still holds no explicit
+      grant on collection {{ vault_collection_name | default('platform-secrets') }}.
+      Until it does, its access depends on the organization-wide admin flag.
+      The collection came back holding:
+      {{ (_vault_collection_readback.stdout | from_json).users | default([]) }}
   when: not (_vault_collection_grant_verified | default(false))
 
 - name: Vault | Record that the collection grant was verified this run
