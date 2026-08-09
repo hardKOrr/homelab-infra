@@ -47,3 +47,31 @@
   retries: 30
   delay: 5
   changed_when: false
+
+# ── Prove the app is USABLE, not merely alive ─────────────────────────────────
+# Every role in this repo ends with one check that only an initialized application
+# can pass. Liveness is not it: Uptime Kuma sat on its "choose a database" setup
+# screen for five days while four green deploys passed over it, because a container
+# that is up and an application a human can log into look identical from the port.
+#
+# Pick a probe that an uninitialized instance FAILS, and verify its shape against a
+# running instance before trusting it — reasoning about a vendor API is how the
+# premise "Uptime Kuma has a REST API" reached four files. Two traps to check for:
+#   - a catch-all front-end route that answers 200 on every path, including ones
+#     that do not exist (request a nonsense path; it should not return 200)
+#   - reading an error status as success ("404 Cannot POST /setup" is not "already
+#     configured")
+#
+# Probes that have held up here: an authenticated call that names the account back
+# (Authentik `/api/v3/core/users/me/`), a real write plus proof the anonymous write
+# is refused (ntfy publish), the config the RUNNING process loaded rather than the
+# file on disk (Vaultwarden `/api/config`), and a stage endpoint that reports setup
+# state honestly (Kuma `/api/entry-page`).
+#
+# Replace this task; do not ship the role with it.
+- name: Verify APP_NAME is initialized
+  ansible.builtin.fail:
+    msg: >-
+      This role has no usability check. Replace this task with one probe only an
+      initialized APP_NAME can pass — see .claude/meta/LESSONS.md, "A deploy must
+      assert usability, not liveness".

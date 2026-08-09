@@ -266,6 +266,40 @@
     | list | length == 0
   changed_when: true
 
+# ── Prove the token the platform will actually use ────────────────────────────
+# "Verify the recorded token still authenticates" above exercises only a secret this
+# run inherited; a token this run CREATED reaches the vault, the registry and Play 3
+# without ever being used once. /api2/json/ping answers 200 long before any of that,
+# so a deploy that stops at liveness reports success on a PBS the platform cannot
+# authenticate to, and the failure surfaces later as a lab with no backups.
+# See "A deploy must assert usability, not liveness" in .claude/meta/LESSONS.md.
+#
+# Placed after the ACL grant so the token is tested in the state Play 3 will find it.
+- name: Verify the effective API token authenticates
+  ansible.builtin.uri:
+    url: "https://localhost:{{ app_config.app.port }}/api2/json/access/permissions"
+    headers:
+      Authorization: "PBSAPIToken={{ _pbs_token_id }}:{{ _pbs_token_secret }}"
+    validate_certs: false   # self-signed until a certificate is installed
+    status_code: 200
+  register: _pbs_token_final
+  until: _pbs_token_final.status | default(0) == 200
+  retries: 5
+  delay: 3
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Assert the effective API token authenticates
+  ansible.builtin.assert:
+    that: _pbs_token_final.status | default(0) == 200
+    fail_msg: >-
+      The PBS API token {{ _pbs_token_id }} does not authenticate
+      (HTTP {{ _pbs_token_final.status | default('no response') }}). Datastore
+      creation, the backup job and notification routing all use this token. Check
+      `proxmox-backup-manager user list-tokens {{ pbs_auth_id }}` and
+      `proxmox-backup-manager acl list` on the PBS VM.
+
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the PBS endpoint to the playbook
   ansible.builtin.set_fact:

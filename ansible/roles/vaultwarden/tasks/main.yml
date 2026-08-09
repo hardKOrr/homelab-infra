@@ -252,6 +252,61 @@
   delay: 5
   changed_when: false
 
+# ── Prove the instance is usable, not merely alive ────────────────────────────
+# /alive answers from the API process alone. It is 200 on an instance whose
+# web-vault extraction failed, and on one still running the previous binary under
+# the environment file this run replaced — both indistinguishable from a working
+# server to a liveness check, and both leave a human unable to use the vault.
+# See "A deploy must assert usability, not liveness" in .claude/meta/LESSONS.md.
+#
+# Verified live against 1.37.1: an unmatched path returns 404, so a 200 on / is a
+# real signal and not the catch-all route that made Uptime Kuma look healthy.
+- name: Verify the web vault is served
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+    return_content: true
+  register: _vw_web_vault
+  failed_when: >-
+    _vw_web_vault.status | default(0) != 200
+    or 'Vaultwarden Web' not in (_vw_web_vault.content | default(''))
+  changed_when: false
+
+- name: Read the running server configuration
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/config"
+    status_code: 200
+    return_content: true
+  register: _vw_api_config
+  changed_when: false
+
+# `version` here is the bundled WEB-VAULT version (2026.6.0 while the server binary
+# reports 1.37.1) — it is not the server version and must never be compared with
+# _latest_version. Its presence proves the API layer serves JSON, which /alive alone
+# does not distinguish from a server that lost its web vault.
+- name: Assert the API layer is serving
+  ansible.builtin.assert:
+    that: _vw_api_config.json.version | default('') | length > 0
+    fail_msg: >-
+      Vaultwarden answered /alive but /api/config carries no version. The API
+      layer is not serving; check `journalctl -u {{ vaultwarden_service_name }}`
+      on the guest.
+
+# environment.vault is DOMAIN as the RUNNING process read it, so this compares the
+# environment file this run wrote against the one the process actually loaded — the
+# "my change had no effect" class that a restart-less deploy produces silently.
+- name: Assert the running server loaded this deploy's domain
+  ansible.builtin.assert:
+    that: _vw_api_config.json.environment.vault | default('') == _vw_expected_domain
+    fail_msg: >-
+      Vaultwarden is serving DOMAIN
+      '{{ _vw_api_config.json.environment.vault | default('') }}', but this deploy
+      configured '{{ _vw_expected_domain }}'. The running process is still on an
+      older environment file — restart {{ vaultwarden_service_name }} on the guest.
+  vars:
+    _vw_expected_domain: "https://{{ instance }}.{{ homelabinfra_infra.domain | default('') }}"
+  when: homelabinfra_infra.domain is defined
+
 # ── Lab maintenance scripts ───────────────────────────────────────────────────
 - name: Install lab maintenance scripts
   ansible.builtin.copy:

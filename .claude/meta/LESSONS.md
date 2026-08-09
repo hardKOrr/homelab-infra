@@ -31,6 +31,26 @@ success.** Every app role wants one check that only an initialized application c
 for Kuma that check is `GET /api/entry-page`. Treat any place a role reads an error status
 as a success signal as the same bug.
 
+As of 2026-08-09 all seven app roles carry one, and both role templates fail closed until
+the author replaces the placeholder. The probes that work fall into four shapes, and a new
+role should copy the closest one rather than invent a fifth:
+
+| Shape | Where | Probe |
+|---|---|---|
+| Authenticate and be named back | authentik, pbs | `/api/v3/core/users/me/` asserted against the expected username; the PBS token asserted against `/api2/json/access/permissions` |
+| Perform the real operation, and prove the anonymous one is refused | ntfy | authenticated publish 200, anonymous publish 401/403 |
+| Compare what the RUNNING process loaded against what this run wrote | vaultwarden, observability | `/api/config`'s `environment.vault` vs the templated `DOMAIN`; Prometheus's active target set vs the rendered target list |
+| Ask the app what stage it is at | uptime-kuma | `/api/entry-page` reports `setup-database` or `entryPage` |
+
+Two facts cost a live probe each and are worth not rediscovering. Vaultwarden's
+`/api/config` `version` is the bundled **web-vault** version (`2026.6.0` while the server
+binary reports `1.37.1`) — comparing it against the installed release fails every run. And
+Grafana's `/api/datasources/uid/<uid>` proves a datasource *exists*; only
+`/api/datasources/uid/<uid>/health` proves Grafana can *query* it, which is the difference
+between provisioning that landed and dashboards that render blank. Prometheus target
+*health* is deliberately not asserted — a guest that happens to be down is not a reason to
+fail a deploy — only that the scraped set matches the rendered one and something scrapes.
+
 **A wrong premise about an external API does not stay in one file.** "Uptime Kuma has a
 REST API" was wrong, and it independently broke the wiring, the role's notification
 channel, the Lab Status report and a deploy notification — four silent failures in four

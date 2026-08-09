@@ -237,6 +237,45 @@
   delay: 5
   changed_when: false
 
+# /-/ready answers from whatever config Prometheus last loaded, which is not
+# necessarily the file this run wrote — exactly the failure the single-file bind
+# mount produced above, where a replaced inode left Prometheus scraping a five-day-old
+# target list while /-/ready stayed 200 the whole time. Comparing the ACTIVE target
+# set against the list this run rendered is what makes that visible.
+#
+# Target HEALTH is deliberately not asserted for every target: a guest that happens
+# to be down is not a reason to fail this deploy. One target scraping successfully is
+# enough to prove Prometheus is collecting at all.
+- name: Read the active Prometheus targets
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.prometheus_port }}/api/v1/targets?state=active"
+    status_code: 200
+  register: _prometheus_targets
+  until: >-
+    (_prometheus_targets.json.data.activeTargets | default([]))
+    | selectattr('labels.job', 'equalto', 'nodes') | list | length
+    == (_observability_node_targets | length)
+  retries: 10
+  delay: 3
+  failed_when: false
+  changed_when: false
+
+- name: Assert Prometheus is scraping the targets this deploy rendered
+  ansible.builtin.assert:
+    that:
+      - (_prometheus_scraped | sort) == (_observability_node_targets | map(attribute='name') | list | sort)
+      - _prometheus_active | selectattr('health', 'equalto', 'up') | list | length > 0
+    fail_msg: >-
+      Prometheus is scraping {{ _prometheus_scraped | sort }} but this deploy
+      rendered {{ _observability_node_targets | map(attribute='name') | list | sort }}.
+      A Prometheus that never picked up the new config keeps collecting the old
+      target list indefinitely, and every dashboard still looks populated.
+  vars:
+    _prometheus_active: "{{ _prometheus_targets.json.data.activeTargets | default([]) }}"
+    _prometheus_scraped: >-
+      {{ _prometheus_active | selectattr('labels.job', 'equalto', 'nodes')
+         | map(attribute='labels.instance') | list }}
+
 - name: Wait for Grafana to be healthy
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/api/health"
@@ -262,6 +301,38 @@
   delay: 3
   changed_when: false
   no_log: true
+
+# The check above proves the datasource EXISTS. This one proves Grafana can actually
+# query it: a datasource whose URL is unreachable from inside the container — a
+# loopback address, a renamed compose service — provisions perfectly and leaves every
+# panel on every dashboard blank, which nobody notices until they open a dashboard.
+# Verified against Grafana 13.1.3:
+#   {"status":"OK","message":"Successfully queried the Prometheus API."}
+#
+# no_log because the admin password is a task argument; the assert below reads the
+# registered result, which carries the server's message but not the credential.
+- name: Query the Prometheus datasource health from Grafana
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/datasources/uid/prometheus/health"
+    user: "{{ app_config.app.admin_user | default('admin') }}"
+    password: "{{ _observability_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: _grafana_datasource_health
+  until: (_grafana_datasource_health.json.status | default('')) == 'OK'
+  retries: 10
+  delay: 3
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Assert Grafana can query Prometheus
+  ansible.builtin.assert:
+    that: (_grafana_datasource_health.json.status | default('')) == 'OK'
+    fail_msg: >-
+      Grafana cannot query its Prometheus datasource —
+      {{ _grafana_datasource_health.json.message | default('no response') }}.
+      The datasource is provisioned but unusable, so every dashboard renders blank.
 
 # ── Hand the endpoints back to the playbook ───────────────────────────────────
 - name: Export the observability endpoints to the playbook

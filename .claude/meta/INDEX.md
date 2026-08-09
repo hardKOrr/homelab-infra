@@ -13,7 +13,7 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | Make deploys assert usability, not liveness. One check per app role that only an initialized app can pass. | all app slices |
+| 1 | Run a deploy of Vaultwarden, Observability and PBS. Every app role now carries a usability assertion; the three added 2026-08-09 have never executed. | 400, 405 |
 | 2 | Decide 016's collection scoping — grant per-collection, or amend the criterion to the decision already made. | 016 |
 | 3 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model. | 011 |
 | 4 | The browser legs — Vaultwarden vault CRUD, Authentik sign-in, one app behind `forward_auth`. Needs a human at a browser. | 400, 403, 405, 306 |
