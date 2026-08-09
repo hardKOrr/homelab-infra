@@ -1,36 +1,35 @@
 # 502 — Rollback container playbook
 
-**Status:** built — implemented and gate-verified; awaiting live acceptance. Decisions and deviations from the approach below are in notes.md.
-**Depends on:** 201 (watchtower — to test the feedback loop)
-**Blocks:** container update recovery story
+**Status:** built
+**Subject:** Day-2 ops
+**Related:** 201 (Watchtower — the other half of the feedback loop), 501
 
-## Problem
+## Goal
 
-`playbooks/stacks/rollback-container.yml` is a TODO header only. Required for the Watchtower feedback loop in CLAUDE.md.
+The recovery half of the day-2 feedback loop: Watchtower reports "updated", Kuma reports
+"DOWN", and the notification the operator is already holding tells them to run this job.
+`playbooks/stacks/rollback-container.yml` was a TODO header.
 
-## Files
+Parameters: `stack` and `container` (required), `image_tag` optional. On the stack host it
+reads the current tag from `/opt/<container>/docker-compose.yml`, edits the `image:` line,
+pulls, recreates, waits for health where the port is known, and posts an Ntfy message naming
+both the old and new tags.
 
-- `ansible/playbooks/stacks/rollback-container.yml` — implement
+Omitting `image_tag` **pins to the currently running tag** — a freeze rather than a
+rollback. Either way, pinning a non-`latest` tag disables Watchtower auto-update for that
+container until the deploy playbook is re-run and restores the configured tag.
 
-## Approach
+## Remaining
 
-Parameters: `stack` (required), `container` (required, = instance name), `image_tag` (optional — if omitted, pin to currently running tag = freeze).
+Live acceptance needs a Docker app actually rolled back a tag.
 
-Steps on the stack host (`tag_<stack>`):
-1. Locate the compose file at `/opt/{{ container }}/docker-compose.yml`.
-2. Read current image tag.
-3. If `image_tag` is omitted, set it to the currently running tag (just pins to stop future updates).
-4. Use `ansible.builtin.replace` or `lineinfile` to edit the `image:` line. Capture old and new for the notification.
-5. `community.docker.docker_compose_v2_pull` — pull the rollback image.
-6. `community.docker.docker_compose_v2` with `state: present` and `recreate: always` — restart with new tag.
-7. Wait for container healthy (best effort — uri check the published port if known).
-8. Ntfy notify: `"{{ container }} rolled back from {{ old_tag }} to {{ new_tag }}"`.
+- [ ] Rollback with an explicit tag changes the compose file and restarts the container
+- [ ] Rollback without a tag freezes at the current version
+- [ ] The Ntfy notification includes both old and new tags
+- [ ] Idempotent on re-run against the same target tag
 
-Note: pinning a non-latest tag disables Watchtower auto-update for that container until the deploy playbook is re-run (which restores `:latest` or the configured tag).
+## Links
 
-## Acceptance
-
-- [ ] Rollback with explicit tag changes the compose file + restarts the container
-- [ ] Rollback without tag freezes at current version (no compose-file change required if already pinned)
-- [ ] Ntfy notification includes both old and new tags
-- [ ] Idempotent on re-run with the same target tag
+- `ansible/playbooks/stacks/rollback-container.yml`
+- `rundeck/jobs/rollback-container.yaml` — keeps its parameters, unlike the per-app deploys
+- [notes.md](notes.md) — decisions and deviations

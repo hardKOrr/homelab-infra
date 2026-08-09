@@ -1,45 +1,36 @@
 # 302 — Authentik wire + unwire
 
 **Status:** built
-**Depends on:** 200, 403 (authentik app must exist before this can be tested)
-**Blocks:** SSO across all apps
+**Subject:** Authentik / identity
+**Related:** 009 (the mode contract this dispatches on), 306 (proxy enforcement), 403 (app)
 
-## Problem
+## Goal
 
-Both `tasks/wiring/authentik.yml` and `tasks/unwiring/authentik.yml` are TODO headers. Without this, every app skips SSO.
+Both halves were TODO headers, so every app skipped SSO. Both drive Authentik's REST API at
+`<sso.host>/api/v3/`, gated on `sso.provider == 'authentik'`.
 
-## Files
+Since 009, **`wiring/authentik.yml` dispatches on `wiring_identity_mode`** rather than a
+boolean — catalog builds an Application tile and group binding; oidc builds an OAuth2
+provider and returns client credentials; forward_auth builds a proxy provider
+(`mode: forward_single`), Application, policy binding and outpost membership. Unwiring
+removes whichever shape exists.
 
-- `ansible/tasks/wiring/authentik.yml` — implement
-- `ansible/tasks/unwiring/authentik.yml` — implement
+The second-deploy lookup defect is fixed: objects are found by slug or name before they are
+created, so a re-run adopts rather than duplicates.
 
-## Approach
+## Remaining
 
-Authentik REST API at `<host>/api/v3/`. Token from `homelabinfra_infra.authentik.api_token`.
+- [ ] Hitting a wired domain without a session redirects through Authentik, and after
+      unwire a user can no longer SSO to that app — the browser sign-in leg, shared with
+      306, 403 and 405. Needs a human at a browser
+- [ ] Re-wire idempotent and unwire clean for each of the three shapes — the per-mode
+      acceptance lives in 009, which needs one app deployed per mode
+- [x] Wire creates provider + application + policy binding
+- [x] No-op for `sso.provider != 'authentik'`
 
-**Wire (forward auth / proxy provider mode):**
-1. Find or create the homelab outpost (cache by name).
-2. Find existing provider by slug — GET `/providers/proxy/?name=<wiring_app_name>`.
-3. POST or PATCH provider:
-   - mode=forward_single (single domain)
-   - external_host=`wiring_external_url`
-   - internal_host=`wiring_upstream_url`
-   - authorization_flow + invalidation_flow = default homelab flows
-4. Find or create application — GET `/core/applications/?slug=<wiring_app_name>`. Link to provider.
-5. Bind policy: ensure group `wiring_auth_group` has access (PolicyBinding to group).
-6. Add provider to outpost.
+## Links
 
-**Unwire:**
-1. Find application by slug → DELETE.
-2. Find provider by name → DELETE.
-3. Outpost auto-updates.
-
-Gated on `homelabinfra_infra.sso.provider == 'authentik'`.
-
-## Acceptance
-
-- [ ] Wire creates provider + application + policy binding
-- [ ] Hitting the wired domain without a session redirects through Authentik
-- [ ] Re-wire is idempotent
-- [ ] Unwire removes app + provider; users can no longer SSO to that app
-- [ ] No-op for `sso.provider != 'authentik'`
+- `ansible/tasks/wiring/authentik.yml`, `ansible/tasks/unwiring/authentik.yml`
+- `ansible/tasks/resolve-estate.yml` — resolves which estate's Authentik is targeted
+- Authentik 2026.5.6 flow slugs and query-filter behaviour that this wiring depends on are
+  recorded in agent project memory, not in this repo

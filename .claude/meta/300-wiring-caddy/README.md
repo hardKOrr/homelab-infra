@@ -1,38 +1,33 @@
 # 300 — Caddy wire + unwire
 
-**Status:** built (implementation complete; live acceptance blocked on 402)
-**Depends on:** 200
-**Blocks:** 402 (caddy app), 504 (media stack wire)
+**Status:** built
+**Subject:** Caddy / TLS
+**Related:** 306 (forward_auth handler chain), 407 + 015 (certificates), 504 (media stack)
 
-## Problem
+## Goal
 
-Caddy is the default reverse proxy and the most-used wiring target. Both `tasks/wiring/caddy.yml` and `tasks/unwiring/caddy.yml` are TODO headers only.
+Caddy is the default reverse proxy and the most-used wiring target; both halves were TODO
+headers. Both drive Caddy's admin API (`reverse_proxy.host`, typically port 2019) with
+`ansible.builtin.uri`, gated on `reverse_proxy.provider == 'caddy'`.
 
-## Files
+- **Wire** — build the route JSON (match `wiring_domain`, reverse_proxy to
+  `wiring_upstream_host:wiring_upstream_port`), `GET /id/route_<app>`; PATCH when it exists,
+  POST to `/config/apps/http/servers/srv0/routes` when it does not, then verify.
+- **Unwire** — `GET /id/route_<app>`; 404 is a no-op success, otherwise DELETE.
 
-- `ansible/tasks/wiring/caddy.yml` — implement
-- `ansible/tasks/unwiring/caddy.yml` — implement
+Since 306 the route's `handle` list is built from `wiring_identity_mode`, so a forward_auth
+app gets the auth chain and every other mode keeps the plain handler unchanged.
 
-## Approach
+## Remaining
 
-Both via Caddy admin API (`homelabinfra_infra.caddy.admin_api_url`, typically `http://CADDY_IP:2019`).
+Wiring runs on every bootstrap; unwire needs a removal run.
 
-**Wire:**
-1. Build route JSON: match `wiring_domain`, reverse_proxy to `wiring_upstream_host:wiring_upstream_port`, ACME for TLS.
-2. Check if route with the same `@id` (`route_<wiring_app_name>`) exists — GET `/id/route_<name>`.
-3. If exists → PATCH; else POST to `/config/apps/http/servers/srv0/routes`.
-4. Verify route active (GET, expect 200).
+- [ ] Unwiring removes the route and the domain returns Caddy's default response
+- [ ] Unwiring a non-existent route succeeds
+- [x] Wiring a fresh app produces a working HTTPS route — every bootstrap exercises this
+- [x] Re-running wire is a no-op
+- [x] Both tasks are gated on the provider check and no-op for a different provider
 
-**Unwire:**
-1. GET `/id/route_<wiring_app_name>`. 404 → no-op success.
-2. DELETE `/id/route_<wiring_app_name>`.
+## Links
 
-Use `ansible.builtin.uri`. All wiring tasks gated on `homelabinfra_infra.reverse_proxy.provider == 'caddy'`.
-
-## Acceptance
-
-- [ ] Wiring a fresh app produces a working HTTPS route via Caddy
-- [ ] Re-running wire is a no-op (idempotent — PATCH same content = no change)
-- [ ] Unwiring removes the route; the domain returns Caddy's default response (or 404)
-- [ ] Unwiring a non-existent route succeeds (idempotent)
-- [ ] Both tasks are gated on the provider check and no-op if a different provider is configured
+- `ansible/tasks/wiring/caddy.yml`, `ansible/tasks/unwiring/caddy.yml`

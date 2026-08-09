@@ -163,3 +163,37 @@ database and skipped its schema bootstrap, failing with `no such table: setting`
 files were moved to `/opt/uptime-kuma/preinit-20260808-171202/` rather than deleted and
 Kuma restarted to its exact prior state — still waiting for setup, nothing lost. Worth
 remembering: on a database-backed app, a read-only-looking client can be a write.
+
+---
+
+## Superseded planning text (moved from README, 2026-08-08)
+
+Kept for provenance during the meta restructure. This was the slice's original "Approach"
+section, written before the v1/v2 question was settled and before the REST premise was
+found to be false. It describes a design that did **not** ship; the README now describes
+the one that did.
+
+> 1. Compose: `louislam/uptime-kuma:latest` with volume `uptime-kuma:/app/data`.
+> 2. `docker compose up -d`.
+> 3. Wait for HTTP 200 on `/`.
+> 4. First-run setup is interactive in v1 — need to either:
+>    - Use the `uptime-kuma-api` Python lib to script setup (recommended)
+>    - OR document a one-time manual setup step (breaks the "1-click" promise)
+>    - OR check if Kuma v2 (currently beta) is mature enough — it has proper REST +
+>      setup-via-env
+> 5. After setup, create the Ntfy notification channel — POST monitor-notification with
+>    `type: ntfy`, server: `homelabinfra_infra.notifications.ntfy_url`, topic: `homelab`.
+> 6. Capture the notification channel ID.
+> 7. Write to facts under the Shape B role key.
+>
+> `tasks/wiring/uptime-kuma.yml` targets the v2 REST surface behind a probe and skips with
+> a warning when `GET /api/monitors` does not answer 200. Locking Kuma v1 here means
+> replacing that file with a socket.io implementation.
+>
+> Implementation decision: lock in Kuma v1 + python lib, OR Kuma v2 if stable.
+
+How it actually resolved: neither. Kuma 2.x shipped, the Python library was never needed,
+and the REST surface named in step 7 does not exist in any version — `GET /api/monitors`
+answers 200 `text/html` from the front end's catch-all route, which is exactly why the
+probe, the delete and the verify-assert all passed against nothing. Slice 303 rebuilt the
+wiring on socket.io.

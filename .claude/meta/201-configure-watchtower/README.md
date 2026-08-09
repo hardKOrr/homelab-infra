@@ -1,37 +1,36 @@
 # 201 — Implement configure-watchtower
 
-**Status:** built (implementation complete; live acceptance blocked on 401)
-**Depends on:** 200 (needs ntfy facts), 401 (ntfy app must exist first in bootstrap order)
-**Blocks:** Docker app stack hosts auto-updating
+**Status:** built
+**Subject:** Day-2 ops
+**Related:** 401 (Ntfy must exist first in bootstrap order), 200 (notification facts), 502
 
-## Problem
+## Goal
 
-`tasks/bootstrap/configure-watchtower.yml` is a TODO header only. Container auto-update is a core day-2 promise from CLAUDE.md.
+Container auto-update is a core day-2 promise: configure the tool, don't replicate it.
+`tasks/bootstrap/configure-watchtower.yml` was a TODO header.
 
-## Files
+Watchtower runs on each Docker stack host from `/opt/watchtower/docker-compose.yml`, on a
+nightly schedule, with `WATCHTOWER_LABEL_ENABLE=true` so it touches only containers that opt
+in, and `WATCHTOWER_CLEANUP=true`. Notifications go through shoutrrr to Ntfy, built from
+`notifications.host` + `.topic` — the registry stores no pre-built URL.
 
-- `ansible/tasks/bootstrap/configure-watchtower.yml` — implement
-- Caller: any Docker host creation (likely a hook added to `playbooks/docker/create-docker-host.yml` or the bootstrap stack-host flow)
+The notification template carries the **rollback instruction**, which is the other half of
+the day-2 feedback loop: Watchtower says "updated", Kuma says "DOWN", and the message the
+operator is already holding tells them how to run the Rollback job.
 
-## Approach
+## Remaining
 
-Run on the target Docker host. Steps:
-
-1. Create `/opt/watchtower/` (root:root, 0750).
-2. Template `/opt/watchtower/docker-compose.yml` with:
-   - Image `containrrr/watchtower`
-   - `WATCHTOWER_NOTIFICATIONS=shoutrrr`
-   - `WATCHTOWER_NOTIFICATION_URL=ntfy://{{ homelabinfra_infra.notifications.ntfy_url }}/{{ homelabinfra_infra.notifications.topic }}` — verify shoutrrr ntfy URL format
-   - `WATCHTOWER_SCHEDULE="0 0 4 * * *"`
-   - `WATCHTOWER_LABEL_ENABLE=true`
-   - `WATCHTOWER_CLEANUP=true`
-   - Notification template that includes the rollback instruction (per CLAUDE.md feedback loop)
-   - Mount `/var/run/docker.sock:/var/run/docker.sock:ro`
-3. `community.docker.docker_compose_v2` up.
-
-## Acceptance
+Live acceptance needs a container update actually reported.
 
 - [ ] Watchtower container running on the target host
 - [ ] Test notification appears in Ntfy on first start
-- [ ] An image update on a labeled container triggers an Ntfy message that includes the rollback hint
-- [ ] Unlabeled containers are ignored (label_enable=true)
+- [ ] An image update on a labeled container triggers an Ntfy message including the
+      rollback hint
+- [ ] Unlabeled containers are ignored
+
+## Links
+
+- `ansible/tasks/bootstrap/configure-watchtower.yml`
+- `ansible/playbooks/docker/create-docker-host.yml` — the caller in the stack-host flow
+- `ansible/vars/CONTRACT.md` §3 — `notifications` gained optional `user`/`password`/`token`;
+  consumers fall back to anonymous POST when no token is recorded

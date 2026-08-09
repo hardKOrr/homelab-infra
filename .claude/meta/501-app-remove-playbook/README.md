@@ -1,58 +1,47 @@
 # 501 — App removal playbook
 
-**Status:** built — ran live 2026-08-02 against the whole baseline; four acceptance items met, item 3 disproved. **The disproving defect is fixed** (2026-08-03): `unwiring/caddy.yml` and `unwiring/authentik.yml` now probe first and degrade on an unreachable provider, matching `unwiring/uptime-kuma.yml`. Gate-verified, not yet re-observed live — a removal against a stopped Caddy or Authentik is what closes this. Findings in notes.md.
-**Depends on:** 300-305 (unwire halves of each wiring slice)
-**Blocks:** Remove App job in Semaphore/Rundeck
+**Status:** built
+**Subject:** Day-2 ops
+**Related:** 300–305 (the unwire halves), 303 (the Kuma defect this run exposed), 502
 
-## Problem
+## Goal
 
-`playbooks/apps/remove.yml` currently only loads config + asserts. The actual removal logic is a TODO.
+`playbooks/apps/remove.yml` only loaded config and asserted. It now runs three plays
+mirroring the deploy in reverse:
 
-## Files
+1. **Unwire** on localhost — the matching `unwiring/<provider>.yml` for reverse proxy, SSO
+   (by identity mode), Uptime Kuma and DNS, each gated on its provider.
+2. **Stop and remove** on the target host — `docker compose down` for Docker apps,
+   `systemctl stop`/`disable` for native. Native apps stop by `app.service_name`, which is
+   not always the app name (PBS runs `proxmox-backup-proxy`).
+3. **Notify** — an Ntfy post.
 
-- `ansible/playbooks/apps/remove.yml` — implement
+Three deliberate limits: `delete_data: false` by default, so re-running the deploy restores;
+**stack hosts are never destroyed** even when empty; and `config/apps/<instance>.yml` is
+never deleted, because it is the restore point.
 
-## Approach
+Ran live 2026-08-02 against the whole baseline. Four items met, one disproved — and **the
+disproving defect is fixed** (2026-08-03): `unwiring/caddy.yml` and `unwiring/authentik.yml`
+now probe first and degrade on an unreachable provider, matching `unwiring/uptime-kuma.yml`,
+and the `no_log: true` that censored the Authentik lookup's own failure is off.
 
-Three plays matching the deploy's three plays in reverse:
+## Remaining
 
-**Play 1 — Unwire (on localhost):**
-- Load `homelabinfra_infra`
-- Load app_config (same merge as deploy)
-- Include the matching unwire tasks (each gated on provider):
-  - `tasks/unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml`
-  - `tasks/unwiring/authentik.yml` if SSO provider is authentik AND `app_config.routing.auth` is true
-  - `tasks/unwiring/uptime-kuma.yml`
-  - `tasks/unwiring/{{ homelabinfra_infra.dns.provider }}.yml`
+- [ ] Re-running remove on an already-removed app is idempotent — reopened by the live run,
+      fixed in code, **not yet re-observed.** A removal against a stopped Caddy or Authentik
+      is what closes this
+- [x] Removing a Docker app stops and removes the container and unwires everything
+- [x] Removing a native LXC app stops the service and unwires everything
+- [x] `config/apps/<instance>.yml` survives
+- [x] The Ntfy notification fires
 
-**Play 2 — Stop and remove the app (on target host):**
-- For Docker apps: `docker compose -f /opt/<instance>/docker-compose.yml down -v` (or without -v to preserve data — make this a parameter)
-- For native LXC: `systemctl stop <service>`, `systemctl disable <service>`, optionally delete the binary and config
+The Kuma monitor was not actually deleted during that run, but that was never this slice's
+defect: `GET /api/monitors` answered 200 with the SPA's HTML, so the probe, the delete and
+the verify assert all passed without touching a monitor. Owned and fixed by **303**.
 
-**Play 3 — Notify (on localhost):**
-- Ntfy POST: "<instance> removed"
+## Links
 
-Decisions:
-- `delete_data: false` default — preserves data, user re-running deploy restores. `delete_data: true` for hard wipe.
-- Stack hosts are NOT destroyed even if empty — explicit user decision.
-- `config/apps/<instance>.yml` is NOT deleted — it's the restore point.
-
-How to detect Docker vs native? Read `app_config.proxmox.type` if set, OR check for `app_config.stack`. Document the heuristic.
-
-## Acceptance
-
-- [x] Removing a Docker app stops + removes the container, unwires Caddy/Authentik/Kuma/DNS
-      — met 2026-08-02, except the Kuma monitor (see below)
-- [x] Removing a native LXC app stops the service, unwires everything — met 2026-08-02
-- [ ] Re-running remove on an already-removed app is idempotent — **false when a provider
-      is unreachable.** `unwiring/caddy.yml` and `unwiring/authentik.yml` fail the playbook
-      on a connection error instead of degrading like `unwiring/uptime-kuma.yml` does
-- [x] `config/apps/<instance>.yml` survives — met 2026-08-02
-- [x] Ntfy notification fires — met 2026-08-02
-
-Re-opened by the live run. Closing it needs the probe-first stance from
-`unwiring/uptime-kuma.yml` applied to the Caddy and Authentik unwire halves, and
-`no_log: true` off the Authentik lookup that currently censors its own failure. The Kuma
-monitor delete is a separate defect owned by slice 404: `GET /api/monitors` answers 200
-with the SPA's HTML, so the probe, the delete and the verify assert all pass without
-touching a monitor.
+- `ansible/playbooks/apps/remove.yml`
+- `ansible/tasks/unwiring/` — all provider halves
+- `ansible/vars/app-defaults/*.yml` — `app.service_name` on native apps
+- [notes.md](notes.md) — the live-run findings

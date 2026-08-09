@@ -1,47 +1,37 @@
 # 600 — Semaphore project.json
 
-**Status:** built — implemented; awaiting a live import. Decisions and deviations from the approach below are in notes.md.
-**Depends on:** 500 (bootstrap), and ideally most app slices so the deploy templates have real targets
-**Blocks:** the "import and click" Semaphore experience
+**Status:** built
+**Subject:** Runners / UI
+**Related:** 601 (the Rundeck equivalent, which the live lab runs), 500
 
-## Problem
+## Goal
 
-`semaphore/README.md` references `project.json` but the file does not exist. CLAUDE.md promises an importable project.
+`semaphore/README.md` referenced a `project.json` that did not exist. The file now carries
+project metadata, the repository and branch, the inventory, the environment secrets, and one
+template per job.
 
-## Files
+**One template per app, not a parameterized "Deploy App"** — the same dispatch decision as
+601, taken for the one-click promise: an operator should not have to type an app name.
+`Remove App`, `Restart App`, `Tail App Log` and `Rollback Container` keep their surveys.
 
-- `semaphore/project.json` — create
+**Carried caveat:** the backup schema is *reconstructed*, not exported from a running
+Semaphore. If the restore rejects it, dump `GET /api/project/<id>/backup` and commit the
+server's output.
 
-## Approach
+Semaphore also gets no `lab-run.sh` and no `bootstrap-semaphore.sh` — it re-clones the repo
+before every task, so the checkout is current by construction, and its remaining manual
+steps are documented as manual rather than implied to have parity.
 
-Semaphore exposes a project export/import via its API. Build the JSON by hand or by exporting from a working Semaphore instance once jobs are configured.
+## Remaining
 
-Contents:
-- Project metadata (name: homelab-infra, alert email)
-- Repository pointing at this git repo, branch: ansible (or master once merged)
-- Inventory: dynamic (community.proxmox plugin requires the playbook to import vars first — confirm Semaphore can pass `-e @user-vars.yml`)
-- Environment: PROXMOX_API_TOKEN, VAULTWARDEN_ADMIN_TOKEN as secrets
-- Templates (one per job from semaphore/README.md table):
-  - Bootstrap Platform → bootstrap.yml
-  - Deploy App → apps/{{ APP }}.yml with `instance` survey variable
-  - Remove App → apps/remove.yml with `instance` survey variable
-  - Wire Stack → stacks/wire-{{ stack }}.yml with `stack` survey
-  - Rollback Container → stacks/rollback-container.yml with three surveys
-  - Lab Status → maintenance/status.yml
-  - Check Native Updates → maintenance/check-native-updates.yml (cron: weekly)
-  - Restart App → maintenance/restart-app.yml with `instance` survey
-  - Tail App Log → maintenance/tail-applog.yml with `instance` + `lines` surveys
-
-Decision point: how does Deploy App know which app's playbook to run? Options:
-- (A) one template per app (lots of templates, simplest UI)
-- (B) one Deploy template with `app` survey that selects the playbook by interpolation: `playbooks/apps/{{ app }}.yml`
-- (C) the survey populates both `app` and `instance`, and a wrapper playbook dispatches
-
-Pick A (one-click promise — user shouldn't have to type the app name). Generate the templates programmatically when adding a new app (slice scaffolding could include a Semaphore template snippet).
-
-## Acceptance
+Live acceptance needs a restore into a fresh Semaphore.
 
 - [ ] `project.json` imports cleanly into a fresh Semaphore install
 - [ ] All listed jobs appear in the UI
 - [ ] Each job runs successfully against a populated config
-- [ ] Surveys validate (no free-text where dropdowns are appropriate)
+- [ ] Surveys validate — no free text where a dropdown belongs
+
+## Links
+
+- `semaphore/project.json`, `semaphore/README.md`
+- [notes.md](notes.md) — decisions and deviations

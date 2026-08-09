@@ -1,51 +1,43 @@
 # 403 — Authentik role + playbook
 
-**Status:** built — implementation complete and gate-verified; awaiting live deploy acceptance. Decisions and deviations from the approach below are in notes.md. **Acceptance item 3 is blocked**: nothing emits a Caddy/Nginx `forward_auth` handler, so SSO objects are created but not enforced — see notes.md "Known gap".
-**Depends on:** 302 (wiring), 401 (ntfy)
-**Blocks:** SSO across all apps that set `routing.auth: true`
+**Status:** built
+**Subject:** Authentik / identity
+**Related:** 302 (wiring), 009 (identity modes), 306 (enforcement), 401 (Ntfy)
 
-## Problem
+## Goal
 
-Authentik is bootstrap step 4 (optional, but the default in `config.example/infrastructure.yml`). No role or playbook exists.
+Authentik is bootstrap step 4 — optional, but the default in
+`config.example/infrastructure.yml`. Docker-on-LXC, and the first slice to exercise the
+Docker app path.
 
-Docker-on-LXC deployment. First slice that exercises the Docker app path.
+Adapts Authentik's official compose (server, worker, postgres, redis) onto a stack host,
+with the Postgres credentials and `AUTHENTIK_SECRET_KEY` generated into the vault on first
+run, a readiness wait on `/-/health/ready/`, and the admin account scripted rather than left
+to an interactive setup URL. It records the `sso` registry key and wires Caddy, Uptime Kuma
+and DNS — but **no Authentik wiring**, because it *is* Authentik (`routing.identity: none`).
 
-## Files
+The original "known gap" — SSO objects created but not enforced, because nothing emitted a
+proxy `forward_auth` handler — is closed by **306**, which builds the handler chain and
+asserts `sso.host` before publishing a forward_auth route.
 
-To create:
-- `ansible/roles/authentik/{tasks,handlers,defaults,meta,templates}/...`
-- `ansible/roles/authentik/templates/docker-compose.yml.j2`
-- `ansible/playbooks/apps/authentik.yml` (PATH A — Docker)
-- `ansible/vars/app-defaults/authentik.yml` — assign to a stack (e.g. `core_stack` or its own host)
-- `config.example/apps/authentik.example.yml`
+## Remaining
 
-## Approach
-
-Authentik ships an official `docker-compose.yml` with server + worker + postgres + redis. Adapt it.
-
-1. Ensure stack host exists (find-or-create-host with stack `core_stack` or `authentik_stack`).
-2. Template compose file with:
-   - server, worker, postgresql, redis containers
-   - Volumes for media, custom-templates, certs
-   - Postgres credentials generated and stored in Vaultwarden on first run
-   - `AUTHENTIK_SECRET_KEY` generated and stored in Vaultwarden
-3. `docker compose up -d`.
-4. Wait for `/-/health/ready/` to return 200.
-5. On first deploy, run the initial-setup flow URL is printed (user finishes setup interactively) — OR auto-create the admin user via the bootstrap token mechanism and store the admin password in Vaultwarden.
-6. Call `write-generated-facts`:
-   ```yaml
-   authentik:
-     api_url: https://auth.<domain>/api/v3
-     api_token: <from-vault>
-     outpost_id: <default-embedded-outpost-id>
-   ```
-
-Wire Caddy + Uptime Kuma + DNS. **No Authentik wiring** (it IS Authentik — `routing.auth: false`).
-
-## Acceptance
+Live acceptance needs one app deployed with `routing.identity: forward_auth`, observed end
+to end.
 
 - [ ] Authentik UI loads at the wired domain
-- [ ] Admin login works with credentials from Vaultwarden
+- [ ] Admin login works with credentials from the vault — part of the browser leg shared
+      with 400, 405 and 306
 - [ ] A test app wired via 302 redirects through Authentik successfully
-- [ ] facts.yml has the api_token + outpost_id
+- [ ] The registry holds the API token and outpost id — recorded under `sso` in the vault,
+      not `authentik.api_token` in `facts.yml` as originally written (slices 200 and 014
+      moved that shape); judge against the shipped one
 - [ ] Re-run is idempotent
+
+## Links
+
+- `ansible/roles/authentik/` — role and compose template
+- `ansible/playbooks/apps/authentik.yml` (PATH A, Docker)
+- `ansible/vars/app-defaults/authentik.yml`, `config.example/apps/authentik.example.yml`
+- [notes.md](notes.md) — decisions, deviations, the closed known-gap write-up, and the
+  superseded planning text

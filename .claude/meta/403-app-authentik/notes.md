@@ -125,3 +125,40 @@ product defaults. All removed.
 endpoint, admin credentials and token. Account names, group membership, social
 login sources and MFA enforcement are operator policy set in the Authentik UI. A
 re-deploy must never overwrite a decision made there.
+
+---
+
+## Superseded planning text (moved from README, 2026-08-08)
+
+The pre-build approach, kept for provenance. The `facts.yml` shape in step 6 was superseded
+by slices 200 and 014 (the key is `sso`, and the token lives in the vault), and
+`routing.auth` by slice 017 / 009 (`routing.identity`).
+
+- `ansible/vars/app-defaults/authentik.yml` — assign to a stack (e.g. `core_stack` or its own host)
+- `config.example/apps/authentik.example.yml`
+
+## Approach
+
+Authentik ships an official `docker-compose.yml` with server + worker + postgres + redis. Adapt it.
+
+1. Ensure stack host exists (find-or-create-host with stack `core_stack` or `authentik_stack`).
+2. Template compose file with:
+   - server, worker, postgresql, redis containers
+   - Volumes for media, custom-templates, certs
+   - Postgres credentials generated and stored in Vaultwarden on first run
+   - `AUTHENTIK_SECRET_KEY` generated and stored in Vaultwarden
+3. `docker compose up -d`.
+4. Wait for `/-/health/ready/` to return 200.
+5. On first deploy, run the initial-setup flow URL is printed (user finishes setup interactively) — OR auto-create the admin user via the bootstrap token mechanism and store the admin password in Vaultwarden.
+6. Call `write-generated-facts`:
+   ```yaml
+   authentik:
+     api_url: https://auth.<domain>/api/v3
+     api_token: <from-vault>
+     outpost_id: <default-embedded-outpost-id>
+   ```
+
+Wire Caddy + Uptime Kuma + DNS. **No Authentik wiring** (it IS Authentik — `routing.auth: false`).
+
+## Acceptance
+

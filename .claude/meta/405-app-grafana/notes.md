@@ -95,3 +95,51 @@ marks superseded — same correction slices 300 and 302 already made to their RE
   `up{job="nodes"}` in Prometheus).
 - Re-run idempotent — in particular that the Grafana password is not rotated.
 - Confirm the container uids (472 / 65534) still match the upstream images.
+
+---
+
+## Superseded planning text (moved from README, 2026-08-08)
+
+The original option A / option B framing and the pre-build approach, kept for provenance.
+Option A shipped; the `facts.yml` shape below was superseded by slices 200 and 014.
+
+## Problem
+
+Bootstrap step 6 is "Prometheus + Grafana". No role or playbook exists. CLAUDE.md lists them together — open question whether they share one stack/playbook or split into two apps.
+
+## Files
+
+To create — option A (one combined app):
+- `ansible/roles/observability/{tasks,handlers,defaults,meta,templates}/...`
+- `ansible/playbooks/apps/observability.yml`
+- `ansible/vars/app-defaults/observability.yml`
+- `config.example/apps/observability.example.yml`
+
+Option B (two apps): `roles/grafana/`, `roles/prometheus/`, two playbooks, two configs.
+
+## Approach
+
+Recommendation: **option A**, one combined "observability" stack. They're tightly coupled (Grafana datasource = Prometheus) and users don't realistically run one without the other. Splits add ceremony without value here.
+
+Docker-on-LXC. Compose includes:
+- Prometheus with a scrape config built from inventory (every `tag_homelab-infra` host with node_exporter)
+- Grafana with provisioned datasource pointing at the Prometheus service + a default homelab dashboard
+- Optionally node_exporter as part of the bootstrap baseline so every host is scrapeable (consider adding to `guest-bootstrap.yml`)
+
+Grafana admin password generated and stored in Vaultwarden.
+
+Wire Caddy + Authentik + Uptime Kuma + DNS for **Grafana** (the user-facing piece). Prometheus is internal-only (no public route).
+
+facts.yml:
+```yaml
+observability:
+  grafana_url: https://grafana.<domain>
+  prometheus_url: http://<stack-ip>:9090
+  grafana_admin_password: <from-vault>
+```
+
+## Acceptance
+
+Observed 2026-08-08 unless noted.
+
+- [ ] Grafana UI loads, admin login works — **half met.** `GET /api/health` returns 200
