@@ -162,15 +162,19 @@
 
 # ── Collection scoping (slice 016, decided 2026-08-09) ────────────────────────
 # The automation account reached platform items purely by being an organization
-# Admin with `allowAdminAccessToAllCollectionItems` — organization-scoped access,
-# not collection-scoped, so the slice's own criterion was unmet. It now holds an
-# explicit grant on the canonical collection, which is what makes revoking that
-# org-wide flag in the web vault safe: writes keep working from the grant alone.
+# Admin — organization-scoped access, not collection-scoped, so the slice's own
+# criterion was unmet. An explicit grant on the canonical collection is what scopes
+# it, and on a Manager or User membership these tasks establish and prove one on
+# every run, self-healing rather than depending on a one-shot enrollment step.
 #
-# A collection this run creates already grants every confirmed member above. These
-# tasks are the repair path for a collection that predates the decision, and they
-# run once per play — the guard fact survives the whole run, so nine upserts cost
-# one check, not nine.
+# On an Owner or Admin membership no such grant can exist at all — see the note at
+# the decision task below — so the tasks state that plainly instead of asserting
+# something the server will not store.
+#
+# A collection this run creates already grants every confirmed member above, subject
+# to the same rule. These tasks are the repair path for a collection that predates
+# the decision, and they run once per play — the guard fact survives the whole run,
+# so nine upserts cost one check, not nine.
 - name: Vault | Identify the account the session belongs to
   ansible.builtin.command:
     argv: [bw, status]
@@ -191,13 +195,20 @@
   become: false
   no_log: true
 
-- name: Vault | Resolve the account's organization membership id
+- name: Vault | Resolve the account's organization membership
   ansible.builtin.set_fact:
-    _vault_self_member_id: >-
+    _vault_self_member_id: "{{ (_vault_self_member | default({})).id | default('') }}"
+    # Owner (0) and Admin (1) hold organization-wide access; `accessAll` states it
+    # outright on servers whose CLI still reports the field.
+    _vault_self_org_wide: >-
+      {{ (_vault_self_member | default({})).accessAll
+         | default(((_vault_self_member | default({})).type | default(9)) in [0, 1]) }}
+  vars:
+    _vault_self_member: >-
       {{ (_vault_grant_members.stdout | from_json
           | selectattr('email', 'equalto',
                        (_vault_status.stdout | from_json).userEmail | default(''))
-          | map(attribute='id') | list | first) | default('') }}
+          | list | first) | default({}) }}
   when: not (_vault_collection_grant_verified | default(false))
   no_log: true
 
@@ -209,6 +220,35 @@
       {{ vault_organization_name | default('homelab-infra') }}, so no
       collection grant can be resolved for it.
   when: not (_vault_collection_grant_verified | default(false))
+
+# Vaultwarden will not store a per-collection grant for a member that already has
+# organization-wide access. `post_organization_collection_update` walks the submitted
+# `users` array and does `if member.access_all { continue; }` before CollectionUser::save
+# (verified in 1.37.1, the version this lab runs), so the write is ACCEPTED, returns 200,
+# and persists nothing. Asserting the grant afterwards therefore fails forever and takes
+# every deploy that stores a secret down with it.
+#
+# So the grant is attempted only where it can exist — a Manager or User membership — and
+# an Owner/Admin membership records what its access actually rests on instead of pretending
+# otherwise. Lowering the role in the web vault is what makes the grant both storable and
+# load-bearing; until then the account's reach is organization-scoped and this says so.
+- name: Vault | Decide whether an explicit collection grant can exist
+  ansible.builtin.set_fact:
+    _vault_grant_check_due: "{{ not _vault_self_org_wide }}"
+  when: not (_vault_collection_grant_verified | default(false))
+
+- name: Vault | Report that the account's access is organization-wide
+  ansible.builtin.debug:
+    msg: >-
+      The automation account holds an Owner/Admin membership in
+      {{ vault_organization_name | default('homelab-infra') }}, which carries
+      organization-wide access. Vaultwarden stores no explicit collection grant for
+      such a member, so its reach over
+      {{ vault_collection_name | default('platform-secrets') }} is organization-scoped.
+      Lower the membership to Manager in the web vault to scope it to the collection.
+  when:
+    - not (_vault_collection_grant_verified | default(false))
+    - _vault_self_org_wide
 
 # `bw get org-collection` returns the collection with its `groups` and `users`
 # arrays; `bw list org-collections` does not carry them. The edit below rewrites
@@ -225,7 +265,7 @@
       - --organizationid
       - "{{ _vault_org_id }}"
   register: _vault_collection_detail
-  when: not (_vault_collection_grant_verified | default(false))
+  when: _vault_grant_check_due | default(false)
   changed_when: false
   delegate_to: localhost
   become: false
@@ -235,7 +275,7 @@
   ansible.builtin.set_fact:
     _vault_collection_users: >-
       {{ (_vault_collection_detail.stdout | from_json).users | default(none) }}
-  when: not (_vault_collection_grant_verified | default(false))
+  when: _vault_grant_check_due | default(false)
   no_log: true
 
 - name: Vault | Assert the collection detail carries its grant list
@@ -245,7 +285,7 @@
       Vaultwarden returned collection
       {{ vault_collection_name | default('platform-secrets') }} without a `users`
       list. Rewriting it would drop every existing grant, so the run stops here.
-  when: not (_vault_collection_grant_verified | default(false))
+  when: _vault_grant_check_due | default(false)
 
 # Manage rights, matching what the create path grants confirmed members: the
 # account has to write items and keep the collection usable without depending on
@@ -322,7 +362,7 @@
       - --organizationid
       - "{{ _vault_org_id }}"
   register: _vault_collection_readback
-  when: not (_vault_collection_grant_verified | default(false))
+  when: _vault_grant_check_due | default(false)
   changed_when: false
   delegate_to: localhost
   become: false
@@ -341,11 +381,14 @@
       Until it does, its access depends on the organization-wide admin flag.
       The collection came back holding:
       {{ (_vault_collection_readback.stdout | from_json).users | default([]) }}
-  when: not (_vault_collection_grant_verified | default(false))
+  when: _vault_grant_check_due | default(false)
 
-- name: Vault | Record that the collection grant was verified this run
+# Both facts: the second stops the later upserts in this run re-entering the grant
+# tasks on a membership whose check already settled, whichever way it settled.
+- name: Vault | Record that the collection grant was settled this run
   ansible.builtin.set_fact:
     _vault_collection_grant_verified: true
+    _vault_grant_check_due: false
 
 - name: Vault | List exact-name item candidates
   ansible.builtin.command:
