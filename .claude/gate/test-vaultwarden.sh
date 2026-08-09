@@ -163,4 +163,45 @@ grep -q '^logout ' "$work/bw.log" || fail "bw logout was not called"
 appdata="$(awk 'NR==1 {print $2}' "$work/bw.log")"
 [ -n "$appdata" ] && [ ! -e "$appdata" ] || fail "private CLI state survived cleanup"
 
+# The collection grant rewrites the collection object wholesale, so the payload it
+# sends is exercised here rather than trusted: the shipped shell block is lifted out
+# of the task file itself and run against a fake `bw`, so a copy in this test cannot
+# drift away from what deploys actually send.
+python3 - "$repo/ansible/tasks/bitwarden/upsert-item.yml" > "$work/grant.sh" <<'PY'
+import sys, yaml
+tasks = yaml.safe_load(open(sys.argv[1]))
+name = "Vault | Grant the account explicit access to the canonical collection"
+block = [t for t in tasks if t.get("name") == name]
+assert len(block) == 1, f"expected exactly one {name!r} task, found {len(block)}"
+sys.stdout.write(block[0]["ansible.builtin.shell"])
+PY
+mkdir -p "$work/grant-bin"
+cat > "$work/grant-bin/bw" <<'SH'
+#!/bin/sh
+case "$1" in
+  encode) cat ;;
+  edit) cat > "$GRANT_PAYLOAD" ;;
+esac
+SH
+chmod +x "$work/grant-bin/bw"
+PATH="$work/grant-bin:$PATH" GRANT_PAYLOAD="$work/grant-payload.json" \
+  VAULT_COLLECTION_ID=col VAULT_ORG_ID=org VAULT_SELF_MEMBER_ID=self \
+  VAULT_COLLECTION_JSON='{"id":"col","name":"platform-secrets","externalId":null,
+    "groups":[],"users":[{"id":"owner","readOnly":false,"hidePasswords":false,"manage":true},
+                         {"id":"self","readOnly":true,"hidePasswords":true,"manage":false}]}' \
+  bash "$work/grant.sh"
+python3 - "$work/grant-payload.json" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1]))
+users = {u["id"]: u for u in payload["users"]}
+assert set(users) == {"owner", "self"}, f"grant changed the member set: {sorted(users)}"
+assert users["owner"] == {"id": "owner", "readOnly": False,
+                          "hidePasswords": False, "manage": True}, "another member's grant was rewritten"
+assert users["self"]["manage"] is True, "the account was not granted manage"
+assert users["self"]["readOnly"] is False and users["self"]["hidePasswords"] is False, \
+    "a stale read-only grant survived"
+assert payload["name"] == "platform-secrets" and payload["groups"] == [], \
+    "the collection object lost fields the edit must preserve"
+PY
+
 echo "Vaultwarden focused tests passed."

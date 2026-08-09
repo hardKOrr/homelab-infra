@@ -152,6 +152,160 @@
       neither visible to nor creatable by the automation account in organization
       {{ vault_organization_name | default('homelab-infra') }}.
 
+# ── Collection scoping (slice 016, decided 2026-08-09) ────────────────────────
+# The automation account reached platform items purely by being an organization
+# Admin with `allowAdminAccessToAllCollectionItems` — organization-scoped access,
+# not collection-scoped, so the slice's own criterion was unmet. It now holds an
+# explicit grant on the canonical collection, which is what makes revoking that
+# org-wide flag in the web vault safe: writes keep working from the grant alone.
+#
+# A collection this run creates already grants every confirmed member above. These
+# tasks are the repair path for a collection that predates the decision, and they
+# run once per play — the guard fact survives the whole run, so nine upserts cost
+# one check, not nine.
+- name: Vault | Identify the account the session belongs to
+  ansible.builtin.command:
+    argv: [bw, status]
+  register: _vault_status
+  when: not (_vault_collection_grant_verified | default(false))
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | List organization members to resolve the account's membership
+  ansible.builtin.command:
+    argv: [bw, list, org-members, --organizationid, "{{ _vault_org_id }}"]
+  register: _vault_grant_members
+  when: not (_vault_collection_grant_verified | default(false))
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Resolve the account's organization membership id
+  ansible.builtin.set_fact:
+    _vault_self_member_id: >-
+      {{ (_vault_grant_members.stdout | from_json
+          | selectattr('email', 'equalto',
+                       (_vault_status.stdout | from_json).userEmail | default(''))
+          | map(attribute='id') | list | first) | default('') }}
+  when: not (_vault_collection_grant_verified | default(false))
+  no_log: true
+
+- name: Vault | Assert the account is a member of the canonical organization
+  ansible.builtin.assert:
+    that: _vault_self_member_id | length > 0
+    fail_msg: >-
+      The session's account is not listed among the members of organization
+      {{ vault_organization_name | default('homelab-infra') }}, so no
+      collection grant can be resolved for it.
+  when: not (_vault_collection_grant_verified | default(false))
+
+# `bw get org-collection` returns the collection with its `groups` and `users`
+# arrays; `bw list org-collections` does not carry them. The edit below rewrites
+# the object wholesale, so the read has to be the detailed one — a payload with no
+# `users` key would silently erase every existing grant, which is why the next
+# task fails on that shape instead of proceeding.
+- name: Vault | Read the canonical collection's grants
+  ansible.builtin.command:
+    argv:
+      - bw
+      - get
+      - org-collection
+      - "{{ _vault_collection_id }}"
+      - --organizationid
+      - "{{ _vault_org_id }}"
+  register: _vault_collection_detail
+  when: not (_vault_collection_grant_verified | default(false))
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Determine whether the account already holds a grant
+  ansible.builtin.set_fact:
+    _vault_collection_users: >-
+      {{ (_vault_collection_detail.stdout | from_json).users | default(none) }}
+  when: not (_vault_collection_grant_verified | default(false))
+  no_log: true
+
+- name: Vault | Assert the collection detail carries its grant list
+  ansible.builtin.assert:
+    that: _vault_collection_users is not none
+    fail_msg: >-
+      Vaultwarden returned collection
+      {{ vault_collection_name | default('platform-secrets') }} without a `users`
+      list. Rewriting it would drop every existing grant, so the run stops here.
+  when: not (_vault_collection_grant_verified | default(false))
+
+# Manage rights, matching what the create path grants confirmed members: the
+# account has to write items and keep the collection usable without depending on
+# an administrator role.
+- name: Vault | Grant the account explicit access to the canonical collection
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 -c '
+    import json, os, sys
+    collection = json.loads(os.environ["VAULT_COLLECTION_JSON"])
+    users = [u for u in collection.get("users", [])
+             if u.get("id") != os.environ["VAULT_SELF_MEMBER_ID"]]
+    users.append({"id": os.environ["VAULT_SELF_MEMBER_ID"], "readOnly": False,
+                  "hidePasswords": False, "manage": True})
+    collection["users"] = users
+    json.dump(collection, sys.stdout)
+    ' | bw encode | bw edit org-collection "$VAULT_COLLECTION_ID" \
+        --organizationid "$VAULT_ORG_ID"
+  args:
+    executable: /bin/bash
+  environment:
+    VAULT_COLLECTION_ID: "{{ _vault_collection_id }}"
+    VAULT_COLLECTION_JSON: "{{ _vault_collection_detail.stdout }}"
+    VAULT_ORG_ID: "{{ _vault_org_id }}"
+    VAULT_SELF_MEMBER_ID: "{{ _vault_self_member_id }}"
+  when:
+    - not (_vault_collection_grant_verified | default(false))
+    - _vault_collection_users
+      | selectattr('id', 'equalto', _vault_self_member_id)
+      | selectattr('manage', 'defined') | selectattr('manage') | list | length == 0
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Read the grants back
+  ansible.builtin.command:
+    argv:
+      - bw
+      - get
+      - org-collection
+      - "{{ _vault_collection_id }}"
+      - --organizationid
+      - "{{ _vault_org_id }}"
+  register: _vault_collection_readback
+  when: not (_vault_collection_grant_verified | default(false))
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Vault | Assert the account holds an explicit collection grant
+  ansible.builtin.assert:
+    that:
+      - (_vault_collection_readback.stdout | from_json).users | default([])
+        | selectattr('id', 'equalto', _vault_self_member_id)
+        | selectattr('manage', 'defined') | selectattr('manage')
+        | list | length == 1
+    fail_msg: >-
+      The automation account still holds no explicit grant on collection
+      {{ vault_collection_name | default('platform-secrets') }}. Until it does,
+      its access depends on the organization-wide admin flag.
+  when: not (_vault_collection_grant_verified | default(false))
+
+- name: Vault | Record that the collection grant was verified this run
+  ansible.builtin.set_fact:
+    _vault_collection_grant_verified: true
+
 - name: Vault | List exact-name item candidates
   ansible.builtin.command:
     argv: [bw, list, items, --search, "{{ vault_item_name }}"]

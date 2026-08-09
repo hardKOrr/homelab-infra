@@ -13,10 +13,9 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | Decide 016's collection scoping — grant per-collection, or amend the criterion to the decision already made. | 016 |
-| 2 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model. | 011 |
-| 3 | The browser legs — Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. Every remaining app-role acceptance item now needs a human at a browser. | 400, 403, 405, 306 |
-| 4 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
+| 1 | Fix the IP allocator before the next guest. Six addresses are already live under the flat model, and the scope grew on 2026-08-09: VLANs, and static addressing unless DHCP is asked for. | 011 |
+| 2 | The browser legs, in one sitting at a browser: turn off `allowAdminAccessToAllCollectionItems` and re-run a deploy, Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 016, 400, 403, 405, 306 |
+| 3 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
 
 ## By subject
 
@@ -35,7 +34,7 @@ wiring task / bootstrap play). Look up the subject, then read only those slices.
 | Day-2 ops | watchtower **201**, remove **501**, rollback **502** |
 | No live target | nginx **301**, pihole **305**, opnsense **304** |
 
-## Open (3)
+## Open (2)
 
 Design defects in shipped code, or gaps between the documented model and the implemented
 one. None are new features.
@@ -44,9 +43,8 @@ one. None are new features.
 |---|---|---|
 | 011 | [IP allocation model](011-ip-allocation-model/README.md) | `generate-ip.yml` is a flat +1 walk with one global offset; the lab addresses by function across three bands in a single /20. Six addresses (.10–.15) are already allocated under the flat model. |
 | 015 | [Caddy-first wildcard HTTPS](015-wildcard-dns-default/README.md) | Certificate model observed live 2026-08-06. Open on internal mode, the no-API-provider handoff, the resume item, and migrating an already-serving estate without interrupting HTTPS. |
-| 016 | [Vaultwarden identities + keyring](016-vaultwarden-identity-bootstrap/README.md) | One decision: `users_collections` is empty, so the automation account reads the org as an Admin with `allowAdminAccessToAllCollectionItems` — org-scoped, not collection-scoped. |
 
-## Built — awaiting live acceptance (22)
+## Built — awaiting live acceptance (23)
 
 Code-complete and gate-verified. Each row names the unobserved leg.
 
@@ -58,6 +56,7 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 | 012 | [Runner onboarding](012-runner-onboarding/README.md) | Configure App / Get Config from the UI, `LAB_REFRESH=0`, a no-op script re-run, the root README |
 | 013 | [Vaultwarden token self-capture](013-vaultwarden-token-capture/README.md) | sink write/readback proved live; HTTPS, identities and item CRUD belong to 015/016/014 |
 | 014 | [Vaultwarden secret store](014-vaultwarden-secret-store/README.md) | only the runner rebuild from Key Storage — seed-file recreation and seed re-entry were both injected and refused, 2026-08-06 |
+| 016 | [Vaultwarden identities + keyring](016-vaultwarden-identity-bootstrap/README.md) | the human owner turning off `allowAdminAccessToAllCollectionItems` in the web vault, then one Deploy job succeeding on the explicit collection grant alone |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | a container update actually reported |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | wiring runs every bootstrap; unwire needs a removal run |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists |

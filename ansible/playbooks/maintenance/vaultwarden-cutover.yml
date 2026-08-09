@@ -292,3 +292,14 @@
         msg: >-
           Vault mode is active. Seed files were removed only after every imported
           item passed exact readback. Ordinary jobs now fail closed on Vaultwarden.
+
+    # The grant above is what makes this safe to do; until it existed, revoking the
+    # flag would have cut the automation account off from every platform item.
+    - name: Publish the remaining browser-only tightening step
+      ansible.builtin.debug:
+        msg:
+          - "One browser-only step remains, and it narrows access rather than granting it."
+          - "The automation account now holds an explicit grant on the platform-secrets collection, verified on this run."
+          - "As the human owner, open the organization's settings in the web vault."
+          - "Turn off 'Admins and owners can manage all collections' (allowAdminAccessToAllCollectionItems)."
+          - "Then re-run any Deploy job: it writes to the vault through the explicit grant alone and must still succeed."

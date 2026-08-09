@@ -1,6 +1,6 @@
 # 016 — Vaultwarden identities and Rundeck bootstrap keyring
 
-**Status:** open
+**Status:** built
 **Subject:** Vaultwarden
 **Related:** 014 (the secret store this unblocks), 013 (admin token), 015 (HTTPS)
 
@@ -35,13 +35,13 @@ read and write in the green bootstrap.
 
 ## Remaining
 
-- [ ] **The one decision blocking this slice.** The automation account can access only the
-      intended organization/collection — this **needs a decision, not a test.**
-      `users_collections` is empty, so the account reads the organization purely by being an
-      Admin with `allowAdminAccessToAllCollectionItems`. There is one organization and the
-      account cannot reach outside it, so the *organization* half holds; the *collection*
-      half does not. Either grant per-collection access scoped to `platform-secrets` and
-      tighten, or amend the criterion to match the decision already made in practice
+- [ ] The automation account can access only the intended organization/collection —
+      **decided and implemented 2026-08-09, not yet observed live.** The account is granted
+      an explicit `users_collections` entry with manage rights on `platform-secrets`, read
+      back and asserted on every run, so its access no longer depends on
+      `allowAdminAccessToAllCollectionItems`. Closing this needs the org-wide flag turned
+      off in the web vault (a browser step Cutover now names) and one Deploy job succeeding
+      afterwards — that run is the proof the grant alone carries the writes
 - [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password —
       not tested
 - [ ] Every Key Storage secret is loaded through a secure option, and none is copied into a

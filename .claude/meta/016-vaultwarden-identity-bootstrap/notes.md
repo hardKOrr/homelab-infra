@@ -115,3 +115,39 @@ but every imported job declares only the credentials it actually needs.
   exists only to open Proxmox, HTTPS issuance, SSH transport, and Vaultwarden itself.
 - **Unsupported account steps remain honest.** The workflow pauses with exact instructions
   and resumes after verification instead of claiming an unproven automated setup.
+- **Explicit collection grant, organization Admin retained** — decided 2026-08-09, the
+  decision that had blocked the slice. The automation account now holds a `users_collections`
+  grant with manage rights on `platform-secrets`, so its access no longer rests on
+  `allowAdminAccessToAllCollectionItems`, and the human owner turns that org-wide flag off as
+  the last tightening step.
+
+  The two alternatives were rejected for reasons worth keeping. **Demoting the account to a
+  collection-scoped user** is stricter but breaks the platform: `upsert-item.yml` creates the
+  canonical collection at runtime, which a plain user cannot do, and that path is what keeps
+  enrollment from depending on an instruction printed in job output. **Amending the criterion**
+  to record org-scoped Admin would have been honest about what shipped but leaves the account's
+  reach defined by a flag nobody would think to check.
+
+  Order matters and the code enforces it: the grant is written and read back before the flag
+  is revoked. Revoking first would cut the account off from every platform item.
+
+## Where the grant is enforced
+
+In `tasks/bitwarden/upsert-item.yml`, beside the collection resolution, not in a one-shot
+enrollment step — so it is self-healing on any run rather than a state a re-enrollment could
+lose. A guard fact makes it once per play, so a bootstrap's nine upserts cost one check.
+
+Three traps the tasks are written around:
+
+- **`bw list org-collections` carries no `users` array; `bw get org-collection` does.** The
+  edit rewrites the collection object wholesale, so reading the list form and sending it back
+  would erase every existing grant. A payload without `users` fails the run instead.
+- **The collection this platform creates already grants confirmed members.** These tasks are
+  the repair path for a collection that predates the decision — including this lab's, whose
+  `users_collections` was empty.
+- **A stale read-only row is not absence.** The account may already appear with
+  `manage: false`; the payload replaces its row rather than appending a second one.
+
+`.claude/gate/test-vaultwarden.sh` lifts the payload builder out of the task file and runs it
+against a fake `bw`, so the test cannot drift from the shipped code: another member's row must
+come back byte-identical and the account's must end at manage.
