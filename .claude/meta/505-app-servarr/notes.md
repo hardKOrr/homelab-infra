@@ -107,6 +107,44 @@ execute Jinja and this is selection logic, so the gates alone would have proved 
   the playbook now says so plainly.
 - **No adoption has been observed live.** The probe covers the selection, not the PUT.
 
+## The live run, 2026-08-09 — both vendor facts measured
+
+Deploy Prowlarr, executions 46–48 on the lab. The `media_stack` host was created at
+192.168.0.100, Docker installed, the image pulled and the container started. Then:
+
+**The env override IS honoured, and config.xml never says so.** Measured on
+`lscr.io/linuxserver/prowlarr:latest` from inside the stack host:
+
+```
+keyed:   200      # X-Api-Key = the key this deploy declared
+unkeyed: 401
+uiroot:  200
+config.xml: no <ApiKey>, no <AuthenticationMethod>  (393 bytes, defaults only)
+```
+
+Both facts the role refused to trust are now settled: the `<APP>__AUTH__APIKEY` spelling
+works, and an unkeyed API call really is refused. What was wrong was the oracle. Servarr
+treats `<APP>__AUTH__*` as runtime configuration and persists only what its own setup
+writes, so a file with no `<ApiKey>` describes an app whose API key is fully in force. The
+role failed a working app on that reading.
+
+The verification therefore asks the app, not the file: the key in force must authenticate,
+an unkeyed call must be refused, and `/api/<v>/config/host` must report an
+`authenticationMethod` the app actually chose — the setup-page state that config.xml used to
+be asked about, asked of the running app. config.xml keeps its one real job, key continuity
+for a migrated or hand-configured app.
+
+This is the same lesson as 011's, from the other direction: there the probe was too narrow,
+here the assertion was pointed at the wrong artifact. Neither gate can see either.
+
+**Where it stopped.** Execution 48 got through every app check (82 tasks green on the stack
+host) and failed at `Vault | Grant the account explicit access to the canonical collection`
+in `tasks/bitwarden/upsert-item.yml`. The collection read and the member lookup both
+succeeded, so the session is valid and the account is a member — only the `bw edit
+org-collection` write failed. That is 016's open question arriving on its own: whether the
+automation account, at Manager, can rewrite a collection's grant list. The error itself is
+still unseen, because the task is `no_log`.
+
 ## Unverified
 
 Nothing here has run against a live Servarr. Both gates are green, which covers syntax and

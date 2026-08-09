@@ -175,3 +175,30 @@ Three traps the tasks are written around:
 `.claude/gate/test-vaultwarden.sh` lifts the payload builder out of the task file and runs it
 against a fake `bw`, so the test cannot drift from the shipped code: another member's row must
 come back byte-identical and the account's must end at manage.
+
+## 2026-08-09 — the grant write failed live, and the error is masked
+
+Deploy Prowlarr (execution 48) reached this code on the lab and failed at
+`Vault | Grant the account explicit access to the canonical collection`. Everything before it
+passed: the session unlocked, the organization resolved, the account was found among the
+members, and `bw get org-collection` returned a payload carrying its `users` list — so the
+account can READ the collection and its grants. Only the `bw edit org-collection` write
+failed.
+
+That is this slice's open question arriving on its own, before anyone drove the browser leg:
+whether the automation account can rewrite a collection's grant list from the role it holds.
+
+**The error was not captured**, because the task is `no_log: true` and Rundeck printed
+`censored`. Unmasking that one task shows the `bw` stderr and exposes nothing secret — the
+collection object carries encrypted names, member ids and grant flags, no item material. That
+is the next diagnostic step, and it is a one-line change plus one job run.
+
+Two outcomes to distinguish, and they lead opposite ways:
+
+- **Manager cannot edit collection grants.** Then the floor is higher than Manager for
+  self-granting, and the honest fix is for the OWNER to grant the collection once at
+  enrollment rather than the account granting itself on every run.
+- **Something else refused it** — a stale session, an organization id mismatch, a payload
+  Vaultwarden rejects. Then the grant model stands and this is a bug in the write.
+
+Until it is known, no app deploy that stores a secret can finish on this lab.

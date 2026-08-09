@@ -71,12 +71,40 @@ compute the answer but cannot explain its absence, and "No available IPs found i
       holding it — including the gateway
 - [x] An existing single-network config with no pools allocates exactly as it does today
 - [x] `config.example/proxmox.yml` describes offset/pool behaviour correctly for a /20
-- [ ] **Live:** one deploy allocating from a pool on the lab, and one from a pinned address
-- [ ] **Live:** the lab's own `config/proxmox.yml` migrated off the invented
-      `ip_offset: 2305` / `max_hosts: 2560` fence onto declared pools. That file lives on the
-      runner, so it is a human edit through the Configure App job, not a repo change. The six
-      addresses already allocated under the flat model (.10–.15) keep working — they are
-      recorded on their guests, and nothing re-derives them
+- [x] **Live, 2026-08-09:** a deploy allocated from a pool. Deploy Prowlarr created the
+      `media_stack` host at **192.168.0.100**, the first address of the `media_stack` pool,
+      inherited by stack name with nothing declared per app — the flat walk would have
+      handed out `.0.16`. VMID `168000100` derived from it, tags `homelab-infra;media_stack`
+- [x] **Live, 2026-08-09:** the lab's `config/proxmox.yml` migrated onto declared pools.
+      The invented `ip_offset: 2305` / `max_hosts: 2560` fence was already gone (the file was
+      rewritten 2026-08-03); what it lacked was pools and reserved spans. It now declares
+      `platform` (.0.10–.0.49), `sso_stack`, `monitoring_stack`, `media_stack`
+      (.0.100–.0.149) and `apps` (.0.200–.0.249, the `default_pool`), plus reserved spans for
+      the whole of the operator's older estate — `192.168.1.0/24`, `192.168.3.0/24`,
+      `192.168.7.0/24`, `192.168.13.0/24` and `.0.1–.0.9`. `ip_offset: 10` stays as the
+      no-pool fallback. Backed up to `config/.backups/proxmox.yml.pre-pools-*` and verified
+      to parse identically to the backup apart from the three new keys. The six existing
+      guests (.0.10–.0.15) were untouched
+- [ ] **Live:** one deploy from a pinned address. `stacks.<name>.ip_address` now carries a
+      pin for a stack host; no deploy has used it yet
+
+## What the live run found
+
+Two defects the offline probe could not reach, both fixed and both on record because the
+shape of them matters more than the fix:
+
+- **A stack host could not reach a pool at all.** `find-or-create-host.yml` — the path every
+  Docker app takes — called the allocator with nothing but a network name. Pools worked from
+  the native-LXC playbooks and from `create-docker-host.yml`, which is exactly what the
+  offline probe exercised, so both gates stayed green over a feature that was unreachable
+  from most of the platform. Address selection now comes from the same stack-scoped merge as
+  sizing, `_stack_sizing`, and reading it from there rather than from
+  `homelabinfra_config.proxmox.lxc` is deliberate: that dict survives between chained plays.
+- **An inventory entry with no address is not an in-use address.** The first live allocation
+  died on `in-use address '' is not an address, range or CIDR`. The collect task guarded on
+  `is defined`, which says nothing about the value, and a guest Proxmox reports no address
+  for arrived as an empty string. The allocator's strictness is right and stays — it named
+  its refusal, which is the whole point of it being Python rather than Jinja.
 
 ## The bug the offline probe caught
 
