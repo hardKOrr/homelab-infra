@@ -165,8 +165,22 @@ vaultwarden:
 #   media_stack       4 cores / 4096 MB / 32 GB   the *arr suite
 #   anything else     2 cores / 2048 MB / 16 GB
 #
+# The same block chooses where the stack host is ADDRESSED, for the same reason it
+# sizes it: the host is shared and the first app to deploy creates it, so an address
+# declared per app would depend on deploy order.
+#
+#   pool:       a pool from config/proxmox.yml this host allocates in. A stack whose
+#               name matches a pool name needs nothing here — that pool is inherited.
+#               Naming a pool the network does not define fails the run.
+#   ip_address: pin this host to an exact address. Honoured as written or refused
+#               with the conflict named, never quietly replaced.
+#
 # stacks:
 #   monitoring_stack:
 #     memory: 8192
+#   media_stack:
+#     pool: media_stack
+#   sso_stack:
+#     ip_address: "192.168.1.50"
 #     disk_volume:
 #       size: 64

@@ -27,6 +27,9 @@
 #   homelabinfra_config.ansible.ssh_user
 #   homelabinfra_config.proxmox.*       — API connection + lxc defaults (create path)
 #   homelabinfra_config.networks.*      — for generate-ip.yml (create path)
+#   homelabinfra_config.infrastructure.stacks.<stack_name>
+#                                       — optional; sizing, plus `pool` and `ip_address` for
+#                                         this stack host's address (create path)
 #   homelabinfra_infra                  — optional; forwarded to the host if defined
 #
 # Mutates (create path only, except .stack):
@@ -173,10 +176,23 @@
             else (_stack_existing_lxc_features + ['keyctl=1']) | unique
           }}
 
+    # Address selection reads from _stack_sizing, not from homelabinfra_config.proxmox.lxc,
+    # for the same reason `stack_tag` exists above: that dict survives between chained plays,
+    # so a `pool` or `ip_address` left there by an earlier app's stack host would silently
+    # steer this one. _stack_sizing is rebuilt per call from stack-defaults plus this lab's
+    # `stacks:` overrides, so it carries only what THIS stack declares.
+    #
+    # Which pool a stack host lands in — and whether its address is pinned — is a property of
+    # the STACK, exactly like its sizing: the host is shared, and the first app to deploy is
+    # the one that creates it. Declaring either per app would make the address depend on
+    # deploy order.
     - name: Generate IP for new stack host
       ansible.builtin.include_tasks: ../network/generate-ip.yml
       vars:
         network_name: "{{ homelabinfra_config.proxmox.lxc.network | default('default') }}"
+        pool_name: "{{ _stack_sizing.pool | default('') }}"
+        pool_hint: "{{ stack_name }}"
+        requested_ip_address: "{{ _stack_sizing.ip_address | default('') }}"
 
     - name: Set stack host IP in config
       ansible.builtin.set_fact:

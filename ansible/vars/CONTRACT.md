@@ -210,6 +210,11 @@ carries its reason.
 | `backups.retention` | optional | |
 | `vaultwarden.admin_token` | Seed/recovery override only | removed from authored config after cutover |
 | `vaultwarden.instance` | optional | |
+| `media_storage.library` | required for media apps with a `library_subpath` | the library root as the containers see it; `app.library_subpath` hangs off it |
+| `media_storage.mounts` | required for media apps with a `library_subpath` | list of `{host, path}` — storage the node already mounts, attached to the stack host as Proxmox mountpoints. Nothing is created, exported or formatted |
+| `stacks.<name>.{cores,memory,disk_volume}` | optional | deep-merged over `vars/stack-defaults.yml`; applies when the stack host is CREATED |
+| `stacks.<name>.pool` | optional | pool the stack host allocates from. A stack whose name matches a pool name inherits it without this key; a pool named here must exist on the network |
+| `stacks.<name>.ip_address` | optional | pins the stack host to an exact address, honoured or refused with the conflict named |
 
 ### Runtime secrets and external unlock material (slice 014)
 
