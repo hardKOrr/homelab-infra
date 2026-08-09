@@ -271,7 +271,7 @@
   changed_when: true
   delegate_to: localhost
   become: false
-  no_log: true
+  no_log: false   # TEMPORARY: diagnosing a live grant failure, 2026-08-09
 
 - name: Vault | Read the grants back
   ansible.builtin.command:
