@@ -170,20 +170,37 @@
   ansible.builtin.meta: flush_handlers
 
 # ── Prove the app is USABLE, not merely alive ─────────────────────────────────
-# A Servarr container opens its port well before it has written config.xml, and a
-# v4 app that never had an authentication method chosen serves its setup screen
-# on every UI path while looking perfectly healthy from outside. Three checks,
-# each failing a state the port alone cannot distinguish:
+# A Servarr container opens its port well before it is configured, and a v4 app
+# that never had an authentication method chosen serves its setup screen on every
+# UI path while looking perfectly healthy from outside.
 #
-#   1. config.xml exists and names an authentication method — not the "choose one"
-#      state that leaves the web UI stuck on a setup page.
-#   2. /api/<v>/system/status answers with the app's own name, authenticated with
-#      the key this deploy declared. That proves the key is live, which is the one
-#      thing every piece of media wiring depends on.
-#   3. the same call WITHOUT the key is refused. Without this, an app configured
+# THE APP IS ASKED, NOT ITS CONFIG FILE. Measured live 2026-08-09 against
+# lscr.io/linuxserver/prowlarr:latest: the `<APP>__AUTH__APIKEY` and
+# `<APP>__AUTH__METHOD` overrides are honoured — the declared key authenticates
+# and an unkeyed call is refused — and yet config.xml contains NEITHER element.
+# Servarr treats environment overrides as runtime configuration and persists only
+# what its own setup writes, so "config.xml has no ApiKey" does not mean "the app
+# has no API key". Asserting on the file failed a deploy of an app that was
+# working correctly.
+#
+# config.xml keeps exactly one job, above: key continuity. An app with a key of
+# its own — migrated, or set up by hand — is adopted rather than overwritten,
+# because that key is what every Prowlarr Application and Bazarr connection in
+# the lab was wired with.
+#
+# Three checks, each failing a state the port alone cannot distinguish:
+#
+#   1. /api/<v>/system/status answers with the app's own name, authenticated with
+#      the key that is in force. That proves the key is live, which is the one
+#      thing every piece of media wiring depends on — and a first-run app with no
+#      key configured fails it, because nothing authenticates.
+#   2. the same call WITHOUT the key is refused. Without this, an app configured
 #      DisabledForLocalAddresses looks identical to a secured one from the stack
 #      host, and the lab ships an unauthenticated API on the LAN.
-- name: Wait for the app to write its config.xml
+#   3. the app reports an authentication method it actually chose, read from
+#      /api/<v>/config/host — the setup-page state that config.xml used to be
+#      asked about, asked of the running app instead.
+- name: Re-read config.xml after start (an app may have written its own key)
   ansible.builtin.slurp:
     src: "{{ app_config.app.config_path }}/config.xml"
   register: _servarr_config
@@ -193,47 +210,52 @@
   failed_when: false
   no_log: true
 
-- name: Read the effective API key and authentication method
+- name: Resolve the key that is in force
   ansible.builtin.set_fact:
-    # config.xml is the authority, not the compose environment: the override
-    # spelling differs across Servarr versions, and an ignored override must not
-    # leave the registry holding a key the app never adopted.
+    # A key in config.xml wins: the app wrote it, so it is what the app answers
+    # to. Otherwise the declared key is in force through the environment, which
+    # the status call below proves rather than assumes.
     _servarr_effective_key: >-
       {{ (_servarr_config.content | default('') | b64decode
-          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join('')) }}
-    _servarr_auth_method: >-
-      {{ (_servarr_config.content | default('') | b64decode
-          | regex_search('<AuthenticationMethod>([^<]+)</AuthenticationMethod>', '\1')
-          | default([], true) | join('')) }}
+          | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join(''))
+         | default(_servarr_api_key, true) }}
   no_log: true
 
-- name: Assert the app wrote a usable configuration
+- name: Assert a key exists to authenticate with
   ansible.builtin.assert:
-    that:
-      - _servarr_effective_key | length > 0
-      - _servarr_auth_method | length > 0
-      - _servarr_auth_method != 'None'
+    that: _servarr_effective_key | length > 0
     fail_msg: >-
-      {{ instance }} came up but has not configured itself:
-      config.xml at {{ app_config.app.config_path }} carries
-      {{ 'no API key' if _servarr_effective_key | length == 0 else 'no authentication method' }}.
-      A Servarr app in that state serves its first-run setup page on every UI
-      path while the port answers normally. Check the container log
-      (`docker logs {{ instance }}`) and that
-      {{ _servarr_prefix }}__AUTH__METHOD is a spelling this image honours.
+      {{ instance }} has no API key from either source — none in config.xml at
+      {{ app_config.app.config_path }}, and none declared by this deploy. Without
+      one, nothing can wire this app.
 
 - name: Query the app's own status endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
     headers:
       X-Api-Key: "{{ _servarr_effective_key }}"
-    status_code: 200
+    # 401 is accepted here so the retry loop owns the wait and the assert below
+    # owns the explanation. Letting uri fail on it produces "Status code was 401",
+    # which says nothing about what to do next.
+    status_code: [200, 401]
   register: _servarr_status
   until: _servarr_status.status | default(0) == 200
   retries: 30
   delay: 5
+  failed_when: false
   changed_when: false
   no_log: true
+
+- name: Assert the key in force actually authenticates
+  ansible.builtin.assert:
+    that: _servarr_status.status | default(0) == 200
+    fail_msg: >-
+      {{ instance }} refused the key this deploy holds. Either the app generated
+      a key of its own after start and did not write it to
+      {{ app_config.app.config_path }}/config.xml, or it never accepted
+      {{ _servarr_prefix }}__AUTH__APIKEY and is sitting on its first-run setup
+      page — which answers the port normally and serves the setup screen on every
+      UI path. `docker logs {{ instance }}` shows which.
 
 - name: Assert the app identifies itself as {{ _servarr_kind }}
   ansible.builtin.assert:
@@ -258,8 +280,34 @@
       {{ instance }} served its API to a caller with no key. Its
       AuthenticationRequired is "{{ app_config.app.auth_required | default('Enabled') }}"
       as this deploy asked, but the running app answered anyway — anything on the
-      LAN can read and rewrite this app's library. Confirm the setting took in
-      {{ app_config.app.config_path }}/config.xml.
+      LAN can read and rewrite this app's library. `docker inspect {{ instance }}`
+      shows whether {{ _servarr_prefix }}__AUTH__REQUIRED reached the container.
+
+# The question config.xml used to be asked, put to the running app: an app still
+# on its setup screen reports no authentication method here, however healthy the
+# port looks.
+- name: Read the authentication the app reports for itself
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/config/host"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_host_config
+  changed_when: false
+  no_log: true
+
+- name: Assert the app has chosen an authentication method
+  ansible.builtin.assert:
+    that:
+      - (_servarr_host_config.json.authenticationMethod | default('') | length) > 0
+      - (_servarr_host_config.json.authenticationMethod | default('') | lower) != 'none'
+    fail_msg: >-
+      {{ instance }} reports authenticationMethod
+      "{{ _servarr_host_config.json.authenticationMethod | default('nothing') }}".
+      An app in that state serves its first-run setup page on every UI path while
+      the port answers normally, and the reverse proxy in front of it would be
+      publishing a setup wizard. Check that
+      {{ _servarr_prefix }}__AUTH__METHOD is a spelling this image honours.
 
 # ── Point the app at its library ──────────────────────────────────────────────
 # A Servarr app with no root folder accepts nothing: every add, every import and
