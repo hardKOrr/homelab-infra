@@ -7,7 +7,7 @@
 #   mw_arr          its registry entry {app, host, api_key}
 #   mw_client_name  instance name of the download client — becomes the client name
 #   mw_client       its registry entry {app, host, api_key|username+password|arl,
-#                   url_base?, categories?}
+#                   url_base?, categories?, migrated_from?}
 #
 # Reads `media_wiring` (ansible/vars/media-wiring.yml) for the implementation name
 # and the app's category field.
@@ -18,8 +18,10 @@
 # sent — that is what makes a category-less client (Deemix, Slskd) work through
 # the same code path as SABnzbd.
 #
-# Idempotent: located by name; absent → POST, drifted → PUT, identical → no
-# change. Secrets come back masked on GET and are excluded from drift comparison.
+# Idempotent: located by name, then by the address it is configured at (including
+# `migrated_from`, the client's pre-migration address); absent → POST, drifted or
+# adopted → PUT, identical → no change. Secrets come back masked on GET and are
+# excluded from drift comparison.
 #
 # Appends one entry to `media_wire_results`; failures are recorded, not fatal.
 
@@ -55,15 +57,55 @@
       changed_when: false
       no_log: true
 
-    - name: Download client | Select the existing entry and its schema
+    # ── Locating the record ───────────────────────────────────────────────────
+    # By name first, then by the address the client is configured at. An estate
+    # this platform did not build names its clients by hand (`SABnzbd`,
+    # `qBittorrent-1032`), so name matching alone would add a second copy of a
+    # client the app already has and leave the original in place — two entries
+    # feeding one library. Matching the address repairs and renames instead.
+    #
+    # A download client's address is two fields here, not a URL, so the identity
+    # is assembled from `host` and `port`.
+    - name: Download client | Index existing clients by address
       ansible.builtin.set_fact:
-        _mw_existing: >-
-          {{ _mw_clients.json | selectattr('name', 'equalto', mw_client_name)
-             | list | first | default({}) }}
+        _mw_by_address: {}
         _mw_schema: >-
           {{ _mw_schema_all.json
              | selectattr('implementation', 'equalto', _mw_client_kind.implementation)
              | list | first | default({}) }}
+
+    - name: Download client | Read the address each client is configured at
+      ansible.builtin.set_fact:
+        _mw_by_address: "{{ _mw_by_address | combine({_mw_address: item}) }}"
+      vars:
+        _mw_fields_now: >-
+          {{ item.fields | default([]) | selectattr('value', 'defined')
+             | items2dict(key_name='name', value_name='value') }}
+        _mw_address: >-
+          {{ (_mw_fields_now.host | default('') | lower) ~ ':'
+             ~ (_mw_fields_now.port | default('')) }}
+      loop: "{{ _mw_clients.json }}"
+      loop_control:
+        label: "{{ item.name | default('') }}"
+      when: item.fields is defined
+      no_log: true
+
+    - name: Download client | Select the existing entry
+      ansible.builtin.set_fact:
+        _mw_existing: "{{ _mw_named if _mw_named | length > 0 else _mw_addressed }}"
+        _mw_adopted: "{{ _mw_named | length == 0 and _mw_addressed | length > 0 }}"
+      vars:
+        _mw_named: >-
+          {{ _mw_clients.json | selectattr('name', 'equalto', mw_client_name)
+             | list | first | default({}) }}
+        _mw_identities: >-
+          {{ ([mw_client.host] + [mw_client.migrated_from | default('', true)])
+             | reject('equalto', '') | list
+             | map('regex_replace', '^[A-Za-z][A-Za-z0-9+.-]*://', '')
+             | map('regex_replace', '[/?#].*$', '') | map('lower') | list }}
+        _mw_hits: "{{ _mw_identities | select('in', _mw_by_address.keys() | list) | list }}"
+        _mw_addressed: "{{ _mw_by_address[_mw_hits | first] if _mw_hits | length > 0 else {} }}"
+      no_log: true
 
     - name: Download client | Assert the app supports this client
       ansible.builtin.assert:
@@ -117,7 +159,8 @@
         # when the client is already wired the way this run wants it.
         _mw_drifted: >-
           {{ _mw_existing.id is defined
-             and ((_mw_current | combine(_mw_comparable)) != _mw_current
+             and (_mw_adopted | bool
+                  or (_mw_current | combine(_mw_comparable)) != _mw_current
                   or _mw_existing.enable | default(true) != (mw_client.enabled | default(true))) }}
       vars:
         _mw_current: >-
@@ -160,7 +203,10 @@
           {{ media_wire_results | default([])
              + [{'connection': _mw_connection,
                  'state': 'created' if _mw_existing.id is not defined
-                          else ('updated' if _mw_drifted | bool else 'confirmed')}] }}
+                          else ('adopted' if _mw_adopted | bool
+                                else ('updated' if _mw_drifted | bool else 'confirmed'))}]
+             + ([{'connection': _mw_existing.name ~ ' → ' ~ mw_client_name,
+                  'state': 'renamed'}] if _mw_adopted | bool else []) }}
 
   rescue:
     - name: Download client | Record the failure

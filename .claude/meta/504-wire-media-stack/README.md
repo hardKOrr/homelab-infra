@@ -34,14 +34,18 @@ the loop.
 
 ## Remaining
 
-- [ ] **Records are located by name, which duplicates instead of repairing.** Both
-      `arr-download-client.yml` and `prowlarr-application.yml` select the existing entry with
-      `selectattr('name', 'equalto', ...)` against the registry instance name. A lab whose
-      records were named by hand — the live one names them `Radarr-1015-1080p` and `SABnzbd`
-      — matches nothing, so wiring creates a second record and leaves the first pointing
-      wherever it pointed. Harmless on apps this platform deployed, wrong on every app it
-      adopted or migrated. Needs a host-based fallback that renames the record it finds.
-      Evidence and the rest of the reconciliation gap: `../505-app-servarr/notes.md`
+- [x] **Records are located by name, then by address.** Both `arr-download-client.yml` and
+      `prowlarr-application.yml` now index the existing records by the address they point at
+      and fall back to that when the name does not match, so a hand-named record
+      (`Radarr-1015-1080p`, `SABnzbd`) is adopted and renamed rather than duplicated. The
+      second address they recognise is `media.<instance>.migrated_from`, written by
+      `migrate-servarr.yml` from the source app's own `config.xml`, which is what makes a
+      record still pointing at the pre-migration host resolve to the new instance. An
+      adoption reports as `adopted` plus a `renamed` row in the run summary. Probed offline
+      against a fixture shaped like the live estate — syntax-check does not execute Jinja,
+      and this is selection logic, so green would otherwise mean nothing
+- [ ] **Live:** an adoption observed against a record this platform did not create — the
+      probe covers the selection, not the PUT that renames it
 - [ ] End-to-end run of the playbook itself, Plays 1–3 including discovery over SSH — needs
       `config/` populated on the runner; only the wiring plays have been exercised
 - [ ] The "Media stack wired: N connections confirmed" Ntfy notification fires — needs a lab

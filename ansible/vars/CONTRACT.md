@@ -117,6 +117,7 @@ read by `playbooks/stacks/wire-media-stack.yml` and by nothing else.
 | `peers` | optional | instance names this app may wire to; default is every compatible app |
 | `categories` | optional | `{<arr instance>: <category>}` — download clients only; default is the target app's `default_category` |
 | `sync_level`, `sync_categories`, `anime_sync_categories` | optional | Prowlarr Application settings for an *arr entry |
+| `migrated_from` | optional | full base URL **including port** this app answered on before migration, written by `migrate-servarr.yml`. The wiring locates a record by name, then by address, and this is the second address it will recognise — which is what turns a peer entry pointing at the source host into a repair of that entry rather than a duplicate beside it |
 
 Entries may also be **discovered** rather than registered: an instance file
 declaring `app.media_kind` joins the registry with its `app.host` (or the dynamic

@@ -43,7 +43,7 @@ a `vars/app-defaults/` file, a playbook and two job definitions.
 - **Prowlarr gets no media mount.** It manages indexers and never touches files.
 - **Readarr pins `develop`.** There is no current stable Readarr tag.
 
-## Migration leaves peer references stale — open, and larger than it looks
+## Migration leaves peer references stale — the duplication half is closed
 
 Found by auditing the live estate on 2026-08-09, after the role was written. A migrated
 database carries every peer connection the source had, and those are addresses. Read off the
@@ -72,18 +72,40 @@ Three distinct problems, in order of severity:
    manage one library, both talking to the same download clients and both importing. The
    stale URL is not the hazard; the second live writer is.
 
-What closes it, neither of which is written:
+### What was built, 2026-08-09
 
-- `playbooks/stacks/remap-media-hosts.yml` — rewrite peer references whose host matches a
-  migrated app's old address, leave every other reference untouched. The old address can be
-  carried automatically: have `migrate-servarr.yml` write `media.<instance>.migrated_from`,
-  which survives the deploy's own facts write because that merge is `recursive=True`.
-- Host-fallback matching in those two wiring task files, so a record found by host is
-  RENAMED to the canonical instance name instead of duplicated. Without this the remap alone
-  still converges to duplicates.
+Problem 1 is closed, and it closed problem 2's *peer* half with it — no separate remap
+playbook was needed, because the wiring that already owns those two categories can repair
+them in place:
 
-A cutover step — stopping and unwiring the source once the new instance is verified — is the
-third piece, and is the one that touches the live estate.
+- **`migrate-servarr.yml` writes `media.<instance>.migrated_from`** — the source's own
+  address, read from its `config.xml` rather than assumed, because two instances on one host
+  are distinguished by nothing but the port. It survives the later deploy's registry write,
+  which merges `recursive=True`.
+- **Both wiring task files index existing records by the address they point at** and fall
+  back to that index when the name does not match. A record found by address is adopted:
+  the payload already carries the canonical name, and drift detection now treats adoption as
+  drift, so the PUT renames it. The run summary reports `adopted` plus a `renamed` row.
+- The identity is host **and** port, scheme and path stripped. Port matters — two *arr apps
+  on one stack host differ by nothing else.
+
+Probed offline against a fixture shaped like the live estate: a hand-named
+`Radarr-1015-1080p` pointing at `192.168.1.15:7878` is adopted by a migrated `radarr-1080p`,
+a `sonarr` matching by name is not an adoption, a genuinely new app matches nothing, and
+`SABnzbd` at `192.168.1.72:7777` is adopted by a migrated client. Syntax-check does not
+execute Jinja and this is selection logic, so the gates alone would have proved nothing.
+
+### What is still open
+
+- **The categories nothing wires** — `/notification`, `/importlist`, `/indexerproxy`,
+  `/remotepathmapping` — are now left alone **by decision**, stated in the playbook header
+  and in its closing report rather than by omission. Correct for the Plex notification and
+  the FlareSolverr proxy, which are not moving; wrong for `RadarrImport`, the import list
+  naming the 4k instance, if that instance also migrates. That one is repointed by hand.
+- **The cutover.** Migration is additive: the source keeps running on the same library, so
+  two instances write it until the operator retires one. Nothing here automates that, and
+  the playbook now says so plainly.
+- **No adoption has been observed live.** The probe covers the selection, not the PUT.
 
 ## Unverified
 

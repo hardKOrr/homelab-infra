@@ -11,15 +11,16 @@
 #   mw_prowlarr_host   Prowlarr base URL including scheme
 #   mw_prowlarr_key    Prowlarr API key
 #   mw_target_name     instance name of the *arr — becomes the Application name
-#   mw_target          its registry entry {app, host, api_key, sync_level?,
-#                      sync_categories?, anime_sync_categories?}
+#   mw_target          its registry entry {app, host, api_key, migrated_from?,
+#                      sync_level?, sync_categories?, anime_sync_categories?}
 #
 # Reads `media_wiring` (ansible/vars/media-wiring.yml) for the implementation name.
 #
-# Idempotent: the Application is located by name; absent → POST, drifted → PUT,
-# identical → no change. The API key field comes back masked ("********") on GET,
-# so it is deliberately excluded from drift comparison — comparing it would make
-# every run report a change and rewrite the record.
+# Idempotent: the Application is located by name, then by the address it points at
+# (including `migrated_from`, the app's pre-migration address); absent → POST,
+# drifted or adopted → PUT, identical → no change. The API key field comes back
+# masked ("********") on GET, so it is deliberately excluded from drift comparison
+# — comparing it would make every run report a change and rewrite the record.
 #
 # Appends one entry to `media_wire_results`. A failure here is recorded and the
 # run continues: one unreachable app must not abandon the rest of the stack.
@@ -54,14 +55,58 @@
       changed_when: false
       no_log: true
 
-    - name: Prowlarr application | Select the existing entry and its schema
+    # ── Locating the record ───────────────────────────────────────────────────
+    # By name first: that is what an Application this platform created looks like.
+    # Then by the ADDRESS it points at, which is what an adopted or migrated app
+    # looks like — its entry was named by hand in the Prowlarr UI
+    # (`Radarr-1015-1080p`) and will never equal an instance name. Without the
+    # second lookup a re-wire creates an eighth Application beside seven that now
+    # point at nothing; with it, the existing record is repaired and renamed.
+    #
+    # `migrated_from` is the base URL the app answered on BEFORE migration,
+    # written into the registry by migrate-servarr.yml. It is what lets a record
+    # still pointing at the source host be recognised as this app's own.
+    - name: Prowlarr application | Index existing applications by address
       ansible.builtin.set_fact:
-        _mw_existing: >-
-          {{ _mw_apps.json | selectattr('name', 'equalto', mw_target_name)
-             | list | first | default({}) }}
+        _mw_by_address: {}
         _mw_schema: >-
           {{ _mw_schema_all.json | selectattr('implementation', 'equalto', _mw_implementation)
              | list | first | default({}) }}
+
+    - name: Prowlarr application | Read the address each application points at
+      ansible.builtin.set_fact:
+        _mw_by_address: "{{ _mw_by_address | combine({_mw_url: item}) }}"
+      vars:
+        _mw_url: >-
+          {{ (item.fields | default([]) | selectattr('name', 'equalto', 'baseUrl')
+              | map(attribute='value') | first | default(''))
+             | regex_replace('^[A-Za-z][A-Za-z0-9+.-]*://', '')
+             | regex_replace('[/?#].*$', '') | lower }}
+      loop: "{{ _mw_apps.json }}"
+      loop_control:
+        label: "{{ item.name | default('') }}"
+      when: item.fields is defined
+
+    - name: Prowlarr application | Select the existing entry
+      ansible.builtin.set_fact:
+        _mw_existing: "{{ _mw_named if _mw_named | length > 0 else _mw_addressed }}"
+        # An adopted record is one this run found by address under someone else's
+        # name. The payload below already carries the canonical name, so adopting
+        # it is a rename — which is why drift detection has to notice the name.
+        _mw_adopted: "{{ _mw_named | length == 0 and _mw_addressed | length > 0 }}"
+      vars:
+        _mw_named: >-
+          {{ _mw_apps.json | selectattr('name', 'equalto', mw_target_name)
+             | list | first | default({}) }}
+        # Host:port, scheme and path stripped. The port is part of the identity:
+        # two *arr apps on one stack host differ only by it.
+        _mw_identities: >-
+          {{ ([mw_target.host] + [mw_target.migrated_from | default('', true)])
+             | reject('equalto', '') | list
+             | map('regex_replace', '^[A-Za-z][A-Za-z0-9+.-]*://', '')
+             | map('regex_replace', '[/?#].*$', '') | map('lower') | list }}
+        _mw_hits: "{{ _mw_identities | select('in', _mw_by_address.keys() | list) | list }}"
+        _mw_addressed: "{{ _mw_by_address[_mw_hits | first] if _mw_hits | length > 0 else {} }}"
 
     - name: Prowlarr application | Assert Prowlarr supports this app kind
       ansible.builtin.assert:
@@ -103,7 +148,8 @@
       ansible.builtin.set_fact:
         _mw_drifted: >-
           {{ _mw_existing.id is defined
-             and (_mw_current.baseUrl | default('') != mw_target.host
+             and (_mw_adopted | bool
+                  or _mw_current.baseUrl | default('') != mw_target.host
                   or _mw_current.prowlarrUrl | default('') != mw_prowlarr_host
                   or _mw_existing.syncLevel | default('') != mw_target.sync_level | default('fullSync')
                   or not (_mw_existing.enable | default(true))) }}
@@ -142,7 +188,10 @@
           {{ media_wire_results | default([])
              + [{'connection': mw_target_name ~ ' → prowlarr indexers',
                  'state': 'created' if _mw_existing.id is not defined
-                          else ('updated' if _mw_drifted | bool else 'confirmed')}] }}
+                          else ('adopted' if _mw_adopted | bool
+                                else ('updated' if _mw_drifted | bool else 'confirmed'))}]
+             + ([{'connection': _mw_existing.name ~ ' → ' ~ mw_target_name,
+                  'state': 'renamed'}] if _mw_adopted | bool else []) }}
 
   rescue:
     - name: Prowlarr application | Record the failure

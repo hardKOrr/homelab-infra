@@ -20,16 +20,23 @@
 # adopts an API key it finds in an existing config.xml, so the migrated app keeps
 # the key every Prowlarr Application and Bazarr connection already points at.
 #
-# NOT READY FOR A LIVE MIGRATION — read .claude/meta/505-app-servarr/notes.md,
+# A MIGRATION IS NOT A CUTOVER — read .claude/meta/505-app-servarr/notes.md,
 # "Migration leaves peer references stale", before running this against an app you
-# care about. The copy itself is sound; what is missing is everything that happens
-# after it. A migrated database keeps its peer connections as ADDRESSES — the live
-# lab's Prowlarr holds seven Applications pointing at *arrs by IP, and each Radarr
-# holds six download clients, a Plex notification and an import list the same way.
-# Nothing rewrites those yet, `wire-media-stack.yml` locates records by name and so
-# would add duplicates rather than repair them, and the source app keeps running,
-# which leaves two instances writing one library. Safe to run against a throwaway
-# instance to exercise the path; not safe as a cutover.
+# care about.
+#
+# A migrated database keeps its peer connections as ADDRESSES: the live lab's
+# Prowlarr holds seven Applications pointing at *arrs by IP, and each Radarr holds
+# six download clients the same way. Play 5 records the address this app answered
+# on as `migrated_from`, and `wire-media-stack.yml` matches on it — so those
+# records are rewritten onto the new instance rather than duplicated beside it.
+# Peer categories this platform does not wire (notifications, import lists,
+# indexer proxies) are left exactly as they are, which is right for a Plex or a
+# FlareSolverr that is not moving and wrong for an import list naming an *arr that
+# is: repoint those by hand.
+#
+# What this playbook still does not do is stop anything. The source app keeps
+# running on the same library, so until you retire it deliberately, two instances
+# are writing one library. That step is yours.
 #
 # NON-DESTRUCTIVE. The source is read, never rewritten. Its service is stopped for
 # the copy — a SQLite database copied out from under a running writer is how you
@@ -152,6 +159,36 @@
         msg: >-
           {{ source_host }} root folders:
           {{ ms_source_root_paths | join(', ') | default('none readable', true) }}
+
+    # The address this app answers on today, which every peer in the estate has
+    # recorded: Prowlarr's Applications point at it, and so do Bazarr's
+    # connections. Play 5 writes it into the registry as `migrated_from`, and that
+    # is what lets the media wiring recognise those records as this instance's own
+    # afterwards instead of creating a second set beside them. Read from
+    # config.xml rather than assumed, because a second instance on one host is
+    # distinguished by nothing else.
+    - name: Read the port the source app serves on
+      ansible.builtin.shell: |
+        set -euo pipefail
+        grep -o '<Port>[^<]*</Port>' "{{ source_config_path }}/config.xml" \
+          | sed 's/<[^>]*>//g' | head -1
+      args:
+        executable: /bin/bash
+      register: _ms_source_port
+      changed_when: false
+
+    - name: Record the address the source serves on
+      ansible.builtin.set_fact:
+        ms_source_address: "http://{{ source_host }}:{{ _ms_source_port.stdout | trim }}"
+
+    - name: Assert the source port was readable
+      ansible.builtin.assert:
+        that: _ms_source_port.stdout | trim | length > 0
+        fail_msg: >-
+          No <Port> in {{ source_config_path }}/config.xml on {{ source_host }}.
+          Without it the pre-migration address cannot be recorded, and the media
+          wiring would later duplicate every peer record pointing at this app
+          rather than repairing it.
 
     # Stopped for the copy and started again in `always`, including on failure.
     # A SQLite database copied while its writer is running is how a migration
@@ -316,3 +353,36 @@
           folder(s). Run the Deploy job for this app: it starts the app on the
           migrated database and asserts it came up usable. The source app on
           {{ source_host }} is running and unchanged.
+
+
+# ── Play 5: Record where this app came from ────────────────────────────────────
+# Written after the copy has been verified, and deliberately as its own registry
+# write rather than a hostvar: the deploy that follows merges its own `media`
+# entry recursively, so this key survives it, and `wire-media-stack.yml` reads it
+# on every later run — not just the one immediately after the migration.
+- name: "Migrate Servarr | Record the pre-migration address"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Record migrated_from in the media registry
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: media
+        generated_facts_data:
+          "{{ instance }}":
+            migrated_from: "{{ hostvars['migrate_source'].ms_source_address }}"
+
+    - name: Report what the peers will do on the next wiring run
+      ansible.builtin.debug:
+        msg: >-
+          {{ instance }} is recorded as having come from
+          {{ hostvars['migrate_source'].ms_source_address }}. Wire Media Stack will
+          now find the peer records pointing at that address — Prowlarr's
+          Application for it, and its download clients — and rewrite them onto this
+          instance under its own name, rather than adding a second set. Peer records
+          in categories this platform does not wire (notifications, import lists,
+          indexer proxies) are left untouched by design; repoint any that name a
+          host you are retiring.
