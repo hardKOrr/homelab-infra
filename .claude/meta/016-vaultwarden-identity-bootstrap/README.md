@@ -38,10 +38,14 @@ read and write in the green bootstrap.
 - [ ] The automation account can access only the intended organization/collection —
       **decided and implemented 2026-08-09, not yet observed live.** The account is granted
       an explicit `users_collections` entry with manage rights on `platform-secrets`, read
-      back and asserted on every run, so its access no longer depends on
-      `allowAdminAccessToAllCollectionItems`. Closing this needs the org-wide flag turned
-      off in the web vault (a browser step Cutover now names) and one Deploy job succeeding
-      afterwards — that run is the proof the grant alone carries the writes
+      back and asserted on every run. What that grant cannot do on Vaultwarden is *replace*
+      the admin reach: `allowAdminAccessToAllCollectionItems` is a hardcoded `true` in
+      `src/db/models/organization.rs` (verified against 1.37.1 and `main`) and
+      `PUT /api/organizations/<id>/collection-management` is a 404, so there is no flag to
+      revoke. Closing this means removing the **role** instead: change the account from
+      Admin to User in the web vault's Members list, keep the collection grant, and run a
+      Deploy job. Only on a lab whose collection already exists — creating it needs Admin,
+      so a fresh bootstrap cannot start from User
 - [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password —
       not tested
 - [ ] Every Key Storage secret is loaded through a secure option, and none is copied into a

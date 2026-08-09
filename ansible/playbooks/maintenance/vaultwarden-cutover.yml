@@ -293,13 +293,16 @@
           Vault mode is active. Seed files were removed only after every imported
           item passed exact readback. Ordinary jobs now fail closed on Vaultwarden.
 
-    # The grant above is what makes this safe to do; until it existed, revoking the
-    # flag would have cut the automation account off from every platform item.
-    - name: Publish the remaining browser-only tightening step
+    # Vaultwarden serializes allowAdminAccessToAllCollectionItems as a hardcoded
+    # true (src/db/models/organization.rs, verified through 1.37.1 and main) and
+    # ships no endpoint to change it — PUT /api/organizations/<id>/collection-management
+    # is a 404. So the org-wide admin reach cannot be revoked server-side, and the
+    # optional tightening is to remove the role instead of the flag.
+    - name: Publish the optional tightening step
       ansible.builtin.debug:
         msg:
-          - "One browser-only step remains, and it narrows access rather than granting it."
-          - "The automation account now holds an explicit grant on the platform-secrets collection, verified on this run."
-          - "As the human owner, open the organization's settings in the web vault."
-          - "Turn off 'Admins and owners can manage all collections' (allowAdminAccessToAllCollectionItems)."
-          - "Then re-run any Deploy job: it writes to the vault through the explicit grant alone and must still succeed."
+          - "The automation account holds an explicit grant on the platform-secrets collection, verified on this run."
+          - "Vaultwarden pins allowAdminAccessToAllCollectionItems to true and offers no toggle for it, so an organization Admin can always reach every collection here."
+          - "Optional, and only on a lab whose collection already exists: as the human owner, open Members in the web vault and change the automation account's role from Admin to User."
+          - "It keeps manage rights on platform-secrets, so deploys keep writing — through the grant alone, which is the point."
+          - "Do not do this before a first bootstrap: creating the canonical collection needs the Admin role, and a User cannot."

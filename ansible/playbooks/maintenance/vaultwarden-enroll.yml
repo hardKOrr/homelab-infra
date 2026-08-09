@@ -79,6 +79,6 @@
           - "Register the dedicated automation address separately."
           - "As the owner, create organization 'homelab-infra' and invite the automation account into it as an Admin."
           - "Create no collection: the platform creates 'platform-secrets' itself on first write, and grants the automation account explicit access to it."
-          - "Leave the organization's 'Admins and owners can manage all collections' setting alone for now — Cutover tells you when it is safe to turn off."
+          - "Admin is required for that first write. Cutover names the optional tightening available afterwards."
           - "From the automation account, create a personal API key and stage BW_CLIENTID, BW_CLIENTSECRET and BW_PASSWORD in Rundeck Key Storage."
           - "Then run the Vaultwarden Cutover job. Ordinary deploys remain disabled until it succeeds."

@@ -128,8 +128,25 @@ but every imported job declares only the credentials it actually needs.
   to record org-scoped Admin would have been honest about what shipped but leaves the account's
   reach defined by a flag nobody would think to check.
 
-  Order matters and the code enforces it: the grant is written and read back before the flag
-  is revoked. Revoking first would cut the account off from every platform item.
+  **Correction, same day: there is no flag to revoke on Vaultwarden.** The decision above
+  stands, but the tightening step it implied does not exist. Vaultwarden serializes
+  `"allowAdminAccessToAllCollectionItems": true` as a hardcoded literal in
+  `src/db/models/organization.rs` — both places the organization is emitted, unchanged
+  through 1.37.1 and `main` — and ships no endpoint behind it:
+  `PUT /api/organizations/<id>/collection-management` answers 404 on the live server while
+  `PUT /api/organizations/<id>` answers 401, so the route table is real and that one is
+  simply absent. The web vault hides the Collection management page for that reason.
+
+  What remains achievable is removing the **role** rather than the flag: an account with
+  `manage` on the collection and the ordinary User role writes items through the grant
+  alone. That is the only arrangement on Vaultwarden where the grant is load-bearing, and
+  it is lab-local rather than shipped, because creating the canonical collection needs
+  Admin — a fresh bootstrap cannot start from User.
+
+  The general lesson is cheap to state and was not: **a permission model borrowed from
+  upstream Bitwarden is not evidence about Vaultwarden.** Both halves of this were checkable
+  in one request each — a route probe against the live server, and a grep of the pinned
+  version's source.
 
 ## Where the grant is enforced
 
