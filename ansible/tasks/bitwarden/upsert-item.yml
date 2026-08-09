@@ -285,8 +285,9 @@
     msg: >-
       Vaultwarden refused the collection grant for
       {{ vault_collection_name | default('platform-secrets') }}
-      (rc={{ _vault_grant_write.rc }}):
-      {{ (_vault_grant_write.stderr | default('') | trim)[:500] }}
+      (rc={{ _vault_grant_write.rc }}, collection payload
+      {{ _vault_collection_detail.stdout | default('') | length }} bytes):
+      {{ (_vault_grant_write.stderr | default('') | trim)[-600:] }}
       {{ (_vault_grant_write.stdout | default('') | trim)[:200] }}
   when: _vault_grant_write.rc | default(0) != 0
 
