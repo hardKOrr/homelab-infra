@@ -176,7 +176,46 @@ Three traps the tasks are written around:
 against a fake `bw`, so the test cannot drift from the shipped code: another member's row must
 come back byte-identical and the account's must end at manage.
 
+## 2026-08-09 (later) — resolved: the grant cannot exist while the account is Admin
+
+Executions 49-55 read the error and followed it down. Neither of the two outcomes below
+was right, because the write had never reached Vaultwarden at all. Three defects in a row,
+each hiding the next:
+
+1. **The payload builder crashed on its own input.** `VAULT_COLLECTION_JSON` arrived as
+   `{'object': 'org-collection', ...}` — a Python repr. Ansible converts a rendered
+   template that parses as a data structure back into one and stringifies it for the
+   environment, so a captured `stdout` holding JSON becomes a dict on the way through
+   `environment:`. Probed against ansible-core 2.18: a raw stdout string converts, and
+   `to_json` output does not, which is why the item write in the same file always worked.
+   Both raw-stdout sites now round-trip through `| from_json | to_json`.
+2. **The readback preceded a sync.** With the payload fixed the write was accepted, and
+   `bw get` then answered from the CLI's local cache and reported the grant missing. The
+   item write had always sequenced its readback behind `bw sync`; the grant path had not.
+3. **The server accepts the write and stores nothing.** Vaultwarden's
+   `post_organization_collection_update` walks the submitted `users` array and does
+   `if member.access_all { continue; }` before `CollectionUser::save` — read in 1.37.1,
+   the version this lab runs. The database agrees: the automation account is `atype` 1
+   with `access_all` 1, and `users_collections` is empty for it and for the human owner.
+
+So the slice's open question has an answer, and it inverts the premise. The account was
+never short a permission. **Holding Admin is precisely what makes the explicit grant
+unstorable** — the server refuses to keep a per-collection row for a member that already
+has organization-wide access. The assert could not pass at any point, and it took every
+secret-storing deploy down with it.
+
+The tasks now resolve the membership's role and act on it: attempt and prove the grant on
+a Manager or User membership, and on Owner/Admin report what the account's reach actually
+rests on. That makes the Manager tightening the *cause* of the grant rather than a step
+taken after it — one action in the web vault, and the grant becomes storable, stored and
+enforced on every run.
+
+Deploy Prowlarr (execution 55) is green end to end: nine platform items plus Prowlarr's in
+the vault, the guest stamped `app_prowlarr;kind_docker;media_stack`.
+
 ## 2026-08-09 — the grant write failed live, and the error is masked
+
+**Superseded by the section above; kept for the reasoning it records.**
 
 Deploy Prowlarr (execution 48) reached this code on the lab and failed at
 `Vault | Grant the account explicit access to the canonical collection`. Everything before it

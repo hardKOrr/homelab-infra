@@ -36,19 +36,21 @@ read and write in the green bootstrap.
 ## Remaining
 
 - [ ] The automation account can access only the intended organization/collection —
-      **decided and implemented 2026-08-09, not yet observed live.** The account is granted
-      an explicit `users_collections` entry with manage rights on `platform-secrets`, read
-      back and asserted on every run. What that grant cannot do on Vaultwarden is *replace*
-      the admin reach: `allowAdminAccessToAllCollectionItems` is a hardcoded `true` in
-      `src/db/models/organization.rs` (verified against 1.37.1 and `main`) and
-      `PUT /api/organizations/<id>/collection-management` is a 404, so there is no flag to
-      revoke. Closing this means lowering the **role** instead: Admin → **Manager** in the
-      web vault's Members list, keeping the collection grant, then a Deploy job. Manager is
-      the floor, not User: `GET /organizations/<id>/collections` and `…/users` take
-      `ManagerHeadersLoose`, so a User is refused at the first vault write. Manager passes
-      that, and the strict `ManagerHeaders` on the collection detail and update calls
-      `is_coll_manageable_by_user` — which the grant is what satisfies. Only on a lab whose
-      collection already exists; creating it needs Admin
+      **one action away, and that action is the whole of it.** Set the membership to
+      **Manager** in the web vault's Members list, then run any Deploy job: the grant tasks
+      establish the `users_collections` entry with manage rights on `platform-secrets` and
+      assert it on every subsequent run. Nothing else is outstanding in code.
+
+      Proved live 2026-08-09 (executions 49-55): while the account is Admin the grant
+      **cannot** be stored at all. `post_organization_collection_update` skips members with
+      `access_all` before saving, so the write returns success and persists nothing — the
+      lab's `users_collections` is empty for both accounts. There is likewise no flag to
+      revoke: `allowAdminAccessToAllCollectionItems` is a hardcoded `true` in
+      `src/db/models/organization.rs` and `PUT /api/organizations/<id>/collection-management`
+      is a 404. Manager is the floor, not User: `GET /organizations/<id>/collections` and
+      `…/users` take `ManagerHeadersLoose`, so a User is refused at the first vault write.
+      Only on a lab whose collection already exists; creating it needs Admin. See
+      [notes.md](notes.md) for the three defects that stood between the decision and this
 - [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password —
       not tested
 - [ ] Every Key Storage secret is loaded through a secure option, and none is copied into a
