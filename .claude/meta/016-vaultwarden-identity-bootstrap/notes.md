@@ -137,11 +137,18 @@ but every imported job declares only the credentials it actually needs.
   `PUT /api/organizations/<id>` answers 401, so the route table is real and that one is
   simply absent. The web vault hides the Collection management page for that reason.
 
-  What remains achievable is removing the **role** rather than the flag: an account with
-  `manage` on the collection and the ordinary User role writes items through the grant
-  alone. That is the only arrangement on Vaultwarden where the grant is load-bearing, and
-  it is lab-local rather than shipped, because creating the canonical collection needs
-  Admin — a fresh bootstrap cannot start from User.
+  What remains achievable is lowering the **role** rather than the flag, and the floor is
+  **Manager**, not User. Every vault write already calls org-scoped endpoints that take
+  `ManagerHeadersLoose` — `GET /organizations/<id>/collections` for the collection list and
+  `GET /organizations/<id>/users` for the member list — which errors with "You need to be a
+  Manager, Admin or Owner to call this endpoint". A User is refused at the first write, not
+  merely at collection creation. Manager passes it, and the strict `ManagerHeaders` guarding
+  the collection detail and update calls `is_coll_manageable_by_user`, which is precisely
+  what the explicit grant satisfies. So Manager plus the grant is least privilege that still
+  functions, and it is the only arrangement here where the grant is load-bearing.
+
+  It stays lab-local rather than shipped: creating the canonical collection needs Admin, so
+  a fresh bootstrap cannot start from Manager. Revert is setting the role back to Admin.
 
   The general lesson is cheap to state and was not: **a permission model borrowed from
   upstream Bitwarden is not evidence about Vaultwarden.** Both halves of this were checkable

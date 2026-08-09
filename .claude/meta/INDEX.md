@@ -13,7 +13,7 @@ Gates (both green): `wsl bash -lc 'bash .claude/gate/lint.sh'` and `.claude/gate
 
 | Order | Do this | Slices |
 |---|---|---|
-| 1 | The browser legs, in one sitting at a browser: demote the automation account to User and re-run a deploy, Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 016, 400, 403, 405, 306 |
+| 1 | The browser legs, in one sitting at a browser: lower the automation account to Manager and re-run a deploy, Vaultwarden vault CRUD, Grafana and Authentik sign-in, one app behind `forward_auth`. | 016, 400, 403, 405, 306 |
 | 2 | A media app role. 504 wires the media stack but nothing deploys it. | 504 |
 | 3 | Migrate the lab's `config/proxmox.yml` onto declared pools, then deploy one guest from a pool and one from a pin. | 011 |
 
@@ -56,7 +56,7 @@ Code-complete and gate-verified. Each row names the unobserved leg.
 | 012 | [Runner onboarding](012-runner-onboarding/README.md) | Configure App / Get Config from the UI, `LAB_REFRESH=0`, a no-op script re-run, the root README |
 | 013 | [Vaultwarden token self-capture](013-vaultwarden-token-capture/README.md) | sink write/readback proved live; HTTPS, identities and item CRUD belong to 015/016/014 |
 | 014 | [Vaultwarden secret store](014-vaultwarden-secret-store/README.md) | only the runner rebuild from Key Storage — seed-file recreation and seed re-entry were both injected and refused, 2026-08-06 |
-| 016 | [Vaultwarden identities + keyring](016-vaultwarden-identity-bootstrap/README.md) | the automation account demoted from Admin to User in the web vault's Members list, then one Deploy job succeeding on the explicit collection grant alone. Vaultwarden hardcodes `allowAdminAccessToAllCollectionItems` — there is no flag to revoke, only a role to remove |
+| 016 | [Vaultwarden identities + keyring](016-vaultwarden-identity-bootstrap/README.md) | the automation account lowered from Admin to **Manager** in the web vault's Members list, then one Deploy job succeeding on the explicit collection grant. Vaultwarden hardcodes `allowAdminAccessToAllCollectionItems`, so there is no flag to revoke — and Manager is the floor, since org collection/member listing refuses a plain User |
 | 201 | [configure-watchtower](201-configure-watchtower/README.md) | a container update actually reported |
 | 300 | [Caddy wire/unwire](300-wiring-caddy/README.md) | wiring runs every bootstrap; unwire needs a removal run |
 | 301 | [Nginx wire/unwire](301-wiring-nginx/README.md) | an nginx lab — none exists |

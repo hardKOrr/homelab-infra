@@ -98,7 +98,15 @@
       "Read(//c/Users/korr/.gemini/**)",
       "PowerShell(ollama *)",
       "PowerShell(\\(Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | Format-Table -AutoSize | Out-String\\); \\(Get-CimInstance Win32_ComputerSystem\\).TotalPhysicalMemory)",
-      "Bash(base64 -w0 /tmp/chk.sh)"
+      "Bash(base64 -w0 /tmp/chk.sh)",
+      "Bash(xargs wc -l)",
+      "Bash(scp -q /tmp/probe.sh root@192.168.13.247:/tmp/probe.sh)",
+      "Bash(scp -q /tmp/probe2.sh root@192.168.13.247:/tmp/p2.sh)",
+      "Bash(scp -q /tmp/probe3.sh root@192.168.13.247:/tmp/p3.sh)",
+      "Bash(scp -q /tmp/p4.sh root@192.168.13.247:/tmp/p4.sh)",
+      "Bash(scp -q /tmp/p5.sh root@192.168.13.247:/tmp/p5.sh)",
+      "Bash(scp -q /tmp/vw.sh root@192.168.13.247:/tmp/vw.sh)",
+      "Bash(scp -q /tmp/pt.sh root@192.168.13.247:/tmp/pt.sh)"
     ]
   }
 }

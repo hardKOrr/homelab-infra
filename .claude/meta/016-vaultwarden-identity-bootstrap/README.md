@@ -42,10 +42,13 @@ read and write in the green bootstrap.
       the admin reach: `allowAdminAccessToAllCollectionItems` is a hardcoded `true` in
       `src/db/models/organization.rs` (verified against 1.37.1 and `main`) and
       `PUT /api/organizations/<id>/collection-management` is a 404, so there is no flag to
-      revoke. Closing this means removing the **role** instead: change the account from
-      Admin to User in the web vault's Members list, keep the collection grant, and run a
-      Deploy job. Only on a lab whose collection already exists — creating it needs Admin,
-      so a fresh bootstrap cannot start from User
+      revoke. Closing this means lowering the **role** instead: Admin → **Manager** in the
+      web vault's Members list, keeping the collection grant, then a Deploy job. Manager is
+      the floor, not User: `GET /organizations/<id>/collections` and `…/users` take
+      `ManagerHeadersLoose`, so a User is refused at the first vault write. Manager passes
+      that, and the strict `ManagerHeaders` on the collection detail and update calls
+      `is_coll_manageable_by_user` — which the grant is what satisfies. Only on a lab whose
+      collection already exists; creating it needs Admin
 - [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password —
       not tested
 - [ ] Every Key Storage secret is loaded through a secure option, and none is copied into a
