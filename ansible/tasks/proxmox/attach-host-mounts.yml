@@ -38,10 +38,16 @@
 - name: Host mounts | Extract the vmid for {{ attach_mounts_guest }}
   ansible.builtin.set_fact:
     _am_vmid: >-
-      {{ (_am_lxc_list.stdout | from_json
-          | selectattr('name', 'defined')
-          | selectattr('name', 'equalto', attach_mounts_guest)
-          | map(attribute='vmid') | list | first) | default('') | string }}
+      {{ (_am_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _am_was_running: >-
+      {{ (_am_entry | map(attribute='status') | list | first)
+         | default('') == 'running' }}
+  vars:
+    _am_entry: >-
+      {{ _am_lxc_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', attach_mounts_guest) | list }}
 
 - name: Host mounts | Assert the guest was found
   ansible.builtin.assert:
@@ -115,6 +121,32 @@
              _am_existing_pairs | map('regex_replace', '^.*\|', '') | list)
          | map(attribute='host') | list }}
 
+# PVE attaches a mountpoint to a RUNNING container by hotplugging it, which has to
+# re-apply the guest's apparmor profile and fails on an unprivileged container:
+# `unable to hotplug mp0: failed to change apparmor profile: No such file or
+# directory` (media-stack, execution 56, 2026-08-09). A stopped container takes the
+# same `pct set` unconditionally, because there is no live profile to change. The
+# guest was going to bounce either way — the mountpoint is invisible to a running
+# container until it restarts — so stopping first costs no extra disruption and
+# removes the whole failure mode. Nothing is stopped unless there is work to do.
+- name: Host mounts | Stop the guest so the mountpoints can be attached
+  ansible.builtin.command:
+    cmd: "pct shutdown {{ _am_vmid }} --forceStop 1 --timeout 120"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _am_missing | length > 0 and _am_was_running
+  changed_when: true
+
+- name: Host mounts | Wait for the guest to reach stopped
+  ansible.builtin.command:
+    cmd: "pct status {{ _am_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_stop_check
+  until: _am_stop_check.stdout is search('stopped')
+  retries: 30
+  delay: 4
+  when: _am_missing | length > 0 and _am_was_running
+  changed_when: false
+
 - name: Host mounts | Attach the missing mountpoints
   ansible.builtin.command:
     cmd: >-
@@ -131,17 +163,18 @@
           | difference(_am_used_indices))[_am_loop_index] }}
   changed_when: true
 
-# PVE writes the mountpoint into the guest config immediately, but a RUNNING
-# container does not see it until it restarts. Without this the deploy that added
-# the mount would find an empty directory, configure a root folder inside it, and
-# the app would report every file missing — while the next deploy, on a container
-# that had been restarted for some unrelated reason, would work. Only restarted
-# when something was actually attached.
-- name: Host mounts | Restart the guest so it sees the new mountpoints
+# A container only sees a mountpoint from the boot that follows it being attached,
+# so the guest comes back up holding the new mounts. Without the restart the deploy
+# that added the mount would find an empty directory, configure a root folder inside
+# it, and the app would report every file missing — while the next deploy, on a
+# container that had been restarted for some unrelated reason, would work. The
+# guest is returned to the state it was found in: one that was already stopped
+# stays stopped, and starting it is the job of whoever wanted it running.
+- name: Host mounts | Start the guest so it sees the new mountpoints
   ansible.builtin.command:
-    cmd: "pct reboot {{ _am_vmid }}"
+    cmd: "pct start {{ _am_vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _am_missing | length > 0
+  when: _am_missing | length > 0 and _am_was_running
   changed_when: true
 
 - name: Host mounts | Wait for the guest to answer SSH again
@@ -150,7 +183,7 @@
     port: 22
     delay: 5
     timeout: 300
-  when: _am_missing | length > 0
+  when: _am_missing | length > 0 and _am_was_running
 
 - name: Host mounts | Report what is attached
   ansible.builtin.debug:
