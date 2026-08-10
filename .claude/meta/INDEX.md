@@ -73,6 +73,22 @@ read only those slices.
 | Runners / UI | Rundeck **601** |
 | Day-2 ops | watchtower **201**, remove **501**, rollback **502** |
 
+### Sitting 1 is under way — the media apps are where it stands
+
+Eight of the twelve per-app Deploy jobs have run green at some point; the four *arrs and every
+day-2 job have not. **Radarr was the first app ever to need a library mount** and found three
+defects in that one path (executions 56/57/58, 2026-08-09), all fixed and pushed:
+`f0a39fd` hotplug, `2eaf7b0` storage identity, `ef5b655` idmap templating. Full account in
+[505/notes.md](505-app-servarr/notes.md).
+
+The platform now owns a dedicated storage identity — **`homelab-infra`, uid/gid 1313** —
+created on the node, granted in `/etc/subuid`/`/etc/subgid`, and passed through to the
+unprivileged stack host by `lxc.idmap`. It replaces a default of 1000 that had silently made
+`civicfs`, an account of the domain being decommissioned, the owner of the media library.
+
+**Next click is `Deploy Radarr`**, which exercises all of it at once. The node side is applied
+and verified; the guest's idmap is not yet written, so 168000100 is untouched.
+
 ## Carried caveats
 
 - **PBS's new token check ran against an inherited token, not a created one.** Exec 44

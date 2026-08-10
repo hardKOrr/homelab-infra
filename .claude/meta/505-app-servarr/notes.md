@@ -155,3 +155,60 @@ a guessed key with the real one, and the unauthenticated call is an assert, not 
 
 Deploying Prowlarr and one *arr onto the lab's media_stack, then running Wire Media Stack,
 exercises this slice and closes 504's last two open items at the same time.
+
+## Session 2026-08-09b — the first *arr that needed the library
+
+Prowlarr (execution 55) proved the servarr path, but it declares no `library_subpath`, so it
+asks for no mounts and never touched storage. **Radarr was the first app in the platform's
+history to need a library mount**, and it found three defects in one code path — none of
+which either gate can see, all of which are now fixed and pushed.
+
+| Execution | Died at | Cause | Commit |
+|---|---|---|---|
+| 56 | `Attach the missing mountpoints` | `pct set -mpN` hotplugs into a RUNNING container and fails on apparmor | `f0a39fd` |
+| 57 | `Configure the root folder` | the guest cannot write a library owned by an unmapped host uid | `2eaf7b0` |
+| 58 | `Resolve the identity passthrough` | a `vars:` entry is a string even after `| int` | `ef5b655` |
+
+**The storage identity, decided this session.** An unprivileged stack host maps its whole id
+range into the node's `100000+` block, so a library owned by anything outside that block
+reads as `nobody:nogroup` inside the guest and every write is refused — Radarr says
+`Folder '/mnt/data/media/movies' is not writable by user 'abc'`. `media_storage.owner` now
+names one account, **`homelab-infra`, uid/gid 1313**, and the platform makes it true on both
+sides: created on the node, granted to root in `/etc/subuid` and `/etc/subgid`, given the
+mount roots, and handed to the guest as an `lxc.idmap` passthrough. `app.puid`/`app.pgid`
+follow it.
+
+The id is the platform's own deliberately. It defaulted to 1000, which on a Debian node is
+whoever was created there first — here that was `civicfs`, the file-server account of the
+CIVIC domain **being decommissioned**, which had silently become the owner of the media
+library. Chosen by the user, 2026-08-09. There is no registry of local uids: `/etc/login.defs`
+hands `UID_MIN`–`UID_MAX` (1000–60000) to useradd's allocator, and creating the account is
+what claims 1313 against it.
+
+**Mount roots only, never `chown -R`.** The platform takes the directories it was handed, not
+everything inside them — a recursive walk across an NFS export of 2,589 films is not something
+a deploy starts. An app's own `library_subpath` it now creates and owns itself, which reverses
+this slice's earlier "asserted, never created" rule for that one directory and only that one.
+
+**A `no_log` task cannot report itself.** Execution 57 failed with nothing but `censored`, and
+reading the actual reason cost a hand-run curl against the container. `Configure the root
+folder` now re-raises from the RESPONSE alone, which carries no credential. Treat every
+`no_log` task that can fail on a *server* answer the same way.
+
+### Where it stopped
+
+Node state is applied and verified on pve-host-3: `homelab-infra` uid/gid 1313 exists,
+`root:1313:1` is in both `/etc/subuid` and `/etc/subgid`, and the library plus its two empty
+subdirectories are chowned to 1313. The guest's `lxc.idmap` is **not yet written** — execution
+58 died immediately before that task, so guest 168000100 is untouched and running, and the
+next run continues from there idempotently.
+
+**Next click: `Deploy Radarr`.** It exercises the node account, the subuid grants, the idmap,
+the stop/start path and the root folder in one run. Then Sonarr, Readarr, Lidarr, then
+`Wire Media Stack`, then the day-2 jobs. Sitting 1 is not finished.
+
+Two caveats for whoever runs it. The idmap write stops and restarts the guest, which briefly
+takes Prowlarr down with it — expected, and the only disruption in the change. And Prowlarr's
+own container keeps its `puid: 1000` files until its next deploy; container uid 1000 still
+maps to host 101000 under the new ranges, so nothing breaks, but Prowlarr and Radarr run as
+different ids until Prowlarr is redeployed.

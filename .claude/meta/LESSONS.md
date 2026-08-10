@@ -70,6 +70,38 @@ slice 303). This is a property of the lab, not of the code — when acceptance s
 a long time, check whether the estate can express the test before assuming the code is at
 fault. The same shape applies to 301/305, which have no live target of any kind.
 
+**A container boundary is an identity boundary, and ownership does not survive it.** An
+unprivileged LXC maps its whole id range into the node's `100000+` block, so a host uid
+below that is not representable inside the guest at all: the directory is present, mounted,
+correct — and reads as `nobody:nogroup`, refusing every write. Radarr is the app that says
+so out loud (`Folder '...' is not writable by user 'abc'`); the same wall is waiting for
+anything that writes to host storage from an unprivileged guest. The fix is one id that
+means the same thing on both sides — an `lxc.idmap` passthrough plus a matching
+`/etc/subuid` and `/etc/subgid` grant — never a `chown -R` across the lab's library.
+
+Two corollaries worth keeping. **A generic default uid will collide with a real account**:
+`puid: 1000` on a Debian node is whoever was created there first, which here silently made
+`civicfs` — the file server of a domain being decommissioned — the owner of the media
+library. The platform now creates and owns `homelab-infra` at 1313 for exactly this reason.
+And **`pct set -mpN` hotplugs into a running container**, which has to re-apply an apparmor
+profile and fails outright; a stopped container takes the same command unconditionally, and
+the guest had to restart to see the mount anyway.
+
+**A `no_log` task cannot report itself.** The credential is in the request, so the task is
+rightly silenced — but that silences the *server's answer* too, and a deploy then fails with
+nothing but `censored`. Reading why Radarr refused a root folder cost a hand-run curl against
+the container, and the response body held no secret at any point. Any `no_log` task that can
+fail on what the server said needs `failed_when: false` plus a following task that re-raises
+from the response alone. This is the same defect shape as 016's silenced collection grant,
+which cost three passes across two sessions.
+
+**Green is not even templated.** Both gates passed over an expression that could not render:
+a `vars:` entry is a templated STRING even when its expression ends in `| int`, so range
+arithmetic on it died with "can only concatenate str (not int) to str" — at run time, on the
+live lab, after the run had already changed the node. Syntax check and lint see a perfect
+playbook. Verify an unfamiliar Jinja construction by *running* it against a throwaway
+playbook before it reaches a job; that cost two minutes here and one failed execution.
+
 **A guard can work while the path around it does not.** Break-glass recovery was
 unreachable in vault mode twice — `config-doctor` and then `with-proxmox-env.sh` each
 demanded a token that recovery exists precisely to do without. The gates cannot see this
