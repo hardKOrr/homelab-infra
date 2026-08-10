@@ -12,7 +12,14 @@ readarr_defaults:
   app:
     media_kind: readarr
 
-    image: "lscr.io/linuxserver/readarr:develop"
+    # Pinned, and permanently so. Readarr is retired: upstream archived the project
+    # and LinuxServer stopped publishing `develop` and `latest`, so the tag this
+    # file used to carry no longer resolves for linux/amd64 at all — the deploy dies
+    # at `docker compose pull` with `no matching manifest` (execution 63,
+    # 2026-08-09). This is the last multi-arch build LinuxServer produced. It will
+    # never move, and neither Watchtower nor a re-deploy has anything to update it
+    # to. Deploy Readarr only if you want that frozen build.
+    image: "lscr.io/linuxserver/readarr:nightly-0.1.0.1225-ls85"
     port: 8787
     container_port: 8787
 

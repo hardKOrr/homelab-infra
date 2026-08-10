@@ -47,6 +47,9 @@
 - name: Resolve the app's API version from the wiring table
   ansible.builtin.set_fact:
     _servarr_api: "{{ media_wiring.kinds[_servarr_kind].api }}"
+    _servarr_rootfolder_needs_profiles: >-
+      {{ media_wiring.kinds[_servarr_kind].rootfolder_needs_profiles
+         | default(false) | bool }}
 
 # Storage is configured once for the lab in config/infrastructure.yml under
 # media_storage, not restated by every app. An app contributes one thing: which
@@ -351,6 +354,46 @@
   loop_control:
     label: "{{ item.item }}"
 
+# Lidarr and Readarr refuse a root folder that does not name a quality profile and
+# a metadata profile, so the ids have to be read from the app that is about to be
+# asked. The first of each is the app's own freshly-seeded default; nothing here
+# creates or reconciles profiles, and an operator's own choice in the UI stands.
+- name: Read the profiles a v1 root folder has to name
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/{{ item }}"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+    status_code: 200
+  register: _servarr_profiles
+  loop: [qualityprofile, metadataprofile]
+  changed_when: false
+  no_log: true
+  when:
+    - _servarr_root_folders | length > 0
+    - _servarr_rootfolder_needs_profiles
+
+- name: Assert the app seeded the profiles a root folder needs
+  ansible.builtin.assert:
+    that: item.json | default([]) | length > 0
+    fail_msg: >-
+      {{ instance }} reports no {{ item.item }}. A freshly started Lidarr or Readarr
+      seeds its own defaults, so an empty list means the app came up without
+      initialising its database — check the container's log before re-running.
+  loop: "{{ _servarr_profiles.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when: _servarr_rootfolder_needs_profiles
+
+- name: Resolve the root folder payload this app accepts
+  ansible.builtin.set_fact:
+    _servarr_rootfolder_extra: >-
+      {{ {} if not _servarr_rootfolder_needs_profiles else
+         {'defaultQualityProfileId':
+            (_servarr_profiles.results[0].json | first).id,
+          'defaultMetadataProfileId':
+            (_servarr_profiles.results[1].json | first).id} }}
+  when: _servarr_root_folders | length > 0
+
 - name: Read the root folders the app already has
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/rootfolder"
@@ -372,8 +415,14 @@
     headers:
       X-Api-Key: "{{ _servarr_effective_key }}"
     body_format: json
-    body:
-      path: "{{ item }}"
+    # A bare path for Radarr and Sonarr — exactly what they took before — plus the
+    # name and profile ids only where the app validates them. Nothing extra is sent
+    # to an app that never asked for it.
+    body: >-
+      {{ {'path': item}
+         | combine({'name': item | basename} if _servarr_rootfolder_needs_profiles
+                   else {})
+         | combine(_servarr_rootfolder_extra | default({})) }}
     status_code: 201
   loop: "{{ _servarr_root_folders }}"
   when:
