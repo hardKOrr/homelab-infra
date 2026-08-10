@@ -1,0 +1,49 @@
+---
+# Record one thing that did not work, without aborting the run.
+#
+# The problem this solves: a deploy that could not do what it was asked must not exit 0.
+# Before this existed, eleven sites caught a failure, printed it with `debug`, and let the
+# play finish green — so an app could be published through SSO with no access policy, or
+# come up with no uptime monitor, and the operator saw a successful run. Execution 67 wired
+# nothing and exited 0 for exactly this reason.
+#
+# The stance is *collect, then fail* — never abort at the first problem. Aborting mid-wire
+# is what `tasks/unwiring/caddy.yml` and `uptime-kuma.yml` deliberately avoid, and for the
+# same reason: a half-finished run is worse than a finished one that reports honestly. So a
+# caller records here, keeps going, and calls `assert-no-degradations.yml` at the end of the
+# play. `playbooks/stacks/wire-media-stack.yml` already worked this way with its own
+# `media_wire_results` list; this generalises that pattern so every playbook can use it.
+#
+# Inputs:
+#   degradation_component  what is degraded — app instance, provider, or "<app> → <target>"
+#   degradation_reason     why, in an operator's terms, including the fix where known
+#   degradation_fatal      default true. false records a genuine partial success that
+#                          should be visible but must not fail the run
+#
+# Appends to `homelabinfra_degradations`. That fact is per-host, like every set_fact, so the
+# gate must run against the same host that recorded the entry — normally the same play.
+
+- name: Degradation | Assert the report contract
+  ansible.builtin.assert:
+    that:
+      - degradation_component is defined and degradation_component | length > 0
+      - degradation_reason is defined and degradation_reason | length > 0
+    fail_msg: >-
+      report-degradation.yml needs degradation_component and degradation_reason.
+    quiet: true
+
+- name: Degradation | Record {{ degradation_component }}
+  ansible.builtin.set_fact:
+    homelabinfra_degradations: >-
+      {{ (homelabinfra_degradations | default([]))
+         + [{'component': degradation_component,
+             'reason': degradation_reason | trim,
+             'fatal': degradation_fatal | default(true) | bool}] }}
+
+# Printed as well as recorded. The operator watching the run should see the problem when it
+# happens, not only in the summary at the end.
+- name: Degradation | Report {{ degradation_component }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'FAILED' if degradation_fatal | default(true) | bool else 'DEGRADED' }}:
+      {{ degradation_component }} — {{ degradation_reason | trim }}

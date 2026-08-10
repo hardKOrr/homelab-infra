@@ -70,13 +70,18 @@
              and (homelabinfra_infra.monitoring.admin_user | default('') | length > 0)
              and (homelabinfra_infra.monitoring.admin_password | default('') | length > 0) }}
 
-    - name: Wire Uptime Kuma | Report missing credentials
-      ansible.builtin.debug:
-        msg: >-
-          Skipping the Uptime Kuma monitor for {{ wiring_app_name }} — the monitoring
-          registry key has no host/admin_user/admin_password to sign in with. Deploy
-          Uptime Kuma (playbooks/apps/uptime-kuma.yml) so it records them, then re-run
-          this deploy. The deploy continues: monitoring is an add-on.
+    # "Monitoring is an add-on" was the old justification for exiting 0 here. It does not
+    # hold: an app with no monitor is an app whose outage nobody is told about, and the
+    # operator who asked for monitoring has no way to notice it never happened. Recorded,
+    # not raised, so the remaining wiring still runs.
+    - name: Wire Uptime Kuma | Record missing credentials
+      ansible.builtin.include_tasks: ../report-degradation.yml
+      vars:
+        degradation_component: "{{ wiring_app_name }} → uptime monitor"
+        degradation_reason: >-
+          The monitoring registry key has no host/admin_user/admin_password to sign in
+          with, so no monitor was registered. Deploy Uptime Kuma
+          (playbooks/apps/uptime-kuma.yml) so it records them, then re-run this deploy.
       when: not (_kuma_credentialed | bool)
 
     - name: Wire Uptime Kuma | Open an authenticated socket
@@ -87,12 +92,13 @@
         kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
       when: _kuma_credentialed | bool
 
-    - name: Wire Uptime Kuma | Report an unusable Uptime Kuma
-      ansible.builtin.debug:
-        msg: >-
-          Skipping the Uptime Kuma monitor for {{ wiring_app_name }} —
+    - name: Wire Uptime Kuma | Record an unusable Uptime Kuma
+      ansible.builtin.include_tasks: ../report-degradation.yml
+      vars:
+        degradation_component: "{{ wiring_app_name }} → uptime monitor"
+        degradation_reason: >-
+          No monitor was registered —
           {{ kuma_session_reason | default('the session could not be opened') | trim }}.
-          The deploy continues: monitoring is an add-on, never a reason to fail an app.
       when:
         - _kuma_credentialed | bool
         - not (kuma_session_ready | default(false) | bool)
@@ -143,13 +149,19 @@
                      | list))
                  | first | default('') }}
 
-        - name: Wire Uptime Kuma | Report a missing notification channel
-          ansible.builtin.debug:
-            msg: >-
+        # Fatal despite the monitor existing. A monitor with no channel is the worst of
+        # both worlds: the dashboard looks correct, and the outage notification never
+        # arrives. 404 closed on a working channel (id 1), so this is a fallback path on
+        # a system proven to work, not the normal case.
+        - name: Wire Uptime Kuma | Record a missing notification channel
+          ansible.builtin.include_tasks: ../report-degradation.yml
+          vars:
+            degradation_component: "{{ wiring_app_name }} → outage notifications"
+            degradation_reason: >-
               Uptime Kuma has no '{{ uptime_kuma_notification_name }}' notification
-              channel, so the monitor for {{ wiring_app_name }} is registered without
-              one — it will show state in the dashboard but send nothing to Ntfy.
-              Re-run playbooks/apps/uptime-kuma.yml to provision the channel.
+              channel, so the monitor is registered without one — it shows state in the
+              dashboard but sends nothing to Ntfy. Re-run playbooks/apps/uptime-kuma.yml
+              to provision the channel.
           when: _kuma_notification_id | string | length == 0
 
         - name: Wire Uptime Kuma | Select the existing monitor and build the payload

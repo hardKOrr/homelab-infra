@@ -23,7 +23,8 @@
 # Outputs (localhost facts):
 #   media_registry        {<instance>: {app, host, api_key, ...}} — complete entries
 #   media_registry_needs_key  {<instance>: {...}} — entries handed to Play 2
-#   media_registry_skipped    [{instance, reason}] — reported, never fatal
+#   media_registry_skipped    [{instance, reason}] — recorded as a fatal degradation, so
+#                             the wiring run attempts everything else and then fails
 #
 # Newly discovered keys are written to Vaultwarden and verified before wiring.
 
@@ -107,13 +108,16 @@
       {{ _mw_usable | dict2items | selectattr('value.api_key', 'undefined')
          | selectattr('value.app', 'in', _mw_key_discoverable) | items2dict }}
 
-- name: Media registry | Report unusable entries
-  ansible.builtin.debug:
-    msg: >-
-      Skipping {{ item }} — its media entry has no recognised `app` kind
+- name: Media registry | Record unusable entries
+  ansible.builtin.include_tasks: ../report-degradation.yml
+  vars:
+    degradation_component: "media registry entry {{ item }}"
+    degradation_reason: >-
+      It has no recognised `app` kind
       (one of {{ media_wiring.kinds.keys() | list | join(', ') }}) or no resolvable
-      `host`. Declare app.host / app.port in config/apps/{{ item }}.yml,
-      or record the endpoint in config/.generated/facts.yml under media.
+      `host`, so {{ item }} was not wired into the media stack. Declare app.host /
+      app.port in config/apps/{{ item }}.yml, or record the endpoint in
+      config/.generated/facts.yml under media.
   loop: "{{ media_registry_skipped }}"
 
 # Play 2 reads config.xml on these guests. add_host so the play targets them by

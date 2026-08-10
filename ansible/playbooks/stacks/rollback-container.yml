@@ -210,13 +210,23 @@
           rollback.
       when: _rb_probe is not skipped and _rb_probe.status | default(0) >= 200
 
-    - name: Warn when the app port never answered
-      ansible.builtin.debug:
-        msg: >-
-          {{ container }} did not answer on port
-          {{ _rb_instance_config.app.port | default('?') }} after the rollback to
-          {{ _rb_new_ref }}. The container was recreated — check its logs.
+    # The rollback itself already happened, so this does not undo anything — but a rollback
+    # whose container never came back up is a failed rollback, and reporting it as a
+    # successful job is how an operator ends up believing the app recovered.
+    - name: Record that the app port never answered
+      ansible.builtin.include_tasks: ../../tasks/report-degradation.yml
+      vars:
+        degradation_component: "{{ container }} health after rollback"
+        degradation_reason: >-
+          It did not answer on port {{ _rb_instance_config.app.port | default('?') }}
+          after the rollback to {{ _rb_new_ref }}. The container was recreated — check
+          its logs.
       when: _rb_probe is not skipped and _rb_probe.status | default(0) < 200
+
+    - name: Fail if the rollback did not leave a working container
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ container }} rollback"
 
 
 # ── Play 3: Notify ─────────────────────────────────────────────────────────────

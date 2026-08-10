@@ -307,3 +307,11 @@
           Proxmox Backup Server {{ instance }} is running at
           {{ _pbs_deploy_host.pbs_url }} and registered as a PVE storage backend.
           Backups run on the configured schedule without further action.
+
+    # Last task in the play, deliberately. Wiring records what it could not do rather than
+    # aborting, so a failure in one provider does not strand the others; this is what stops
+    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

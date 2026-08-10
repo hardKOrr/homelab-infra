@@ -413,12 +413,20 @@
       ansible.builtin.set_fact:
         _ak_group: "{{ (_ak_group_list.json.results | default([])) | list | first | default({}) }}"
 
-    - name: Wire Authentik | Report missing access group
-      ansible.builtin.debug:
-        msg: >-
-          Authentik group '{{ wiring_auth_group | default('homelab-users') }}' does not exist —
-          {{ wiring_app_name }} is wired without a group policy binding. Create the group and
-          re-run the deploy to bind it.
+    # Fatal, not a warning. Without the binding the application is published through
+    # Authentik with no access policy at all — every Authentik user can reach an app the
+    # operator asked to restrict to one group. Reporting that and exiting 0 hands back a
+    # deploy that looks successful and is less restricted than it was asked to be.
+    # Recorded rather than raised so the rest of the wiring still completes; the gate at
+    # the end of the deploy is what fails.
+    - name: Wire Authentik | Record a missing access group
+      ansible.builtin.include_tasks: ../report-degradation.yml
+      vars:
+        degradation_component: "{{ wiring_app_name }} → Authentik access policy"
+        degradation_reason: >-
+          Authentik group '{{ wiring_auth_group | default('homelab-users') }}' does not
+          exist, so {{ wiring_app_name }} is published with no group policy binding and is
+          reachable by every Authentik user. Create the group and re-run the deploy.
       when: _ak_group.pk is not defined
 
     - name: Wire Authentik | Find existing policy binding

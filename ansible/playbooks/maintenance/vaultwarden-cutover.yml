@@ -274,17 +274,20 @@
       register: _cutover_seed_survivors
       no_log: true
 
-    - name: Report seed files the job user could not remove
-      ansible.builtin.debug:
-        msg: >-
-          Cutover succeeded, but {{ _cutover_seed_paths | join(', ') }} could not be
-          removed by the unprivileged job user. Delete it on the runner as root; it
-          still holds seed secrets. Ordinary jobs already ignore it — the vault-mode
-          marker is written.
+    # Fatal. The cutover's purpose is that seed secrets stop living on the runner's disk;
+    # if they survive, the job did not achieve the one thing it exists for. Reporting it
+    # and exiting 0 lets an operator believe the secrets are gone when they are not.
+    - name: Record seed files the job user could not remove
+      ansible.builtin.include_tasks: ../../tasks/report-degradation.yml
       vars:
         _cutover_seed_paths: >-
           {{ _cutover_seed_survivors.results
              | selectattr('stat.exists') | map(attribute='item.item') | list }}
+        degradation_component: "runner seed files"
+        degradation_reason: >-
+          Cutover completed, but {{ _cutover_seed_paths | join(', ') }} could not be removed
+          by the unprivileged job user and still holds seed secrets. Delete it on the runner
+          as root. The vault-mode marker is written and ordinary jobs already ignore it.
       when: _cutover_seed_paths | length > 0
 
     - name: Report successful cutover
@@ -308,3 +311,8 @@
           - "Not User: org collection and member listing require Manager, Admin or Owner, so a User is refused at the first vault write."
           - "Not before a first bootstrap either: creating the canonical collection needs Admin."
           - "Run a Deploy job afterwards. If it fails, set the role back to Admin — nothing else changes."
+
+    - name: Fail if the cutover left anything undone
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the Vaultwarden cutover"

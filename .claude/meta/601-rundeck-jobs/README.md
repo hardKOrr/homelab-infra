@@ -25,10 +25,11 @@ Two facts that came out of this slice and now bind the rest of the repo:
 
 ## Remaining
 
-- [ ] Each job runs to completion against a populated config. **Bootstrap Platform, Lab
-      Status, Remove App and the Vaultwarden Cutover / Enrollment / Recovery jobs have all
-      run.** The per-app Deploy jobs, Restart App, Tail App Log, Rollback Container, Check
-      Native Updates, Wire Media Stack and the whole Config group have not
+- [ ] Each job runs to completion against a populated config. **Run as of 2026-08-10:**
+      Bootstrap Platform, Lab Status, Remove App, the Vaultwarden Cutover / Enrollment /
+      Recovery jobs, all eleven per-app Deploy jobs, and Wire Media Stack (execution 72).
+      **Never run:** Restart App, Tail App Log, Rollback Container, Check Native Updates,
+      and the Config group
 - [x] All files load via the REST import — 22/22 clean, and driven by API
 - [x] Jobs are visible in the UI under their groups
 - [x] `check-native-updates` is scheduled — registered SCHEDULED; the first firing has not

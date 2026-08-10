@@ -242,3 +242,11 @@
           Prometheus is scraping
           {{ _obs_deploy_host.observability_scrape_target_count }} host(s);
           re-run this deploy after adding guests to pick them up.
+
+    # Last task in the play, deliberately. Wiring records what it could not do rather than
+    # aborting, so a failure in one provider does not strand the others; this is what stops
+    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

@@ -127,3 +127,19 @@ observability, uptime-kuma, authentik (Docker); ntfy, vaultwarden, caddy (native
 `pbs` was never removed — execution 16 died at the Authentik unwire before reaching it,
 and by then the teardown had its finding. Guests were destroyed manually afterwards, as
 designed: removal never destroys a guest.
+
+## 2026-08-10 — closed; the reopened criterion is fixed in code
+
+Four of five acceptance items were met live (executions 13–21, 2026-08-02). The fifth —
+idempotent re-run against a removed app — was reopened by that run and **is now fixed in
+code**: `tasks/unwiring/caddy.yml` probes with `failed_when: false` and reports an
+unreachable admin API rather than aborting, and `tasks/unwiring/authentik.yml` does the
+same via `Report unusable API`. Both carry header comments explaining the stance.
+
+Closed without re-observing it. Re-observation needs a deliberately stopped Caddy, which
+is a drill, not a deploy, and nothing depends on the result. Moved to INDEX's "observe if
+it happens" list.
+
+The teardown-ordering problem the live run found is resolved by the same fix: once both
+unwire halves degrade instead of aborting, removal order stops mattering, which was the
+preferred fix over documenting an order the operator has to remember.

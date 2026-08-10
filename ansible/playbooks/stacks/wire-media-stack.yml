@@ -91,13 +91,15 @@
       when: _mw_config_xml.content is defined
       no_log: true
 
-    - name: Report an unreadable config.xml
-      ansible.builtin.debug:
-        msg: >-
-          Could not read an API key for {{ inventory_hostname }} from
-          {{ mw_config_path | default('(no app.config_path declared)') }}/config.xml.
-          The key could not be captured into
-          homelab-infra/media/{{ inventory_hostname }}. This app is not being wired.
+    - name: Record an unreadable config.xml
+      ansible.builtin.include_tasks: ../../tasks/report-degradation.yml
+      vars:
+        degradation_component: "media API key for {{ inventory_hostname }}"
+        degradation_reason: >-
+          Could not read an API key from
+          {{ mw_config_path | default('(no app.config_path declared)') }}/config.xml, so
+          the key was not captured into homelab-infra/media/{{ inventory_hostname }} and
+          this app was not wired.
       when: mw_api_key | default('') | length == 0
 
 
@@ -245,10 +247,30 @@
               ~ (_mw_failed | map(attribute='connection') | join(', ')))
              if _mw_failed | length > 0 else '' }}
 
-    - name: Fail when a connection could not be wired
-      ansible.builtin.fail:
-        msg: >-
-          {{ _mw_failed | length }} media connection(s) failed:
-          {{ _mw_failed | map(attribute='connection') | join(', ') }}.
-          Every other connection was wired — re-run after fixing these.
-      when: _mw_failed | length > 0
+    # Play 2 runs on the discovery hosts, and set_fact is per-host, so anything it recorded
+    # is not visible here until it is pulled out of hostvars. Play 1 was localhost, like
+    # this play, so its entries carried over on their own.
+    - name: Collect degradations recorded during discovery
+      ansible.builtin.set_fact:
+        homelabinfra_degradations: >-
+          {{ (homelabinfra_degradations | default([]))
+             + (groups['media_discover'] | default([])
+                | map('extract', hostvars, 'homelabinfra_degradations')
+                | select('defined') | flatten | list) }}
+
+    # Connection failures join the same ledger rather than failing on their own, so a run
+    # with both a failed connection and an unreadable config.xml reports them together
+    # instead of stopping at whichever came first.
+    - name: Record every connection that could not be wired
+      ansible.builtin.include_tasks: ../../tasks/report-degradation.yml
+      vars:
+        degradation_component: "{{ item.connection }}"
+        degradation_reason: "{{ item.detail | default('unknown error') }}"
+      loop: "{{ _mw_failed }}"
+      loop_control:
+        label: "{{ item.connection }}"
+
+    - name: Fail if any part of the media stack could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the media stack"

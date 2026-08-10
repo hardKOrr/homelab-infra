@@ -1,0 +1,40 @@
+---
+# The gate for `tasks/report-degradation.yml`. Call it as the last task of a play.
+#
+# Fails when anything recorded during the play was fatal, after every other task has had its
+# turn. That ordering is the whole point: the run attempts everything it can, then refuses to
+# call itself successful. An operator gets one message naming every problem, rather than
+# discovering them one re-run at a time.
+#
+# Non-fatal entries are summarised and never fail the play — they are real partial successes
+# (a monitor registered without a notification channel still shows state in the dashboard).
+#
+# Inputs:
+#   degradation_scope  optional label for the failure message, e.g. the app instance name
+#
+# Reads `homelabinfra_degradations`, which is per-host. Call it in the same play that
+# recorded the entries, against the same hosts.
+
+- name: Degradations | Summarise partial successes
+  ansible.builtin.debug:
+    msg: >-
+      DEGRADED: {{ item.component }} — {{ item.reason }}
+  loop: "{{ (homelabinfra_degradations | default([])) | rejectattr('fatal') | list }}"
+  loop_control:
+    label: "{{ item.component }}"
+
+- name: Degradations | Fail when anything did not work
+  ansible.builtin.fail:
+    msg: >-
+      {{ _degradations_fatal | length }} thing(s)
+      {{ 'in ' ~ degradation_scope ~ ' ' if degradation_scope is defined else '' }}did not
+      work, so this run is not a success. {{ _degradations_detail | join(' | ') }}.
+      Everything else was attempted and completed — fix these and re-run.
+  vars:
+    _degradations_fatal: >-
+      {{ (homelabinfra_degradations | default([])) | selectattr('fatal') | list }}
+    _degradations_detail: >-
+      {{ _degradations_fatal
+         | map(attribute='component') | zip(_degradations_fatal | map(attribute='reason'))
+         | map('join', ' — ') | list }}
+  when: _degradations_fatal | length > 0

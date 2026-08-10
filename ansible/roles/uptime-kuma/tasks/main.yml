@@ -356,11 +356,16 @@
              | default('') }}
       no_log: true
   rescue:
-    - name: Report that minting the API key did not work
-      ansible.builtin.debug:
-        msg: >-
-          Could not mint an Uptime Kuma API key automatically; falling back to the
-          manual step below. The deploy is unaffected.
+    # 404 closed on minting working without human intervention (execution 37), so a
+    # failure here is a regression, not the expected path. The manual fallback below still
+    # prints — the operator gets the instructions and a run that admits it did not finish.
+    - name: Record that minting the API key did not work
+      ansible.builtin.include_tasks: ../../../tasks/report-degradation.yml
+      vars:
+        degradation_component: "Uptime Kuma API key"
+        degradation_reason: >-
+          Could not mint an Uptime Kuma API key automatically. App deploys will skip
+          monitor registration until it has one; follow the manual step printed below.
   vars:
     _kuma_key_url: >-
       {{ _kuma_base }}/socket.io/?EIO=4&transport=polling&sid={{ _kuma_key_sid | default('') }}
@@ -443,13 +448,15 @@
         kuma_user: "{{ _kuma_user }}"
         kuma_password: "{{ _kuma_password }}"
 
-    - name: Report a notification channel that cannot be provisioned
-      ansible.builtin.debug:
-        msg: >-
+    - name: Record a notification channel that cannot be provisioned
+      ansible.builtin.include_tasks: ../../../tasks/report-degradation.yml
+      vars:
+        degradation_component: "Uptime Kuma notification channel"
+        degradation_reason: >-
           Could not sign in to Uptime Kuma to provision the
-          '{{ uptime_kuma_notification_name }}' notification channel
-          ({{ kuma_session_reason | default('no detail') | trim }}). Monitors will still
-          be registered; they just will not notify until the channel is added in the UI.
+          '{{ uptime_kuma_notification_name }}' channel
+          ({{ kuma_session_reason | default('no detail') | trim }}). Monitors will be
+          registered but will not notify until the channel is added in the UI.
       when: not (kuma_session_ready | bool)
 
     - name: Save the notification channel
@@ -531,13 +538,14 @@
           when: _kuma_notification_id | string | length > 0
           changed_when: _kuma_notification_drifted | bool
 
-        - name: Report a notification channel Uptime Kuma refused
-          ansible.builtin.debug:
-            msg: >-
-              Uptime Kuma refused the '{{ uptime_kuma_notification_name }}' notification
-              channel ({{ kuma_call_reason | default('no detail') | trim }}). Monitors
-              will still be registered; they just will not notify until the channel is
-              added in the UI.
+        - name: Record a notification channel Uptime Kuma refused
+          ansible.builtin.include_tasks: ../../../tasks/report-degradation.yml
+          vars:
+            degradation_component: "Uptime Kuma notification channel"
+            degradation_reason: >-
+              Uptime Kuma refused the '{{ uptime_kuma_notification_name }}' channel
+              ({{ kuma_call_reason | default('no detail') | trim }}). Monitors will be
+              registered but will not notify until the channel is added in the UI.
           when: _kuma_notification_id | string | length == 0
 
 # ── Hand the endpoint and credentials back to the playbook ────────────────────

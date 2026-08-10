@@ -306,3 +306,11 @@
           {{ _caddy_deploy_host.caddy_admin_host }} with TLS mode
           '{{ _caddy_deploy_host.app_config.app.tls_mode | default('acme') }}'.
           App routes are added automatically as each app deploys.
+
+    # Last task in the play, deliberately. Wiring records what it could not do rather than
+    # aborting, so a failure in one provider does not strand the others; this is what stops
+    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

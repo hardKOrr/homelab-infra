@@ -247,3 +247,11 @@
           signed in as {{ _kuma_deploy_host.kuma_admin_username }}
           (password in Vaultwarden item homelab-infra/monitoring).
           Apps register their monitors automatically from their next deploy onward.
+
+    # Last task in the play, deliberately. Wiring records what it could not do rather than
+    # aborting, so a failure in one provider does not strand the others; this is what stops
+    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

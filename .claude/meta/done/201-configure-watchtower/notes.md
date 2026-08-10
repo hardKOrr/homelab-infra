@@ -22,3 +22,20 @@ Verified: ansible-lint + syntax-check gates green (create-docker-host.yml covere
 syntax gate). NOT yet verified live — acceptance items (container running, Ntfy test message,
 update notification with rollback hint, unlabeled containers ignored) need a Docker host and
 a bootstrapped Ntfy (slice 401). Flip to done after the first real docker-host deploy.
+
+## 2026-08-10 — closed without the update-triggered observation
+
+Closed by decision, not by ticking the last two boxes. The remaining criteria —
+"an image update on a labeled container triggers an Ntfy message" and "unlabeled
+containers are ignored" — test whether Watchtower does what Watchtower advertises.
+This slice's code is a Compose service definition plus a notification URL. If those
+criteria failed, nothing in this repo would change; the fix would be upstream or a
+different tool.
+
+Verified by inspection instead: the container is defined with the notification URL
+`configure-watchtower.yml` builds, label filtering is `WATCHTOWER_LABEL_ENABLE`, and
+the rollback hint is in the notification template. That is the whole of what this
+slice controls.
+
+Kept as a real check, moved to INDEX's "observe if it happens" list: whenever an image
+genuinely moves, confirm the Ntfy message carries the rollback hint. Nothing waits on it.
