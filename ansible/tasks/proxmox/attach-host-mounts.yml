@@ -189,18 +189,23 @@
 # and therefore what makes the library writable.
 - name: Host mounts | Resolve the identity passthrough the guest needs
   ansible.builtin.set_fact:
+    # `| int` at every use, not once into a var: a `vars:` entry is a templated
+    # STRING even when its expression ended in `| int`, so arithmetic on it fails
+    # at runtime with "can only concatenate str (not int) to str" — and no gate
+    # sees it, because the playbook is syntactically perfect (execution 58).
     _am_idmap_lines: >-
-      {{ ['lxc.idmap: u 0 100000 ' ~ _am_uid,
-          'lxc.idmap: u ' ~ _am_uid ~ ' ' ~ _am_uid ~ ' 1',
-          'lxc.idmap: u ' ~ (_am_uid + 1) ~ ' ' ~ (100001 + _am_uid)
-            ~ ' ' ~ (65535 - _am_uid),
-          'lxc.idmap: g 0 100000 ' ~ _am_gid,
-          'lxc.idmap: g ' ~ _am_gid ~ ' ' ~ _am_gid ~ ' 1',
-          'lxc.idmap: g ' ~ (_am_gid + 1) ~ ' ' ~ (100001 + _am_gid)
-            ~ ' ' ~ (65535 - _am_gid)] }}
-  vars:
-    _am_uid: "{{ attach_mounts_owner.uid | int }}"
-    _am_gid: "{{ attach_mounts_owner.gid | int }}"
+      {{ ['lxc.idmap: u 0 100000 ' ~ (attach_mounts_owner.uid | int),
+          'lxc.idmap: u ' ~ (attach_mounts_owner.uid | int)
+            ~ ' ' ~ (attach_mounts_owner.uid | int) ~ ' 1',
+          'lxc.idmap: u ' ~ ((attach_mounts_owner.uid | int) + 1)
+            ~ ' ' ~ (100001 + (attach_mounts_owner.uid | int))
+            ~ ' ' ~ (65535 - (attach_mounts_owner.uid | int)),
+          'lxc.idmap: g 0 100000 ' ~ (attach_mounts_owner.gid | int),
+          'lxc.idmap: g ' ~ (attach_mounts_owner.gid | int)
+            ~ ' ' ~ (attach_mounts_owner.gid | int) ~ ' 1',
+          'lxc.idmap: g ' ~ ((attach_mounts_owner.gid | int) + 1)
+            ~ ' ' ~ (100001 + (attach_mounts_owner.gid | int))
+            ~ ' ' ~ (65535 - (attach_mounts_owner.gid | int))] }}
   when: attach_mounts_owner | default({}) | length > 0
 
 # The guest config file, not `pct config` — pct renders the runtime view and drops
