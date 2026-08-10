@@ -175,11 +175,16 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: media
-        generated_facts_data:
-          "{{ instance }}":
-            app: "{{ _prowlarr_deploy_host.servarr_media_kind }}"
-            host: "{{ _prowlarr_deploy_host.servarr_media_host }}"
-            config_path: "{{ _prowlarr_deploy_host.servarr_media_config_path }}"
+        # Built as an expression, never as a literal `"{{ instance }}":` key —
+        # Ansible does not template a YAML MAPPING KEY, so that spelling wrote the
+        # entry under the literal string `{{ instance }}` and every app overwrote the
+        # one before it. The registry then held exactly one nameless app and
+        # wire-media-stack resolved nothing while reporting success (execution 67,
+        # 2026-08-09).
+        generated_facts_data: >-
+          {{ {instance: {'app': _prowlarr_deploy_host.servarr_media_kind,
+                         'host': _prowlarr_deploy_host.servarr_media_host,
+                         'config_path': _prowlarr_deploy_host.servarr_media_config_path}} }}
 
     # Re-read so the wiring tasks below see the key just written.
     - name: Reload infrastructure facts

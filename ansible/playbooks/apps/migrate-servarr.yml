@@ -371,9 +371,12 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: media
-        generated_facts_data:
-          "{{ instance }}":
-            migrated_from: "{{ hostvars['migrate_source'].ms_source_address }}"
+        # An expression, not a literal `"{{ instance }}":` key: Ansible does not
+        # template a YAML mapping key, so that spelling records the entry under the
+        # literal string (execution 67, 2026-08-09).
+        generated_facts_data: >-
+          {{ {instance:
+              {'migrated_from': hostvars['migrate_source'].ms_source_address}} }}
 
     - name: Report what the peers will do on the next wiring run
       ansible.builtin.debug:
