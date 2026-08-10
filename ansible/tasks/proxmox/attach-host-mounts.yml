@@ -219,14 +219,20 @@
 
 - name: Host mounts | Resolve whether the passthrough is already in place
   ansible.builtin.set_fact:
+    # `.splitlines()`, never `.split('\n')`: inside a YAML folded scalar the escape
+    # reaches Jinja as a literal backslash-n and the split silently returns the WHOLE
+    # file as one element, so every run reports the map missing and writes it again —
+    # media-stack ended up with two conflicting copies and refused to boot
+    # (execution 60, 2026-08-09). Measured, not assumed.
+    _am_conf_lines: >-
+      {{ (_am_raw_conf.content | default('') | b64decode).splitlines()
+         | map('trim') | list }}
+- name: Host mounts | Resolve whether the passthrough has to be rewritten
+  ansible.builtin.set_fact:
     _am_idmap_missing: >-
       {{ (attach_mounts_owner | default({}) | length > 0)
-         and (_am_idmap_lines | default([])
-              | difference(_am_conf_lines) | length > 0) }}
-  vars:
-    _am_conf_lines: >-
-      {{ (_am_raw_conf.content | default('') | b64decode).split('\n')
-         | map('trim') | list }}
+         and ((_am_conf_lines | select('match', '^lxc\.idmap:') | list)
+              != (_am_idmap_lines | default([]) | list)) }}
 
 # Both the mountpoints and the identity map are guest configuration that a running
 # container will not accept, so one stop covers both.
@@ -277,15 +283,24 @@
           | difference(_am_used_indices))[_am_loop_index] }}
   changed_when: true
 
-# Appended as a marked block so the map is one editable unit and a re-run that
-# changes the owner's id replaces it rather than stacking a second, conflicting
-# set of ranges on top.
+# The whole `lxc.idmap:` set is replaced, not appended to, and no comment marker is
+# involved. PVE owns this file: `pct set` rewrites it and hoists every `#` line into
+# the description block at the top, which detaches a blockinfile marker pair from the
+# lines it was supposed to bracket — after which blockinfile sees no block and appends
+# a second, conflicting copy. LXC then refuses to start the guest with
+# `container uid 0 is also mapped by entry` (media-stack, execution 60, 2026-08-09).
+# Rewriting the set is idempotent under anything PVE does to the file, and it also
+# repairs a guest already carrying duplicates. The stale markers are dropped on sight.
 - name: Host mounts | Write the identity passthrough into the guest config
-  ansible.builtin.blockinfile:
-    path: "/etc/pve/lxc/{{ _am_vmid }}.conf"
-    block: "{{ _am_idmap_lines | join('\n') }}"
-    marker: "# {mark} homelab-infra storage identity"
-    state: present
+  ansible.builtin.copy:
+    dest: "/etc/pve/lxc/{{ _am_vmid }}.conf"
+    content: "{{ (_am_kept_lines + _am_idmap_lines) | join('\n') }}\n"
+  vars:
+    _am_kept_lines: >-
+      {{ _am_conf_lines
+         | reject('match', '^lxc\.idmap:')
+         | reject('search', 'homelab-infra storage identity')
+         | list }}
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   when: _am_idmap_missing | default(false) | bool
 
