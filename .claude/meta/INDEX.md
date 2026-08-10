@@ -54,6 +54,12 @@ So: one genuine shrug in 131, and it was the one that mattered most, since every
 notification in the repo went through it. This was a bounded defect, not a culture — but
 that conclusion is now measured rather than assumed.
 
+**The standing rule, set 2026-08-10:** if something did not work, the run fails. "The real
+work succeeded, only the reporting failed" is not an exemption — it is the exact shape of a
+problem discovered months later. Non-fatal (`degradation_fatal: false`) is reserved for
+genuine partial successes where a named, working fallback is in place, and every use needs
+a comment saying what the fallback is. There are currently none.
+
 **W1–W5 are done, 2026-08-10.** Both gates green, and the ledger's behaviour is proven by
 a scratch play: an empty ledger passes, a non-fatal-only ledger passes, and two fatal
 entries fail naming both.
@@ -66,7 +72,7 @@ entries fail naming both.
 | **W4** | **`vaultwarden-cutover.yml`** — surviving seed files are fatal; the job exists to get secrets off the runner's disk, so reporting success while they remain defeats it. **`wire-media-stack.yml`** — an unreadable `config.xml`. **`rollback-container.yml`** — a container that never answered after rollback. | done |
 | **W5** | **The gate is called** as the last task of all 11 app deploy playbooks, `wire-media-stack.yml`, `rollback-container.yml` play 2, and `vaultwarden-cutover.yml`. `wire-media-stack.yml` also pulls play 2's per-host entries out of `hostvars`, and its old `_mw_failed` fail now feeds the same ledger so one message reports everything. | done |
 | **W6** | **Document the eight that stay** — a header comment on each saying why degrading is correct, so a future audit does not re-litigate them. Four already carry the reason; four do not. | **next** |
-| **W6.5** | **`tasks/notify.yml`** — the publish call was `failed_when: false` with no `register`, so an undelivered notification was indistinguishable from a delivered one. Every day-2 promise in this repo arrives through it. Now registered and recorded **non-fatally** — the deploy did succeed, but the run says the message did not go out. | done |
+| **W6.5** | **`tasks/notify.yml`** — the publish call was `failed_when: false` with no `register`, so an undelivered notification was indistinguishable from a delivered one. Every day-2 promise in this repo arrives through it. Now registered and **fatal**: the gate is the last task, so the run completes all its work and then refuses to report green when nobody was told. | done |
 | **W7** | **A download-client app playbook** (qBittorrent or SABnzbd). `tasks/app-wiring/arr-download-client.yml` is fully implemented and has nothing to wire. Do this before any other new app. | open |
 
 ### The three that were already right

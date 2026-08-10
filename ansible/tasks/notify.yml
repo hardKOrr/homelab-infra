@@ -58,21 +58,29 @@
     body: "{{ notify_message }}"
     body_format: raw
     status_code: 200
-  # A notification must never be the thing that fails a successful deploy — but until
-  # 2026-08-10 this task also never told anyone it had failed, and the result was never
-  # registered, so a silently undelivered notification was indistinguishable from a
-  # delivered one. Every day-2 promise in this repo (Watchtower updates, Kuma DOWN alerts,
-  # rollback hints) arrives through here, so "we will tell you" was resting on a call whose
-  # outcome nobody looked at. Registered and recorded non-fatally below.
+  # Suppressed here so the publish never aborts the play mid-way; the outcome is judged
+  # below and failed on at the end. Until 2026-08-10 the result was not even registered, so
+  # a silently undelivered notification was indistinguishable from a delivered one. Every
+  # day-2 promise in this repo (Watchtower updates, Kuma DOWN alerts, rollback hints)
+  # arrives through here, so "we will tell you" was resting on a call whose outcome nobody
+  # looked at.
   failed_when: false
   changed_when: false
   no_log: true
   register: _notify_result
   when: _notify_enabled | bool
 
-# Non-fatal on purpose: the deploy did succeed, and failing it now would be the very thing
-# the comment above rules out. But it is recorded, so the run's summary says the message did
-# not go out instead of leaving the operator to assume it did.
+# Fatal. The first pass here recorded this non-fatally, reasoning that the deploy had
+# succeeded and marking the job red would punish a working run. That reasoning is what the
+# ledger exists to retire: the gate is the LAST task of the play, so every task including
+# this one has already done its work by the time anything fails. Nothing is aborted and
+# nothing is half-done — the job simply refuses to report green when the operator was
+# supposed to be told something and was not.
+#
+# The old comment above ("a notification must never fail a successful deploy") was written
+# when failing meant aborting. It no longer does. An undelivered notification is a real
+# failure of a thing this platform promises, and the whole point of catching it is that
+# nobody discovers months later that alerts were never arriving.
 - name: Notify | Record an undelivered notification
   ansible.builtin.include_tasks: report-degradation.yml
   vars:
@@ -80,9 +88,9 @@
     degradation_reason: >-
       The notification could not be published to
       {{ homelabinfra_infra.notifications.provider | default('the notification provider') }}
-      (HTTP {{ _notify_result.status | default('no response') }}). The run itself was
-      unaffected — but nothing was sent, so do not treat silence as success.
-    degradation_fatal: false
+      (HTTP {{ _notify_result.status | default('no response') }}). The work this run did was
+      completed — but nothing was sent, so nobody was told. Fix the notification provider
+      and re-run; re-running is the update path and is idempotent.
   when:
     - _notify_enabled | bool
     - _notify_result is not skipped
