@@ -92,6 +92,11 @@
       vars:
         attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
         attach_mounts_list: "{{ _servarr_host_mounts }}"
+        # Who this storage belongs to on both sides of the guest boundary. An
+        # unprivileged stack host cannot write a library owned by an id outside
+        # its own range, so this is what makes the mount usable rather than
+        # merely present.
+        attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
       when: _servarr_host_mounts | length > 0
 
 

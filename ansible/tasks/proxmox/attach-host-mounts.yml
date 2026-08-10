@@ -18,6 +18,11 @@
 #                         `host` is the path on the Proxmox node, `path` is where
 #                         the guest sees it. Keeping them identical is what lets a
 #                         migrated app database keep resolving its file paths.
+#   attach_mounts_owner — {user: homelab-infra, uid: 1313, gid: 1313} or omitted.
+#                         Who owns this storage. Supplying it is what makes the
+#                         mount WRITABLE from inside an unprivileged guest; omit it
+#                         and the mount is attached read-as-nobody, which is all a
+#                         guest can do with a host uid outside its own id range.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -81,6 +86,62 @@
   loop_control:
     label: "{{ item.item.host }}"
 
+# ── Who owns this storage ─────────────────────────────────────────────────────
+# An unprivileged container maps its whole id range into the host's 100000+ block,
+# so a host uid below that is not representable inside the guest at all: the
+# library shows up owned by nobody:nogroup and every app that tries to write to it
+# is refused. Radarr said so exactly — `Folder '/mnt/data/media/movies' is not
+# writable by user 'abc'` (execution 57, 2026-08-09) — on a directory that was
+# perfectly present and perfectly mounted.
+#
+# The fix is an identity that means the same thing on both sides of the boundary:
+# one account, one uid, owning the storage on the node, mapped straight through to
+# the same number inside the guest. The account is the platform's own rather than
+# a borrowed one, because a borrowed uid belongs to somebody — this library was
+# owned by `civicfs`, an unrelated file-server account of a domain being
+# decommissioned, purely because both defaulted to 1000.
+- name: Host mounts | Ensure the storage owner's group exists on the node
+  ansible.builtin.group:
+    name: "{{ attach_mounts_owner.user }}"
+    gid: "{{ attach_mounts_owner.gid }}"
+    system: true
+    state: present
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: attach_mounts_owner | default({}) | length > 0
+
+- name: Host mounts | Ensure the storage owner exists on the node
+  ansible.builtin.user:
+    name: "{{ attach_mounts_owner.user }}"
+    uid: "{{ attach_mounts_owner.uid }}"
+    group: "{{ attach_mounts_owner.user }}"
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+    state: present
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: attach_mounts_owner | default({}) | length > 0
+
+# Root may only delegate ids it has been granted. Without these two lines the
+# idmap below is refused and the container will not start at all.
+- name: Host mounts | Grant root the right to map that id into a container
+  ansible.builtin.lineinfile:
+    path: "/etc/{{ item.file }}"
+    line: "root:{{ item.id }}:1"
+    regexp: "^root:{{ item.id }}:1$"
+    state: present
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop:
+    - { file: subuid, id: "{{ attach_mounts_owner.uid | default(0) }}" }
+    - { file: subgid, id: "{{ attach_mounts_owner.gid | default(0) }}" }
+  loop_control:
+    label: "/etc/{{ item.file }} root:{{ item.id }}:1"
+  when: attach_mounts_owner | default({}) | length > 0
+
 - name: Host mounts | Read the guest's current configuration
   ansible.builtin.command:
     cmd: "pct config {{ _am_vmid }}"
@@ -121,6 +182,54 @@
              _am_existing_pairs | map('regex_replace', '^.*\|', '') | list)
          | map(attribute='host') | list }}
 
+# The id range is split into three: everything below the owner's id keeps the
+# stock 100000+ offset, the owner's id maps to ITSELF, and everything above
+# resumes the offset. That single passthrough entry is the whole mechanism — it is
+# what makes uid 1313 on the node and uid 1313 in the container the same identity,
+# and therefore what makes the library writable.
+- name: Host mounts | Resolve the identity passthrough the guest needs
+  ansible.builtin.set_fact:
+    _am_idmap_lines: >-
+      {{ ['lxc.idmap: u 0 100000 ' ~ _am_uid,
+          'lxc.idmap: u ' ~ _am_uid ~ ' ' ~ _am_uid ~ ' 1',
+          'lxc.idmap: u ' ~ (_am_uid + 1) ~ ' ' ~ (100001 + _am_uid)
+            ~ ' ' ~ (65535 - _am_uid),
+          'lxc.idmap: g 0 100000 ' ~ _am_gid,
+          'lxc.idmap: g ' ~ _am_gid ~ ' ' ~ _am_gid ~ ' 1',
+          'lxc.idmap: g ' ~ (_am_gid + 1) ~ ' ' ~ (100001 + _am_gid)
+            ~ ' ' ~ (65535 - _am_gid)] }}
+  vars:
+    _am_uid: "{{ attach_mounts_owner.uid | int }}"
+    _am_gid: "{{ attach_mounts_owner.gid | int }}"
+  when: attach_mounts_owner | default({}) | length > 0
+
+# The guest config file, not `pct config` — pct renders the runtime view and drops
+# the raw lxc.* keys entirely, so it can never show whether the map is present.
+- name: Host mounts | Read the raw guest config file
+  ansible.builtin.slurp:
+    src: "/etc/pve/lxc/{{ _am_vmid }}.conf"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_raw_conf
+  when: attach_mounts_owner | default({}) | length > 0
+
+- name: Host mounts | Resolve whether the passthrough is already in place
+  ansible.builtin.set_fact:
+    _am_idmap_missing: >-
+      {{ (attach_mounts_owner | default({}) | length > 0)
+         and (_am_idmap_lines | default([])
+              | difference(_am_conf_lines) | length > 0) }}
+  vars:
+    _am_conf_lines: >-
+      {{ (_am_raw_conf.content | default('') | b64decode).split('\n')
+         | map('trim') | list }}
+
+# Both the mountpoints and the identity map are guest configuration that a running
+# container will not accept, so one stop covers both.
+- name: Host mounts | Resolve whether the guest has to stop at all
+  ansible.builtin.set_fact:
+    _am_work: >-
+      {{ (_am_missing | length > 0) or (_am_idmap_missing | bool) }}
+
 # PVE attaches a mountpoint to a RUNNING container by hotplugging it, which has to
 # re-apply the guest's apparmor profile and fails on an unprivileged container:
 # `unable to hotplug mp0: failed to change apparmor profile: No such file or
@@ -133,7 +242,7 @@
   ansible.builtin.command:
     cmd: "pct shutdown {{ _am_vmid }} --forceStop 1 --timeout 120"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _am_missing | length > 0 and _am_was_running
+  when: _am_work | bool and _am_was_running
   changed_when: true
 
 - name: Host mounts | Wait for the guest to reach stopped
@@ -144,7 +253,7 @@
   until: _am_stop_check.stdout is search('stopped')
   retries: 30
   delay: 4
-  when: _am_missing | length > 0 and _am_was_running
+  when: _am_work | bool and _am_was_running
   changed_when: false
 
 - name: Host mounts | Attach the missing mountpoints
@@ -163,6 +272,35 @@
           | difference(_am_used_indices))[_am_loop_index] }}
   changed_when: true
 
+# Appended as a marked block so the map is one editable unit and a re-run that
+# changes the owner's id replaces it rather than stacking a second, conflicting
+# set of ranges on top.
+- name: Host mounts | Write the identity passthrough into the guest config
+  ansible.builtin.blockinfile:
+    path: "/etc/pve/lxc/{{ _am_vmid }}.conf"
+    block: "{{ _am_idmap_lines | join('\n') }}"
+    marker: "# {mark} homelab-infra storage identity"
+    state: present
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _am_idmap_missing | default(false) | bool
+
+# The mount roots only — never a recursive walk. The platform is pointed at the
+# lab's storage and takes ownership of the directories it was handed, not of
+# everything already inside them: a populated library keeps its files exactly as
+# they are, and `chown -R` across an NFS export of two and a half thousand films
+# is not something a deploy should ever start.
+- name: Host mounts | Give the storage owner its directories
+  ansible.builtin.file:
+    path: "{{ item.host }}"
+    owner: "{{ attach_mounts_owner.user }}"
+    group: "{{ attach_mounts_owner.user }}"
+    state: directory
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.host }}"
+  when: attach_mounts_owner | default({}) | length > 0
+
 # A container only sees a mountpoint from the boot that follows it being attached,
 # so the guest comes back up holding the new mounts. Without the restart the deploy
 # that added the mount would find an empty directory, configure a root folder inside
@@ -174,7 +312,7 @@
   ansible.builtin.command:
     cmd: "pct start {{ _am_vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _am_missing | length > 0 and _am_was_running
+  when: _am_work | bool and _am_was_running
   changed_when: true
 
 - name: Host mounts | Wait for the guest to answer SSH again
@@ -183,7 +321,7 @@
     port: 22
     delay: 5
     timeout: 300
-  when: _am_missing | length > 0 and _am_was_running
+  when: _am_work | bool and _am_was_running
 
 - name: Host mounts | Report what is attached
   ansible.builtin.debug:

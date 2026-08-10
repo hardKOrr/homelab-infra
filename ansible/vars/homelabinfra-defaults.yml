@@ -1,4 +1,20 @@
 homelabinfra_defaults:
+  infrastructure:
+    media_storage:
+      # The identity that owns the media library, on the node and inside the
+      # unprivileged stack host alike. A guest maps its ids into the node's
+      # 100000+ block, so a library owned by anything outside that block reads as
+      # nobody:nogroup inside the container and cannot be written; the platform
+      # gives the guest a passthrough entry for this one id so both sides mean the
+      # same account. See config.example/infrastructure.yml for how to choose one.
+      #
+      # An account of the platform's own, deliberately: this defaulted to 1000
+      # once, which on a Debian node is whoever was created there first, and the
+      # library ended up owned by an unrelated file-server account.
+      owner:
+        user: homelab-infra
+        uid: 1313
+        gid: 1313
   networks: {}
   ansible:
     ssh_user: root

@@ -314,24 +314,39 @@
 # every search needs somewhere to put the result. Configuring it here is the
 # difference between a deployed app and a usable one.
 #
-# The directory is asserted, never created. It lives on storage the lab already
-# provides and this platform does not write into it — a missing path is a
-# configuration answer the operator owns, not something to invent on their NFS.
-- name: Verify the root folder exists
-  ansible.builtin.stat:
+# The LIBRARY is the lab's and is only ever asserted — attach-host-mounts refuses
+# to run against a library that is not already mounted on the node. This app's own
+# subdirectory of it is a different thing: app.library_subpath is the platform's
+# declaration of the one folder this instance owns, so creating it, and owning it,
+# is this deploy finishing its own job rather than inventing storage on somebody's
+# NFS. It is created empty, next to whatever else the library already holds.
+#
+# Ownership is the point, not existence. A Servarr app refuses a root folder it
+# cannot write — `Folder '...' is not writable by user 'abc'` — so an unwritable
+# directory fails the deploy just as surely as a missing one.
+- name: Ensure this app owns its root folder
+  ansible.builtin.file:
     path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid }}"
+    group: "{{ app_config.app.pgid }}"
+    mode: "0775"
   register: _servarr_root_check
   loop: "{{ _servarr_root_folders }}"
+  failed_when: false
 
-- name: Assert the root folder exists before configuring it
+- name: Assert the root folder is usable before configuring it
   ansible.builtin.assert:
-    that: item.stat.exists and item.stat.isdir
+    that: not (item.failed | default(false))
     fail_msg: >-
-      {{ item.item }} does not exist inside {{ instance }}. It is
-      media_storage.library plus app.library_subpath. Either create that
-      directory on the library, or correct app.library_subpath in
-      config/apps/{{ instance }}.yml. Nothing is created here — this is the
-      lab's storage, not the platform's.
+      {{ instance }} cannot own {{ item.item }} ({{ item.msg | default('') }}).
+      It is media_storage.library plus app.library_subpath. On an unprivileged
+      stack host this is what an unmapped owner looks like: a directory whose
+      host uid falls outside the guest's id range appears as nobody:nogroup and
+      not even root inside the guest can chown it. Check that the library and
+      everything under it belongs to media_storage.owner
+      ({{ app_config.media_storage.owner.user | default('unset') }}) on the
+      Proxmox node.
   loop: "{{ _servarr_root_check.results }}"
   loop_control:
     label: "{{ item.item }}"
@@ -364,7 +379,42 @@
   when:
     - _servarr_root_folders | length > 0
     - item not in (_servarr_rootfolders.json | default([]) | map(attribute='path') | list)
+  # The key is in the request headers, so the call cannot report itself. The
+  # failure is re-raised below from the RESPONSE alone, which carries no
+  # credential — a refusal here is a storage-permission answer worth reading.
   no_log: true
+  register: _servarr_rootfolder_add
+  failed_when: false
+
+# Without this, `no_log` swallowed the reason and a deploy failed with nothing
+# but "censored". Radarr answering `Folder '/mnt/data/media/movies' is not
+# writable by user 'abc'` (execution 57, 2026-08-09) is the whole diagnosis, and
+# it cost a hand-run curl against the container to read it. Only `status` and the
+# decoded body are quoted; neither holds the API key.
+- name: Report a refused root folder
+  ansible.builtin.fail:
+    msg: >-
+      {{ instance }} refused the root folder {{ item.item }}
+      (HTTP {{ item.status | default('no response') }}):
+      {{ _servarr_rf_reason }}
+      A Servarr app must be able to WRITE its root folder. On an unprivileged
+      LXC the library is visible but owned by an unmapped host uid, so check
+      that the mount's owner maps to app.puid/app.pgid inside the guest.
+  vars:
+    # A Servarr validation failure is a list of records; anything else answers
+    # with an object or nothing at all.
+    _servarr_rf_body: "{{ item.json | default('', true) }}"
+    _servarr_rf_reason: >-
+      {{ (_servarr_rf_body | map(attribute='errorMessage') | join('; '))
+         if (_servarr_rf_body is sequence and _servarr_rf_body is not string
+             and _servarr_rf_body is not mapping)
+         else (_servarr_rf_body.message | default(_servarr_rf_body, true)) }}
+  loop: "{{ _servarr_rootfolder_add.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - not (item.skipped | default(false))
+    - item.status | default(0) != 201
 
 # ── Store the credential ──────────────────────────────────────────────────────
 # Written under the same canonical item name wire-media-stack.yml reads, so the

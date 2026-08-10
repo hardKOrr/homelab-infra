@@ -132,6 +132,27 @@ dns:
 #       path: /mnt/data/media
 #     - host: /mnt/downloads      # where the download clients put things
 #       path: /mnt/downloads
+#   owner:                        # who owns this storage, on BOTH sides
+#     user: homelab-infra         # created on the node if it is not there
+#     uid: 1313
+#     gid: 1313
+#
+# About `owner`. Media apps run on an unprivileged stack host, which maps its
+# whole id range into the node's 100000+ block — so a library owned by an id
+# outside that block is visible inside the guest as nobody:nogroup and every
+# write to it is refused. The platform gives the guest a passthrough entry for
+# this one id, making it the same identity on the node and in the container, and
+# gives the mount roots to that account.
+#
+# Pick an id nothing else on the node uses. Linux has no registry of local uids:
+# /etc/login.defs reserves 0 for root, 1-999 for system accounts and hands
+# UID_MIN-UID_MAX (1000-60000 by default) to useradd's automatic allocation.
+# Creating this account is what claims the id against that allocator. An id above
+# UID_MAX can never be auto-assigned at all, if you would rather not rely on that.
+#
+# Do NOT point this at an existing human or service account. The default was 1000
+# once, which on a Debian node is usually the first account ever created there —
+# the platform ended up sharing an id with an unrelated file server.
 
 # ── Backups ────────────────────────────────────────────────────────────────────
 # PBS is deployed as a VM by bootstrap. Configure the datastore path here.

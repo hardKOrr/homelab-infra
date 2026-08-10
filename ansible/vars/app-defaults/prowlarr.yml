@@ -26,8 +26,11 @@ prowlarr_defaults:
     # neither a root folder nor a mount into the library.
     library_subpath: ""
 
-    puid: 1000
-    pgid: 1000
+    # Matches media_storage.owner in infrastructure.yml, and must: this is the
+    # id the app writes the library as, and the guest maps exactly that one id
+    # straight through to the node. A lab that changes the owner changes both.
+    puid: 1313
+    pgid: 1313
 
   routing:
     proxy: internal
