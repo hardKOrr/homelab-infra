@@ -64,8 +64,14 @@ leave it unticked forever.
 
 ## Workflow
 
-1. Pick a slice from `INDEX.md` **Start here**, or an `open` row with no unmet dependency.
-2. Work it. Append discoveries to `notes.md`.
+Every live slice is now code-complete, so `INDEX.md` is cut by **sitting** — one block of
+hands-on lab time — rather than by slice. Pick the lowest-numbered unblocked sitting, run
+it, and tick whatever it closes across every slice it touches. Do not pick a slice and go
+looking for work inside it; that path produces hardening sidequests on code that already
+works.
+
+1. Pick the lowest unblocked sitting from `INDEX.md`.
+2. Work it. Append discoveries to the `notes.md` of each slice it touches.
 3. Code written, both gates green → `built`. Update the slice's **Remaining** and its
    INDEX row in the same edit.
 4. Acceptance observed live → `done`. Tick the boxes, `git mv` the folder into `done/`,

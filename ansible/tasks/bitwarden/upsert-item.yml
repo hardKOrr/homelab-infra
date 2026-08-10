@@ -228,24 +228,24 @@
 # and persists nothing. Asserting the grant afterwards therefore fails forever and takes
 # every deploy that stores a secret down with it.
 #
-# So the grant is attempted only where it can exist — a Manager or User membership — and
-# an Owner/Admin membership records what its access actually rests on instead of pretending
-# otherwise. Lowering the role in the web vault is what makes the grant both storable and
-# load-bearing; until then the account's reach is organization-scoped and this says so.
+# What ships is organization-scoped Admin, and that is settled — see the decision in
+# 016/notes.md. The grant is still established and asserted on a Manager or User
+# membership, because a lab that runs one gets a working scoped account for free; an
+# Owner/Admin membership simply proceeds. Neither path asks anyone to change a role.
 - name: Vault | Decide whether an explicit collection grant can exist
   ansible.builtin.set_fact:
     _vault_grant_check_due: "{{ not _vault_self_org_wide }}"
   when: not (_vault_collection_grant_verified | default(false))
 
-- name: Vault | Report that the account's access is organization-wide
+- name: Vault | Note that the account's access is organization-scoped
   ansible.builtin.debug:
     msg: >-
       The automation account holds an Owner/Admin membership in
-      {{ vault_organization_name | default('homelab-infra') }}, which carries
-      organization-wide access. Vaultwarden stores no explicit collection grant for
-      such a member, so its reach over
-      {{ vault_collection_name | default('platform-secrets') }} is organization-scoped.
-      Lower the membership to Manager in the web vault to scope it to the collection.
+      {{ vault_organization_name | default('homelab-infra') }}, so its access to
+      {{ vault_collection_name | default('platform-secrets') }} is organization-scoped
+      and Vaultwarden stores no explicit collection grant for it. This is the shipped
+      arrangement; no action is required.
+    verbosity: 1
   when:
     - not (_vault_collection_grant_verified | default(false))
     - _vault_self_org_wide

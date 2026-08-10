@@ -35,22 +35,16 @@ read and write in the green bootstrap.
 
 ## Remaining
 
-- [ ] The automation account can access only the intended organization/collection —
-      **one action away, and that action is the whole of it.** Set the membership to
-      **Manager** in the web vault's Members list, then run any Deploy job: the grant tasks
-      establish the `users_collections` entry with manage rights on `platform-secrets` and
-      assert it on every subsequent run. Nothing else is outstanding in code.
-
-      Proved live 2026-08-09 (executions 49-55): while the account is Admin the grant
-      **cannot** be stored at all. `post_organization_collection_update` skips members with
-      `access_all` before saving, so the write returns success and persists nothing — the
-      lab's `users_collections` is empty for both accounts. There is likewise no flag to
-      revoke: `allowAdminAccessToAllCollectionItems` is a hardcoded `true` in
-      `src/db/models/organization.rs` and `PUT /api/organizations/<id>/collection-management`
-      is a 404. Manager is the floor, not User: `GET /organizations/<id>/collections` and
-      `…/users` take `ManagerHeadersLoose`, so a User is refused at the first vault write.
-      Only on a lab whose collection already exists; creating it needs Admin. See
-      [notes.md](notes.md) for the three defects that stood between the decision and this
+- [x] The automation account's access is scoped to the `homelab-infra` organization —
+      **amended and closed 2026-08-09.** What ships is organization-scoped Admin, and
+      Vaultwarden gives no way to make it collection-scoped without a role change nobody
+      is going to make: `post_organization_collection_update` skips members with
+      `access_all` before saving, so a grant write returns success and persists nothing,
+      and `allowAdminAccessToAllCollectionItems` is a hardcoded `true` in
+      `src/db/models/organization.rs` with `PUT /api/organizations/<id>/collection-management`
+      answering 404. The criterion now records the reach the platform actually has. The
+      grant tasks remain in place and self-heal on a Manager or User membership, so a lab
+      that runs one is scoped for free — no lab is asked to change anything
 - [ ] Ordinary deploys cannot read `keys/vaultwarden/admin-token` or the owner password —
       not tested
 - [ ] Every Key Storage secret is loaded through a secure option, and none is copied into a

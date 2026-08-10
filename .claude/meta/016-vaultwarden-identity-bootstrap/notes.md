@@ -115,8 +115,10 @@ but every imported job declares only the credentials it actually needs.
   exists only to open Proxmox, HTTPS issuance, SSH transport, and Vaultwarden itself.
 - **Unsupported account steps remain honest.** The workflow pauses with exact instructions
   and resumes after verification instead of claiming an unproven automated setup.
-- **Explicit collection grant, organization Admin retained** — decided 2026-08-09, the
-  decision that had blocked the slice. The automation account now holds a `users_collections`
+- **Explicit collection grant, organization Admin retained** — decided 2026-08-09.
+  **Superseded the same day: the criterion was amended to organization-scoped Admin and
+  the Manager tightening abandoned. Everything from here to the end of this bullet is the
+  reasoning that led there, not work to do.** The automation account now holds a `users_collections`
   grant with manage rights on `platform-secrets`, so its access no longer rests on
   `allowAdminAccessToAllCollectionItems`, and the human owner turns that org-wide flag off as
   the last tightening step.
@@ -205,10 +207,17 @@ has organization-wide access. The assert could not pass at any point, and it too
 secret-storing deploy down with it.
 
 The tasks now resolve the membership's role and act on it: attempt and prove the grant on
-a Manager or User membership, and on Owner/Admin report what the account's reach actually
-rests on. That makes the Manager tightening the *cause* of the grant rather than a step
-taken after it — one action in the web vault, and the grant becomes storable, stored and
-enforced on every run.
+a Manager or User membership, and on an Owner/Admin membership proceed.
+
+**Decision, closing this: the criterion is amended to organization-scoped Admin, and the
+Manager tightening is abandoned.** It had already consumed three passes across two sessions
+— a restriction attempt, a decision record, and this diagnosis — and every one of them ended
+by proposing the same manual role change to a lab that works. The 2026-08-09 decision
+rejected amending because it "leaves the account's reach defined by a flag nobody would
+think to check"; that objection is now answered by the flag being unreachable and the reach
+being written down here. The platform ships one automation identity, confined to the
+`homelab-infra` organization, and that is the security posture of record. No lab is asked
+to touch a role, and nothing in the code or docs proposes it.
 
 Deploy Prowlarr (execution 55) is green end to end: nine platform items plus Prowlarr's in
 the vault, the guest stamped `app_prowlarr;kind_docker;media_stack`.
