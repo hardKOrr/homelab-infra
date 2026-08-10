@@ -31,10 +31,28 @@ correct, three already rolled up into a fatal, and **eleven let a deploy report 
 while the thing it was deploying was not actually wired** — the same class as execution 67,
 which wired nothing and exited 0.
 
-The codebase is not generally permissive: 142 `assert` and 11 `fail` sites versus 22
-`debug`-on-failure sites, and the 131 `failed_when: false` uses are mostly the
-"suppress, then `fail` with a readable message" idiom. This was a bounded defect, not a
-culture.
+### What the 131 `failed_when: false` uses actually are
+
+Classified 2026-08-10, because "mostly fine" was asserted once without evidence and is not
+good enough. `failed_when: false` is only defensible when something downstream reads the
+result; the question is how many do.
+
+| Class | Count | Verdict |
+|---|---|---|
+| `include_vars` on an optional file — absent file means use defaults | 78 | not a failure; an optional input |
+| Registered, and a `fail`/`assert` reads it | 16 | the "suppress, then fail readably" idiom |
+| Registered, read only by a `when:` branch — probe-to-decide (`Check whether this guest runs Docker`, `Check installed vaultwarden version`, `Read the existing compose env` for secret continuity) | ~25 | correct: absent means take the other branch |
+| Registered, read by a `fail` that keys off a loop item rather than the register name | ~3 | correct — `roles/servarr:436` re-raises via `Report a refused root folder`; a name-matching audit misses these, so do not trust one |
+| **Unregistered and not `include_vars`** | **9** | listed below — the only ones where the result is genuinely never inspected |
+
+The nine: `notify.yml:67` (**was the real one — fixed, W6.5**), `migrate-servarr.yml:155,271`,
+`roles/vaultwarden:149` (mkdir), `bitwarden/cleanup.yml:9` and both Pihole `Close API
+session` tasks and `kuma/poll-once.yml:47` (session teardown and a protocol ping — nothing
+downstream can act on them), plus one comment-line false match in `load-user-vars.yml`.
+
+So: one genuine shrug in 131, and it was the one that mattered most, since every
+notification in the repo went through it. This was a bounded defect, not a culture — but
+that conclusion is now measured rather than assumed.
 
 **W1–W5 are done, 2026-08-10.** Both gates green, and the ledger's behaviour is proven by
 a scratch play: an empty ledger passes, a non-fatal-only ledger passes, and two fatal
