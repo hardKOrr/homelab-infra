@@ -212,3 +212,55 @@ takes Prowlarr down with it — expected, and the only disruption in the change.
 own container keeps its `puid: 1000` files until its next deploy; container uid 1000 still
 maps to host 101000 under the new ranges, so nothing breaks, but Prowlarr and Radarr run as
 different ids until Prowlarr is redeployed.
+
+## Session 2026-08-09c — four *arrs deployed, and the registry that recorded none of them
+
+Executions 59–72. Radarr, Sonarr and Lidarr are deployed on `media_stack`, Prowlarr is
+redeployed, and `Wire Media Stack` resolved all four and created three Prowlarr
+Applications. Readarr is blocked on a vendor fact, below. Four more defects, all found by
+running, none visible to either gate.
+
+| Execution | Died at | Cause | Commit |
+|---|---|---|---|
+| 60/61 | `pct start` | the idmap write was neither idempotent nor detectable; the guest got two copies and would not boot | `8a42b43` |
+| 63 | `docker compose pull` | `readarr:develop` no longer exists for linux/amd64 | `3e13965` |
+| 64 | `Configure the root folder` | Lidarr's v1 API validates `name` + two profile ids that Radarr and Sonarr do not | `3e13965` |
+| 67 | nothing — it exited 0 | the media registry was keyed by the literal string `{{ instance }}` | `86de49e` |
+
+**`.split('\n')` in a YAML folded scalar does not split.** The escape reaches Jinja as a
+literal backslash-n, so the guest config came back as ONE line, the passthrough always
+looked missing, and blockinfile appended a second copy of the map. LXC then refused the
+guest with `container uid 0 is also mapped by entry`. Measured on the runner, not guessed:
+the same expression returned `nlines: 1` against the real file. Use `.splitlines()`.
+
+**PVE owns the guest config file, so a comment marker cannot anchor anything in it.**
+`pct set` — which this platform calls itself, to stamp tags and the apps table — rewrites
+the file and hoists every `#` line into the description block at the top. The blockinfile
+markers survived as an empty pair ten lines above the content they were supposed to
+bracket. The write now replaces the whole `lxc.idmap:` set instead of appending to it,
+which is idempotent under anything PVE does and repairs a guest already carrying
+duplicates. Proven both ways: execution 62 wrote the map, 63 and later left it alone.
+
+**A guest the platform broke, the platform could not fix.** `find-or-create-host` starts
+the stack host before `attach-host-mounts` ever runs, so an unbootable guest fails the
+deploy at the start and never reaches the task that would repair its config. Execution 61
+died there and the config had to be stripped by hand. Not fixed — noted. The ordering is
+only reachable when the platform has already written a bad config, which is the bug that
+was just closed.
+
+**Lidarr and Readarr validate a root folder harder than Radarr and Sonarr.** `POST
+/api/v1/rootfolder` answers 400 without `name`, `defaultQualityProfileId` and
+`defaultMetadataProfileId`. `media-wiring.yml` now carries `rootfolder_needs_profiles` per
+kind, the role reads the ids from the app itself, and a Radarr or Sonarr request still
+sends the bare path. The generic failure message blamed storage permissions; the 400 body,
+which the earlier `no_log` fix made visible, gave the real answer immediately.
+
+**Readarr is retired and the platform cannot publish it.** Upstream archived the project
+and LinuxServer stopped publishing `develop` and `latest`, so the pull dies with `no
+matching manifest` for linux/amd64. The image is pinned to the last multi-arch build,
+`nightly-0.1.0.1225-ls85` — and that build predates the platform's auth contract: it
+ignores `READARR__AUTH__*` entirely, writes `<AuthenticationMethod>None</AuthenticationMethod>`
+and reports `authenticationMethod: none`, which the role refuses because a reverse proxy in
+front of it would publish a setup wizard. The refusal is correct. The container is left
+running on the stack host, unauthenticated and unpublished, pending a decision to drop the
+app or accept it as-is. **Deploy Readarr is the one per-app job that cannot go green.**

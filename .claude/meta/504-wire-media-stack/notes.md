@@ -50,3 +50,18 @@ playbook.
   qBittorrent instances are all disabled.
 - `unwiring/` has no media counterpart: removing an app leaves its Prowlarr Application and
   download-client entries behind. Worth a slice if it bites.
+
+## The wiring ran for real, 2026-08-09 — execution 72
+
+Four apps resolved (lidarr, prowlarr, radarr, sonarr) and three Prowlarr Applications
+created: `lidarr → prowlarr indexers`, `radarr → …`, `sonarr → …`. No download client is
+deployed by the platform on this lab, so that half of the wiring is still unexercised, and
+Bazarr with it.
+
+**It ran green with nothing to do first, and that is the finding.** Execution 67 reported
+`Media stack: 0 app(s) resolved (none)`, wired nothing and exited 0, after four successful
+deploys. The cause was in the deploys, not here — Ansible does not template a YAML mapping
+key, so every app had written its registry entry under the literal key `{{ instance }}` and
+overwritten the app before it (fixed in `86de49e`). But this playbook treats an empty
+registry as a normal outcome, so the only signal was one `msg:` in a passing log. A stack
+that resolves zero apps when the registry is non-empty is worth failing on.
