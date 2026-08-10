@@ -264,3 +264,12 @@ and reports `authenticationMethod: none`, which the role refuses because a rever
 front of it would publish a setup wizard. The refusal is correct. The container is left
 running on the stack host, unauthenticated and unpublished, pending a decision to drop the
 app or accept it as-is. **Deploy Readarr is the one per-app job that cannot go green.**
+
+### Readarr is dropped, 2026-08-09
+
+Decided by the user rather than worked around. `playbooks/apps/readarr.yml`,
+`vars/app-defaults/readarr.yml`, `rundeck/jobs/deploy-readarr.yaml` and the Semaphore
+template are deleted, the live Rundeck job with them, and the container and `/opt/readarr`
+are removed from the stack host. The `readarr` kind stays in `media-wiring.yml` — a lab that
+runs its own Readarr can declare it in `config/apps/` and be wired in like any other app, and
+the `rootfolder_needs_profiles` fix applies to that path too. This role ships four apps now.

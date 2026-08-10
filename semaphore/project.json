@@ -525,22 +525,6 @@
       "view": "Apps"
     },
     {
-      "name": "Deploy Readarr",
-      "description": "Deploy or update Readarr — book management (Docker on media_stack). Registers the app in the media registry; run Wire Media Stack afterwards to connect it to the rest of the stack.",
-      "playbook": "ansible/playbooks/apps/readarr.yml",
-      "arguments": "[\"-e\",\"instance=readarr\"]",
-      "allow_override_args_in_task": false,
-      "suppress_success_alerts": false,
-      "app": "ansible",
-      "type": "",
-      "survey_vars": [],
-      "vaults": [],
-      "repository": "homelab-infra",
-      "inventory": "Proxmox (dynamic)",
-      "environment": "Homelab",
-      "view": "Apps"
-    },
-    {
       "name": "Deploy Prowlarr",
       "description": "Deploy or update Prowlarr — indexer management (Docker on media_stack). Registers the app in the media registry; run Wire Media Stack afterwards to connect it to the rest of the stack.",
       "playbook": "ansible/playbooks/apps/prowlarr.yml",

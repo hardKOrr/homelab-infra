@@ -73,7 +73,7 @@ ansible/
     docker/                        # installs Docker Engine (Debian only)
     _template-native/              # copy for new native LXC apps; includes files/ with lab script placeholders
     _template-docker/              # copy for new Docker apps
-    servarr/                       # Sonarr/Radarr/Lidarr/Readarr/Prowlarr — one role, five apps
+    servarr/                       # Sonarr/Radarr/Lidarr/Prowlarr — one role, four apps
                                    # (same program, different media type; see the role header)
     <app>/                         # one role per deployable app; ships files/lab-* scripts
   vars/

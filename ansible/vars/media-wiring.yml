@@ -53,6 +53,12 @@ media_wiring:
       # The plugins branch adds Deemix and Slskd as first-class download clients;
       # a mainline Lidarr rejects them and the wiring reports the failed probe.
       protocols: [usenet, torrent, deemix, slskd]
+    # No Deploy Readarr job and no app playbook: Readarr is retired upstream, and the
+    # last multi-arch image LinuxServer published predates this platform's auth
+    # contract — it ignores `READARR__AUTH__*` and serves an unauthenticated UI, which
+    # the servarr role refuses rather than publish (execution 66, 2026-08-09). The kind
+    # stays defined so a lab that already runs its own Readarr can declare it in
+    # config/apps/ and be wired into the stack like any other app.
     readarr:
       role: arr
       api: v1

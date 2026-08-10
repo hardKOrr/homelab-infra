@@ -75,7 +75,7 @@ read only those slices.
 
 ### Sitting 1 is under way — the media stack is wired, the day-2 jobs are not
 
-Eleven of the twelve per-app Deploy jobs have run green. **`Wire Media Stack` has now run for
+Every per-app Deploy job has run green. **`Wire Media Stack` has now run for
 real** (execution 72, 2026-08-09): four apps resolved and three Prowlarr Applications
 created. Prowlarr, Radarr, Sonarr and Lidarr all live on `media_stack` at 192.168.0.100.
 
@@ -89,10 +89,11 @@ The platform owns a dedicated storage identity — **`homelab-infra`, uid/gid 13
 on the node, granted in `/etc/subuid`/`/etc/subgid`, and passed through to the unprivileged
 stack host by `lxc.idmap`. Applied and verified on 168000100.
 
-**`Deploy Readarr` cannot go green and is not waiting on code.** Readarr is retired upstream;
-LinuxServer's last multi-arch build ignores `READARR__AUTH__*` and reports
-`authenticationMethod: none`, which the role refuses rather than publish a setup wizard. Drop
-the app or accept it unauthenticated — an open product decision, not a defect.
+**Readarr is gone, by decision, 2026-08-09.** It is retired upstream, and LinuxServer's
+last multi-arch build ignores `READARR__AUTH__*` and serves an unauthenticated UI, which
+the servarr role refuses rather than publish. The playbook, the defaults and both runner
+jobs are deleted; the `readarr` kind stays in `media-wiring.yml` so a lab running its own
+can still be wired in. Eleven per-app Deploy jobs remain, and all eleven have run green.
 
 **Next click: the day-2 jobs** — Check Native App Updates, Restart App, Tail App Log, Remove
 App, Rollback Container — against what sitting 1 has now produced. They close 201, 501, 502.
