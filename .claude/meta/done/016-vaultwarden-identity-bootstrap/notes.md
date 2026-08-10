@@ -250,3 +250,33 @@ Two outcomes to distinguish, and they lead opposite ways:
   Vaultwarden rejects. Then the grant model stands and this is a bug in the write.
 
 Until it is known, no app deploy that stores a secret can finish on this lab.
+
+## 2026-08-10 — closed, and why it stayed open
+
+**This slice was never open on the collection-grant question.** That box was ticked and
+amended closed on 2026-08-09; organization-scoped Admin is what ships and no lab is asked
+to change a role. Anyone reading the open status as "the Manager downgrade is back" is
+reading it wrong — the four boxes that kept it open were about Rundeck secret handling and
+had nothing to do with the grant.
+
+All four closed by inspection today. The evidence is in the README; the short version is
+that `rundeck/render-job.py` is the single place secure options are attached, and reading it
+answers three of the four outright:
+
+- It scopes the admin-token option to Enrollment and Cutover by job name, so ordinary
+  deploys have no path to it.
+- It emits every secret as `secure: true` + `storagePath`, injected at import from
+  `bootstrap-rundeck.sh:1153` — which is why the committed job YAMLs look like they have no
+  secure options at all. They are generated, not authored, and that surprised this session
+  for several minutes.
+- Nothing is interpolated as a command argument; `lab-run.sh:93-98` reads `RD_OPTION_*` from
+  the environment.
+
+The fourth — re-run adoption without duplication — is closed on accumulated live evidence
+rather than a dedicated run: the same nine platform items upserted repeatedly across
+2026-08-03 to 2026-08-09 with exact readback, plus execution 55 adding Prowlarr's without
+re-creating the organization or collection.
+
+**Do not reopen the grant question.** If a future session finds itself reading
+`post_organization_collection_update` again, stop: the answer is above and in the amended
+first criterion.

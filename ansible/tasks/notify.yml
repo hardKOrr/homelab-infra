@@ -58,8 +58,32 @@
     body: "{{ notify_message }}"
     body_format: raw
     status_code: 200
-  # A notification must never be the thing that fails a successful deploy.
+  # A notification must never be the thing that fails a successful deploy — but until
+  # 2026-08-10 this task also never told anyone it had failed, and the result was never
+  # registered, so a silently undelivered notification was indistinguishable from a
+  # delivered one. Every day-2 promise in this repo (Watchtower updates, Kuma DOWN alerts,
+  # rollback hints) arrives through here, so "we will tell you" was resting on a call whose
+  # outcome nobody looked at. Registered and recorded non-fatally below.
   failed_when: false
   changed_when: false
   no_log: true
+  register: _notify_result
   when: _notify_enabled | bool
+
+# Non-fatal on purpose: the deploy did succeed, and failing it now would be the very thing
+# the comment above rules out. But it is recorded, so the run's summary says the message did
+# not go out instead of leaving the operator to assume it did.
+- name: Notify | Record an undelivered notification
+  ansible.builtin.include_tasks: report-degradation.yml
+  vars:
+    degradation_component: "notification: {{ notify_title | default('(untitled)') }}"
+    degradation_reason: >-
+      The notification could not be published to
+      {{ homelabinfra_infra.notifications.provider | default('the notification provider') }}
+      (HTTP {{ _notify_result.status | default('no response') }}). The run itself was
+      unaffected — but nothing was sent, so do not treat silence as success.
+    degradation_fatal: false
+  when:
+    - _notify_enabled | bool
+    - _notify_result is not skipped
+    - _notify_result.status | default(0) not in [200, 201, 202, 204]

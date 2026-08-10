@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**21 live · 25 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**20 live · 26 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 
 ## Start here
 
@@ -48,6 +48,7 @@ entries fail naming both.
 | **W4** | **`vaultwarden-cutover.yml`** — surviving seed files are fatal; the job exists to get secrets off the runner's disk, so reporting success while they remain defeats it. **`wire-media-stack.yml`** — an unreadable `config.xml`. **`rollback-container.yml`** — a container that never answered after rollback. | done |
 | **W5** | **The gate is called** as the last task of all 11 app deploy playbooks, `wire-media-stack.yml`, `rollback-container.yml` play 2, and `vaultwarden-cutover.yml`. `wire-media-stack.yml` also pulls play 2's per-host entries out of `hostvars`, and its old `_mw_failed` fail now feeds the same ledger so one message reports everything. | done |
 | **W6** | **Document the eight that stay** — a header comment on each saying why degrading is correct, so a future audit does not re-litigate them. Four already carry the reason; four do not. | **next** |
+| **W6.5** | **`tasks/notify.yml`** — the publish call was `failed_when: false` with no `register`, so an undelivered notification was indistinguishable from a delivered one. Every day-2 promise in this repo arrives through it. Now registered and recorded **non-fatally** — the deploy did succeed, but the run says the message did not go out. | done |
 | **W7** | **A download-client app playbook** (qBittorrent or SABnzbd). `tasks/app-wiring/arr-download-client.yml` is fully implemented and has nothing to wire. Do this before any other new app. | open |
 
 ### The three that were already right
@@ -95,8 +96,8 @@ the work queue above.
 | 601 rundeck-jobs | four job definitions never executed: Restart App, Tail App Log, Rollback Container, Check Native Updates |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
 | 302, 306, 400, 403, 405 | one browser session: Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in |
-| 010, 012, 013, 014, 016 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
-| 011, 016, 300, 504, 505 | nothing; observation only |
+| 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
+| 011, 300, 504, 505 | nothing; observation only |
 | 304 | OPNsense API credentials |
 
 ## By subject
@@ -105,7 +106,7 @@ Slices are cut on the code axis, so one subject spans several.
 
 | Subject | Slices |
 |---|---|
-| Vaultwarden | app **400**, secret store **014**, token capture **013**, identities **016** |
+| Vaultwarden | app **400**, secret store **014**, token capture **013** |
 | Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
 | Authentik / identity | app **403**, wiring **302**, forward_auth **306**, modes **009** |
 | Config model | provenance **010**, onboarding **012**, estates **008** |
@@ -119,10 +120,12 @@ Slices are cut on the code axis, so one subject spans several.
 Recorded because each has cost a session to re-derive. If a row elsewhere contradicts one
 of these, that row is stale.
 
-- **The secret store is closed.** Organization-scoped Admin ships, decided 2026-08-09 in
-  [016/notes.md](016-vaultwarden-identity-bootstrap/notes.md). Vaultwarden offers no way to
-  make the account collection-scoped. Deploy Prowlarr, execution 55, stored nine platform
-  items plus Prowlarr's. Secret-storing deploys work.
+- **The secret store is closed, and so is 016** (2026-08-10, [done/](done/)). Organization-
+  scoped Admin ships; Vaultwarden offers no way to make the account collection-scoped.
+  **016 was never open on that question** — its last four boxes were Rundeck secret
+  handling, all closed by inspection of `rundeck/render-job.py`, which is the single place
+  secure options are attached and is why the committed job YAMLs appear to have none.
+  **Do not reopen the collection-grant question.**
 - **The media stack is wired.** Execution 72, 2026-08-09: four apps resolved, three Prowlarr
   Applications created, all on `media_stack` at 192.168.0.100. Seven defects fixed getting
   there — full account in [505/notes.md](505-app-servarr/notes.md).
