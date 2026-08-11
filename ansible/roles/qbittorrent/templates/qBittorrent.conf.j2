@@ -1,0 +1,44 @@
+# qBittorrent.conf for {{ instance }} — SEEDED ONCE by homelab-infra, then owned
+# by qBittorrent. The role writes this file only when it does not exist.
+#
+# It is not a managed template. qBittorrent holds its whole configuration in
+# memory and rewrites this file from memory when it shuts down, so anything
+# written here while the app is running is discarded on the next stop — and
+# anything an operator changes in the WebUI would be reverted by a deploy that
+# re-templated it. Settings chosen in the UI stand, the same fire-and-forget rule
+# the rest of the platform follows.
+#
+# The role enforces exactly one value after the seed: the WebUI password, because
+# it is the credential every *arr in the lab authenticates to this client with.
+# Changing it in the WebUI breaks that wiring, so a deploy puts it back.
+
+[LegalNotice]
+# Unattended, so the container does not sit on the legal notice waiting for a
+# terminal that is not attached to it.
+Accepted=true
+
+[BitTorrent]
+Session\DefaultSavePath={{ app_config.app.download_path }}
+# One directory, not two. An incomplete-downloads path on a different filesystem
+# turns every completed download into a copy, and the *arr import that follows
+# into a second copy.
+Session\TempPathEnabled=false
+Session\Port={{ app_config.app.torrenting_port | default(6881) }}
+
+[Preferences]
+WebUI\Username={{ app_config.app.webui_user | default('admin') }}
+WebUI\Password_PBKDF2="{{ _qbt_password_hash }}"
+WebUI\Port={{ app_config.app.container_port | default(app_config.app.port) }}
+WebUI\Address=*
+# Authentication is required from every address, including the container's own
+# host. The *arr apps reach this client across the Docker bridge and authenticate
+# like anything else; a localhost bypass would only widen who gets in for free.
+WebUI\LocalHostAuth=true
+WebUI\CSRFProtection=true
+WebUI\ClickjackingProtection=true
+# The reverse proxy publishes this app under a name qBittorrent does not know, and
+# host-header validation refuses a request whose Host is not in this list. `*` is
+# qBittorrent's own wildcard for "any domain" and is what makes the proxied UI
+# reachable; the check still runs, it just accepts every name.
+WebUI\HostHeaderValidation=true
+WebUI\ServerDomains=*

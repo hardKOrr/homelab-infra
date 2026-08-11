@@ -148,8 +148,10 @@
              if app_config.stack is defined
              else ([instance] if instance in (groups['all'] | default([])) else []) }}
 
-    # Not an error: the guest may already be gone, or never have existed. The
-    # unwiring above still ran, which is the part that leaves stale state behind.
+    # DEGRADATION BY DESIGN — and in fact not a degradation at all: a host that is not
+    # there is the success case for a removal. The guest may already be gone, or never
+    # have existed. The unwiring above still ran, which is the part that leaves stale
+    # state behind. Do not convert this to tasks/report-degradation.yml.
     - name: Report a missing host
       ansible.builtin.debug:
         msg: >-

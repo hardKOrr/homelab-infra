@@ -48,6 +48,10 @@
         kuma_password: "{{ homelabinfra_infra.monitoring.admin_password }}"
       when: _kuma_credentialed | bool
 
+    # DEGRADATION BY DESIGN — reports instead of failing, and that is correct here. Reason
+    # in the file header: removal unwires before it stops the app, so a hard failure here
+    # strands every removal queued behind an unreachable or uncredentialed Kuma. Do not
+    # convert this to tasks/report-degradation.yml.
     - name: Unwire Uptime Kuma | Report a monitor left behind
       ansible.builtin.debug:
         msg: >-
@@ -89,6 +93,10 @@
             kuma_call_ack_id: 2
           when: _kuma_existing.id is defined
 
+        # DEGRADATION BY DESIGN — same reason as the sign-in site above, one step later:
+        # the socket worked and Kuma refused the delete. A stale monitor in the dashboard
+        # is a smaller problem than a removal that aborts half-way through tearing the app
+        # down. Do not convert this to tasks/report-degradation.yml.
         - name: Unwire Uptime Kuma | Report a monitor Uptime Kuma would not delete
           ansible.builtin.debug:
             msg: >-

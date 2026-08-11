@@ -1,0 +1,386 @@
+---
+# qbittorrent role — qBittorrent as a Docker container on a stack host. Called
+# from Play 2 of playbooks/apps/qbittorrent.yml. Target: the media_stack host.
+#
+# The media stack's torrent download client. Until this existed, the stack could
+# find releases and could not fetch any of them: tasks/app-wiring/arr-download-client.yml
+# has been complete since slice 504 and had nothing to wire.
+#
+# Variables available:
+#   app_config         — merged defaults + user config (from Play 1)
+#   instance           — the instance name (e.g. qbittorrent)
+#   homelabinfra_infra — infrastructure facts + the in-memory vault contract
+#
+# Exports (read by Play 3 to write the `media` registry key):
+#   qbittorrent_media_kind, qbittorrent_media_host
+#
+# WHY THIS IS NOT THE servarr ROLE. qBittorrent is not a Servarr app: no
+# config.xml, no API key, no <APP>__ environment overrides, and its API
+# authenticates with a username and password over a session cookie. What it has
+# in common with them is the deploy shape, which is the playbook's, not the
+# role's.
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind
+  ansible.builtin.set_fact:
+    _qbt_kind: "{{ app_config.app.media_kind }}"
+    _qbt_base: "http://localhost:{{ app_config.app.port }}"
+    _qbt_conf_dir: "{{ app_config.app.config_path }}/qBittorrent"
+    _qbt_conf: "{{ app_config.app.config_path }}/qBittorrent/qBittorrent.conf"
+
+# The kind is not decoration: wire-media-stack.yml refuses to wire an app whose
+# kind is not in the table, so a typo here would deploy a download client that
+# silently never joins the stack. Failing at deploy time names the problem where
+# it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that:
+      - _qbt_kind in media_wiring.kinds
+      - media_wiring.kinds[_qbt_kind].role == 'download_client'
+    fail_msg: >-
+      app.media_kind is "{{ _qbt_kind }}", which ansible/vars/media-wiring.yml does
+      not define as a download client. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+# A download client sees the whole of the lab's media storage by default, which is
+# more than an *arr gets: it writes the downloads directory AND the library has to
+# be on the same mount namespace, or every completed import is a copy instead of a
+# hardlink. An app that owns no library subpath still needs all of it.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _qbt_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ qbittorrent_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: qBittorrent writes its configuration, its resume
+# data and its logs here, and the seeded config file below has to be readable and
+# rewritable by the same account.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+  loop:
+    - "{{ app_config.app.config_path }}"
+    - "{{ _qbt_conf_dir }}"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/servarr: the mounts are the lab's, attached to the stack
+# host by Play 1, and only ever asserted here. A container started against a
+# missing bind source gets an empty directory, and qBittorrent then downloads into
+# the stack host's own root disk until it fills.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _qbt_mount_check
+  loop: "{{ _qbt_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared in
+      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      either the attach did not happen or the guest has not restarted since. This
+      platform attaches storage the lab already provides; it never creates it.
+  loop: "{{ _qbt_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# The download directory is this app's own, the way an *arr's library_subpath is:
+# the platform declares it, so creating it and owning it is this deploy finishing
+# its own job. It must live under one of the mounts above — a path outside them
+# is the stack host's root disk, which is what this check is really for.
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _qbt_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _qbt_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not inside
+      any media_storage mount
+      ({{ _qbt_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Downloads would land on the stack host's own disk and never hardlink into
+      the library. Point app.download_path at a directory under one of the mounts,
+      or declare the mount that holds it in config/infrastructure.yml.
+  vars:
+    # The download path's own ancestors, so the comparison lands on a path
+    # component rather than a string prefix — /mnt/data2 is not inside /mnt/data.
+    # Serialized through JSON because a template carrying {% %} statement blocks
+    # renders to a STRING; see the same construction in tasks/load-user-vars.yml.
+    _qbt_download_ancestors_json: >-
+      {%- set parts = (app_config.app.download_path | regex_replace('/+$', '')).split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _qbt_download_ancestors: "{{ _qbt_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.download_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _qbt_download_dir
+  failed_when: false
+
+- name: Assert the download directory is usable
+  ansible.builtin.assert:
+    that: not (_qbt_download_dir.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ app_config.app.download_path }}
+      ({{ _qbt_download_dir.msg | default('') }}). On an unprivileged stack host
+      this is what an unmapped owner looks like: a directory whose host uid falls
+      outside the guest's id range appears as nobody:nogroup and not even root
+      inside the guest can chown it. Check that the mount and everything under it
+      belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.
+
+# ── The WebUI credential ──────────────────────────────────────────────────────
+# The password is the platform's, not the operator's: it is what every *arr in the
+# lab authenticates to this client with (tasks/app-wiring/arr-download-client.yml
+# reads it from the same vault item). It is declared here before the container
+# that uses it, and on a re-run the one already in the vault wins — regenerating
+# it would break wiring this platform itself created.
+#
+# homelabinfra_vault, not homelabinfra_infra: this play reloads homelabinfra_infra
+# from config/.generated/facts.yml, which holds topology and never credentials.
+# The vault contract is the only place the existing password is readable.
+- name: Resolve the WebUI credentials
+  ansible.builtin.set_fact:
+    _qbt_user: "{{ app_config.app.webui_user | default('admin') }}"
+    _qbt_password: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).password
+         | default('', true)
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+# STDIN, not argv and not the environment — see the script's docstring. It runs on
+# the controller because that is where the repo is; nothing but the derived hash
+# ever reaches the guest.
+- name: Render the password into qBittorrent's stored form
+  ansible.builtin.command:
+    argv: [python3, "{{ role_path }}/files/webui-password.py"]
+    stdin: "{{ _qbt_password }}"
+    stdin_add_newline: false
+  register: _qbt_hash
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Record the rendered password hash
+  ansible.builtin.set_fact:
+    _qbt_password_hash: "{{ _qbt_hash.stdout }}"
+  no_log: true
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+# force: false — seeded once, then qBittorrent's. See the template's header for
+# why this file is not managed on every run.
+- name: Seed qBittorrent.conf on first deploy
+  ansible.builtin.template:
+    src: qBittorrent.conf.j2
+    dest: "{{ _qbt_conf }}"
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0640"
+    force: false
+  no_log: true      # the file carries the password hash
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ qbittorrent_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart qbittorrent
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/servarr and roles/observability — a deploy
+# ensures the image is present, Watchtower is what moves it forward and reports
+# it. Re-pulling :latest on every deploy would make each run a silent, unreviewed
+# upgrade.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ qbittorrent_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ qbittorrent_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the WebUI to answer
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/"
+    status_code: [200, 401, 403]
+  register: _qbt_up
+  until: _qbt_up.status | default(0) in [200, 401, 403]
+  retries: "{{ qbittorrent_webui_retries }}"
+  delay: "{{ qbittorrent_webui_delay }}"
+  changed_when: false
+
+# ── Prove the credential works, and repair it if it does not ──────────────────
+# qBittorrent answers a failed login with HTTP 200 and the body "Fails.", so the
+# status code alone reports success for a password that does not work. Every
+# check below reads the body.
+- name: Sign in to the WebUI
+  ansible.builtin.include_tasks: login.yml
+  vars:
+    qbt_login_base: "{{ _qbt_base }}"
+    qbt_login_user: "{{ _qbt_user }}"
+    qbt_login_password: "{{ _qbt_password }}"
+
+# An existing instance whose password was changed in the WebUI cannot be signed
+# into with the credential every *arr holds, so this deploy puts the platform's
+# password back. The file is edited with the container STOPPED, deliberately:
+# qBittorrent rewrites its config from memory on shutdown, so an edit made while
+# it runs is discarded by the very restart meant to apply it.
+- name: Repair a WebUI password that is not the platform's
+  when: not (qbt_login_ok | bool)
+  block:
+    - name: Stop the app before editing its configuration
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbittorrent_project_dir }}"
+        state: stopped
+
+    - name: Restore the platform's WebUI credentials
+      community.general.ini_file:
+        path: "{{ _qbt_conf }}"
+        section: Preferences
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        owner: "{{ app_config.app.puid | default(1000) }}"
+        group: "{{ app_config.app.pgid | default(1000) }}"
+        mode: "0640"
+        no_extra_spaces: true
+      loop:
+        - option: 'WebUI\Username'
+          value: "{{ _qbt_user }}"
+        # Stored quoted, exactly as qBittorrent writes it — the quotes are part of
+        # the value QSettings reads back.
+        - option: 'WebUI\Password_PBKDF2'
+          value: '"{{ _qbt_password_hash }}"'
+      loop_control:
+        label: "{{ item.option }}"
+      no_log: true
+
+    - name: Start the app again
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbittorrent_project_dir }}"
+        state: present
+
+    - name: Wait for the WebUI to answer after the repair
+      ansible.builtin.uri:
+        url: "{{ _qbt_base }}/"
+        status_code: [200, 401, 403]
+      register: _qbt_up_again
+      until: _qbt_up_again.status | default(0) in [200, 401, 403]
+      retries: "{{ qbittorrent_webui_retries }}"
+      delay: "{{ qbittorrent_webui_delay }}"
+      changed_when: false
+
+    - name: Sign in to the WebUI again
+      ansible.builtin.include_tasks: login.yml
+      vars:
+        qbt_login_base: "{{ _qbt_base }}"
+        qbt_login_user: "{{ _qbt_user }}"
+        qbt_login_password: "{{ _qbt_password }}"
+
+- name: Assert the WebUI accepts the platform's credentials
+  ansible.builtin.assert:
+    that: qbt_login_ok | bool
+    fail_msg: >-
+      {{ instance }} refused the WebUI credentials this deploy holds, and refused
+      them again after they were written back into {{ _qbt_conf }}
+      ({{ qbt_login_reason }}). Nothing can wire this download client until it
+      accepts them: qBittorrent bans a calling address for an hour after repeated
+      failed logins, so check `docker logs {{ instance }}`, and check that the
+      container is reading the config file this role writes.
+
+- name: Ask the app what it is
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/api/v2/app/version"
+    headers:
+      Cookie: "{{ qbt_login_cookie }}"
+    return_content: true
+    status_code: 200
+  register: _qbt_version
+  changed_when: false
+  no_log: true
+
+- name: Assert the app identifies itself as qBittorrent
+  ansible.builtin.assert:
+    that: _qbt_version.content | default('') is match('^v?[0-9]')
+    fail_msg: >-
+      {{ app_config.app.port }} answered /api/v2/app/version with
+      "{{ _qbt_version.content | default('nothing') }}", which is not a qBittorrent
+      version. Either app.image is not qBittorrent, or another container already
+      holds that port on this stack host.
+
+# The mirror of the servarr role's unauthenticated-API check, and the same reason:
+# without it, an instance configured to bypass authentication looks identical to a
+# secured one from here, and the lab ships an open torrent client on the LAN.
+- name: Call the API with no session
+  ansible.builtin.uri:
+    url: "{{ _qbt_base }}/api/v2/app/version"
+    status_code: [200, 401, 403]
+  register: _qbt_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses a caller with no session
+  ansible.builtin.assert:
+    that: _qbt_unauthenticated.status in [401, 403]
+    fail_msg: >-
+      {{ instance }} served its API to a caller with no session. Its
+      WebUI\LocalHostAuth is what decides that, and this deploy seeds it as true —
+      so the running app is reading a configuration this role did not write, or an
+      address whitelist is in force. Anything on the LAN can add torrents and
+      change where they are written.
+
+# ── Store the credential ──────────────────────────────────────────────────────
+# Written under the same canonical item name wire-media-stack.yml reads, and with
+# the field names tasks/app-wiring/arr-download-client.yml expects for a `userpass`
+# client (ansible/vars/media-wiring.yml). Stored after the app has proven the
+# credential works, never before.
+- name: Store and verify the WebUI credentials
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      username: "{{ _qbt_user }}"
+      password: "{{ _qbt_password }}"
+    vault_item_secret_fields: [password]
+
+# ── Hand the endpoint back to the playbook ────────────────────────────────────
+- name: Export the media registry entry to the playbook
+  ansible.builtin.set_fact:
+    qbittorrent_media_kind: "{{ _qbt_kind }}"
+    qbittorrent_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

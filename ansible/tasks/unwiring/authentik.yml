@@ -64,6 +64,10 @@
       changed_when: false
       no_log: true
 
+    # DEGRADATION BY DESIGN — reports instead of failing, and that is correct here. Reason
+    # in the file header: removal unwires before it stops the app, so a hard failure here
+    # strands every removal queued behind an unreachable Authentik. Do not convert this to
+    # tasks/report-degradation.yml.
     - name: Unwire Authentik | Report unusable API
       ansible.builtin.debug:
         msg: >-

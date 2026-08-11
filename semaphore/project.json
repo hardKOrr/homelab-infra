@@ -541,6 +541,22 @@
       "view": "Apps"
     },
     {
+      "name": "Deploy qBittorrent",
+      "description": "Deploy or update qBittorrent — the media stack's torrent download client (Docker on media_stack). Registers the app in the media registry; run Wire Media Stack afterwards to register it as a download client in every *arr.",
+      "playbook": "ansible/playbooks/apps/qbittorrent.yml",
+      "arguments": "[\"-e\",\"instance=qbittorrent\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
       "name": "Migrate Servarr",
       "description": "Copy an existing Servarr app's configuration — history, library, profiles, indexers and its API key — onto a lab instance. Run the app's Deploy job afterwards. The source app is left running and unchanged.",
       "playbook": "ansible/playbooks/apps/migrate-servarr.yml",

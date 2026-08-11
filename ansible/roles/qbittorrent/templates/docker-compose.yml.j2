@@ -1,0 +1,43 @@
+# docker-compose.yml for qBittorrent ({{ instance }})
+# Managed by homelab-infra — changes made here are overwritten on the next deploy.
+# To make permanent changes, edit config/apps/{{ instance }}.yml.
+#
+# qBittorrent has no environment-variable configuration of its own: everything it
+# reads lives in /config/qBittorrent/qBittorrent.conf, which the role seeds. The
+# only settings here are the image's own (WEBUI_PORT, TORRENTING_PORT), and they
+# have to match the published ports below — the WebUI binds the port it is told
+# about, and a mismatch publishes a port nothing is listening on.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1000) }}
+      - PGID={{ app_config.app.pgid | default(1000) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - WEBUI_PORT={{ app_config.app.container_port | default(app_config.app.port) }}
+      - TORRENTING_PORT={{ app_config.app.torrenting_port | default(6881) }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+{% for mount in _qbt_mounts %}
+      # Same path inside as outside, for the same reason the *arr apps use: an
+      # import is a hardlink rather than a copy only when the download directory
+      # and the library are one mount namespace with one set of paths.
+      - "{{ mount.path }}:{{ mount.path }}"
+{% endfor %}
+    ports:
+      # container_port is the WebUI port inside the image; app.port is what the
+      # stack host publishes. They differ whenever two apps on one stack would
+      # otherwise collide.
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
+      # The BitTorrent port is published on BOTH protocols and on the SAME number
+      # inside and out. A torrent client behind a translated port advertises the
+      # wrong one to its peers and takes incoming connections from nobody.
+      - "{{ app_config.app.torrenting_port | default(6881) }}:{{ app_config.app.torrenting_port | default(6881) }}/tcp"
+      - "{{ app_config.app.torrenting_port | default(6881) }}:{{ app_config.app.torrenting_port | default(6881) }}/udp"

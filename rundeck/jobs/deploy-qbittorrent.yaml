@@ -1,0 +1,35 @@
+# Deploy qBittorrent — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/deploy-qbittorrent.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 6d0f2353-96d6-59a6-8986-b57b9b06ceb7
+  uuid: 6d0f2353-96d6-59a6-8986-b57b9b06ceb7
+  name: Deploy qBittorrent
+  group: Apps
+  description: |-
+    Deploy or update qBittorrent — the media stack's torrent download client
+    (Docker on media_stack). Registers the app in the media registry; run Wire
+    Media Stack afterwards to register it as a download client in every *arr.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/qbittorrent.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          ARGS+=(-e "instance=qbittorrent")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/qbittorrent.yml "${ARGS[@]}"

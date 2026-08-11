@@ -1,0 +1,12 @@
+---
+# Role-internal defaults for the qbittorrent role. Everything a user would tune
+# lives in vars/app-defaults/qbittorrent.yml instead — these are paths and timings
+# the role needs and nobody overrides.
+
+qbittorrent_project_dir: "/opt/{{ instance }}"
+
+# How long to wait for the WebUI to answer after the container starts. qBittorrent
+# opens its port a few seconds after the process starts, and a first run also has
+# to read the seeded config file.
+qbittorrent_webui_retries: 30
+qbittorrent_webui_delay: 5

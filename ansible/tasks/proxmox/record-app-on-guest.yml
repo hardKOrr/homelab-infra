@@ -84,8 +84,12 @@
       failed_when: false
       ignore_unreachable: true
 
-    # Surfaced rather than swallowed: the deploy still succeeds, but an operator who wonders
-    # why the Proxmox UI disagrees with reality gets told here.
+    # DEGRADATION BY DESIGN — reports instead of failing, and that is correct here. What
+    # this writes is a cosmetic Proxmox label: the app is deployed, wired and serving
+    # whether or not the guest's notes say so, and nothing downstream reads the record.
+    # Surfaced rather than swallowed so an operator who wonders why the Proxmox UI
+    # disagrees with reality gets told. Do not convert this to
+    # tasks/report-degradation.yml.
     - name: Report a guest record that could not be written
       ansible.builtin.debug:
         msg: "Guest record not updated — {{ _rg_result.stdout | default('the node was unreachable') | trim }}"

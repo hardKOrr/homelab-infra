@@ -1,0 +1,57 @@
+---
+# Sign in to a qBittorrent WebUI and hand back a session.
+#
+# Inputs:
+#   qbt_login_base      base URL, no trailing slash (http://localhost:8080)
+#   qbt_login_user      WebUI username
+#   qbt_login_password  WebUI password
+#
+# Outputs:
+#   qbt_login_ok      true when the credentials were accepted
+#   qbt_login_cookie  Cookie header value for subsequent API calls ('' when not)
+#   qbt_login_reason  what happened, for a caller's failure message
+#
+# Included rather than inlined because the deploy signs in twice: once to find out
+# whether the platform's credentials still work, and again after writing them back
+# if they did not.
+
+# Referer and Origin are sent because qBittorrent's CSRF check compares them with
+# its own address and refuses a POST whose headers name somewhere else. It accepts
+# a request that sends neither, which is what a bare API client does — but it does
+# not accept one that sends a mismatched pair, and that is the failure mode of
+# calling this through anything that adds them.
+- name: qBittorrent | Sign in
+  ansible.builtin.uri:
+    url: "{{ qbt_login_base }}/api/v2/auth/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      username: "{{ qbt_login_user }}"
+      password: "{{ qbt_login_password }}"
+    headers:
+      Referer: "{{ qbt_login_base }}"
+      Origin: "{{ qbt_login_base }}"
+    return_content: true
+    # A wrong password is HTTP 200 with the body "Fails.", and a banned address is
+    # 403. Both are answers this file reports rather than crashes on: the caller
+    # decides what to do about them.
+    status_code: [200, 401, 403]
+  register: _qbt_login
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: qBittorrent | Record the session
+  ansible.builtin.set_fact:
+    qbt_login_ok: "{{ (_qbt_login.content | default('') | trim) == 'Ok.' }}"
+    qbt_login_cookie: >-
+      {{ _qbt_login.cookies_string | default('')
+         if (_qbt_login.content | default('') | trim) == 'Ok.' else '' }}
+    qbt_login_reason: >-
+      {{ 'signed in'
+         if (_qbt_login.content | default('') | trim) == 'Ok.'
+         else ('the address is banned after repeated failed logins'
+               if _qbt_login.status | default(0) == 403
+               else 'the username or password was refused (HTTP '
+                    ~ (_qbt_login.status | default('no response')) ~ ')') }}
+  no_log: true

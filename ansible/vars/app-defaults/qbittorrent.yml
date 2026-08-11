@@ -1,0 +1,53 @@
+---
+# Default stack and app configuration for qBittorrent — the media stack's torrent
+# download client. Users override specific values in config/apps/qbittorrent.yml.
+# This file is git-managed — git pull may update these defaults.
+
+qbittorrent_defaults:
+  stack: media_stack
+
+  app:
+    # The key ansible/vars/media-wiring.yml is looked up by. It decides which
+    # *arr apps this client is registered in (every one that speaks `torrent`)
+    # and which download-client implementation they are told to use.
+    media_kind: qbittorrent
+
+    image: "lscr.io/linuxserver/qbittorrent:latest"
+    port: 8080
+    container_port: 8080
+
+    # The BitTorrent listen port, published on TCP and UDP and unchanged on both
+    # sides of the container — see the compose template. Forward it at the router
+    # for incoming peer connections; the client works without that, more slowly.
+    torrenting_port: 6881
+
+    config_path: "/opt/{{ instance }}/config"
+
+    # Where completed downloads land. It MUST be inside a media_storage mount
+    # (config/infrastructure.yml): the *arr apps import from here into the
+    # library, and an import is a hardlink rather than a copy only when both are
+    # on one filesystem. The role refuses a path outside the declared mounts.
+    download_path: /mnt/downloads
+
+    # The WebUI account. Its password is not here and is never authored: the role
+    # generates one, proves the app accepts it, and stores it in Vaultwarden under
+    # homelab-infra/media/<instance>, which is where wire-media-stack.yml reads it
+    # from when it registers this client in each *arr.
+    webui_user: admin
+
+    # Matches media_storage.owner in infrastructure.yml, and must: this is the id
+    # the downloads are written as, and the *arr apps have to be able to hardlink
+    # them into the library afterwards.
+    puid: 1313
+    pgid: 1313
+
+  routing:
+    proxy: internal
+    access: internal
+    # catalog, NOT forward_auth — the opposite of the *arr apps, and deliberately.
+    # Those are switched to AuthenticationMethod External so the reverse proxy is
+    # their only login. qBittorrent cannot be: its API authenticates with the
+    # username and password above, and that is the only credential the *arr apps
+    # have for it, so its own login stays on. catalog publishes it in the
+    # Authentik catalog and leaves the app to authenticate its own callers.
+    identity: catalog

@@ -1,0 +1,39 @@
+---
+# qBittorrent instance config.
+# Copy to config/apps/qbittorrent.yml (or qbittorrent-private.yml, etc.).
+# The filename you choose IS the instance name: it becomes the hostname,
+# Caddy subdomain (qbittorrent.yourdomain.com), and Authentik app name.
+#
+# Only set values that differ from the defaults in vars/app-defaults/qbittorrent.yml.
+# This file persists after removal — it is your restore point.
+
+# ── Stack assignment (Docker app) ──────────────────────────────────────────────
+stack: media_stack     # which Docker stack host this app runs on
+
+# ── App config ─────────────────────────────────────────────────────────────────
+app:
+  # Where completed downloads land, as the container sees it. It must be inside a
+  # media_storage mount declared in config/infrastructure.yml: the *arr apps import
+  # from here into the library, and that import is a hardlink rather than a copy
+  # only when both are on one filesystem. The deploy refuses a path outside them.
+  download_path: /mnt/downloads
+
+  # torrenting_port: 6881      # the BitTorrent listen port, TCP and UDP. Forward
+  #                            # it at the router for incoming peer connections.
+  #                            # Change it for a second instance — two clients
+  #                            # cannot share one listen port.
+  # port: 8080                 # the WebUI port the stack host publishes. Change
+  #                            # it when another app on this stack already has it.
+  # webui_user: admin          # the WebUI account name. Its password is generated
+  #                            # by the deploy and stored in Vaultwarden under
+  #                            # homelab-infra/media/<instance> — never set here.
+
+# ── Routing ────────────────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal            # internal | external (WHICH reverse proxy handles this app)
+#   access: internal           # internal | public (WHO may reach it — public means the
+#                              # internet on a WAN-facing proxy)
+#   identity: catalog          # none | catalog | oidc | forward_auth.
+#                              # catalog is the default and the right one: unlike the
+#                              # *arr apps, qBittorrent keeps its own login, because
+#                              # that password is what they authenticate to it with.

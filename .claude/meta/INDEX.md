@@ -64,6 +64,10 @@ a comment saying what the fallback is. There are currently none.
 a scratch play: an empty ledger passes, a non-fatal-only ledger passes, and two fatal
 entries fail naming both.
 
+**The queue is empty as of 2026-08-11** — W6 and W7 closed the last two rows. There is no
+top unchecked row to pick up; the next session needs work put here first, and the two
+sections below ("Observe if it happens", slice `Remaining` boxes) are still not it.
+
 | # | Work | Status |
 |---|---|---|
 | **W1** | **The degradation ledger.** `tasks/report-degradation.yml` appends `{component, reason, fatal}` to `homelabinfra_degradations`; `tasks/assert-no-degradations.yml` fails with the collected list. Collect, then fail — never abort at the first problem. | done |
@@ -71,9 +75,9 @@ entries fail naming both.
 | **W3** | **`wiring/authentik.yml`** — a missing access group is now fatal. It was the worst site on the list: the app was published through Authentik with **no group policy binding**, reachable by every Authentik user, and the run exited 0. **`resolve-media-registry.yml`** — skipped entries are fatal, and its header no longer says "never fatal". | done |
 | **W4** | **`vaultwarden-cutover.yml`** — surviving seed files are fatal; the job exists to get secrets off the runner's disk, so reporting success while they remain defeats it. **`wire-media-stack.yml`** — an unreadable `config.xml`. **`rollback-container.yml`** — a container that never answered after rollback. | done |
 | **W5** | **The gate is called** as the last task of all 11 app deploy playbooks, `wire-media-stack.yml`, `rollback-container.yml` play 2, and `vaultwarden-cutover.yml`. `wire-media-stack.yml` also pulls play 2's per-host entries out of `hostvars`, and its old `_mw_failed` fail now feeds the same ledger so one message reports everything. | done |
-| **W6** | **Document the eight that stay** — a header comment on each saying why degrading is correct, so a future audit does not re-litigate them. Four already carry the reason; four do not. | **next** |
+| **W6** | **Document the eight that stay** — a header comment on each saying why degrading is correct, so a future audit does not re-litigate them. All eight now carry a `DEGRADATION BY DESIGN` comment **at the task**, not only in a file header, each naming the reason and saying not to convert it to `report-degradation.yml`. `grep -rn 'DEGRADATION BY DESIGN' ansible/` returns exactly eight; a future audit's first move is that grep. | done |
 | **W6.5** | **`tasks/notify.yml`** — the publish call was `failed_when: false` with no `register`, so an undelivered notification was indistinguishable from a delivered one. Every day-2 promise in this repo arrives through it. Now registered and **fatal**: the gate is the last task, so the run completes all its work and then refuses to report green when nobody was told. | done |
-| **W7** | **A download-client app playbook** (qBittorrent or SABnzbd). `tasks/app-wiring/arr-download-client.yml` is fully implemented and has nothing to wire. Do this before any other new app. | open |
+| **W7** | **A download-client app playbook** — **qBittorrent**, chosen over SABnzbd because the lab is torrent-side. `playbooks/apps/qbittorrent.yml` + `roles/qbittorrent/` + `vars/app-defaults/qbittorrent.yml`, plus the Semaphore template and Rundeck job. `tasks/app-wiring/arr-download-client.yml` now has something to wire: the `qbittorrent` kind is `auth: userpass`, and the role stores `username`/`password` in `homelab-infra/media/<instance>`, which is exactly where the wiring reads them. Twelve per-app Deploy jobs now. | done |
 
 ### The three that were already right
 
@@ -157,12 +161,14 @@ of these, that row is stale.
   `/etc/subuid`/`/etc/subgid` and mapped into the unprivileged stack host. Verified on
   168000100.
 - **Readarr is gone**, by decision 2026-08-09 — retired upstream, and its last build serves
-  an unauthenticated UI. Eleven per-app Deploy jobs remain and all eleven have run green.
-- **The media stack cannot download or play anything.** `arr-download-client.yml` is fully
-  implemented, but no download-client app playbook exists (no qBittorrent, no SABnzbd) and
-  there is no media server. This is the largest functional gap in the repo, and it is W7 —
-  behind the silent-failure work deliberately, because shipping more apps onto a platform
-  that reports success when wiring fails multiplies the problem.
+  an unauthenticated UI. **Twelve per-app Deploy jobs** now: the eleven that remained have
+  all run green, and W7's `Deploy qBittorrent` has not run at all.
+- **The media stack can download, and still cannot play.** W7 shipped qBittorrent, so the
+  torrent half of the download path exists in code and is wired by the existing
+  `arr-download-client.yml`. Two gaps remain, neither of them started: no usenet client
+  (SABnzbd — the `sabnzbd` kind is already in `media-wiring.yml`, so it is a role plus a
+  playbook, the same shape as qBittorrent), and no media server. **Never deployed to the
+  lab**: qBittorrent is gate-green and unexecuted, like every app on the day it landed.
 - **500's one staged import is `apps/nginx.yml`**, which does not exist — 301 shipped the
   wiring pair only.
 - **010/012's bootstrap script is the proven path.** It has run from a full wipe to exit 0

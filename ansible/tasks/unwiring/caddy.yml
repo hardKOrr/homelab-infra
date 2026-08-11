@@ -50,6 +50,10 @@
     # `status` is absent entirely on a connection error, which is what distinguishes an
     # unreachable admin API from a 404 route-not-found. default(0) makes that case explicit
     # rather than an undefined-variable crash in the conditions below.
+    # DEGRADATION BY DESIGN — reports instead of failing, and that is correct here. Reason
+    # in the file header: removal unwires before it stops the app, so a hard failure here
+    # strands every removal queued behind an unreachable proxy. Do not convert this to
+    # tasks/report-degradation.yml.
     - name: Unwire Caddy | Report unreachable admin API
       ansible.builtin.debug:
         msg: >-

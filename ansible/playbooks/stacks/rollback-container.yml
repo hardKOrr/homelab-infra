@@ -154,6 +154,11 @@
           {{ _ref[:(_ref | length) - (_tag | length) - 1]
              if _tagged | bool else _ref }}
 
+    # DEGRADATION BY DESIGN — and in fact not a degradation at all: nothing failed. The
+    # operator asked to roll back a container already pinned to a floating tag without
+    # naming a version, so there is no earlier release to go to. Re-pinning `latest` to
+    # `latest` freezes nothing, and saying so is more honest than reporting a rollback
+    # that did not happen. Do not convert this to tasks/report-degradation.yml.
     - name: Report a no-op freeze on a floating tag
       ansible.builtin.debug:
         msg: >-

@@ -42,6 +42,10 @@
       failed_when: false
       ignore_unreachable: true
 
+    # DEGRADATION BY DESIGN — reports instead of failing, and that is correct here. The
+    # guest may already have been destroyed by hand, and the row this withdraws is a
+    # Proxmox label, not the app: every unwiring that leaves real stale state behind has
+    # already run by now. Do not convert this to tasks/report-degradation.yml.
     - name: Report a guest record that could not be withdrawn
       ansible.builtin.debug:
         msg: "Guest record not withdrawn — {{ _rug_result.stdout | default('the node was unreachable') | trim }}"
