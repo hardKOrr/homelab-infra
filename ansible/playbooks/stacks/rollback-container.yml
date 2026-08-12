@@ -88,10 +88,21 @@
   pre_tasks:
     # Optional: only used for the best-effort health check below. Read on the
     # controller, not the stack host.
-    - name: Load instance config (optional — health check is skipped without it)
+    - name: Load instance config (optional — one of three port sources below)
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/apps/{{ container }}.yml"
         name: _rb_instance_config
+      failed_when: false
+
+    # An instance file almost never carries `app.port` — the port is declared in
+    # vars/app-defaults/<app>.yml, which is why the health probe below silently
+    # skipped on every app until 2026-08-12 (execution 106: lidarr recreated, probe
+    # skipped, job green). Load the defaults too, and fall back to the Compose file's
+    # own published port, which needs no config file at all.
+    - name: Load app defaults (optional — second port source)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ container }}.yml"
+        name: _rb_app_defaults
       failed_when: false
 
   vars:
@@ -154,6 +165,32 @@
           {{ _ref[:(_ref | length) - (_tag | length) - 1]
              if _tagged | bool else _ref }}
 
+    # Three sources, most specific first. The Compose entry may be "8686:8686" or
+    # "127.0.0.1:8686:8686" or a bare int, so the HOST port is the second-to-last
+    # colon-separated field. An empty result means the service publishes no port —
+    # host networking, or a worker with no listener — and only then is a probe
+    # genuinely meaningless.
+    - name: Resolve the port to probe
+      ansible.builtin.set_fact:
+        _rb_port: >-
+          {{ (_rb_instance_config.app.port | default('', true))
+             | default(_rb_app_defaults.app.port | default('', true), true)
+             | default(_compose_host_port, true) | string }}
+      vars:
+        _ports: "{{ _rb_compose.services[_rb_service].ports | default([]) }}"
+        _first: "{{ (_ports | first | default('')) | string }}"
+        _parts: "{{ _first.split(':') }}"
+        _compose_host_port: >-
+          {{ (_parts[-2] if (_parts | length) > 1 else _first)
+             | regex_replace('[^0-9]', '') }}
+
+    - name: Say so when no port can be resolved
+      ansible.builtin.debug:
+        msg: >-
+          {{ container }} publishes no port that could be probed, so the post-rollback
+          health check is skipped. The container was recreated — verify it by hand.
+      when: _rb_port | length == 0
+
     # DEGRADATION BY DESIGN — and in fact not a degradation at all: nothing failed. The
     # operator asked to roll back a container already pinned to a floating tag without
     # naming a version, so there is no earlier release to go to. Re-pinning `latest` to
@@ -205,8 +242,6 @@
       failed_when: false
       changed_when: false
       when: _rb_port | length > 0
-      vars:
-        _rb_port: "{{ _rb_instance_config.app.port | default('') | string }}"
 
     - name: Report the health probe
       ansible.builtin.debug:
@@ -223,7 +258,7 @@
       vars:
         degradation_component: "{{ container }} health after rollback"
         degradation_reason: >-
-          It did not answer on port {{ _rb_instance_config.app.port | default('?') }}
+          It did not answer on port {{ _rb_port | default('?') }}
           after the rollback to {{ _rb_new_ref }}. The container was recreated — check
           its logs.
       when: _rb_probe is not skipped and _rb_probe.status | default(0) < 200

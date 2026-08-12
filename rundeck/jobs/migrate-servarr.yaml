@@ -42,9 +42,17 @@
       script: |-
           #!/bin/bash
           set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables. Rundeck's
+          # ${option.x} tokens are NOT expanded inside a script step — bash sees
+          # them first and dies with "bad substitution", which is how execution
+          # 107 failed on line 4 before reaching Ansible. Every other job in this
+          # directory already reads RD_OPTION_*; this one was missed.
           ARGS=()
-          ARGS+=(-e "instance=${option.instance}")
-          ARGS+=(-e "source_host=${option.source_host}")
-          ARGS+=(-e "source_config_path=${option.source_config_path}")
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          : "${RD_OPTION_SOURCE_HOST:?source_host is required}"
+          : "${RD_OPTION_SOURCE_CONFIG_PATH:?source_config_path is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          ARGS+=(-e "source_host=$RD_OPTION_SOURCE_HOST")
+          ARGS+=(-e "source_config_path=$RD_OPTION_SOURCE_CONFIG_PATH")
 
           exec lab-run playbooks/apps/migrate-servarr.yml "${ARGS[@]}"

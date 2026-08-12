@@ -20,12 +20,22 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Pass the app instance name: -e instance=<name>"
 
+    # The connection user must be loaded here, before the guest play: the Proxmox
+    # dynamic inventory carries no ansible_user, so Play 2 would connect as the
+    # account running Ansible — rundeck on a runner — and every guest is
+    # UNREACHABLE with "Permission denied (publickey)". Found live, execution 103.
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
 # The default() can only fire during --syntax-check: Play 1 has already
 # asserted `instance` is defined by the time this play's pattern is resolved.
 - name: Restart App | {{ instance | default('(no instance)') }}
   hosts: "{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
+  vars:
+    ansible_user: >-
+      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
   tasks:
     - name: Restart app
       ansible.builtin.command: /usr/local/bin/lab-restart-app
