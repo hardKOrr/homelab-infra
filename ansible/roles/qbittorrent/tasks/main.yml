@@ -248,9 +248,11 @@
   changed_when: false
 
 # ── Prove the credential works, and repair it if it does not ──────────────────
-# qBittorrent answers a failed login with HTTP 200 and the body "Fails.", so the
-# status code alone reports success for a password that does not work. Every
-# check below reads the body.
+# What counts as an accepted login is version-dependent, so login.yml owns that
+# judgement and every caller here reads only its qbt_login_ok. A 5.x WebUI answers
+# an accepted login with 204 and no body; a 4.x one answers 200 "Ok." and reports a
+# bad password as 200 "Fails.", which is why the body cannot simply be ignored
+# either. See login.yml, and execution 76 for what assuming one of them costs.
 - name: Sign in to the WebUI
   ansible.builtin.include_tasks: login.yml
   vars:

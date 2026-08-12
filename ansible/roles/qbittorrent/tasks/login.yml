@@ -32,26 +32,43 @@
       Referer: "{{ qbt_login_base }}"
       Origin: "{{ qbt_login_base }}"
     return_content: true
-    # A wrong password is HTTP 200 with the body "Fails.", and a banned address is
-    # 403. Both are answers this file reports rather than crashes on: the caller
+    # What each answer means, measured against qBittorrent 5.2.3 in the lab
+    # (execution 76, 2026-08-11) rather than assumed:
+    #   204  accepted — empty body, and the session cookie is on this response
+    #   200  accepted by a 4.x WebUI, which answers with the body "Ok."
+    #   401  refused: wrong username or password, body "Unauthorized"
+    #   403  the calling address is banned after repeated failures
+    # All four are answers this file reports rather than crashes on; the caller
     # decides what to do about them.
-    status_code: [200, 401, 403]
+    status_code: [200, 204, 401, 403]
   register: _qbt_login
   changed_when: false
   failed_when: false
   no_log: true
 
+# Success is the STATUS, not the body. A 5.x WebUI answers an accepted login with
+# 204 and no body at all, so a check for the body "Ok." reads a successful sign-in
+# as a refusal — which is exactly what happened: the deploy signed in, was told it
+# had not, rewrote the password, signed in again, was told the same, and failed the
+# assert with the app working the whole time (execution 76, 2026-08-11).
 - name: qBittorrent | Record the session
   ansible.builtin.set_fact:
-    qbt_login_ok: "{{ (_qbt_login.content | default('') | trim) == 'Ok.' }}"
-    qbt_login_cookie: >-
-      {{ _qbt_login.cookies_string | default('')
-         if (_qbt_login.content | default('') | trim) == 'Ok.' else '' }}
+    qbt_login_ok: "{{ _qbt_login_accepted | bool }}"
+    # `| bool` at every use, not once: a folded `vars:` value is a STRING, and the
+    # string 'False' is truthy to Jinja, so a bare `if _qbt_login_accepted` would
+    # take the success branch on a refused login.
+    qbt_login_cookie: "{{ _qbt_login.cookies_string | default('') if _qbt_login_accepted | bool else '' }}"
     qbt_login_reason: >-
       {{ 'signed in'
-         if (_qbt_login.content | default('') | trim) == 'Ok.'
+         if _qbt_login_accepted | bool
          else ('the address is banned after repeated failed logins'
                if _qbt_login.status | default(0) == 403
                else 'the username or password was refused (HTTP '
                     ~ (_qbt_login.status | default('no response')) ~ ')') }}
+  vars:
+    # 204 carries no body; 200 is a 4.x WebUI, which says "Ok." on success and
+    # "Fails." on a bad password, so the body still has to be read in that case.
+    _qbt_login_accepted: >-
+      {{ (_qbt_login.status | default(0) | int) == 204
+         or ((_qbt_login.content | default('') | trim) == 'Ok.') }}
   no_log: true
