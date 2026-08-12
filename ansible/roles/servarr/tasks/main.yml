@@ -134,12 +134,33 @@
   failed_when: false
   no_log: true
 
+# Three sources, in the order of what the app actually answers to.
+#
+# config.xml only carries <ApiKey> when the APP wrote one. A key this platform
+# supplies through the environment never appears there — measured on the live lab
+# 2026-08-12: prowlarr's config.xml has no ApiKey element at all. With config.xml
+# as the only continuity source, every re-deploy therefore minted a NEW key,
+# rewrote the Compose file and bounced the container (executions 114-116, three
+# consecutive runs, three different keys), which is precisely the breakage the
+# comment above says must not happen: the Prowlarr Applications, Bazarr
+# connections and media-registry entries this platform created all still hold the
+# previous key.
+#
+# The vault item is the platform's own record of the key it issued, and it
+# survives container recreation, so it is the continuity source when the app has
+# not written one. roles/qbittorrent and roles/jellyfin already read their
+# password back the same way.
 - name: Resolve the API key
   ansible.builtin.set_fact:
     _servarr_api_key: >-
       {{ (_servarr_config_existing.content | default('') | b64decode
           | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join(''))
+         | default(_servarr_vault_key, true)
          | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+  vars:
+    _servarr_vault_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
+         | default('', true) }}
   no_log: true
 
 # ── Configuration ─────────────────────────────────────────────────────────────
