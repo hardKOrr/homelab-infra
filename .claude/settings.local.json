@@ -106,7 +106,11 @@
       "Bash(scp -q /tmp/p4.sh root@192.168.13.247:/tmp/p4.sh)",
       "Bash(scp -q /tmp/p5.sh root@192.168.13.247:/tmp/p5.sh)",
       "Bash(scp -q /tmp/vw.sh root@192.168.13.247:/tmp/vw.sh)",
-      "Bash(scp -q /tmp/pt.sh root@192.168.13.247:/tmp/pt.sh)"
+      "Bash(scp -q /tmp/pt.sh root@192.168.13.247:/tmp/pt.sh)",
+      "Bash(scp -q chk.sh root@192.168.13.247:/tmp/chk.sh)",
+      "Bash(scp -q chk2.sh root@192.168.13.247:/tmp/chk2.sh)",
+      "Bash(scp -q chk3.sh root@192.168.13.247:/tmp/chk3.sh)",
+      "Bash(scp -q chk4.sh root@192.168.13.247:/tmp/chk4.sh)"
     ]
   }
 }
