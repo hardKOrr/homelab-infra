@@ -21,6 +21,35 @@ Kuma is the same lesson one level up: the run was green, the app was not started
 adding to the gates: a smoke target that provisions one throwaway guest, `shellcheck` over
 `rundeck/*.sh` + `ansible/scripts/*.sh`, and a file-mode assertion.
 
+**The runner can be disarmed by the day-2 automation this repo installs.** On 2026-08-12
+unattended-upgrades reinstalled `openjdk-21-jre-headless` at 06:24 under a Rundeck JVM that
+had been running nine days. The JVM could no longer `fork`, so **every job on the platform
+failed before reaching Ansible**, with an opaque error naming a "spawn helper", no mention
+of Java versions, and nothing wrong in the repo:
+
+```
+IOFailure: Cannot run program "/bin/sh": Failed to exec spawn helper
+```
+
+`systemctl restart rundeckd` fixes it in about a minute. Two general points: a job failure
+whose text names no playbook and no task is a **runner** fault, so check the runner before
+reading a single line of Ansible; and the runner is the one host where an in-place library
+upgrade needs a service restart to take effect, which unattended-upgrades will not do for a
+JVM holding an open jar.
+
+**One git checkout serves every job, and `LAB_REFRESH=1` pulls at job start.** Two jobs
+launched at the same moment collide:
+
+```
+Unable to create '/var/lib/rundeck/homelab-infra/.git/index.lock': File exists
+```
+
+Rundeck's per-job execution limit prevents the *same* job overlapping itself and nothing
+else — nine different Deploy jobs fired together are nine racing `git pull`s. Deploy jobs
+are meant to be run one at a time; anything that launches them in a batch has to wait for
+each to finish. Eight of nine survived the race on 2026-08-12, which makes this a defect
+that will usually hide.
+
 **A deploy must assert usability, not liveness.** Uptime Kuma sat on its "choose a
 database" setup screen from 2026-08-03 to 2026-08-08 — no admin user, no monitors, no
 database — while four green bootstrap runs passed over it. Nothing in a deploy asserted

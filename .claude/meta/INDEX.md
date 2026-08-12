@@ -89,11 +89,16 @@ session's first question is `git log origin/master..master`, not the gates.
 degradation, named the component and the reason, completed all other work, and then refused
 to report success.
 
-**Nine published apps have no access group binding**, measured against the platform's
-Authentik 2026-08-11: `lidarr`, `ntfy`, `observability`, `pbs`, `prowlarr`, `radarr`,
-`sonarr`, `uptime-kuma`, `vaultwarden`. Each is reachable by every Authentik user, and each
-deploy exited 0 because it predates W3. `qbittorrent` is the only one bound. Re-running each
-Deploy job binds it — that is the remediation, and it is nine runs, not a code change.
+**Every published app is bound — remediation complete, 2026-08-12.** The nine that were
+unbound on 2026-08-11 (`lidarr`, `ntfy`, `observability`, `pbs`, `prowlarr`, `radarr`,
+`sonarr`, `uptime-kuma`, `vaultwarden`) were re-deployed; **verified by querying Authentik's
+own `policies/bindings/`, not by trusting exit codes** — all ten applications, `qbittorrent`
+included, carry exactly one enabled binding to `homelab-users`. The remediation was nine job
+runs, no code change, as predicted.
+
+Two rounds ran: executions 80–88 (2026-08-11) and 91–100 (2026-08-12). The second round was
+redundant — this table still said the work was open, so a session re-ran it. **A row that
+outlives its work costs a live re-run.** Update the row when the run lands, not later.
 
 **The access group is the platform's to create — answered 2026-08-11, `a19105a`.** 403
 deliberately removed *directory-content* management from the Authentik role, and that
@@ -213,7 +218,10 @@ of these, that row is stale.
   playbook, the same shape as qBittorrent), and no media server. **qBittorrent is deployed**
   — execution 78, 2026-08-11, green and idempotent, on `media_stack` with an Authentik group
   binding. Two defects were found and fixed getting there; see the executions table above.
-  It has **not** yet been registered in the *arr apps: that needs one `Wire Media Stack` run.
+  **It is registered in the *arr apps** — `Wire Media Stack` execution 90, 2026-08-12,
+  `failed=0` and `changed=0`, confirming `qbittorrent → sonarr/radarr/lidarr` and all three
+  `→ prowlarr indexers`. `changed=0` means execution 79 had already wired it the night
+  before, so this only proved the state; the download path is complete end to end.
 - **500's one staged import is `apps/nginx.yml`**, which does not exist — 301 shipped the
   wiring pair only.
 - **010/012's bootstrap script is the proven path.** It has run from a full wipe to exit 0

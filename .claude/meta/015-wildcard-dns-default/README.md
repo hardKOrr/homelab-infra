@@ -33,8 +33,12 @@ command. Mode details and the handoff contract are in notes.md.
       wildcard while pinning current hostnames in `automatic_https.force_automate`, wait for
       the wildcard, then drop the pin in a second write. Fresh labs are unaffected, so this
       gates migrations only
-- [ ] Internal mode exports the CA, reports its fingerprint, and pauses until runner trust
-      is verified
+- **Internal mode is declined, 2026-08-12** — the operator does not want Caddy's own CA
+      ("just a PITA to deal with"): every client would have to be made to trust it. The code
+      path stays for anyone who has no public domain, but **this lab will never enter it, so
+      its criterion is not work and must not be listed as open.** The lab runs `acme-dns01`,
+      proven 2026-08-06. Note this is about *who signs the certificate* — serving an app
+      privately is `routing.access`, a different axis entirely, and works in either mode.
 - [ ] A provider with no supported API receives an exact wildcard-DNS handoff and a
       resumable checkpoint rather than a misleading success
 - [ ] Re-running after the manual action resumes at verification and does not rotate the
