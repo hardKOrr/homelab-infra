@@ -45,11 +45,16 @@ the loop.
       against a fixture shaped like the live estate — syntax-check does not execute Jinja,
       and this is selection logic, so green would otherwise mean nothing
 - [ ] **Live:** an adoption observed against a record this platform did not create — the
-      probe covers the selection, not the PUT that renames it
-- [ ] End-to-end run of the playbook itself, Plays 1–3 including discovery over SSH — needs
-      `config/` populated on the runner; only the wiring plays have been exercised
-- [ ] The "Media stack wired: N connections confirmed" Ntfy notification fires — needs a lab
-      with Ntfy bootstrapped; `tasks/notify.yml` is the shared, already-built publisher
+      probe covers the selection, not the PUT that renames it. **The only item left on this
+      slice, and it is 505's last item too**: one `Migrate Servarr` run produces both
+- [x] End-to-end run of the playbook itself, Plays 1–3 — executions 72 (2026-08-09),
+      79 and 90 (2026-08-12). Play 2 read each *arr's API key off the guest over SSH, which
+      is what made the Prowlarr Applications possible. **Exercised via the registry path**;
+      the `config/apps/*.yml` + `app.media_kind` discovery path still has no live run, and
+      is what a lab with pre-existing apps would use
+- [x] The "Media stack wired: N connections confirmed" Ntfy notification fires — proven by
+      execution 90, which was green *after* W6.5 (`44dd7c3`, 2026-08-10) made an undelivered
+      notification fatal. Under that code a green run cannot mean a swallowed publish
 - [x] Running against an empty stack is a no-op
 - [x] Registering an *arr in Prowlarr works
 - [x] Re-run is idempotent — 12 live connections all reported `confirmed`, no writes issued

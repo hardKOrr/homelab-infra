@@ -24,7 +24,11 @@ created, so a re-run adopts rather than duplicates.
       unwire a user can no longer SSO to that app — the browser sign-in leg, shared with
       306, 403 and 405. Needs a human at a browser
 - [ ] Re-wire idempotent and unwire clean for each of the three shapes — the per-mode
-      acceptance lives in 009, which needs one app deployed per mode
+      acceptance lives in 009, which needs one app deployed per mode. **The catalog shape is
+      done**: executions 80–88 and 91–100 (2026-08-11/12) re-wired ten published apps, and
+      querying Authentik's `policies/bindings/` afterwards found **exactly one enabled
+      binding to `homelab-users` per application** — no duplicates, so the slug/name lookup
+      adopts as designed. `oidc` and `forward_auth` are what remain
 - [x] Wire creates provider + application + policy binding
 - [x] No-op for `sso.provider != 'authentik'`
 

@@ -65,3 +65,16 @@ key, so every app had written its registry entry under the literal key `{{ insta
 overwritten the app before it (fixed in `86de49e`). But this playbook treats an empty
 registry as a normal outcome, so the only signal was one `msg:` in a passing log. A stack
 that resolves zero apps when the registry is non-empty is worth failing on.
+
+## Acceptance caught up with the lab, 2026-08-12
+
+No code changed. Three criteria had been satisfied by live runs and never ticked, which is
+how a slice stays "live" long after its work is done.
+
+- Plays 1–3 have run end to end three times (72, 79, 90). Play 2's SSH read of each *arr's
+  `config.xml` is not an untested leg — it is the only reason Play 3 has API keys.
+- The Ntfy notification is proven **by the shape of a green run**, not by someone watching a
+  phone: since `44dd7c3` an undelivered publish is fatal, and execution 90 was green.
+- What is left is the adoption PUT, and it cannot be manufactured — it needs a record this
+  platform did not create. `Migrate Servarr` against the operator's old Radarrs is the one
+  run that produces it, and it is also 505's last item. **One click closes two slices.**

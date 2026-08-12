@@ -68,6 +68,31 @@ entries fail naming both.
 top unchecked row to pick up; the next session needs work put here first, and the two
 sections below ("Observe if it happens", slice `Remaining` boxes) are still not it.
 
+### Why nothing closed while a lot got built, 2026-08-12
+
+A session asked the fair question: eight commits of real work and not one slice moved to
+[done/](done/). The answer is that the work was **queue rows** (W1–W7, then Jellyfin), and
+queue rows are not slices. Every live slice is code-complete; what each waits on is a live
+observation. So building more never closes one.
+
+**The acceptance was also behind the lab.** Executions 55–102 had already satisfied criteria
+nobody went back to tick: 504 lost three boxes and 505 lost five on inspection alone, no code
+touched. Tick the box in the same session as the run, or a later session re-runs the job
+(which is exactly what the access-group remediation cost, twice).
+
+### What is actually closable, ranked by cost
+
+| Click | Closes | Cost |
+|---|---|---|
+| `Deploy Prowlarr` against the running stack, expecting `changed=0` | **505's last box but one** | one job, minutes |
+| `Migrate Servarr` against the operator's old Radarrs | **504 and 505 both** — 504's adoption criterion can only come from a record this platform did not create, and that is the same run | one job, large data |
+| Four `Rundeck` jobs never executed — Restart App, Tail App Log, Rollback Container, Check Native Updates | **601**, and Rollback Container also gives **502** its one real rollback | four jobs |
+| One browser session — Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in | **302, 306, 400, 403, 405** — five slices on one sitting | a human at a browser |
+
+That is nine of the twenty live slices reachable without writing code. Everything below that
+line (008/009/015/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap; 304
+needs OPNsense credentials) is genuinely blocked on something the lab does not have yet.
+
 ### W1–W7 ran live, 2026-08-11 — executions 75–78
 
 Recorded here because "done" and "never run live" were both true of this table at once,
@@ -163,10 +188,12 @@ the work queue above.
 
 | Slice | Waiting on |
 |---|---|
+| 504 wire-media-stack | **one box left** — an adoption against a foreign record, i.e. `Migrate Servarr` |
+| 505 app-servarr | **two boxes left** — a `changed=0` re-deploy, and the same migration run |
 | 502 rollback-container | one real rollback — its criteria test *this repo's* Compose-rewrite logic, so unlike 201 it is worth running |
 | 601 rundeck-jobs | four job definitions never executed: Restart App, Tail App Log, Rollback Container, Check Native Updates |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
-| 302, 306, 400, 403, 405 | one browser session: Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in |
+| 302, 306, 400, 403, 405 | one browser session: Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in. 302's catalog-shape idempotency is already proven by the 2026-08-12 binding query; only `oidc` and `forward_auth` remain |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300, 504, 505 | nothing; observation only |
 | 304 | OPNsense API credentials |

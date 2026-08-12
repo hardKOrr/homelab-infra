@@ -273,3 +273,14 @@ template are deleted, the live Rundeck job with them, and the container and `/op
 are removed from the stack host. The `readarr` kind stays in `media-wiring.yml` — a lab that
 runs its own Readarr can declare it in `config/apps/` and be wired in like any other app, and
 the `rootfolder_needs_profiles` fix applies to that path too. This role ships four apps now.
+
+## Acceptance caught up with the lab, 2026-08-12
+
+No code changed. Five of the seven `Remaining` boxes were already true — four live deploys
+(59–72), the two untrusted image facts (the role asserts both, so a green deploy *is* the
+confirmation), the registry-fed Wire Media Stack leg (72, re-confirmed `changed=0` at 90),
+and the mountpoint plus idmap on guest 168000100. The Readarr box is void; the app was
+dropped the same day it was written.
+
+Two remain: a `changed=0` re-deploy (one click, `Deploy Prowlarr`), and the migration —
+which is the same run 504 needs for its adoption criterion.
