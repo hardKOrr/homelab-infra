@@ -95,13 +95,16 @@ Authentik 2026-08-11: `lidarr`, `ntfy`, `observability`, `pbs`, `prowlarr`, `rad
 deploy exited 0 because it predates W3. `qbittorrent` is the only one bound. Re-running each
 Deploy job binds it — that is the remediation, and it is nine runs, not a code change.
 
-**The access group is the operator's to create, by decision.** 403 deliberately removed
-directory-content management from the Authentik role, so the platform hardcodes
-`wiring_auth_group: homelab-users` in all twelve app playbooks and never creates it. W3 turned
-that gap from a console message into a hard failure, so on a fresh lab **every** app deploy now
-fails until one group is created by hand in the Authentik UI. Whether the platform should
-create the empty group it depends on — distinct from managing who is in it — is an open
-product question, not a defect. Do not silently reopen the 403 boundary to answer it.
+**The access group is the platform's to create — answered 2026-08-11, `a19105a`.** 403
+deliberately removed *directory-content* management from the Authentik role, and that
+boundary stands: account names, membership, social login sources and MFA doctrine belong to
+the operator. The access group is not content, it is the platform's own ACL primitive, and
+the platform that hardcodes `wiring_auth_group: homelab-users` in all twelve app playbooks
+has to be the one that creates it. `wiring/authentik.yml` now creates it when absent —
+empty, `is_superuser: false`, 400 accepted alongside 201 so concurrent deploys race
+harmlessly — and degrades only when the group can neither be found nor created. Membership
+stays untouched. Without this, W3 meant every app deploy on a fresh lab failed until an
+operator made one group by hand in the UI (execution 77).
 
 | # | Work | Status |
 |---|---|---|
