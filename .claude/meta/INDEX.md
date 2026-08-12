@@ -68,6 +68,41 @@ entries fail naming both.
 top unchecked row to pick up; the next session needs work put here first, and the two
 sections below ("Observe if it happens", slice `Remaining` boxes) are still not it.
 
+### W1–W7 ran live, 2026-08-11 — executions 75–78
+
+Recorded here because "done" and "never run live" were both true of this table at once,
+and nothing on the page dated either. **A claim of live proof is only about the commit it
+was measured at.** Every row above was gate-green and unexecuted until execution 78.
+
+Four of the five W commits were also **unpushed**, and the runner tracks `origin/master`,
+so the lab could not have run them. It was still on `39ef809` (2026-08-09). A future
+session's first question is `git log origin/master..master`, not the gates.
+
+| Execution | Result | What it proved |
+|---|---|---|
+| 75 | failed | qBittorrent's own storage assert. The shipped `download_path` was `/mnt/downloads`, the lab mounts `/mnt/data/media`, so a literal default could never satisfy the role's rule — the app was undeployable on the first click. Fixed by deriving it from the declared mount. |
+| 76 | failed | The app deployed, then the WebUI login assert failed on a login that had **succeeded**. qBittorrent 5.2.3 answers an accepted login with 204 and no body; `login.yml` compared the body with the 4.x `"Ok."`. Fixed. |
+| 77 | failed | **The degradation ledger fired for the first time, live, and caught exactly what W3 was written about**: `qbittorrent` published through Authentik with no group policy binding, because `homelab-users` did not exist. Pre-W3 this run exits 0. |
+| 78 | **succeeded** | Green after the group was created, and idempotent on the re-run (`changed=1` / `changed=0`). |
+
+**So the ledger is proven, and it earned its keep on its first live run.** W1–W5 collected one
+degradation, named the component and the reason, completed all other work, and then refused
+to report success.
+
+**Nine published apps have no access group binding**, measured against the platform's
+Authentik 2026-08-11: `lidarr`, `ntfy`, `observability`, `pbs`, `prowlarr`, `radarr`,
+`sonarr`, `uptime-kuma`, `vaultwarden`. Each is reachable by every Authentik user, and each
+deploy exited 0 because it predates W3. `qbittorrent` is the only one bound. Re-running each
+Deploy job binds it — that is the remediation, and it is nine runs, not a code change.
+
+**The access group is the operator's to create, by decision.** 403 deliberately removed
+directory-content management from the Authentik role, so the platform hardcodes
+`wiring_auth_group: homelab-users` in all twelve app playbooks and never creates it. W3 turned
+that gap from a console message into a hard failure, so on a fresh lab **every** app deploy now
+fails until one group is created by hand in the Authentik UI. Whether the platform should
+create the empty group it depends on — distinct from managing who is in it — is an open
+product question, not a defect. Do not silently reopen the 403 boundary to answer it.
+
 | # | Work | Status |
 |---|---|---|
 | **W1** | **The degradation ledger.** `tasks/report-degradation.yml` appends `{component, reason, fatal}` to `homelabinfra_degradations`; `tasks/assert-no-degradations.yml` fails with the collected list. Collect, then fail — never abort at the first problem. | done |
@@ -161,14 +196,21 @@ of these, that row is stale.
   `/etc/subuid`/`/etc/subgid` and mapped into the unprivileged stack host. Verified on
   168000100.
 - **Readarr is gone**, by decision 2026-08-09 — retired upstream, and its last build serves
-  an unauthenticated UI. **Twelve per-app Deploy jobs** now: the eleven that remained have
-  all run green, and W7's `Deploy qBittorrent` has not run at all.
+  an unauthenticated UI. **Twelve per-app Deploy jobs** now, all twelve having run green —
+  but the eleven ran green *before* W1–W7, on code that could exit 0 without wiring, so that
+  is not a claim about the current failure semantics. Only `Deploy qBittorrent` has run
+  against them (execution 78).
+- **A new job definition is not live until `Reimport Jobs` runs.** Rundeck stores its own
+  copy, so `Deploy qBittorrent` was absent from the runner until execution 74 imported it,
+  even with the checkout up to date.
 - **The media stack can download, and still cannot play.** W7 shipped qBittorrent, so the
   torrent half of the download path exists in code and is wired by the existing
   `arr-download-client.yml`. Two gaps remain, neither of them started: no usenet client
   (SABnzbd — the `sabnzbd` kind is already in `media-wiring.yml`, so it is a role plus a
-  playbook, the same shape as qBittorrent), and no media server. **Never deployed to the
-  lab**: qBittorrent is gate-green and unexecuted, like every app on the day it landed.
+  playbook, the same shape as qBittorrent), and no media server. **qBittorrent is deployed**
+  — execution 78, 2026-08-11, green and idempotent, on `media_stack` with an Authentik group
+  binding. Two defects were found and fixed getting there; see the executions table above.
+  It has **not** yet been registered in the *arr apps: that needs one `Wire Media Stack` run.
 - **500's one staged import is `apps/nginx.yml`**, which does not exist — 301 shipped the
   wiring pair only.
 - **010/012's bootstrap script is the proven path.** It has run from a full wipe to exit 0
