@@ -204,18 +204,27 @@ of these, that row is stale.
   `/etc/subuid`/`/etc/subgid` and mapped into the unprivileged stack host. Verified on
   168000100.
 - **Readarr is gone**, by decision 2026-08-09 — retired upstream, and its last build serves
-  an unauthenticated UI. **Twelve per-app Deploy jobs** now, all twelve having run green —
+  an unauthenticated UI. **Thirteen per-app Deploy jobs** now (Jellyfin, 2026-08-12), all
+  having run green —
   but the eleven ran green *before* W1–W7, on code that could exit 0 without wiring, so that
   is not a claim about the current failure semantics. Only `Deploy qBittorrent` has run
   against them (execution 78).
 - **A new job definition is not live until `Reimport Jobs` runs.** Rundeck stores its own
   copy, so `Deploy qBittorrent` was absent from the runner until execution 74 imported it,
   even with the checkout up to date.
-- **The media stack can download, and still cannot play.** W7 shipped qBittorrent, so the
-  torrent half of the download path exists in code and is wired by the existing
-  `arr-download-client.yml`. Two gaps remain, neither of them started: no usenet client
-  (SABnzbd — the `sabnzbd` kind is already in `media-wiring.yml`, so it is a role plus a
-  playbook, the same shape as qBittorrent), and no media server. **qBittorrent is deployed**
+- **The media stack can download and play, as of 2026-08-12.** W7 shipped qBittorrent;
+  **Jellyfin** shipped the same day and closed the other half — `roles/jellyfin`,
+  `playbooks/apps/jellyfin.yml`, both runner surfaces, **thirteen** per-app Deploy jobs.
+  Execution 102 was green on its first live run: Jellyfin 10.11.11 on `media_stack`, its
+  first-run wizard completed over `/Startup/*` by the deploy, `Movies`/`TV`/`Music` created
+  against the same subpaths radarr/sonarr/lidarr write into, admin account in Vaultwarden,
+  and an Authentik `homelab-users` binding. Verified in the app and in Authentik, not from
+  the exit code. **It deliberately writes no media registry entry** — the registry is how
+  `wire-media-stack.yml` finds indexers, clients and *arr apps, W3 made an unplaceable entry
+  fatal, and Jellyfin is none of those.
+  One gap is left and is not started: **no usenet client** (SABnzbd — the `sabnzbd` kind is
+  already in `media-wiring.yml`, so it is a role plus a playbook, the same shape as
+  qBittorrent). **qBittorrent is deployed**
   — execution 78, 2026-08-11, green and idempotent, on `media_stack` with an Authentik group
   binding. Two defects were found and fixed getting there; see the executions table above.
   **It is registered in the *arr apps** — `Wire Media Stack` execution 90, 2026-08-12,
