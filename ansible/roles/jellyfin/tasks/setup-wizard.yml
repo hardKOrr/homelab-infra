@@ -1,0 +1,95 @@
+---
+# Jellyfin's first-run wizard, completed over its own API.
+#
+# WHY THIS EXISTS. A fresh Jellyfin container answers /System/Info/Public with
+# StartupWizardCompleted: false and refuses everything else until a human walks
+# through four setup screens in a browser. That is a deploy that reports success
+# and hands the operator a form — precisely the failure LESSONS.md records
+# against Uptime Kuma, which sat on its "choose a database" screen for five days
+# while four green bootstrap runs passed over it.
+#
+# The /Startup/* endpoints are unauthenticated, and they are only reachable while
+# the wizard is incomplete: once /Startup/Complete is posted they stop answering,
+# which is what makes running this once safe. main.yml calls this file only when
+# the server reports the wizard unfinished, so a re-run never re-enters it.
+#
+# The calls run from the stack host against localhost, so nothing on the LAN is
+# ever in a position to answer them first.
+
+- name: First run | Set the server's language and metadata region
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/Startup/Configuration"
+    method: POST
+    body_format: json
+    body:
+      UICulture: "{{ app_config.app.ui_culture | default('en-US') }}"
+      MetadataCountryCode: "{{ app_config.app.metadata_country | default('US') }}"
+      PreferredMetadataLanguage: "{{ app_config.app.metadata_language | default('en') }}"
+    status_code: [200, 204]
+
+# Jellyfin requires this to be read before the account is posted — the wizard's
+# own client does the same, and the call is what moves the server to the user
+# step. It returns the empty account form, which is of no interest.
+- name: First run | Open the account step
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/Startup/User"
+    status_code: 200
+  changed_when: false
+
+# The one account this platform creates. Jellyfin makes the first account an
+# administrator; there is no way to ask for that explicitly, and no second
+# account is created — the operator adds their household's users themselves,
+# the same boundary 403 draws around Authentik's directory content.
+- name: First run | Create the platform's admin account
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/Startup/User"
+    method: POST
+    body_format: json
+    body:
+      Name: "{{ _jf_user }}"
+      Password: "{{ _jf_password }}"
+    status_code: [200, 204]
+  no_log: true
+
+# Remote access on, UPnP port mapping off. The reverse proxy is how this lab
+# publishes anything, and a media server that opens its own hole in the router
+# is the one app most likely to do it: this platform decides exposure in
+# routing.access, and nothing else gets a vote.
+- name: First run | Allow remote access without touching the router
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/Startup/RemoteAccess"
+    method: POST
+    body_format: json
+    body:
+      EnableRemoteAccess: true
+      EnableAutomaticPortMapping: false
+    status_code: [200, 204]
+
+- name: First run | Finish the wizard
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/Startup/Complete"
+    method: POST
+    status_code: [200, 204]
+
+# Read back, because every call above returns an empty body: the only proof the
+# wizard actually closed is the server saying so on the endpoint that reported it
+# open in the first place.
+- name: First run | Confirm the wizard is closed
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/System/Info/Public"
+    return_content: true
+    status_code: 200
+  register: _jf_public_after
+  until: (_jf_public_after.json.StartupWizardCompleted | default(false)) | bool
+  retries: 6
+  delay: 5
+  changed_when: true
+
+- name: First run | Assert the server is out of setup
+  ansible.builtin.assert:
+    that: (_jf_public_after.json.StartupWizardCompleted | default(false)) | bool
+    fail_msg: >-
+      {{ instance }} still reports StartupWizardCompleted: false after the deploy
+      completed every step of its setup wizard. The server is running and unusable
+      — anyone reaching it gets the setup screen, and the account this deploy
+      created does not exist. Check `docker logs {{ instance }}`.

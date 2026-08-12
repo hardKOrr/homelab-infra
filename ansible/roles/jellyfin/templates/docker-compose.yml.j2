@@ -1,0 +1,51 @@
+# docker-compose.yml for Jellyfin ({{ instance }})
+# Managed by homelab-infra — changes made here are overwritten on the next deploy.
+# To make permanent changes, edit config/apps/{{ instance }}.yml.
+#
+# Jellyfin keeps its settings in its own database under /config, written through
+# the API. Almost nothing is configurable by environment variable, so unlike the
+# *arr apps there is no <APP>__ block here — the first-run wizard in the role is
+# what configures this app.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1000) }}
+      - PGID={{ app_config.app.pgid | default(1000) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+{% if _jf_published_url | length > 0 %}
+      # What Jellyfin hands its clients as its own address. Without it the server
+      # advertises the stack host's LAN address, so a client that first reached it
+      # through the reverse proxy is told to go somewhere it may not be able to.
+      - JELLYFIN_PublishedServerUrl={{ _jf_published_url }}
+{% endif %}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+      - "{{ app_config.app.cache_path }}:/cache"
+{% for mount in _jf_mounts %}
+      # Same path inside as outside, matching the *arr apps and the download
+      # client. Jellyfin stores library locations as absolute paths, so a path
+      # that differs between containers means the *arr writes a file to a
+      # location the server has no name for.
+      - "{{ mount.path }}:{{ mount.path }}"
+{% endfor %}
+    ports:
+      # container_port is the HTTP port inside the image; app.port is what the
+      # stack host publishes. They differ whenever two apps on one stack would
+      # otherwise collide.
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
+{% if (app_config.app.devices | default([])) | length > 0 %}
+    devices:
+{% for device in app_config.app.devices %}
+      # Hardware transcoding. Docker refuses to start the container if this does
+      # not exist on the host, which is why the default is an empty list.
+      - "{{ device }}:{{ device }}"
+{% endfor %}
+{% endif %}

@@ -1,0 +1,19 @@
+---
+# Role-internal defaults for the jellyfin role. Everything a user would tune
+# lives in vars/app-defaults/jellyfin.yml instead — these are paths and timings
+# the role needs and nobody overrides.
+
+jellyfin_project_dir: "/opt/{{ instance }}"
+
+# How long to wait for Jellyfin to answer after the container starts. A first run
+# builds its databases before it opens the port, which is slower than any other
+# app on the media stack — 30 × 5 s is deliberately generous.
+jellyfin_http_retries: 30
+jellyfin_http_delay: 5
+
+# What the platform calls itself when it authenticates to Jellyfin. Jellyfin
+# records the client, device and device id against every session and shows them
+# in Dashboard → Devices, so these are what an operator sees when they wonder
+# who logged in; they are not decoration.
+jellyfin_client_name: homelab-infra
+jellyfin_device_name: deploy

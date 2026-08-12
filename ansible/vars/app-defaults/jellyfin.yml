@@ -1,0 +1,76 @@
+---
+# Default stack and app configuration for Jellyfin — the media stack's media
+# server, and the half of the stack that plays what the rest of it collects.
+# Users override specific values in config/apps/jellyfin.yml.
+# This file is git-managed — git pull may update these defaults.
+
+jellyfin_defaults:
+  stack: media_stack
+
+  app:
+    # NO media_kind, deliberately. That key enrols an app in the media registry,
+    # and wire-media-stack.yml fails on a registry entry whose kind it cannot
+    # place (W3, 2026-08-10). Jellyfin is neither an indexer, a download client
+    # nor an *arr: nothing in vars/media-wiring.yml wires it, so it stays out of
+    # the registry rather than joining it as an entry that breaks the wiring run.
+    image: "lscr.io/linuxserver/jellyfin:latest"
+    port: 8096
+    container_port: 8096
+
+    config_path: "/opt/{{ instance }}/config"
+    # Jellyfin's transcode scratch and image cache. Separate from config because
+    # it is large, disposable, and nothing here is worth backing up.
+    cache_path: "/opt/{{ instance }}/cache"
+
+    # The admin account the deploy creates through Jellyfin's first-run wizard.
+    # Its password is not here and is never authored: the role generates one,
+    # proves Jellyfin accepts it, and stores it in Vaultwarden under
+    # homelab-infra/media/<instance>.
+    admin_user: admin
+
+    # The libraries created on first setup. `subpath` hangs off media_storage.library
+    # in config/infrastructure.yml, exactly as the *arr apps' library_subpath does —
+    # these three are the same three paths radarr, sonarr and lidarr write into, so
+    # the server points at the library the rest of the stack is filling rather than
+    # at somewhere the operator has to go and set by hand.
+    #
+    # collection_type is Jellyfin's own vocabulary and decides which metadata
+    # providers run: movies, tvshows, music, books, homevideos, musicvideos,
+    # boxsets, mixed.
+    libraries:
+      - name: Movies
+        collection_type: movies
+        subpath: movies
+      - name: TV
+        collection_type: tvshows
+        subpath: tv
+      - name: Music
+        collection_type: music
+        subpath: music
+
+    # Host devices passed to the container for hardware transcoding — normally
+    # ["/dev/dri"] for Intel QuickSync or AMD VAAPI. Empty by default and it has
+    # to be: the device is absent on plenty of hosts, and Docker refuses to start
+    # a container whose declared device does not exist, so a non-empty default
+    # would break the deploy on every lab without a GPU. Passing the device is
+    # also only half the job — the codecs still have to be enabled in Jellyfin's
+    # playback settings, which is the operator's call, not the platform's.
+    devices: []
+
+    # Matches media_storage.owner in infrastructure.yml, and must: this is the id
+    # Jellyfin reads the library as. It only ever reads, but an unprivileged stack
+    # host still shows it nobody:nogroup and refuses the read without the mapping.
+    puid: 1313
+    pgid: 1313
+
+  routing:
+    proxy: internal
+    access: internal
+    # catalog, NOT forward_auth — the same call qBittorrent makes and for a
+    # stronger reason. Jellyfin's clients are televisions, phones and Chromecasts
+    # that speak its API with a token and cannot complete an interactive Authentik
+    # sign-in; forward_auth in front of it locks out every device in the house
+    # while the browser UI keeps working, which is the worst kind of half-broken.
+    # catalog publishes it in the Authentik catalog and leaves Jellyfin to
+    # authenticate its own callers.
+    identity: catalog

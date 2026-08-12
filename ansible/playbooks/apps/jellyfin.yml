@@ -1,0 +1,236 @@
+---
+# Deploy Jellyfin — the media stack's media server. Docker on LXC (PATH A) on the
+# media_stack host.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/jellyfin.yml -e instance=jellyfin
+#   ansible-playbook -i inventory/ playbooks/apps/jellyfin.yml -e instance=jellyfin-4k
+#
+# The `instance` parameter is the unique name for this deployment. It becomes the
+# hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
+# the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+#
+# NO MEDIA REGISTRY ENTRY, unlike every other app on this stack. The registry
+# exists so wire-media-stack.yml can find indexers, download clients and *arr
+# apps, and it fails on an entry whose kind it cannot place (W3). Jellyfin is
+# none of those: the *arr apps do not talk to it and it does not talk to them —
+# they share a library path, and that is the whole of the coupling. It is wired
+# to the platform (proxy, SSO, monitoring, DNS) like any other app and to the
+# media stack not at all.
+#
+# The deploy shape is the *arr apps' — see playbooks/apps/lidarr.yml. The role is
+# its own, because Jellyfin is configured through its API rather than a file, and
+# because its first run is a setup wizard this deploy has to complete. See
+# roles/jellyfin/tasks/setup-wizard.yml.
+
+# ── Play 1: Provision ──────────────────────────────────────────────────────────
+# Runs on localhost against the Proxmox API to find or create the stack host.
+# Adds the target host to a group for Play 2 to use.
+- name: "Jellyfin | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=jellyfin"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/jellyfin.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.jellyfin_defaults
+             | combine({'media_storage':
+                        homelabinfra_config.infrastructure.media_storage | default({})},
+                       recursive=True)
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+
+  tasks:
+    # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
+    # The stack host is found (or created) by tag. The app is deployed in Play 2.
+    - name: Find or create stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        # Per-instance group: add_host groups persist for the whole run, and
+        # bootstrap.yml chains app playbooks via import_playbook.
+        deploy_group: "deploy_{{ instance }}"
+
+    # ── Storage the lab already provides ──────────────────────────────────────
+    # A media server gets ALL of media_storage, for the same reason the download
+    # client does and a single *arr does not: it serves the whole library, not one
+    # subpath of it, and a library it cannot see is a library that does not exist.
+    - name: Resolve the storage this app needs on the stack host
+      ansible.builtin.set_fact:
+        _jf_host_mounts: >-
+          {{ app_config.app.mounts
+             | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+    - name: Attach the lab's storage to the stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_list: "{{ _jf_host_mounts }}"
+        # Who this storage belongs to on both sides of the guest boundary. An
+        # unprivileged stack host cannot read a library owned by an id outside its
+        # own range, so this is what makes the mount usable rather than merely
+        # present.
+        attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+      when: _jf_host_mounts | length > 0
+
+
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the stack host to install and configure Jellyfin.
+- name: "Jellyfin | Deploy"
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    # Unconditional: its Ntfy notify hook depends on homelabinfra_infra.notifications,
+    # which does not exist yet when the first baseline guests are created. Running it
+    # every deploy is what gives them the hook once Ntfy is up.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    # Unconditional, and deliberately not gated on homelabinfra_stack_host_created:
+    # that fact means "I created this host in THIS run", which is not the same
+    # question as "does this host have Docker".
+    - name: Ensure Docker is installed on the stack host
+      ansible.builtin.include_role:
+        name: docker
+
+    # ── App Deployment ─────────────────────────────────────────────────────────
+    - name: Deploy Jellyfin
+      ansible.builtin.include_role:
+        name: jellyfin
+
+
+# ── Play 3: Wire ───────────────────────────────────────────────────────────────
+# Registers the app with platform services. Runs on localhost (API calls). All
+# wiring tasks are idempotent.
+- name: "Jellyfin | Wire"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout /
+    # pre-bootstrap run there is no facts.yml, homelabinfra_infra stays undefined,
+    # and every provider when-condition below falls through to a silent no-op.
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _jf_deploy_host.app_config.routing.estate | default('') }}"
+
+  vars:
+    _jf_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Do not rename them.
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _jf_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _jf_deploy_host.app_config.app.port }}"
+    wiring_subdomain: "{{ _jf_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Jellyfin ({{ instance }})"
+    # Jellyfin publishes a real unauthenticated health endpoint — it answers
+    # "Healthy" as plain text — so unlike qBittorrent there is no need to monitor
+    # a login page and call it liveness.
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/health"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+    # catalog by default: Jellyfin's clients are televisions and phones that
+    # cannot complete an interactive sign-in. See vars/app-defaults/jellyfin.yml.
+    wiring_identity_mode: "{{ _jf_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _jf_deploy_host.app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the
+    # UI shows what each host actually runs.
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+    # Last task in the play, deliberately. Wiring records what it could not do rather than
+    # aborting, so a failure in one provider does not strand the others; this is what stops
+    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

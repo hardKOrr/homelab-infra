@@ -1,0 +1,60 @@
+---
+# Jellyfin instance config.
+# Copy to config/apps/jellyfin.yml (or jellyfin-4k.yml, etc.).
+# The filename you choose IS the instance name: it becomes the hostname,
+# Caddy subdomain (jellyfin.yourdomain.com), and Authentik app name.
+#
+# Only set values that differ from the defaults in vars/app-defaults/jellyfin.yml.
+# This file persists after removal — it is your restore point.
+
+# ── Stack assignment (Docker app) ──────────────────────────────────────────────
+stack: media_stack     # which Docker stack host this app runs on
+
+# ── App config ─────────────────────────────────────────────────────────────────
+# app:
+#   # The libraries created on the first deploy. Each subpath hangs off
+#   # media_storage.library in config/infrastructure.yml, and the three defaults
+#   # are the same paths radarr, sonarr and lidarr write into — so out of the box
+#   # this server points at the library the rest of the stack is filling.
+#   #
+#   # Setting this list REPLACES the defaults. Libraries added here on a later
+#   # deploy are created; libraries removed here are NOT deleted, because this
+#   # platform does not delete a library it may not have created.
+#   libraries:
+#     - name: Movies
+#       collection_type: movies       # movies | tvshows | music | books |
+#       subpath: movies               # homevideos | musicvideos | boxsets | mixed
+#     - name: TV
+#       collection_type: tvshows
+#       subpath: tv
+#
+#   # Hardware transcoding. Pass the render device through, then enable the codecs
+#   # in Jellyfin's playback settings — the platform passes the device and makes no
+#   # decision about which codecs your GPU should be trusted with.
+#   # Docker refuses to start the container if a device listed here is not present
+#   # on the stack host.
+#   devices: ["/dev/dri"]
+#
+#   # port: 8096                 # the HTTP port the stack host publishes. Change
+#   #                            # it when another app on this stack already has it.
+#   # admin_user: admin          # the admin account the first deploy creates. Its
+#   #                            # password is generated and stored in Vaultwarden
+#   #                            # under homelab-infra/media/<instance> — never
+#   #                            # set here. Add your household's own accounts in
+#   #                            # Jellyfin; the platform creates only this one.
+#   # metadata_country: US       # first-run wizard answers. They set the metadata
+#   # metadata_language: en      # region and the UI language, and are only read on
+#   # ui_culture: en-US          # a first deploy — change them in the UI after that.
+
+# ── Routing ────────────────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal            # internal | external (WHICH reverse proxy handles this app)
+#   access: internal           # internal | public (WHO may reach it — public means the
+#                              # internet on a WAN-facing proxy)
+#   identity: catalog          # none | catalog | oidc | forward_auth.
+#                              # catalog is the default and the right one. Do NOT set
+#                              # forward_auth: Jellyfin's clients are televisions,
+#                              # phones and Chromecasts that authenticate with a token
+#                              # and cannot complete an interactive Authentik sign-in.
+#                              # Putting one in front locks out every device in the
+#                              # house while the browser UI keeps working.

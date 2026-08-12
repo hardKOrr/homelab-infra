@@ -1,0 +1,36 @@
+# Deploy Jellyfin — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/deploy-jellyfin.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: d4ef9a86-ba44-4fa3-99b0-468b3e541f32
+  uuid: d4ef9a86-ba44-4fa3-99b0-468b3e541f32
+  name: Deploy Jellyfin
+  group: Apps
+  description: |-
+    Deploy or update Jellyfin — the media stack's media server (Docker on
+    media_stack). Completes Jellyfin's first-run wizard, creates the admin
+    account in Vaultwarden and adds a library for each path the *arr apps
+    write into. Nothing to wire afterwards.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/jellyfin.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          ARGS+=(-e "instance=jellyfin")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/jellyfin.yml "${ARGS[@]}"
