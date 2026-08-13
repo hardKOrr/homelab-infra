@@ -3,7 +3,8 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**20 live · 26 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**18 live · 28 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+304 and 502 closed 2026-08-12, both by running things.
 
 ## Start here
 
@@ -80,18 +81,42 @@ nobody went back to tick: 504 lost three boxes and 505 lost five on inspection a
 touched. Tick the box in the same session as the run, or a later session re-runs the job
 (which is exactly what the access-group remediation cost, twice).
 
-### What is actually closable, ranked by cost
+### That list was worked the same day — executions 103–121
+
+Every row above the browser line was run. **Six defects, five of them in code that both
+gates had passed and that had never been executed once.**
+
+| Job | Defect | Where |
+|---|---|---|
+| Tail App Log, Restart App | No connection user — the Proxmox inventory sets none, so both connected as `rundeck@` and every guest was UNREACHABLE | `2694ce7` |
+| Rollback Container | Health probe gated on `_rb_instance_config.app.port`, but ports live in `vars/app-defaults/` — so the probe, and **W4's fatal gate behind it**, had never once fired | `2694ce7` |
+| Migrate Servarr | `${option.x}` inside a bash script step — died on line 4 | `2694ce7` |
+| Deploy `<arr>` | **A new API key on every deploy.** Continuity read `config.xml`, where a platform-supplied key never appears; three consecutive Prowlarr deploys, three different keys. Every Prowlarr Application and registry entry holding the old one goes stale | `726f947` |
+| Wire Media Stack | **Jellyfin broke it permanently the morning it shipped** — its vault credential item lands in the media registry via `load-user-vars.yml:56` and W3 makes an unplaceable entry fatal | `c3a1cca` |
+| Wire Media Stack | The fix's first version referenced a fact from inside the same `set_fact`; gates green, execution 121 red | `c3a1cca` |
+
+**The gates cannot see any of this.** Lint and syntax-check passed every one of these files
+on every commit. The only instrument that found them was execution. Treat "never run" as
+"presumed broken", not as "built".
+
+### What is left, ranked by cost
 
 | Click | Closes | Cost |
 |---|---|---|
-| `Deploy Prowlarr` against the running stack, expecting `changed=0` | **505's last box but one** | one job, minutes |
-| `Migrate Servarr` against the operator's old Radarrs | **504 and 505 both** — 504's adoption criterion can only come from a record this platform did not create, and that is the same run | one job, large data |
-| Four `Rundeck` jobs never executed — Restart App, Tail App Log, Rollback Container, Check Native Updates | **601**, and Rollback Container also gives **502** its one real rollback | four jobs |
 | One browser session — Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in | **302, 306, 400, 403, 405** — five slices on one sitting | a human at a browser |
+| The Rundeck **Config group** — the last never-run job group | **601** outright | two jobs |
+| A migration that completes | **504's adoption PUT** — the last box on it | blocked, see below |
 
-That is nine of the twenty live slices reachable without writing code. Everything below that
-line (008/009/015/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap; 304
-needs OPNsense credentials) is genuinely blocked on something the lab does not have yet.
+**The migration is deliberately not wanted yet** (operator, 2026-08-12). The platform's media
+stack mounts `/friends-pool/homelab-media` — empty, 114 G — while the old *arrs use
+`/mnt/media`, 40 T. That is intentional: the platform's library is separate, one open slice
+is a full teardown and rebuild, and the old apps exist as migration *test material*, not as a
+cutover target. Execution 120 stopped exactly there, which is the path guard working. Do not
+"fix" the storage mismatch.
+
+008/009/015/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap. Those are
+the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
+OPNsense credentials had been in the repo's gitignored `.env` for days.
 
 ### W1–W7 ran live, 2026-08-11 — executions 75–78
 
@@ -179,7 +204,6 @@ if the situation arises on its own.
 | Interrupting bootstrap before cutover is resumable | 014 | fault injection; attempted and refused twice, 2026-08-06 |
 | Internal-CA mode; the no-API-provider handoff | 015 | the lab has a real domain on an API provider, so neither path runs here |
 | PBS token rotation | — | needs the token deleted PBS-side to force the create path |
-| OPNsense host overrides | 304 | blocked on OPNsense API credentials |
 
 ## Live slices, and what each is actually waiting on
 
@@ -188,15 +212,13 @@ the work queue above.
 
 | Slice | Waiting on |
 |---|---|
-| 504 wire-media-stack | **one box left** — an adoption against a foreign record, i.e. `Migrate Servarr` |
-| 505 app-servarr | **two boxes left** — a `changed=0` re-deploy, and the same migration run |
-| 502 rollback-container | one real rollback — its criteria test *this repo's* Compose-rewrite logic, so unlike 201 it is worth running |
-| 601 rundeck-jobs | four job definitions never executed: Restart App, Tail App Log, Rollback Container, Check Native Updates |
+| 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
+| 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
+| 601 rundeck-jobs | the Config group, the last never-run jobs |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
 | 302, 306, 400, 403, 405 | one browser session: Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in. 302's catalog-shape idempotency is already proven by the 2026-08-12 binding query; only `oidc` and `forward_auth` remain |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
-| 011, 300, 504, 505 | nothing; observation only |
-| 304 | OPNsense API credentials |
+| 011, 300 | nothing; observation only |
 
 ## By subject
 
@@ -208,10 +230,10 @@ Slices are cut on the code axis, so one subject spans several.
 | Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
 | Authentik / identity | app **403**, wiring **302**, forward_auth **306**, modes **009** |
 | Config model | provenance **010**, onboarding **012**, estates **008** |
-| Networking | IP allocation **011**, OPNsense **304** |
+| Networking | IP allocation **011**, OPNsense **304** (closed) |
 | Media | apps **505**, wiring **504** |
 | Runners / UI | Rundeck **601** |
-| Day-2 ops | rollback **502** |
+| Day-2 ops | rollback **502** (closed) |
 
 ## Standing facts
 

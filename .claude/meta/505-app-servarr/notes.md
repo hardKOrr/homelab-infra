@@ -284,3 +284,41 @@ dropped the same day it was written.
 
 Two remain: a `changed=0` re-deploy (one click, `Deploy Prowlarr`), and the migration —
 which is the same run 504 needs for its adoption criterion.
+
+## The migration was attempted, 2026-08-12 — and its guard is what stopped it
+
+Executions 107, 113, 120. Target: `sonarr` from the operator's `css-sonarr-anime-1`
+(LXC 1012, 192.168.1.12, 61 MB config). Two defects and one correct refusal.
+
+- **107** — the Rundeck job died on line 4: `${option.instance}` in a script step. Fixed in
+  `rundeck/jobs/migrate-servarr.yaml`; live after `Reimport Jobs` (108).
+- **113** — `root@192.168.1.12: Permission denied`. A hand-built guest carries no platform
+  key, so **SSH access to the source is a prerequisite of migrating a foreign app** and
+  nothing says so. The runner's public half (`/var/lib/rundeck/.ssh/homelab-infra.pub`; the
+  private half is in Rundeck Key Storage, not on disk) was added to root's authorized_keys
+  on 1012 and 1014, with the operator's approval.
+- **120** — copied the source config, stopped and restarted the source cleanly, then
+  **refused**: the migrated database expects its library at `/mnt/data/media/tv/anime`,
+  which does not exist on the stack host. That is the guard doing exactly its job, and it
+  named the fix.
+
+### Why it cannot exist, and why that is not a bug
+
+| | Host path | Backing | In-container |
+|---|---|---|---|
+| `css-sonarr-anime-1` (LXC 1012) | `/mnt/media` | `disk-pool/media`, 54 T, **40 T used** | `/mnt/data/media` |
+| `media_stack` (168000100) | `/friends-pool/homelab-media` | 114 G, **192 K used** | `/mnt/data/media` |
+
+Same path inside the container, different storage. **This is deliberate** — confirmed by the
+operator 2026-08-12: the platform's media stack is a separate, empty library, and one of the
+open slices is a full teardown and rebuild. The old *arrs exist as migration test material,
+not as a cutover target. So a real migration is not wanted yet, and the platform pointing at
+`friends-pool` is correct, not a misconfiguration.
+
+**What this run therefore proves:** the job runs, the source is stopped and restarted safely,
+the copy lands, and the path guard fires before an operator gets a library reporting every
+item missing. What it does not prove is the adoption PUT — 504's last box — which still needs
+a migration that completes.
+
+The platform's `sonarr` config was restored from `/opt/.pre-migrate-backups/` (taken before
+the run), the container restarted, and it answers HTTP 200 on its original database.

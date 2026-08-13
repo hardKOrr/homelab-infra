@@ -86,6 +86,13 @@
       {{ _mw_usable | dict2items | rejectattr('key', 'in', _mw_needs_key.keys() | list)
          | items2dict }}
     media_registry_needs_key: "{{ _mw_needs_key }}"
+    media_registry_skipped: >-
+      {{ _mw_merged | dict2items
+         | rejectattr('key', 'in', _mw_usable.keys() | list)
+         | rejectattr('key', 'in', _mw_credential_only)
+         | map(attribute='key') | list }}
+    media_registry_credential_only: "{{ _mw_credential_only }}"
+  vars:
     # An entry that declares NEITHER `app` NOR `host` is not a half-declared app —
     # it is a credential record sharing this namespace. `homelab-infra/media/<instance>`
     # is where every media app stores its secret, and load-user-vars.yml merges the
@@ -94,18 +101,15 @@
     # unplaceable entry fatal and it should stay fatal — but only for something that
     # actually claims to be an app. Measured 2026-08-12: Jellyfin failed every Wire
     # Media Stack run (executions 118, 119) for owning a password.
+    #
+    # This lives in vars:, not among the facts above — one set_fact cannot reference
+    # a fact it is setting in the same task, which is how execution 121 died with
+    # "'_mw_credential_only' is undefined" on code both gates had passed.
     _mw_credential_only: >-
       {{ _mw_merged | dict2items
          | rejectattr('value.app', 'defined')
          | rejectattr('value.host', 'defined')
          | map(attribute='key') | list }}
-    media_registry_skipped: >-
-      {{ _mw_merged | dict2items
-         | rejectattr('key', 'in', _mw_usable.keys() | list)
-         | rejectattr('key', 'in', _mw_credential_only)
-         | map(attribute='key') | list }}
-    media_registry_credential_only: "{{ _mw_credential_only }}"
-  vars:
     # Usable = a known kind with a resolvable endpoint. Anything else is reported
     # by name and dropped; a half-declared app must not fail the whole wire run.
     _mw_usable: >-

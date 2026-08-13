@@ -14,6 +14,32 @@ artifact deleted by one step that the next still expected; and a bind-mounted co
 whose inode the container kept after Ansible replaced it. Suspect it first on any "already
 exists", "missing file", or "my change had no effect" symptom.
 
+**A job that has never run is presumed broken.** Not a figure of speech — a measurement.
+The four day-2 Rundeck jobs were executed for the first time on 2026-08-12 and **three of
+the four failed on their first line of real work**: two had no connection user and could
+not reach a single guest, one used `${option.x}` inside a bash script step and died at
+`bad substitution`. All three had been gate-green for weeks. The same day, a fourth job's
+health probe was found to have never once executed, taking a fatal safety gate with it.
+Sampling three from four is not bad luck; it is what shipping-without-executing looks like.
+When a slice says "built" and no execution is on record, the honest status is "unverified".
+
+**An assertion gated on an optional value is not an assertion.** `rollback-container.yml`
+probed the app port only `when: _rb_port | length > 0`, and `_rb_port` came from the
+instance config file — where ports are never declared, because they live in
+`vars/app-defaults/`. So the probe, and W4's fatal gate behind it, silently skipped on every
+app for the whole of their existence. Two rules follow: resolve such a value from every
+source that can supply it, and when it still cannot be resolved, SAY SO in the log instead
+of skipping quietly. A skipped check and a passed check look identical in a green run.
+
+**One namespace, two meanings, is a defect waiting for its second user.**
+`homelab-infra/media/<instance>` is where every media app stores its secret, and
+`load-user-vars.yml` merges the whole vault contract into `homelabinfra_infra`, which is
+also the media wiring registry. Every app was both a credential holder and a wirable app, so
+the overload was invisible — until Jellyfin, which has a password but is not an indexer, a
+download client or an *arr. It broke every `Wire Media Stack` run from the morning it
+shipped. Neither file was wrong alone. Before adding a key to a shared namespace, ask what
+reads the whole namespace.
+
 **Green is not working.** The gates are lint and syntax; they say nothing about whether the
 platform runs. The first from-scratch runner bootstrap hit fifteen blockers with both gates
 green, eleven of them in the seam between the repo and the machine that runs it. Uptime

@@ -86,3 +86,22 @@ authenticates rather than returning an empty set — `ansible-inventory --list` 
 Acceptance items 1, 2 and 4 are met. **Item 3 is one job of fifteen** — Lab Status is
 the only one that has run, and it is the only read-only one. The fourteen that mutate
 the lab remain unobserved.
+
+## The four never-run jobs were run, 2026-08-12 — and three were broken
+
+Executions 103–121. Every one of these was gate-green and had shipped unusable. None of the
+defects is visible to lint or `--syntax-check`; all three needed one execution to find.
+
+| Job | What happened | Fix |
+|---|---|---|
+| Tail App Log (103) | Every guest UNREACHABLE — connected as `rundeck@`, the account running Ansible | The Proxmox dynamic inventory carries no `ansible_user`. `check-native-updates.yml` and `status.yml` already load it from config and say why in a comment; `tail-applog.yml` and `restart-app.yml` were written without it |
+| Migrate Servarr (107) | Died on line 4, `bad substitution` | The script step used `${option.instance}`. Rundeck does not expand those inside a script step — every other job in `rundeck/jobs/` reads `RD_OPTION_*` and carries a comment saying exactly this |
+| Rollback Container (106) | Recreated the container, **skipped the health probe, exited 0** | The probe was gated on `_rb_instance_config.app.port`, but ports are declared in `vars/app-defaults/`. W4's fatal gate had never been reachable. Now resolves port from instance config → app-defaults → the Compose file's own published port |
+| Check Native App Updates (104) | Green first time | — |
+
+**A job that has never run is not "built", whatever the gates say.** Three of four is not a
+sampling error; it is what shipping without executing looks like. The Config group is the
+last never-run group and should be assumed broken until a run says otherwise.
+
+`Reimport Jobs` was needed before the fixed definitions were live (execution 108) — Rundeck
+holds its own copy, exactly as the standing fact in INDEX says.

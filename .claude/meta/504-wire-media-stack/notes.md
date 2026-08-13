@@ -78,3 +78,30 @@ how a slice stays "live" long after its work is done.
 - What is left is the adoption PUT, and it cannot be manufactured — it needs a record this
   platform did not create. `Migrate Servarr` against the operator's old Radarrs is the one
   run that produces it, and it is also 505's last item. **One click closes two slices.**
+
+## Shipping Jellyfin broke every wire run, 2026-08-12 — executions 118, 119, 121
+
+`Wire Media Stack` confirmed all six connections and then failed, naming a media registry
+entry `jellyfin` that has no kind and no host. Neither source could produce it: `facts.yml`
+has five media entries and none is Jellyfin, and `config/apps/` holds one file, `rundeck.yml`.
+Probed both on the runner to be sure.
+
+The entry comes from **`load-user-vars.yml:56`**, which merges the entire Vaultwarden
+contract into `homelabinfra_infra`. Jellyfin's role stores its admin username and password
+under `homelab-infra/media/jellyfin` — the same namespace every media app uses for secrets —
+so a credential item arrives in the registry looking like an app with nothing declared. W3
+made an unplaceable entry fatal, so from the moment Jellyfin shipped that morning, every
+media wiring run was going to fail.
+
+**The two changes are in different files and neither is wrong on its own.** That is the
+shape of this defect class: the vault namespace is both a credential store and, through one
+merge, a wiring registry. A future media app that stores a secret and is not wirable will do
+this again unless it declares neither `app` nor `host`.
+
+Fix: an entry declaring NEITHER is a credential record, named in the log and skipped. An
+entry that claims to be an app and cannot be placed is still fatal — W3 keeps its teeth.
+
+**And the fix's own first version failed live** (execution 121): `_mw_credential_only` was
+written among the facts of a `set_fact` rather than in the task's `vars:`, and one `set_fact`
+cannot reference a fact it is setting. Both gates passed it. Two executions to get one
+conditional right is the honest cost of code no gate can evaluate.
