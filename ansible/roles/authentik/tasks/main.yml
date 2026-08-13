@@ -78,7 +78,10 @@
     group: root
     mode: "0750"
 
-- name: Create data directories
+# database and redis are written only by the postgres and redis containers, which
+# chown their own data directory on first start. Leave them root-owned: chowning a
+# live postgres data directory is how you break an instance that was working.
+- name: Create data directories owned by their own container
   ansible.builtin.file:
     path: "{{ app_config.app.data_path }}/{{ item }}"
     state: directory
@@ -86,6 +89,21 @@
   loop:
     - database
     - redis
+
+# authentik-server runs as uid 1000 (fixed by the image; the worker runs as root and
+# is unaffected), and 0750 root:root makes these three unreadable to it. /templates
+# unreadable is not a degraded feature: EVERY flow interface render 500s, so nobody
+# can sign in to Authentik at all, and every forward_auth app behind it is sealed
+# shut. certs and media only escaped it here because their containers wrote content
+# and took ownership on the way. Cost a live run to find, 2026-08-13.
+- name: Create data directories read by authentik-server
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}/{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0750"
+  loop:
     - media
     - certs
     - custom-templates
