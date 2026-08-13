@@ -1,0 +1,53 @@
+---
+# Ask a SABnzbd instance a question only a caller holding the API key may ask,
+# and hand back whether it was answered.
+#
+# Inputs:
+#   sab_check_base  base URL, no trailing slash (http://localhost:8085)
+#   sab_check_key   the API key to authenticate with
+#
+# Outputs:
+#   sab_api_ok      true when the key was accepted
+#   sab_api_reason  what happened, for a caller's failure message
+#
+# Included rather than inlined because the deploy asks twice: once to find out
+# whether the key this deploy holds is the one the app answers to, and again after
+# writing that key back into sabnzbd.ini if it was not.
+#
+# `mode=queue` and not `mode=version`: version is one of the two modes SABnzbd
+# answers WITHOUT a key (the other is auth), so it proves the app is up and proves
+# nothing at all about the credential.
+
+- name: SABnzbd | Ask the queue endpoint with the key
+  ansible.builtin.uri:
+    url: "{{ sab_check_base }}/api?mode=queue&output=json&apikey={{ sab_check_key | urlencode }}"
+    return_content: true
+    # Both shapes of refusal are answers this file reports rather than crashes on.
+    # SABnzbd has answered a bad key as HTTP 401 and, in older releases, as HTTP 200
+    # carrying {"status": false, "error": "API Key Incorrect"} — so neither the
+    # status nor the body alone decides it, and the caller must not see a raw
+    # "Status code was 401" instead of an explanation.
+    status_code: [200, 401, 403]
+  register: _sab_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+# Success is a 200 that carries a queue. A 200 whose body says `status: false` is a
+# refusal wearing a success code, which is the whole reason this is not a plain
+# status check.
+- name: SABnzbd | Record whether the key was accepted
+  ansible.builtin.set_fact:
+    sab_api_ok: "{{ _sab_accepted | bool }}"
+    sab_api_reason: >-
+      {{ 'the API answered the queue with the key this deploy holds'
+         if _sab_accepted | bool
+         else ((_sab_probe.json | default({})).error
+               | default('HTTP ' ~ (_sab_probe.status | default('no response')), true)) }}
+  vars:
+    # `| bool` at every use, not once: a folded `vars:` value is a STRING, and the
+    # string 'False' is truthy to Jinja.
+    _sab_accepted: >-
+      {{ (_sab_probe.status | default(0) | int) == 200
+         and (_sab_probe.json | default({})).queue is defined }}
+  no_log: true

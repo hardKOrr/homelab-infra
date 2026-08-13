@@ -1,0 +1,18 @@
+---
+# Role-internal defaults for the sabnzbd role. Everything a user would tune lives
+# in vars/app-defaults/sabnzbd.yml instead — these are paths and timings the role
+# needs and nobody overrides.
+
+sabnzbd_project_dir: "/opt/{{ instance }}"
+
+# How long to wait for the web interface to answer after the container starts.
+# SABnzbd opens its port a few seconds after the process starts, and a first run
+# also has to read the seeded sabnzbd.ini and build its database.
+sabnzbd_webui_retries: 30
+sabnzbd_webui_delay: 5
+
+# How long to wait for sabnzbd.ini to appear after a start. The file is seeded by
+# this role, so it exists already on the normal path; the retry covers a first run
+# on a config directory SABnzbd is still rewriting.
+sabnzbd_ini_retries: 12
+sabnzbd_ini_delay: 5

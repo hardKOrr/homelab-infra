@@ -1,0 +1,463 @@
+---
+# sabnzbd role — SABnzbd as a Docker container on a stack host. Called from Play 2
+# of playbooks/apps/sabnzbd.yml. Target: the media_stack host.
+#
+# The media stack's USENET download client, the counterpart to roles/qbittorrent.
+# Until this existed the stack could find usenet releases through Prowlarr and had
+# nothing to fetch them with: tasks/app-wiring/arr-download-client.yml has carried
+# the `sabnzbd` kind since slice 504 and had no instance to wire.
+#
+# Variables available:
+#   app_config           — merged defaults + user config (from Play 1)
+#   instance             — the instance name (e.g. sabnzbd)
+#   homelabinfra_config  — merged input config, including infrastructure.*
+#   homelabinfra_infra   — infrastructure facts (may be absent pre-bootstrap)
+#   homelabinfra_vault   — the in-memory Vaultwarden contract
+#
+# Exports (read by Play 3 to write the `media` registry key):
+#   sabnzbd_media_kind, sabnzbd_media_host
+#
+# WHY THIS IS NOT THE servarr ROLE, and not roles/qbittorrent either. SABnzbd is
+# not a Servarr app: no config.xml, no <APP>__ environment overrides, no
+# /api/v3/system/status. It is not qBittorrent either: its API authenticates with
+# an API key rather than a username and password over a session cookie, which is
+# exactly what ansible/vars/media-wiring.yml records as `auth: api_key`. What the
+# three share is the deploy shape, which belongs to the playbook, not the role.
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind
+  ansible.builtin.set_fact:
+    _sab_kind: "{{ app_config.app.media_kind }}"
+    _sab_base: "http://localhost:{{ app_config.app.port }}"
+    _sab_ini: "{{ app_config.app.config_path }}/sabnzbd.ini"
+
+# The kind is not decoration: wire-media-stack.yml refuses to wire an app whose
+# kind is not in the table, so a typo here would deploy a download client that
+# silently never joins the stack. Failing at deploy time names the problem where
+# it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that:
+      - _sab_kind in media_wiring.kinds
+      - media_wiring.kinds[_sab_kind].role == 'download_client'
+    fail_msg: >-
+      app.media_kind is "{{ _sab_kind }}", which ansible/vars/media-wiring.yml does
+      not define as a download client. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+# A download client sees the whole of the lab's media storage by default, which is
+# more than an *arr gets: it writes the downloads directory AND the library has to
+# be on the same mount namespace, or every completed import is a copy instead of a
+# hardlink. An app that owns no library subpath still needs all of it.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _sab_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+# SABnzbd keeps incomplete and completed downloads in two directories, and both are
+# derived from the one path the platform declares. They are siblings under
+# app.download_path deliberately: a completed download that has to cross a
+# filesystem to reach the *arr import is copied twice instead of moved once.
+- name: Resolve the download directories
+  ansible.builtin.set_fact:
+    _sab_download_root: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
+    _sab_incomplete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/incomplete"
+    _sab_complete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/complete"
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ sabnzbd_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: SABnzbd writes sabnzbd.ini, its history database
+# and its logs here, and the seeded configuration file below has to be readable and
+# rewritable by the same account.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/servarr and roles/qbittorrent: the mounts are the lab's,
+# attached to the stack host by Play 1, and only ever asserted here. A container
+# started against a missing bind source gets an empty directory, and SABnzbd then
+# unpacks into the stack host's own root disk until it fills.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _sab_mount_check
+  loop: "{{ _sab_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared in
+      media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint, so
+      either the attach did not happen or the guest has not restarted since. This
+      platform attaches storage the lab already provides; it never creates it.
+  loop: "{{ _sab_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# The download directory is this app's own, the way an *arr's library_subpath is:
+# the platform declares it, so creating it and owning it is this deploy finishing
+# its own job. It must live under one of the mounts above — a path outside them is
+# the stack host's root disk, which is what this check is really for.
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _sab_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _sab_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not inside
+      any media_storage mount
+      ({{ _sab_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Completed downloads would land on the stack host's own disk and never
+      hardlink into the library. Point app.download_path at a directory under one
+      of the mounts, or declare the mount that holds it in
+      config/infrastructure.yml.
+  vars:
+    # The download path's own ancestors, so the comparison lands on a path
+    # component rather than a string prefix — /mnt/data2 is not inside /mnt/data.
+    # Serialized through JSON because a template carrying {% %} statement blocks
+    # renders to a STRING; see the same construction in tasks/load-user-vars.yml.
+    _sab_download_ancestors_json: >-
+      {%- set parts = _sab_download_root.split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _sab_download_ancestors: "{{ _sab_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _sab_download_dirs
+  loop:
+    - "{{ _sab_download_root }}"
+    - "{{ _sab_incomplete_dir }}"
+    - "{{ _sab_complete_dir }}"
+  failed_when: false
+
+- name: Assert the download directories are usable
+  ansible.builtin.assert:
+    that: not (item.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ item.item }} ({{ item.msg | default('') }}). On
+      an unprivileged stack host this is what an unmapped owner looks like: a
+      directory whose host uid falls outside the guest's id range appears as
+      nobody:nogroup and not even root inside the guest can chown it. Check that
+      the mount and everything under it belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.
+  loop: "{{ _sab_download_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# ── The name the proxy publishes this app under ───────────────────────────────
+# SABnzbd validates the Host header of every request and refuses one naming a host
+# it does not know, which is what a reverse proxy sends. Requests by IP address —
+# the *arr apps, and the deploy's own checks below — are unaffected, so a missing
+# entry here breaks only the human's browser, and breaks it completely.
+#
+# The estate's domain, not the lab's, when the app declares one: routing.estate
+# picks a domain from the `domains:` map in config/infrastructure.yml
+# (ansible/vars/CONTRACT.md §5). tasks/resolve-estate.yml does this in Play 3 and
+# does not run here, so the estate is resolved from the authored config directly.
+- name: Resolve the hostname the reverse proxy publishes
+  ansible.builtin.set_fact:
+    _sab_host_whitelist: >-
+      {{ app_config.app.host_whitelist
+         | default(([_sab_fqdn] if _sab_domain | length > 0 else [])
+                   + [instance, ansible_hostname | default(instance)]
+                   | unique, true) }}
+  vars:
+    _sab_estate: "{{ app_config.routing.estate | default('') }}"
+    _sab_infra_cfg: "{{ homelabinfra_config.infrastructure | default({}) }}"
+    _sab_domain: >-
+      {{ ((_sab_infra_cfg.domains | default({}))[_sab_estate] | default({})).domain
+         | default(_sab_infra_cfg.domain | default(''), true) }}
+    _sab_fqdn: >-
+      {{ (app_config.routing.subdomain | default(instance, true)) ~ '.' ~ _sab_domain }}
+
+# ── API key continuity ────────────────────────────────────────────────────────
+# THE HAZARD THIS TASK EXISTS FOR. SABnzbd mints an api_key of its own on first
+# start if sabnzbd.ini does not name one, and that key is what every *arr in the
+# lab authenticates to this client with (tasks/app-wiring/arr-download-client.yml
+# reads it from homelab-infra/media/<instance>). A deploy that let a new key be
+# minted on every run would stale every download-client entry the platform itself
+# created — measured on the *arr apps as executions 114-116, three consecutive
+# Deploy Prowlarr runs producing three different keys (fixed in 726f947).
+#
+# APPROACH CHOSEN: the platform AUTHORS the key into sabnzbd.ini before the
+# container's first start, resolved from three sources in the order of what the
+# app actually answers to. Authoring rather than reading-back is what makes the key
+# knowable on a first deploy and restorable after a wiped config directory; the
+# read-back is still first in the chain so an app that minted or was given a key of
+# its own is ADOPTED rather than overwritten.
+#
+#   1. sabnzbd.ini on this host — unlike a Servarr config.xml, this file is where
+#      SABnzbd's key genuinely lives, so it is the app's own answer and it wins.
+#   2. the vault item — the platform's record of the key it issued last time. It
+#      survives container recreation AND a wiped /config, which is the case source
+#      1 cannot cover and the case that would otherwise mint a new key.
+#   3. generate — only when neither source has one, i.e. a genuinely first deploy.
+#
+# RE-DEPLOY BEHAVIOUR: run two reads the same key out of the ini seeded by run one,
+# writes nothing (the template below is force: false), and stores the identical
+# value back into the vault, which the upsert then recognises as unchanged.
+#
+# homelabinfra_vault, not homelabinfra_infra: the play reloads homelabinfra_infra
+# from config/.generated/facts.yml, which holds topology and never credentials.
+- name: Read the existing sabnzbd.ini (key continuity across re-runs)
+  ansible.builtin.slurp:
+    src: "{{ _sab_ini }}"
+  register: _sab_ini_existing
+  failed_when: false
+  no_log: true
+
+- name: Resolve the API key
+  ansible.builtin.set_fact:
+    _sab_api_key: >-
+      {{ _sab_ini_key
+         | default(_sab_vault_key, true)
+         | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+  vars:
+    _sab_ini_key: >-
+      {{ (_sab_ini_existing.content | default('') | b64decode
+          | regex_search('(?m)^[ \t]*api_key[ \t]*=[ \t]*(\S+)[ \t]*$', '\1')
+          | default([], true) | join('')) }}
+    _sab_vault_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
+         | default('', true) }}
+  no_log: true
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+# force: false — seeded once, then SABnzbd's. See the template's header for why
+# this file is not managed on every run.
+- name: Seed sabnzbd.ini on first deploy
+  ansible.builtin.template:
+    src: sabnzbd.ini.j2
+    dest: "{{ _sab_ini }}"
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0640"
+    force: false
+  no_log: true      # the file carries the API key
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ sabnzbd_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart sabnzbd
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/servarr and roles/qbittorrent — a deploy ensures
+# the image is present, Watchtower is what moves it forward and reports it.
+# Re-pulling :latest on every deploy would make each run a silent, unreviewed
+# upgrade.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ sabnzbd_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ sabnzbd_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the web interface to answer
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=version&output=json"
+    status_code: [200, 401, 403]
+  register: _sab_up
+  until: _sab_up.status | default(0) in [200, 401, 403]
+  retries: "{{ sabnzbd_webui_retries }}"
+  delay: "{{ sabnzbd_webui_delay }}"
+  changed_when: false
+
+# ── Prove the key works, and repair it if it does not ─────────────────────────
+# The app is asked, not its configuration file — the lesson roles/servarr paid for.
+# A container that answers its port is not the same thing as an app that answers to
+# the credential this deploy holds, and the credential is the only part the media
+# wiring depends on.
+- name: Re-read sabnzbd.ini after start (the app may have rewritten it)
+  ansible.builtin.slurp:
+    src: "{{ _sab_ini }}"
+  register: _sab_ini_started
+  until: _sab_ini_started.content is defined
+  retries: "{{ sabnzbd_ini_retries }}"
+  delay: "{{ sabnzbd_ini_delay }}"
+  failed_when: false
+  no_log: true
+
+- name: Resolve the key that is in force
+  ansible.builtin.set_fact:
+    # A key in the file the running app read wins: it is what the app answers to.
+    # Otherwise the key this deploy resolved is what was seeded, which the probe
+    # below proves rather than assumes.
+    _sab_effective_key: >-
+      {{ (_sab_ini_started.content | default('') | b64decode
+          | regex_search('(?m)^[ \t]*api_key[ \t]*=[ \t]*(\S+)[ \t]*$', '\1')
+          | default([], true) | join(''))
+         | default(_sab_api_key, true) }}
+  no_log: true
+
+- name: Ask the API a question that needs the key
+  ansible.builtin.include_tasks: api-check.yml
+  vars:
+    sab_check_base: "{{ _sab_base }}"
+    sab_check_key: "{{ _sab_effective_key }}"
+
+# An instance whose key was regenerated in the web interface cannot be reached with
+# the credential every *arr holds, so this deploy puts the platform's key back. The
+# file is edited with the container STOPPED, deliberately: SABnzbd holds its
+# configuration in memory and rewrites this file on shutdown, so an edit made while
+# it runs is discarded by the very restart meant to apply it. Stopping first is also
+# what makes the edit deterministic — the flush happens, then the value is set.
+- name: Repair an API key that is not the platform's
+  when: not (sab_api_ok | bool)
+  block:
+    - name: Stop the app before editing its configuration
+      community.docker.docker_compose_v2:
+        project_src: "{{ sabnzbd_project_dir }}"
+        state: stopped
+
+    - name: Restore the platform's API key
+      community.general.ini_file:
+        path: "{{ _sab_ini }}"
+        section: misc
+        option: api_key
+        value: "{{ _sab_api_key }}"
+        owner: "{{ app_config.app.puid | default(1000) }}"
+        group: "{{ app_config.app.pgid | default(1000) }}"
+        mode: "0640"
+        no_extra_spaces: false
+      no_log: true
+
+    - name: Record the repaired key as the one in force
+      ansible.builtin.set_fact:
+        _sab_effective_key: "{{ _sab_api_key }}"
+      no_log: true
+
+    - name: Start the app again
+      community.docker.docker_compose_v2:
+        project_src: "{{ sabnzbd_project_dir }}"
+        state: present
+
+    - name: Wait for the web interface to answer after the repair
+      ansible.builtin.uri:
+        url: "{{ _sab_base }}/api?mode=version&output=json"
+        status_code: [200, 401, 403]
+      register: _sab_up_again
+      until: _sab_up_again.status | default(0) in [200, 401, 403]
+      retries: "{{ sabnzbd_webui_retries }}"
+      delay: "{{ sabnzbd_webui_delay }}"
+      changed_when: false
+
+    - name: Ask the API again with the restored key
+      ansible.builtin.include_tasks: api-check.yml
+      vars:
+        sab_check_base: "{{ _sab_base }}"
+        sab_check_key: "{{ _sab_api_key }}"
+
+- name: Assert the API answers to the key this deploy holds
+  ansible.builtin.assert:
+    that: sab_api_ok | bool
+    fail_msg: >-
+      {{ instance }} refused the API key this deploy holds, and refused it again
+      after it was written back into {{ _sab_ini }} ({{ sab_api_reason }}). Nothing
+      can wire this download client until it answers: check
+      `docker logs {{ instance }}`, and check that the container is reading the
+      configuration file this role writes — SABnzbd rewrites sabnzbd.ini from
+      memory on shutdown, so a second process holding the same /config would undo
+      the repair.
+
+- name: Ask the app what it is
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=version&output=json&apikey={{ _sab_effective_key | urlencode }}"
+    status_code: 200
+  register: _sab_version
+  changed_when: false
+  no_log: true
+
+- name: Assert the app identifies itself as SABnzbd
+  ansible.builtin.assert:
+    that: (_sab_version.json | default({})).version | default('') is match('^[0-9]')
+    fail_msg: >-
+      {{ app_config.app.port }} answered mode=version with
+      "{{ (_sab_version.json | default({})).version | default('nothing') }}", which
+      is not a SABnzbd version. Either app.image is not SABnzbd, or another
+      container already holds that port on this stack host.
+
+# The mirror of the servarr and qbittorrent unauthenticated-API checks, and the
+# same reason: without it, an instance that has stopped requiring a key looks
+# identical to a secured one from here, and the lab ships an open usenet client on
+# the LAN — one that will write anywhere its configuration lets it.
+- name: Call the API with no key
+  ansible.builtin.uri:
+    url: "{{ _sab_base }}/api?mode=queue&output=json"
+    status_code: [200, 401, 403]
+  register: _sab_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses a caller with no key
+  ansible.builtin.assert:
+    # Not a status check. SABnzbd has refused an unkeyed call as HTTP 401 and, in
+    # older releases, as HTTP 200 carrying {"status": false, ...} — so the refusal
+    # is "it did not hand over the queue", which both shapes satisfy.
+    that: >-
+      _sab_unauthenticated.status != 200
+      or (_sab_unauthenticated.json | default({})).queue is not defined
+    fail_msg: >-
+      {{ instance }} served its queue to a caller with no API key. Its `api_key` in
+      {{ _sab_ini }} is what decides that, and this deploy seeds one — so the
+      running app is reading a configuration this role did not write. Anything on
+      the LAN can queue downloads and change where they are written.
+
+# ── Store the credential ──────────────────────────────────────────────────────
+# Written under the same canonical item name wire-media-stack.yml reads, and with
+# the field name tasks/app-wiring/arr-download-client.yml expects for an `api_key`
+# client (ansible/vars/media-wiring.yml, ansible/vars/CONTRACT.md §3). Stored after
+# the app has proven the key works, never before.
+- name: Store and verify the API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _sab_effective_key }}"
+    vault_item_secret_fields: [api_key]
+
+# ── Hand the endpoint back to the playbook ────────────────────────────────────
+- name: Export the media registry entry to the playbook
+  ansible.builtin.set_fact:
+    sabnzbd_media_kind: "{{ _sab_kind }}"
+    sabnzbd_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

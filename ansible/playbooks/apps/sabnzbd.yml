@@ -1,0 +1,280 @@
+---
+# Deploy SABnzbd — the media stack's usenet download client. Docker on LXC
+# (PATH A) on the media_stack host.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/sabnzbd.yml -e instance=sabnzbd
+#   ansible-playbook -i inventory/ playbooks/apps/sabnzbd.yml -e instance=sabnzbd-4k
+#
+# The `instance` parameter is the unique name for this deployment. It becomes the
+# hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
+# the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
+#
+# Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
+# what closes the loop with slice 504: wire-media-stack.yml reads that key to find
+# this client and reads the API key this deploy stored in
+# homelab-infra/media/<instance>, then registers it in every *arr that speaks
+# `usenet`. Nothing has to be declared by hand afterwards.
+#
+# The deploy shape is qBittorrent's — see playbooks/apps/qbittorrent.yml — and the
+# role is its own for the same reason: SABnzbd shares no configuration mechanism
+# with either the *arr apps or the torrent client, and it authenticates with an API
+# key rather than a session. See roles/sabnzbd/tasks/main.yml.
+
+# ── Play 1: Provision ──────────────────────────────────────────────────────────
+# Runs on localhost against the Proxmox API to find or create the stack host.
+# Adds the target host to a group for Play 2 to use.
+- name: "SABnzbd | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=sabnzbd"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/sabnzbd.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # optional — absent on a clean checkout / pre-bootstrap run
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.sabnzbd_defaults
+             | combine({'media_storage':
+                        homelabinfra_config.infrastructure.media_storage | default({})},
+                       recursive=True)
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+
+  tasks:
+    # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
+    # The stack host is found (or created) by tag. The app is deployed in Play 2.
+    - name: Find or create stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        # Per-instance group: add_host groups persist for the whole run, and
+        # bootstrap.yml chains app playbooks via import_playbook.
+        deploy_group: "deploy_{{ instance }}"
+
+    # ── Storage the lab already provides ──────────────────────────────────────
+    # A download client gets ALL of media_storage, where an *arr gets it only when
+    # it owns a library subpath: this app writes the downloads directory, and the
+    # library has to be on the same mount namespace or every import the *arr apps
+    # make afterwards is a copy instead of a hardlink.
+    - name: Resolve the storage this app needs on the stack host
+      ansible.builtin.set_fact:
+        _sab_host_mounts: >-
+          {{ app_config.app.mounts
+             | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+    - name: Attach the lab's storage to the stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_list: "{{ _sab_host_mounts }}"
+        # Who this storage belongs to on both sides of the guest boundary. An
+        # unprivileged stack host cannot write a library owned by an id outside
+        # its own range, so this is what makes the mount usable rather than
+        # merely present.
+        attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+      when: _sab_host_mounts | length > 0
+
+
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# Runs on the stack host to install and configure SABnzbd.
+- name: "SABnzbd | Deploy"
+  # Per-instance group, not a shared one: add_host groups persist for the whole
+  # run and bootstrap.yml chains these playbooks with import_playbook, so a shared
+  # group would accumulate every earlier app's guest and run this role on all of
+  # them. The default() can only fire during --syntax-check — Play 1 has already
+  # asserted `instance` is defined by the time this pattern is resolved for real.
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    # Unconditional: its Ntfy notify hook depends on homelabinfra_infra.notifications,
+    # which does not exist yet when the first baseline guests are created. Running it
+    # every deploy is what gives them the hook once Ntfy is up.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    # Unconditional, and deliberately not gated on homelabinfra_stack_host_created:
+    # that fact means "I created this host in THIS run", which is not the same
+    # question as "does this host have Docker".
+    - name: Ensure Docker is installed on the stack host
+      ansible.builtin.include_role:
+        name: docker
+
+    # ── App Deployment ─────────────────────────────────────────────────────────
+    - name: Deploy SABnzbd
+      ansible.builtin.include_role:
+        name: sabnzbd
+
+
+# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# Registers the app in the media registry, then registers it with platform
+# services. Runs on localhost (API calls). All wiring tasks are idempotent.
+- name: "SABnzbd | Record facts and wire"
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    # Load infra facts in this play rather than relying on Play 1's localhost fact.
+    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout /
+    # pre-bootstrap run there is no facts.yml, homelabinfra_infra stays undefined,
+    # and every provider when-condition below falls through to a silent no-op.
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # The `media` key is instance-keyed, not role-keyed (CONTRACT.md §3): a lab may
+    # run a second client for a second provider, so this merges one entry and leaves
+    # every sibling entry alone. Topology only — the API key lives in
+    # homelab-infra/media/<instance>, written by the role, because
+    # write-generated-facts.yml rejects credential-shaped fields outright.
+    #
+    # No config_path, unlike the *arr apps: that key exists so wire-media-stack.yml
+    # can slurp an API key out of config.xml when the registry has none, and this
+    # client's key is already in the vault item the registry overlays.
+    - name: Record the media registry entry
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: media
+        # Built as an expression, never as a literal `"{{ instance }}":` key —
+        # Ansible does not template a YAML MAPPING KEY, so that spelling writes the
+        # entry under the literal string `{{ instance }}` and every app overwrites
+        # the one before it (execution 67, 2026-08-09).
+        generated_facts_data: >-
+          {{ {instance: {'app': _sab_deploy_host.sabnzbd_media_kind,
+                         'host': _sab_deploy_host.sabnzbd_media_host}} }}
+
+    # Re-read so the wiring tasks below see the key just written.
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Overlay estate-scoped facts (domain, sso, dns) for the app's routing.estate.
+    # No-op for the default estate and for labs without a `domains:` map.
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _sab_deploy_host.app_config.routing.estate | default('') }}"
+
+  vars:
+    _sab_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+
+    # ── WIRING CONTRACT ────────────────────────────────────────────────────────
+    # These are the variables all wiring tasks read. Do not rename them.
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _sab_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _sab_deploy_host.app_config.app.port }}"
+    wiring_subdomain: "{{ _sab_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "SABnzbd ({{ instance }})"
+    # mode=version, because it is one of the two API modes SABnzbd answers without
+    # a key. Every other endpoint would need the credential embedded in a monitor's
+    # URL, and the web root redirects rather than reporting health. A 200 here means
+    # the app is up and serving, which is what a monitor can honestly report.
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/api?mode=version"
+    wiring_auth_group: "homelab-users"   # Authentik group granted access
+    # catalog by default: this app keeps its own authentication, because its API key
+    # is what the *arr apps authenticate to it with. See vars/app-defaults/sabnzbd.yml.
+    wiring_identity_mode: "{{ _sab_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _sab_deploy_host.app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the
+    # UI shows what each host actually runs.
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+    # App-to-app wiring is deliberately NOT done here, for the same reason the *arr
+    # playbooks leave it alone: this client's peers are every *arr in the lab, and
+    # wiring them pairwise from each deploy would mean every app re-wiring the whole
+    # stack. playbooks/stacks/wire-media-stack.yml owns that, is idempotent, and
+    # finds this client through the registry entry written above.
+    - name: Report how to wire this app into the media stack
+      ansible.builtin.debug:
+        msg: >-
+          {{ instance }} is registered in the media registry. Run the Wire Media
+          Stack job to register it as a download client in every *arr that
+          downloads over usenet. Add your news server in the SABnzbd web interface
+          once — the provider and its credentials are yours, not the platform's,
+          and the setting survives every re-deploy.
+
+    # Last task in the play, deliberately. Wiring records what it could not do rather than
+    # aborting, so a failure in one provider does not strand the others; this is what stops
+    # the run reporting success afterwards. See tasks/report-degradation.yml for why.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

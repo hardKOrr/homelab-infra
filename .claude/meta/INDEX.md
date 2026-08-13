@@ -105,6 +105,7 @@ on every commit. The only instrument that found them was execution. Treat "never
 |---|---|---|
 | One browser session — Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in | **302, 306, 400, 403, 405** — five slices on one sitting | a human at a browser |
 | The Rundeck **Config group** — the last never-run job group | **601** outright | two jobs |
+| `Deploy SABnzbd`, twice — the second run must produce the same api_key | nothing; proves the last app shipped | two clicks |
 | A migration that completes | **504's adoption PUT** — the last box on it | blocked, see below |
 
 **The migration is deliberately not wanted yet** (operator, 2026-08-12). The platform's media
@@ -271,9 +272,14 @@ of these, that row is stale.
   the exit code. **It deliberately writes no media registry entry** — the registry is how
   `wire-media-stack.yml` finds indexers, clients and *arr apps, W3 made an unplaceable entry
   fatal, and Jellyfin is none of those.
-  One gap is left and is not started: **no usenet client** (SABnzbd — the `sabnzbd` kind is
-  already in `media-wiring.yml`, so it is a role plus a playbook, the same shape as
-  qBittorrent). **qBittorrent is deployed**
+  **SABnzbd closed the usenet gap in code, 2026-08-13** — `roles/sabnzbd`,
+  `playbooks/apps/sabnzbd.yml`, `vars/app-defaults/sabnzbd.yml`, both runner surfaces,
+  **fourteen** per-app Deploy jobs. **It has never been executed, so it is presumed broken**
+  until a live `Deploy SABnzbd` says otherwise — both gates passed it, and neither gate
+  starts a container. The one thing to watch on that first run is api_key continuity: the
+  role resolves the key from `sabnzbd.ini` → the vault item → generate, and seeds it with
+  `force: false` before first start, so a second deploy must return the *same* key. A
+  different key on run two is the `726f947` defect again. **qBittorrent is deployed**
   — execution 78, 2026-08-11, green and idempotent, on `media_stack` with an Authentik group
   binding. Two defects were found and fixed getting there; see the executions table above.
   **It is registered in the *arr apps** — `Wire Media Stack` execution 90, 2026-08-12,

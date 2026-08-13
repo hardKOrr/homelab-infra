@@ -557,6 +557,22 @@
       "view": "Apps"
     },
     {
+      "name": "Deploy SABnzbd",
+      "description": "Deploy or update SABnzbd — the media stack's usenet download client (Docker on media_stack). Registers the app in the media registry; run Wire Media Stack afterwards to register it as a download client in every *arr.",
+      "playbook": "ansible/playbooks/apps/sabnzbd.yml",
+      "arguments": "[\"-e\",\"instance=sabnzbd\"]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Apps"
+    },
+    {
       "name": "Deploy Jellyfin",
       "description": "Deploy or update Jellyfin — the media stack's media server (Docker on media_stack). Completes Jellyfin's first-run wizard, creates the admin account in Vaultwarden and adds a library for each path the *arr apps write into. Nothing to wire afterwards.",
       "playbook": "ansible/playbooks/apps/jellyfin.yml",

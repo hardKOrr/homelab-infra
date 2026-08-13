@@ -1,0 +1,83 @@
+---
+# Default stack and app configuration for SABnzbd — the media stack's usenet
+# download client. Users override specific values in config/apps/sabnzbd.yml.
+# This file is git-managed — git pull may update these defaults.
+
+sabnzbd_defaults:
+  stack: media_stack
+
+  app:
+    # The key ansible/vars/media-wiring.yml is looked up by. It decides which
+    # *arr apps this client is registered in (every one that speaks `usenet`)
+    # and which download-client implementation they are told to use.
+    media_kind: sabnzbd
+
+    image: "lscr.io/linuxserver/sabnzbd:latest"
+
+    # 8085 published, 8080 inside. SABnzbd's own default is 8080 and qBittorrent
+    # already holds that port on the media stack, so the published port moves and
+    # the container's does not. SABnzbd binds the port named in its sabnzbd.ini,
+    # which the role writes from container_port — there is no environment variable
+    # for it, so the two values are only ever consistent because the role writes
+    # both from here.
+    port: 8085
+    container_port: 8080
+
+    config_path: "/opt/{{ instance }}/config"
+
+    # Where downloads land. The role writes `incomplete` and `complete`
+    # subdirectories under it and points SABnzbd at both.
+    #
+    # It MUST be inside a media_storage mount (config/infrastructure.yml): the
+    # *arr apps import from the completed directory into the library, and an
+    # import is a hardlink rather than a copy only when both are on one
+    # filesystem. The role refuses a path outside the declared mounts.
+    #
+    # Derived from the lab's own storage rather than hardcoded, because a literal
+    # path cannot satisfy that rule in a lab that did not happen to mount at its
+    # parent: qBittorrent's first shipped default was /mnt/downloads against a lab
+    # mounting /mnt/data/media, and the deploy failed that assert on the first
+    # click (execution 75, 2026-08-11). A `downloads` directory under the first
+    # declared mount is hardlink-capable by construction. The /mnt fallback applies
+    # only when no mounts are declared at all, where the assert fails anyway and
+    # says so.
+    #
+    # Shared with qBittorrent on purpose — the two clients write sibling
+    # subdirectories of one downloads area, not two areas. A SECOND SABnzbd
+    # instance must override this: two instances sharing one incomplete directory
+    # will fight over the same partial files.
+    download_path: >-
+      {{ ((homelabinfra_config.infrastructure.media_storage | default({})).mounts
+          | default([], true) | map(attribute='path') | list
+          | first | default('/mnt', true)) | regex_replace('/+$', '') }}/downloads
+
+    # The API key is not here and is never authored by a user: the role resolves it
+    # from sabnzbd.ini, then from Vaultwarden, then generates one; proves the app
+    # answers to it; and stores it under homelab-infra/media/<instance>, which is
+    # where wire-media-stack.yml reads it from when it registers this client in
+    # each *arr.
+
+    # Which Host headers SABnzbd will answer. Left unset, the role derives it from
+    # the app's subdomain and its estate's domain, plus the instance and stack host
+    # names. Set it explicitly only when this app is published under a name the
+    # platform did not choose.
+    # host_whitelist: [sabnzbd.example.com]
+
+    # Matches media_storage.owner in infrastructure.yml, and must: this is the id
+    # the downloads are written as, and the *arr apps have to be able to hardlink
+    # them into the library afterwards.
+    puid: 1313
+    pgid: 1313
+
+  routing:
+    proxy: internal
+    access: internal
+    # catalog, NOT forward_auth — the opposite of the *arr apps, and deliberately.
+    # Those are switched to AuthenticationMethod External so the reverse proxy is
+    # their only login. SABnzbd cannot be: its API authenticates with the api_key
+    # above, and that is the only credential the *arr apps have for it, so its own
+    # authentication stays on. A forward_auth proxy in front of it would also
+    # intercept /api and break every download client entry in the lab. catalog
+    # publishes it in the Authentik catalog and leaves the app to authenticate its
+    # own callers.
+    identity: catalog

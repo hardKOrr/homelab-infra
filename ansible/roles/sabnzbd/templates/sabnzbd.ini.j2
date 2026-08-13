@@ -1,0 +1,48 @@
+; sabnzbd.ini for {{ instance }} — SEEDED ONCE by homelab-infra, then owned by
+; SABnzbd. The role writes this file only when it does not exist.
+;
+; It is not a managed template. SABnzbd holds its whole configuration in memory and
+; rewrites this file from memory whenever it saves or shuts down, so anything
+; written here while the app is running is discarded on the next stop — and
+; anything an operator changes in the web interface would be reverted by a deploy
+; that re-templated it. Settings chosen in the UI stand, the same fire-and-forget
+; rule the rest of the platform follows.
+;
+; The role enforces exactly one value after the seed: api_key, because it is the
+; credential every *arr in the lab authenticates to this client with. Regenerating
+; it in the web interface breaks that wiring, so a deploy puts it back.
+;
+; No `__version__` key is written on purpose. It is SABnzbd's own record of which
+; configuration migrations it has already applied to this file, and asserting a
+; number the running version did not choose invites it to migrate a file that never
+; needed migrating. Absent, SABnzbd treats this as the fresh configuration it is and
+; stamps its own version on the first save.
+;
+; Deliberately minimal. Everything not named here is SABnzbd's default, including
+; every usenet server: the news provider and its credentials are the operator's,
+; and this platform manages what it creates. Add the server in the web interface
+; once — it survives every re-deploy, because this file is seeded and not managed.
+
+[misc]
+; The credential the media wiring depends on. See the API key continuity block in
+; roles/sabnzbd/tasks/main.yml for why it is authored here rather than discovered
+; after the fact.
+api_key = {{ _sab_api_key }}
+
+; Bind every interface inside the container — Docker publishes the port, and the
+; container's own address is not knowable when this file is written.
+host = 0.0.0.0
+port = {{ app_config.app.container_port | default(app_config.app.port) }}
+
+; SABnzbd refuses a request whose Host header names a host it does not know, which
+; is exactly what the reverse proxy sends. Requests by IP address — every *arr, and
+; this deploy's own checks — are never affected, so an entry missing here breaks
+; only the browser, and breaks it completely. Comma-separated, the same shape
+; SABnzbd itself writes.
+host_whitelist = {{ _sab_host_whitelist | join(', ') }}
+
+; Two directories, siblings under one declared path, so a completed download is
+; renamed rather than copied on its way out of the unpacker — and so the *arr
+; import that follows is a hardlink rather than a second copy.
+download_dir = {{ _sab_incomplete_dir }}
+complete_dir = {{ _sab_complete_dir }}

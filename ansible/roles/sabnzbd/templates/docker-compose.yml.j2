@@ -1,0 +1,36 @@
+# docker-compose.yml for SABnzbd ({{ instance }})
+# Managed by homelab-infra — changes made here are overwritten on the next deploy.
+# To make permanent changes, edit config/apps/{{ instance }}.yml.
+#
+# SABnzbd has no environment-variable configuration of its own: everything it reads
+# lives in /config/sabnzbd.ini, which the role seeds. The variables here are the
+# image's own, and the listen port is NOT among them — SABnzbd binds the port named
+# in its ini file, so container_port is written into both places and a change to one
+# without the other publishes a port nothing is listening on.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1000) }}
+      - PGID={{ app_config.app.pgid | default(1000) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+{% for mount in _sab_mounts %}
+      # Same path inside as outside, for the same reason the *arr apps use: an
+      # import is a hardlink rather than a copy only when the download directory
+      # and the library are one mount namespace with one set of paths.
+      - "{{ mount.path }}:{{ mount.path }}"
+{% endfor %}
+    ports:
+      # container_port is the port SABnzbd is configured to listen on inside the
+      # image; app.port is what the stack host publishes. They differ here because
+      # qBittorrent already holds 8080 on the media stack.
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
