@@ -43,6 +43,11 @@
 #     `default-provider-invalidation` (no `-flow` suffix) — override there.
 #   wiring_authentik_outpost            authentik Embedded Outpost
 #   wiring_authentik_signing_key        authentik Self-signed Certificate (oidc)
+#   wiring_authentik_public_url         https://auth.<estate domain> — the browser-facing
+#     base URL of Authentik itself, written to the outpost's config.authentik_host
+#     (forward_auth only). Default follows the estate doctrine: Authentik's own
+#     routing.subdomain defaults to `auth` (ansible/vars/app-defaults/authentik.yml),
+#     so the canonical hostname is auth.<domain>. Override only if this lab moved it.
 #
 # Idempotent: provider, application, policy binding and outpost membership are each
 # located first and only created or patched when absent or drifted. Silent no-op when
@@ -69,6 +74,15 @@
     _ak_signing_key_name: >-
       {{ wiring_authentik_signing_key | default('authentik Self-signed Certificate') }}
     _ak_external_url: "{{ wiring_external_url | default('https://' ~ wiring_domain) }}"
+    # Authentik's OWN browser-facing base URL — deliberately not sso.host, which is the
+    # LAN URL the control node uses for API calls (e.g. http://192.168.0.13:9000) and
+    # which no browser off the LAN can reach. Estate-correct by construction: the app's
+    # domain and its estate's Authentik share the estate domain, and resolve-estate.yml
+    # has already put that estate's domain in homelabinfra_infra.domain.
+    _ak_public_url: >-
+      {{ wiring_authentik_public_url
+         | default('https://auth.' ~ (homelabinfra_infra.domain
+                                      | default(wiring_domain.split('.')[1:] | join('.'), true))) }}
     _ak_internal_url: >-
       {{ wiring_upstream_url
          | default('http://' ~ wiring_upstream_host ~ ':' ~ wiring_upstream_port) }}
@@ -555,5 +569,32 @@
               {{ {'providers': (_ak_outpost.providers | default([])) + [_ak_provider_pk | int]} }}
             status_code: 200
           when: (_ak_provider_pk | int) not in (_ak_outpost.providers | default([]))
+          changed_when: true
+          no_log: true
+
+        # The outpost builds every sign-in redirect against config.authentik_host. An
+        # empty value (the shipped default of the Embedded Outpost) makes it emit
+        # `http://localhost/application/o/authorize/...`, so the browser is bounced to
+        # localhost and login can never complete — while the reverse-proxy forward_auth
+        # block and the provider-to-outpost membership both look perfectly correct. It
+        # is invisible to any check short of following the 302 in a browser, and cost a
+        # live run to find (2026-08-13).
+        #
+        # Merged, never replaced: config also carries log_level, the docker settings,
+        # cookie domain and the object-naming template, and PATCHing a bare
+        # {'authentik_host': ...} would drop them.
+        - name: Wire Authentik | Point outpost at the public Authentik URL
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/outposts/instances/{{ _ak_outpost.pk }}/"
+            method: PATCH
+            headers: "{{ _ak_headers }}"
+            body_format: json
+            body: >-
+              {{ {'config': (_ak_outpost.config | default({}, true))
+                            | combine({'authentik_host': _ak_public_url})} }}
+            status_code: 200
+          when: >-
+            (_ak_outpost.config | default({}, true)).authentik_host
+            | default('', true) != _ak_public_url
           changed_when: true
           no_log: true
