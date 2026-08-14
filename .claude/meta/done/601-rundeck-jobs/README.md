@@ -1,6 +1,6 @@
 # 601 — Rundeck job definitions
 
-**Status:** built
+**Status:** closed
 **Subject:** Runners / UI
 **Related:** 012 (`lab-run.sh` and the import mechanism), 600 (Semaphore), 500
 
@@ -29,7 +29,9 @@ Two facts that came out of this slice and now bind the rest of the repo:
       were run 2026-08-12** and three of them were broken — see below. Green now:
       Check Native App Updates (104), Tail App Log (109), Restart App (110), Rollback
       Container (105/106/111), Migrate Servarr (120 — reached its own storage guard, which
-      is the playbook working). Still never run: the **Config group**
+      is the playbook working). **The Config group ran 2026-08-13/14** (executions
+      123–134): Reimport Jobs, Config Doctor, Get Config and Configure App all green —
+      every one of the 22 jobs now has an observed live execution
 - [x] All files load via the REST import — 22/22 clean, and driven by API
 - [x] Jobs are visible in the UI under their groups
 - [x] `check-native-updates` is scheduled — registered SCHEDULED; the first firing has not

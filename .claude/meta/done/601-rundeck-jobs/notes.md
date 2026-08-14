@@ -105,3 +105,26 @@ last never-run group and should be assumed broken until a run says otherwise.
 
 `Reimport Jobs` was needed before the fixed definitions were live (execution 108) — Rundeck
 holds its own copy, exactly as the standing fact in INDEX says.
+
+## The Config group ran, 2026-08-13/14 — executions 123–134, all four jobs green
+
+Driven entirely through the Rundeck API over SSH (no browser needed — see
+`live-lab-access` memory), while the operator was away from the lab.
+
+| Job | Execution | Result |
+|---|---|---|
+| Reimport Jobs | 123 | succeeded |
+| Config Doctor | 124 | succeeded |
+| Get Config | 125 | succeeded |
+| Configure App | 133 | **failed** — correctly. Ran against `sabnzbd` with every field blank; the playbook's own guard (`Assert the result changes something`) refused a no-op write on an instance that had no override file yet. Not a defect. |
+| Configure App | 134 | succeeded, given `instance=sabnzbd stack=media_stack`. Wrote `config/apps/sabnzbd.yml` with `stack: media_stack` — the value SABnzbd was already deployed with, so operationally inert; confirmed by the two prior `changed=0` re-deploys already having used that stack. |
+
+**All four Config-group jobs have now run at least once. 601 closes** — every one of
+the fifteen job files has an observed live execution, not just a gate pass.
+
+Also closed while at it: `Deploy SABnzbd` was run twice back to back (executions
+128, 129) after one transient first-boot timeout (126, `Connection reset by peer`
+waiting for the web UI — a slow-start race, not a code defect; 127 retried and
+succeeded). Both 128 and 129 show `changed: false` on "Restore the platform's API
+key" / "Store and verify the API key" — the key did not rotate. That is the api_key
+continuity proof the queue wanted; SABnzbd is confirmed shipped and idempotent.

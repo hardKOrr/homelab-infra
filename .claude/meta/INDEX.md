@@ -3,8 +3,9 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**17 live · 29 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
-304 and 502 closed 2026-08-12, both by running things. 306 closed 2026-08-13, same way.
+**16 live · 30 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
+same way.
 
 ## Start here
 
@@ -104,9 +105,16 @@ on every commit. The only instrument that found them was execution. Treat "never
 | Click | Closes | Cost |
 |---|---|---|
 | One browser session — Vaultwarden CRUD, Grafana login | **400, 405** | a human at a browser |
-| The Rundeck **Config group** — the last never-run job group | **601** outright | two jobs |
-| `Deploy SABnzbd`, twice — the second run must produce the same api_key | nothing; proves the last app shipped | two clicks |
 | A migration that completes | **504's adoption PUT** — the last box on it | blocked, see below |
+
+**601 closed and `Deploy SABnzbd`'s api_key proof is done, 2026-08-13/14** — both run
+entirely over the Rundeck REST API via SSH, no browser needed (see the
+`live-lab-access` memory). The Config group's last untested job, `Configure App`,
+correctly refused a no-op write on `sabnzbd` (execution 133 — its own guard, not a
+defect), then succeeded once given a real, operationally-inert override (execution
+134). `Deploy SABnzbd` ran twice more (128, 129, after one transient first-boot
+timeout at 126); both show `changed: false` on the API-key tasks, so the key held.
+Full account in [601/notes.md](done/601-rundeck-jobs/notes.md).
 
 **The migration is deliberately not wanted yet** (operator, 2026-08-12). The platform's media
 stack mounts `/friends-pool/homelab-media` — empty, 114 G — while the old *arrs use
@@ -229,7 +237,6 @@ the work queue above.
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
-| 601 rundeck-jobs | the Config group, the last never-run jobs |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
 | 302, 400, 403, 405 | Vaultwarden CRUD, Grafana login, one `oidc` sign-in and 302's unwire-then-denied check. 302's catalog-shape idempotency was proven by the 2026-08-12 binding query, and its forward_auth redirect + 403's admin-login/UI/redirect items by the 2026-08-13 Sonarr sign-in; only `oidc`, the unwire check, 403's registry-token check and its idempotent re-run remain |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
@@ -247,7 +254,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Config model | provenance **010**, onboarding **012**, estates **008** |
 | Networking | IP allocation **011**, OPNsense **304** (closed) |
 | Media | apps **505**, wiring **504** |
-| Runners / UI | Rundeck **601** |
+| Runners / UI | Rundeck **601** (closed) |
 | Day-2 ops | rollback **502** (closed) |
 
 ## Standing facts
@@ -288,12 +295,10 @@ of these, that row is stale.
   fatal, and Jellyfin is none of those.
   **SABnzbd closed the usenet gap in code, 2026-08-13** — `roles/sabnzbd`,
   `playbooks/apps/sabnzbd.yml`, `vars/app-defaults/sabnzbd.yml`, both runner surfaces,
-  **fourteen** per-app Deploy jobs. **It has never been executed, so it is presumed broken**
-  until a live `Deploy SABnzbd` says otherwise — both gates passed it, and neither gate
-  starts a container. The one thing to watch on that first run is api_key continuity: the
-  role resolves the key from `sabnzbd.ini` → the vault item → generate, and seeds it with
-  `force: false` before first start, so a second deploy must return the *same* key. A
-  different key on run two is the `726f947` defect again. **qBittorrent is deployed**
+  **fourteen** per-app Deploy jobs. **Deployed live 2026-08-13/14** (executions 126–129):
+  one transient first-boot timeout, then two clean back-to-back deploys with `changed:
+  false` on both API-key tasks — the key held, so the `726f947` defect did not recur.
+  **qBittorrent is deployed**
   — execution 78, 2026-08-11, green and idempotent, on `media_stack` with an Authentik group
   binding. Two defects were found and fixed getting there; see the executions table above.
   **It is registered in the *arr apps** — `Wire Media Stack` execution 90, 2026-08-12,
