@@ -32,10 +32,15 @@ to end.
       Sonarr (forward_auth) redirected through Authentik's login flow and back, once
       akadmin was added to `homelab-users` (group membership is operator content, out of
       this slice's scope — see notes.md "Known gap" resolution)
-- [ ] The registry holds the API token and outpost id — recorded under `sso` in the vault,
-      not `authentik.api_token` in `facts.yml` as originally written (slices 200 and 014
-      moved that shape); judge against the shipped one
-- [ ] Re-run is idempotent
+- [x] The registry holds a working API token — executions 142 and 143 loaded it from the
+      canonical `homelab-infra/sso` vault item, authenticated with it, and asserted it
+      belongs to the bootstrap admin. The original outpost-id field did not ship: wiring
+      resolves the embedded outpost by name on every call, and Sonarr's live forward-auth
+      flow already proves that lookup
+- [ ] Re-run is idempotent — execution 143 proved secrets, templates, images and containers
+      stable, but found PostgreSQL's runtime `0700` directory being forced to `0750` once
+      after a container recreate. The role now declares `0700`; one deploy from the
+      committed revision remains
 
 ## Links
 

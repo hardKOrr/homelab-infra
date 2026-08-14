@@ -126,6 +126,26 @@ endpoint, admin credentials and token. Account names, group membership, social
 login sources and MFA enforcement are operator policy set in the Authentik UI. A
 re-deploy must never overwrite a decision made there.
 
+## 2026-08-14 — token proven; idempotence exposed one mode fight
+
+Deploy Authentik executions 142 and 143 both succeeded. On both runs the vault-backed API
+token authenticated and the role asserted it belongs to the bootstrap admin, closing the
+registry-token acceptance item. The outpost ID from the superseded planning shape is not a
+stored field: wiring resolves `authentik Embedded Outpost` by name, which the live Sonarr
+forward-auth path has already exercised.
+
+Execution 142 pulled a newer image and recreated the stack, so its two changes were a real
+update rather than idempotence evidence. The immediate execution 143 then showed secrets,
+the compose environment, Compose template, image state and containers unchanged. One task
+still changed: PostgreSQL had restored its data directory to runtime mode `0700` during the
+recreate, while the role declared `0750` and forced it back on the next deploy. Redis stayed
+at `0750`.
+
+The role now declares the database directory `0700` and Redis `0750`, without managing
+container-owned uid/gid. Both repository gates pass. The final idempotence box remains open
+until that revision reaches the runner's tracked branch and one deploy confirms the
+directory task is unchanged.
+
 ---
 
 ## Superseded planning text (moved from README, 2026-08-08)
@@ -161,4 +181,3 @@ Authentik ships an official `docker-compose.yml` with server + worker + postgres
 Wire Caddy + Uptime Kuma + DNS. **No Authentik wiring** (it IS Authentik — `routing.auth: false`).
 
 ## Acceptance
-

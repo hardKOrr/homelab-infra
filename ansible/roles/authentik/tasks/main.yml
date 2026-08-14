@@ -78,17 +78,21 @@
     group: root
     mode: "0750"
 
-# database and redis are written only by the postgres and redis containers, which
-# chown their own data directory on first start. Leave them root-owned: chowning a
-# live postgres data directory is how you break an instance that was working.
+# Database and Redis are written only by their containers, which chown their own data
+# directory on first start. Do not set owner/group here: chowning a live PostgreSQL data
+# directory is how you break an instance that was working. PostgreSQL also enforces 0700
+# when it starts; declaring 0750 made the next deploy change it back after every container
+# recreate, so each directory carries its runtime-stable mode explicitly.
 - name: Create data directories owned by their own container
   ansible.builtin.file:
-    path: "{{ app_config.app.data_path }}/{{ item }}"
+    path: "{{ app_config.app.data_path }}/{{ item.name }}"
     state: directory
-    mode: "0750"
+    mode: "{{ item.mode }}"
   loop:
-    - database
-    - redis
+    - name: database
+      mode: "0700"
+    - name: redis
+      mode: "0750"
 
 # authentik-server runs as uid 1000 (fixed by the image; the worker runs as root and
 # is unaffected), and 0750 root:root makes these three unreadable to it. /templates

@@ -247,7 +247,7 @@ the work queue above.
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
-| 302, 403 | One `oidc` sign-in and 302's unwire-then-denied check. 302's catalog-shape idempotency was proven by the 2026-08-12 binding query, and its forward_auth redirect + 403's admin-login/UI/redirect items by the 2026-08-13 Sonarr sign-in; only `oidc`, the unwire check, 403's registry-token check and its idempotent re-run remain |
+| 302, 403 | One `oidc` sign-in and 302's unwire-then-denied check. 302's catalog-shape idempotency was proven by the 2026-08-12 binding query, and its forward_auth redirect + 403's admin-login/UI/redirect items by the 2026-08-13 Sonarr sign-in. Executions 142/143 proved 403's vault-backed registry token; only `oidc`, the unwire check and 403's final idempotent re-run remain |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
 
