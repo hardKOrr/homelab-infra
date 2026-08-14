@@ -27,15 +27,16 @@ execution 42, 2026-08-09.
 ## Remaining
 
 Installation is not an execution test — the three maintenance commands are present but
-unrun, and the public hostname has not been exercised from a browser or client.
+unrun. The public hostname and vault CRUD were exercised successfully from a browser on
+2026-08-14.
 
-- [ ] Fresh deploy creates the LXC, installs Vaultwarden, and the web vault loads at the
-      wired domain — LXC, install, direct HTTP and the Caddy route are observed; the public
-      hostname is not
+- [x] Fresh deploy creates the LXC, installs Vaultwarden, and the web vault loads at the
+      wired domain — LXC, install, direct HTTP and the Caddy route were already observed;
+      public-hostname login and create/read/update/delete were confirmed 2026-08-14
 - [ ] `lab-update-check` reports installed vs latest correctly
 - [ ] `lab-restart-app` restarts the service
 - [ ] `lab-tail-applog` shows journalctl output
-- [ ] Remove playbook stops and unwires cleanly — covered by 501
+- [x] Remove playbook stops and unwires cleanly — covered by 501
 - [x] First deploy preserves the admin token exactly once without exposing it in the log —
       013 superseded the original console-print mechanism with a durable sink
 - [x] Subsequent re-runs are idempotent

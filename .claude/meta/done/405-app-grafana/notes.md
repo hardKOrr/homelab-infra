@@ -116,8 +116,15 @@ Both checks added in `f9347b3` executed and passed:
 `changed=0` on the same run is the idempotence half: the Grafana admin password was
 not rotated by a re-run.
 
-Still unobserved: **admin sign-in from a browser**, and that the default dashboard
-renders real data to a human. Those need a person at a browser, not a deploy.
+At that point, admin sign-in from a browser and a human view of the default dashboard
+were still unobserved.
+
+## 2026-08-14 — browser login confirmed
+
+The operator retrieved the generated Grafana admin credentials from Vaultwarden and
+signed in successfully at `https://observability.wasitacatisaw.cc`. Together with the
+already-proven datasource health, live scrape targets, dashboard data and idempotent
+re-run, this completes acceptance and closes 405.
 
 ---
 

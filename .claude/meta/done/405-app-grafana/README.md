@@ -1,6 +1,6 @@
 # 405 — Grafana + Prometheus role + playbook
 
-**Status:** built
+**Status:** done
 **Subject:** Observability
 **Related:** 401 (Ntfy), 300 (Caddy wiring), 302 (Authentik wiring)
 
@@ -23,11 +23,9 @@ Deployed green 2026-08-03; five of six acceptance items observed 2026-08-08.
 
 ## Remaining
 
-- [ ] Grafana UI loads, admin login works — **half met.** `GET /api/health` returns 200 and
-      `https://observability.wasitacatisaw.cc` answers 302 to its login through the estate
-      wildcard, so the UI is served and reachable. Nobody has signed in; the generated admin
-      password sits in the vault unused. This is the browser-credential leg 015/016 name,
-      not a defect in this slice
+- [x] Grafana UI loads, admin login works — `GET /api/health` and the public route were
+      already proven; on 2026-08-14 the operator retrieved the generated credentials from
+      Vaultwarden and signed in successfully at `https://observability.wasitacatisaw.cc`
 - [x] Prometheus datasource pre-configured — the role's own verify step passes every run,
       and since `f9347b3` it also queries `/api/datasources/uid/prometheus/health`, so the
       datasource is proved *queryable* rather than only provisioned (observed exec 43,
@@ -61,7 +59,7 @@ frozen the target list permanently.
 
 Fixed in `64ec867`: the config lives in its own directory and the directory is mounted.
 Prometheus was the only file-to-file mount in the repo. This is "state survives boundaries
-the code assumes are fresh" ([../LESSONS.md](../LESSONS.md)), and the first instance where
+the code assumes are fresh" ([../../LESSONS.md](../../LESSONS.md)), and the first instance where
 **every observable signal said the mechanism was working**.
 
 ## Links

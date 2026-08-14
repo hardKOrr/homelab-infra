@@ -15,8 +15,14 @@ All three checks added in `f9347b3` executed and passed:
   catches a restart-less deploy: the file on disk can be right while the process still
   holds the old value.
 
-Still unobserved: **vault CRUD from a browser** at the public hostname, and the three
-`lab-*` commands, which are installed but unrun.
+At that point, vault CRUD from a browser at the public hostname and the three `lab-*`
+commands were still unobserved.
+
+## 2026-08-14 — browser CRUD confirmed
+
+The operator signed in to the public Vaultwarden hostname and successfully exercised
+create/read/update/delete. This closes the browser/client usability leg. The three
+`lab-*` maintenance commands remain unrun.
 
 ## Superseded planning text (moved from README, 2026-08-08)
 
@@ -58,4 +64,3 @@ Native LXC install via binary release from `dani-garcia/vaultwarden`:
 Play 3 wires Caddy + Uptime Kuma + DNS — **skips Authentik** (`routing.auth: false` in defaults).
 
 Bootstrap chicken-and-egg: on first deploy, admin token is generated locally and printed; user pastes into `config/infrastructure.yml` (per CLAUDE.md). On subsequent deploys, the token comes from there.
-
