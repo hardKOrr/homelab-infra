@@ -219,6 +219,29 @@ The pre-cutover `keys/proxmox/api-token`, `keys/rundeck/homelab-ssh`, and Cloudf
 bootstrap entries are imported into their canonical Vaultwarden items, verified, then
 deleted. Recovery is documented in [VAULTWARDEN-RECOVERY.md](VAULTWARDEN-RECOVERY.md).
 
+### Rundeck API token rotation
+
+The Rundeck control-plane token has exactly two persisted consumers:
+
+- `RUNDECK_API_TOKEN` in `/root/.rundeck-bootstrap` inside the Rundeck container
+- `keys/project/homelab-infra/rundeck/api-token` in Rundeck Key Storage
+
+The checkout `.env` contains only `RUNDECK_URL` and `RUNDECK_PROJECT`. Do not add the token
+there. Rotate in this order so the current token remains the rollback path until the
+replacement is proven:
+
+1. Create a replacement `homelab-infra` token and retain its token ID and one-time secret.
+2. Replace the bootstrap-file value without changing its ownership or `0600` mode.
+3. Replace the Key Storage value.
+4. Confirm the replacement can read the `homelab-infra` project.
+5. Run **Reimport Jobs**. Its successful import proves the secure option received the new
+   Key Storage value and could authenticate back to Rundeck.
+6. Delete the old token by ID, then confirm it is rejected while the replacement still
+   authenticates.
+
+This sequence ran live on 2026-08-14. Reimport Jobs execution 141 succeeded using the
+replacement; the old token then returned HTTP 403 and the replacement remained valid.
+
 ## Reading and changing config from the UI
 
 No SSH session appears anywhere in this document's happy path, and that is the point.

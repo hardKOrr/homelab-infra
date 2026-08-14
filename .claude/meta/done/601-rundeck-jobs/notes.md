@@ -128,3 +128,12 @@ waiting for the web UI — a slow-start race, not a code defect; 127 retried and
 succeeded). Both 128 and 129 show `changed: false` on "Restore the platform's API
 key" / "Store and verify the API key" — the key did not rotate. That is the api_key
 continuity proof the queue wanted; SABnzbd is confirmed shipped and idempotent.
+
+## 2026-08-14 — Rundeck API token rotation exercised
+
+The control-plane token was rotated for the first time. Its two persisted consumers —
+`/root/.rundeck-bootstrap` and
+`keys/project/homelab-infra/rundeck/api-token` — were updated before the old token was
+revoked. Reimport Jobs execution 141 succeeded using the Key Storage replacement, the old
+token then returned HTTP 403, and the replacement continued to authenticate. The proven
+order and complete consumer set are documented in `rundeck/README.md`.
