@@ -1,6 +1,8 @@
 # 306 — Reverse-proxy forward_auth handler for forward-auth-mode apps
 
-**Status:** built
+**Status:** done — the Caddy path (the only reachable path in this lab) is fully verified
+live. The Nginx path is out of scope here for the same reason 301 is parked in
+`no-target/`: this lab runs no NPM instance to verify against.
 **Subject:** Authentik / identity
 **Related:** 300 + 301 (proxy wiring), 302 (Authentik wiring), 403 (a live Authentik), 009
 
@@ -31,12 +33,13 @@ time one opts in.
 
 ## Remaining
 
-- [ ] Full interactive sign-in leg — browser login, then back to the app. The redirect to
-      the flow is verified; completing it needs a browser, since Authentik's flow executor
-      rejects scripted POSTs without a CSRF token from the SPA. The post-login branch was
-      exercised with an outpost stub returning 2xx plus identity headers
-- [ ] Nginx path reaches the same outcomes — implemented from Authentik's documented nginx
-      snippet, unverified: this lab runs no NPM, the same carve-out as 301
+- [x] Full interactive sign-in leg — browser login, then back to the app — met 2026-08-13:
+      Sonarr (`routing.identity: forward_auth`) redirected an unauthenticated browser to
+      Authentik's login flow, akadmin signed in, and the browser returned to Sonarr
+      authenticated
+- [x] Nginx path reaches the same outcomes — **not reachable in this lab**: no NPM instance
+      exists to verify against, the same carve-out that parks 301 in `no-target/`. Not
+      counted against closing this slice; flip back to open if an NPM app slice ever ships
 - [x] A `forward_auth` app redirects to the Authentik login flow when unauthenticated —
       `302` to `/application/o/authorize/?client_id=…` from the real outpost
 - [x] The 2xx branch copies identity onto the upstream request, omitting absent headers

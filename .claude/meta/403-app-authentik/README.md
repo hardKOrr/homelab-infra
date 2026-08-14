@@ -25,10 +25,13 @@ asserts `sso.host` before publishing a forward_auth route.
 Live acceptance needs one app deployed with `routing.identity: forward_auth`, observed end
 to end.
 
-- [ ] Authentik UI loads at the wired domain
-- [ ] Admin login works with credentials from the vault — part of the browser leg shared
-      with 400, 405 and 306
-- [ ] A test app wired via 302 redirects through Authentik successfully
+- [x] Authentik UI loads at the wired domain — met 2026-08-13, `auth.wasitacatisaw.cc`
+- [x] Admin login works with credentials from the vault — met 2026-08-13, akadmin signed
+      in at the admin UI
+- [x] A test app wired via 302 redirects through Authentik successfully — met 2026-08-13:
+      Sonarr (forward_auth) redirected through Authentik's login flow and back, once
+      akadmin was added to `homelab-users` (group membership is operator content, out of
+      this slice's scope — see notes.md "Known gap" resolution)
 - [ ] The registry holds the API token and outpost id — recorded under `sso` in the vault,
       not `authentik.api_token` in `facts.yml` as originally written (slices 200 and 014
       moved that shape); judge against the shipped one

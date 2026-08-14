@@ -20,15 +20,17 @@ created, so a re-run adopts rather than duplicates.
 
 ## Remaining
 
-- [ ] Hitting a wired domain without a session redirects through Authentik, and after
-      unwire a user can no longer SSO to that app — the browser sign-in leg, shared with
-      306, 403 and 405. Needs a human at a browser
+- [x] Hitting a wired domain without a session redirects through Authentik — met 2026-08-13
+      for the `forward_auth` shape: Sonarr redirected an unauthenticated browser to
+      Authentik, akadmin signed in, and the browser returned authenticated. `oidc`'s sign-in
+      leg and the post-unwire "can no longer SSO" check are still open, shared with 403/405
 - [ ] Re-wire idempotent and unwire clean for each of the three shapes — the per-mode
       acceptance lives in 009, which needs one app deployed per mode. **The catalog shape is
       done**: executions 80–88 and 91–100 (2026-08-11/12) re-wired ten published apps, and
       querying Authentik's `policies/bindings/` afterwards found **exactly one enabled
       binding to `homelab-users` per application** — no duplicates, so the slug/name lookup
-      adopts as designed. `oidc` and `forward_auth` are what remain
+      adopts as designed. **The forward_auth shape's wire+sign-in is now proven** (Sonarr,
+      2026-08-13); its unwire-then-denied leg and the `oidc` shape entirely are what remain
 - [x] Wire creates provider + application + policy binding
 - [x] No-op for `sso.provider != 'authentik'`
 

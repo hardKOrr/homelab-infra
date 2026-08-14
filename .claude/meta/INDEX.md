@@ -3,8 +3,8 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**18 live · 28 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
-304 and 502 closed 2026-08-12, both by running things.
+**17 live · 29 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+304 and 502 closed 2026-08-12, both by running things. 306 closed 2026-08-13, same way.
 
 ## Start here
 
@@ -103,7 +103,7 @@ on every commit. The only instrument that found them was execution. Treat "never
 
 | Click | Closes | Cost |
 |---|---|---|
-| One browser session — Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in | **302, 306, 400, 403, 405** — five slices on one sitting | a human at a browser |
+| One browser session — Vaultwarden CRUD, Grafana login | **400, 405** | a human at a browser |
 | The Rundeck **Config group** — the last never-run job group | **601** outright | two jobs |
 | `Deploy SABnzbd`, twice — the second run must produce the same api_key | nothing; proves the last app shipped | two clicks |
 | A migration that completes | **504's adoption PUT** — the last box on it | blocked, see below |
@@ -118,6 +118,20 @@ cutover target. Execution 120 stopped exactly there, which is the path guard wor
 008/009/015/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap. Those are
 the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
 OPNsense credentials had been in the repo's gitignored `.env` for days.
+
+### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
+
+Sonarr denied akadmin (superuser, but not a member of `homelab-users` — application-access
+group bindings are not superuser-bypassed by design, see 403's notes.md). Operator added
+akadmin to `homelab-users` in the Authentik UI and retried: Sonarr redirected to Authentik's
+login flow, akadmin signed in, and the browser returned to Sonarr authenticated.
+
+That is the full `forward_auth` browser leg 306, 302 and 403 were all waiting on.
+**306 is done** — its only remaining item was the Nginx path, unreachable in this lab for
+the same reason 301 is parked in `no-target/`, so it does not block closing. **302** ticks
+its forward_auth redirect item; `oidc`'s sign-in leg and the unwire-then-denied check are
+still open. **403** ticks three of five acceptance items; the registry-token check and an
+idempotent re-run remain.
 
 ### W1–W7 ran live, 2026-08-11 — executions 75–78
 
@@ -217,7 +231,7 @@ the work queue above.
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
 | 601 rundeck-jobs | the Config group, the last never-run jobs |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
-| 302, 306, 400, 403, 405 | one browser session: Vaultwarden CRUD, Grafana login, Authentik login, one `forward_auth` sign-in. 302's catalog-shape idempotency is already proven by the 2026-08-12 binding query; only `oidc` and `forward_auth` remain |
+| 302, 400, 403, 405 | Vaultwarden CRUD, Grafana login, one `oidc` sign-in and 302's unwire-then-denied check. 302's catalog-shape idempotency was proven by the 2026-08-12 binding query, and its forward_auth redirect + 403's admin-login/UI/redirect items by the 2026-08-13 Sonarr sign-in; only `oidc`, the unwire check, 403's registry-token check and its idempotent re-run remain |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
 
@@ -229,7 +243,7 @@ Slices are cut on the code axis, so one subject spans several.
 |---|---|
 | Vaultwarden | app **400**, secret store **014**, token capture **013** |
 | Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
-| Authentik / identity | app **403**, wiring **302**, forward_auth **306**, modes **009** |
+| Authentik / identity | app **403**, wiring **302**, forward_auth **306** (closed), modes **009** |
 | Config model | provenance **010**, onboarding **012**, estates **008** |
 | Networking | IP allocation **011**, OPNsense **304** (closed) |
 | Media | apps **505**, wiring **504** |
