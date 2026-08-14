@@ -24,6 +24,19 @@ The operator signed in to the public Vaultwarden hostname and successfully exerc
 create/read/update/delete. This closes the browser/client usability leg. The three
 `lab-*` maintenance commands remain unrun.
 
+## 2026-08-14 — maintenance commands confirmed; slice closed
+
+All three Maintenance jobs ran through the Rundeck API and succeeded:
+
+| Command | Execution | Evidence |
+|---|---:|---|
+| `lab-update-check` | 138 | The job succeeded; exact command output was `installed=1.37.1`, `latest=1.37.1`, `update_available=false` |
+| `lab-restart-app` | 139 | The Vaultwarden task reported `changed=1`, `failed=0`; the service was `active` afterward |
+| `lab-tail-applog` | 140 | Journal output showed the old process exit cleanly, systemd start a new process, and successful requests afterward |
+
+Together with the browser CRUD confirmation earlier the same day, this completes acceptance
+and closes 400.
+
 ## Superseded planning text (moved from README, 2026-08-08)
 
 The original install approach, kept for provenance. It does **not** describe what shipped:

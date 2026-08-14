@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**15 live · 31 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**14 live · 32 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way.
 
@@ -104,14 +104,17 @@ on every commit. The only instrument that found them was execution. Treat "never
 
 | Click | Closes | Cost |
 |---|---|---|
-| Run Vaultwarden's three native maintenance commands | **400** | three runner/API executions |
 | A migration that completes | **504's adoption PUT** — the last box on it | blocked, see below |
 
+**400 closed, 2026-08-14.** Rundeck executions 138–140 ran Vaultwarden's update check,
+restart and log tail. The update command reported installed/latest `1.37.1`, the restart
+produced a clean stop/start and the log tail showed successful requests from the new
+process. Combined with the browser CRUD check, that closes every acceptance item.
+
 **The browser session is done, 2026-08-14.** Vaultwarden login and CRUD succeeded at the
-public hostname, advancing 400; its three `lab-*` commands are the only remaining checks.
-Grafana login succeeded with the generated credentials retrieved from Vaultwarden, closing
-405. The datasource, dashboard data, scrape targets and idempotent re-run were already
-proven.
+public hostname, completing the browser leg before executions 138–140 closed 400. Grafana
+login succeeded with the generated credentials retrieved from Vaultwarden, closing 405.
+The datasource, dashboard data, scrape targets and idempotent re-run were already proven.
 
 **601 closed and `Deploy SABnzbd`'s api_key proof is done, 2026-08-13/14** — both run
 entirely over the Rundeck REST API via SSH, no browser needed (see the
@@ -244,7 +247,6 @@ the work queue above.
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
 | 008, 009, 015, 407 | a second estate declared and one app deployed into it |
-| 400 app-vaultwarden | Browser login and CRUD are done (2026-08-14); only `lab-update-check`, `lab-restart-app` and `lab-tail-applog` remain |
 | 302, 403 | One `oidc` sign-in and 302's unwire-then-denied check. 302's catalog-shape idempotency was proven by the 2026-08-12 binding query, and its forward_auth redirect + 403's admin-login/UI/redirect items by the 2026-08-13 Sonarr sign-in; only `oidc`, the unwire check, 403's registry-token check and its idempotent re-run remain |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
@@ -255,7 +257,7 @@ Slices are cut on the code axis, so one subject spans several.
 
 | Subject | Slices |
 |---|---|
-| Vaultwarden | app **400**, secret store **014**, token capture **013** |
+| Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
 | Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
 | Authentik / identity | app **403**, wiring **302**, forward_auth **306** (closed), modes **009** |
 | Observability | app **405** (closed) |
