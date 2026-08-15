@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**14 live · 32 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**13 live · 33 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way.
 
@@ -110,6 +110,11 @@ on every commit. The only instrument that found them was execution. Treat "never
 restart and log tail. The update command reported installed/latest `1.37.1`, the restart
 produced a clean stop/start and the log tail showed successful requests from the new
 process. Combined with the browser CRUD check, that closes every acceptance item.
+
+**403 closed, 2026-08-14.** Authentik execution 144 applied the one-time PostgreSQL mode
+transition from the old declaration to runtime-stable `0700`. Immediate execution 145 used
+pushed revision `8138199`; database and Redis directory tasks were both unchanged and the
+full recap was `changed=0`, `unreachable=0`, `failed=0` on both hosts.
 
 **The browser session is done, 2026-08-14.** Vaultwarden login and CRUD succeeded at the
 public hostname, completing the browser leg before executions 138–140 closed 400. Grafana
@@ -246,8 +251,9 @@ the work queue above.
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
-| 008, 009, 015, 407 | a second estate declared and one app deployed into it |
-| 302, 403 | One `oidc` sign-in and 302's unwire-then-denied check. 302's catalog-shape idempotency was proven by the 2026-08-12 binding query, and its forward_auth redirect + 403's admin-login/UI/redirect items by the 2026-08-13 Sonarr sign-in. Executions 142/143 proved 403's vault-backed registry token; only `oidc`, the unwire check and 403's final idempotent re-run remain |
+| 008, 009, 407 | a second estate declared and one app deployed into it |
+| 015 | one live migration from per-host certificates to the wildcard, proving HTTPS stays available throughout |
+| 302 | One `oidc` sign-in and the unwire-then-denied check. Its catalog-shape idempotency was proven by the 2026-08-12 binding query and its forward_auth redirect by the 2026-08-13 Sonarr sign-in |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
 
@@ -259,7 +265,7 @@ Slices are cut on the code axis, so one subject spans several.
 |---|---|
 | Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
 | Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
-| Authentik / identity | app **403**, wiring **302**, forward_auth **306** (closed), modes **009** |
+| Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** |
 | Observability | app **405** (closed) |
 | Config model | provenance **010**, onboarding **012**, estates **008** |
 | Networking | IP allocation **011**, OPNsense **304** (closed) |

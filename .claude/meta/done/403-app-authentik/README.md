@@ -1,6 +1,6 @@
 # 403 — Authentik role + playbook
 
-**Status:** built
+**Status:** done
 **Subject:** Authentik / identity
 **Related:** 302 (wiring), 009 (identity modes), 306 (enforcement), 401 (Ntfy)
 
@@ -22,8 +22,8 @@ asserts `sso.host` before publishing a forward_auth route.
 
 ## Remaining
 
-Live acceptance needs one app deployed with `routing.identity: forward_auth`, observed end
-to end.
+**None — closed 2026-08-14.** The forward-auth path, vault-backed API token and a fully
+unchanged deploy have all been observed live.
 
 - [x] Authentik UI loads at the wired domain — met 2026-08-13, `auth.wasitacatisaw.cc`
 - [x] Admin login works with credentials from the vault — met 2026-08-13, akadmin signed
@@ -37,10 +37,10 @@ to end.
       belongs to the bootstrap admin. The original outpost-id field did not ship: wiring
       resolves the embedded outpost by name on every call, and Sonarr's live forward-auth
       flow already proves that lookup
-- [ ] Re-run is idempotent — execution 143 proved secrets, templates, images and containers
-      stable, but found PostgreSQL's runtime `0700` directory being forced to `0750` once
-      after a container recreate. The role now declares `0700`; one deploy from the
-      committed revision remains
+- [x] Re-run is idempotent — execution 144 applied the one-time transition from the old
+      declared database mode to runtime-stable `0700`; the immediate execution 145 used
+      revision `8138199`, reported both database and Redis directory items `ok`, and ended
+      `changed=0`, `unreachable=0`, `failed=0` on both hosts
 
 ## Links
 

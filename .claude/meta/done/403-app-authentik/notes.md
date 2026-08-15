@@ -146,6 +146,15 @@ container-owned uid/gid. Both repository gates pass. The final idempotence box r
 until that revision reaches the runner's tracked branch and one deploy confirms the
 directory task is unchanged.
 
+## 2026-08-14 — idempotence proven; slice closed
+
+Rundeck execution 144 refreshed the runner to pushed revision `8138199` and applied the
+expected one-time database mode transition from the old declaration to `0700`; Redis was
+already unchanged. Immediate execution 145 then reported both items `ok`. Its full recap
+was `changed=0`, `unreachable=0`, `failed=0` on localhost and `sso-stack`.
+
+That closes the final acceptance item and slice 403.
+
 ---
 
 ## Superseded planning text (moved from README, 2026-08-08)
