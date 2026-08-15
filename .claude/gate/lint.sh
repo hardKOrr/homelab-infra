@@ -1,8 +1,27 @@
 #!/bin/bash
 # Ansible-lint gate. Invoked as the `lint` gate registered in .isotope/isotope.json
 # (see .claude/gate/README.md), from the repo root:
-#   wsl bash -lc 'bash .claude/gate/lint.sh'
+#   wsl bash -lc 'bash .claude/gate/lint.sh'          # narrow to the working tree's changes
+#   wsl bash -lc 'bash .claude/gate/lint.sh --all'    # full sweep
+#
+# A clean tree, an unreadable git, or a change to anything a playbook consumes all resolve
+# to the full sweep — see .claude/gate/lib-scope.sh.
 set -euo pipefail
+
+repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cd "$repo"
+
+# shellcheck source=lib-scope.sh
+. .claude/gate/lib-scope.sh
+gate_resolve_scope "${1:-}"
+
+# Narrowed runs lint the changed files themselves. ansible-lint's rules are per-file, so a
+# file list is a faithful subset of the full run — unlike the target *directories* below,
+# which have to stay directories for the auto-detection reason documented there.
+lint_targets=(playbooks roles tasks vars)
+if [ "$gate_scope" = "changed" ]; then
+    mapfile -t lint_targets < <(gate_changed_ansible_yaml | grep -E '^(playbooks|roles|tasks|vars)/' || true)
+fi
 
 cd ansible
 
@@ -22,7 +41,12 @@ export ANSIBLE_INVENTORY=localhost,
 # Lint targets the explicit playbooks/roles/tasks/vars dirs, not ".": ansible-lint auto-detects
 # a bare "." target as a single *role* here (ansible/ has top-level tasks/, vars/, roles/ dirs,
 # matching role-layout heuristics) and silently short-scans ~3 files instead of the full tree.
-"$HOME/.venvs/homelab-ansible/bin/ansible-lint" -c .ansible-lint playbooks roles tasks vars
+if [ "${#lint_targets[@]}" -eq 0 ]; then
+    echo "Scope: changed ($gate_scope_reason) — no linted ansible files touched; skipping ansible-lint."
+else
+    echo "Scope: $gate_scope ($gate_scope_reason) — ${#lint_targets[@]} target(s)."
+    "$HOME/.venvs/homelab-ansible/bin/ansible-lint" -c .ansible-lint "${lint_targets[@]}"
+fi
 
 # Compile every Jinja expression in the tree. ansible-lint above and --syntax-check in
 # test.sh both parse YAML without ever templating a string, so a malformed expression —

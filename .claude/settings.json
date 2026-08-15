@@ -5,6 +5,8 @@
       "Write(//c/Users/korr/source/repos/homelab-infra/**)",
       "Bash(wsl bash -lc 'bash .claude/gate/lint.sh')",
       "Bash(wsl bash -lc 'bash .claude/gate/test.sh')",
+      "Bash(wsl bash -lc 'bash .claude/gate/lint.sh --all')",
+      "Bash(wsl bash -lc 'bash .claude/gate/test.sh --all')",
       "Bash(git status *)",
       "Bash(git diff *)",
       "Bash(git log *)",
