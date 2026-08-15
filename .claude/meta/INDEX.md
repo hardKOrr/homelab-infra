@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**12 live · 34 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**11 live · 35 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 
@@ -137,7 +137,7 @@ is a full teardown and rebuild, and the old apps exist as migration *test materi
 cutover target. Execution 120 stopped exactly there, which is the path guard working. Do not
 "fix" the storage mismatch.
 
-008/009/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap. Those are
+008/009 need the estate's Authentik; 010/012/013/014 need a bare-metal bootstrap. Those are
 the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
 OPNsense credentials had been in the repo's gitignored `.env` for days.
 
@@ -189,11 +189,24 @@ estate's block. Its three preconditions (`proxmox.api_token_secret`,
 post-cutover by `lab-run.sh`, so **the cutover job is re-runnable and is the estate import
 path** — Likely, reasoned from the source, not yet run.
 
-The sequence, when a session can write to the lab: author the token under the estate's
-`dns_challenge` in the runner's `config/infrastructure.yml`, run `Vaultwarden Cutover`,
-confirm the item, then remove the token from the file. Writing that seeded file was
-attempted on 2026-08-15 and **refused three times by the permission classifier** (`pct
-push` and `scp` alike); the estate map itself, which carries no secret, pushed fine.
+**The cutover job is NOT that path — measured, execution 147.** `rundeck/jobs/
+vaultwarden-cutover.yaml` exports `LAB_SEED_MODE=1`, and `lab-run.sh` refuses it outright
+once the vault-mode marker exists: `runner is already in Vault mode; LAB_SEED_MODE cannot
+bypass Vaultwarden`. It never reaches the play, so the play's own preconditions — which
+*are* satisfiable from the vault post-cutover — are irrelevant. **A secret authored after
+the one-time cutover has no supported route into Vaultwarden.** Anything needing one today
+must be reasoned about with that in mind; the estate's Cloudflare token consequently lives
+in the runner's `config/infrastructure.yml` (0640 `rundeck:rundeck`), which is the same
+guest-held-credential exception as `/etc/caddy/caddy.json`, not a fix.
+
+The operator authored the token by hand on 2026-08-15, after three attempts to push the
+seeded file were **refused by the permission classifier** (`pct push` and `scp` alike). The
+estate map itself, carrying no secret, pushed fine.
+
+**407 closed on that token — executions 148 and 149.** The foxglove wildcard issued via
+DNS-01 in about 40 s, each estate policy carries its own distinct token ahead of the
+catch-all (compared by hash, never printed), the catch-all carries none, and the re-run was
+`changed=0` on the Caddy host.
 
 ### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
 
@@ -306,7 +319,7 @@ the work queue above.
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
 | 008 | **two boxes left** — an Authentik deployed with `routing.estate: foxglove`, then one app into that estate. The estate itself is declared and its three inert-path boxes are ticked |
-| 009, 407 | the same estate Authentik and one app per identity mode. 407 additionally needs the foxglove wildcard, which needs the DNS-01 token delivered |
+| 009 | the same estate Authentik, then one app per identity mode |
 | 302 | One `oidc` sign-in and the unwire-then-denied check. Its catalog-shape idempotency was proven by the 2026-08-12 binding query and its forward_auth redirect by the 2026-08-13 Sonarr sign-in |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
@@ -318,7 +331,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Subject | Slices |
 |---|---|
 | Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
-| Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** (closed) |
+| Caddy / TLS | wiring **300**, DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
 | Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** |
 | Observability | app **405** (closed) |
 | Config model | provenance **010**, onboarding **012**, estates **008** |
