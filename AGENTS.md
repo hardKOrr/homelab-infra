@@ -297,6 +297,12 @@ wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/ga
 wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh'
 ```
 
+**Allow at least 20 minutes per gate.** Full-repository lint and syntax checks are slow on
+the `/mnt/c` filesystem and commonly run far longer than one minute. Do not wrap either
+command in a short timeout. If the caller times out, its WSL child can keep running and hold
+the `ansible-lint` lock; inspect the existing process and wait for or stop that exact process
+before retrying. Do not start a second lint gate while the first is still running.
+
 `lint.sh` runs ansible-lint. `test.sh` runs `--syntax-check` over every playbook under
 `ansible/playbooks/`. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to
 `localhost,` so the dynamic inventory plugin never asks for credentials.
