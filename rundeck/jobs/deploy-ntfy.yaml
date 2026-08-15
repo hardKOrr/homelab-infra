@@ -17,6 +17,14 @@
   scheduleEnabled: false
   nodeFilterEditable: false
   multipleExecutions: false
+  options:
+  - name: instance
+    description: Leave this as it is for the normal deployment. Change it only to run a
+      SECOND instance of this app alongside the first — a second estate's SSO, for example.
+      The value is the config/apps/<instance>.yml filename, the guest hostname and the
+      subdomain.
+    required: true
+    value: ntfy
   sequence:
     keepgoing: false
     strategy: node-first
@@ -26,7 +34,10 @@
           #!/bin/bash
           set -euo pipefail
           ARGS=()
-          ARGS+=(-e "instance=ntfy")
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
 
           # lab-run refreshes the checkout, runs config-doctor, and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.

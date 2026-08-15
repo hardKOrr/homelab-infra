@@ -113,13 +113,13 @@ Job UUIDs are stable, so re-loading updates the existing jobs instead of duplica
 | Config | Configure App | `playbooks/maintenance/configure-app.yml` | `instance` + a dozen optional overrides + `extra_yaml` |
 | Config | Get Config | `playbooks/maintenance/get-config.yml` | `instance` (optional), `archive` (optional) |
 | Config | Reimport Jobs | — (calls the Rundeck API directly) | none |
-| Apps | Deploy Vaultwarden | `playbooks/apps/vaultwarden.yml` | none — `instance=vaultwarden` is baked in |
-| Apps | Deploy Ntfy | `playbooks/apps/ntfy.yml` | none |
-| Apps | Deploy Caddy | `playbooks/apps/caddy.yml` | optional encrypted Cloudflare Seed token and optional Vaultwarden credentials; the runner enforces whichever lifecycle state is active |
-| Apps | Deploy Authentik | `playbooks/apps/authentik.yml` | none |
-| Apps | Deploy Uptime Kuma | `playbooks/apps/uptime-kuma.yml` | none |
-| Apps | Deploy Observability | `playbooks/apps/observability.yml` | none |
-| Apps | Deploy PBS | `playbooks/apps/pbs.yml` | none |
+| Apps | Deploy Vaultwarden | `playbooks/apps/vaultwarden.yml` | `instance` (prefilled `vaultwarden`) |
+| Apps | Deploy Ntfy | `playbooks/apps/ntfy.yml` | `instance` (prefilled `ntfy`) |
+| Apps | Deploy Caddy | `playbooks/apps/caddy.yml` | `instance` (prefilled `caddy`); optional encrypted Cloudflare Seed token and optional Vaultwarden credentials; the runner enforces whichever lifecycle state is active |
+| Apps | Deploy Authentik | `playbooks/apps/authentik.yml` | `instance` (prefilled `authentik`) |
+| Apps | Deploy Uptime Kuma | `playbooks/apps/uptime-kuma.yml` | `instance` (prefilled `uptime-kuma`) |
+| Apps | Deploy Observability | `playbooks/apps/observability.yml` | `instance` (prefilled `observability`) |
+| Apps | Deploy PBS | `playbooks/apps/pbs.yml` | `instance` (prefilled `pbs`) |
 | Apps | Remove App | `playbooks/apps/remove.yml` | `instance`, `app` (optional), `delete_data` |
 | Maintenance | Lab Status | `playbooks/maintenance/status.yml` | none |
 | Maintenance | Check Native App Updates | `playbooks/maintenance/check-native-updates.yml` | none — cron `0 0 6 ? * MON *` |
@@ -129,9 +129,15 @@ Job UUIDs are stable, so re-loading updates the existing jobs instead of duplica
 | Maintenance | Wire Media Stack | `playbooks/stacks/wire-media-stack.yml` | none |
 | Maintenance | Vaultwarden Recovery | `playbooks/maintenance/vaultwarden-recovery.yml` | exact break-glass confirmation |
 
-**One job per app, no typing.** Each Deploy job hard-codes `instance=<app>`, so deploying
-is one click. A second instance of an app means copying its job file, changing that
-argument and the UUID.
+**One job per app, still no typing.** Each Deploy job carries a required `instance`
+option whose *value is already the app's own name*, so Rundeck prefills it and the normal
+deployment stays one click. Changing it is how a second instance of the same app is
+deployed alongside the first — a second estate's Authentik, per the estate contract that
+an estate's SSO is an ordinary app deploy. The instance name is the
+`config/apps/<instance>.yml` filename, the guest hostname and the subdomain.
+
+Copying a job file to get a second instance is no longer necessary, and the copy is worse:
+its UUID has to be changed by hand and it drifts from the original on every later edit.
 
 ### Every step is one `lab-run` call
 
@@ -140,7 +146,7 @@ No job file contains a path, a venv, or a `cd`. A step looks like this:
 ```bash
 #!/bin/bash
 set -euo pipefail
-exec lab-run playbooks/apps/caddy.yml -e instance=caddy
+exec lab-run playbooks/apps/caddy.yml -e "instance=$RD_OPTION_INSTANCE"
 ```
 
 `lab-run` is `/usr/local/bin/lab-run`, a symlink into the checkout at
