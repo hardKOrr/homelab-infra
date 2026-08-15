@@ -1,0 +1,61 @@
+---
+# Forget one instance in config/.generated/facts.yml. Called from
+# playbooks/apps/remove.yml (Play 1), after the provider unwiring and on localhost.
+#
+# The registry is how each service finds the ones before it, and until 2026-08-15
+# nothing ever removed from it: `Remove App` unwired the proxy, SSO, monitoring and DNS,
+# stopped the app, optionally deleted its data — and left the entry claiming the app is
+# still there at an endpoint that is gone.
+#
+# That entry is not inert. `tasks/app-wiring/resolve-media-registry.yml` calls an entry
+# with an `app` kind and a `host` USABLE, so the next `Wire Media Stack` run registers
+# the removed app as a download client in every *arr and fails when it does not answer.
+# Found on the live lab: `media.sabnzbd-foxglove` outlived its container by three days.
+#
+# What is pruned, and why nothing else is, is in ansible/scripts/registry-forget.py.
+# The pruning is done there rather than in Jinja because a filter chain that has to
+# rebuild nested maps by hand is exactly where a wrong `combine` silently drops a
+# neighbouring service — and because a Python function can be tested by
+# .claude/gate/test-registry-forget.sh without an Ansible run.
+#
+# Inputs:
+#   instance                    the app being removed
+#   unwire_registry_file        absolute path to config/.generated/facts.yml
+#
+# NOT a degradation site. A registry the platform failed to prune is a landmine for the
+# next run, and unlike the provider unwiring above it cannot be "stale route on a proxy
+# that is gone" — nothing external is involved, this is the platform's own file.
+
+- name: Unwire registry | Read the current registry
+  ansible.builtin.set_fact:
+    _unwire_registry: >-
+      {{ (lookup('ansible.builtin.file', unwire_registry_file, errors='ignore')
+          | from_yaml) | default({}, true) }}
+
+- name: Unwire registry | Compute the registry without {{ instance }}
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ unwire_registry_file | dirname | dirname | dirname }}/ansible/scripts/registry-forget.py"
+    stdin: "{{ {'registry': _unwire_registry, 'instance': instance} | to_json }}"
+  register: _unwire_registry_pruned
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Unwire registry | Write the pruned registry
+  ansible.builtin.copy:
+    dest: "{{ unwire_registry_file }}"
+    mode: "0600"
+    content: "{{ _unwire_registry_pruned.stdout | from_json | to_nice_yaml(indent=2) }}"
+  when: (_unwire_registry_pruned.stdout | from_json) != _unwire_registry
+  delegate_to: localhost
+  become: false
+
+- name: Unwire registry | Report what the registry no longer claims
+  ansible.builtin.debug:
+    msg: >-
+      {{ instance }} is out of config/.generated/facts.yml.
+      {{ 'Nothing referenced it.'
+         if (_unwire_registry_pruned.stdout | from_json) == _unwire_registry
+         else 'Its registry entries were removed, so nothing will try to wire it.' }}

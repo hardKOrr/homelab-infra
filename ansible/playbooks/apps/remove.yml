@@ -23,6 +23,10 @@
 #      a. Caddy/Nginx route      d. DNS record
 #      b. Authentik application + provider
 #      c. Uptime Kuma monitor
+#      e. its entries in config/.generated/facts.yml — the service registry. Added
+#         2026-08-15: a removal used to leave the registry claiming the app was still
+#         there, and an orphaned media entry is not inert (Wire Media Stack registers
+#         it as a live download client). See tasks/unwiring/registry.yml.
 #   3. Withdraw the instance's row and app_<instance> tag from its Proxmox guest
 #   4. Stop and remove the app on its host (compose down, or stop+disable the service)
 #   5. Notify via Ntfy: "<instance> removed"
@@ -135,6 +139,14 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # After the provider unwiring, deliberately: the registry is what the unwire steps
+    # above read to find those providers, so pruning it first would remove the app's own
+    # entry while the reverse proxy and DNS still carried its route.
+    - name: Unregister from the service registry
+      ansible.builtin.include_tasks: ../../tasks/unwiring/registry.yml
+      vars:
+        unwire_registry_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
 
     # ── Locate the host that runs the app ──────────────────────────────────────
     - name: Refresh inventory to get current Proxmox state

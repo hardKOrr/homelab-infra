@@ -90,4 +90,5 @@ fi
 cd "$repo"
 bash .claude/gate/test-vaultwarden.sh || rc=1
 bash .claude/gate/test-allocate-ip.sh || rc=1
+bash .claude/gate/test-registry-forget.sh || rc=1
 exit $rc
