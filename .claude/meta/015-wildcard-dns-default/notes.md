@@ -147,3 +147,17 @@ No output contains a DNS API token, certificate private key, or other credential
   wildcard record is sufficient to bring up the platform control plane.
 - **Manual work is a checkpoint.** Unsupported DNS and client trust changes produce exact,
   verifiable output and an explicit resume action.
+
+## 2026-08-15 — outage-free wildcard migration built
+
+The role now derives the hostnames covered by any desired wildcard that is not yet on disk.
+It stages those names alongside the wildcard in `apps.tls.certificates.automate`, waits for
+the wildcard certificate gate, and removes the temporary names only after the gate passes.
+If issuance fails, the task leaves the old names pinned and fails before cleanup, preserving
+the serving certificates for the next resumable run.
+
+The slice originally named `automatic_https.force_automate` as the pin. Current Caddy JSON
+does not expose a hostname list there: `ignore_loaded_certificates` is a boolean that forces
+individual automation despite a matching loaded certificate. The certificate loader's
+`automate` list is the supported list of subjects Caddy must keep loaded and managed, so it
+is the correct transition surface.

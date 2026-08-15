@@ -1,6 +1,6 @@
 # 015 — Caddy-first wildcard HTTPS bootstrap
 
-**Status:** open
+**Status:** built
 **Subject:** Caddy / TLS
 **Related:** 407 (per-estate DNS-01), 300 (Caddy wiring), 014 + 016 (what HTTPS unblocks)
 
@@ -26,13 +26,12 @@ command. Mode details and the handoff contract are in notes.md.
 
 ## Remaining
 
-- [ ] **Migration to the wildcard does not interrupt an already-serving estate.** Adding the
-      wildcard to `automate` drops every per-hostname name from Caddy's managed set
-      immediately, unloading valid certificates — HTTPS is down from the moment the config
-      applies until the wildcard is obtained. The fix is a two-phase reconcile: write the
-      wildcard while pinning current hostnames in `automatic_https.force_automate`, wait for
-      the wildcard, then drop the pin in a second write. Fresh labs are unaffected, so this
-      gates migrations only
+- [ ] **Live acceptance:** migration to the wildcard does not interrupt an already-serving
+      estate. The two-phase reconcile is built: the role stages the wildcard together with
+      affected route hostnames in `apps.tls.certificates.automate`, waits for the wildcard,
+      then drops the temporary host pins in a second write. Fresh and already-converged labs
+      skip the transition. A live migration still needs to prove continuous HTTPS before
+      this closes
 - **Internal mode is declined, 2026-08-12** — the operator does not want Caddy's own CA
       ("just a PITA to deal with"): every client would have to be made to trust it. The code
       path stays for anyone who has no public domain, but **this lab will never enter it, so

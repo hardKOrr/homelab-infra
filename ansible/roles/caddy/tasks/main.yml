@@ -376,6 +376,46 @@
   vars:
     _caddy_admin_url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}"
 
+# A pre-015 Caddy manages one certificate for every route hostname. Replacing that
+# implicit set with only the wildcard unloads those certificates before the wildcard
+# has finished issuing, taking an already-serving estate offline. Find which desired
+# wildcards are not present before changing the loader, then keep the affected route
+# hostnames in `tls.certificates.automate` for the transition. The pins are removed only
+# after the wildcard gate below succeeds. Fresh installs have no routes to preserve;
+# converged installs already have every wildcard and therefore skip the transition.
+- name: Check which estate wildcard certificates already exist
+  ansible.builtin.find:
+    paths: "{{ caddy_cert_dir }}"
+    patterns: "{{ item | regex_replace('^\\*\\.', 'wildcard_.') }}.crt"
+    recurse: true
+  loop: "{{ _caddy_automate_names }}"
+  register: _caddy_existing_wildcard_cert
+  changed_when: false
+
+- name: Collect estate wildcards still awaiting issuance
+  ansible.builtin.set_fact:
+    _caddy_pending_wildcards: >-
+      {{ _caddy_existing_wildcard_cert.results | default([])
+         | selectattr('matched', 'equalto', 0)
+         | map(attribute='item') | list }}
+
+- name: Collect route hostnames to preserve during wildcard migration
+  ansible.builtin.set_fact:
+    _caddy_migration_names: >-
+      {%- set result = [] -%}
+      {%- for route in (_caddy_srv0.json | default({})).routes | default([]) -%}
+        {%- for matcher_set in route.match | default([]) -%}
+          {%- for host in matcher_set.host | default([]) -%}
+            {%- for wildcard in _caddy_pending_wildcards -%}
+              {%- if host.endswith(wildcard[1:]) and host not in result -%}
+                {%- set _ = result.append(host) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ result }}
+
 # Fresh install, or an autosave that lost the server — load the base config whole.
 # Safe here precisely because there are no routes to lose.
 - name: Load the base configuration
@@ -399,6 +439,9 @@
     _caddy_desired_policies: "{{ _caddy_base_config.apps.tls.automation.policies }}"
     _caddy_desired_certificates: >-
       {{ _caddy_base_config.apps.tls.certificates | default({}) }}
+    _caddy_transition_certificates: >-
+      {{ {'automate': (_caddy_automate_names + _caddy_migration_names)
+                        | unique | list} }}
   block:
     # PATCH, not PUT on the parent: replacing srv0 wholesale would take its routes
     # with it.
@@ -446,18 +489,18 @@
       changed_when: false
       when: _caddy_desired_certificates | length > 0
 
-    - name: Update the automated certificate names
+    - name: Stage wildcard certificates without unloading serving hostnames
       ansible.builtin.uri:
         url: "{{ _caddy_admin_url }}/config/apps/tls/certificates"
         method: POST
         body_format: json
-        body: "{{ _caddy_desired_certificates }}"
+        body: "{{ _caddy_transition_certificates }}"
         status_code: 200
       when:
         - _caddy_desired_certificates | length > 0
         - >-
           _caddy_certificates_running.status != 200
-          or (_caddy_certificates_running.json | default({})) != _caddy_desired_certificates
+          or (_caddy_certificates_running.json | default({})) != _caddy_transition_certificates
       changed_when: true
 
 - name: Verify the route table is reachable
@@ -502,6 +545,18 @@
   loop: "{{ _caddy_wildcard_cert.results | default([]) }}"
   loop_control:
     label: "{{ item.item }}"
+
+- name: Remove temporary per-hostname certificate pins
+  ansible.builtin.uri:
+    url: >-
+      http://{{ _caddy_bind_ip }}:{{ app_config.app.port
+      }}/config/apps/tls/certificates
+    method: POST
+    body_format: json
+    body: "{{ _caddy_base_config.apps.tls.certificates }}"
+    status_code: 200
+  when: _caddy_migration_names | length > 0
+  changed_when: true
 
 # ── Hand the admin endpoint back to the playbook ──────────────────────────────
 - name: Export the admin endpoint to the playbook
