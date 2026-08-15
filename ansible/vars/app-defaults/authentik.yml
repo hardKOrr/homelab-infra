@@ -13,7 +13,7 @@ authentik_defaults:
   app:
     port: 9000                  # Authentik HTTP listener (the API + UI)
     https_port: 9443            # Authentik HTTPS listener, unused behind the proxy
-    data_path: /opt/authentik/data
+    data_path: "/opt/{{ instance }}/data"
     admin_email: "admin@example.com"   # akadmin's address; change to reach password resets
 
     # Image tag. Empty means "resolve the latest GitHub release at deploy time",

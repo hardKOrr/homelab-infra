@@ -226,6 +226,26 @@
             state: absent
           when: _rm_delete_data | bool
 
+        # A bind-mounted data path is neither a named volume nor part of the project
+        # directory, so neither of the two tasks above touches it. Older app defaults
+        # hard-coded the app name (`/opt/authentik/data`) while the project directory
+        # is `/opt/<instance>`, which put the app's whole database outside everything
+        # removal deleted: `delete_data: true` reported success and the data survived.
+        # The next deploy then generated fresh credentials the surviving database did
+        # not accept, and Authentik never came up (executions 153 then 155).
+        # `state: absent` on a path already gone is a no-op, so this is safe for apps
+        # whose data does live under the project directory.
+        - name: Delete bind-mounted data and config paths
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ app_config.app.data_path | default('') }}"
+            - "{{ app_config.app.config_path | default('') }}"
+          when:
+            - _rm_delete_data | bool
+            - item | length > 0
+
     # ── Native app on its own LXC ──────────────────────────────────────────────
     - name: Stop the native service
       when: remove_kind == 'native'

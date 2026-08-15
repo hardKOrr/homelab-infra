@@ -18,7 +18,7 @@ vaultwarden_defaults:
 
   app:
     port: 80                    # web vault + API + /admin panel (one port for everything)
-    data_path: /opt/vaultwarden/data
+    data_path: "/opt/{{ instance }}/data"
     signups_allowed: false      # open registration off by default — invite via /admin
     service_name: vaultwarden   # systemd unit — playbooks/apps/remove.yml stops this
 

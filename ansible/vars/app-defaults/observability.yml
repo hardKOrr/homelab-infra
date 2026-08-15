@@ -22,8 +22,8 @@ observability_defaults:
     prometheus_port: 9090       # internal only; never published through the proxy
     node_exporter_port: 9100
 
-    data_path: /opt/observability/data
-    config_path: /opt/observability/config
+    data_path: "/opt/{{ instance }}/data"
+    config_path: "/opt/{{ instance }}/config"
 
     admin_user: admin
     retention: 30d              # how long Prometheus keeps samples

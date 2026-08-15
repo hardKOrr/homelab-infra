@@ -31,8 +31,8 @@ APP_NAME_defaults:
   # ── App config ──────────────────────────────────────────────────────────────
   app:
     port: 8080           # port the app listens on inside the container/LXC
-    data_path: /opt/APP_NAME/data
-    config_path: /opt/APP_NAME/config
+    data_path: "/opt/{{ instance }}/data"
+    config_path: "/opt/{{ instance }}/config"
     # NATIVE LXC apps: the systemd unit playbooks/apps/remove.yml stops. Set it
     # whenever the unit name differs from the instance name.
     # service_name: APP_NAME
