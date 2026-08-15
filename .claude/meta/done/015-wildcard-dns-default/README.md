@@ -1,6 +1,9 @@
 # 015 — Caddy-first wildcard HTTPS bootstrap
 
-**Status:** built
+**Status:** closed 2026-08-15 — every acceptance item is either proven live or an
+operator decision. The two boxes still unticked below (no-API-provider handoff, resume
+after the manual action) are in INDEX's "Observe if it happens": this lab's domain is on
+an API provider, so neither path can run here.
 **Subject:** Caddy / TLS
 **Related:** 407 (per-estate DNS-01), 300 (Caddy wiring), 014 + 016 (what HTTPS unblocks)
 
@@ -26,12 +29,18 @@ command. Mode details and the handoff contract are in notes.md.
 
 ## Remaining
 
-- [ ] **Live acceptance:** migration to the wildcard does not interrupt an already-serving
-      estate. The two-phase reconcile is built: the role stages the wildcard together with
-      affected route hostnames in `apps.tls.certificates.automate`, waits for the wildcard,
-      then drops the temporary host pins in a second write. Fresh and already-converged labs
-      skip the transition. A live migration still needs to prove continuous HTTPS before
-      this closes
+- [x] **Live acceptance: accepted by the operator, 2026-08-15, without forcing a second
+      migration.** The two-phase reconcile is built: the role stages the wildcard together
+      with affected route hostnames in `apps.tls.certificates.automate`, waits for the
+      wildcard, then drops the temporary host pins in a second write. Fresh and
+      already-converged labs skip the transition — and **this lab is converged**: Caddy
+      168000010 holds `wildcard_.wasitacatisaw.cc.crt` with `automate:
+      ["*.wasitacatisaw.cc"]`, so `_caddy_pending_wildcards` is empty and the transition
+      path cannot fire on a re-run. Proving it live would mean deleting a working
+      certificate to re-enter the migration deliberately; the operator declined that as not
+      worth a live re-issue. **The code path is therefore built and reviewed but never
+      executed** — treat it as "presumed broken" if a lab ever does migrate, per the
+      standing rule in INDEX.md
 - **Internal mode is declined, 2026-08-12** — the operator does not want Caddy's own CA
       ("just a PITA to deal with"): every client would have to be made to trust it. The code
       path stays for anyone who has no public domain, but **this lab will never enter it, so

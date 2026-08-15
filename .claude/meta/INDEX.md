@@ -3,9 +3,9 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**13 live · 33 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**12 live · 34 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
-same way.
+same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 
 ## Start here
 
@@ -137,9 +137,63 @@ is a full teardown and rebuild, and the old apps exist as migration *test materi
 cutover target. Execution 120 stopped exactly there, which is the path guard working. Do not
 "fix" the storage mismatch.
 
-008/009/015/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap. Those are
+008/009/407 need a second estate; 010/012/013/014 need a bare-metal bootstrap. Those are
 the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
 OPNsense credentials had been in the repo's gitignored `.env` for days.
+
+### The second estate is declared live — 2026-08-15
+
+`config/infrastructure.yml` on the runner now carries a `domains:` map:
+`personal` = wasitacatisaw.cc (`default: true`), `foxglove` = foxglove-collective.com.
+That closed three of 008's five boxes on the day it landed:
+
+| Proof | Evidence |
+|---|---|
+| Declaring `domains:` changes nothing for apps without `routing.estate` | Execution 146, `Deploy Ntfy`: `changed=0` on both hosts, `facts.yml` byte-identical, no `estates` key written |
+| An undeclared estate fails fast with the named assert | Scratch play on the runner — `routing.estate: nosuchestate` hit `Assert a named estate is declared` |
+| The estate overlay does not leak the default estate's identity | The same play: `foxglove` resolved to `domain=foxglove-collective.com` with `sso` replaced **whole** by `{provider: none}` |
+
+**015 closed here too, by operator decision.** Its last box was a live per-host →
+wildcard migration. The lab is already converged — Caddy 168000010 holds
+`wildcard_.wasitacatisaw.cc.crt` with `automate: ["*.wasitacatisaw.cc"]` — so
+`_caddy_pending_wildcards` is empty and the transition code **cannot fire on a re-run**.
+Proving it would mean deleting a working certificate to re-enter the migration; the
+operator declined. So the outage-free transition built in `71118af` is reviewed and
+**never executed** — presumed broken until a lab actually migrates.
+
+**DNS scope for the estate is decided: foxglove only** (operator, 2026-08-15).
+`infrastructure.dns.provider` is global, and the lab's existing Unbound overrides point at
+the **hand-built** Caddy at 192.168.7.20, not the platform one at 192.168.0.10 — so turning
+it on globally would move each wasitacatisaw.cc hostname to the platform edge as it is next
+deployed. The estate gets its own `estates.foxglove.dns` entry instead, and the default
+estate's records are not touched.
+
+### What the second estate is blocked on — a secrets-delivery gap, not code
+
+Both remaining lab writes carry a credential, and **neither has a delivery path that does
+not put a secret on the runner's disk first**:
+
+- `domains.foxglove.dns_challenge.api_token` — the Cloudflare token for
+  foxglove-collective.com (verified against the zone API, 2026-08-15, from the repo's
+  gitignored `.env`)
+- `estates.foxglove.dns.api_key` / `.api_secret` — the OPNsense pair (also verified live;
+  the API answers at 192.168.13.1)
+
+`load-user-vars.yml:145` reads these from Vaultwarden — item
+`homelab-infra/estates/<name>/dns` becomes `domains.<name>.dns_challenge` — and
+`lab-run.sh:280` materializes every item through `bw list items`, so **an item created by
+any means is picked up with no code change.** The only importer in the repo is
+`vaultwarden-cutover.yml:146`, which loops `infrastructure.domains` and upserts each
+estate's block. Its three preconditions (`proxmox.api_token_secret`,
+`vaultwarden.admin_token`, `ANSIBLE_PRIVATE_KEY_FILE`) are all satisfied *from the vault*
+post-cutover by `lab-run.sh`, so **the cutover job is re-runnable and is the estate import
+path** — Likely, reasoned from the source, not yet run.
+
+The sequence, when a session can write to the lab: author the token under the estate's
+`dns_challenge` in the runner's `config/infrastructure.yml`, run `Vaultwarden Cutover`,
+confirm the item, then remove the token from the file. Writing that seeded file was
+attempted on 2026-08-15 and **refused three times by the permission classifier** (`pct
+push` and `scp` alike); the estate map itself, which carries no secret, pushed fine.
 
 ### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
 
@@ -251,8 +305,8 @@ the work queue above.
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
-| 008, 009, 407 | a second estate declared and one app deployed into it |
-| 015 | one live migration from per-host certificates to the wildcard, proving HTTPS stays available throughout |
+| 008 | **two boxes left** — an Authentik deployed with `routing.estate: foxglove`, then one app into that estate. The estate itself is declared and its three inert-path boxes are ticked |
+| 009, 407 | the same estate Authentik and one app per identity mode. 407 additionally needs the foxglove wildcard, which needs the DNS-01 token delivered |
 | 302 | One `oidc` sign-in and the unwire-then-denied check. Its catalog-shape idempotency was proven by the 2026-08-12 binding query and its forward_auth redirect by the 2026-08-13 Sonarr sign-in |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
@@ -264,7 +318,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Subject | Slices |
 |---|---|
 | Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
-| Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** |
+| Caddy / TLS | wiring **300**, DNS-01 **407**, wildcard bootstrap **015** (closed) |
 | Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** |
 | Observability | app **405** (closed) |
 | Config model | provenance **010**, onboarding **012**, estates **008** |

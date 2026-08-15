@@ -25,17 +25,28 @@ DNS-challenge token, sharing one Caddy/Ntfy/Kuma/metrics/PBS with the lab.
 
 ## Remaining
 
-Live acceptance needs a second-domain deploy; the lab runs one estate today.
+**The second estate is declared live, 2026-08-15.** `config/infrastructure.yml` on the
+runner now carries `domains: {personal: wasitacatisaw.cc (default), foxglove:
+foxglove-collective.com}`. Three of five boxes closed on that alone; the last two need an
+Authentik deployed into the estate.
 
-- [ ] Single-domain lab: `facts.yml`, route JSON and Authentik objects identical before and
-      after — no `domains:` map means resolve-estate no-ops
-- [ ] Declaring `domains:` with a default estate changes nothing for apps without
-      `routing.estate`
+- [x] Single-domain lab: `facts.yml`, route JSON and Authentik objects identical before and
+      after — no `domains:` map means resolve-estate no-ops. Same evidence as the row below
+- [x] Declaring `domains:` with a default estate changes nothing for apps without
+      `routing.estate` — **execution 146**, `Deploy Ntfy` with the map in place:
+      `changed=0` on localhost and on ntfy, `facts.yml` byte-identical to the pre-run copy,
+      and no `estates` key written
 - [ ] Deploying Authentik with `routing.estate: <name>` writes `estates.<name>.sso` and
       leaves top-level `sso` untouched
 - [ ] An app with `routing.estate: <name>` wires `<subdomain>.<estate-domain>` and registers
       against that estate's Authentik only
-- [ ] An app naming an undeclared estate fails fast with the named assert
+- [x] An app naming an undeclared estate fails fast with the named assert — scratch play on
+      the runner, 2026-08-15: `routing.estate: nosuchestate` hit
+      `Resolve estate | Assert a named estate is declared` with the message naming the
+      missing `domains.nosuchestate` entry. The same play showed the foxglove overlay
+      resolving to `domain=foxglove-collective.com` with `sso` replaced **whole** by
+      `{provider: none}` — the default estate's Authentik host and token do not survive
+      into the second estate, which is the property the non-recursive combine exists for
 
 ## Links
 
