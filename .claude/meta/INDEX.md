@@ -281,6 +281,32 @@ The credential reached the vault through the new job with no secret at rest on t
 and none in any command line — the payload went to the Rundeck API over stdin, and the job
 hands it to Ansible through the environment.
 
+### Removal never pruned the service registry — found and fixed the same day
+
+Verifying the estate's DNS turned up a live landmine: `media.sabnzbd-foxglove` was still
+in the runner's `config/.generated/facts.yml`, pointing at `192.168.0.100:8086`, three
+days after execution 153 removed the app. **Nothing in the repo ever removed from the
+registry.** `Remove App` unwired the proxy, SSO, monitoring and DNS, stopped the app and
+could delete its data, and left the entry claiming it was still there.
+
+That entry is not inert: `resolve-media-registry.yml` calls an entry with an `app` kind
+and a `host` **usable**, so the next `Wire Media Stack` run would have registered a dead
+SABnzbd as a download client in every *arr and then failed on it. The removal that created
+it exited 0.
+
+`592fedd` — `registry-forget.py` prunes `media.<instance>` and any role entry whose
+`instance` names it, top level and inside every `estates.<name>` scope, dropping
+containers left empty; `tasks/unwiring/registry.yml` runs it **after** the provider
+unwiring, since those steps read the registry to find the providers. Thirteen focused
+cases in the gate, weighted toward what must NOT move: one estate's removal never reaches
+another estate's entries, an unknown instance leaves the file identical, and malformed
+input is refused rather than treated as an empty registry — which would write an empty
+`facts.yml` over a working lab.
+
+**Execution 167 ran the real path on the live ghost.** `Unwire registry | Write the pruned
+registry` = changed, `sabnzbd-foxglove` is gone, and the six real media entries,
+`estates.foxglove`, and every role entry came back untouched.
+
 **Watch for a stale assumption underneath this.** The scope decision was reasoned partly
 from "the lab's existing Unbound overrides point at the hand-built Caddy at 192.168.7.20".
 Measured 2026-08-15: `vaultwarden.wasitacatisaw.cc` and `sonarr.wasitacatisaw.cc` both
