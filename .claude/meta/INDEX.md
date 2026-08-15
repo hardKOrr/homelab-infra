@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**11 live · 35 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**9 live · 37 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 
@@ -137,7 +137,7 @@ is a full teardown and rebuild, and the old apps exist as migration *test materi
 cutover target. Execution 120 stopped exactly there, which is the path guard working. Do not
 "fix" the storage mismatch.
 
-008/009 need the estate's Authentik; 010/012/013/014 need a bare-metal bootstrap. Those are
+010/012/013/014 need a bare-metal bootstrap. Those are
 the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
 OPNsense credentials had been in the repo's gitignored `.env` for days.
 
@@ -207,6 +207,34 @@ estate map itself, carrying no secret, pushed fine.
 DNS-01 in about 40 s, each estate policy carries its own distinct token ahead of the
 catch-all (compared by hash, never printed), the catch-all carries none, and the re-run was
 `changed=0` on the Caddy host.
+
+### 008 and 009 closed too — and cost three defects on the way, executions 150–161
+
+The estate got its own Authentik (`authentik-foxglove`, LXC 168000200 on its own
+`sso_stack_foxglove` host) and an app deployed into it, exercised through every identity
+mode and then removed. Full account in [008/notes.md](done/008-estate-contract/notes.md).
+
+**First, the platform could not click a second instance at all.** Every per-app Deploy job
+hard-coded `instance=<app>`, while 008's contract says an estate's SSO is an ordinary app
+deploy. `a00430d` makes `instance` a required option **prefilled with the app's own name**,
+so one-click stays one click and a second instance is a different value in one field.
+
+| Defect | What actually happened | Fix |
+|---|---|---|
+| `roles/authentik` wrote every instance to the fixed vault item `homelab-infra/sso`, and read token continuity from the unscoped fact | Execution 151 exited 0 having overwritten the **platform's** vault item and handed the new instance the platform Authentik's **own API token** — same SHA-256 in both `.env` files. Two identity providers, one credential | `b68a117` — item and continuity are `homelab-infra/estates/<name>/sso` for an estate instance |
+| The estate therefore had no token under `estates.<name>.sso` | Execution 152: the first app into the estate failed the wiring contract assert. The assert worked; the naming under it did not | same |
+| `Remove App` with `delete_data: true` deleted the Compose project and named volumes, but not the **bind-mounted** data path | Execution 153 reported success with the whole Postgres cluster still on disk. Execution 155 then minted a fresh password the surviving database refused — 60 readiness retries, cause visible only in `docker logs` | `9c4393e` — deletes bind-mounted data/config, and keys every app default by `{{ instance }}` |
+
+**All three were gate-green, and two of the three exited 0 while doing damage.** The
+useful cheap habit from this round: the fix's own expressions were proven in a scratch play
+against four fact shapes — including "named estate with nothing recorded yet, must NOT
+inherit the default estate's token" — before anything was pushed.
+
+**Two live facts the next session needs.** The estate's Authentik is still running and
+empty; and `*.foxglove-collective.com` **does not resolve on the LAN** — DNS wiring was
+scoped to the estate (operator's call) and `estates.foxglove.dns` was never populated,
+which needs the OPNsense key/secret placed the same way the Cloudflare token was. TLS is
+unaffected, since DNS-01 validates from the public internet.
 
 ### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
 
@@ -318,9 +346,7 @@ the work queue above.
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
-| 008 | **two boxes left** — an Authentik deployed with `routing.estate: foxglove`, then one app into that estate. The estate itself is declared and its three inert-path boxes are ticked |
-| 009 | the same estate Authentik, then one app per identity mode |
-| 302 | One `oidc` sign-in and the unwire-then-denied check. Its catalog-shape idempotency was proven by the 2026-08-12 binding query and its forward_auth redirect by the 2026-08-13 Sonarr sign-in |
+| 302 | One `oidc` **sign-in** — its object half is done, see the estate section. The unwire-then-denied check. Its catalog-shape idempotency was proven by the 2026-08-12 binding query and its forward_auth redirect by the 2026-08-13 Sonarr sign-in |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 | 011, 300 | nothing; observation only |
 
@@ -332,9 +358,9 @@ Slices are cut on the code axis, so one subject spans several.
 |---|---|
 | Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
 | Caddy / TLS | wiring **300**, DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
-| Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** |
+| Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** (closed) |
 | Observability | app **405** (closed) |
-| Config model | provenance **010**, onboarding **012**, estates **008** |
+| Config model | provenance **010**, onboarding **012**, estates **008** (closed) |
 | Networking | IP allocation **011**, OPNsense **304** (closed) |
 | Media | apps **505**, wiring **504** |
 | Runners / UI | Rundeck **601** (closed) |
