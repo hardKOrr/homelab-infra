@@ -135,6 +135,28 @@
     - lookup('env', 'CLOUDFLARE_API_TOKEN') | default('', true) | length == 0
   no_log: true
 
+# The authored DNS block is the ONLY declaration of which DNS provider serves the lab,
+# and until 2026-08-15 it never reached the thing that reads it. Wiring reads
+# `homelabinfra_infra.dns` (the registry), and nothing wrote a `dns` registry entry:
+# bootstrap writes one key per baseline service it deploys, and an external firewall is
+# not one it deploys. The vault item `homelab-infra/dns` carries the credential fields
+# only — the cutover imports api_key/api_secret/token and nothing else — so
+# `homelabinfra_infra.dns.provider` was always absent, every app playbook's
+# `dns.provider | default('none') != 'none'` was always false, and DNS wiring could not
+# fire in ANY lab regardless of what infrastructure.yml declared. Presumed working,
+# never executed; found by reading, not by a run.
+#
+# Authored values are the BASE and the vault/facts copy is overlaid on top, so a
+# credential in the vault still wins over one left in the file pre-cutover.
+- name: Overlay the authored DNS provider onto the registry
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine({'dns': (_config_infrastructure | default({})).dns | default({}, true)
+                           | combine(homelabinfra_infra.dns | default({}, true))}) }}
+  when: ((_config_infrastructure | default({})).dns | default({}, true)) | length > 0
+  no_log: true
+
 - name: Overlay canonical DNS secrets into authored provider shape
   ansible.builtin.set_fact:
     homelabinfra_config: >-
@@ -150,11 +172,24 @@
     # back to a dict — `domains` then arrives as "  {}" and every consumer that expects a
     # mapping breaks on it (caddy's .values(), cutover's dict2items). Emitting JSON and
     # parsing it back in a full-expression template restores the real type.
+    # The estate items mirror the global split, and that split is load-bearing:
+    #   homelab-infra/estates/<n>/reverse_proxy.dns_api_token -> the ACME DNS-01
+    #     challenge credential, exactly as homelab-infra/reverse_proxy.dns_api_token
+    #     supplies the single-estate lab above.
+    #   homelab-infra/estates/<n>/dns -> the DNS-RECORD-WIRING credential, read
+    #     straight off homelabinfra_infra.estates.<n>.dns by tasks/resolve-estate.yml,
+    #     exactly as homelab-infra/dns serves the default estate.
+    # These were one item until 2026-08-15, and the conflation was not cosmetic: an
+    # OPNsense key/secret stored for record wiring landed in the estate's dns_challenge
+    # block, where the caddy role would have read `provider: opnsense` and issued the
+    # estate's certificates against a DNS-01 module that is not its ACME provider.
     _vault_estate_domains_json: >-
       {%- set result = {} -%}
       {%- for estate in (homelabinfra_vault.estates | default({}) | dict2items) -%}
-      {%- if estate.value.dns is defined -%}
-      {%- set _ = result.update({estate.key: {'dns_challenge': estate.value.dns}}) -%}
+      {%- if estate.value.reverse_proxy is defined
+             and estate.value.reverse_proxy.dns_api_token | default('') | length > 0 -%}
+      {%- set _ = result.update({estate.key: {'dns_challenge':
+            {'api_token': estate.value.reverse_proxy.dns_api_token}}}) -%}
       {%- endif -%}
       {%- endfor -%}
       {{ result | to_json }}

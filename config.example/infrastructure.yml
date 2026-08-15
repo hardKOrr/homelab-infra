@@ -36,8 +36,22 @@ domain: "homelab.example.com"
 #     domain: "second-domain.example.com"
 #     dns_challenge:               # optional — public certs without opening port 80
 #       provider: cloudflare       # any github.com/caddy-dns/<provider> module
-#       # Provider-specific fields stay flat in this block. For Cloudflare,
-#       # api_token is read from homelab-infra/estates/foxglove/dns after cutover.
+#       # Provider-specific fields stay flat in this block. For Cloudflare, api_token
+#       # is read from homelab-infra/estates/foxglove/reverse_proxy field
+#       # dns_api_token after cutover — the same shape as the lab-wide token below.
+#     dns:                         # optional — which DNS provider serves THIS estate
+#       provider: opnsense         # pihole | adguard | opnsense | none
+#       host: "192.168.1.1"
+#       # NON-SECRET HALF ONLY. The estate inherits the credential stored under
+#       # homelab-infra/dns, so one firewall serving two estates is ONE stored
+#       # key, not a copy per estate. Store a key here only when this estate uses
+#       # a DIFFERENT DNS server — then it goes in
+#       # homelab-infra/estates/foxglove/dns (fields api_key, api_secret).
+#       #
+#       # This block is why `dns.provider` below can stay `none`: it selects DNS
+#       # per estate, so a lab whose default estate already has hand-built records
+#       # can manage a second estate's zone without rewriting the first. It works
+#       # on the default estate too — `dns: {provider: none}` holds it out.
 
 # ── Reverse Proxy ──────────────────────────────────────────────────────────────
 # provider: caddy | nginx | none

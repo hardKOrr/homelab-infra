@@ -188,6 +188,32 @@ else:
             for name, estate in domains.items():
                 if not isinstance(estate, dict) or not estate.get("domain"):
                     report("ERROR", "infrastructure.yml", "domains.%s.domain" % name, "required")
+                # Per-estate DNS selection: the non-secret half of a provider the
+                # estate's records are written to. Same enum and same address rule as
+                # the lab-wide dns block below, because it lands in the same place.
+                estate_dns = estate.get("dns") if isinstance(estate, dict) else None
+                if estate_dns is not None:
+                    if not isinstance(estate_dns, dict):
+                        report("ERROR", "infrastructure.yml", "domains.%s.dns" % name,
+                               "must be a mapping (provider, host)")
+                    else:
+                        estate_provider = estate_dns.get("provider")
+                        if estate_provider not in (None, "", "pihole", "adguard",
+                                                   "opnsense", "none"):
+                            report("ERROR", "infrastructure.yml",
+                                   "domains.%s.dns.provider" % name,
+                                   "%r is not one of pihole, adguard, opnsense, none"
+                                   % estate_provider)
+                        elif estate_provider not in (None, "", "none") \
+                                and not estate_dns.get("instance") \
+                                and not estate_dns.get("host") \
+                                and not dig(infra, "dns.host") \
+                                and not dig(infra, "dns.instance"):
+                            report("ERROR", "infrastructure.yml",
+                                   "domains.%s.dns.host" % name,
+                                   "required for provider %r -- the estate inherits "
+                                   "dns.host when the lab-wide block names one, and "
+                                   "this lab's does not" % estate_provider)
 
     provider = enum(infra, "infrastructure.yml", "reverse_proxy.provider",
                     ["caddy", "nginx", "none"])

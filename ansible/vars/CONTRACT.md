@@ -314,7 +314,39 @@ domains:
                                    # scoped to THIS domain; referenced only from its
                                    # own TLS policy (third deliberate secret exception,
                                    # alongside dns.host and vaultwarden.admin_token)
+    dns:                           # optional — which DNS provider serves THIS estate
+      provider: opnsense           # pihole | adguard | opnsense | none
+      host: 192.168.1.1            # non-secret half only; see below
 ```
+
+**`domains.<name>.dns` — DNS is selected per estate, and the credential is not
+duplicated.** `infrastructure.dns.provider` is global, so without this block a lab
+whose default estate is already served by hand-built records cannot turn platform DNS
+on for a second estate without rewriting the first estate's zone as each of its apps is
+next deployed. The block carries the NON-SECRET half only — `provider`, `host`,
+`validate_certs` — and `tasks/resolve-estate.yml` overlays it on the credential the
+estate already inherits (`homelab-infra/dns`, or `homelab-infra/estates/<name>/dns`
+when that estate uses a different DNS server). One firewall serving two estates is one
+stored credential and two provider declarations. It applies to the default estate too,
+so `domains.<default>.dns: {provider: none}` holds the default estate out while another
+estate's records are managed.
+
+**Two vault items per estate, mirroring the global pair.** They must not be merged:
+
+| Item | Field(s) | Feeds |
+|---|---|---|
+| `homelab-infra/estates/<name>/reverse_proxy` | `dns_api_token` | `domains.<name>.dns_challenge.api_token` — ACME DNS-01 for that estate's certificates |
+| `homelab-infra/estates/<name>/dns` | `api_key`, `api_secret`, `token` | `homelabinfra_infra.estates.<name>.dns` — the DNS-record wiring credential |
+
+Until 2026-08-15 both mapped from one `estates/<name>/dns` item, which meant an
+OPNsense key stored for record wiring arrived in the estate's `dns_challenge` block and
+the caddy role would have issued that estate's certificates against `provider:
+opnsense`.
+
+A secret authored after the one-time Vaultwarden Cutover reaches either item through
+the **Store Secret** job (`playbooks/maintenance/store-secret.yml`) — the cutover
+importer is Seed-mode-only and `lab-run.sh` refuses Seed mode once the vault-mode
+marker exists.
 
 Apps choose an estate with `routing.estate` (default: the default estate). A
 non-default estate's Authentik is just another app deploy with

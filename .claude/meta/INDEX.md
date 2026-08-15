@@ -168,7 +168,17 @@ it on globally would move each wasitacatisaw.cc hostname to the platform edge as
 deployed. The estate gets its own `estates.foxglove.dns` entry instead, and the default
 estate's records are not touched.
 
-### What the second estate is blocked on — a secrets-delivery gap, not code
+### What the second estate WAS blocked on — a secrets-delivery gap, closed 2026-08-15
+
+**Read this section as history.** The gap it describes is real and its measurement stands;
+what changed is that the platform now has a post-cutover route — the **Store Secret** job,
+see "DNS for the estate" below. Two claims here are also now wrong and are left in place
+because the reasoning that produced them is the lesson: `load-user-vars.yml:145` no longer
+maps `estates/<n>/dns` to `dns_challenge` (that is `estates/<n>/reverse_proxy` now), and
+"the cutover job is the estate import path" was Likely, then measured false at execution
+147. A `Likely` reasoned from source is worth exactly one run.
+
+
 
 Both remaining lab writes carry a credential, and **neither has a delivery path that does
 not put a secret on the runner's disk first**:
@@ -230,11 +240,33 @@ useful cheap habit from this round: the fix's own expressions were proven in a s
 against four fact shapes — including "named estate with nothing recorded yet, must NOT
 inherit the default estate's token" — before anything was pushed.
 
-**Two live facts the next session needs.** The estate's Authentik is still running and
-empty; and `*.foxglove-collective.com` **does not resolve on the LAN** — DNS wiring was
-scoped to the estate (operator's call) and `estates.foxglove.dns` was never populated,
-which needs the OPNsense key/secret placed the same way the Cloudflare token was. TLS is
-unaffected, since DNS-01 validates from the public internet.
+**One live fact the next session needs.** The estate's Authentik is still running and
+empty. The LAN-DNS half is dealt with below.
+
+### DNS for the estate — and DNS wiring had never been reachable at all, 2026-08-15
+
+The operator asked for the OPNsense credential to be *copied* from the default estate to
+`foxglove`, since one firewall serves both. **There was nothing to copy, and reading for
+the copy found three defects, all by inspection, none of which any gate can see.**
+
+| Defect | Why it was invisible | Fix |
+|---|---|---|
+| **DNS wiring could not fire in any lab, ever.** Wiring reads `homelabinfra_infra.dns` — the registry. Nothing writes a `dns` registry entry: bootstrap writes one key per service **it deploys**, and an external firewall is not one. The cutover imports `api_key`/`api_secret`/`token` into `homelab-infra/dns` and no `provider`. So `dns.provider` was always absent and every app playbook's `dns.provider \| default('none') != 'none'` was always false, whatever `infrastructure.yml` declared | The lab has run with `dns.provider: none` throughout, so nothing ever contradicted it. 304 closed on credential verification, not on a record being written | `load-user-vars.yml` — authored `infrastructure.dns` is the BASE of the registry entry, vault/facts overlaid on top, so a pre-cutover file credential still loses to the vault |
+| **The estate's two DNS credentials shared one vault item.** `estates/<n>/dns` mapped to `domains.<n>.dns_challenge`, so an OPNsense key stored for record wiring would arrive in the ACME block and the caddy role would issue that estate's certificates against `provider: opnsense` | Only one estate credential had ever existed (407's Cloudflare token), and it was the challenge one | Split, mirroring the global pair: `estates/<n>/reverse_proxy.dns_api_token` = ACME DNS-01, `estates/<n>/dns` = record wiring. Cutover writes both |
+| **A secret authored after cutover had no route into the vault** (measured at execution 147) — so per-estate DNS would have meant a second credential hand-written onto the runner's disk, the thing cutover exists to end | The gap was named in this file and left as an operator chore | New **Store Secret** job (`playbooks/maintenance/store-secret.yml`): one field of one canonical item, value as a Rundeck secure option, through the environment not argv, `no_log` throughout |
+
+**The result is that no credential is duplicated.** `domains.<name>.dns` carries the
+non-secret half only — provider, host, validate_certs — and `resolve-estate.yml` overlays
+it on the credential the estate already inherits from `homelab-infra/dns`. One firewall,
+two estates, one stored key. It applies to the default estate too, so
+`domains.<default>.dns: {provider: none}` is what holds wasitacatisaw.cc's hand-built
+records out while foxglove's zone is managed — which is the operator's 2026-08-15 scope
+decision expressed in config rather than in a global switch nobody could aim.
+
+Proven in a scratch play against three fact shapes before anything was pushed: foxglove
+resolves to `opnsense` + the inherited key + its own host; both default-estate paths stay
+`provider: none`; and an estate holding its own credential keeps it with no default-estate
+leak.
 
 ### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
 

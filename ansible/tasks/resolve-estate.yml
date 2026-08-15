@@ -21,7 +21,9 @@
 #                               into another estate); {provider: none} until that
 #                               estate's SSO service is deployed
 #   homelabinfra_infra.dns    — the estate's dns entry when one is recorded;
-#                               otherwise the global dns entry serves every estate
+#                               otherwise the global dns entry serves every estate,
+#                               with the estate's authored `dns:` block (provider,
+#                               host, validate_certs) overlaid on top of it
 #
 # Estate-scoped endpoints live in facts.yml under estates.<name>.<role_key>,
 # written by tasks/bootstrap/write-generated-facts.yml (generated_facts_estate).
@@ -103,3 +105,37 @@
     - _estate_selected | length > 0
     - _estate_selected != _estate_default
     - _estate_selected in _estate_domains
+
+# DNS is the one provider an estate shares with the rest of the lab BY DEFAULT and
+# still has to be able to select per estate. `infrastructure.dns.provider` is global,
+# so a lab whose default estate is already served by hand-built records cannot turn
+# platform DNS on for a second estate without rewriting the first estate's zone as each
+# of its apps is next deployed (the reason DNS scope was set to one estate on
+# 2026-08-15).
+#
+# The split this makes possible: the CREDENTIAL stays in one place — the global
+# `homelab-infra/dns` vault item, inherited by every estate through the merge in
+# load-user-vars.yml — while the estate's authored `domains.<name>.dns` block carries
+# only the non-secret half (provider, host, validate_certs). One OPNsense server serving
+# two estates is therefore one stored credential and two provider declarations, not two
+# copies of an API key.
+#
+# Applies to EVERY estate, the default one included, so `domains.<default>.dns:
+# {provider: none}` holds the default estate out while the global entry drives another.
+# A lab that declares no per-estate `dns:` block reaches none of this and behaves
+# exactly as before.
+- name: Resolve estate | Overlay the estate's authored DNS provider
+  ansible.builtin.set_fact:
+    # Non-recursive: the authored block replaces the fields it names and inherits the
+    # rest — a provider switch must not leave the previous provider's host behind.
+    homelabinfra_infra: "{{ homelabinfra_infra | combine({'dns': _estate_dns}) }}"
+  vars:
+    _estate_dns_authored: >-
+      {{ (_estate_domains[_estate_selected] | default({})).dns | default({}) }}
+    _estate_dns: >-
+      {{ (homelabinfra_infra.dns | default({}, true)) | combine(_estate_dns_authored) }}
+  when:
+    - homelabinfra_infra is defined
+    - _estate_selected | length > 0
+    - _estate_selected in _estate_domains
+    - _estate_dns_authored | length > 0

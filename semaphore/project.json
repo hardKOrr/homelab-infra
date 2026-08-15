@@ -317,6 +317,54 @@
       "view": "Config"
     },
     {
+      "name": "Store Secret",
+      "description": "Put a credential into Vaultwarden without touching a file on the runner — the only supported route for anything authored after the one-time Vaultwarden Cutover. One field per run; run it twice with the same Item to store a key and its secret. Supply the secret itself as LAB_SECRET_VALUE in the task environment, never as a survey answer: survey answers are stored in plain text and shown in the task log.",
+      "playbook": "ansible/playbooks/maintenance/store-secret.yml",
+      "arguments": "[]",
+      "allow_override_args_in_task": false,
+      "suppress_success_alerts": false,
+      "app": "ansible",
+      "type": "",
+      "survey_vars": [
+        {
+          "name": "vault_item",
+          "title": "Item",
+          "description": "Canonical item name without the homelab-infra/ prefix, e.g. dns, estates/foxglove/dns, estates/foxglove/reverse_proxy, media/sonarr.",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "vault_field",
+          "title": "Field",
+          "description": "Field name inside that item, exactly as ansible/vars/CONTRACT.md names it — e.g. api_key, api_secret, dns_api_token.",
+          "required": true,
+          "type": ""
+        },
+        {
+          "name": "merge",
+          "title": "Keep the item's other fields",
+          "description": "true keeps them (the normal case). false replaces the item with this one field.",
+          "required": false,
+          "type": "enum",
+          "values": [
+            {
+              "name": "true",
+              "value": "true"
+            },
+            {
+              "name": "false",
+              "value": "false"
+            }
+          ]
+        }
+      ],
+      "vaults": [],
+      "repository": "homelab-infra",
+      "inventory": "Proxmox (dynamic)",
+      "environment": "Homelab",
+      "view": "Config"
+    },
+    {
       "name": "Deploy Vaultwarden",
       "description": "Deploy or update Vaultwarden (native LXC). Re-running is the update path.",
       "playbook": "ansible/playbooks/apps/vaultwarden.yml",

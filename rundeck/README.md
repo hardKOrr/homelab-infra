@@ -112,6 +112,7 @@ Job UUIDs are stable, so re-loading updates the existing jobs instead of duplica
 | Config | Config Doctor | `playbooks/maintenance/config-doctor.yml` | none |
 | Config | Configure App | `playbooks/maintenance/configure-app.yml` | `instance` + a dozen optional overrides + `extra_yaml` |
 | Config | Get Config | `playbooks/maintenance/get-config.yml` | `instance` (optional), `archive` (optional) |
+| Config | Store Secret | `playbooks/maintenance/store-secret.yml` | `vault_item`, `vault_field`, `value` (secure), `merge` |
 | Config | Reimport Jobs | — (calls the Rundeck API directly) | none |
 | Apps | Deploy Vaultwarden | `playbooks/apps/vaultwarden.yml` | `instance` (prefilled `vaultwarden`) |
 | Apps | Deploy Ntfy | `playbooks/apps/ntfy.yml` | `instance` (prefilled `ntfy`) |
@@ -260,6 +261,14 @@ or change it was a text editor over SSH on a machine whose contents existed nowh
   restore point under `artifacts/` on the runner. Rundeck OSS serves no artifacts, so fetch
   that file over scp if you want it off the host — or rely on PBS, which backs up the runner
   along with it.
+- **Store Secret** writes one field of one canonical Vaultwarden item from a form, with
+  the value as a secure option — masked in the form, masked in the log, passed to Ansible
+  through the environment rather than argv, and stored as a hidden field. It is the only
+  post-cutover route into the vault: **Vaultwarden Cutover** exports `LAB_SEED_MODE=1` and
+  `lab-run.sh` refuses Seed mode once the vault-mode marker exists, so a credential
+  authored later cannot go through the importer. Without this job the answer was a secret
+  hand-written into `config/infrastructure.yml` on the runner, which is what cutover exists
+  to end.
 - **Config Doctor** validates everything and names each problem by file and key path.
 
 History is point-in-time: every write is copied to `<dir>/.backups/<file>.<timestamp>`

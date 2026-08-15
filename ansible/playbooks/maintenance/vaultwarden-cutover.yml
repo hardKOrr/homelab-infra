@@ -144,19 +144,33 @@
         | rejectattr('value', 'equalto', '') | list | length > 0
       no_log: true
 
+    # Two items per estate, mirroring the global pair — see the comment in
+    # tasks/load-user-vars.yml for why the ACME challenge token and the DNS record
+    # wiring credential must not share one item.
+    - name: Import and verify estate-scoped ACME DNS-01 tokens
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/estates/{{ item.key }}/reverse_proxy"
+        vault_item_fields:
+          dns_api_token: "{{ item.value.dns_challenge.api_token }}"
+        vault_item_secret_fields: [dns_api_token]
+      loop: "{{ homelabinfra_config.infrastructure.domains | default({}) | dict2items }}"
+      when: item.value.dns_challenge.api_token | default('') | length > 0
+      no_log: true
+
     - name: Import and verify estate-scoped DNS credentials
       ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
       vars:
         vault_item_name: "homelab-infra/estates/{{ item.key }}/dns"
         vault_item_fields: >-
-          {{ item.value.dns_challenge | default({}) | dict2items
-             | selectattr('key', 'in', ['api_token', 'api_key', 'api_secret'])
+          {{ item.value.dns | default({}) | dict2items
+             | selectattr('key', 'in', ['api_key', 'api_secret', 'token'])
              | rejectattr('value', 'equalto', '') | list | items2dict }}
-        vault_item_secret_fields: [api_token, api_key, api_secret]
+        vault_item_secret_fields: [api_key, api_secret, token]
       loop: "{{ homelabinfra_config.infrastructure.domains | default({}) | dict2items }}"
       when: >-
-        item.value.dns_challenge | default({}) | dict2items
-        | selectattr('key', 'in', ['api_token', 'api_key', 'api_secret'])
+        item.value.dns | default({}) | dict2items
+        | selectattr('key', 'in', ['api_key', 'api_secret', 'token'])
         | rejectattr('value', 'equalto', '') | list | length > 0
       no_log: true
 

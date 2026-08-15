@@ -154,7 +154,7 @@ tracked branch, and because nothing under `config/` is tracked, your configurati
 survives untouched. A fix pushed to the repo therefore reaches your platform on the next
 click, with no action from you, and the job log names the commit it ran.
 
-You never need SSH to read or change that configuration. Three jobs in the **Config**
+You never need SSH to read or change that configuration. Four jobs in the **Config**
 group do it from the UI:
 
 - **Configure App** — writes `config/apps/<instance>.yml` from a form. Every field is an
@@ -162,6 +162,10 @@ group do it from the UI:
   `.backups/` and the job log shows a diff of exactly what changed.
 - **Get Config** — reads the whole set back out, secrets redacted, plus an unredacted
   archive on the runner as a restore point.
+- **Store Secret** — puts a credential into Vaultwarden without a file ever existing on
+  the runner. Cutover is a one-time import, so this is how anything authored later — a
+  second domain's DNS-01 token, a firewall API key, a rotated password — gets in. One
+  field per run; run it twice with the same item to store a key and its secret.
 - **Config Doctor** — validates everything and names every problem by file and key path.
   It also runs in front of every other job, so a missing key fails at the front door
   instead of halfway through provisioning something.
@@ -175,6 +179,7 @@ group do it from the UI:
 | Cloudflare DNS-01 token | temporary AES-GCM runner storage during Seed mode, then `homelab-infra/reverse_proxy` in Vaultwarden |
 | Proxmox, runner SSH, and generated service credentials | canonical organization-owned Vaultwarden items after verified cutover |
 | Rundeck API token | AES-GCM Key Storage, injected only into control-plane jobs |
+| Anything authored after cutover (a second domain's DNS-01 token, a firewall API key) | typed into the **Store Secret** job, which writes it straight into its canonical Vaultwarden item — it is never written to disk |
 
 There is **no Ansible Vault**, ever. Seed files exist only while bringing up Caddy and
 Vaultwarden. After the explicit cutover marker, every mutating job unlocks Vaultwarden

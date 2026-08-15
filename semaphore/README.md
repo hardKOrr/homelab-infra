@@ -57,6 +57,7 @@ here, and everything after it is not.
 | Config | Config Doctor | `playbooks/maintenance/config-doctor.yml` | none |
 | Config | Configure App | `playbooks/maintenance/configure-app.yml` | `instance` + a dozen optional overrides + `extra_yaml` |
 | Config | Get Config | `playbooks/maintenance/get-config.yml` | `instance` (optional), `archive` (optional) |
+| Config | Store Secret | `playbooks/maintenance/store-secret.yml` | `vault_item`, `vault_field`, `merge`; the value comes from `LAB_SECRET_VALUE` in the environment |
 | Apps | Deploy Vaultwarden | `playbooks/apps/vaultwarden.yml` | none — `instance=vaultwarden` is baked in |
 | Apps | Deploy Ntfy | `playbooks/apps/ntfy.yml` | none |
 | Apps | Deploy Caddy | `playbooks/apps/caddy.yml` | none |
