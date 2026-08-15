@@ -40,6 +40,25 @@ download client or an *arr. It broke every `Wire Media Stack` run from the morni
 shipped. Neither file was wrong alone. Before adding a key to a shared namespace, ask what
 reads the whole namespace.
 
+**A role that writes a fixed credential name can only ever have one instance.**
+`roles/authentik` stored every deployment under `homelab-infra/sso`, and read its API-token
+continuity from the equally unscoped `homelabinfra_infra.sso.token`. Both were correct while
+exactly one Authentik existed. Deploying the second estate's Authentik on 2026-08-15
+(execution 151, green, `failed=0`) therefore did three things nobody asked for: it wrote the
+new instance's host and freshly generated passwords **over the platform's own vault item**,
+it handed the new instance the platform Authentik's API token — two independent identity
+providers accepting one credential, confirmed by hashing both `.env` files — and it left
+`estates.foxglove.sso` with no token at all, so the first app deployed into the estate
+failed its wiring assert (execution 152).
+
+Note what did NOT catch it. Both gates were green. The deploy exited 0. The estate-scoped
+half of the same information — the non-secret facts — was already scoped correctly by
+`write-generated-facts.yml`, which made the naming look considered. **When a fact is scoped
+by instance or estate, its secret must be scoped by the same key, and the continuity read
+that resurrects it must use that scope too** — otherwise the second instance silently
+inherits the first's identity. Ask of any `vault_item_name:` literal: what happens when this
+role runs twice?
+
 **Green is not working.** The gates are lint and syntax; they say nothing about whether the
 platform runs. The first from-scratch runner bootstrap hit fifteen blockers with both gates
 green, eleven of them in the seam between the repo and the machine that runs it. Uptime

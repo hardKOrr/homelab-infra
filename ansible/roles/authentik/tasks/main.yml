@@ -113,6 +113,38 @@
     - custom-templates
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
+# ESTATE SCOPE. An estate's Authentik is an ordinary app deploy carrying
+# routing.estate (slice 008), and its credentials belong to that estate alone. Both
+# the canonical vault item and the continuity read below are therefore scoped by it:
+#
+#   default estate   homelab-infra/sso                  -> homelabinfra_infra.sso
+#   named estate     homelab-infra/estates/<name>/sso   -> ...infra.estates.<name>.sso
+#
+# The fixed name cost a live run to find, 2026-08-15. Deploying the second estate's
+# Authentik (execution 151) wrote its host, admin password, Postgres password and
+# secret key over the PLATFORM's homelab-infra/sso item, and the continuity read
+# below — pointed at the unscoped fact — handed the new instance the platform
+# Authentik's own API token, so two independent identity providers accepted one
+# credential. `resolve-estate.yml` then found no token under estates.<name>.sso and
+# the estate app's wiring failed its contract assert (execution 152). The name that
+# `write-generated-facts.yml` already scopes by estate has to be scoped here too.
+- name: Resolve the estate this instance belongs to
+  ansible.builtin.set_fact:
+    _authentik_estate: "{{ app_config.routing.estate | default('', true) }}"
+
+- name: Resolve the estate-scoped SSO names
+  ansible.builtin.set_fact:
+    _authentik_vault_item: >-
+      {{ 'homelab-infra/sso' if _authentik_estate | length == 0
+         else 'homelab-infra/estates/' ~ _authentik_estate ~ '/sso' }}
+    # The recorded facts for THIS instance — never another estate's, so a second
+    # estate cannot inherit the first's token through a re-run.
+    _authentik_recorded_sso: >-
+      {{ (homelabinfra_infra.sso | default({}))
+         if _authentik_estate | length == 0
+         else ((homelabinfra_infra.estates | default({}))[_authentik_estate]
+               | default({})).sso | default({}) }}
+
 - name: Read the existing compose environment (secret continuity across re-runs)
   ansible.builtin.slurp:
     src: "{{ authentik_env_file }}"
@@ -141,7 +173,7 @@
       {{ _authentik_env_existing.AUTHENTIK_BOOTSTRAP_PASSWORD
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
     _authentik_api_token: >-
-      {{ homelabinfra_infra.sso.token
+      {{ _authentik_recorded_sso.token
          | default(_authentik_env_existing.AUTHENTIK_BOOTSTRAP_TOKEN
                    | default(lookup('password', '/dev/null length=60 chars=ascii_letters,digits'), true),
                    true) }}
@@ -150,7 +182,7 @@
 - name: Store Authentik secrets before applying them
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
-    vault_item_name: homelab-infra/sso
+    vault_item_name: "{{ _authentik_vault_item }}"
     vault_item_fields:
       provider: authentik
       instance: "{{ instance }}"

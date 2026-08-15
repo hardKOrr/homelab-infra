@@ -229,7 +229,7 @@ The canonical top-level items are:
 | `homelab-infra/runner` | `ssh_private_key` |
 | `homelab-infra/vaultwarden` | `admin_token` |
 | `homelab-infra/notifications` | `password`, `token` |
-| `homelab-infra/sso` | `token`, `admin_password`, `postgres_password`, `secret_key` |
+| `homelab-infra/sso` | `token`, `admin_password`, `postgres_password`, `secret_key` — **the DEFAULT estate's SSO only**; an instance carrying `routing.estate` writes `homelab-infra/estates/<estate>/sso` instead |
 | `homelab-infra/monitoring` | `api_key`, `admin_password` (the wiring needs `admin_password`, not the key) |
 | `homelab-infra/metrics` | `admin_password` |
 | `homelab-infra/backups` | `api_token_secret` |
@@ -237,7 +237,7 @@ The canonical top-level items are:
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | instance-specific secret fields |
-| `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields |
+| `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields — e.g. `.../sso` (`token`, `admin_password`, `postgres_password`, `secret_key`) and `.../dns` (`api_token`). A role that writes a top-level item unconditionally clobbers the default estate's copy the first time an estate deploys, and hands the new instance the default estate's credential through its own continuity read; both happened live on 2026-08-15 |
 
 The following process variables are external control-plane inputs. Rundeck injects them
 through per-job secure options backed by AES-GCM Key Storage; they are not ordinary job
