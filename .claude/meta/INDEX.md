@@ -268,6 +268,26 @@ resolves to `opnsense` + the inherited key + its own host; both default-estate p
 `provider: none`; and an estate holding its own credential keeps it with no default-estate
 leak.
 
+**Then run, executions 162–166, and every part of it worked on the first live click.**
+
+| Execution | What it proved |
+|---|---|
+| 162 | `Reimport Jobs` — 31 imported, `store-secret.yaml` among them |
+| 163, 164 | **Store Secret's first live runs.** `homelab-infra/dns` gained `api_key`, then `api_secret` with `merge: true` keeping the first. Both readbacks verified by upsert-item's own exact-field assert; `failed=0`, and no file was written anywhere |
+| 165 | `Deploy Authentik` for `authentik-foxglove`. **`Wire OPNsense \| Add host override` fired — the first time DNS wiring has executed in this lab at all** — then applied the Unbound configuration. `auth.foxglove-collective.com` now resolves on the LAN to 192.168.0.10, the platform Caddy |
+| 166 | The same deploy again: `changed=0` on **both** hosts, the override neither added nor updated. Idempotent |
+
+The credential reached the vault through the new job with no secret at rest on the runner
+and none in any command line — the payload went to the Rundeck API over stdin, and the job
+hands it to Ansible through the environment.
+
+**Watch for a stale assumption underneath this.** The scope decision was reasoned partly
+from "the lab's existing Unbound overrides point at the hand-built Caddy at 192.168.7.20".
+Measured 2026-08-15: `vaultwarden.wasitacatisaw.cc` and `sonarr.wasitacatisaw.cc` both
+resolve to **192.168.0.10**, the platform edge, already. The estate-scoped decision still
+stands and nothing about it was changed — but if it is ever revisited, re-measure rather
+than re-reading that sentence.
+
 ### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
 
 Sonarr denied akadmin (superuser, but not a member of `homelab-users` — application-access
