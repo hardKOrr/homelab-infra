@@ -6,9 +6,9 @@
 # (source archives only) — the container image is the canonical binary channel.
 # vaultwarden-fetch extracts the statically linked musl binary and the matching
 # web-vault from the official Alpine image via skopeo. No container runtime is
-# installed; skopeo is just a downloader. See .claude/meta/400-app-vaultwarden/notes.md.
+# installed; skopeo is just a downloader. See docs/meta/400-app-vaultwarden/notes.md.
 #
-# Admin token (spec: specs/secrets-handling.md — server-control credentials
+# Admin token (spec: docs/specs/secrets-handling.md — server-control credentials
 # remain outside the item vault to avoid a recovery circle):
 #   source order: VAULTWARDEN_ADMIN_TOKEN env var
 #              -> homelabinfra_config.infrastructure.vaultwarden.admin_token
@@ -257,7 +257,7 @@
 # web-vault extraction failed, and on one still running the previous binary under
 # the environment file this run replaced — both indistinguishable from a working
 # server to a liveness check, and both leave a human unable to use the vault.
-# See "A deploy must assert usability, not liveness" in .claude/meta/LESSONS.md.
+# See "A deploy must assert usability, not liveness" in docs/meta/LESSONS.md.
 #
 # Verified live against 1.37.1: an unmatched path returns 404, so a 200 on / is a
 # real signal and not the catch-all route that made Uptime Kuma look healthy.

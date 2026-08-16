@@ -1,6 +1,6 @@
 ---
 # Register an app monitor in Uptime Kuma over socket.io.
-# Inverse: tasks/unwiring/uptime-kuma.yml. Spec: specs/provider-noop-wiring.md.
+# Inverse: tasks/unwiring/uptime-kuma.yml. Spec: docs/specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name:     app instance name — becomes the monitor's friendly name
@@ -172,7 +172,7 @@
                  | selectattr('name', 'equalto', wiring_app_name)
                  | list | first | default({}) }}
             # One dict expression keeps ints as ints and bools as bools in the JSON body
-            # (specs/jinja-string-typing.md). The field set is the one Uptime
+            # (docs/specs/jinja-type-discipline.md). The field set is the one Uptime
             # Kuma's own front end sends; `accepted_statuscodes` must be present and all
             # strings or the add is rejected outright.
             _kuma_fields: >-

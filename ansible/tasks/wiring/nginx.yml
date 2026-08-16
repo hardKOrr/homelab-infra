@@ -1,6 +1,6 @@
 ---
 # Register an app proxy host with Nginx Proxy Manager via its REST API.
-# Inverse: tasks/unwiring/nginx.yml. Spec: specs/provider-noop-wiring.md.
+# Inverse: tasks/unwiring/nginx.yml. Spec: docs/specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name:       app instance name (used only in messages)
@@ -38,7 +38,7 @@
 # re-wire never re-issues a certificate. Silent no-op when the configured reverse proxy
 # provider is not nginx.
 #
-# Authenticated requests carry no_log (they hold the JWT, per specs/secrets-handling.md);
+# Authenticated requests carry no_log (they hold the JWT, per docs/specs/secrets-handling.md);
 # each is followed by an explicit status assert so failures stay diagnosable.
 
 - name: Wire Nginx | Register proxy host
@@ -179,7 +179,7 @@
 
     # Built as one dict expression, not a YAML mapping of per-key templates: only the
     # outer template is rendered, so ints and bools reach the JSON body as ints and
-    # bools (specs/jinja-string-typing.md).
+    # bools (docs/specs/jinja-type-discipline.md).
     # certificate_id reuses whatever is already attached to this proxy host; only a
     # brand new host asks NPM to issue one, and only when a LE email is configured.
     - name: Wire Nginx | Build desired proxy host payload

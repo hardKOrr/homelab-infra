@@ -7,7 +7,7 @@
 #   homelabinfra_instance.network.*    — from generate-ip.yml; drives netif/nameserver/
 #                                        searchdomain and the DHCP lease discovery
 #
-# Mutates (combine recursive per specs/namespace-merge-discipline.md):
+# Mutates (combine recursive per docs/specs/namespace-merge-discipline.md):
 #   homelabinfra_instance.lxc.*        — module params + resolved ip_address
 #   homelabinfra_instance.network.ip_address — replaced with the leased IP when DHCP
 

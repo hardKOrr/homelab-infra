@@ -3,7 +3,7 @@
 # environment from a homelab-infra user-vars file, then exec the given ansible command.
 #
 # Why: community.proxmox 2.0.0's inventory plugin cannot receive -e extra vars in its connection
-# options (see .claude/plans/done/fix-inventory-url-and-extra-vars.md). inventory/proxmox.yml reads
+# options. This was verified against the plugin; inventory/proxmox.yml reads
 # PROXMOX_API_* via lookup('env', ...) instead; this wrapper fills them from the same user-vars file
 # -e @<file> feeds the playbook, keeping the Proxmox host/token in one place.
 #

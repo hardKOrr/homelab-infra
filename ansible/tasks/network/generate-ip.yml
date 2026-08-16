@@ -20,7 +20,7 @@
 #                                              — optional; merged over networks.default
 #   groups['proxmox_clients'] hostvars          — existing IPs excluded from allocation
 #
-# Mutates (combine recursive per specs/namespace-merge-discipline.md):
+# Mutates (combine recursive per docs/specs/namespace-merge-discipline.md):
 #   homelabinfra_instance.network.{name,cidr,ip_address}  — always
 #   homelabinfra_instance.network.pool                    — when a pool was used
 #   homelabinfra_instance.network.{gateway,dns_servers,bridge,vlan,searchdomain}

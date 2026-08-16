@@ -1,6 +1,6 @@
 ---
 # Publish one notification to the configured notification provider.
-# Spec: specs/one-click-idempotent.md — "every automated state change
+# Spec: docs/specs/one-click-idempotent.md — "every automated state change
 # notifies via the configured notification provider".
 #
 # Runs wherever it is called from; the POST goes out from that host, so call it
@@ -21,7 +21,7 @@
 #
 # Silent no-op when the provider is not ntfy or the registry has no notifications
 # key — a lab that chose `none`, or a pre-bootstrap run, must not fail here
-# (specs/provider-noop-wiring.md). Only ntfy is implemented; gotify and
+# (docs/specs/provider-noop-wiring.md). Only ntfy is implemented; gotify and
 # discord are declared providers with no publisher yet.
 #
 # The enabled check comes FIRST and the input assert is gated on it, because callers

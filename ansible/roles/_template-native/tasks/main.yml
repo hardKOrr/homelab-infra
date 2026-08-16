@@ -90,7 +90,7 @@
   ansible.builtin.fail:
     msg: >-
       This role has no usability check. Replace this task with one probe only an
-      initialized APP_NAME can pass — see .claude/meta/LESSONS.md, "A deploy must
+      initialized APP_NAME can pass — see docs/meta/LESSONS.md, "A deploy must
       assert usability, not liveness".
 
 # ── Lab maintenance scripts ───────────────────────────────────────────────────

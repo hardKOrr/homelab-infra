@@ -156,7 +156,7 @@
   gather_facts: false
 
   pre_tasks:
-    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout /
+    # Tolerate absence per docs/specs/provider-noop-wiring.md: on a clean checkout /
     # pre-bootstrap run there is no facts.yml, homelabinfra_infra stays undefined,
     # and every provider when-condition below falls through to a silent no-op.
     - name: Load infrastructure facts

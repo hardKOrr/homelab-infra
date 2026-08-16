@@ -42,4 +42,4 @@ someone made it by hand.
 **Membership is not managed here.** Who is in the group is operator policy, set in the
 Authentik UI, and neither the first deploy nor any re-deploy touches it. Same for
 account names, social login sources and MFA — see the boundary at the end of
-[403/notes.md](../../../.claude/meta/403-app-authentik/notes.md).
+[403/notes.md](../../../docs/meta/403-app-authentik/notes.md).

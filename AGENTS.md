@@ -1,6 +1,6 @@
 # homelab-infra
 
-Ansible-based homelab automation platform. Goal: one click in Semaphore deploys a fully configured, cross-wired application on Proxmox. Designed to be shared — others clone, fill in two config files, run bootstrap, and have a working lab.
+Ansible-based homelab automation platform. Goal: one click in Rundeck or Semaphore deploys a fully configured, cross-wired application on Proxmox. Designed to be shared — others clone, supply their lab configuration, run bootstrap, and have a working lab.
 
 ## Philosophy
 
@@ -9,7 +9,7 @@ Ansible-based homelab automation platform. Goal: one click in Semaphore deploys 
 - **homelab-infra manages what it creates** — no "bring your own host" support. Existing untagged resources are ignored entirely.
 - **We configure tools, we do not replicate them** — Watchtower handles container updates, unattended-upgrades handles OS updates, PBS handles backups. We configure these at deploy time, not build our own.
 - **No Ansible Vault** — Vaultwarden is mandatory after cutover. Only its dedicated automation unlock credentials and server-admin token remain in encrypted runner control-plane storage.
-- **One click per app in Semaphore** — not "deploy media stack with checkboxes". Each app is a separate job.
+- **One click per app in Rundeck or Semaphore** — not "deploy media stack with checkboxes". Each app is a separate job.
 
 ## Repository Structure
 
@@ -91,7 +91,7 @@ rundeck/
     *.yaml                         # importable Rundeck job definitions
 
 config/                            # GITIGNORED — never overwritten by git pull
-  proxmox.yml                      # Proxmox connection + API token
+  proxmox.yml                      # Proxmox connection shape; secrets come from Vaultwarden
   infrastructure.yml               # platform service role declarations
   .generated/
     facts.yml                      # written by bootstrap: topology only, never secrets
@@ -102,14 +102,21 @@ config.example/                    # in git — fully documented templates for u
   proxmox.yml
   infrastructure.yml
   apps/<app>.example.yml
+
+docs/
+  architecture.md                  # module, flow, and seam map
+  specs/                           # normative implementation and review contracts
+  meta/                            # current work queue and implementation history
+
+gate/                              # lint, parser, syntax, and focused regression checks
 ```
 
 ## Config Hierarchy
 
 Three layers merged via `combine(recursive=True)` at playbook runtime:
 
-1. `vars/homelabinfra-defaults.yml` — global defaults
-2. `vars/app-defaults/<app>.yml` — per-app defaults (cores, RAM, ports, stack assignment)
+1. `ansible/vars/homelabinfra-defaults.yml` — global defaults
+2. `ansible/vars/app-defaults/<app>.yml` — per-app defaults (cores, RAM, ports, stack assignment)
 3. `config/apps/<instance>.yml` — user overrides for this instance only
 
 Users only write what differs. Everything else falls through.
@@ -132,11 +139,11 @@ Never `set_fact: homelabinfra_instance: {key: val}` — it destroys all sibling 
 | Docker on VM | Needs full kernel | k3s, kernel module deps |
 | VM | Needs own installer or full OS | PBS |
 
-No OCI container support — PVE 9.1 OCI is tech preview and not mature enough to build on.
+OCI guests are outside this project's supported hosting model.
 
 ## Stack Model
 
-Related Docker apps group onto shared hosts ("stacks"). Stack assignment is declared in `vars/app-defaults/<app>.yml` and overridable per-instance in `config/apps/<instance>.yml`. Stack host is created on first app deploy targeting it, then reused for subsequent apps on that stack. Proxmox tags identify stacks: `tag_media_stack`, `tag_services_stack`, etc.
+Related Docker apps group onto shared hosts ("stacks"). Stack assignment is declared in `ansible/vars/app-defaults/<app>.yml` and overridable per-instance in `config/apps/<instance>.yml`. Stack host is created on first app deploy targeting it, then reused for subsequent apps on that stack. Proxmox tags identify stacks: `tag_media_stack`, `tag_services_stack`, etc.
 
 ## Wiring Step
 
@@ -148,25 +155,31 @@ Every app deployment ends by registering with platform services. Each task is co
 4. DNS record (if `infrastructure.dns.provider != none`)
 
 Wiring tasks read service connection details from `config/.generated/facts.yml`.
-Before wiring, `tasks/resolve-estate.yml` overlays the app's `routing.estate`
+Before wiring, `ansible/tasks/resolve-estate.yml` overlays the app's `routing.estate`
 scope (domain, sso, dns) onto those facts — multi-domain labs declare estates in
 `infrastructure.yml` under `domains:`; single-domain labs are untouched.
 
 ## Baseline Apps (Bootstrap Order)
 
-`playbooks/bootstrap.yml` deploys in order — each writes its facts before the next needs them:
+`ansible/playbooks/bootstrap.yml` deploys in dependency order. Each app records topology before
+the next app needs it:
 
-1. **Vaultwarden** — enforced, all platform secrets live here after bootstrap
-2. **Ntfy** — notification hub (Watchtower, unattended-upgrades, Uptime Kuma all report here)
-3. **Caddy or Nginx** — reverse proxy per `infrastructure.yml`
+1. **Caddy** — current reverse-proxy implementation; Layer 1 may have already created it
+2. **Vaultwarden** — enforced, all platform secrets live here after cutover
+3. **Ntfy** — notification hub (Watchtower, unattended-upgrades, Uptime Kuma all report here)
 4. **Authentik** — SSO, optional per `infrastructure.yml`
 5. **Uptime Kuma** — uptime monitoring, auto-registers all subsequent app deploys
 6. **Prometheus + Grafana** — metrics and dashboards
 7. **PBS** — backup, schedule configured by Ansible, runs autonomously
 
+Nginx wiring exists, but an Nginx deployment playbook is not implemented. Do not describe Nginx
+as a selectable bootstrap target until that playbook exists.
+
 ## Day-2 Operations
 
-All operations are idempotent and re-runnable. Every automated action produces a Ntfy notification.
+All operations are idempotent and re-runnable. State-changing jobs call the common notification
+task. Ntfy publishing is implemented; `none` is a no-op. Gotify and Discord are declared provider
+values but do not yet have publishers.
 
 | Concern | Tool | Our responsibility | Notification |
 |---|---|---|---|
@@ -190,12 +203,12 @@ Watchtower notification includes the rollback instruction so the path is obvious
 Re-running the deploy playbook for a native app IS the update mechanism — it checks latest version, downloads if newer, restarts if changed. `check-native-updates.yml` (run on schedule) only notifies; it does not update.
 
 ### Lab Maintenance Scripts
-Each native app role ships three scripts to `/usr/local/bin/` (installed by the role, placeholders in `_template-native/files/`):
+Each native app role ships three scripts to `/usr/local/bin/` (installed by the role, placeholders in `ansible/roles/_template-native/files/`):
 - `lab-update-check` — outputs JSON `{"app":..., "installed":..., "latest":..., "update_available":...}`. Each app owns its own version-check logic.
 - `lab-restart-app` — restarts the app's service. Called by `restart-app.yml`.
 - `lab-tail-applog` — streams recent logs (journalctl or equivalent). Called by `tail-applog.yml`.
 
-All three are no-ops (exit 1) in the template — each app role replaces them with real implementations in `roles/<app>/files/`.
+All three are no-ops (exit 1) in the template — each app role replaces them with real implementations in `ansible/roles/<app>/files/`.
 
 ## UI Job Structure (Semaphore + Rundeck)
 
@@ -274,8 +287,8 @@ All resources created by this system are tagged `homelab-infra`. Existing untagg
 ## What a Guest Records About Itself
 
 Every app deploy stamps the guest it lands on, and every removal withdraws that stamp
-(`tasks/proxmox/record-app-on-guest.yml` and `tasks/unwiring/guest-record.yml`, both driving
-`files/proxmox/guest-app-record.py`):
+(`ansible/tasks/proxmox/record-app-on-guest.yml` and `ansible/tasks/unwiring/guest-record.yml`,
+both driving `ansible/files/proxmox/guest-app-record.py`):
 
 - the tag `app_<instance>` alongside the guest's existing tags, which yields a
   `tag_app_<instance>` inventory group and a filter in the Proxmox guest tree
@@ -290,22 +303,25 @@ that has vanished or a Proxmox that refuses the update never fails a deploy.
 
 ## Verifying a Change
 
-Two gates, both invoked from the repo root:
+Two gates are invoked from the repo root:
 
 ```
 wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/lint.sh'
 wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/test.sh'
 ```
 
-**Allow at least 20 minutes per gate.** Full-repository lint and syntax checks are slow on
+The wrappers narrow to affected files when the working tree permits it. A clean tree, `--all`,
+or a change to a shared Ansible or gate path runs the full repository. **Allow at least 20 minutes
+per full gate.** Full-repository lint and syntax checks are slow on
 the `/mnt/c` filesystem and commonly run far longer than one minute. Do not wrap either
 command in a short timeout. If the caller times out, its WSL child can keep running and hold
 the `ansible-lint` lock; inspect the existing process and wait for or stop that exact process
 before retrying. Do not start a second lint gate while the first is still running.
 
-`lint.sh` runs ansible-lint. `test.sh` runs `--syntax-check` over every playbook under
-`ansible/playbooks/`. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to
-`localhost,` so the dynamic inventory plugin never asks for credentials.
+`lint.sh` runs ansible-lint and the Jinja parser check. `test.sh` runs `--syntax-check` over its
+selected playbooks and focused regressions for Vaultwarden handling, IP allocation, and registry
+removal. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to `localhost,` so the
+dynamic inventory plugin never asks for credentials. See `gate/README.md` for exact scope rules.
 
 **Run both under WSL.** `test.sh` invokes the interpreter at
 `$HOME/.venvs/homelab-ansible/bin/ansible-playbook`. Under WSL that resolves; from Git Bash
@@ -333,13 +349,3 @@ file. Only the repo-root `config/` is user config; anything named `config/` deep
 tree is ours and belongs in git. See the comment in `.gitignore` for the full account.
 
 Never commit anything under `/config/`. Users copy `config.example/` into place themselves.
-
-## Subagents
-
-Claude Code specific — other agent tools can ignore this section.
-
-- `deployment-architect` — app hosting decisions, playbook/role structure, cross-service planning
-- `ansible-expert` — Ansible code, variable conventions, task calling patterns, pitfalls
-- `notes-manager` — documentation, README updates, keeping docs in sync with code
-- `test-developer` — Molecule, ansible-lint, integration test structure
-- `project-manager` — 1-click compliance reviews, scope evaluation

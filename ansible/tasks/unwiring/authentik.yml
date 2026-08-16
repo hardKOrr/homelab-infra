@@ -4,7 +4,7 @@
 # provider; forward_auth: proxy provider + outpost membership). Every lookup
 # tolerates absence, so one pass covers all modes and mode changes between runs.
 # Inverse of tasks/wiring/authentik.yml. Called by playbooks/apps/remove.yml.
-# Spec: specs/provider-noop-wiring.md.
+# Spec: docs/specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name:  app instance name — the Authentik application slug and provider name

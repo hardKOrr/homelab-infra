@@ -6,7 +6,7 @@
 #
 # ONE APP, NOT TWO — Grafana's only datasource is Prometheus and neither is useful
 # alone, so they deploy together under a single instance name and a single job in
-# Semaphore/Rundeck. Decision record: .claude/meta/405-app-grafana/notes.md.
+# Semaphore/Rundeck. Decision record: docs/meta/405-app-grafana/notes.md.
 #
 # WHAT IS EXPOSED — only Grafana. Prometheus binds the stack host's loopback: it
 # has no authentication of its own, so publishing it would hand every metric in

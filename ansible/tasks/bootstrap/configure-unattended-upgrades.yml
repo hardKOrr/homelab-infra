@@ -9,7 +9,7 @@
 #     "N package(s) updated on <hostname>" to Ntfy. Any other provider (or absent
 #     facts) is a silent no-op — the apt configuration itself is still applied.
 #
-# Guest-held credential (narrow, deliberate exception to specs/secrets-handling.md
+# Guest-held credential (narrow, deliberate exception to docs/specs/secrets-handling.md
 # "no secret is ever written to a managed guest's filesystem"): Ntfy is closed by
 # default (auth-default-access: deny-all, slice 401), so a guest that reports its own
 # OS updates must hold a publish credential. It is scoped as tightly as the mechanism

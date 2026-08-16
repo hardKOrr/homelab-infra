@@ -134,7 +134,7 @@ resolvable in DNS.
 | Change an app's configuration | the **Configure App** job, or [`config.example/`](config.example/) |
 | Know exactly what a config key does | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
-| See what is built and what is planned | [`.claude/meta/INDEX.md`](.claude/meta/INDEX.md) |
+| See what is built and what is planned | [`docs/meta/INDEX.md`](docs/meta/INDEX.md) |
 
 ---
 

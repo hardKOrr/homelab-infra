@@ -16,7 +16,7 @@
 #
 # Version 2.x is locked in for its scripted database setup, not for an API: no version of
 # Uptime Kuma exposes REST monitor CRUD. See the role header and
-# .claude/meta/404-app-uptime-kuma/notes.md.
+# docs/meta/404-app-uptime-kuma/notes.md.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to find or create the stack host.
@@ -137,7 +137,7 @@
 
   pre_tasks:
     # Load infra facts in this play rather than relying on Play 1's localhost fact.
-    # Tolerate absence per specs/provider-noop-wiring.md: on a clean checkout / pre-bootstrap
+    # Tolerate absence per docs/specs/provider-noop-wiring.md: on a clean checkout / pre-bootstrap
     # run there is no facts.yml, homelabinfra_infra stays undefined, and every provider
     # when-condition below falls through its `| default('none')` to a silent no-op.
     - name: Load infrastructure facts

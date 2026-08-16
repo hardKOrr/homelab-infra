@@ -240,7 +240,7 @@
 - name: Build the desired base configuration
   ansible.builtin.set_fact:
     # One dict expression keeps ports as ints in the JSON body
-    # (specs/jinja-string-typing.md). srv0 starts with an empty route
+    # (docs/specs/jinja-type-discipline.md). srv0 starts with an empty route
     # table — every route is added later through the admin API by the wiring tasks.
     _caddy_base_config: >-
       {{ {

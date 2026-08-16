@@ -1,6 +1,6 @@
 ---
 # Galaxy collections this codebase imports. Pinned to the exact versions verified in the gate
-# venv (~/.venvs/homelab-ansible) — see .claude/build.yml. This file is the single source of
+# venv (~/.venvs/homelab-ansible) — see gate/README.md. This file is the single source of
 # truth: the gate bootstrap and a fresh clone both install from it via
 # `ansible-galaxy collection install -r ansible/requirements.yml`. Users get version bumps via
 # git pull when the repo re-verifies; they never resolve versions themselves.

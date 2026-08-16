@@ -21,7 +21,7 @@
 #   homelabinfra_config.ansible.*            — ssh_user, ssh_public_key
 #   homelabinfra_instance.network.*          — from generate-ip.yml
 #
-# Mutates (combine recursive per specs/namespace-merge-discipline.md):
+# Mutates (combine recursive per docs/specs/namespace-merge-discipline.md):
 #   homelabinfra_instance.vm.*               — resolved vmid/name/ip_address
 #   homelabinfra_instance.vm_ansible_host    — address later plays connect to
 #   homelabinfra_instance.network.ip_address — replaced with the leased IP when DHCP

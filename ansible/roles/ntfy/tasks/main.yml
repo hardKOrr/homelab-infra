@@ -6,7 +6,7 @@
 # (ntfy_<ver>_linux_amd64.deb), so there is no image-extraction dance here —
 # contrast roles/vaultwarden, which has no binary assets upstream.
 #
-# Credentials (spec: specs/secrets-handling.md): the publish account's
+# Credentials (spec: docs/specs/secrets-handling.md): the publish account's
 # password and access token are generated on first deploy and stored in the
 # canonical `homelab-infra/notifications` item. The guest keeps a
 # bcrypt hash in ntfy's own auth database — no plaintext secret is written to the
