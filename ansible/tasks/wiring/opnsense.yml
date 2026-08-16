@@ -1,6 +1,6 @@
 ---
 # Create a DNS host override in OPNsense Unbound via the OPNsense REST API.
-# Inverse: tasks/unwiring/opnsense.yml. Spec: .claude/specs/provider-noop-wiring.md.
+# Inverse: tasks/unwiring/opnsense.yml. Spec: specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_domain:         full domain of the app (e.g. radarr-4k.homelab.example.com);

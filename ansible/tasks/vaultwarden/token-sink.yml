@@ -3,7 +3,7 @@
 # back if it is already there. Slice 013.
 #
 # The token is one of the two secrets that cannot live in Vaultwarden — it is the
-# credential for Vaultwarden itself (.claude/specs/secrets-handling.md). Before this
+# credential for Vaultwarden itself (specs/secrets-handling.md). Before this
 # slice its only durable copy was a human's clipboard: the role printed it once and
 # bootstrap halted until someone pasted it into config/infrastructure.yml. This file
 # gives it a machine-readable home so bootstrap runs in one pass.

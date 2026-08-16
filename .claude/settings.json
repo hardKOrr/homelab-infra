@@ -3,10 +3,10 @@
     "allow": [
       "Edit(//c/Users/korr/source/repos/homelab-infra/**)",
       "Write(//c/Users/korr/source/repos/homelab-infra/**)",
-      "Bash(wsl bash -lc 'bash .claude/gate/lint.sh')",
-      "Bash(wsl bash -lc 'bash .claude/gate/test.sh')",
-      "Bash(wsl bash -lc 'bash .claude/gate/lint.sh --all')",
-      "Bash(wsl bash -lc 'bash .claude/gate/test.sh --all')",
+      "Bash(wsl bash -lc 'bash gate/lint.sh')",
+      "Bash(wsl bash -lc 'bash gate/test.sh')",
+      "Bash(wsl bash -lc 'bash gate/lint.sh --all')",
+      "Bash(wsl bash -lc 'bash gate/test.sh --all')",
       "Bash(git status *)",
       "Bash(git diff *)",
       "Bash(git log *)",
@@ -46,7 +46,7 @@
       "Bash(cp config.example/infrastructure.yml __TRACKED_VAR__/cfg013/infrastructure.yml)",
       "Bash(PROXMOX_API_TOKEN=abc123 bash ansible/scripts/config-doctor.sh __TRACKED_VAR__/cfg013)",
       "Bash(LAB_ENV_FILE=__TRACKED_VAR__/etc/lab-run.env bash __TRACKED_VAR__/repo/ansible/scripts/lab-run.sh dummy.yml)",
-      "Bash(timeout 300 bash .claude/gate/test.sh)",
+      "Bash(timeout 300 bash gate/test.sh)",
       "Bash(grep -iE 'config/|\\\\.env$|secret')",
       "Bash(echo \"exit=$? \\(1 = nothing sensitive staged\\)\")"
     ]

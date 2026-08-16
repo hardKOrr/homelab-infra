@@ -1,6 +1,6 @@
 ---
 # Create a DNS custom record in Pi-hole v6 via its REST API.
-# Inverse: tasks/unwiring/pihole.yml. Spec: .claude/specs/provider-noop-wiring.md.
+# Inverse: tasks/unwiring/pihole.yml. Spec: specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_domain:         full domain of the app (the record's FQDN)
@@ -24,7 +24,7 @@
 # only when absent. The session is always closed in the always: block — Pi-hole allows
 # a small fixed number of concurrent sessions and leaking them locks out the UI.
 #
-# Requests carry no_log (password and session SID, per .claude/specs/secrets-handling.md).
+# Requests carry no_log (password and session SID, per specs/secrets-handling.md).
 
 - name: Wire Pihole | Create DNS record
   when: homelabinfra_infra.dns.provider | default('none') == 'pihole'

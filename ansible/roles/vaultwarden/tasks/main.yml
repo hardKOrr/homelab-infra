@@ -8,7 +8,7 @@
 # web-vault from the official Alpine image via skopeo. No container runtime is
 # installed; skopeo is just a downloader. See .claude/meta/400-app-vaultwarden/notes.md.
 #
-# Admin token (spec: .claude/specs/secrets-handling.md — server-control credentials
+# Admin token (spec: specs/secrets-handling.md — server-control credentials
 # remain outside the item vault to avoid a recovery circle):
 #   source order: VAULTWARDEN_ADMIN_TOKEN env var
 #              -> homelabinfra_config.infrastructure.vaultwarden.admin_token

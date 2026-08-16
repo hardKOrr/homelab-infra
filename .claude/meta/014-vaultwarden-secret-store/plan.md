@@ -2,7 +2,7 @@ Work in the homelab-infra repository and implement the Vaultwarden secret-storag
 
 Context:
 
-- Read `.claude/meta/INDEX.md`, `.claude/meta/014-vaultwarden-secret-store/README.md`, `.claude/specs/secrets-handling.md`, `ansible/vars/CONTRACT.md`, `rundeck/README.md`, and the current Vaultwarden/bootstrap implementation first.
+- Read `.claude/meta/INDEX.md`, `.claude/meta/014-vaultwarden-secret-store/README.md`, `specs/secrets-handling.md`, `ansible/vars/CONTRACT.md`, `rundeck/README.md`, and the current Vaultwarden/bootstrap implementation first.
 - Preserve all existing uncommitted work. Some Vaultwarden documentation reconciliation may already be present; inspect it rather than reverting it.
 - The live lab currently has:
   - Rundeck at `http://192.168.0.2:4440`
@@ -165,7 +165,7 @@ Execution requirements:
 - Make safe assumptions where possible, but stop for human input where account registration, master-password choice, API-key creation, or a destructive live cutover inherently requires it.
 - Never expose secrets in command output.
 - Use `apply_patch` for edits.
-- Run `git diff --check`, `.claude/gate/lint.sh`, and `.claude/gate/test.sh`.
+- Run `git diff --check`, `gate/lint.sh`, and `gate/test.sh`.
 - Add focused tests for secret redaction, fail-closed preflight, seed/cutover behavior, item mapping, cleanup, and absence of secrets from generated facts.
 - Before live migration, inventory exactly which secret-bearing fields exist and present a non-secret migration manifest for approval.
 - Do not perform destructive live migration, delete seed files, rotate credentials, or alter the only recovery copies without explicit approval.

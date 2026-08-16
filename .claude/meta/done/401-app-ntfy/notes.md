@@ -60,7 +60,7 @@ hash in its own auth database.
 
 ### Guest-held publish credential (spec exception, deliberate)
 
-`.claude/specs/secrets-handling.md` says no secret is ever written to a managed
+`specs/secrets-handling.md` says no secret is ever written to a managed
 guest's filesystem. A guest that reports its own OS updates or container updates
 must be able to publish, so two files break that rule narrowly:
 

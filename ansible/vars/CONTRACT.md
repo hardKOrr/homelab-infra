@@ -2,7 +2,7 @@
 
 This is the authoritative variable-loading contract for the `homelabinfra_*` namespaces and config
 files — the single data-shape reference downstream slices cite. Inspection rules that protect these
-shapes: `.claude/specs/config-layering.md` and `.claude/specs/namespace-merge-discipline.md`.
+shapes: `specs/config-layering.md` and `specs/namespace-merge-discipline.md`.
 
 ## 1. The three namespaces
 

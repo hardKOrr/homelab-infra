@@ -101,7 +101,7 @@ but every imported job declares only the credentials it actually needs.
 - `rundeck/jobs/*.yaml` — Key-Storage-backed secure options scoped per job.
 - `ansible/scripts/lab-run.sh` — accept injected credentials, isolate CLI state, and guarantee
   cleanup; stop treating `secrets.env`/`secrets.d` as durable stores.
-- `rundeck/README.md`, `ansible/vars/CONTRACT.md`, `.claude/specs/secrets-handling.md` — document
+- `rundeck/README.md`, `ansible/vars/CONTRACT.md`, `specs/secrets-handling.md` — document
   identity separation, key paths, recovery ownership, and rotation boundaries.
 
 ## Decisions
@@ -174,7 +174,7 @@ Three traps the tasks are written around:
 - **A stale read-only row is not absence.** The account may already appear with
   `manage: false`; the payload replaces its row rather than appending a second one.
 
-`.claude/gate/test-vaultwarden.sh` lifts the payload builder out of the task file and runs it
+`gate/test-vaultwarden.sh` lifts the payload builder out of the task file and runs it
 against a fake `bw`, so the test cannot drift from the shipped code: another member's row must
 come back byte-identical and the account's must end at manage.
 

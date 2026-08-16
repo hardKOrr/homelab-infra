@@ -1,26 +1,24 @@
 # Architecture
 
-<!-- isotope:section architecture:start -->
-
 Ansible-based homelab automation platform: one click in Semaphore/Rundeck deploys a fully
 configured, cross-wired application on Proxmox. Designed to be cloned by others — fill in two
 config files, run bootstrap, have a working lab. Fire-and-forget provisioning: create correct
-once, never police drift. This file is the map; contract detail lives in [specs/](specs/) and
+once, never police drift. This file is the map; contract detail lives in [specs/](../specs/) and
 `AGENTS.md` at the repo root.
 
 ## Modules
 
 | Module | Responsibility | Spec |
 |---|---|---|
-| `ansible/playbooks/` | Orchestration entry points, one per UI job (bootstrap, apps/<app>, apps/remove, stacks/*, maintenance/*, proxmox/*, docker/*) | [one-click-idempotent](specs/one-click-idempotent.md) |
-| `ansible/tasks/` | Shared task library: `load-user-vars`, `network/generate-ip`, `proxmox/{lxc,vm}-create` + `ip-to-vmid`, `stack/find-or-create-host`, `guest-bootstrap`, `bootstrap/*` | [namespace-merge-discipline](specs/namespace-merge-discipline.md) |
-| `ansible/tasks/wiring/` + `unwiring/` | Register/deregister an app with each platform service (reverse proxy, SSO, uptime, DNS); one file per provider, conditional no-ops | [provider-noop-wiring](specs/provider-noop-wiring.md) |
-| `ansible/roles/` | Per-app deployment (`_template-native`, `_template-docker` are the contracts; `docker` installs Docker Engine). Native roles ship `lab-update-check` / `lab-restart-app` / `lab-tail-applog` to `/usr/local/bin/` | [one-click-idempotent](specs/one-click-idempotent.md) |
-| `ansible/vars/` | Config layers 1–2: `homelabinfra-defaults.yml` (global) and `app-defaults/<app>.yml` (per-app), both git-managed | [config-layering](specs/config-layering.md) |
-| `config/` (gitignored) | Config layer 3: user's `proxmox.yml`, `infrastructure.yml`, `apps/<instance>.yml`, plus `.generated/facts.yml` written by bootstrap | [secrets-handling](specs/secrets-handling.md) |
-| `ansible/inventory/proxmox.yml` | `community.proxmox` dynamic inventory → groups `proxmox_nodes`, `proxmox_clients`, `tag_<tag>`. Only `homelab-infra`-tagged guests are managed | [config-layering](specs/config-layering.md) |
+| `ansible/playbooks/` | Orchestration entry points, one per UI job (bootstrap, apps/<app>, apps/remove, stacks/*, maintenance/*, proxmox/*, docker/*) | [one-click-idempotent](../specs/one-click-idempotent.md) |
+| `ansible/tasks/` | Shared task library: `load-user-vars`, `network/generate-ip`, `proxmox/{lxc,vm}-create` + `ip-to-vmid`, `stack/find-or-create-host`, `guest-bootstrap`, `bootstrap/*` | [namespace-merge-discipline](../specs/namespace-merge-discipline.md) |
+| `ansible/tasks/wiring/` + `unwiring/` | Register/deregister an app with each platform service (reverse proxy, SSO, uptime, DNS); one file per provider, conditional no-ops | [provider-noop-wiring](../specs/provider-noop-wiring.md) |
+| `ansible/roles/` | Per-app deployment (`_template-native`, `_template-docker` are the contracts; `docker` installs Docker Engine). Native roles ship `lab-update-check` / `lab-restart-app` / `lab-tail-applog` to `/usr/local/bin/` | [one-click-idempotent](../specs/one-click-idempotent.md) |
+| `ansible/vars/` | Config layers 1–2: `homelabinfra-defaults.yml` (global) and `app-defaults/<app>.yml` (per-app), both git-managed | [config-layering](../specs/config-layering.md) |
+| `config/` (gitignored) | Config layer 3: user's `proxmox.yml`, `infrastructure.yml`, `apps/<instance>.yml`, plus `.generated/facts.yml` written by bootstrap | [secrets-handling](../specs/secrets-handling.md) |
+| `ansible/inventory/proxmox.yml` | `community.proxmox` dynamic inventory → groups `proxmox_nodes`, `proxmox_clients`, `tag_<tag>`. Only `homelab-infra`-tagged guests are managed | [config-layering](../specs/config-layering.md) |
 | `semaphore/`, `rundeck/` | Importable UI job definitions; playbooks stay UI-agnostic | — |
-| `.claude/meta/` | Pre-existing hand-written backlog of numbered slices (000–601) with its own INDEX.md; Isotope specimens under `.isotope/cultures/` cross-reference it | — |
+| `.claude/meta/` | Hand-written backlog of numbered slices (000–601) with its own INDEX.md | — |
 
 ## Flows
 
@@ -63,7 +61,7 @@ playbook IS the update. `apps/remove.yml` mirrors deploy: stop app, run `unwirin
 
 - **Variable namespaces**: `homelabinfra_config` (merged input), `homelabinfra_instance`
   (computed execution facts), `homelabinfra_infra` (service registry from facts.yml). All writes
-  go through `combine(recursive=True)` — see [namespace-merge-discipline](specs/namespace-merge-discipline.md).
+  go through `combine(recursive=True)` — see [namespace-merge-discipline](../specs/namespace-merge-discipline.md).
 - **Cross-play handoff**: facts are host-scoped; the only sanctioned way to move state between
   plays is `add_host` hostvars (Play 1 → Play 2) or `hostvars[...]` reads. This is the repo's
   most fragile seam — plays on `localhost` do not see facts set on proxmox nodes.
@@ -79,5 +77,3 @@ playbook IS the update. `apps/remove.yml` mirrors deploy: stop app, run `unwirin
   only `pct`/`qm` tasks are `delegate_to` the node named in `homelabinfra_config.proxmox.node`.
   Plays must never target `hosts: proxmox_nodes` with `run_once` facts — that pattern corrupts
   fact scoping on multi-node clusters.
-
-<!-- isotope:section architecture:end -->

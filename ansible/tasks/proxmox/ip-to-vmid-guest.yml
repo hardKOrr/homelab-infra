@@ -5,7 +5,7 @@
 # Scheme: <prefix-octet><octet3 as %03d><octet4 as %03d>, cast to int as ONE value.
 # Parenthesize the whole concatenation before `| int` — `|` binds tighter than `~`, so an
 # un-parenthesized `a ~ b | int` casts only b and strips its zero-padding
-# (per .claude/specs/jinja-string-typing.md). prefix-octet = second octet unless 0, else first.
+# (per specs/jinja-string-typing.md). prefix-octet = second octet unless 0, else first.
 
 #
 # A derived VMID records the IP it came from in `vmid_source_ip`, and is re-derived as

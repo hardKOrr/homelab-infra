@@ -323,8 +323,13 @@ parameters. Rundeck: 22 jobs across Bootstrap / Apps / Config / Maintenance.
 - **`.claude/plans/`** — deleted 2026-07-25. Its six `design/` forms were all verified
   implemented in the tree by later tier work, and its two `concept/` notes were absorbed:
   the red-test-gate note's two `hosts:` defects by slice 102, its third by slice 502; the
-  gate-wrapper note into `.claude/gate/README.md`.
-- **`.claude/isotope-intake-backlog.md` + `.isotope/cultures/flux/`** — an abandoned
-  migration into Isotope specimens. All eight flux specimens describe work that has since
-  landed, and `.isotope/isotope.json` points at a checkout path that does not exist. Not
-  yet removed — decide before it accrues more stale state.
+  gate-wrapper note into `gate/README.md`.
+- **Isotope** — removed 2026-08-16 after reconciling its abandoned intake backlog, eight
+  flux specimens, and two scratch construction records against the current tree. The flux
+  work remains accounted for in: DHCP lease discovery (`lxc-create.yml`, `vm-create.yml`),
+  the ad-hoc Ansible environment (`ansible.cfg`, `gate/requirements-dev.txt`), app-template
+  wiring scope (`playbooks/apps/_template.yml`), native-update reporting
+  (`maintenance/check-native-updates.yml`), Docker-ready stack hosts
+  (`find-or-create-host.yml` plus the Docker role handoff), the signed-by Docker apt repo,
+  removal of the default LXC password, and sanitized guest instance metadata. The scratch
+  records repeated the last two completed changes and contained no additional work.

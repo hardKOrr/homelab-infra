@@ -1,7 +1,7 @@
 ---
 # Remove a DNS host override from OPNsense Unbound via the OPNsense REST API.
 # Inverse of tasks/wiring/opnsense.yml. Called by playbooks/apps/remove.yml.
-# Spec: .claude/specs/provider-noop-wiring.md.
+# Spec: specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_domain:  full domain of the record to remove

@@ -16,7 +16,7 @@
 # The pruning is done there rather than in Jinja because a filter chain that has to
 # rebuild nested maps by hand is exactly where a wrong `combine` silently drops a
 # neighbouring service — and because a Python function can be tested by
-# .claude/gate/test-registry-forget.sh without an Ansible run.
+# gate/test-registry-forget.sh without an Ansible run.
 #
 # Inputs:
 #   instance                    the app being removed

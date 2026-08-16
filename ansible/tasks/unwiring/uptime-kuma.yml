@@ -1,7 +1,7 @@
 ---
 # Remove an app monitor from Uptime Kuma over socket.io.
 # Inverse of tasks/wiring/uptime-kuma.yml. Called by playbooks/apps/remove.yml.
-# Spec: .claude/specs/provider-noop-wiring.md.
+# Spec: specs/provider-noop-wiring.md.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name:  app instance name — matches the monitor's friendly name

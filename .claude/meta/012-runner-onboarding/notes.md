@@ -151,7 +151,7 @@ baseline sequence rests on did not hold.
 
 **Neither gate saw any of the fifteen.** `lint.sh` and `test.sh` stayed green throughout —
 they check Ansible syntax and style, and none of these were syntax or style. #6 is the
-sharpest illustration: `.claude/gate/requirements-dev.txt` pinned `netaddr` in July precisely
+sharpest illustration: `gate/requirements-dev.txt` pinned `netaddr` in July precisely
 as the ipaddr filters' runtime dependency, so the gate environment had it and the runner
 environment never did. **Green gates were never evidence the platform could run.** A smoke
 target that provisions one throwaway guest would have caught most of this; `shellcheck` and a
@@ -293,7 +293,7 @@ platform references. Destroying it is the operator's call and was not done.
 
 ### Gates
 
-`.claude/gate/jinja-parse.py` was added to `lint.sh`: it walks every string scalar under
+`gate/jinja-parse.py` was added to `lint.sh`: it walks every string scalar under
 `ansible/` and compiles the ones containing `{{` or `{%`. It catches blocker 16's class,
 which both existing gates are structurally blind to — they parse YAML and never compile a
 template string.

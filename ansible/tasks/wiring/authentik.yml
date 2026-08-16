@@ -1,6 +1,6 @@
 ---
 # Register an app with Authentik per its identity mode.
-# Inverse: tasks/unwiring/authentik.yml. Spec: .claude/specs/provider-noop-wiring.md.
+# Inverse: tasks/unwiring/authentik.yml. Spec: specs/provider-noop-wiring.md.
 #
 # Identity modes (wiring_identity_mode, from routing.identity — CONTRACT.md):
 #   catalog       Application only: a launch tile in the Authentik user portal with
@@ -54,7 +54,7 @@
 # the configured SSO provider is not authentik.
 #
 # Authenticated requests carry no_log (they hold the API token, per
-# .claude/specs/secrets-handling.md); asserts on registered results keep failures
+# specs/secrets-handling.md); asserts on registered results keep failures
 # diagnosable without printing the token.
 
 - name: Wire Authentik | Register application per identity mode
@@ -156,7 +156,7 @@
                  | list | first | default({}) }}
 
         # Single dict expression so pks stay ints and flags stay bools in the JSON body
-        # (.claude/specs/jinja-string-typing.md). forward_single = one app, one domain.
+        # (specs/jinja-string-typing.md). forward_single = one app, one domain.
         - name: Wire Authentik | Build provider payload
           ansible.builtin.set_fact:
             _ak_provider_payload: >-
@@ -238,7 +238,7 @@
           no_log: true
 
         # Single dict expression keeps pks ints and the redirect list structured
-        # (.claude/specs/jinja-string-typing.md). Default redirect scope: any path
+        # (specs/jinja-string-typing.md). Default redirect scope: any path
         # on the app's own domain — override with wiring_oidc_redirect_uris.
         - name: Wire Authentik | Build OAuth2 provider payload
           ansible.builtin.set_fact:

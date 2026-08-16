@@ -477,7 +477,7 @@
         - name: Build the notification payload
           ansible.builtin.set_fact:
             # One dict expression keeps bools as bools in the JSON body
-            # (.claude/specs/jinja-string-typing.md).
+            # (specs/jinja-string-typing.md).
             _kuma_notification_payload: >-
               {{ {
                    'name': uptime_kuma_notification_name,

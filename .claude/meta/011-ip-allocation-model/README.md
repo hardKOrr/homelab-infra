@@ -122,7 +122,7 @@ is "green is not working" ([../LESSONS.md](../LESSONS.md)) inside a single play.
 ## Links
 
 - `ansible/scripts/allocate-ip.py` — the decision, with a reason for every refusal
-- `.claude/gate/test-allocate-ip.sh` — pools, pins, reservations, exhaustion, malformed input
+- `gate/test-allocate-ip.sh` — pools, pins, reservations, exhaustion, malformed input
 - `ansible/tasks/network/generate-ip.yml` — pool resolution, the script call, instance facts
 - `ansible/vars/CONTRACT.md` §2 — `networks.<name>` schema and the selection order
 - `config.example/proxmox.yml`, `config.example/apps/_template.example.yml`

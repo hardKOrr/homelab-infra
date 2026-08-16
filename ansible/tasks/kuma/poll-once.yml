@@ -5,7 +5,7 @@
 #
 # Every task here is a no-op once the acknowledgement has arrived (kuma_call_done) or the
 # transport has gone (kuma_call_dead), so the caller's loop can be a plain fixed range
-# instead of loop state built across `until` retries (.claude/specs/jinja-string-typing.md).
+# instead of loop state built across `until` retries (specs/jinja-string-typing.md).
 
 - name: Kuma poll | Read pending frames
   ansible.builtin.uri:

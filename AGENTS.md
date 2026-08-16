@@ -290,11 +290,11 @@ that has vanished or a Proxmox that refuses the update never fails a deploy.
 
 ## Verifying a Change
 
-Two gates, both registered in `.isotope/isotope.json` and both invoked from the repo root:
+Two gates, both invoked from the repo root:
 
 ```
-wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/lint.sh'
-wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash .claude/gate/test.sh'
+wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/lint.sh'
+wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/test.sh'
 ```
 
 **Allow at least 20 minutes per gate.** Full-repository lint and syntax checks are slow on

@@ -41,7 +41,7 @@ no documented endpoint to mint the first one. So the honest state of this slice:
   re-runs. Everything from that point is scripted, including the Ntfy notification
   channel.
 
-This is a real gap against `.claude/specs/one-click-idempotent.md`, recorded rather
+This is a real gap against `specs/one-click-idempotent.md`, recorded rather
 than papered over. It degrades loudly instead of failing, and monitoring is an add-on
 that must never be the thing that fails an app deploy (slice 303 acceptance item 5).
 

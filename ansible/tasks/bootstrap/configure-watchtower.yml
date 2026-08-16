@@ -52,7 +52,7 @@
 
 # The compose file carries the Ntfy publish credential when notifications are
 # configured — root-only 0640 in a 0750 directory. Same narrow exception to
-# .claude/specs/secrets-handling.md documented in configure-unattended-upgrades.yml:
+# specs/secrets-handling.md documented in configure-unattended-upgrades.yml:
 # a guest that reports its own container updates must hold a publish credential,
 # and it grants nothing beyond publishing to one topic.
 - name: Watchtower | Write docker-compose.yml

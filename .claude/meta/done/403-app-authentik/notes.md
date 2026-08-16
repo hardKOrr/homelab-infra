@@ -58,7 +58,7 @@ invalidate every session. The API token additionally prefers the value already i
 
 Guest-held credentials are unavoidable here — a containerised database and its client
 both read the password — so `.env` is 0600 root-owned in a 0750 directory. Same
-narrow exception to `.claude/specs/secrets-handling.md` documented in the role header.
+narrow exception to `specs/secrets-handling.md` documented in the role header.
 
 ### Contract addition
 

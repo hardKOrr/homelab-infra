@@ -89,6 +89,6 @@ read and write in the green bootstrap.
   cutover; `ansible/playbooks/maintenance/` — the explicit recovery job
 - `rundeck/bootstrap-rundeck.sh` — the bounded Key Storage tree and resumable checkpoints
 - `ansible/scripts/lab-run.sh` — injected credentials, isolated CLI state, guaranteed cleanup
-- `rundeck/README.md`, `ansible/vars/CONTRACT.md`, `.claude/specs/secrets-handling.md`
+- `rundeck/README.md`, `ansible/vars/CONTRACT.md`, `specs/secrets-handling.md`
 - [notes.md](notes.md) — the full identity model, the seven Key Storage paths and their
   consumers, the seven-step approach, and the decision record

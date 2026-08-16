@@ -29,7 +29,7 @@
 inventory/hosts.ini
 ansible/vars/user-vars.yml
 
-# Python bytecode (Isotope toolkit)
+# Python bytecode
 __pycache__/
 *.pyc
 

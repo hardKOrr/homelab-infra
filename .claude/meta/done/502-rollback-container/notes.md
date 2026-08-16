@@ -4,7 +4,7 @@
 
 `playbooks/stacks/rollback-container.yml` implemented as three plays (locate host →
 rewrite + recreate → notify). Both gates green; **this slice is what turned
-`.claude/gate/test.sh` green** — it was the only playbook failing syntax-check.
+`gate/test.sh` green** — it was the only playbook failing syntax-check.
 
 ### Deviations from the README approach
 

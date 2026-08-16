@@ -19,7 +19,7 @@
 # its own database, and regenerating the API token would strand every wired app.
 #
 # Guest-held credentials (narrow, deliberate exception to
-# .claude/specs/secrets-handling.md): a containerised database and its client must
+# specs/secrets-handling.md): a containerised database and its client must
 # both read the password, so the compose environment file has to exist on the stack
 # host. It is 0600 root-owned in a 0750 directory, and is the only file on that host
 # holding these values. The API token additionally reaches the controller, where it
