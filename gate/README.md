@@ -25,6 +25,8 @@ unquoted on the Windows side and fail the check rather than smuggle through. Any
 must replicate the env exports below and be forced to LF in `.gitattributes`.
 
 - `lint.sh` — `ansible-lint` profile `min` over `playbooks roles tasks vars`.
+- `check-links.py` — validates repository-local Markdown links and repo-root `docs/*.md`
+  references in tracked and untracked text files.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.

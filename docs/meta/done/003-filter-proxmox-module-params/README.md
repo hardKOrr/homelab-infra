@@ -6,7 +6,7 @@
 
 ## Problem
 
-[tasks/proxmox/lxc-create.yml:21-29](../../ansible/tasks/proxmox/lxc-create.yml#L21-L29) and [tasks/proxmox/vm-create.yml:19-31](../../ansible/tasks/proxmox/vm-create.yml#L19-L31) `combine` the entire `homelabinfra_config.proxmox.lxc` (or `.vm`) into the dict passed to `community.proxmox.proxmox` / `proxmox_kvm`. Any key the user adds that isn't a valid module parameter gets forwarded as a module argument. The module will reject those at runtime.
+[tasks/proxmox/lxc-create.yml:21-29](../../../../ansible/tasks/proxmox/lxc-create.yml#L21-L29) and [tasks/proxmox/vm-create.yml:19-31](../../../../ansible/tasks/proxmox/vm-create.yml#L19-L31) `combine` the entire `homelabinfra_config.proxmox.lxc` (or `.vm`) into the dict passed to `community.proxmox.proxmox` / `proxmox_kvm`. Any key the user adds that isn't a valid module parameter gets forwarded as a module argument. The module will reject those at runtime.
 
 Concrete cases:
 - `proxmox.lxc.network: default` (network name reference, not a module param) — user-facing per the schema, will hit the module as `network=default`.

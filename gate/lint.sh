@@ -54,3 +54,8 @@ fi
 # in jinja-parse.py for the run that proved it.
 cd ..
 "$HOME/.venvs/homelab-ansible/bin/python" gate/jinja-parse.py ansible
+
+# Documentation is part of the operating surface: source comments and archived slice
+# records link to the contracts and evidence used to maintain the playbooks. Validate both
+# relative Markdown links and repo-root docs/*.md references after moves or renames.
+"$HOME/.venvs/homelab-ansible/bin/python" gate/check-links.py

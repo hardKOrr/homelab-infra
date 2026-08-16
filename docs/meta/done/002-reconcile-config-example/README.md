@@ -8,8 +8,8 @@
 
 The example files users copy into `config/` have top-level keys that the loader (slice 001) places under specific paths in `homelabinfra_config`. The current example files don't match what slice 001 expects:
 
-- [config.example/proxmox.yml](../../config.example/proxmox.yml) has `proxmox:`, `networks:`, `ansible:` at top level — correct for slice 001's loader (which keeps them at top level under `homelabinfra_config`).
-- [config.example/infrastructure.yml](../../config.example/infrastructure.yml) has `domain:`, `reverse_proxy:`, `sso:`, etc. at top level — correct for slice 001's loader (which wraps the whole file under `homelabinfra_config.infrastructure`).
+- [config.example/proxmox.yml](../../../../config.example/proxmox.yml) has `proxmox:`, `networks:`, `ansible:` at top level — correct for slice 001's loader (which keeps them at top level under `homelabinfra_config`).
+- [config.example/infrastructure.yml](../../../../config.example/infrastructure.yml) has `domain:`, `reverse_proxy:`, `sso:`, etc. at top level — correct for slice 001's loader (which wraps the whole file under `homelabinfra_config.infrastructure`).
 
 So structurally the files are *almost* right under the slice 001 plan. But:
 

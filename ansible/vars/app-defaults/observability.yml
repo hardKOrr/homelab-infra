@@ -6,7 +6,7 @@
 #
 # One app, not two: Grafana's only datasource is Prometheus, nobody runs one
 # without the other, and splitting them would mean two deploy jobs to stand up a
-# single capability. Decision recorded in docs/meta/405-app-grafana/notes.md.
+# single capability. Decision recorded in docs/meta/done/405-app-grafana/notes.md.
 
 observability_defaults:
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on

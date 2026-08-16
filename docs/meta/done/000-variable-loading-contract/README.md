@@ -6,11 +6,11 @@
 
 ## Problem
 
-The CLAUDE.md story ("copy `config.example/*.yml` → `config/`, run bootstrap") is not implemented. Today, `tasks/load-user-vars.yml` only knows about a legacy single-file `user_vars_file` parameter ([vars/user-vars-example.yml](../../ansible/vars/user-vars-example.yml)) that wraps everything in `homelabinfra_config:`. Nothing reads `config/proxmox.yml` or `config/infrastructure.yml`. As a result:
+The CLAUDE.md story ("copy `config.example/*.yml` → `config/`, run bootstrap") is not implemented. Today, `tasks/load-user-vars.yml` only knows about a legacy single-file `user_vars_file` parameter ([vars/user-vars-example.yml](../../../../ansible/vars/user-vars-example.yml)) that wraps everything in `homelabinfra_config:`. Nothing reads `config/proxmox.yml` or `config/infrastructure.yml`. As a result:
 
 - Code reads `homelabinfra_config.proxmox.api_host` (and similar), but no path populates it from user-edited config.
 - `config.example/proxmox.yml` and `config.example/infrastructure.yml` have unwrapped top-level keys (`proxmox:`, `networks:`, `domain:`, etc.) — incompatible with the namespace the code reads.
-- `homelabinfra_infra` is loaded from `config/.generated/facts.yml` in [_template.yml:47](../../ansible/playbooks/apps/_template.yml#L47) and read in two contradictory shapes (`.reverse_proxy.provider`, `.domain`) with no spec.
+- `homelabinfra_infra` is loaded from `config/.generated/facts.yml` in [_template.yml:47](../../../../ansible/playbooks/apps/_template.yml#L47) and read in two contradictory shapes (`.reverse_proxy.provider`, `.domain`) with no spec.
 
 Without a written contract, every subsequent slice will guess at the wrong shape.
 

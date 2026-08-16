@@ -52,5 +52,5 @@ root:caddy), the same narrow guest-held-credential exception as the Authentik co
 - `ansible/roles/caddy/tasks/main.yml`
 - `ansible/vars/app-defaults/caddy.yml` — the documented `app.dns_challenge` knob
 - `config.example/apps/caddy.example.yml`, `config.example/infrastructure.yml`
-- [../done/015-wildcard-dns-default/notes.md](../done/015-wildcard-dns-default/notes.md) — why
+- [015/notes.md](../015-wildcard-dns-default/notes.md) — why
   propagation checking is off by default, which is a DNS-01 fact this slice inherits

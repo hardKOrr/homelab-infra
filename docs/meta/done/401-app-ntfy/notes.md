@@ -99,7 +99,7 @@ the thing that fails an otherwise successful deploy.
 
 ## 2026-07-25 — post-review correction (shared with 400, 402–406)
 
-A review recorded in `docs/meta/500-bootstrap-plays/notes.md` caught a blocker in
+A review recorded in `docs/meta/done/500-bootstrap-plays/notes.md` caught a blocker in
 the shape this slice established and the other five copied: Play 1/2/3 used a **shared**
 `app_deploy` group. `add_host` groups persist for a whole run and `bootstrap.yml` chains
 app playbooks with `import_playbook`, so under bootstrap the group accumulates — step 2

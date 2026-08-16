@@ -50,5 +50,5 @@ drivable from Ansible with four `uri` tasks and no Python client.
 - `config.example/apps/uptime-kuma.example.yml`
 - `ansible/tasks/kuma/` — the shared socket.io conversation, owned by 303
 - [notes.md](notes.md) — session narrative, and the superseded v1/v2 planning text
-- [../LESSONS.md](../LESSONS.md) — "A deploy must assert usability, not liveness" is this
+- [LESSONS.md](../../LESSONS.md) — "A deploy must assert usability, not liveness" is this
   slice's lesson; `GET /api/entry-page` is the check only an initialized Kuma passes

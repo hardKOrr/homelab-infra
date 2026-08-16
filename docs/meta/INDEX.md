@@ -67,9 +67,12 @@ a comment saying what the fallback is. There are currently none.
 a scratch play: an empty ledger passes, a non-fatal-only ledger passes, and two fatal
 entries fail naming both.
 
-**The queue is empty as of 2026-08-11** — W6 and W7 closed the last two rows. There is no
-top unchecked row to pick up; the next session needs work put here first, and the two
-sections below ("Observe if it happens", slice `Remaining` boxes) are still not it.
+**The queue is empty.** W6 and W7 closed the original rows on 2026-08-11. W8 closed a
+post-consolidation documentation-link audit on 2026-08-16: eleven broken Markdown links
+and seven stale path references were repaired, and `gate/check-links.py` now checks
+both classes on every lint run. There is no top unchecked row to pick up; the next session
+needs work put here first, and the two sections below ("Observe if it happens", slice
+`Remaining` boxes) are still not it.
 
 ### Why nothing closed while a lot got built, 2026-08-12
 

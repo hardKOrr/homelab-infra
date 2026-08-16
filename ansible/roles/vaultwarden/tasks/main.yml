@@ -6,7 +6,7 @@
 # (source archives only) — the container image is the canonical binary channel.
 # vaultwarden-fetch extracts the statically linked musl binary and the matching
 # web-vault from the official Alpine image via skopeo. No container runtime is
-# installed; skopeo is just a downloader. See docs/meta/400-app-vaultwarden/notes.md.
+# installed; skopeo is just a downloader. See docs/meta/done/400-app-vaultwarden/notes.md.
 #
 # Admin token (spec: docs/specs/secrets-handling.md — server-control credentials
 # remain outside the item vault to avoid a recovery circle):

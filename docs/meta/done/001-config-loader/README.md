@@ -6,7 +6,7 @@
 
 ## Problem
 
-[tasks/load-user-vars.yml](../../ansible/tasks/load-user-vars.yml) only loads `homelabinfra-defaults.yml` and an optional `user_vars_file`. The CLAUDE.md-documented workflow (copy `config.example/*.yml` → `config/`, run bootstrap) is unimplemented: nothing reads `config/proxmox.yml` or `config/infrastructure.yml`.
+[tasks/load-user-vars.yml](../../../../ansible/tasks/load-user-vars.yml) only loads `homelabinfra-defaults.yml` and an optional `user_vars_file`. The CLAUDE.md-documented workflow (copy `config.example/*.yml` → `config/`, run bootstrap) is unimplemented: nothing reads `config/proxmox.yml` or `config/infrastructure.yml`.
 
 `bootstrap.yml` and every app playbook call `load-user-vars.yml`, then assert `homelabinfra_config.proxmox.*` and `homelabinfra_config.infrastructure.*`. Today those asserts fail on any realistic input that follows the documented workflow.
 

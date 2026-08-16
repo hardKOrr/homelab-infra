@@ -123,7 +123,7 @@ so a stale one is never right; the sub-dict is now replaced wholesale while its 
 `homelabinfra_instance` stay merged.
 
 Both gates were green before the probe ran. Syntax-check does not execute a task file — this
-is "green is not working" ([../LESSONS.md](../LESSONS.md)) inside a single play.
+is "green is not working" ([LESSONS.md](../../LESSONS.md)) inside a single play.
 
 ## Links
 

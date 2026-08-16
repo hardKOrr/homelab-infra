@@ -3,7 +3,7 @@
 # (bootstrap step 6). Docker on LXC (PATH A) on the monitoring_stack host.
 #
 # One app, not two: Grafana's only datasource is Prometheus and neither is useful
-# alone. See the role header and docs/meta/405-app-grafana/notes.md.
+# alone. See the role header and docs/meta/done/405-app-grafana/notes.md.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/apps/observability.yml -e instance=observability

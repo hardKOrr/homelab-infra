@@ -16,7 +16,7 @@
 #
 # Version 2.x is locked in for its scripted database setup, not for an API: no version of
 # Uptime Kuma exposes REST monitor CRUD. See the role header and
-# docs/meta/404-app-uptime-kuma/notes.md.
+# docs/meta/done/404-app-uptime-kuma/notes.md.
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to find or create the stack host.
