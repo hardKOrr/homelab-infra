@@ -283,6 +283,33 @@
           | difference(_am_used_indices))[_am_loop_index] }}
   changed_when: true
 
+# `pct set` above rewrites /etc/pve/lxc/<vmid>.conf, so the snapshot taken at
+# `Read the raw guest config file` is now stale by exactly the mountpoint lines
+# just added — and the copy below rebuilds the whole file from that snapshot.
+# Without this re-read the mp lines are written by `pct set` and deleted again
+# milliseconds later: the guest starts with no storage, and the deploy fails the
+# very mount assert the attach existed to satisfy (execution 168, 2026-08-16,
+# qbittorrent onto a brand-new stack host).
+#
+# It only ever bit a FIRST attach, which is why the live media stack never showed
+# it: both halves have to be missing in one run, and after any run has written the
+# idmap the copy is skipped and the mountpoints survive. So the failure was
+# reserved for a new lab's first media deploy, where it is fatal.
+- name: Host mounts | Re-read the raw guest config after attaching mountpoints
+  ansible.builtin.slurp:
+    src: "/etc/pve/lxc/{{ _am_vmid }}.conf"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _am_raw_conf_post
+  when: _am_idmap_missing | default(false) | bool
+
+- name: Host mounts | Refresh the config lines from that re-read
+  ansible.builtin.set_fact:
+    # `.splitlines()` for the same reason as the first read — see above.
+    _am_conf_lines: >-
+      {{ (_am_raw_conf_post.content | default('') | b64decode).splitlines()
+         | map('trim') | list }}
+  when: _am_idmap_missing | default(false) | bool
+
 # The whole `lxc.idmap:` set is replaced, not appended to, and no comment marker is
 # involved. PVE owns this file: `pct set` rewrites it and hoists every `#` line into
 # the description block at the top, which detaches a blockinfile marker pair from the
