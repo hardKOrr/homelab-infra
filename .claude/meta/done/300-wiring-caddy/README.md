@@ -22,8 +22,16 @@ app gets the auth chain and every other mode keeps the plain handler unchanged.
 
 Wiring runs on every bootstrap; unwire needs a removal run.
 
-- [ ] Unwiring removes the route and the domain returns Caddy's default response
-- [ ] Unwiring a non-existent route succeeds
+- [x] **Live, 2026-08-16:** unwiring removes the route. `Remove App` on
+      `qbittorrent-pintest` (execution 170) ran `Unwire Caddy | Delete route` = changed and
+      `Verify route gone` = ok; `GET /id/route_qbittorrent-pintest` on the Caddy admin API
+      answered **200 before and 404 after**, queried directly rather than read off the exit
+      code
+- [x] **Live, 2026-08-16:** unwiring a non-existent route succeeds. The same removal run
+      again (execution 171) succeeded with `Check for existing route` ok, `Delete route`
+      **skipped** and `Verify route gone` ok. The whole run was behaviourally a no-op — its
+      one `changed` was the `add_host` bookkeeping, now marked `changed_when: false` so a
+      re-run reads `changed=0`
 - [x] Wiring a fresh app produces a working HTTPS route — every bootstrap exercises this
 - [x] Re-running wire is a no-op
 - [x] Both tasks are gated on the provider check and no-op for a different provider

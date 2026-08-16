@@ -85,8 +85,14 @@ compute the answer but cannot explain its absence, and "No available IPs found i
       no-pool fallback. Backed up to `config/.backups/proxmox.yml.pre-pools-*` and verified
       to parse identically to the backup apart from the three new keys. The six existing
       guests (.0.10–.0.15) were untouched
-- [ ] **Live:** one deploy from a pinned address. `stacks.<name>.ip_address` now carries a
-      pin for a stack host; no deploy has used it yet
+- [x] **Live, 2026-08-16:** one deploy from a pinned address. `stacks.pintest_stack.ip_address:
+      192.168.0.240` in the runner's `config/infrastructure.yml`, a throwaway
+      `config/apps/qbittorrent-pintest.yml` declaring `stack: pintest_stack`, and
+      `Deploy qBittorrent` (execution 169) created `pintest-stack` at exactly
+      **192.168.0.240/20**, vmid **168000240** derived from it, tagged
+      `homelab-infra;pintest_stack`. The pin sits inside the `apps` pool (.200–.249) that
+      an undeclared stack falls back to, so pool resolution and the pin agreed rather than
+      the pin bypassing the pool. Torn down afterwards — the stack was created for this
 
 ## What the live run found
 

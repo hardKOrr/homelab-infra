@@ -183,6 +183,12 @@
         app_config: "{{ app_config }}"
         remove_kind: "{{ _rm_kind }}"
       when: _rm_hosts | length > 0
+      # Inventory bookkeeping, not a lab change — the same reason
+      # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without
+      # this, a second Remove App on an already-removed app reports changed=1 with
+      # every unwiring step skipped, and "a re-run is a clean no-op" cannot be read
+      # off the recap (execution 171, 2026-08-16).
+      changed_when: false
 
     # Withdrawn here rather than beside the other unwiring steps, because this is the
     # only point in the play that knows WHICH guest ran the app - _rm_hosts resolves the

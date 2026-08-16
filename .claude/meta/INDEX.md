@@ -3,9 +3,10 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**9 live · 37 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**7 live · 39 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
+**011 and 300 closed 2026-08-16** by one deploy-and-remove cycle — see below.
 
 ## Start here
 
@@ -314,6 +315,31 @@ resolve to **192.168.0.10**, the platform edge, already. The estate-scoped decis
 stands and nothing about it was changed — but if it is ever revisited, re-measure rather
 than re-reading that sentence.
 
+### 011 and 300 closed — and a new lab's first media deploy was broken, 2026-08-16
+
+One deploy-and-remove cycle on a throwaway instance, executions 168–171. It closed 011's
+last box, both of 300's, and advanced 302 — and the first click found a defect that no lab
+which has ever deployed a media app can reproduce.
+
+| Execution | Result | What it proved |
+|---|---|---|
+| 168 | failed | **`attach-host-mounts.yml` deleted the mountpoint it had just attached.** It reads `/etc/pve/lxc/<vmid>.conf`, then rebuilds that whole file when it writes the identity passthrough — and `pct set` writes the `mp` lines into the same file in between. The guest booted with no storage and the deploy failed the mount assert the attach existed to satisfy. Fixed in `b9029c1` by re-reading the config after the attach |
+| 169 | succeeded | The fix, from a destroyed-and-recreated host: `mp0` survives, `/mnt/data/media/downloads` exists in the guest, the container runs. **011's pin**: `pintest-stack` at exactly **192.168.0.240**, vmid **168000240**, from `stacks.pintest_stack.ip_address` |
+| 170 | succeeded | **300's unwire.** Caddy route id **200 before, 404 after**, queried on the admin API. Authentik application deleted, Kuma monitor deleted, registry entry pruned, container and bind-mounted data gone with `delete_data: true` |
+| 171 | succeeded | **300's no-op.** The same removal again: route delete skipped, registry write skipped, nothing failed. Its one `changed` was `add_host` bookkeeping, now `changed_when: false` |
+
+**Why the mount defect was invisible.** It needs the mountpoints *and* the idmap both
+missing in one run, and once any run has written the idmap the rebuild is skipped and the
+mount survives. So it could only ever fire on a **first** attach to a **new** stack host —
+which in this lab happened once, before the identity work landed, and never again. A new
+lab's first media deploy hit it every time. Both gates were green over it throughout, and
+the only reason it was found is that this cycle deliberately created a stack host from
+nothing rather than reusing `media_stack`.
+
+**The cheap habit that made it cheap:** the host was destroyed and the deploy re-run from
+scratch, so the fix was proven against the failing condition rather than against a host
+that had already been repaired by the first run's `pct set`.
+
 ### 306 closed, 302 and 403 advanced — 2026-08-13, forward_auth sign-in confirmed live
 
 Sonarr denied akadmin (superuser, but not a member of `homelab-users` — application-access
@@ -424,9 +450,8 @@ the work queue above.
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
-| 302 | One `oidc` **sign-in** — its object half is done, see the estate section. The unwire-then-denied check. Its catalog-shape idempotency was proven by the 2026-08-12 binding query and its forward_auth redirect by the 2026-08-13 Sonarr sign-in |
+| 302 | One `oidc` **sign-in**, and the browser leg that shows sign-in refused after an unwire. Its object half is done: catalog-shape idempotency from the 2026-08-12 binding query, the forward_auth redirect from the 2026-08-13 Sonarr sign-in, and the **catalog shape's unwire from execution 170** |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
-| 011, 300 | nothing; observation only |
 
 ## By subject
 
@@ -435,11 +460,11 @@ Slices are cut on the code axis, so one subject spans several.
 | Subject | Slices |
 |---|---|
 | Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
-| Caddy / TLS | wiring **300**, DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
+| Caddy / TLS | wiring **300** (closed), DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
 | Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** (closed) |
 | Observability | app **405** (closed) |
 | Config model | provenance **010**, onboarding **012**, estates **008** (closed) |
-| Networking | IP allocation **011**, OPNsense **304** (closed) |
+| Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
 | Media | apps **505**, wiring **504** |
 | Runners / UI | Rundeck **601** (closed) |
 | Day-2 ops | rollback **502** (closed) |

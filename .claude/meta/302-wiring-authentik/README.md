@@ -30,7 +30,13 @@ created, so a re-run adopts rather than duplicates.
       querying Authentik's `policies/bindings/` afterwards found **exactly one enabled
       binding to `homelab-users` per application** — no duplicates, so the slug/name lookup
       adopts as designed. **The forward_auth shape's wire+sign-in is now proven** (Sonarr,
-      2026-08-13); its unwire-then-denied leg and the `oidc` shape entirely are what remain
+      2026-08-13); its unwire-then-denied leg and the `oidc` shape entirely are what remain.
+      **The `catalog` shape's unwire is now proven clean** — `qbittorrent-pintest`, executions
+      169–171 (2026-08-16): wire created the application and one `homelab-users` binding,
+      unwire deleted the application with both provider deletes correctly **skipped** (a
+      catalog app owns no provider), and a second unwire was a no-op. What that leaves is
+      `forward_auth`'s and `oidc`'s unwire, and the browser leg that shows sign-in refused
+      afterwards
 - [x] Wire creates provider + application + policy binding
 - [x] No-op for `sso.provider != 'authentik'`
 
