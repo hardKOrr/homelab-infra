@@ -107,8 +107,8 @@ LAB_ETC=/etc/homelab-infra
 LAB_SEED_ENV="$LAB_ETC/secrets.d/proxmox.env"
 LAB_LEGACY_SEED_ENV="$LAB_ETC/secrets.env"
 # The platform's own SSH identity, generated in the container. Its public half goes into
-# config/proxmox.yml (deployed to every guest this platform creates); its private half
-# stays here and is copied into Key Storage.
+# config/proxmox.yml (deployed to every guest this platform creates). Cutover moves the
+# private half into Vaultwarden; lab-run materializes it only for one job session.
 LAB_SSH_KEY=/var/lib/rundeck/.ssh/homelab-infra
 
 RD_HOST="${CT_IP%%/*}"
@@ -540,11 +540,18 @@ say "at $(git -C "$REPO_DIR" log --oneline -1)"
 # here rather than reusing the node's root key means the lab's guests trust exactly one
 # identity, held by exactly one host, and revoking it revokes only the platform.
 if [ ! -f "$LAB_SSH_KEY" ]; then
-  say "generating the platform SSH identity at $LAB_SSH_KEY"
-  install -d -m 0700 -o rundeck -g rundeck "$(dirname "$LAB_SSH_KEY")"
-  ssh-keygen -q -t ed25519 -N '' -C 'homelab-infra platform key' -f "$LAB_SSH_KEY"
-  chown rundeck:rundeck "$LAB_SSH_KEY" "${LAB_SSH_KEY}.pub"
-  chmod 0600 "$LAB_SSH_KEY"
+  if [ -f "$LAB_ETC/state/vault-mode" ] && [ -f "${LAB_SSH_KEY}.pub" ]; then
+    # The absent private half is the expected post-cutover state. Generating a replacement
+    # here would rotate the runner identity, strand every guest that trusts the old public
+    # key, and overwrite the canonical Vaultwarden item during Key Storage staging below.
+    say "platform SSH private key is held in Vaultwarden — preserving the existing public identity"
+  else
+    say "generating the platform SSH identity at $LAB_SSH_KEY"
+    install -d -m 0700 -o rundeck -g rundeck "$(dirname "$LAB_SSH_KEY")"
+    ssh-keygen -q -t ed25519 -N '' -C 'homelab-infra platform key' -f "$LAB_SSH_KEY"
+    chown rundeck:rundeck "$LAB_SSH_KEY" "${LAB_SSH_KEY}.pub"
+    chmod 0600 "$LAB_SSH_KEY"
+  fi
 else
   say "platform SSH identity already present"
 fi

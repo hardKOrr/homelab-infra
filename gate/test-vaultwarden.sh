@@ -43,6 +43,16 @@ for name in ("cloudflare_api_token", "bw_clientid", "bw_clientsecret", "bw_passw
     assert options[name]["required"] is False, name
 PY
 
+# A post-cutover bootstrap re-run must not replace the platform SSH identity. Vault mode
+# intentionally leaves only the public half on disk; the private half is materialized from
+# Vaultwarden for each job by lab-run.sh.
+grep -Fq '[ -f "$LAB_ETC/state/vault-mode" ] && [ -f "${LAB_SSH_KEY}.pub" ]' \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not recognize the post-cutover SSH-key state"
+grep -Fq 'platform SSH private key is held in Vaultwarden' \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap can rotate the post-cutover platform SSH identity"
+
 # Provider selection stays authored and provider-specific fields are passed through
 # without forcing every caddy-dns module into Cloudflare's api_token schema.
 ! grep -A4 '_env_reverse_proxy:' "$repo/ansible/tasks/load-user-vars.yml" \
