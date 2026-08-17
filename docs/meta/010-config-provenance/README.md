@@ -41,19 +41,27 @@ that run surfaced: [012/notes.md](../done/012-runner-onboarding/notes.md).
 - [x] `bash rundeck/bootstrap-rundeck.sh` on a bare node produces a runner whose
       `proxmox.yml` and `infrastructure.yml` are complete, with no human editing either —
       observed 2026-08-01, alongside `apps/rundeck.yml`
-- [ ] That `proxmox.yml` contains **no secret**, and Lab Status runs green with
-      `PROXMOX_API_TOKEN` supplied only from Key Storage
+- [x] That `proxmox.yml` contains **no secret**, and Lab Status runs green with
+      `PROXMOX_API_TOKEN` supplied only from Key Storage — the live file had no
+      `api_token_secret` key on 2026-08-16; execution 33 had already named the environment
+      as the token source and completed with `failed=0`
 - [x] The platform's Proxmox credential is `homelab-infra@pve`, not `root@pam`, and its
       secret exists in exactly one place — role `HomelabInfra`, minted and rotated cleanly
       2026-08-01
-- [ ] The runner LXC carries the `homelab-infra` tag, appears in Lab Status, and its vmid is
-      in the PVE backup job created by `configure-pbs.yml`
+- [x] The runner LXC carries the `homelab-infra` tag, appears in Lab Status, and its vmid is
+      in the PVE backup job created by `configure-pbs.yml` — verified 2026-08-16: running
+      LXC `168000003` is tagged, execution 33 includes `homelab-rundeck`, and the enabled
+      `pbs-homelab` job includes VMID `168000003`
 - [x] `config/apps/rundeck.yml` and the `runner` registry key describe the running host —
       both authored 2026-08-01; `.generated/facts.yml` carries `runner` at the correct path
-- [ ] `config-doctor` on the live runner's populated `config/` exits zero
+- [x] `config-doctor` on the live runner's populated `config/` exits zero — execution 173,
+      2026-08-16 local / 2026-08-17 UTC: `changed=0`, `failed=0`
 - [ ] `Bootstrap Platform` aborts at the doctor play — not mid-provision — on a missing key
 - [ ] Restoring the runner LXC from PBS yields a working runner with `config/` intact
-- [ ] Re-running the bootstrap script rotates no credential and overwrites no answered prompt
+- [x] Re-running the bootstrap script rotates no credential and overwrites no answered
+      prompt — the authorized 2026-08-16 re-run preserved both authored config files,
+      credential metadata, the admin realm, storage password and SSH identity; full evidence
+      is in [012/notes.md](../done/012-runner-onboarding/notes.md)
 - [x] `Configure App` writes the instance file, the log shows a unified diff, and the
       previous content lands in `config/apps/.backups/`
 - [x] `Get Config` returns the authored file with `admin_token` redacted; with an `instance`

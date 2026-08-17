@@ -4,6 +4,24 @@ Design narrative and build record, moved out of README.md during the meta restru
 (2026-08-08). The README now carries goal, remaining acceptance and links; everything
 below is the reasoning and history behind it, kept verbatim.
 
+## 2026-08-16 — live acceptance caught up
+
+Four acceptance boxes were stale after their evidence existed or could be read without a
+state change:
+
+- the live runner's `config/proxmox.yml` has no `api_token_secret` key; Lab Status execution
+  33 named `PROXMOX_API_TOKEN (environment)` as its source and completed with `failed=0`;
+- LXC `168000003` is running with the `homelab-infra` tag, appears as
+  `homelab-rundeck` in that execution, and is in the enabled `pbs-homelab` vzdump VMID list;
+- Config Doctor execution 173 completed against the populated live config with `changed=0`,
+  `failed=0`;
+- the authorized bootstrap re-run already recorded in 012 preserved the authored config and
+  every credential or identity continuity point it measured.
+
+No live state changed during these checks. The old workstation Rundeck URL and credentials
+were stale after the runner rebuild, so evidence came from the current LXC and its retained
+Rundeck logs instead of from a new API execution.
+
 ## Problem
 
 Every job in both UIs runs only because `config/proxmox.yml` happens to exist on one LXC.
