@@ -147,8 +147,8 @@ is a full teardown and rebuild, and the old apps exist as migration *test materi
 cutover target. Execution 120 stopped exactly there, which is the path guard working. Do not
 "fix" the storage mismatch.
 
-013/014 need a bare-metal bootstrap. Those are
-the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
+014 still needs its two bare-metal fault injections. It is
+the only genuinely blocked Vaultwarden slice now — **304 was never blocked at all**: its "missing"
 OPNsense credentials had been in the repo's gitignored `.env` for days.
 
 ### The second estate is declared live — 2026-08-15
@@ -457,7 +457,7 @@ the work queue above.
 | Slice | Waiting on |
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
-| 013, 014 | bare-metal acceptance — these affect the runner everything else uses, so they go last |
+| 014 | bare-metal acceptance — this affects the runner everything else uses, so it goes last |
 
 ## By subject
 
@@ -465,7 +465,7 @@ Slices are cut on the code axis, so one subject spans several.
 
 | Subject | Slices |
 |---|---|
-| Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
+| Vaultwarden | app **400** (closed), secret store **014**, token capture **013** (closed) |
 | Caddy / TLS | wiring **300** (closed), DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
 | Authentik / identity | app **403** (closed), wiring **302** (closed), forward_auth **306** (closed), modes **009** (closed) |
 | Observability | app **405** (closed) |

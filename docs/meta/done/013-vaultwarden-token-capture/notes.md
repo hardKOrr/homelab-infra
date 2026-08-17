@@ -95,12 +95,19 @@ to notice a stall.
   human owner plus automation vault credentials. Until then, `secrets.d/vaultwarden.env` is a
   temporary bootstrap sink, not the intended steady state.
 
-## Verified locally, not on the runner
+## Verified locally, then on the runner
 
 Round trip on both sink paths, precedence across all four combinations, `lab-run.sh`
 sourcing in four runner states, config-doctor in four states, and the failed-write branch.
-`ansible-lint` and `--syntax-check` pass. **Nothing here has run against live Proxmox** —
-the first bootstrap on real hardware is still the experiment.
+`ansible-lint` and `--syntax-check` pass.
+
+The live producer and consumer proof followed on 2026-08-01. `bootstrap-rundeck.sh`
+deployed Vaultwarden, wrote the sink at 0600, and returned exit 0 without a paste or re-run.
+The first `Bootstrap Platform` execution then passed the sink-backed admin-token gate;
+execution 7 completed every baseline service in one Rundeck job. The two commands were
+separate workflow executions. Vaultwarden already existed when `bootstrap.yml` began, so
+this evidence must not be restated as one process from bare Proxmox through the full
+platform.
 
 One defect was caught in testing and fixed: the sink write originally used
 `failed_when: false`, which forces `.failed` to `False` even when the module errored. That

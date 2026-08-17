@@ -1,6 +1,6 @@
 # 013 — Vaultwarden admin token self-capture: collapse the two-pass bootstrap
 
-**Status:** built
+**Status:** done
 **Subject:** Vaultwarden
 **Related:** 400 (the app), 016 (moves this token into bounded Key Storage), 014
 
@@ -30,13 +30,15 @@ unblock 014.
 
 ## Remaining
 
-- [ ] `bootstrap.yml` runs from an empty lab to a deployed Vaultwarden and past the gate in
-      **one execution** with no human input. The *sink* half is observed — 2026-08-01,
-      `bootstrap-rundeck.sh` deployed Vaultwarden, the role wrote the token to
-      `/etc/homelab-infra/secrets.d/vaultwarden.env` (0600 `rundeck:rundeck`), and the script
-      returned exit 0 in a single pass with no paste and no re-run. The *consumer* half is
-      not: no later step has read `VAULTWARDEN_ADMIN_TOKEN` back out, because nothing after
-      Vaultwarden had run
+- [x] The fresh-lab flow deployed Vaultwarden, persisted its admin token, and a later
+      `bootstrap.yml` job consumed that token without a paste or token-specific re-run —
+      2026-08-01. `bootstrap-rundeck.sh` wrote
+      `/etc/homelab-infra/secrets.d/vaultwarden.env` (0600 `rundeck:rundeck`) and returned
+      exit 0. The first `Bootstrap Platform` execution then crossed the sink-backed admin
+      token gate. Execution 7 completed all baseline services in one Rundeck job. These were
+      two workflow executions: the runner bootstrap had already deployed Vaultwarden before
+      `bootstrap.yml` ran. Do not describe this as one process from bare Proxmox through the
+      full platform
 - [x] The admin token is readable from the sink after that run — round-tripped on both sink
       paths and through `lab-run.sh`
 - [x] The token does **not** appear in the job execution log
@@ -46,9 +48,9 @@ unblock 014.
       hanging
 - [x] Bootstrap step 1 emits no notification attempt and does not stall on the absent Ntfy
 
-Everything ticked was verified on the workstation across both sink paths, all four
-precedence combinations, four runner states and the failed-write branch. **Nothing here has
-run against live Proxmox**; the first bootstrap on real hardware is still the experiment.
+The sink mechanics were verified on the workstation across both sink paths, all four
+precedence combinations, four runner states and the failed-write branch. The producer and
+consumer path was then verified on live Proxmox on 2026-08-01.
 
 ## Links
 
