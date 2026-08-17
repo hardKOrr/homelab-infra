@@ -217,10 +217,12 @@ files stay uncluttered: `render-job.py` centrally adds the required project-scop
 at import. The wrapper consumes only their `RD_OPTION_*` environment variables; neither
 secret interpolation nor ordinary option values are used.
 
-The full `/keys` tree uses Rundeck 6.0's AES-256-GCM converter. Its password file is
-`/etc/rundeck/.storage-password` (`root:rundeck`, `0440`) and the generated handover copy
-must be backed up separately. Encryption protects stored values; root on a running runner
-can still access the converter key and job memory.
+The full `/keys` tree and Rundeck's project configuration use Rundeck 6.0's AES-256-GCM
+converter. Its password is supplied through the root-owned systemd EnvironmentFile
+`/etc/rundeck/.storage-password` (`root:rundeck`, `0440`), and the generated handover copy
+must be backed up separately. Both converter namespaces use that one recovery value.
+Encryption protects stored values; root on a running runner can still access the converter
+key and job memory.
 
 The pre-cutover `keys/proxmox/api-token`, `keys/rundeck/homelab-ssh`, and Cloudflare
 bootstrap entries are imported into their canonical Vaultwarden items, verified, then

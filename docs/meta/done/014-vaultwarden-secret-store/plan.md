@@ -2,7 +2,7 @@ Work in the homelab-infra repository and implement the Vaultwarden secret-storag
 
 Context:
 
-- Read `docs/meta/INDEX.md`, `docs/meta/014-vaultwarden-secret-store/README.md`, `docs/specs/secrets-handling.md`, `ansible/vars/CONTRACT.md`, `rundeck/README.md`, and the current Vaultwarden/bootstrap implementation first.
+- Read `docs/meta/INDEX.md`, `docs/meta/done/014-vaultwarden-secret-store/README.md`, `docs/specs/secrets-handling.md`, `ansible/vars/CONTRACT.md`, `rundeck/README.md`, and the current Vaultwarden/bootstrap implementation first.
 - Preserve all existing uncommitted work. Some Vaultwarden documentation reconciliation may already be present; inspect it rather than reverting it.
 - The live lab currently has:
   - Rundeck at `http://192.168.0.2:4440`

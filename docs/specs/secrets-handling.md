@@ -13,9 +13,10 @@ key authenticates the client but the master password decrypts the vault. Its eph
 admin token is a separate external server-control credential and cannot read items.
 
 Rundeck stores those four external values under project Key Storage protected by the
-AES-256-GCM converter for `/keys`. Its converter password is a separately backed-up
-root-owned file, never a Key Storage or Vaultwarden item. Semaphore uses encrypted secret
-variables for the equivalent inputs.
+AES-256-GCM converter for `/keys`. The same converter protects encrypted project
+configuration. Both namespaces read one separately backed-up value from the root-owned
+systemd EnvironmentFile `/etc/rundeck/.storage-password`; that value is never a Key Storage
+or Vaultwarden item. Semaphore uses encrypted secret variables for the equivalent inputs.
 
 ## Rule
 

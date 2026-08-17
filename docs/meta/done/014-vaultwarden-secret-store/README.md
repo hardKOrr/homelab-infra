@@ -1,6 +1,6 @@
 # 014 — Make Vaultwarden the mandatory secret store
 
-**Status:** built
+**Status:** done — closed 2026-08-17 after a fresh scratch-runner recovery
 **Subject:** Vaultwarden
 **Related:** 016 (identities + bootstrap keyring), 015 (HTTPS), 013 (admin token), 400 (app)
 
@@ -30,19 +30,17 @@ tokens, OIDC secrets or generated passwords.
 Cutover completed 2026-08-03; the first full vault-mode bootstrap ran green the same day
 (execution 12, seven services, `failed=0`).
 
-## Remaining
+## Acceptance
 
-- [ ] Rebuilding the runner from non-secret config plus a backup of the bounded Key Storage
+- [x] Rebuilding the runner from non-secret config plus a backup of the bounded Key Storage
       roots restores access to all platform secrets without redeploying or rotating a
-      service — **not tested**, and the only remaining item needing real setup rather than
-      an injection. Preferred shape: clone the runner to a scratch VMID and rebuild the
-      copy, so a failure leaves the working runner untouched
-- [ ] Interrupting bootstrap before cutover is resumable and does not delete the only copy
-      of a seed secret — **not tested.** Resumability is well evidenced for vault mode
-      (executions 10–12 each resumed cleanly mid-run); the pre-cutover case is the gap
+      service — 2026-08-17. Fresh runner `168000203` restored the post-migration PBS
+      recovery inputs and credential-free config, then execution 243 completed Vaultwarden
+      preflight and Config Doctor. The production SSH public identity matched and the
+      execution-private key was removed afterward. Both scratch guests were destroyed
 - [x] A fresh runner uses only bounded Key Storage roots to establish HTTPS, deploy
-      Vaultwarden and initialize identities — met with a caveat: the runner was not rebuilt
-      from bare metal, so "fresh" is inferred from the seed → cutover → vault-mode sequence
+      Vaultwarden and initialize identities — the original seed/cutover path completed on
+      2026-08-03, and the 2026-08-17 scratch build removed the former bare-runner caveat
 - [x] Bootstrap imports every seed secret, verifies by readback, records cutover, removes
       all seed files before deploying the next service
 - [x] After cutover, stopping Vaultwarden fails every deploy in preflight before any change
@@ -59,8 +57,10 @@ Cutover completed 2026-08-03; the first full vault-mode bootstrap ran green the 
       metadata — all 4,909 lines of the execution-12 log scanned
 - [x] Documentation describes Vaultwarden as a mandatory runtime dependency
 
-**Fail-closed is an observed property**, not a claim. Two of the three originally-remaining
-injections were run and passed on 2026-08-06.
+**Fail-closed and recovery are observed properties**, not claims. The remaining
+pre-cutover interruption injection is intentionally not closure work: the project index
+classifies it under **Observe if it happens** after two refused attempts on 2026-08-06.
+It remains unobserved and must not be described as tested.
 
 Adjacent finding, not this slice: `Deploy Ntfy` reports `changed=4` on a converged re-run —
 three `changed_when` omissions, cosmetic rather than drift.

@@ -339,6 +339,19 @@ export PATH=/usr/local/sbin:/usr/local/bin:$PATH
 
 say() { printf '    %s\n' "$*"; }
 
+# Replace one handover value without disturbing the others. The values remain shell
+# builtins' arguments only; do not hand them to sed/awk through process argv.
+cred_set() {
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp)"
+  if [ -f "$CRED_FILE" ]; then
+    grep -v "^${key}=" "$CRED_FILE" > "$tmp" || true
+  fi
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  install -m 0600 -o root -g root "$tmp" "$CRED_FILE"
+  rm -f "$tmp"
+}
+
 # -- locale ---------------------------------------------------------------------
 # The minimal Debian LXC image ships no generated locale; ansible refuses to start without
 # a UTF-8 one ("could not initialize the preferred locale").
@@ -454,30 +467,85 @@ grep -q '^rundeck.security.apiCookieAccess.enabled' /etc/rundeck/rundeck-config.
 # tree. The converter password is deliberately outside Key Storage to avoid a
 # circular dependency and is included in the root-only handover file so the
 # operator can back it up separately.
+#
+# The Rundeck 6.1 package already declares this converter with an inline, package-
+# generated `config.password`. Merely testing whether `converter.1.type` exists leaves
+# that password active and makes the documented password file an unused decoy. A rebuild
+# then restores the wrong key and every Key Storage read fails with AEADBadTagException.
+# Adopt that existing password before switching the plugin to an environment variable
+# supplied by a root-owned systemd EnvironmentFile. The installed 6.1 plugin supports
+# password, passwordEnvVarName and passwordSysPropName; it does not support passwordFile.
+# Existing environment-backed installs retain their file value; fresh installs generate
+# one here.
 STORAGE_PASSWORD_FILE=/etc/rundeck/.storage-password
-if [ ! -s "$STORAGE_PASSWORD_FILE" ]; then
+legacy_storage_password="$(sed -n 's/^rundeck\.storage\.converter\.1\.config\.password=//p' \
+  /etc/rundeck/rundeck-config.properties | tail -1)"
+legacy_config_storage_password="$(sed -n 's/^rundeck\.config\.storage\.converter\.1\.config\.password=//p' \
+  /etc/rundeck/rundeck-config.properties | tail -1)"
+if grep -q '^rundeck\.storage\.converter\.1\.config\.passwordEnvVarName=' \
+     /etc/rundeck/rundeck-config.properties; then
+  storage_password="$(sed -n 's/^RUNDECK_STORAGE_PASSWORD=//p' "$STORAGE_PASSWORD_FILE" | tail -1)"
+  [ -n "$storage_password" ] \
+    || { echo "configured Key Storage environment file is missing or empty" >&2; exit 1; }
+elif [ -n "$legacy_storage_password" ]; then
+  storage_password="$legacy_storage_password"
+elif grep -q '^rundeck\.storage\.converter\.1\.config\.passwordFile=' \
+       /etc/rundeck/rundeck-config.properties && [ -s "$STORAGE_PASSWORD_FILE" ]; then
+  # Recovery for the short-lived passwordFile declaration shipped before the installed
+  # plugin's accepted keys were exercised live. The plugin ignored that file, so the
+  # project-config inline value remained the key that had actually encrypted both stores.
+  storage_password="${legacy_config_storage_password:-$(cat "$STORAGE_PASSWORD_FILE")}"
+else
   storage_pool="$(head -c 128 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
   storage_password="${storage_pool:0:48}"
-  install -m 0440 -o root -g rundeck /dev/null "$STORAGE_PASSWORD_FILE"
-  printf '%s\n' "$storage_password" > "$STORAGE_PASSWORD_FILE"
-  touch "$CRED_FILE"; chmod 0600 "$CRED_FILE"
-  printf 'RUNDECK_STORAGE_PASSWORD=%s\n' "$storage_password" >> "$CRED_FILE"
-  unset storage_pool storage_password
+  unset storage_pool
 fi
-chown root:rundeck "$STORAGE_PASSWORD_FILE"
-chmod 0440 "$STORAGE_PASSWORD_FILE"
-touch "$CRED_FILE"; chmod 0600 "$CRED_FILE"
-if ! grep -q '^RUNDECK_STORAGE_PASSWORD=' "$CRED_FILE"; then
-  printf 'RUNDECK_STORAGE_PASSWORD=%s\n' "$(cat "$STORAGE_PASSWORD_FILE")" >> "$CRED_FILE"
+
+# Rundeck applies a second instance of the same converter to project configuration.
+# Secure job-option definitions are read through this namespace before a job starts. The
+# package uses the same password for both; preserving only Key Storage lets the API list a
+# restored job but fails its execution with AEADBadTagException. Refuse an unexpected split
+# instead of silently making either restored namespace unreadable.
+if [ -n "$legacy_config_storage_password" ] \
+   && [ "$legacy_config_storage_password" != "$storage_password" ]; then
+  echo "Key Storage and project-config encryption passwords differ; migrate both explicitly" >&2
+  exit 1
 fi
-grep -q '^rundeck.storage.converter.1.type=' /etc/rundeck/rundeck-config.properties || cat >> /etc/rundeck/rundeck-config.properties <<'EOF'
+
+# Passwords generated here and by the Rundeck package are alphanumeric. Refuse an unsafe
+# legacy value instead of writing an EnvironmentFile that systemd can interpret differently.
+[[ "$storage_password" =~ ^[A-Za-z0-9]+$ ]] \
+  || { echo "existing Key Storage password is not EnvironmentFile-safe; migrate it explicitly" >&2; exit 1; }
+install -m 0440 -o root -g rundeck /dev/null "$STORAGE_PASSWORD_FILE"
+printf 'RUNDECK_STORAGE_PASSWORD=%s\n' "$storage_password" > "$STORAGE_PASSWORD_FILE"
+cred_set RUNDECK_STORAGE_PASSWORD "$storage_password"
+unset storage_password
+unset legacy_storage_password
+unset legacy_config_storage_password
+
+# Own the complete converter declaration. Leaving the package's inline password beside
+# the environment source retains a second secret in ordinary configuration.
+sed -i '/^rundeck\.storage\.converter\.1\./d' /etc/rundeck/rundeck-config.properties
+cat >> /etc/rundeck/rundeck-config.properties <<'EOF'
 rundeck.storage.converter.1.type=aes-gcm-encryption
 rundeck.storage.converter.1.path=keys
-rundeck.storage.converter.1.config.passwordFile=/etc/rundeck/.storage-password
+rundeck.storage.converter.1.config.passwordEnvVarName=RUNDECK_STORAGE_PASSWORD
+EOF
+
+sed -i '/^rundeck\.config\.storage\.converter\.1\./d' /etc/rundeck/rundeck-config.properties
+cat >> /etc/rundeck/rundeck-config.properties <<'EOF'
+rundeck.config.storage.converter.1.type=aes-gcm-encryption
+rundeck.config.storage.converter.1.path=projects
+rundeck.config.storage.converter.1.config.passwordEnvVarName=RUNDECK_STORAGE_PASSWORD
+EOF
+
+mkdir -p /etc/systemd/system/rundeckd.service.d
+cat > /etc/systemd/system/rundeckd.service.d/storage-password.conf <<'EOF'
+[Service]
+EnvironmentFile=/etc/rundeck/.storage-password
 EOF
 
 # Jobs inherit the service environment, so pin the locale for the ansible plugin too.
-mkdir -p /etc/systemd/system/rundeckd.service.d
 cat > /etc/systemd/system/rundeckd.service.d/locale.conf <<EOF
 [Service]
 Environment=LANG=en_US.UTF-8
@@ -501,9 +569,9 @@ if grep -q '^admin:admin,' /etc/rundeck/realm.properties; then
   sed -i "s|^admin:admin,|admin:${RD_ADMIN_PW},|" /etc/rundeck/realm.properties
   chown root:rundeck /etc/rundeck/realm.properties
   chmod 0640 /etc/rundeck/realm.properties
-  touch "$CRED_FILE"; chmod 0600 "$CRED_FILE"
-  printf 'RUNDECK_URL=%s\nRUNDECK_ADMIN_USER=admin\nRUNDECK_ADMIN_PASSWORD=%s\n' \
-    "$RD_URL" "$RD_ADMIN_PW" > "$CRED_FILE"
+  cred_set RUNDECK_URL "$RD_URL"
+  cred_set RUNDECK_ADMIN_USER admin
+  cred_set RUNDECK_ADMIN_PASSWORD "$RD_ADMIN_PW"
 else
   say "admin password already customised — leaving it alone"
 fi

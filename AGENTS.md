@@ -246,8 +246,8 @@ material. After `/etc/homelab-infra/state/vault-mode` is written, ordinary jobs 
 those files and fail before Ansible when Vaultwarden cannot unlock. No secret is printed.
 
 Everything else is generated into canonical organization-owned Vaultwarden items and
-verified before use. `config/.generated/facts.yml` is topology-only. Slice 014 remains
-open because live enrollment/cutover acceptance has not yet been observed.
+verified before use. `config/.generated/facts.yml` is topology-only. Slice 014 closed on
+2026-08-17 after live cutover, fail-closed, recovery, and fresh scratch-runner acceptance.
 
 ## Infrastructure Config (`config/infrastructure.yml`)
 

@@ -200,6 +200,77 @@ rather than a fault. The authentication message now states that the server answe
 two causes can no longer be confused. The probe is skipped when `curl` is absent, so the
 preflight gains no new runtime dependency.
 
+## 2026-08-17 — fresh-runner recovery acceptance and closure
+
+The last actionable acceptance item ran against the live lab without replacing or stopping
+the production runner. It found two real secret-store defects and one stale plaintext copy
+before it passed.
+
+### Plaintext estate credential removed
+
+The first PBS extraction refused to copy `config/` because
+`domains.foxglove.dns_challenge.api_token` still had a value. The earlier Store Secret
+executions 163–164 had migrated the OPNsense pair, not this Cloudflare token. Store Secret
+execution 207 wrote it to
+`homelab-infra/estates/foxglove/reverse_proxy.dns_api_token`, verified exact readback, and
+only then removed the YAML field atomically. A second scan reported
+`CONFIG_SECRET_SHAPE=PASS`. No value, hash or vault session was printed.
+
+### The documented converter backup was unused
+
+Rundeck 6.1 ships two AES-GCM converter namespaces with inline package-generated
+passwords:
+
+- `rundeck.storage.converter.1` protects Key Storage under `/keys`;
+- `rundeck.config.storage.converter.1` protects project configuration under `projects`.
+
+Bootstrap tested only whether the first converter's `type` existed. Because the package
+already declared it, bootstrap generated `/etc/rundeck/.storage-password` but never made
+Rundeck use it. The later admin-password write also replaced the handover file and could
+erase `RUNDECK_STORAGE_PASSWORD`. Restoring the database and documented file to a fresh
+runner therefore failed with `AEADBadTagException` before a job could start.
+
+The installed plugin descriptor showed that `passwordFile` is not a supported key. The
+accepted sources are `password`, `passwordEnvVarName`, and `passwordSysPropName`. The fix:
+
+1. adopts the package's active inline password;
+2. writes `RUNDECK_STORAGE_PASSWORD=<value>` to the root-owned systemd EnvironmentFile;
+3. selects `passwordEnvVarName=RUNDECK_STORAGE_PASSWORD` for both converter namespaces;
+4. removes both inline password declarations; and
+5. updates handover values without replacing sibling credentials.
+
+Production migration was guarded by `/run` rollback copies and a Rundeck restart. Execution
+210 proved the Key Storage namespace; execution 211 proved both namespaces. Each completed
+Vaultwarden preflight and Config Doctor. The final file is `root:rundeck` mode `0440`.
+
+### Recovery proof
+
+A post-migration snapshot completed as
+`backup/ct/168000003/2026-08-17T16:49:21Z`. Its full isolated restore at VMID `168000204`
+passed Vaultwarden preflight and Config Doctor as execution 242. Fresh VMID `168000203` was
+built by `bootstrap-rundeck.sh` with Vaultwarden deployment disabled, then received:
+
+- credential-free `config/` and the non-secret production `BW_SERVER`;
+- the restored Rundeck database, converter EnvironmentFile, handover and Vault-mode marker;
+- the production SSH public identity, while its private half remained vault-held.
+
+Execution 243 then passed Vaultwarden preflight and Config Doctor. The execution-private
+SSH key was absent afterward and the public key matched production byte-for-byte. Neither
+service credentials nor platform identities rotated. The exact scratch public key was
+removed from the PVE node's `authorized_keys`; VMIDs 168000203 and 168000204 and all
+root-only temporary files were destroyed. Production Rundeck returned HTTP 302 and remained
+running.
+
+One test-harness error briefly started the full restore with the archived `.3` address
+because `pct restore --net0` retained the backup's IP. It was stopped, set explicitly to
+`.204`, and the stale `.3` neighbor entry was cleared. Production answered locally
+throughout and returned over the network immediately afterward. Future restore tests must
+verify `pct config <vmid>` before starting a restored guest.
+
+The pre-cutover interruption injection remains unobserved. `docs/meta/INDEX.md` already
+classifies it as **Observe if it happens**, not closure work, after two refused attempts on
+2026-08-06. Do not restate it as tested.
+
 ## Decided
 
 - **No Vaultwarden means no deploy.** There is no offline or cache-backed mode after

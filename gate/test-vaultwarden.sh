@@ -53,6 +53,32 @@ grep -Fq 'platform SSH private key is held in Vaultwarden' \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap can rotate the post-cutover platform SSH identity"
 
+# Rundeck 6.1 ships an inline AES-GCM converter password. Bootstrap must adopt it into
+# the backed-up password file, remove the inline property, and preserve the handover
+# value when it later writes the generated admin credential. The first live recovery
+# rebuild found all three failures together as an AEAD authentication-tag mismatch.
+grep -q 'legacy_storage_password=' "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not adopt Rundeck's existing inline converter password"
+grep -Fq "sed -i '/^rundeck\\.storage\\.converter\\.1\\./d'" \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap leaves an inline converter password active"
+grep -Fq 'rundeck.storage.converter.1.config.passwordEnvVarName=RUNDECK_STORAGE_PASSWORD' \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not select the supported converter environment source"
+grep -Fq 'rundeck.config.storage.converter.1.config.passwordEnvVarName=RUNDECK_STORAGE_PASSWORD' \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not preserve encrypted project configuration across rebuilds"
+grep -Fq "sed -i '/^rundeck\\.config\\.storage\\.converter\\.1\\./d'" \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap leaves the project-config converter password inline"
+grep -Fq 'EnvironmentFile=/etc/rundeck/.storage-password' \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not supply the converter password from the recovery file"
+grep -Fq 'cred_set RUNDECK_STORAGE_PASSWORD' "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not record the active converter password in the handover"
+grep -Fq 'cred_set RUNDECK_ADMIN_PASSWORD' "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "writing the admin credential can erase the converter recovery value"
+
 # Provider selection stays authored and provider-specific fields are passed through
 # without forcing every caddy-dns module into Cloudflare's api_token schema.
 ! grep -A4 '_env_reverse_proxy:' "$repo/ansible/tasks/load-user-vars.yml" \
