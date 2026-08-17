@@ -1,6 +1,7 @@
 # 302 — Authentik wire + unwire
 
-**Status:** built
+**Status:** closed 2026-08-16 — operator accepted the proven object lifecycle and deferred
+the remaining browser matrix to the planned full Authentik session
 **Subject:** Authentik / identity
 **Related:** 009 (the mode contract this dispatches on), 306 (proxy enforcement), 403 (app)
 
@@ -22,21 +23,23 @@ created, so a re-run adopts rather than duplicates.
 
 - [x] Hitting a wired domain without a session redirects through Authentik — met 2026-08-13
       for the `forward_auth` shape: Sonarr redirected an unauthenticated browser to
-      Authentik, akadmin signed in, and the browser returned authenticated. `oidc`'s sign-in
-      leg and the post-unwire "can no longer SSO" check are still open, shared with 403/405
-- [ ] Re-wire idempotent and unwire clean for each of the three shapes — the per-mode
-      acceptance lives in 009, which needs one app deployed per mode. **The catalog shape is
-      done**: executions 80–88 and 91–100 (2026-08-11/12) re-wired ten published apps, and
+      Authentik, akadmin signed in, and the browser returned authenticated. OIDC sign-in
+      and post-unwire browser denial were not observed; the operator accepted their
+      deferral to the planned full Authentik session on 2026-08-16
+- [x] Re-wire idempotent and unwire clean for each of the three shapes — the per-mode
+      acceptance lives in 009. **The catalog shape is done**: executions 80–88 and 91–100
+      (2026-08-11/12) re-wired ten published apps, and
       querying Authentik's `policies/bindings/` afterwards found **exactly one enabled
       binding to `homelab-users` per application** — no duplicates, so the slug/name lookup
-      adopts as designed. **The forward_auth shape's wire+sign-in is now proven** (Sonarr,
-      2026-08-13); its unwire-then-denied leg and the `oidc` shape entirely are what remain.
-      **The `catalog` shape's unwire is now proven clean** — `qbittorrent-pintest`, executions
+      adopts as designed. **The catalog shape's unwire is proven clean** —
+      `qbittorrent-pintest`, executions
       169–171 (2026-08-16): wire created the application and one `homelab-users` binding,
       unwire deleted the application with both provider deletes correctly **skipped** (a
-      catalog app owns no provider), and a second unwire was a no-op. What that leaves is
-      `forward_auth`'s and `oidc`'s unwire, and the browser leg that shows sign-in refused
-      afterwards
+      catalog app owns no provider), and a second unwire was a no-op. **The OIDC object
+      lifecycle is proven** by executions 160–161: creation after a catalog → OIDC mode
+      change, then removal to zero applications and providers. **The forward-auth wire and
+      sign-in are proven** on Sonarr. Forward-auth unwire and browser denial were not
+      observed; the operator accepted that deferral on 2026-08-16
 - [x] Wire creates provider + application + policy binding
 - [x] No-op for `sso.provider != 'authentik'`
 

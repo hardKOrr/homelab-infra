@@ -322,3 +322,12 @@ a migration that completes.
 
 The platform's `sonarr` config was restored from `/opt/.pre-migrate-backups/` (taken before
 the run), the container restarted, and it answers HTTP 200 on its original database.
+
+## Closed by operator acceptance, 2026-08-16
+
+The operator accepted execution 120 as sufficient acceptance for the Servarr app slice:
+the intended target directory was empty, the existing shared storage was available, the
+copy and source stop/start path worked, and the root-folder guard prevented an unsafe
+cutover. A real cutover and time-to-live test are intentionally deferred until they are
+wanted. This decision closes 505 without creating another slice. It does not close 504's
+adoption PUT, which execution 120 did not reach.

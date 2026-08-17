@@ -11,7 +11,7 @@
   name: Migrate Servarr
   group: Apps
   description: |-
-    NOT READY FOR A LIVE CUTOVER — see docs/meta/505-app-servarr/notes.md.
+    NOT READY FOR A LIVE CUTOVER — see docs/meta/done/505-app-servarr/notes.md.
     Peer references are not rewritten, wiring would duplicate rather than repair,
     and the source keeps running. Exercise it against a throwaway instance.
 

@@ -3,10 +3,12 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**7 live · 39 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**5 live · 41 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 **011 and 300 closed 2026-08-16** by one deploy-and-remove cycle — see below.
+**302 and 505 closed 2026-08-16 by operator acceptance** — their remaining full-session
+browser and media cutover checks are deferred without replacement slices.
 
 ## Start here
 
@@ -452,8 +454,6 @@ the work queue above.
 | Slice | Waiting on |
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
-| 505 app-servarr | **one box left** — the same migration. Its `changed=0` re-deploy is done (execution 117, after the API-key fix) |
-| 302 | One `oidc` **sign-in**, and the browser leg that shows sign-in refused after an unwire. Its object half is done: catalog-shape idempotency from the 2026-08-12 binding query, the forward_auth redirect from the 2026-08-13 Sonarr sign-in, and the **catalog shape's unwire from execution 170** |
 | 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
 
 ## By subject
@@ -464,11 +464,11 @@ Slices are cut on the code axis, so one subject spans several.
 |---|---|
 | Vaultwarden | app **400** (closed), secret store **014**, token capture **013** |
 | Caddy / TLS | wiring **300** (closed), DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
-| Authentik / identity | app **403** (closed), wiring **302**, forward_auth **306** (closed), modes **009** (closed) |
+| Authentik / identity | app **403** (closed), wiring **302** (closed), forward_auth **306** (closed), modes **009** (closed) |
 | Observability | app **405** (closed) |
 | Config model | provenance **010**, onboarding **012**, estates **008** (closed) |
 | Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
-| Media | apps **505**, wiring **504** |
+| Media | apps **505** (closed), wiring **504** |
 | Runners / UI | Rundeck **601** (closed) |
 | Day-2 ops | rollback **502** (closed) |
 
@@ -485,7 +485,7 @@ of these, that row is stale.
   **Do not reopen the collection-grant question.**
 - **The media stack is wired.** Execution 72, 2026-08-09: four apps resolved, three Prowlarr
   Applications created, all on `media_stack` at 192.168.0.100. Seven defects fixed getting
-  there — full account in [505/notes.md](505-app-servarr/notes.md).
+  there — full account in [505/notes.md](done/505-app-servarr/notes.md).
 - **The platform owns a storage identity** — `homelab-infra`, uid/gid 1313, granted in
   `/etc/subuid`/`/etc/subgid` and mapped into the unprivileged stack host. Verified on
   168000100.

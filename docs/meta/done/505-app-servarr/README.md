@@ -1,6 +1,7 @@
 # 505 — Servarr app roles (Sonarr, Radarr, Lidarr, Readarr, Prowlarr)
 
-**Status:** built
+**Status:** closed 2026-08-16 — operator accepted the guarded migration rehearsal and
+deferred a real cutover until time-to-live testing is wanted
 **Subject:** Media
 **Related:** 504 (wire media stack) — this slice is what gives 504 something to wire
 
@@ -117,8 +118,9 @@ assertion only means anything under that setting.
       asserts the key read back out of `config.xml` and `:280` asserts `status == 401`, so
       a green deploy is the confirmation. The role reads `config.xml` back rather than
       assuming either, so a wrong guess fails loudly at deploy time
-- [ ] A re-run reaching `changed=0`, with the API key unchanged — the cheapest live click
-      left on this slice: one `Deploy Prowlarr` against the running stack
+- [x] A re-run reaching `changed=0`, with the API key unchanged — execution 117, after the
+      API-key continuity fix: both plays reported `changed=0`; the role resolved the
+      existing key and `Store and verify the API key` completed without a write
 - [x] Wire Media Stack run straight after a deploy, wiring the app from the registry entry
       rather than from a hand-written instance file — the leg 504 had never had. **Execution
       72**: all four apps resolved from registry entries their own deploys wrote, three
@@ -126,9 +128,14 @@ assertion only means anything under that setting.
 - [x] A mountpoint attached to a stack host, and the guest restart that makes it visible —
       executions 56–63; the `homelab-infra` uid/gid 1313 identity and the `lxc.idmap`
       passthrough are applied and verified on guest 168000100
-- [ ] One migration run end to end. **This is the slice's last open item, and it is also
-      504's** — an adoption can only be observed against records this platform did not
-      create. The lab's own candidates are the three Radarrs on
+- [x] One migration run end to end. **Closed by operator acceptance, 2026-08-16.** Execution
+      120 exercised the live migration path through source inspection, config copy, safe
+      source stop/start and the target root-folder guard. The guard correctly refused the
+      final cutover because the selected platform library was deliberately empty while the
+      existing shared library remained available. The copied target was restored from its
+      pre-migration backup. A true cutover and time-to-live test are deferred until the
+      operator wants them; this does not satisfy 504's separate adoption-PUT criterion.
+      The original candidates were the three Radarrs on
       192.168.1.14/.15/.16 (2,589 and 2,556 films) and the Sonarrs on .12/.13, whose root
       folders sit under `/mnt/data/media` — an NFS export from 192.168.13.247 already
       mounted on pve-host-2 and passed into each LXC as `mp0`. Reproducing those mountpoints
@@ -145,5 +152,5 @@ apps. Do not re-derive it.
 - `ansible/playbooks/apps/{sonarr,radarr,lidarr,readarr,prowlarr}.yml`
 - `ansible/vars/app-defaults/{sonarr,radarr,lidarr,readarr,prowlarr}.yml`
 - `rundeck/jobs/deploy-*.yaml`, `semaphore/project.json`
-- [504](../504-wire-media-stack/README.md) — the wiring this slice feeds
+- [504](../../504-wire-media-stack/README.md) — the wiring this slice feeds
 - [notes.md](notes.md) — decisions and what is unverified

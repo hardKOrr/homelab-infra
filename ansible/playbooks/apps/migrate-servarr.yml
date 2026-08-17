@@ -20,7 +20,7 @@
 # adopts an API key it finds in an existing config.xml, so the migrated app keeps
 # the key every Prowlarr Application and Bazarr connection already points at.
 #
-# A MIGRATION IS NOT A CUTOVER — read docs/meta/505-app-servarr/notes.md,
+# A MIGRATION IS NOT A CUTOVER — read docs/meta/done/505-app-servarr/notes.md,
 # "Migration leaves peer references stale", before running this against an app you
 # care about.
 #

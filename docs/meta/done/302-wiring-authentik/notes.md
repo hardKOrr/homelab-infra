@@ -64,3 +64,12 @@ re-wire, unwire removes SSO) need slice 403. Flip to done after the first real w
 lookups both tolerate absence), so mode changes between runs leave no orphans on
 removal. Estate awareness comes free: `resolve-estate.yml` swaps `sso` before
 this file runs. Live acceptance still pending (needs a running Authentik).
+
+## 2026-08-16 — closed on the observed lifecycle
+
+The operator closed this slice without expanding it into a complete Authentik acceptance
+session. The implementation has live evidence for catalog idempotency, OIDC creation and
+unwiring after a catalog → OIDC mode change (executions 157–161), and forward-auth sign-in.
+OIDC sign-in and browser denial after a forward-auth unwire remain unobserved. They will be
+covered, if needed, during the operator's planned full Authentik session; no replacement
+slice was created.

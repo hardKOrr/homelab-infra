@@ -12,7 +12,7 @@
 # second table describing the same apps. Each app still has its own playbook, its
 # own app-defaults file and its own one-click job, which is what the platform's
 # "one click per app" rule is about. Decision record:
-# docs/meta/505-app-servarr/notes.md.
+# docs/meta/done/505-app-servarr/notes.md.
 #
 # Variables available:
 #   app_config         — merged defaults + user config (from Play 1)
