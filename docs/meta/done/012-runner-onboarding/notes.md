@@ -482,3 +482,22 @@ Landed together with 010. Both gates green. Live acceptance is unobserved.
   run. Its README now names the repository directory on the Semaphore host as the place to
   put it, instead of the previous (wrong) claim that it lives "in the repository checkout
   Semaphore clones".
+
+## 2026-08-16 — post-cutover idempotency and closure
+
+Execution 172 temporarily set `LAB_REFRESH=0` in the runner environment, ran Config Doctor
+at the on-disk revision `b9029c1`, and completed with `changed=0`, `failed=0`. A trap restored
+`LAB_REFRESH=1` before the check ended.
+
+The first bootstrap preflight then found a real defect before the script ran: Vault mode
+correctly leaves the platform SSH private key out of its configured disk path, but bootstrap
+treated that absence as a fresh runner and would have generated a replacement identity.
+Commit `eca4230` makes the public-key-plus-vault-marker state authoritative, preserves the
+identity and leaves the private key in Vaultwarden. A focused regression guards that branch.
+
+The authorized live re-run used the exact `eca4230` script against LXC 168000003 on
+pve-host-3. It exited zero, retained the existing runner and tag, left both authored config
+files unchanged, retained the credential handoff file, admin realm, storage password, SSH
+public identity and Proxmox token metadata, and left the private SSH key absent on disk. The
+existing Rundeck API token still authenticated. All 31 jobs imported with zero failures;
+Vault mode skipped the Seed-only Caddy and Vaultwarden deployment as designed.

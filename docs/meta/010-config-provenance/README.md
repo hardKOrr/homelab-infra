@@ -36,7 +36,7 @@ The accepted cost: history is point-in-time, not per-commit-with-message. See
 The bootstrap script has run against real nodes — from a full wipe of the old runner and
 its predecessor on 2026-08-01, exit 0 on three consecutive runs, and again since. `pveum`,
 Key Storage staging, tagging and job import are all exercised. Evidence and the 15 defects
-that run surfaced: [../012-runner-onboarding/notes.md](../012-runner-onboarding/notes.md).
+that run surfaced: [012/notes.md](../done/012-runner-onboarding/notes.md).
 
 - [x] `bash rundeck/bootstrap-rundeck.sh` on a bare node produces a runner whose
       `proxmox.yml` and `infrastructure.yml` are complete, with no human editing either —

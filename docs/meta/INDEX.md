@@ -3,12 +3,14 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**5 live · 41 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**4 live · 42 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 **011 and 300 closed 2026-08-16** by one deploy-and-remove cycle — see below.
 **302 and 505 closed 2026-08-16 by operator acceptance** — their remaining full-session
 browser and media cutover checks are deferred without replacement slices.
+**012 closed 2026-08-16** after `LAB_REFRESH=0` execution 172 and a live post-cutover
+bootstrap re-run that preserved every credential and authored config value.
 
 ## Start here
 
@@ -454,7 +456,7 @@ the work queue above.
 | Slice | Waiting on |
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
-| 010, 012, 013, 014 | a bare-metal bootstrap — destroys the lab everything else runs on, so it goes last |
+| 010, 013, 014 | destructive recovery and bare-metal acceptance — these affect the runner everything else uses, so they go last |
 
 ## By subject
 
@@ -466,7 +468,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Caddy / TLS | wiring **300** (closed), DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
 | Authentik / identity | app **403** (closed), wiring **302** (closed), forward_auth **306** (closed), modes **009** (closed) |
 | Observability | app **405** (closed) |
-| Config model | provenance **010**, onboarding **012**, estates **008** (closed) |
+| Config model | provenance **010**, onboarding **012** (closed), estates **008** (closed) |
 | Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
 | Media | apps **505** (closed), wiring **504** |
 | Runners / UI | Rundeck **601** (closed) |

@@ -1,6 +1,7 @@
 # 012 — Runner onboarding: make the handover executable, not a checklist
 
-**Status:** built
+**Status:** closed 2026-08-16 — the live post-cutover runner passed refresh opt-out and
+bootstrap idempotency acceptance
 **Subject:** Config model
 **Related:** 010 (config provenance — landed together, shares the edit surface), 601 (jobs)
 
@@ -37,13 +38,19 @@ overwritten by the next reimport.
 
 ## Remaining
 
-- [ ] Config authored on the runner is editable and readable from the UI alone — no SSH
-      session anywhere in the documented path (010's Configure App / Get Config)
-- [ ] `LAB_REFRESH=0` runs the on-disk checkout unchanged
-- [ ] Re-running the bootstrap script against a configured Rundeck changes nothing and
-      rotates no credential
-- [ ] The repository root has a README that takes a first-time reader from clone to a
-      running bootstrap
+- [x] Config authored on the runner is editable and readable from the UI alone — executions
+      124, 125 and 134 ran Config Doctor, Get Config and Configure App through Rundeck; the
+      documented path in the root README requires no SSH session
+- [x] `LAB_REFRESH=0` runs the on-disk checkout unchanged — execution 172, 2026-08-16:
+      `refresh off`, revision `b9029c1`, `changed=0`, `failed=0`
+- [x] Re-running the bootstrap script against a configured Rundeck preserves its authored
+      state and rotates no credential — 2026-08-16 on live runner 168000003, revision
+      `eca4230`. The credential handoff file, admin realm, storage password, SSH public
+      identity, Proxmox token metadata, `proxmox.yml` and `infrastructure.yml` were unchanged;
+      the existing API token still authenticated and all 31 jobs imported with zero failures
+- [x] The repository root README takes a first-time reader from clone to a running bootstrap,
+      including the two bootstrap layers, exact first command, Vaultwarden ceremony and the
+      first app deployment
 - [x] `bash rundeck/bootstrap-rundeck.sh` on a bare node yields a Rundeck with the project
       created, 19/19 jobs imported and Key Storage staged — 2026-08-01 on pve-host-3, after
       destroying the previous runner. Took fifteen fixes; see notes.md
