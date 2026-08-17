@@ -4,6 +4,35 @@ Design narrative and build record, moved out of README.md during the meta restru
 (2026-08-08). The README now carries goal, remaining acceptance and links; everything
 below is the reasoning and history behind it, kept verbatim.
 
+## 2026-08-17 — final live acceptance
+
+The last two acceptance criteria were exercised against the live Rundeck runner.
+
+For the front-door failure test, `proxmox.node` was removed from the runner's
+`config/proxmox.yml` after copying the file to a private temporary path. The real
+**Bootstrap Platform** job was then started through the Rundeck API. Execution 175 failed
+in `config-doctor` with `proxmox.node: required`, `1 error(s), 0 warning(s)` and the
+explicit `nothing was changed` message. Its log contained no invocation of
+`ansible-playbook playbooks/bootstrap.yml`. An exit trap restored the original file, and
+an independent check confirmed its prior SHA-256 hash
+`5f83ba93825cb3ec9c6ece026ea29d441cab5f904fde5d5cef2e73b944430d1a` and an active
+`rundeckd` service.
+
+For recovery, a new snapshot of runner LXC `168000003` completed on `pbs-homelab` as
+`backup/ct/168000003/2026-08-17T15:24:01Z`. The archive appeared in `pvesm list`, and
+`pvesm extractconfig` recovered the expected hostname, network, MAC, storage, tags and
+resources before any destructive action. The LXC had no HA, replication, lock or
+protection entry. It was shut down, destroyed without `--purge`, restored from that exact
+archive to `friends-pool-zfs`, and started with the same VMID and embedded configuration.
+
+The restored filesystem retained the config hash above and
+`/etc/homelab-infra/state/vault-mode`. Rundeck returned after its normal Java startup
+delay. The restored API then started **Config Doctor** execution 206; it reported
+`OK -- no problems found` and completed with `changed=0`, `failed=0`. The fresh PBS
+snapshot remained listed, and the enabled managed backup job still included VMID
+`168000003`. This proves that PBS stored and recovered the runner's authoritative
+`config/`, Rundeck database, Key Storage access path and Vault-mode control state.
+
 ## 2026-08-16 — live acceptance caught up
 
 Four acceptance boxes were stale after their evidence existed or could be read without a

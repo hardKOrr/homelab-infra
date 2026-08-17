@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**4 live · 42 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**3 live · 43 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 **011 and 300 closed 2026-08-16** by one deploy-and-remove cycle — see below.
@@ -11,6 +11,8 @@ same way. **015 closed 2026-08-15 by operator decision** — see "The second est
 browser and media cutover checks are deferred without replacement slices.
 **012 closed 2026-08-16** after `LAB_REFRESH=0` execution 172 and a live post-cutover
 bootstrap re-run that preserved every credential and authored config value.
+**010 closed 2026-08-17** after Bootstrap Platform failed at `config-doctor` on an injected
+missing key and runner LXC `168000003` was destroyed and restored from a fresh PBS snapshot.
 
 ## Start here
 
@@ -145,7 +147,7 @@ is a full teardown and rebuild, and the old apps exist as migration *test materi
 cutover target. Execution 120 stopped exactly there, which is the path guard working. Do not
 "fix" the storage mismatch.
 
-010/012/013/014 need a bare-metal bootstrap. Those are
+013/014 need a bare-metal bootstrap. Those are
 the only genuinely blocked ones now — **304 was never blocked at all**: its "missing"
 OPNsense credentials had been in the repo's gitignored `.env` for days.
 
@@ -443,7 +445,6 @@ if the situation arises on its own.
 |---|---|---|
 | An image update triggers a Watchtower Ntfy message with the rollback hint | 201 (closed) | tests Watchtower, not this repo |
 | Re-running `Remove App` against a stopped Caddy is a clean no-op | 501 (closed) | the fix is in code and commented; re-observing needs a staged outage |
-| Restoring the runner LXC from PBS yields a working runner | 010 | a full DR drill |
 | Interrupting bootstrap before cutover is resumable | 014 | fault injection; attempted and refused twice, 2026-08-06 |
 | Internal-CA mode; the no-API-provider handoff | 015 | the lab has a real domain on an API provider, so neither path runs here |
 | PBS token rotation | — | needs the token deleted PBS-side to force the create path |
@@ -456,7 +457,7 @@ the work queue above.
 | Slice | Waiting on |
 |---|---|
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
-| 010, 013, 014 | destructive recovery and bare-metal acceptance — these affect the runner everything else uses, so they go last |
+| 013, 014 | bare-metal acceptance — these affect the runner everything else uses, so they go last |
 
 ## By subject
 
@@ -468,7 +469,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Caddy / TLS | wiring **300** (closed), DNS-01 **407** (closed), wildcard bootstrap **015** (closed) |
 | Authentik / identity | app **403** (closed), wiring **302** (closed), forward_auth **306** (closed), modes **009** (closed) |
 | Observability | app **405** (closed) |
-| Config model | provenance **010**, onboarding **012** (closed), estates **008** (closed) |
+| Config model | provenance **010** (closed), onboarding **012** (closed), estates **008** (closed) |
 | Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
 | Media | apps **505** (closed), wiring **504** |
 | Runners / UI | Rundeck **601** (closed) |

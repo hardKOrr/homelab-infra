@@ -1,6 +1,6 @@
 # 010 — Config provenance: make bootstrap the author, and give config a way to travel
 
-**Status:** built
+**Status:** done
 **Subject:** Config model
 **Related:** 012 (runner onboarding — landed together), 013 + 014 (Vaultwarden), 001 (loader)
 
@@ -29,14 +29,14 @@ Five moves, all shipped:
    job excluded the one guest holding the platform's own configuration.
 
 The accepted cost: history is point-in-time, not per-commit-with-message. See
-[../LESSONS.md](../LESSONS.md) for the config model as it now stands across slices.
+[../../LESSONS.md](../../LESSONS.md) for the config model as it now stands across slices.
 
 ## Remaining
 
 The bootstrap script has run against real nodes — from a full wipe of the old runner and
 its predecessor on 2026-08-01, exit 0 on three consecutive runs, and again since. `pveum`,
 Key Storage staging, tagging and job import are all exercised. Evidence and the 15 defects
-that run surfaced: [012/notes.md](../done/012-runner-onboarding/notes.md).
+that run surfaced: [012/notes.md](../012-runner-onboarding/notes.md).
 
 - [x] `bash rundeck/bootstrap-rundeck.sh` on a bare node produces a runner whose
       `proxmox.yml` and `infrastructure.yml` are complete, with no human editing either —
@@ -56,12 +56,18 @@ that run surfaced: [012/notes.md](../done/012-runner-onboarding/notes.md).
       both authored 2026-08-01; `.generated/facts.yml` carries `runner` at the correct path
 - [x] `config-doctor` on the live runner's populated `config/` exits zero — execution 173,
       2026-08-16 local / 2026-08-17 UTC: `changed=0`, `failed=0`
-- [ ] `Bootstrap Platform` aborts at the doctor play — not mid-provision — on a missing key
-- [ ] Restoring the runner LXC from PBS yields a working runner with `config/` intact
+- [x] `Bootstrap Platform` aborts at the doctor play — not mid-provision — on a missing
+      key — execution 175 on 2026-08-17 named the deliberately removed `proxmox.node`,
+      reported one error and stopped before `ansible-playbook`; the original file was then
+      restored to its exact SHA-256 hash
+- [x] Restoring the runner LXC from PBS yields a working runner with `config/` intact — a
+      fresh snapshot at `2026-08-17T15:24:01Z` was extracted after destroying LXC
+      `168000003`; the restored runner retained its config hash and Vault-mode marker, and
+      Config Doctor execution 206 completed with `changed=0`, `failed=0`
 - [x] Re-running the bootstrap script rotates no credential and overwrites no answered
       prompt — the authorized 2026-08-16 re-run preserved both authored config files,
       credential metadata, the admin realm, storage password and SSH identity; full evidence
-      is in [012/notes.md](../done/012-runner-onboarding/notes.md)
+      is in [012/notes.md](../012-runner-onboarding/notes.md)
 - [x] `Configure App` writes the instance file, the log shows a unified diff, and the
       previous content lands in `config/apps/.backups/`
 - [x] `Get Config` returns the authored file with `admin_token` redacted; with an `instance`
