@@ -75,16 +75,29 @@ Built already: `sonarr`, `radarr`, `lidarr`, `prowlarr` (all via `servarr`), `sa
 | slskd | Docker | media_stack | slskd/slskd | The operator's "soulseekd". `slskd` kind already declared. Soulseek credentials → Vaultwarden |
 | readarr | Docker | media_stack | (servarr role) | Not requested, but its kind is already in `media-wiring.yml` and the role already handles v1 root folders. Cheapest row in this file: an `app-defaults` file and a playbook |
 
-## Batch B — shared backends
+## Batch B — shared backends and infrastructure guests
 
-Deployed once, wired to by other apps. These come before the application rows that need
-them, because "every app brings its own Postgres container" is the shape that makes a lab
-un-backupable.
+Deployed before the application rows that need them.
+
+**A backend is an ordinary one-click app, instanced like any other** (decided 2026-08-17).
+`config/apps/<instance>.yml` is what makes `postgresql`, `postgresql-immich` and
+`postgresql-forgejo` three separate deployments of one role. The platform does not decide
+how many databases a lab runs: an app row names a backend *instance*, and the operator
+points several apps at one instance or gives an app its own. One shared Postgres and four
+dedicated ones are both correct shapes, and neither is enforced as the default.
+
+What must not happen is a backend arriving as an invisible side-effect of an app's compose
+file — that is the shape that makes a lab un-backupable. Every database in the lab is a row
+in this table, deployed by its own job, with its own Vaultwarden item and its own PBS
+coverage.
 
 | App | Hosting | Stack | Upstream | Notes |
 |---|---|---|---|---|
 | postgresql | Native LXC | own guest | PostgreSQL | Standalone backend. Needs a **provisioning contract**: an app asks for a database + role, the backend creates it and hands the credentials back through Vaultwarden. That contract is the actual work; the LXC is trivial |
+| mariadb | Native LXC | own guest | MariaDB | The backend bookstack, wordpress, mautic and mixpost need. Same provisioning contract as postgresql — build that contract once, against both |
 | influxdb | Native LXC or Docker | own guest | InfluxDB | Same shape as postgresql: standalone, wired to. Decide 2.x vs 3.x at implementation |
+| redis | Native LXC or Docker | own guest | Redis / Valkey | Wanted by immich, paperless-ngx, mixpost and plane. Cache, not a database — an app may still be given its own instance, but little is lost when several share one |
+| opnsense | VM | own guest | OPNsense | **Deployable, and separate from the firewall the lab already runs.** `infrastructure.dns.provider: opnsense` (slice 304) wires to an OPNsense this platform did not create and must never adopt. This row builds a *new* VM: an appliance ISO install with its own installer, so the work is media fetch, VM create and console-driven first boot — not a package install |
 | wireguard | Native LXC | own guest | wg-quick / wg-easy | **Inbound** WAN server, not a client. Needs its own port forward and a public endpoint; `routing.proxy` does not apply — this is UDP, and a reverse proxy is not in the path |
 | homepage | Docker | services_stack | gethomepage/homepage | The lab dashboard. Natural consumer of `config/.generated/facts.yml` — this platform already knows every app's URL, so its config should be generated, not hand-written |
 
@@ -94,12 +107,13 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 
 | App | Hosting | Stack | Upstream | Notes |
 |---|---|---|---|---|
-| immich | Docker | photos_stack | immich-app/immich | Postgres + Redis + ML. GPU optional. Large storage claim — a media_storage-style mount, not `/opt` |
-| frigate | Docker on VM | own guest | blakeblackshear/frigate | Needs a Coral or GPU passthrough and writes to disk continuously; do not put it on a shared stack host |
+| immich | Docker | photos_stack | immich-app/immich | Postgres + Redis instances from Batch B. **Shared iGPU** for ML — LXC, not VM. Large storage claim — a media_storage-style mount, not `/opt` |
+| frigate | Docker on LXC | own guest | blakeblackshear/frigate | **LXC, so its iGPU stays shareable** (revised 2026-08-17 — was Docker on VM). Coral USB passthrough into an LXC is a device bind, like the GPU. Still its own guest: it writes to disk continuously and does not belong on a shared stack host |
 | home-assistant | Docker on VM | own guest | home-assistant/core | USB/Zigbee passthrough is why this is a VM, not an LXC |
-| nextcloud | Docker | services_stack | nextcloud/server | Postgres from Batch B |
-| owncloud | Docker | services_stack | owncloud/ocis | Overlaps nextcloud — **decide one at implementation** rather than shipping defaults for both |
+| nextcloud | Docker | services_stack | nextcloud/server | Postgres instance from Batch B |
+| owncloud | Docker | services_stack | owncloud/ocis | Ships alongside nextcloud, not instead of it (decided 2026-08-17). A lab deploys the one it wants; no default picks for it |
 | paperless-ngx | Docker | services_stack | paperless-ngx/paperless-ngx | Postgres + Redis; consumes a documents mount |
+| emby | Docker | media_stack | MediaBrowser/Emby | Third media server alongside jellyfin and plex — same shape, own auth, `routing.identity: catalog`. All three are options; a lab deploys one, or several |
 | navidrome | Docker | media_stack | navidrome/navidrome | Reads the same music library lidarr writes — `library_subpath: music`, read-only |
 | audiobookshelf | Docker | media_stack | advplyr/audiobookshelf | Same shape: reads an audiobooks/podcasts subpath |
 | mealie | Docker | services_stack | mealie-recipes/mealie | Postgres |
@@ -117,33 +131,39 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | hi-events | Docker | services_stack | HiEventsDev/hi.events | Postgres |
 | odoo | Docker | services_stack | odoo/odoo | Postgres, and opinionated about its version pairing — pin both together |
 | litellm | Docker | ai_stack | BerriAI/litellm | Proxy in front of the model backends. Holds provider API keys → Vaultwarden |
-| ollama | Docker | ai_stack | ollama/ollama | GPU passthrough; model storage is large and belongs on a mount |
+| ollama | Docker | ai_stack | ollama/ollama | **Dedicated GPU.** Model storage is large and belongs on a mount |
 | open-webui | Docker | ai_stack | open-webui/open-webui | Fronts ollama and/or litellm — wire it to whichever is deployed |
-| comfyui | Docker | ai_stack | comfyanonymous/ComfyUI | GPU. Models mount, same as ollama |
+| comfyui | Docker | ai_stack | comfyanonymous/ComfyUI | **Dedicated GPU.** Models mount, same as ollama |
+| hermes-agent | Docker | ai_stack | NousResearch/hermes-agent | Identified 2026-08-17 (entered as Unknown): MIT-licensed agent platform reachable from Telegram, Discord, Slack, WhatsApp, Signal, email and a CLI, with persistent memory and scheduling. Holds a Nous portal key plus a token for every chat platform it bridges → Vaultwarden. Its own execution backends (local, Docker, SSH, Singularity, Modal) are its config, not this platform's concern |
 
-## Not application rows
+## Decisions — resolved 2026-08-17
 
-Recorded here so nobody enters them as deploys later.
+Answered by the operator. Each one changes rows above, and each is recorded here so that no
+single row's implementer re-decides it.
 
-| Item | Why not |
-|---|---|
-| opnsense | Already the lab's DNS provider (`infrastructure.dns.provider: opnsense`, slice 304) and its firewall. This platform **wires to** it and does not deploy it: it is an appliance install with its own installer, and it owns the network this platform runs on. A deployable OPNsense VM would be a separate decision, not a catalog row |
-| hermes agent | **Unknown.** No upstream identified at entry time. The operator has to name the project before it can be scoped |
+- **Database backends are instanced apps, not a platform singleton.** Each backend is a
+  one-click row, and an app names the *instance* it uses. One shared Postgres and four
+  dedicated ones are equally valid. MariaDB and Redis join Batch B. See the Batch B
+  preamble.
+- **nextcloud and owncloud both ship.** So do jellyfin, plex and the newly added emby. The
+  catalog offers options and the lab picks. Overlap between rows is not a defect; a default
+  that silently deploys two of the same thing would be.
+- **GPU access has two modes, and shared is preferred.**
+  - *Shared iGPU on LXC* — immich, frigate. The device is bound into the container, so
+    several guests use one adapter. Frigate moves from VM to LXC for this reason.
+  - *Dedicated GPU on VM, PCIe passthrough* — ollama, comfyui. A whole adapter leaves the
+    node for one guest.
 
-## Open decisions
-
-These change what gets built, and none of them should be settled by whoever happens to
-implement the first row that hits them:
-
-- **Database backends.** Batch B has Postgres and Influx. Four Batch C rows want
-  MySQL/MariaDB. Either add a MariaDB backend row, or rule that MariaDB apps own their own
-  database container. Deciding per-app is how a lab ends up with four MariaDBs.
-- **nextcloud vs owncloud.** Both are entered. Shipping defaults for both invites a lab to
-  run two of the same thing.
-- **GPU passthrough.** Four rows (ollama, comfyui, immich, frigate) need it. This platform
-  has no GPU contract; the first of these to be implemented has to create one.
-- **SMTP.** mautic, hi.events, paperless-ngx and nextcloud all send mail.
-  `infrastructure.yml` has a `notifications` provider for Ntfy, which is not the same thing.
+  Prefer LXC and a shared device. Take a whole GPU only where the workload requires it,
+  because passthrough removes that adapter from every other guest on the node. Whoever
+  implements the first GPU row builds the contract for both modes, not only the mode that
+  row needs.
+- **SMTP is a platform contract; its shape is not yet decided.** mautic, hi.events,
+  paperless-ngx and nextcloud all send mail, and `notifications` (Ntfy) is not the same
+  thing. The lab wants a mail provider configured once and handed to apps. Provider,
+  relay and setup are open. The first row that needs mail scopes it as an
+  `infrastructure.yml` block plus Vaultwarden credentials, injected into each app's own
+  mail settings — not as a private SMTP config inside one app.
 
 ## Remaining
 
@@ -152,8 +172,10 @@ implement the first row that hits them:
 - [ ] Batch A accepted — a live media-stack wiring run places every new registry entry
 - [ ] Batch B implemented, including the database-provisioning contract postgresql needs
 - [ ] Batch C implemented
-- [ ] The four open decisions above are resolved and recorded here
-- [ ] `hermes agent` is identified or removed from the catalog
+- [x] The open decisions are resolved and recorded above (2026-08-17)
+- [x] `hermes agent` identified — NousResearch/hermes-agent, now a Batch C row (2026-08-17)
+- [ ] The SMTP contract is scoped by the first row that needs mail
+- [ ] The GPU contract covers both shared-iGPU-on-LXC and dedicated-passthrough-on-VM
 
 ## Links
 - `ansible/vars/media-wiring.yml` — the media-registry kinds Batch A rows join

@@ -48,3 +48,53 @@ as Unknown rather than guessed at.
 
 `opnsense` was requested as an addition but is entered as a non-row: the platform already
 wires to it as the DNS provider (slice 304), and it owns the network the platform runs on.
+
+## 2026-08-17 — the four open decisions answered, and two non-rows became rows
+
+The operator answered every item under "Open decisions" in the same session the catalog was
+entered, so nothing in this slice is waiting on them any more. The answers are in the README
+under "Decisions — resolved 2026-08-17"; what they changed is here.
+
+**Databases are apps, not a platform singleton.** The question was framed as "one shared
+backend or per-app containers", and the answer refused the frame: the operator wants to be
+able to *pull a backend up*, sometimes one for everything and sometimes four for four apps.
+That is exactly what the instance model already does, so no new mechanism is needed — a
+backend is a row with an `app-defaults` file, and `config/apps/postgresql-immich.yml` is how
+a lab gets a dedicated one. MariaDB and Redis were added on the same footing. The rule that
+survives is narrower than the original decision: not "share one Postgres", but "no database
+appears as a side effect of an app's compose file".
+
+**Overlapping rows are the point.** nextcloud vs owncloud was written as a
+pick-one decision. The operator read it the other way — jellyfin and plex already overlap,
+and emby should be added as a third. So the catalog ships options and the lab chooses. The
+defect the original wording was reaching for still stands, but it is about defaults, not
+rows: nothing may deploy two equivalent apps on its own.
+
+**GPU has two modes and the cheap one is the default.** ollama and comfyui get a dedicated
+adapter. immich and frigate run on a shared iGPU, which only works if their guests are LXCs
+— so frigate moved from Docker on VM to Docker on LXC. Its Coral is a USB device bind, the
+same kind of passthrough. The operator's reasoning is worth keeping: taking a whole GPU into
+a VM removes it from every other guest on the node, so it needs a real justification, not a
+preference.
+
+**SMTP is wanted and unscoped.** "we'll probably want some mail provider config... but IDK
+about setup" — so the decision recorded is that mail is a platform-level contract rather
+than four private app configs, and the provider and mechanism are explicitly left to the
+first row that needs mail. That is a smaller commitment than the other three, and it is
+recorded as such rather than dressed up as a design.
+
+**opnsense is now a row.** It was entered as a non-row on the reasoning that the platform
+wires to the lab's firewall and does not own it. That reasoning holds for *that* OPNsense
+and is unchanged — slice 304 still wires to a firewall this platform did not create. What
+the operator wants in addition is the ability to bring up an OPNsense VM, which is an
+ordinary deploy of a new guest. Both facts are true at once, and the row says so, because
+the failure mode to avoid is a future deploy adopting the running firewall.
+
+**hermes agent is identified.** The operator supplied the URL; it resolves to
+NousResearch/hermes-agent, MIT, a multi-channel agent platform with persistent memory. It is
+a Batch C row on `ai_stack`. Its secret surface is the interesting part — a Nous portal key
+plus a token per chat platform it bridges — and its own execution backends are its config,
+not something this platform models.
+
+The "Not application rows" section is gone: both of its entries left it, and an empty
+section that exists to hold exclusions invites new ones.

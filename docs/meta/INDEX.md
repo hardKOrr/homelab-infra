@@ -6,6 +6,11 @@ per-session narrative in a slice's own `notes.md`, slice shape in [README.md](RE
 **2 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 **408 app-catalog entered 2026-08-17** — the application coverage the platform intends to
 have, in three implementation batches. It is the work queue's source of rows from here on.
+**Its four open decisions were answered the same day**: databases are instanced apps
+(MariaDB and Redis added), overlapping apps all ship (emby added), GPU is shared-on-LXC by
+default with dedicated passthrough only where required (frigate moved to LXC), and SMTP is
+a platform contract whose shape the first mail-sending row scopes. opnsense became a
+deployable VM row and hermes-agent was identified. Batch C is no longer decision-blocked.
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 **011 and 300 closed 2026-08-16** by one deploy-and-remove cycle — see below.
@@ -100,12 +105,15 @@ A row is a role (or a reuse of `servarr`), a playbook in `ansible/playbooks/apps
 | A4 | flaresolverr, deemix, slskd | No new mechanism. `deemix` and `slskd` kinds are already declared |
 | A5 | unpackerr, maintainerr, kometa | **Build the mechanism first.** These are configured *from* the whole media registry, not from their own file — no app does that yet. kometa is a scheduled run with no port, no route and no monitor |
 | B1 | postgresql | The database-provisioning contract (an app asks for a database + role, gets credentials back via Vaultwarden) is the work; the LXC is not |
-| B2 | influxdb, wireguard, homepage | Standalone backends and the dashboard. homepage should generate its config from `config/.generated/facts.yml` |
-| C | Batch C, 26 rows | Ordinary deploys, blocked behind B1 and the four open decisions in 408 |
+| B2 | mariadb, redis | The other two backends Batch C rows ask for. Both take B1's provisioning contract; build it once against Postgres and MariaDB |
+| B3 | influxdb, wireguard, homepage, opnsense | Standalone backends, the dashboard, and a *new* OPNsense VM — which never adopts the firewall slice 304 wires to. homepage should generate its config from `config/.generated/facts.yml` |
+| C | Batch C, 28 rows | Ordinary deploys. Blocked behind B1 only; 408's four decisions were resolved 2026-08-17 |
 
-Before starting Batch C, resolve 408's four open decisions (MariaDB backend,
-nextcloud vs owncloud, GPU passthrough, SMTP). Each spans several rows, and settling one
-inside a single app's implementation is how a lab ends up with four MariaDBs.
+The first GPU row (ollama, comfyui, immich or frigate) builds the GPU contract for both
+modes — shared iGPU bound into an LXC, and a whole adapter passed through to a VM — not
+only the mode that row needs. The first mail-sending row (mautic, hi.events,
+paperless-ngx, nextcloud) scopes SMTP as an `infrastructure.yml` block with Vaultwarden
+credentials, not as a private config inside one app.
 
 The two sections below ("Observe if it happens", slice `Remaining` boxes) are still not
 work.
