@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**1 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**2 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 304 and 502 closed 2026-08-12, both by running things. 306 and 601 closed 2026-08-13/14,
 same way. **015 closed 2026-08-15 by operator decision** — see "The second estate" below.
 **011 and 300 closed 2026-08-16** by one deploy-and-remove cycle — see below.
@@ -37,7 +37,16 @@ and the same for `test.sh`.
 
 ## The work queue
 
-The theme: **a deploy that could not do what it was asked must not exit 0.** An audit on
+| Priority | Slice | Repository work | Complete |
+|---:|---|---|:---:|
+| 1 | [204 — Kubernetes hosting backend](204-kubernetes-hosting-backend/README.md) | Implement the reproducible k3s provisioning path, Kubernetes app adapter and existing platform-wiring integration; the Foxglove pilot and recovery run remain live slice acceptance | [ ] |
+
+The Kubernetes row is the active queue. It adds a hosting backend; it does not authorize a
+wholesale migration of stable applications. Slice 408 is reserved for the application catalog
+created in another session and is not renumbered here.
+
+The previous queue's theme was: **a deploy that could not do what it was asked must not exit
+0.** An audit on
 2026-08-10 found 22 places that catch a failure and print it as a `debug` message. Eight are
 correct, three already rolled up into a fatal, and **eleven let a deploy report success
 while the thing it was deploying was not actually wired** — the same class as execution 67,
@@ -76,12 +85,12 @@ a comment saying what the fallback is. There are currently none.
 a scratch play: an empty ledger passes, a non-fatal-only ledger passes, and two fatal
 entries fail naming both.
 
-**The queue is empty.** W6 and W7 closed the original rows on 2026-08-11. W8 closed a
+**That queue is complete.** W6 and W7 closed the original rows on 2026-08-11. W8 closed a
 post-consolidation documentation-link audit on 2026-08-16: eleven broken Markdown links
 and seven stale path references were repaired, and `gate/check-links.py` now checks
-both classes on every lint run. There is no top unchecked row to pick up; the next session
-needs work put here first, and the two sections below ("Observe if it happens", slice
-`Remaining` boxes) are still not it.
+both classes on every lint run. At that point there was no top unchecked row; slice 204 now
+supplies one. The two sections below ("Observe if it happens", slice `Remaining` boxes) are
+still not substitutes for the active queue.
 
 ### Why nothing closed while a lot got built, 2026-08-12
 
@@ -454,11 +463,12 @@ if the situation arises on its own.
 
 ## Live slices, and what each is actually waiting on
 
-Every live slice is code-complete and gate-green. None is waiting on code except through
-the work queue above.
+Each live slice either has repository work in the queue above or is code-complete and
+waiting on acceptance evidence. Acceptance-only items do not replace the active queue.
 
 | Slice | Waiting on |
 |---|---|
+| 204 Kubernetes hosting backend | implementation has not started — cluster, application adapter, Foxglove pilot and recovery proof |
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 
 ## By subject
@@ -473,6 +483,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Observability | app **405** (closed) |
 | Config model | provenance **010** (closed), onboarding **012** (closed), estates **008** (closed) |
 | Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
+| Kubernetes | hosting backend **204** |
 | Media | apps **505** (closed), wiring **504** |
 | Runners / UI | Rundeck **601** (closed) |
 | Day-2 ops | rollback **502** (closed) |
