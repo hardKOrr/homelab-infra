@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**2 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**3 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 **408 app-catalog entered 2026-08-17** — the application coverage the platform intends to
 have, in three implementation batches. It is the work queue's source of rows from here on.
 **Its four open decisions were answered the same day**: databases are instanced apps
@@ -44,7 +44,16 @@ and the same for `test.sh`.
 
 ## The work queue
 
-The theme: **a deploy that could not do what it was asked must not exit 0.** An audit on
+| Priority | Slice | Repository work | Complete |
+|---:|---|---|:---:|
+| 1 | [204 — Kubernetes hosting backend](204-kubernetes-hosting-backend/README.md) | Implement the reproducible k3s provisioning path, owned-resource app adapter, persistent-storage and restore contract, and existing platform-wiring integration; Foxglove access, failure and recovery remain live slice acceptance | [ ] |
+
+The Kubernetes row is an active queue alongside the application-coverage rows below. It adds
+a hosting backend; it does not authorize a wholesale migration of stable applications. Slice
+408 is reserved for the application catalog created in another session and is not renumbered
+here.
+
+The previous queue's theme was: **a deploy that could not do what it was asked must not exit 0.** An audit on
 2026-08-10 found 22 places that catch a failure and print it as a `debug` message. Eight are
 correct, three already rolled up into a fatal, and **eleven let a deploy report success
 while the thing it was deploying was not actually wired** — the same class as execution 67,
@@ -83,10 +92,11 @@ a comment saying what the fallback is. There are currently none.
 a scratch play: an empty ledger passes, a non-fatal-only ledger passes, and two fatal
 entries fail naming both.
 
-**The W-queue is empty.** W6 and W7 closed the original rows on 2026-08-11. W8 closed a
-post-consolidation documentation-link audit on 2026-08-16: eleven broken Markdown links
-and seven stale path references were repaired, and `gate/check-links.py` now checks
-both classes on every lint run.
+**The W-queue is empty; that queue is complete.** W6 and W7 closed the original rows on
+2026-08-11. W8 closed a post-consolidation documentation-link audit on 2026-08-16: eleven
+broken Markdown links and seven stale path references were repaired, and
+`gate/check-links.py` now checks both classes on every lint run. At that point there was no
+top unchecked row; slice 204 and the application-coverage rows below now supply one.
 
 ### The queue from 2026-08-17: application coverage
 
@@ -116,7 +126,7 @@ paperless-ngx, nextcloud) scopes SMTP as an `infrastructure.yml` block with Vaul
 credentials, not as a private config inside one app.
 
 The two sections below ("Observe if it happens", slice `Remaining` boxes) are still not
-work.
+work, and are not substitutes for the active queue.
 
 ### Why nothing closed while a lot got built, 2026-08-12
 
@@ -489,11 +499,13 @@ if the situation arises on its own.
 
 ## Live slices, and what each is actually waiting on
 
-Every live slice except 408 is code-complete and gate-green. 408 is a catalog: it is
-waiting on code, and the work queue above is that code.
+Each live slice either has repository work in the queue above or is code-complete and
+gate-green, waiting on acceptance evidence. Acceptance-only items do not replace the active
+queue. 408 is a catalog: it is waiting on code, and the work queue above is that code.
 
 | Slice | Waiting on |
 |---|---|
+| 204 Kubernetes hosting backend | implementation has not started — topology, cluster, owned-resource adapter, storage and restore contract, and Foxglove live acceptance |
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 408 app-catalog | **code, not observation.** It is the source of the work queue above; it closes when its batches are built, and it is the one live slice a session can act on directly |
 
@@ -509,6 +521,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Observability | app **405** (closed) |
 | Config model | provenance **010** (closed), onboarding **012** (closed), estates **008** (closed) |
 | Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
+| Kubernetes | hosting backend **204** |
 | Media | apps **505** (closed), wiring **504**, remaining apps **408** batch A |
 | App coverage | catalog **408** |
 | Runners / UI | Rundeck **601** (closed) |
