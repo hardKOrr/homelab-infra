@@ -39,7 +39,7 @@ and the same for `test.sh`.
 
 | Priority | Slice | Repository work | Complete |
 |---:|---|---|:---:|
-| 1 | [204 — Kubernetes hosting backend](204-kubernetes-hosting-backend/README.md) | Implement the reproducible k3s provisioning path, Kubernetes app adapter and existing platform-wiring integration; the Foxglove pilot and recovery run remain live slice acceptance | [ ] |
+| 1 | [204 — Kubernetes hosting backend](204-kubernetes-hosting-backend/README.md) | Implement the reproducible k3s provisioning path, owned-resource app adapter, persistent-storage and restore contract, and existing platform-wiring integration; Foxglove access, failure and recovery remain live slice acceptance | [ ] |
 
 The Kubernetes row is the active queue. It adds a hosting backend; it does not authorize a
 wholesale migration of stable applications. Slice 408 is reserved for the application catalog
@@ -468,7 +468,7 @@ waiting on acceptance evidence. Acceptance-only items do not replace the active 
 
 | Slice | Waiting on |
 |---|---|
-| 204 Kubernetes hosting backend | implementation has not started — cluster, application adapter, Foxglove pilot and recovery proof |
+| 204 Kubernetes hosting backend | implementation has not started — topology, cluster, owned-resource adapter, storage and restore contract, and Foxglove live acceptance |
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 
 ## By subject

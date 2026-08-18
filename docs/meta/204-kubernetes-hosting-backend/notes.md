@@ -14,6 +14,12 @@ the reason to build the backend. Kubernetes does not itself create accessibility
 DNS, the external network path, Caddy and Authentik remain responsible for who can reach an
 application.
 
+An access class is not an Authentik mode. The access class says which network path may
+publish an application. `routing.identity` says where authentication occurs. Keeping those
+decisions separate prevents `catalog` from being mistaken for an access control and
+prevents a private application from being required to publish a public DNS record merely
+to satisfy acceptance.
+
 ### Workload boundary
 
 Good first candidates are standard OCI workloads with conventional HTTP ingress, limited
@@ -28,15 +34,42 @@ cluster until a later explicit decision:
 The pilot should be useful to Foxglove but low-risk. It must exercise the complete path,
 including external access and recovery, before the app catalog adopts the backend.
 
+### State boundary
+
+k3s can reconstruct cluster services without reconstructing application data. The first
+implementation therefore needs an explicit storage decision before it selects a pilot:
+where persistent volumes live, what happens when their node is unavailable, and which
+operation deletes them. The implementation must not describe a multi-node control plane as
+application-highly-available when the selected volume remains tied to one failed node.
+
+Backups protect application state, not only VM disks. A database dump or a tool-supported
+quiesce must produce the application-consistent artifact, and the restore proof must start
+with a fresh namespace so surviving cluster objects cannot make the result look healthier
+than the backup is.
+
+### Credential boundary
+
+The post-cutover source of truth remains Vaultwarden. Runtime kubeconfig files and join
+material may persist at protected k3s-managed node paths or exist temporarily where a job
+requires them. “Control-plane storage” describes that runtime placement; it is not a
+second canonical secret store. The same distinction applies to application credentials:
+Kubernetes Secrets are runtime deployment objects, while Vaultwarden remains canonical.
+
 ### Close plan
 
-1. Decide topology, failure domains, ingress address, external access classes and secret
-   ownership.
-2. Provision a fresh cluster and prove an idempotent cluster re-run.
-3. Add the Kubernetes application adapter behind the existing app/job contract.
-4. Deploy and wire one Foxglove pilot through the existing estate.
-5. Prove removal, restore and declared node-failure behavior.
-6. Use the proven adapter for suitable entries in `408-app-catalog` when that slice lands
+1. Decide topology, failure domains, ingress address, access-class field, persistent
+   storage and secret ownership.
+2. Provision a fresh cluster and prove an idempotent cluster re-run and the declared
+   ingress-address behavior.
+3. Add the Kubernetes application adapter and owned-resource model behind the existing
+   app/job contract.
+4. Add status, removal, notification, registry and guest-record behavior before treating
+   the adapter as a complete hosting backend.
+5. Deploy and wire one Foxglove pilot through the existing estate and its selected access
+   class.
+6. Prove explicit data preservation and deletion, application-consistent restore, and the
+   declared node-failure behavior.
+7. Use the proven adapter for suitable entries in `408-app-catalog` when that slice lands
    in this checkout.
 
 ### Later niceties — recorded, not required by 204
