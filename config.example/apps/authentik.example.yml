@@ -46,3 +46,52 @@
 #                      # and its sso facts land under estates.<name>
 #   # identity stays none — putting Authentik behind its own forward-auth
 #   # deadlocks the login flow.
+
+# ── Directory: groups and accounts ─────────────────────────────────────────────
+# Declared here, created and kept correct through the Authentik API on every
+# deploy. This is the answer to "who can sign in": an account reaches a published
+# app only through a group bound to it, and every app playbook binds the group
+# named homelab-users.
+#
+# What is declared is managed. What is NOT declared is never touched: an account
+# you make in the UI keeps working, and deleting an entry from this file stops
+# managing it rather than deleting the person. Deletion stays a deliberate act in
+# the UI.
+#
+# Passwords are generated (28 characters), stored in the Vaultwarden item
+# `homelab-infra/sso` as `user_<username>_password`, and set once — at creation.
+# Change one in the UI and a re-deploy will not overwrite it. To rotate from here,
+# set rotate_password: true on that account for one run.
+#
+# LISTS REPLACE, they do not merge. Declaring `groups:` below replaces the default
+# list from vars/app-defaults/authentik.yml — which is exactly the homelab-users
+# entry shown here, so keep it.
+#
+# directory:
+#   groups:
+#     - name: homelab-users        # bound to every published app by the wiring
+#       is_superuser: false
+#     - name: homelab-admins       # full administrative rights over Authentik
+#       is_superuser: true
+#
+#   users:
+#     - username: you
+#       name: Your Name
+#       email: you@example.com
+#       groups: [homelab-users, homelab-admins]
+#     - username: housemate
+#       name: A Housemate
+#       email: housemate@example.com
+#       groups: [homelab-users]     # can reach the apps, cannot administer Authentik
+#     - username: kiosk
+#       name: Living room kiosk
+#       type: service_account       # internal | service_account
+#       groups: [homelab-users]
+#
+# Optional per account: is_active (default true), attributes (a free-form mapping
+# Authentik exposes to policies and property mappings), path (default `users`),
+# rotate_password (default false).
+#
+# Not managed from here: social login sources, MFA/authenticator stages and flow
+# doctrine. Those are Authentik objects with no config surface in this repo yet —
+# set them in the UI until there is one.

@@ -32,3 +32,25 @@ authentik_defaults:
                                 # must sign in from off-LAN — it is the front door to SSO
     identity: none              # Authentik IS the SSO provider — never wrap it in itself
     subdomain: auth             # default hostname auth.<domain>; override per instance
+
+  # ── Directory as code ────────────────────────────────────────────────────────
+  # Groups and accounts this deploy creates and keeps correct through the API
+  # (roles/authentik/tasks/directory.yml). What is declared here is managed; what
+  # is not declared is never touched and never deleted.
+  #
+  # The default is the one group the platform itself needs: every app playbook
+  # sets wiring_auth_group: homelab-users, and the Authentik wiring binds it to
+  # each published application. Declaring it here means it exists from the SSO
+  # deploy onward rather than appearing when the first app happens to wire.
+  #
+  # NOTE — config layering replaces lists, it does not append to them. A
+  # config/apps/<instance>.yml that declares directory.groups replaces this
+  # entry, so keep homelab-users in your own list unless you also change
+  # wiring_auth_group everywhere.
+  directory:
+    groups:
+      - name: homelab-users
+        is_superuser: false
+    # Accounts are yours to declare — the platform ships none. See
+    # config.example/apps/authentik.example.yml for the shape.
+    users: []

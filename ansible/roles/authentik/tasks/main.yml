@@ -270,6 +270,15 @@
       {{ authentik_admin_user }} in the Authentik UI and put it in
       the canonical Vaultwarden item homelab-infra/sso.
 
+# ── Directory as code ─────────────────────────────────────────────────────────
+# Groups, accounts and membership declared in config/apps/<instance>.yml. Runs
+# here because everything it needs is now proven: the service answers, and the
+# token authenticates as an account that can write to the directory. See
+# directory.yml for what is and is not managed — in one line, what is declared is
+# created and kept correct, and what is not declared is never touched or deleted.
+- name: Apply the declared directory
+  ansible.builtin.include_tasks: directory.yml
+
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the API endpoint to the playbook
   ansible.builtin.set_fact:

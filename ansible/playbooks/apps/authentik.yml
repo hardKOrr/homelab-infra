@@ -195,6 +195,13 @@
     wiring_app_display: "Authentik ({{ instance }})"
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/-/health/live/"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    # Where this instance's admin credentials actually live — same estate scoping
+    # as the role's canonical item (roles/authentik/tasks/main.yml).
+    _authentik_sso_vault_item: >-
+      {{ 'homelab-infra/sso'
+         if (_authentik_deploy_host.app_config.routing.estate | default('', true)) | length == 0
+         else 'homelab-infra/estates/'
+              ~ _authentik_deploy_host.app_config.routing.estate ~ '/sso' }}
     wiring_identity_mode: "{{ _authentik_deploy_host.app_config.routing.identity | default('catalog') }}"
     wiring_access: "{{ _authentik_deploy_host.app_config.routing.access | default('internal') }}"
 
@@ -242,9 +249,14 @@
           SSO provider {{ instance }} is running and registered. Sign in at
           https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }} as
           {{ _authentik_deploy_host.authentik_admin_username }} — the generated password
-          is in config/.generated/facts.yml on the controller, under
-          sso.admin_password. Apps register per their routing.identity mode from
-          their next deploy onward.
+          is in the Vaultwarden item {{ _authentik_sso_vault_item }}, under
+          admin_password. facts.yml is topology only and never holds it.
+          Apps register per their routing.identity mode from their next deploy
+          onward. Directory content is yours: create your accounts in the
+          Authentik UI and add them to the group '{{ wiring_auth_group }}', which
+          the first wired app creates empty. Until an account is in that group it
+          can reach no published application, and forward_auth apps will refuse
+          the sign-in.
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops

@@ -1,0 +1,345 @@
+---
+# Authentik directory as code — groups, accounts and group membership.
+#
+# WHY THIS EXISTS. Slice 403 removed directory management from this role, and the
+# note it left behind ("account names, groups and MFA are operator policy") was
+# wider than the defect that caused it. What was actually wrong was that an earlier
+# pass hardcoded ONE lab's personal choices as product defaults: it renamed the
+# bootstrap admin, created two named groups, added a Google source and an MFA
+# doctrine, none of it declarable and none of it overridable. The fix for
+# un-configurable hardcoding is a config surface, not a hole in the platform.
+# Everything Authentik exposes through its API is ours to configure, from config.
+#
+# WHAT IS DECLARED — config/apps/<instance>.yml, key `directory`:
+#
+#   directory:
+#     groups:
+#       - name: homelab-users            # required
+#         is_superuser: false            # default false
+#         parent: staff                  # optional, name of another group
+#         attributes: {}                 # optional
+#     users:
+#       - username: kevin                # required
+#         name: Kevin Orr                # default: username
+#         email: kevin@example.com       # default: empty
+#         groups: [homelab-users]        # names; every one must exist or be declared
+#         type: internal                 # internal | service_account
+#         is_active: true                # default true
+#         attributes: {}                 # optional
+#         rotate_password: false         # true generates and applies a new password
+#
+# SEMANTICS. Declarative for what is declared, and nothing else:
+#   - A declared group or account that does not exist is created.
+#   - A declared group or account that drifted from its declaration is patched back.
+#   - A declared account's group membership is made to match its `groups` list
+#     exactly, so removing a group from config removes that membership.
+#   - An account or group that is NOT declared is never read into, never patched
+#     and never deleted. Removing an entry from config stops managing it; it does
+#     not delete a person's account. Deletion is a destructive act on someone's
+#     identity and stays a deliberate one in the UI.
+#
+# PASSWORDS. Generated here, 28 characters, stored in the estate's canonical
+# Vaultwarden item as `user_<username>_password` BEFORE they are applied
+# (generate-before-apply, docs/specs/secrets-handling.md), and set exactly once —
+# at creation, or when the declaration says `rotate_password: true`. A re-deploy
+# never overwrites a password its owner changed in the UI.
+#
+# Runs on the stack host against the local API listener with the bootstrap token,
+# after the health check and the token assert in main.yml — so a failure here is
+# already past "is Authentik up" and "does the token work".
+#
+# Inputs from main.yml: _authentik_api_token, _authentik_vault_item.
+
+- name: Directory | Resolve the declared directory
+  ansible.builtin.set_fact:
+    _ak_dir_groups: "{{ (app_config.directory | default({}, true)).groups | default([], true) }}"
+    _ak_dir_users: "{{ (app_config.directory | default({}, true)).users | default([], true) }}"
+
+- name: Directory | Apply the declared directory
+  when: (_ak_dir_groups | length + _ak_dir_users | length) > 0
+  vars:
+    _ak_dir_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_dir_headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+  block:
+    - name: Directory | Assert every declaration carries its identifying key
+      ansible.builtin.assert:
+        that:
+          - _ak_dir_groups | rejectattr('name', 'defined') | list | length == 0
+          - _ak_dir_users | rejectattr('username', 'defined') | list | length == 0
+        fail_msg: >-
+          Every entry under directory.groups needs a `name` and every entry under
+          directory.users needs a `username` in config/apps/{{ instance }}.yml.
+
+    # ── Groups ────────────────────────────────────────────────────────────────
+    # One list call rather than a lookup per group: a homelab directory is small,
+    # and the index it builds is what resolves membership names to pks below.
+    # page_size is Authentik's own cap parameter; the default 100 would silently
+    # truncate on a lab that has grown past it.
+    - name: Directory | List existing groups
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/groups/?page_size=1000"
+        method: GET
+        headers: "{{ _ak_dir_headers }}"
+        status_code: 200
+      register: _ak_dir_group_list
+      changed_when: false
+      no_log: true
+
+    - name: Directory | Index existing groups by name
+      ansible.builtin.set_fact:
+        _ak_dir_group_index: >-
+          {{ dict((_ak_dir_group_list.json.results | default([]) | map(attribute='name') | list)
+                  | zip(_ak_dir_group_list.json.results | default([]))) }}
+
+    - name: Directory | Assert every parent group is known
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ak_dir_groups | selectattr('parent', 'defined')
+            | map(attribute='parent')
+            | reject('in', _ak_dir_group_index.keys() | list)
+            | reject('in', _ak_dir_groups | map(attribute='name') | list)
+            | list | length == 0
+        fail_msg: >-
+          A directory.groups entry names a `parent` that neither exists in Authentik
+          nor is declared here. Declare the parent group as well.
+
+    # is_superuser is passed explicitly on every create rather than left to the API
+    # default: a group that grants access to one published application must never
+    # carry administrative rights over Authentik itself by accident.
+    - name: Directory | Create declared groups that do not exist
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/groups/"
+        method: POST
+        headers: "{{ _ak_dir_headers }}"
+        body_format: json
+        body: >-
+          {{ {'name': item.name,
+              'is_superuser': item.is_superuser | default(false) | bool,
+              'attributes': item.attributes | default({}, true)} }}
+        status_code: 201
+      loop: "{{ _ak_dir_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name not in _ak_dir_group_index
+      changed_when: true
+      no_log: true
+
+    - name: Directory | Update declared groups that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/groups/{{ _ak_dir_group_index[item.name].pk | default('') }}/"
+        method: PATCH
+        headers: "{{ _ak_dir_headers }}"
+        body_format: json
+        body: >-
+          {{ {'is_superuser': item.is_superuser | default(false) | bool,
+              'attributes': item.attributes | default({}, true)} }}
+        status_code: 200
+      loop: "{{ _ak_dir_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - item.name in _ak_dir_group_index
+        - >-
+          (_ak_dir_group_index[item.name].is_superuser | default(false) | bool)
+          != (item.is_superuser | default(false) | bool)
+          or (_ak_dir_group_index[item.name].attributes | default({}, true))
+             != (item.attributes | default({}, true))
+      changed_when: true
+      no_log: true
+
+    # Re-read: groups just created have pks nothing has seen yet, and parenting and
+    # membership below both resolve names through this index.
+    - name: Directory | Re-list groups after creating them
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/groups/?page_size=1000"
+        method: GET
+        headers: "{{ _ak_dir_headers }}"
+        status_code: 200
+      register: _ak_dir_group_list
+      changed_when: false
+      no_log: true
+
+    - name: Directory | Re-index groups by name
+      ansible.builtin.set_fact:
+        _ak_dir_group_index: >-
+          {{ dict((_ak_dir_group_list.json.results | default([]) | map(attribute='name') | list)
+                  | zip(_ak_dir_group_list.json.results | default([]))) }}
+
+    # Parenting is a second pass, not part of the create: a declaration may name a
+    # parent that is itself declared later in the same list, which has no pk until
+    # the pass above has run.
+    - name: Directory | Set declared group parents
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/groups/{{ _ak_dir_group_index[item.name].pk }}/"
+        method: PATCH
+        headers: "{{ _ak_dir_headers }}"
+        body_format: json
+        body: >-
+          {{ {'parent': _ak_dir_group_index[item.parent].pk} }}
+        status_code: 200
+      loop: "{{ _ak_dir_groups | selectattr('parent', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: >-
+        (_ak_dir_group_index[item.name].parent | default(''))
+        != _ak_dir_group_index[item.parent].pk
+      changed_when: true
+      no_log: true
+
+    # ── Accounts ──────────────────────────────────────────────────────────────
+    - name: Directory | Assert every membership names a group that will exist
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ak_dir_users | map(attribute='groups', default=[]) | flatten
+            | reject('in', _ak_dir_group_index.keys() | list)
+            | list | length == 0
+        fail_msg: >-
+          A directory.users entry names a group that does not exist in Authentik and
+          is not declared under directory.groups. Declare the group or fix the name.
+
+    - name: Directory | List existing accounts
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/users/?page_size=1000"
+        method: GET
+        headers: "{{ _ak_dir_headers }}"
+        status_code: 200
+      register: _ak_dir_user_list
+      changed_when: false
+      no_log: true
+
+    - name: Directory | Index existing accounts by username
+      ansible.builtin.set_fact:
+        _ak_dir_user_index: >-
+          {{ dict((_ak_dir_user_list.json.results | default([]) | map(attribute='username') | list)
+                  | zip(_ak_dir_user_list.json.results | default([]))) }}
+      no_log: true
+
+    # Accounts needing a password: the ones being created, plus the ones whose
+    # declaration asks for a rotation. An existing account nobody asked to rotate
+    # keeps whatever password its owner set.
+    - name: Directory | Select the accounts needing a password
+      ansible.builtin.set_fact:
+        _ak_dir_missing_users: >-
+          {{ _ak_dir_users | rejectattr('username', 'in', _ak_dir_user_index.keys() | list) | list }}
+        _ak_dir_password_targets: >-
+          {{ (_ak_dir_users | rejectattr('username', 'in', _ak_dir_user_index.keys() | list) | list)
+             + (_ak_dir_users | selectattr('username', 'in', _ak_dir_user_index.keys() | list)
+                | selectattr('rotate_password', 'defined')
+                | selectattr('rotate_password') | list) }}
+      no_log: true
+
+    - name: Directory | Generate a password for each of them
+      ansible.builtin.set_fact:
+        _ak_dir_passwords: >-
+          {{ _ak_dir_passwords | default({})
+             | combine({item: lookup('password', '/dev/null length=28 chars=ascii_letters,digits')}) }}
+      loop: "{{ _ak_dir_password_targets | map(attribute='username') | list }}"
+      no_log: true
+
+    # Stored before it is applied, and merged into the estate's canonical item so
+    # the token, admin password and database credentials already there survive.
+    - name: Directory | Store the generated passwords before applying them
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "{{ _authentik_vault_item }}"
+        vault_item_fields: "{{ {'user_' ~ item.key ~ '_password': item.value} }}"
+        vault_item_secret_fields: ["user_{{ item.key }}_password"]
+        vault_item_merge: true
+      loop: "{{ _ak_dir_passwords | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+
+    - name: Directory | Create declared accounts
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/users/"
+        method: POST
+        headers: "{{ _ak_dir_headers }}"
+        body_format: json
+        body: >-
+          {{ {'username': item.username,
+              'name': item.name | default(item.username, true),
+              'email': item.email | default(''),
+              'is_active': item.is_active | default(true) | bool,
+              'type': item.type | default('internal'),
+              'path': item.path | default('users'),
+              'attributes': item.attributes | default({}, true),
+              'groups': item.groups | default([]) | map('extract', _ak_dir_group_index, 'pk') | list} }}
+        status_code: 201
+      loop: "{{ _ak_dir_missing_users }}"
+      loop_control:
+        label: "{{ item.username }}"
+      changed_when: true
+      no_log: true
+
+    - name: Directory | Update declared accounts that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/users/{{ _ak_dir_user_index[item.username].pk }}/"
+        method: PATCH
+        headers: "{{ _ak_dir_headers }}"
+        body_format: json
+        # username is deliberately absent from the body: it identifies the account
+        # being patched, and this file has no way to tell a rename from a different
+        # person.
+        body: >-
+          {{ {'name': item.name | default(item.username, true),
+              'email': item.email | default(''),
+              'is_active': item.is_active | default(true) | bool,
+              'type': item.type | default('internal'),
+              'attributes': item.attributes | default({}, true),
+              'groups': item.groups | default([]) | map('extract', _ak_dir_group_index, 'pk') | list} }}
+        status_code: 200
+      loop: "{{ _ak_dir_users | selectattr('username', 'in', _ak_dir_user_index.keys() | list) | list }}"
+      loop_control:
+        label: "{{ item.username }}"
+      when: >-
+        (_ak_dir_user_index[item.username].name | default('')) != (item.name | default(item.username, true))
+        or (_ak_dir_user_index[item.username].email | default('')) != (item.email | default(''))
+        or (_ak_dir_user_index[item.username].is_active | default(true) | bool)
+           != (item.is_active | default(true) | bool)
+        or (_ak_dir_user_index[item.username].attributes | default({}, true))
+           != (item.attributes | default({}, true))
+        or (_ak_dir_user_index[item.username].groups | default([]) | map('string') | sort | list)
+           != (item.groups | default([]) | map('extract', _ak_dir_group_index, 'pk')
+               | map('string') | sort | list)
+      changed_when: true
+      no_log: true
+
+    # Re-read so the password calls below address accounts created moments ago.
+    - name: Directory | Re-list accounts after creating them
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/users/?page_size=1000"
+        method: GET
+        headers: "{{ _ak_dir_headers }}"
+        status_code: 200
+      register: _ak_dir_user_list
+      changed_when: false
+      no_log: true
+      when: _ak_dir_passwords | default({}) | length > 0
+
+    - name: Directory | Re-index accounts by username
+      ansible.builtin.set_fact:
+        _ak_dir_user_index: >-
+          {{ dict((_ak_dir_user_list.json.results | default([]) | map(attribute='username') | list)
+                  | zip(_ak_dir_user_list.json.results | default([]))) }}
+      no_log: true
+      when: _ak_dir_passwords | default({}) | length > 0
+
+    # 204 is the documented answer; 200 is accepted because older releases returned it.
+    - name: Directory | Apply the generated passwords
+      ansible.builtin.uri:
+        url: "{{ _ak_dir_api }}/core/users/{{ _ak_dir_user_index[item.key].pk }}/set_password/"
+        method: POST
+        headers: "{{ _ak_dir_headers }}"
+        body_format: json
+        body: "{{ {'password': item.value} }}"
+        status_code: [200, 204]
+      loop: "{{ _ak_dir_passwords | default({}) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      changed_when: true
+      no_log: true
