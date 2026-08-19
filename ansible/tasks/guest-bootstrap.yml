@@ -21,6 +21,16 @@
 # something to scrape on every guest it creates. It listens on :9100 and exposes
 # host metrics only — no control surface. Prometheus binds the stack host's
 # loopback, so nothing publishes these metrics beyond the lab network.
+# The retry is not defensive padding. A freshly-booted Debian cloud image runs its own
+# apt-get — cloud-init's package step, or the unattended-upgrades timer — for the first
+# minute or so of its life, and this task arrives while that lock is still held:
+#
+#   E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 605 (apt-get)
+#
+# One guest at a time usually wins the race by luck. Provisioning three at once, as the
+# k3s cluster does, loses it reliably on at least one of them, and a whole cluster build
+# then fails on a lock that would have cleared in twenty seconds. Waiting is the correct
+# behavior for a lock held by a process that is about to finish.
 - name: Update apt cache and install baseline packages
   ansible.builtin.apt:
     name:
@@ -32,6 +42,14 @@
       - prometheus-node-exporter
     state: present
     update_cache: true
+    # Have apt itself wait on the lock rather than failing instantly, so the retries
+    # below are a backstop for a genuinely long-running upgrade rather than the whole
+    # mechanism.
+    lock_timeout: 120
+  register: _guest_apt
+  retries: 5
+  delay: 20
+  until: _guest_apt is not failed
 
 - name: Enable and start node_exporter
   ansible.builtin.systemd:

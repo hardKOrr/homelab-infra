@@ -149,11 +149,21 @@
   until: _k3s_readyz.rc == 0
   changed_when: false
 
+# argv, not a cmd string. A jsonpath filter needs its inner double quotes —
+# `[?(@.type=="Ready")]` — and `command:` splits a cmd string on whitespace and drops
+# them, so kubectl received `@.type==Ready` and answered `unrecognized identifier Ready`
+# on every one of 36 retries against a node that was Ready the whole time. argv passes
+# each element through untouched. Every jsonpath in this role is written this way.
 - name: k3s | Wait for this node to report Ready
   ansible.builtin.command:
-    cmd: >-
-      k3s kubectl get node {{ inventory_hostname }}
-      -o jsonpath={.status.conditions[?(@.type=="Ready")].status}
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - node
+      - "{{ inventory_hostname }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Ready")].status}
   register: _k3s_node_ready
   retries: "{{ (k3s_ready_timeout | int / 5) | int }}"
   delay: 5

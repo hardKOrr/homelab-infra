@@ -257,11 +257,18 @@
     # Every declared node has to be Ready before the cluster is called built. A run that
     # installed two of three servers and stopped is a cluster without quorum, and calling
     # that success is how a backend becomes untrustworthy.
+    # argv for the same reason as the role's readiness wait: a cmd string is split on
+    # whitespace and loses the jsonpath's inner double quotes, so the filter reaches
+    # kubectl as `@.type==Ready` and fails against a perfectly healthy cluster.
     - name: Read the cluster's node list
       ansible.builtin.command:
-        cmd: >-
-          k3s kubectl get nodes
-          -o jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - nodes
+          - -o
+          - jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
       delegate_to: "{{ hostvars['localhost'].k8s_first_node }}"
       become: true
       register: _k3s_nodes

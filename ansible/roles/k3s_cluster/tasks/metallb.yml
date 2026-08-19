@@ -97,9 +97,16 @@
 
 - name: k3s ingress | Wait for Traefik to claim the VIP
   ansible.builtin.command:
-    cmd: >-
-      k3s kubectl -n kube-system get svc traefik
-      -o jsonpath={.status.loadBalancer.ingress[0].ip}
+    argv:
+      - k3s
+      - kubectl
+      - -n
+      - kube-system
+      - get
+      - svc
+      - traefik
+      - -o
+      - jsonpath={.status.loadBalancer.ingress[0].ip}
   register: _k3s_traefik_vip
   retries: 20
   delay: 15

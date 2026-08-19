@@ -12,7 +12,14 @@
 
 - name: k3s taints | Read the taints currently on this node
   ansible.builtin.command:
-    cmd: "k3s kubectl get node {{ inventory_hostname }} -o jsonpath={.spec.taints}"
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - node
+      - "{{ inventory_hostname }}"
+      - -o
+      - jsonpath={.spec.taints}
   register: _k3s_taints_now
   changed_when: false
 
@@ -51,7 +58,14 @@
 
 - name: k3s taints | Read the taints back
   ansible.builtin.command:
-    cmd: "k3s kubectl get node {{ inventory_hostname }} -o jsonpath={.spec.taints}"
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - node
+      - "{{ inventory_hostname }}"
+      - -o
+      - jsonpath={.spec.taints}
   register: _k3s_taints_after
   changed_when: false
   when: _k3s_taints_missing | length > 0

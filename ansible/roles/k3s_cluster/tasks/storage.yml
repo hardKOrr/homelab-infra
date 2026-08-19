@@ -27,7 +27,14 @@
 
 - name: k3s storage | Wait for the local-path StorageClass to exist
   ansible.builtin.command:
-    cmd: "k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }} -o name"
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - storageclass
+      - "{{ k8s_cluster_config.storage.class }}"
+      - -o
+      - name
   register: _k3s_sc
   retries: 20
   delay: 5
@@ -36,9 +43,14 @@
 
 - name: k3s storage | Read the current reclaim policy
   ansible.builtin.command:
-    cmd: >-
-      k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }}
-      -o jsonpath={.reclaimPolicy}
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - storageclass
+      - "{{ k8s_cluster_config.storage.class }}"
+      - -o
+      - jsonpath={.reclaimPolicy}
   register: _k3s_sc_policy
   changed_when: false
 
@@ -64,9 +76,14 @@
 
 - name: k3s storage | Confirm the class is the cluster default
   ansible.builtin.command:
-    cmd: >-
-      k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }}
-      -o jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - storageclass
+      - "{{ k8s_cluster_config.storage.class }}"
+      - -o
+      - jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
   register: _k3s_sc_default
   changed_when: false
 
@@ -83,9 +100,14 @@
 
 - name: k3s storage | Read the reclaim policy back
   ansible.builtin.command:
-    cmd: >-
-      k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }}
-      -o jsonpath={.reclaimPolicy}
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - storageclass
+      - "{{ k8s_cluster_config.storage.class }}"
+      - -o
+      - jsonpath={.reclaimPolicy}
   register: _k3s_sc_verify
   changed_when: false
 
