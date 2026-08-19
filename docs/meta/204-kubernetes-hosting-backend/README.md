@@ -23,11 +23,16 @@ identity check, or only through a named private path. It must continue to use
 
 ## Remaining
 
-- [ ] Declare the cluster topology and resource contract: Proxmox placement, VM sizing,
-      addresses, failure domains, k3s version, upgrade policy and stable ingress endpoint.
-      Three control-plane VMs only count as highly available when they occupy distinct
-      physical failure domains; otherwise the UI and documentation must describe the
-      actual single-failure-domain mode.
+- [x] Declare the cluster topology and resource contract (2026-08-18). Three k3s servers
+      with embedded etcd, one per physical Proxmox node, so the three control-plane VMs
+      occupy distinct failure domains and quorum tolerates one node loss. host-1's node is
+      2 GB and tainted `NoSchedule` (quorum only) because that node also runs the CARP
+      BACKUP firewall peer. Ingress is Traefik behind a MetalLB L2 VIP with
+      `--disable=servicelb`. Storage defaults to `local-path`; the database is
+      namespace-scoped and in-cluster; the pilot is `mixpost`; backups are
+      `proxmox-backup-client` CronJobs into the existing PBS datastore. Sizes, reclaims
+      and rationale are in [notes.md](notes.md). k3s version pin and upgrade policy are
+      set by the provisioning row below.
 - [ ] Provision and re-run the k3s VM cluster idempotently through Ansible. Cluster join
       material and administrative kubeconfig remain credentials. Their canonical values
       must be organization-owned Vaultwarden items after cutover. k3s-managed copies may

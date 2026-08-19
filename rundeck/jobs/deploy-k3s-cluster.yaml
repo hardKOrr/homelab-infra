@@ -1,0 +1,61 @@
+# Deploy k3s Cluster — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/deploy-k3s-cluster.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# This job builds the Kubernetes hosting backend, not an application. It is safe to
+# re-run: a converged cluster reports no change, and raising `cluster.version` in
+# config/apps/k3s-cluster.yml turns a re-run into a rolling upgrade, one server at a time.
+
+- id: 5dae403a-1c28-522c-a083-41f7b1984c17
+  uuid: 5dae403a-1c28-522c-a083-41f7b1984c17
+  name: Deploy k3s Cluster
+  group: Apps
+  description: |-
+    Build or converge the k3s cluster that Kubernetes-hosted applications run on.
+
+    Three servers with embedded etcd, one per Proxmox node, so the control plane
+    tolerates one node failure. Traefik behind a single MetalLB VIP is the internal
+    ingress; the platform Caddy stays the sole public TLS edge.
+
+    Application data on the default storage class is NODE-PINNED: a pod whose volume
+    lives on an unavailable node stays Pending rather than moving. The control plane is
+    highly available; application data is not. The job prints this in its output.
+
+    Re-run to converge, to replace a lost node, or to roll every server to a new k3s
+    version after raising cluster.version.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  # A second cluster is a legitimate thing to want, but two runs of THIS job at once
+  # would race the etcd founder against itself.
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Leave this as it is for the normal deployment. Change it only to build a
+      SECOND cluster alongside the first. The value is the config/apps/<instance>.yml
+      filename and the name of the Vaultwarden item holding the cluster's join token and
+      administrative kubeconfig.
+    required: true
+    value: k3s-cluster
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/k3s-cluster.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/k3s-cluster.yml "${ARGS[@]}"

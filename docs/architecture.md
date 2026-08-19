@@ -74,6 +74,21 @@ playbook IS the update. `ansible/playbooks/apps/remove.yml` mirrors deploy: stop
   reach into app internals.
 - **Provider abstraction**: `infrastructure.yml` declares provider *choices*; every wiring task
   is a per-provider file selected by name, and a missing provider is a no-op, not an error.
+- **Kubernetes backend** (slice 204): `playbooks/apps/k3s-cluster.yml` builds a k3s cluster as an
+  additional hosting backend beside native LXC and Docker stacks — it does not replace either, and
+  no working app migrates onto it by default. `tasks/kubernetes/provision-node.yml` reuses
+  `vm-clone.yml` and `ensure-cloud-template.yml` per node rather than adding a second way to make a
+  VM; one template is built on each Proxmox node because local ZFS pools are not shared storage.
+  Play 4 is `serial: 1` so exactly one node runs `--cluster-init` and the rest join it; the join
+  token travels host to host in memory and is canonical only in Vaultwarden. The cluster publishes
+  nothing itself — the API, node addresses and the MetalLB ingress VIP stay on private networks,
+  and the platform Caddy remains the sole public TLS edge. Two properties are asserted rather than
+  documented, because both are the kind that quietly stop being true: that every server sits on a
+  distinct Proxmox node when `failure_domain_mode: distinct-nodes` is declared, and that a
+  quorum-only node still carries its `NoSchedule` taint. The default StorageClass is node-pinned,
+  so a control plane that tolerates a node loss does **not** imply application data that does —
+  `homelabinfra_infra.kubernetes.failure_domain_mode` and `storage_class` are what consumers read
+  rather than counting nodes.
 - **Proxmox boundary**: `community.proxmox` modules are API clients; `pct`/`qm` shell waits are
   the only node-local operations. All created guests carry the `homelab-infra` tag; untagged
   resources are never touched. **Execution model (decided 2026-07-02, applied by

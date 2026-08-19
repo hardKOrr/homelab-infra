@@ -1,0 +1,55 @@
+# k3s node configuration — managed by homelab-infra (roles/k3s_cluster).
+# Rendered per node from ansible/vars/app-defaults/k3s-cluster.yml.
+#
+# Everything lives here rather than on the installer's command line because the join
+# token is one of these values, and slice 204 requires that credentials never reach a
+# command line, job output or tracked config. Mode 0600, root-owned.
+{% if k8s_cluster_token | default('') | length > 0 and not _k3s_is_founder %}
+server: "https://{{ k8s_first_node_ip }}:6443"
+token: "{{ k8s_cluster_token }}"
+{% elif _k3s_is_founder %}
+cluster-init: true
+{% endif %}
+
+# The address other servers and the platform reach this node on. Fixed by declaration:
+# etcd peers identify each other by address.
+node-ip: "{{ k8s_node_spec.ip_address }}"
+node-name: "{{ inventory_hostname }}"
+
+# ServiceLB (klipper-lb) is replaced by MetalLB. It binds its port on every node's own
+# address, so it yields one address per node and none of them move when a node fails.
+# MetalLB L2 gives a single VIP that a surviving node claims within seconds, which is
+# what lets the platform Caddy be pointed at one address permanently.
+#
+# Traefik is NOT disabled. It is the in-cluster ingress controller, and without one an
+# Ingress resource means nothing. It terminates plain HTTP on a private address only —
+# public TLS stays at the platform Caddy.
+disable:
+  - servicelb
+
+# TLS for the API server, so the kubeconfig works when addressed by node IP or VIP
+# rather than only by localhost.
+tls-san:
+  - "{{ k8s_node_spec.ip_address }}"
+{% for node in k8s_cluster_config.cluster.nodes %}
+  - "{{ node.ip_address }}"
+{% endfor %}
+
+# Written by the local-path provisioner. Declared here so the storage contract in
+# app-defaults and the path k3s actually uses cannot drift apart.
+default-local-storage-path: "{{ k8s_cluster_config.storage.path }}"
+
+# Applied at registration, so a node is tainted before the scheduler ever considers it.
+# tasks/taints.yml re-asserts the same set on every run, which is what catches a taint
+# removed by hand.
+{% if k8s_node_spec.taints | default([]) | length > 0 %}
+node-taint:
+{% for taint in k8s_node_spec.taints %}
+  - "{{ taint }}"
+{% endfor %}
+{% endif %}
+
+# The API, the node addresses and the ingress VIP stay on named private networks. This
+# cluster publishes nothing itself; applications are published one at a time through the
+# platform Caddy by their own deploy jobs.
+write-kubeconfig-mode: "0600"

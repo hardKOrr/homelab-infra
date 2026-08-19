@@ -1,0 +1,168 @@
+---
+# Default topology and resource contract for the k3s cluster — slice 204's hosting
+# backend. Users override specific values in config/apps/k3s-cluster.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# The cluster is deployed by one job like any other app, but it is not an app: it is a
+# hosting backend that later `kind: kubernetes` applications land on. Nothing here
+# deploys a workload.
+#
+# WHY THE NODE LIST IS EXPLICIT AND STATIC
+#
+# Every other guest in this repo takes its address from tasks/network/generate-ip.yml
+# and its VMID from that address. Cluster members cannot: etcd peers identify each
+# other by address, a node that comes back on a different IP is a new member and not a
+# recovered one, and the operator has to be able to say which physical machine holds
+# which failure domain. So each node names its Proxmox node and its address, and the
+# VMID is still derived from the address by the usual 168<oct3><oct4> rule.
+#
+# See docs/meta/204-kubernetes-hosting-backend/notes.md for the reasoning behind the
+# sizes, the taint, the ingress choice and the storage class.
+
+k3s_cluster_defaults:
+
+  # ── Cluster topology ────────────────────────────────────────────────────────
+  cluster:
+    # Pinned, not floating. An unpinned installer means two nodes provisioned a month
+    # apart join at different minor versions, which is the one thing etcd will not
+    # forgive. Raising this is the upgrade: change it, re-run the job, and the role
+    # rolls the servers one at a time.
+    version: "v1.31.5+k3s1"
+
+    # Upgrade policy — `manual` re-runs this job to move every node to `version`.
+    # Automated upgrade waves are a recorded later nicety, not this slice.
+    upgrade_policy: manual
+
+    # Every server runs etcd. Three of them across three physical nodes is what makes
+    # "tolerates one node failure" true; see failure_domain_mode below.
+    datastore: etcd
+
+    # Declared, not inferred. `distinct-nodes` asserts that every server sits on a
+    # different Proxmox node and fails the run when it does not, so the UI can never
+    # claim high availability the placement does not provide. Set `single` to
+    # deliberately run a non-HA cluster.
+    failure_domain_mode: distinct-nodes
+
+    # Nodes. Order matters only for the first entry: it is the one that runs
+    # `--cluster-init` and the one the others join. A re-run detects an existing
+    # cluster and never re-inits.
+    nodes:
+      - name: k3s-1
+        proxmox_node: pve-host-1
+        ip_address: 192.168.0.21
+        cores: 2
+        memory: 2048
+        disk_size: 20
+        # Quorum only. pve-host-1 also carries the CARP BACKUP firewall peer, so no
+        # workload may schedule beside it. The taint is applied by the role and
+        # asserted on every re-run.
+        taints:
+          - "homelab-infra.io/quorum-only=true:NoSchedule"
+        # Distinct per node: a Proxmox VMID is cluster-wide unique and each node needs
+        # its own local copy of the cloud-init template (friends-pool is a local pool
+        # per node, not shared storage, so a template cannot be cloned across nodes).
+        template_vmid: 9002
+
+      - name: k3s-2
+        proxmox_node: pve-host-2
+        ip_address: 192.168.0.22
+        cores: 4
+        memory: 16384
+        disk_size: 100
+        taints: []
+        template_vmid: 9003
+
+      - name: k3s-3
+        proxmox_node: pve-host-3
+        ip_address: 192.168.0.23
+        cores: 4
+        memory: 12288
+        disk_size: 60
+        taints: []
+        # pve-host-3 already carries the template this repo built for PBS.
+        template_vmid: 9001
+
+  # ── Ingress ─────────────────────────────────────────────────────────────────
+  ingress:
+    # k3s bundles Traefik and installs it by default. It is kept: without an ingress
+    # controller an Ingress resource means nothing, and this slice requires one stable
+    # internal ingress address. It terminates plain HTTP on a private address only —
+    # public TLS stays at the platform Caddy.
+    controller: traefik
+
+    # ServiceLB (klipper-lb) is disabled instead. It binds the port on every node's own
+    # address, which yields three addresses and none of them move when a node fails.
+    # MetalLB in L2 mode gives one VIP that a surviving node claims in seconds, which is
+    # the declared answer to "how the ingress address moves on node failure".
+    load_balancer: metallb
+    metallb_version: "v0.14.9"
+
+    # The single stable internal ingress address. The platform Caddy is pointed here
+    # once and never again. Must be OUTSIDE any DHCP range and outside the addresses
+    # assigned to the nodes above.
+    vip: 192.168.0.30
+
+    # MetalLB needs a pool, even for one address. Widen it when more LoadBalancer
+    # services than Traefik are wanted.
+    address_pool:
+      - 192.168.0.30-192.168.0.34
+
+  # ── Persistent storage ──────────────────────────────────────────────────────
+  storage:
+    # k3s's bundled local-path provisioner, on the VM's own SSD-backed disk.
+    #
+    # NODE-PINNED, DELIBERATELY. A PVC is a directory on one node's disk and pins its
+    # pod to that node for life. Losing the node leaves the pod Pending until the node
+    # returns; it does NOT reschedule. No workload on this StorageClass may be
+    # described as application-highly-available, whatever the control plane does.
+    #
+    # Longhorn — replicated volumes that do reschedule — is wanted and has its own
+    # queue row. It buys availability, not backup, and does not replace the dump below.
+    class: local-path
+    path: /var/lib/rancher/k3s/storage
+    # Retain, not Delete: an operator who deletes a namespace by hand does not thereby
+    # consent to losing its data. Deliberate deletion goes through the removal job's
+    # explicit delete_data option, which is the only thing that removes a PVC.
+    reclaim_policy: Retain
+
+  # ── Backup ──────────────────────────────────────────────────────────────────
+  backup:
+    # PBS snapshots the k3s VMs on the lab's normal schedule; that is the node rebuild
+    # path and nothing more. A whole-VM image is crash-consistent only and cannot see
+    # inside a PVC, so it is not acceptance for application data.
+    #
+    # The application-consistent artifact is produced in-cluster: a CronJob runs a
+    # quiesced dump and pushes it into the same PBS datastore with
+    # proxmox-backup-client. One destination, one retention policy, one restore tool.
+    provider: pbs
+    schedule: "0 3 * * *"
+    retention_days: 14
+    # Resolved from homelabinfra_infra.backups at deploy time when left empty.
+    datastore: ""
+
+  # ── Proxmox provisioning ────────────────────────────────────────────────────
+  proxmox:
+    type: vm
+    network: default
+    # Mirrored SSD ZFS pool, present under this name on all three nodes.
+    storage: friends-pool-zfs
+    vm:
+      agent: 1
+      onboot: true
+      description: "k3s cluster node, created by homelab-infra"
+      tags:
+        - homelab-infra
+        - k3s
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+
+  # ── Routing ─────────────────────────────────────────────────────────────────
+  # The cluster itself publishes nothing. The Kubernetes API, the node addresses and
+  # the ingress VIP stay on named private networks and must never become alternate
+  # public entry points — applications are published individually, through the
+  # platform Caddy, by their own deploy jobs.
+  routing:
+    proxy: internal
+    access: internal
+    identity: none

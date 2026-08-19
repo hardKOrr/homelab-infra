@@ -1,0 +1,33 @@
+# Layer values onto the Traefik chart k3s bundles — managed by homelab-infra.
+#
+# HelmChartConfig, not an edit to the Service: k3s owns the HelmChart resource and
+# reverts direct edits on its next reconcile. This is the supported override point and
+# it survives a k3s upgrade.
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      annotations:
+        # Pin the Service to the declared VIP instead of accepting whichever pool
+        # address happens to be free, so the address the platform Caddy points at is
+        # stable across a full cluster rebuild.
+        metallb.io/loadBalancerIPs: "{{ k8s_cluster_config.ingress.vip }}"
+    # The cluster publishes nothing itself. Traefik terminates plain HTTP on a private
+    # VIP; public TLS stays at the platform Caddy, which is the sole WAN edge.
+    ports:
+      web:
+        expose:
+          default: true
+      websecure:
+        expose:
+          default: false
+    # Traefik's own dashboard is another way into the cluster and nothing wires it, so
+    # it stays off.
+    ingressRoute:
+      dashboard:
+        enabled: false

@@ -47,6 +47,8 @@ metrics:       { provider, instance, host, prometheus_host, admin_user }
 dns:           { provider, host }
 backups:       { instance, host, datastore, datastore_path, api_token_id }
 vaultwarden:   { host, port }
+kubernetes:    { instance, provider, version, host, ingress_vip, ingress_controller,
+                 storage_class, storage_reclaim_policy, failure_domain_mode, nodes }
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
 runner:                              # the host this platform runs FROM — see below
@@ -99,6 +101,21 @@ read only by that provider's wiring tasks (slices 301–305):
 
 `monitoring` is the Shape B role key for uptime monitoring; the provider-named
 `uptime_kuma` key that app playbooks briefly gated on is superseded — do not use it.
+
+**`kubernetes` — the cluster hosting backend (slice 204).** Written by
+`playbooks/apps/k3s-cluster.yml`. Topology only: the cluster's credentials — the etcd join
+token and the administrative kubeconfig — are canonical in the organization-owned
+Vaultwarden item `homelab-infra/<instance>` and never appear here.
+
+| Field | Notes |
+|---|---|
+| `host` | Kubernetes API base URL including scheme, addressed at the founding node |
+| `ingress_vip` | the one stable internal ingress address; what the platform Caddy proxies to |
+| `ingress_controller` | in-cluster controller terminating plain HTTP on the VIP (`traefik`) |
+| `storage_class` | default StorageClass. `local-path` is **node-pinned**: a pod whose volume lives on an unavailable node stays Pending rather than rescheduling |
+| `storage_reclaim_policy` | `Retain` — only the removal job's explicit `delete_data` removes a volume |
+| `failure_domain_mode` | `distinct-nodes` when every server sits on a different Proxmox node, `single` otherwise. Consumers describing availability read this rather than counting nodes |
+| `nodes` | the node declarations verbatim: name, Proxmox placement, address, sizing, taints |
 
 **`media` — the app-to-app wiring registry (slice 504).** Unlike every other role
 key, `media` is instance-keyed rather than role-keyed: one entry per media app,

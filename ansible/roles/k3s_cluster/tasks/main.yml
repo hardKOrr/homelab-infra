@@ -1,0 +1,190 @@
+---
+# Install or converge one k3s server node. The playbook runs this role with `serial: 1`
+# over the cluster group, so this file always executes against exactly one node at a
+# time, in declaration order.
+#
+# The first node in the group runs `--cluster-init` and becomes the etcd founder. Every
+# later node joins it. A node that already runs k3s at the requested version is left
+# alone, which is what makes the job re-runnable: a converged cluster reports no change.
+#
+# Inputs (from the playbook's add_host handoff):
+#   k8s_cluster_config  — merged cluster contract
+#   k8s_node_spec       — this node's entry from cluster.nodes
+#   k8s_first_node      — name of the founding node
+#   k8s_cluster_token   — join token; empty on the founding node's first run
+#
+# Sets:
+#   k3s_node_token      — read back on the founder only, for the caller to store
+
+- name: k3s | Assert the role received its contract
+  ansible.builtin.assert:
+    that:
+      - k8s_cluster_config is defined
+      - k8s_cluster_config.cluster.version is defined
+      - k8s_node_spec is defined
+      - k8s_first_node is defined
+    fail_msg: >-
+      The k3s_cluster role is driven by playbooks/apps/k3s-cluster.yml and needs
+      k8s_cluster_config, k8s_node_spec and k8s_first_node from its add_host handoff.
+
+- name: k3s | Establish whether this node founds the cluster
+  ansible.builtin.set_fact:
+    _k3s_is_founder: "{{ inventory_hostname == k8s_first_node }}"
+
+# The worst failure this role can produce, and it is silent. config.yaml emits a join
+# stanza only when a token is present; a joining node that reaches the installer without
+# one gets neither `server:` nor `cluster-init:`, and k3s answers that by starting a
+# perfectly healthy SINGLE-NODE cluster of its own. Nothing errors. The job goes green,
+# `kubectl get nodes` on each host shows a Ready node, and the operator has two clusters
+# wearing one name until the day a workload cannot find its data.
+#
+# The token is empty here for exactly one legitimate reason — this is the founder's first
+# run — so anything else stops the run.
+- name: k3s | Refuse to join without the founder's token
+  ansible.builtin.assert:
+    that: (k8s_cluster_token | default('') | length) > 0
+    fail_msg: >-
+      {{ inventory_hostname }} is joining an existing cluster but received no join token
+      from {{ k8s_first_node }}. That usually means the founding node failed earlier in
+      this run. Proceeding would start a second single-node cluster under the same name
+      rather than joining, so the run stops here.
+  when: not _k3s_is_founder
+
+- name: k3s | Read the installed version, if any
+  ansible.builtin.command:
+    cmd: k3s --version
+  register: _k3s_installed
+  failed_when: false
+  changed_when: false
+
+# Matching on the exact requested version rather than "is k3s present" is what makes
+# `cluster.version` an upgrade knob instead of decoration: raising it makes this node
+# reinstall, and `serial: 1` in the playbook turns that into a rolling upgrade one node
+# at a time rather than a simultaneous restart of every server.
+- name: k3s | Decide whether an install is due
+  ansible.builtin.set_fact:
+    _k3s_install_due: >-
+      {{ _k3s_installed.rc != 0
+         or (k8s_cluster_config.cluster.version not in (_k3s_installed.stdout | default(''))) }}
+
+- name: k3s | Ensure the config directory exists
+  ansible.builtin.file:
+    path: "{{ k3s_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# The installer reads /etc/rancher/k3s/config.yaml, so every flag lives in a file rather
+# than on a command line. That is not tidiness: the join token is one of these values,
+# and this slice requires that credentials never reach a command line or job output.
+- name: k3s | Write the node configuration
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ k3s_config_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+  register: _k3s_config
+  no_log: true
+
+- name: k3s | Fetch the installer
+  ansible.builtin.get_url:
+    url: "{{ k3s_install_url }}"
+    dest: /usr/local/bin/k3s-install.sh
+    mode: "0700"
+    owner: root
+    group: root
+  when: _k3s_install_due
+
+# INSTALL_K3S_VERSION and K3S_TOKEN travel as environment variables, never as argv:
+# Ansible records module arguments, and a token in argv is readable from `ps` on the
+# node for the life of the call. The founder's first run has no token to pass — k3s
+# generates one — so the variable is omitted rather than set empty.
+- name: k3s | Install or upgrade k3s
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s-install.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k8s_cluster_config.cluster.version }}"
+    INSTALL_K3S_SKIP_START: "false"
+    K3S_TOKEN: "{{ k8s_cluster_token | default('') }}"
+  register: _k3s_install
+  changed_when: _k3s_install.rc == 0
+  when: _k3s_install_due
+  no_log: true
+
+- name: k3s | Report a failed install
+  ansible.builtin.fail:
+    msg: >-
+      The k3s installer failed on {{ inventory_hostname }}
+      (rc={{ _k3s_install.rc }}): {{ (_k3s_install.stderr | default('') | trim)[-600:] }}
+  when:
+    - _k3s_install_due
+    - _k3s_install.rc | default(0) != 0
+
+# A configuration change on an already-installed node needs the service restarted to
+# take effect; the installer does that itself on the install path, so this is only for
+# the converged-but-edited case.
+- name: k3s | Restart k3s after a configuration change
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+    enabled: true
+  when:
+    - _k3s_config is changed
+    - not _k3s_install_due
+
+- name: k3s | Ensure the service is enabled and running
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true
+
+- name: k3s | Wait for the API to answer
+  ansible.builtin.command:
+    cmd: k3s kubectl get --raw=/readyz
+  register: _k3s_readyz
+  retries: "{{ (k3s_ready_timeout | int / 5) | int }}"
+  delay: 5
+  until: _k3s_readyz.rc == 0
+  changed_when: false
+
+- name: k3s | Wait for this node to report Ready
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl get node {{ inventory_hostname }}
+      -o jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  register: _k3s_node_ready
+  retries: "{{ (k3s_ready_timeout | int / 5) | int }}"
+  delay: 5
+  until: _k3s_node_ready.stdout | trim == 'True'
+  changed_when: false
+
+# Read back on the founder only. The caller stores it in Vaultwarden and hands it to the
+# joining nodes in memory; it is never written to generated facts or printed.
+- name: k3s | Read the cluster join token
+  ansible.builtin.slurp:
+    src: "{{ k3s_server_token_path }}"
+  register: _k3s_token_raw
+  when: _k3s_is_founder
+  no_log: true
+
+- name: k3s | Publish the join token to the caller
+  ansible.builtin.set_fact:
+    k3s_node_token: "{{ _k3s_token_raw.content | b64decode | trim }}"
+  when: _k3s_is_founder
+  no_log: true
+
+- name: k3s | Apply this node's taints
+  ansible.builtin.include_tasks: taints.yml
+
+# Cluster-scoped objects, so they belong to the cluster rather than to a node and are
+# applied once. The founder is chosen because it is the node guaranteed to exist on
+# every run, including the first, when it is the only member.
+- name: k3s | Establish the persistent-storage contract
+  ansible.builtin.include_tasks: storage.yml
+  when: _k3s_is_founder
+
+- name: k3s | Establish the stable ingress address
+  ansible.builtin.include_tasks: metallb.yml
+  when: _k3s_is_founder

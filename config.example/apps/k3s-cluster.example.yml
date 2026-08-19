@@ -1,0 +1,122 @@
+---
+# k3s cluster — the Kubernetes hosting backend.
+#
+# Copy to config/apps/k3s-cluster.yml and change what differs for your lab. Anything you
+# leave out falls through to ansible/vars/app-defaults/k3s-cluster.yml, which is
+# git-managed and improves on `git pull`.
+#
+# This job does not deploy an application. It builds the cluster that later
+# `kind: kubernetes` applications land on. Deploy it once; re-run it to converge, to
+# replace a lost node, or to move every server to a new k3s version.
+#
+# WHAT YOU MUST CHANGE: the node addresses, the Proxmox node names and the ingress VIP.
+# Everything else has a defensible default.
+
+cluster:
+  # Pinned deliberately. An unpinned installer means two nodes provisioned a month apart
+  # join at different minor versions, which is the one thing etcd will not forgive.
+  # Raising this IS the upgrade: change it, re-run the job, and the servers roll one at a
+  # time. Check https://github.com/k3s-io/k3s/releases before raising it.
+  version: "v1.31.5+k3s1"
+
+  # `distinct-nodes` refuses to build unless every server sits on a different Proxmox
+  # node, so the cluster cannot claim to survive a node failure that it would not. Set
+  # `single` if you are deliberately running every server on one machine — the cluster
+  # still works, it just has one power supply, and the job says so in its output.
+  failure_domain_mode: distinct-nodes
+
+  # Order matters only for the first entry: it founds the etcd cluster and the others
+  # join it. Three servers tolerate one failure; five tolerate two. An even count buys
+  # nothing over the odd number below it.
+  #
+  # Addresses are LITERAL and STATIC — no DHCP, no generated address. etcd peers identify
+  # each other by address, so a node that comes back on a different one is a new member
+  # rather than a recovered one. The VMID is still derived from the address by the usual
+  # 168<third-octet><fourth-octet> rule.
+  nodes:
+    - name: k3s-1
+      proxmox_node: pve-host-1     # must match a key in config/proxmox.yml `nodes:`
+      ip_address: 192.168.0.21
+      cores: 2
+      memory: 2048                 # MB
+      disk_size: 20                # GB
+      # A tainted node holds an etcd vote and runs nothing else. Use this when the
+      # Proxmox node is busy or carries something you will not risk crowding — here, a
+      # firewall failover peer. Remove the taint to let workloads schedule.
+      taints:
+        - "homelab-infra.io/quorum-only=true:NoSchedule"
+      # Each Proxmox node needs its own local copy of the cloud-init template, because
+      # local storage is not shared between nodes. VMIDs are cluster-wide unique, so give
+      # each one a free number. A template this platform already built is adopted.
+      template_vmid: 9002
+
+    - name: k3s-2
+      proxmox_node: pve-host-2
+      ip_address: 192.168.0.22
+      cores: 4
+      memory: 16384
+      disk_size: 100
+      taints: []
+      template_vmid: 9003
+
+    - name: k3s-3
+      proxmox_node: pve-host-3
+      ip_address: 192.168.0.23
+      cores: 4
+      memory: 12288
+      disk_size: 60
+      taints: []
+      template_vmid: 9001
+
+ingress:
+  # The one address your reverse proxy points at, forever. It must sit OUTSIDE any DHCP
+  # range and must not be one of the node addresses above — an address claimed by both a
+  # node interface and a MetalLB speaker produces an intermittent ARP conflict, and the
+  # job refuses to build that.
+  #
+  # MetalLB advertises it by ARP. One node owns it at a time; when that node stops
+  # answering, a surviving node claims it within seconds.
+  vip: 192.168.0.30
+
+  # MetalLB needs a pool even for one address. Widen it if you want more LoadBalancer
+  # services than the ingress controller.
+  address_pool:
+    - 192.168.0.30-192.168.0.34
+
+  metallb_version: "v0.14.9"
+
+storage:
+  # READ THIS BEFORE PUTTING DATA YOU CARE ABOUT ON THE CLUSTER.
+  #
+  # `local-path` backs a volume with a directory on ONE node's disk, which pins the pod
+  # using it to that node for life. If the node is unavailable the pod stays Pending —
+  # it does NOT move to a surviving node, and the data is not reachable from anywhere
+  # else. A three-node control plane does not change this. Your control plane is highly
+  # available; your application data is not.
+  #
+  # Replicated storage (Longhorn) is the fix for that and is a separate piece of work. It
+  # is also not a backup: see the backup block below.
+  class: local-path
+  path: /var/lib/rancher/k3s/storage
+
+  # Retain, not Delete. Deleting a namespace by hand does not thereby destroy its data —
+  # only the removal job's explicit `delete_data` option removes a volume.
+  reclaim_policy: Retain
+
+backup:
+  # PBS snapshots of the node VMs are your cluster REBUILD path and nothing more. A
+  # whole-VM image is crash-consistent only and cannot see inside a volume, so it is not
+  # a backup of your application's database.
+  #
+  # The real artifact is a quiesced dump, produced in-cluster on this schedule and pushed
+  # into the same PBS datastore. One destination, one retention policy, one restore tool.
+  provider: pbs
+  schedule: "0 3 * * *"
+  retention_days: 14
+  datastore: ""      # empty resolves to the datastore in your generated facts
+
+proxmox:
+  # A storage id that exists on every node listed above. SSD-backed is strongly
+  # preferred: etcd is fsync-heavy and unhappy on spinning disks.
+  storage: friends-pool-zfs
+  network: default

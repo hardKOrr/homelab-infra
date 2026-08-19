@@ -10,10 +10,20 @@ Five steps. Most of the work is step 3.
 |---|---|---|
 | **Docker on LXC** | App distributes a Docker image; multi-container stacks | Sonarr, Radarr, Jellyfin |
 | **Native LXC** | Single binary or apt-installable; no Docker needed | Vaultwarden, Caddy, Ntfy |
-| **Docker on VM** | Needs full kernel (rare) | k3s |
+| **Docker on VM** | Needs full kernel (rare) | Home Assistant (USB passthrough) |
 | **VM** | Has its own installer (rare) | PBS |
+| **Kubernetes** | The app is an ordinary OCI workload and wants orchestration | see below |
 
 When in doubt, Docker on LXC is the safe default for anything with a Docker image.
+
+**The Kubernetes row is not a promotion.** `playbooks/apps/k3s-cluster.yml` builds a k3s
+cluster as a hosting backend, and an app deployed onto it gains scheduling and restart
+behavior it does not get from a compose file — but it also inherits the cluster's storage
+contract, and the default StorageClass is node-pinned: a pod whose volume lives on an
+unavailable node stays Pending rather than moving. Prefer it for stateless or
+easily-restored workloads. A working Docker app has no reason to migrate. Caddy,
+Vaultwarden, either Authentik estate, the runner and Proxmox/PBS stay outside the cluster
+by decision, not by omission — see `docs/meta/204-kubernetes-hosting-backend/`.
 
 ---
 

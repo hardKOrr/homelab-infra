@@ -1,0 +1,141 @@
+---
+# Provision ONE k3s cluster node VM on its declared Proxmox node.
+#
+# Why this wrapper exists: tasks/proxmox/vm-clone.yml provisions the single VM
+# described by homelabinfra_config.proxmox.{node,vm}, which is the right shape for a
+# one-VM app like PBS and the wrong shape for a cluster. A cluster needs three VMs on
+# three different Proxmox nodes with three different sizes, and vm-clone.yml reads its
+# target out of config rather than taking it as an argument. This file sets that config
+# for one node, calls the existing seams unchanged, and restores what it borrowed — so
+# there is still exactly one implementation of "clone a VM".
+#
+# It is idempotent in the same way the app playbooks are: a VM already present at the
+# derived VMID is adopted and started, never re-cloned.
+#
+# Inputs:
+#   k8s_node            — one entry from cluster.nodes: name, proxmox_node, ip_address,
+#                         cores, memory, disk_size, template_vmid
+#   k8s_cluster_config  — the merged k3s-cluster config (proxmox.*, cluster.*)
+#
+# Mutates:
+#   k8s_provisioned_nodes — appended with {name, ip_address, proxmox_node, vmid}
+#
+# Leaves homelabinfra_config.proxmox as it found it, so the next node in the loop
+# starts from the same place rather than from the previous node's settings.
+
+- name: k3s node | Assert the node declaration is complete
+  ansible.builtin.assert:
+    that:
+      - k8s_node.name is defined and k8s_node.name | length > 0
+      - k8s_node.proxmox_node is defined and k8s_node.proxmox_node | length > 0
+      - k8s_node.ip_address is defined
+      - k8s_node.ip_address | ansible.utils.ipaddr('address')
+      - k8s_node.template_vmid is defined
+    fail_msg: >-
+      Every entry in cluster.nodes needs name, proxmox_node, a literal ip_address and
+      template_vmid. Cluster members cannot take a generated or DHCP address — etcd
+      peers identify each other by address, so a node that returns on a different one
+      is a new member rather than a recovered one.
+
+# DHCP is refused rather than quietly tolerated: the failure it causes surfaces days
+# later as a cluster that lost quorum after a lease change, which is not a debuggable
+# symptom.
+- name: k3s node | Refuse a non-literal node address
+  ansible.builtin.assert:
+    that: (k8s_node.ip_address | string | lower) != 'dhcp'
+    fail_msg: "Cluster node {{ k8s_node.name }} must have a static ip_address, not DHCP."
+
+- name: k3s node | Remember the caller's Proxmox settings
+  ansible.builtin.set_fact:
+    _k8sn_saved_proxmox: "{{ homelabinfra_config.proxmox }}"
+
+# Everything vm-clone.yml and ensure-cloud-template.yml read, assembled for this node.
+# `name` is the node name so the guest is findable in Proxmox by what the cluster calls
+# it, and the tags carry both the platform tag and a per-node tag so the dynamic
+# inventory yields a tag_k3s group and a tag_<node> group.
+- name: k3s node | Point the Proxmox config at this node
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {
+           'node': k8s_node.proxmox_node,
+           'type': 'vm',
+           'storage': k8s_cluster_config.proxmox.storage,
+           'network': k8s_cluster_config.proxmox.network | default('default'),
+           'vm': (k8s_cluster_config.proxmox.vm | default({})) | combine({
+             'name': k8s_node.name,
+             'cores': k8s_node.cores | int,
+             'memory': k8s_node.memory | int,
+             'disk_size': k8s_node.disk_size | int,
+             'storage': k8s_cluster_config.proxmox.storage,
+             'ip_address': k8s_node.ip_address,
+             'tags': ((k8s_cluster_config.proxmox.vm.tags | default(['homelab-infra']))
+                      + [k8s_node.name]) | unique
+           }, recursive=True)
+         }}, recursive=True) }}
+
+# The address is fixed by the declaration, so generate-ip.yml is bypassed — but
+# ip-to-vmid.yml still derives the VMID from it, keeping cluster nodes on the same
+# 168<oct3><oct4> rule as every other guest this platform creates.
+- name: k3s node | Seed the network facts from the declaration
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | default({}) | combine({'network':
+           (homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')]
+            | default({}))
+           | combine({'ip_address': k8s_node.ip_address}, recursive=True)
+         }, recursive=True) }}
+
+- name: k3s node | Derive the VMID from the address
+  ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
+
+# Built per node, not once. friends-pool is a local ZFS pool on each Proxmox node
+# rather than shared storage, so a template on one node cannot be cloned onto another.
+# ensure-cloud-template.yml adopts an existing tagged template of the right name on the
+# target node, so this is a no-op everywhere it has already run — including pve-host-3,
+# whose template PBS built.
+- name: k3s node | Ensure this Proxmox node has the cloud-init template
+  ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
+  vars:
+    cloud_template_vmid: "{{ k8s_node.template_vmid }}"
+    cloud_template_name: "{{ k8s_cluster_config.proxmox.cloud_template.name }}"
+    cloud_template_image_url: "{{ k8s_cluster_config.proxmox.cloud_template.image_url }}"
+    cloud_template_storage: "{{ k8s_cluster_config.proxmox.storage }}"
+    cloud_template_bridge: >-
+      {{ homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')].bridge
+         | default('vmbr0') }}
+
+- name: k3s node | Clone the node VM from the template
+  ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+
+- name: k3s node | Record the provisioned node
+  ansible.builtin.set_fact:
+    k8s_provisioned_nodes: >-
+      {{ (k8s_provisioned_nodes | default([])) + [{
+           'name': k8s_node.name,
+           'ip_address': k8s_node.ip_address,
+           'proxmox_node': k8s_node.proxmox_node,
+           'vmid': homelabinfra_instance.vm.vmid,
+           'taints': k8s_node.taints | default([])
+         }] }}
+
+- name: k3s node | Hand the node to the deploy group
+  ansible.builtin.add_host:
+    name: "{{ k8s_node.name }}"
+    groups: "k3s_cluster_{{ k8s_instance }}"
+    ansible_host: "{{ k8s_node.ip_address }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    k8s_node_spec: "{{ k8s_node }}"
+    k8s_cluster_config: "{{ k8s_cluster_config }}"
+  changed_when: false
+
+# Non-recursive on purpose, and the one place in this repo where that is correct:
+# `proxmox` is being REPLACED with the exact dict saved at the top, not merged with what
+# this node left behind. A recursive combine would fold this node's name, address, sizing
+# and vmid into the restored value, and the next iteration of the loop would start from a
+# blend of two nodes. The outer combine still preserves every other homelabinfra_config
+# key, so the namespace-merge rule in docs/specs/ is not being sidestepped — only the
+# subtree this file deliberately borrowed is put back.
+- name: k3s node | Restore the caller's Proxmox settings
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': _k8sn_saved_proxmox}) }}

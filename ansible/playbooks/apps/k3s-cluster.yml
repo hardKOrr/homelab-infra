@@ -1,0 +1,354 @@
+---
+# Provision the k3s cluster — slice 204's hosting backend.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/k3s-cluster.yml -e instance=k3s-cluster
+#
+# This is one job like every other, but it does not deploy an application. It builds the
+# backend that later `kind: kubernetes` applications land on, and it is idempotent in the
+# same way the app playbooks are: a converged cluster reports no change, and re-running
+# after raising `cluster.version` rolls the servers one at a time.
+#
+# ORDER MATTERS, AND IS ENFORCED BY `serial: 1`
+#
+# The first node in `cluster.nodes` runs `--cluster-init` and founds the etcd cluster.
+# Every later node joins it with a token the founder generated. Running the servers in
+# parallel would have three nodes each trying to found a cluster, so Play 3 is strictly
+# sequential. That also makes a version bump a rolling upgrade rather than a simultaneous
+# restart of the whole control plane.
+#
+# WHAT THIS PLAYBOOK DELIBERATELY DOES NOT DO
+#
+# It does not move Caddy, Vaultwarden, either Authentik estate, the runner or Proxmox/PBS
+# into the cluster. It does not publish anything: the Kubernetes API, the node addresses
+# and the ingress VIP stay on named private networks. Applications are published one at a
+# time, through the platform Caddy, by their own deploy jobs.
+
+# ── Play 1: Resolve the contract ───────────────────────────────────────────────
+- name: "k3s cluster | Resolve"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=k3s-cluster"
+
+    - name: Load cluster defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/k3s-cluster.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge cluster config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        k8s_cluster_config: >-
+          {{ _app_defaults.k3s_cluster_defaults
+             | combine(_instance_config | default({}), recursive=True) }}
+
+  tasks:
+    - name: Assert the cluster declares at least one node
+      ansible.builtin.assert:
+        that:
+          - k8s_cluster_config.cluster.nodes | default([]) | length > 0
+        fail_msg: "cluster.nodes must declare at least one node."
+
+    # The README's condition for calling a control plane highly available is that its
+    # servers occupy DISTINCT physical failure domains. Three VMs on one Proxmox node is
+    # three votes and one power supply. Rather than trusting documentation to stay honest,
+    # the declared mode is checked against the placement, and a lab that genuinely wants a
+    # single-domain cluster says so by setting failure_domain_mode: single.
+    - name: Assert the placement matches the declared failure-domain mode
+      ansible.builtin.assert:
+        that:
+          - (k8s_cluster_config.cluster.nodes | map(attribute='proxmox_node') | unique | list | length)
+            == (k8s_cluster_config.cluster.nodes | length)
+        fail_msg: >-
+          failure_domain_mode is 'distinct-nodes', but the declared cluster puts more
+          than one server on the same Proxmox node
+          ({{ k8s_cluster_config.cluster.nodes | map(attribute='proxmox_node') | list }}).
+          Either spread the servers across distinct nodes or set
+          cluster.failure_domain_mode: single and accept that the UI and documentation
+          must describe a single-failure-domain cluster.
+      when: k8s_cluster_config.cluster.failure_domain_mode == 'distinct-nodes'
+
+    # An even number of etcd members is strictly worse than the odd number below it: four
+    # members still tolerate only one failure, and they add a node that can fail.
+    - name: Warn when the member count cannot form a useful quorum
+      ansible.builtin.debug:
+        msg: >-
+          This cluster declares {{ k8s_cluster_config.cluster.nodes | length }} etcd
+          members. Quorum needs a majority, so this tolerates
+          {{ ((k8s_cluster_config.cluster.nodes | length - 1) / 2) | int }} node
+          failure(s). An even member count tolerates no more failures than the odd number
+          below it.
+      when: (k8s_cluster_config.cluster.nodes | length) % 2 == 0
+
+    - name: Assert node addresses are unique
+      ansible.builtin.assert:
+        that:
+          - (k8s_cluster_config.cluster.nodes | map(attribute='ip_address') | unique | list | length)
+            == (k8s_cluster_config.cluster.nodes | length)
+        fail_msg: "Two cluster nodes declare the same ip_address."
+
+    # Cluster addresses are declared literally, so tasks/network/generate-ip.yml never
+    # learns they are taken. Left inside an allocation pool they are handed to the next
+    # guest that asks for one — and the resulting duplicate address takes out an etcd
+    # member or the ingress VIP at a moment unrelated to whatever caused it. Reserving
+    # them in config/proxmox.yml is the fix, and this is where it gets noticed.
+    - name: Resolve the pool ranges of the network the cluster sits on
+      ansible.builtin.set_fact:
+        _k8s_pool_ranges: >-
+          {{ (homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')].pools
+              | default({})).values() | map(attribute='range') | select('search', '-') | list }}
+        _k8s_claimed: >-
+          {{ (k8s_cluster_config.cluster.nodes | map(attribute='ip_address') | list)
+             + [k8s_cluster_config.ingress.vip] }}
+
+    # Deliberately a statement rather than a containment test. Working out whether each
+    # address falls inside each `start-end` span is a pile of Jinja integer arithmetic
+    # that would be more likely to be wrong than the operator is, and being wrong here
+    # means either a false failure on a correct config or silence on a broken one. The
+    # addresses and the ranges are both short; printing them is the reliable version.
+    - name: Report cluster addresses that must be reserved against allocation
+      ansible.builtin.debug:
+        msg: >-
+          Reserve these addresses in config/proxmox.yml under
+          networks.{{ k8s_cluster_config.proxmox.network | default('default') }}.reserved,
+          or move them outside every pool range: {{ _k8s_claimed | join(', ') }}.
+          They are declared literally, so generate-ip.yml does not know they are taken and
+          will hand one to the next guest that asks. Pool ranges on this network:
+          {{ _k8s_pool_ranges | join(', ') }}.
+      when: _k8s_pool_ranges | length > 0
+
+
+# ── Play 2: Provision the node VMs ─────────────────────────────────────────────
+# Runs on localhost against the Proxmox API. Each node is cloned on its own declared
+# Proxmox node from a template built there; friends-pool is a local ZFS pool per node
+# rather than shared storage, so a template cannot be cloned across nodes.
+- name: "k3s cluster | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Carry the resolved contract into this play
+      ansible.builtin.set_fact:
+        k8s_cluster_config: "{{ hostvars['localhost'].k8s_cluster_config }}"
+        k8s_instance: "{{ instance }}"
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Provision each cluster node
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/provision-node.yml
+      loop: "{{ k8s_cluster_config.cluster.nodes }}"
+      loop_control:
+        loop_var: k8s_node
+        label: "{{ k8s_node.name }} on {{ k8s_node.proxmox_node }}"
+
+    - name: Record the founding node
+      ansible.builtin.set_fact:
+        k8s_first_node: "{{ k8s_cluster_config.cluster.nodes[0].name }}"
+        k8s_first_node_ip: "{{ k8s_cluster_config.cluster.nodes[0].ip_address }}"
+
+
+# ── Play 3: Guest bootstrap ────────────────────────────────────────────────────
+# Ordinary guest setup — packages, hostname, timezone, unattended-upgrades and the Ntfy
+# hook — the same treatment every guest this platform creates receives. Kept separate
+# from Play 4 so the cluster install starts from a fully bootstrapped node.
+- name: "k3s cluster | Bootstrap guests"
+  hosts: "k3s_cluster_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+
+# ── Play 4: Found the cluster ──────────────────────────────────────────────────
+# `serial: 1` is the whole design of this play: the first host founds the etcd cluster
+# and every later host joins it. Parallel execution would have three nodes each running
+# --cluster-init. It also makes a `cluster.version` bump a rolling upgrade.
+- name: "k3s cluster | Install"
+  hosts: "k3s_cluster_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  serial: 1
+  # Ansible orders a group by the order hosts were added to it, which is the order of
+  # cluster.nodes — but stating it removes the dependence on that being true.
+  order: inventory
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Carry the founding node into this play
+      ansible.builtin.set_fact:
+        k8s_first_node: "{{ hostvars['localhost'].k8s_first_node }}"
+        k8s_first_node_ip: "{{ hostvars['localhost'].k8s_first_node_ip }}"
+
+    # The token travels host to host in memory only. On the founder's first run there is
+    # no token yet — k3s generates one — so this resolves empty and the config template
+    # emits `cluster-init` instead of a join stanza. Every later host reads the value the
+    # founder published, which is why this play cannot run in parallel.
+    - name: Resolve the join token from the founding node
+      ansible.builtin.set_fact:
+        k8s_cluster_token: >-
+          {{ hostvars[hostvars['localhost'].k8s_first_node].k3s_node_token | default('') }}
+      no_log: true
+
+  tasks:
+    - name: Install k3s
+      ansible.builtin.include_role:
+        name: k3s_cluster
+
+
+# ── Play 5: Verify, store credentials, record topology ─────────────────────────
+- name: "k3s cluster | Verify and record"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Carry the resolved contract into this play
+      ansible.builtin.set_fact:
+        k8s_cluster_config: "{{ hostvars['localhost'].k8s_cluster_config }}"
+
+  tasks:
+    # Every declared node has to be Ready before the cluster is called built. A run that
+    # installed two of three servers and stopped is a cluster without quorum, and calling
+    # that success is how a backend becomes untrustworthy.
+    - name: Read the cluster's node list
+      ansible.builtin.command:
+        cmd: >-
+          k3s kubectl get nodes
+          -o jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
+      delegate_to: "{{ hostvars['localhost'].k8s_first_node }}"
+      become: true
+      register: _k3s_nodes
+      changed_when: false
+
+    - name: Assert every declared node joined and is Ready
+      ansible.builtin.assert:
+        that:
+          - _k3s_ready | sort == (k8s_cluster_config.cluster.nodes | map(attribute='name') | sort | list)
+        fail_msg: >-
+          The cluster reports Ready nodes {{ _k3s_ready | sort }}, but
+          {{ k8s_cluster_config.cluster.nodes | map(attribute='name') | sort | list }}
+          were declared. A cluster missing a declared etcd member has less failure
+          tolerance than its configuration claims.
+      vars:
+        _k3s_ready: >-
+          {{ _k3s_nodes.stdout_lines | select('search', '=True$')
+             | map('regex_replace', '=True$', '') | list }}
+
+    # The join token and the administrative kubeconfig are credentials. k3s keeps its own
+    # copies at protected node paths, which it requires; the canonical copies live in
+    # organization-owned Vaultwarden items. Nothing here reaches tracked config, generated
+    # topology, job output or a command line.
+    - name: Read the administrative kubeconfig
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      delegate_to: "{{ hostvars['localhost'].k8s_first_node }}"
+      become: true
+      register: _k3s_kubeconfig_raw
+      no_log: true
+
+    # The file k3s writes points at 127.0.0.1, which is correct on the node and useless
+    # anywhere else. The stored copy is addressed at the founding node so it works from
+    # the runner.
+    - name: Store the cluster credentials in Vaultwarden
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/{{ instance }}"
+        vault_item_fields:
+          join_token: "{{ hostvars[hostvars['localhost'].k8s_first_node].k3s_node_token }}"
+          kubeconfig: >-
+            {{ _k3s_kubeconfig_raw.content | b64decode
+               | replace('127.0.0.1', hostvars['localhost'].k8s_first_node_ip) }}
+        vault_item_secret_fields:
+          - join_token
+          - kubeconfig
+      no_log: true
+
+    # Topology only — addresses, the ingress VIP, the storage class and the failure-domain
+    # mode. No credential goes into generated facts; consumers read the kubeconfig from
+    # Vaultwarden.
+    - name: Record the cluster in the generated facts
+      ansible.builtin.include_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_service: kubernetes
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_data:
+          instance: "{{ instance }}"
+          provider: k3s
+          version: "{{ k8s_cluster_config.cluster.version }}"
+          # `host` carries a scheme, as every host in this registry does — consumers
+          # concatenate paths onto it directly (see ansible/vars/CONTRACT.md §3).
+          host: "https://{{ hostvars['localhost'].k8s_first_node_ip }}:6443"
+          ingress_vip: "{{ k8s_cluster_config.ingress.vip }}"
+          ingress_controller: "{{ k8s_cluster_config.ingress.controller }}"
+          storage_class: "{{ k8s_cluster_config.storage.class }}"
+          storage_reclaim_policy: "{{ k8s_cluster_config.storage.reclaim_policy }}"
+          failure_domain_mode: "{{ k8s_cluster_config.cluster.failure_domain_mode }}"
+          # The declarations verbatim. Every field in them is topology — name, Proxmox
+          # placement, address, sizing, taints, template vmid — so there is nothing to
+          # filter out, and a reshaped copy would be one more thing to keep in step with
+          # the declaration it describes.
+          nodes: "{{ k8s_cluster_config.cluster.nodes }}"
+
+    # The honest sentence, printed where the operator reads job output. A backend whose
+    # storage pins a pod to one node must not be remembered as one that reschedules.
+    - name: State the cluster's actual failure behavior
+      ansible.builtin.debug:
+        msg:
+          - "Control plane: {{ k8s_cluster_config.cluster.nodes | length }} etcd members across
+             {{ k8s_cluster_config.cluster.nodes | map(attribute='proxmox_node') | unique | list | length }}
+             Proxmox nodes — tolerates
+             {{ ((k8s_cluster_config.cluster.nodes | length - 1) / 2) | int }} node failure(s)."
+          - "Ingress: {{ k8s_cluster_config.ingress.vip }} — one MetalLB L2 VIP, claimed by a
+             surviving node when its holder stops answering."
+          - "Storage: {{ k8s_cluster_config.storage.class }} is NODE-PINNED. A pod whose volume
+             lives on a failed node stays Pending until that node returns; it does not
+             reschedule. Application data is not highly available."
+          - "Backups: PBS snapshots of the node VMs are the rebuild path only. Application data
+             needs the application-consistent dump job."

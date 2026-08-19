@@ -1,0 +1,116 @@
+---
+# Give the cluster ONE stable internal ingress address and hand it to Traefik.
+#
+# Runs once, on the founding node only — these are cluster-scoped objects, not per-node
+# configuration, and applying them three times would just be three identical writes.
+#
+# WHY METALLB RATHER THAN WHAT k3s SHIPS
+#
+# k3s bundles ServiceLB (klipper-lb), which implements `type: LoadBalancer` by binding
+# the service's port on EVERY node's own host address. That works, and it gives three
+# addresses rather than one, none of which move when a node fails. The platform Caddy
+# would then have to name a specific node, and that node becomes a single point of
+# failure for an otherwise HA cluster.
+#
+# MetalLB in L2 mode advertises one VIP by ARP. One node owns it at a time; when that
+# node stops answering, a surviving speaker claims it within seconds. Caddy is pointed at
+# that VIP once and never again — which is exactly what this slice asks for when it says
+# the ingress address must have declared ownership and failure behavior.
+#
+# Traefik is kept, not replaced. It is the in-cluster ingress controller; without one an
+# Ingress resource means nothing. It terminates plain HTTP on the VIP only. Public TLS
+# stays at the platform Caddy, so the VIP, the node addresses and the Kubernetes API all
+# remain on named private networks and never become alternate public entry points.
+
+- name: k3s ingress | Assert the ingress contract is declared
+  ansible.builtin.assert:
+    that:
+      - k8s_cluster_config.ingress.vip is defined
+      - k8s_cluster_config.ingress.vip | ansible.utils.ipaddr('address')
+      - k8s_cluster_config.ingress.address_pool | default([]) | length > 0
+    fail_msg: >-
+      ingress.vip and ingress.address_pool must be declared in
+      vars/app-defaults/k3s-cluster.yml or config/apps/<instance>.yml. The VIP must sit
+      outside any DHCP range and outside the node addresses.
+
+# A VIP inside the node set would be claimed twice — once by the node's own interface and
+# once by a MetalLB speaker — and the resulting ARP fight is intermittent by nature and
+# miserable to diagnose. Caught here instead.
+- name: k3s ingress | Assert the VIP does not collide with a node address
+  ansible.builtin.assert:
+    that:
+      - k8s_cluster_config.ingress.vip not in
+        (k8s_cluster_config.cluster.nodes | map(attribute='ip_address') | list)
+    fail_msg: >-
+      ingress.vip {{ k8s_cluster_config.ingress.vip }} is also a cluster node address.
+      A VIP claimed by both a node interface and a MetalLB speaker produces an
+      intermittent ARP conflict.
+
+# /var/lib/rancher/k3s/server/manifests is k3s's auto-deploy directory: anything dropped
+# there is applied and kept applied by the cluster itself. Using it rather than a
+# `kubectl apply` from Ansible means the objects survive a control-plane restart without
+# this job having to run again, and a partially-applied manifest is retried by k3s
+# instead of leaving the cluster half-configured.
+- name: k3s ingress | Fetch the MetalLB manifest
+  ansible.builtin.get_url:
+    url: >-
+      https://raw.githubusercontent.com/metallb/metallb/{{
+      k8s_cluster_config.ingress.metallb_version }}/config/manifests/metallb-native.yaml
+    dest: /var/lib/rancher/k3s/server/manifests/metallb-native.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: k3s ingress | Wait for the MetalLB controller to become available
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl -n metallb-system wait deployment/controller
+      --for=condition=Available --timeout=30s
+  register: _k3s_metallb_ready
+  retries: 10
+  delay: 15
+  until: _k3s_metallb_ready.rc == 0
+  changed_when: false
+
+# The pool and the advertisement are separate objects on purpose in MetalLB's own model:
+# the pool says which addresses exist, the L2Advertisement says they are announced by
+# ARP on the LAN rather than by BGP.
+- name: k3s ingress | Declare the address pool and advertisement
+  ansible.builtin.template:
+    src: metallb-pool.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/metallb-pool.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+# Traefik is installed by k3s from a HelmChart resource, so its values cannot be edited
+# directly — k3s would revert them on the next reconcile. A HelmChartConfig in the same
+# namespace is the supported way to layer values onto a bundled chart, and it survives
+# both a k3s restart and a k3s upgrade.
+- name: k3s ingress | Pin Traefik to the declared VIP
+  ansible.builtin.template:
+    src: traefik-config.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: k3s ingress | Wait for Traefik to claim the VIP
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl -n kube-system get svc traefik
+      -o jsonpath={.status.loadBalancer.ingress[0].ip}
+  register: _k3s_traefik_vip
+  retries: 20
+  delay: 15
+  until: _k3s_traefik_vip.stdout | trim == k8s_cluster_config.ingress.vip
+  changed_when: false
+
+- name: k3s ingress | Assert the ingress address matches the declaration
+  ansible.builtin.assert:
+    that: _k3s_traefik_vip.stdout | trim == k8s_cluster_config.ingress.vip
+    fail_msg: >-
+      Traefik holds {{ _k3s_traefik_vip.stdout | trim | default('no address') }} rather
+      than the declared VIP {{ k8s_cluster_config.ingress.vip }}. The platform Caddy is
+      pointed at the declared address, so a mismatch means published applications
+      resolve to nothing.

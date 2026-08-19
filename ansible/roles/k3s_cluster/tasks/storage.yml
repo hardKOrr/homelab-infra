@@ -1,0 +1,98 @@
+---
+# Make the declared persistent-storage contract true on the cluster.
+#
+# Runs once, on the founding node: a StorageClass is cluster-scoped.
+#
+# WHAT THIS STORAGE IS, PLAINLY
+#
+# k3s's local-path provisioner backs a PVC with a directory on ONE node's disk. The pod
+# that mounts it is therefore pinned to that node for the life of the volume. When the
+# node is unavailable the pod stays Pending — it does not reschedule, and the data is not
+# reachable from anywhere else. A three-node control plane does not change this. No
+# workload on this StorageClass may be described as application-highly-available.
+#
+# That is a deliberate first choice, recorded in
+# docs/meta/204-kubernetes-hosting-backend/notes.md: replicated storage (Longhorn) has
+# its own queue row, buys availability rather than backup, and does not replace the
+# application-consistent dump this slice requires.
+
+- name: k3s storage | Assert the storage contract is declared
+  ansible.builtin.assert:
+    that:
+      - k8s_cluster_config.storage.class is defined
+      - k8s_cluster_config.storage.reclaim_policy in ['Retain', 'Delete']
+    fail_msg: >-
+      storage.class and storage.reclaim_policy (Retain or Delete) must be declared in
+      vars/app-defaults/k3s-cluster.yml.
+
+- name: k3s storage | Wait for the local-path StorageClass to exist
+  ansible.builtin.command:
+    cmd: "k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }} -o name"
+  register: _k3s_sc
+  retries: 20
+  delay: 5
+  until: _k3s_sc.rc == 0
+  changed_when: false
+
+- name: k3s storage | Read the current reclaim policy
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }}
+      -o jsonpath={.reclaimPolicy}
+  register: _k3s_sc_policy
+  changed_when: false
+
+# k3s ships local-path with reclaimPolicy Delete, which means removing a PVC by any
+# route — including deleting a namespace by hand — destroys the data with it. This slice
+# requires that data is preserved or deleted only according to an explicit option, so the
+# class is flipped to Retain and the removal job's `delete_data` becomes the only thing
+# that removes a volume.
+- name: k3s storage | Set the declared reclaim policy
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - patch
+      - storageclass
+      - "{{ k8s_cluster_config.storage.class }}"
+      - --type
+      - merge
+      - -p
+      - '{"reclaimPolicy":"{{ k8s_cluster_config.storage.reclaim_policy }}"}'
+  when: _k3s_sc_policy.stdout | trim != k8s_cluster_config.storage.reclaim_policy
+  changed_when: true
+
+- name: k3s storage | Confirm the class is the cluster default
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }}
+      -o jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
+  register: _k3s_sc_default
+  changed_when: false
+
+# A PVC that names no StorageClass gets the default one. If that is not the class whose
+# behavior is documented above, an application silently lands on storage nobody described
+# — so the default is asserted rather than assumed.
+- name: k3s storage | Assert the declared class is the default
+  ansible.builtin.assert:
+    that: (_k3s_sc_default.stdout | trim) == 'true'
+    fail_msg: >-
+      StorageClass {{ k8s_cluster_config.storage.class }} is not marked as the cluster
+      default, so a PVC that names no class would land on storage whose node-loss and
+      reclaim behavior this platform has not declared.
+
+- name: k3s storage | Read the reclaim policy back
+  ansible.builtin.command:
+    cmd: >-
+      k3s kubectl get storageclass {{ k8s_cluster_config.storage.class }}
+      -o jsonpath={.reclaimPolicy}
+  register: _k3s_sc_verify
+  changed_when: false
+
+- name: k3s storage | Assert the reclaim policy matches the declaration
+  ansible.builtin.assert:
+    that: (_k3s_sc_verify.stdout | trim) == k8s_cluster_config.storage.reclaim_policy
+    fail_msg: >-
+      StorageClass {{ k8s_cluster_config.storage.class }} reports reclaimPolicy
+      {{ _k3s_sc_verify.stdout | trim }}, not the declared
+      {{ k8s_cluster_config.storage.reclaim_policy }}.

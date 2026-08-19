@@ -1,0 +1,81 @@
+---
+# Assert this node's taints on every run, not only at install.
+#
+# The taint is declared in config.yaml as `node-taint`, which k3s applies when the node
+# REGISTERS. That covers a fresh node and nothing else: a taint removed by hand, or by a
+# tool, is not restored by a restart, because the node is already registered. On
+# pve-host-1 that matters — its node exists to hold an etcd vote beside the CARP BACKUP
+# firewall peer, and an untainted one silently becomes a workload target.
+#
+# So the declared set is reconciled here. Taints this platform did not declare are left
+# alone: an operator cordoning a node for maintenance must not be undone by a deploy.
+
+- name: k3s taints | Read the taints currently on this node
+  ansible.builtin.command:
+    cmd: "k3s kubectl get node {{ inventory_hostname }} -o jsonpath={.spec.taints}"
+  register: _k3s_taints_now
+  changed_when: false
+
+# An untainted node returns an empty string from jsonpath rather than `[]`, which
+# from_json rejects — hence the `or '[]'`. kubectl renders each taint as
+# {key, value, effect}; the declaration uses the `key=value:effect` string form, so the
+# stored ones are rebuilt into that shape before anything is compared.
+- name: k3s taints | Render the present taints in declaration form
+  ansible.builtin.set_fact:
+    _k3s_taints_present: >-
+      {{ _k3s_now | map(attribute='key') | list
+         | zip(_k3s_now | map(attribute='value', default='') | list)
+         | map('join', '=') | list
+         | zip(_k3s_now | map(attribute='effect') | list)
+         | map('join', ':') | list }}
+  vars:
+    _k3s_now: "{{ ((_k3s_taints_now.stdout | trim) or '[]') | from_json }}"
+
+- name: k3s taints | Resolve which declared taints are missing
+  ansible.builtin.set_fact:
+    _k3s_taints_missing: >-
+      {{ (k8s_node_spec.taints | default([])) | reject('in', _k3s_taints_present) | list }}
+
+- name: k3s taints | Apply the missing taints
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - taint
+      - node
+      - "{{ inventory_hostname }}"
+      - "{{ item }}"
+      - --overwrite
+  loop: "{{ _k3s_taints_missing }}"
+  changed_when: true
+
+- name: k3s taints | Read the taints back
+  ansible.builtin.command:
+    cmd: "k3s kubectl get node {{ inventory_hostname }} -o jsonpath={.spec.taints}"
+  register: _k3s_taints_after
+  changed_when: false
+  when: _k3s_taints_missing | length > 0
+
+- name: k3s taints | Render the taints present after reconciliation
+  ansible.builtin.set_fact:
+    _k3s_taints_present: >-
+      {{ _k3s_after | map(attribute='key') | list
+         | zip(_k3s_after | map(attribute='value', default='') | list)
+         | map('join', '=') | list
+         | zip(_k3s_after | map(attribute='effect') | list)
+         | map('join', ':') | list }}
+  vars:
+    _k3s_after: "{{ ((_k3s_taints_after.stdout | trim) or '[]') | from_json }}"
+  when: _k3s_taints_missing | length > 0
+
+# The readback runs only when something was applied, but the assert runs always: a
+# converged node is exactly where an unnoticed drift would otherwise hide.
+- name: k3s taints | Assert every declared taint is on the node
+  ansible.builtin.assert:
+    that:
+      - (k8s_node_spec.taints | default([])) | reject('in', _k3s_taints_present) | list | length == 0
+    fail_msg: >-
+      Node {{ inventory_hostname }} is missing declared taints
+      {{ (k8s_node_spec.taints | default([])) | reject('in', _k3s_taints_present) | list }}.
+      It carries {{ _k3s_taints_present }}. A quorum-only node without its taint is a
+      workload target.

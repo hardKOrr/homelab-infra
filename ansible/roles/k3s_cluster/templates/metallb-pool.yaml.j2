@@ -1,0 +1,25 @@
+# MetalLB address pool and L2 advertisement — managed by homelab-infra.
+# Dropped into k3s's auto-deploy directory, so the cluster keeps it applied.
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: homelab-infra
+  namespace: metallb-system
+spec:
+  addresses:
+{% for entry in k8s_cluster_config.ingress.address_pool %}
+    - "{{ entry }}"
+{% endfor %}
+  # On deliberately: .0 and .255 in a /24 are the network and broadcast addresses, and
+  # handing one to a Service produces a route that silently never works.
+  avoidBuggyIPs: true
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: homelab-infra
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - homelab-infra
