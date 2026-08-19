@@ -206,7 +206,18 @@ spec:
               mountPath: /var/www/html/storage/app
           readinessProbe:
             httpGet:
-              path: /
+              # NOT `/`. Mixpost answers `/` with a 302 to APP_URL + /mixpost, and APP_URL
+              # is https because the app is published through the reverse proxy. The kubelet
+              # prober follows redirects, so probing `/` sends it to `https://<pod-ip>:80/`,
+              # which is the plaintext container port spoken to as TLS:
+              #
+              #   Readiness probe failed: Get "https://10.42.2.11:80/mixpost":
+              #   http: server gave HTTP response to HTTPS client
+              #
+              # The probe could never pass and the pod could never become ready, however
+              # healthy the app was — it answered 200 to a plain request the whole time.
+              # `/mixpost/login` is the first thing that answers 200 without redirecting.
+              path: /mixpost/login
               port: {{ app_config.app.port }}
             initialDelaySeconds: 30
             periodSeconds: 10
