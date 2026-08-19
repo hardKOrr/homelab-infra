@@ -199,3 +199,67 @@ PVC, estate wiring and removal.
 `hi-events` follows in a separate slice. It is the application that genuinely needs the
 `public` access class, and it forces slice 408's unresolved SMTP contract. Sequential, not
 simultaneous: running both at once means a green result cannot say which half worked.
+
+## 2026-08-18 — Cluster built and proven (close-plan step 2)
+
+Rundeck executions 213–218 against the live lab. The cluster is up; five defects were
+found by running it, and none of them were reachable by either gate.
+
+### What the run proves
+
+Three nodes Ready on `v1.31.5+k3s1`, one per physical Proxmox node, all three reporting
+`EtcdIsVoter=True` — so quorum is 2 of 3 and the control plane tolerates one node loss
+across three real failure domains. `k3s-1` carries `homelab-infra.io/quorum-only:NoSchedule`
+and the other two carry none.
+
+`homelab-local-path` is the default StorageClass with `reclaimPolicy: Retain`; the bundled
+`local-path` remains, demoted, on `Delete`. Traefik holds the declared VIP `192.168.0.30`,
+answers HTTP 404 (no Ingress yet — the correct answer), and ARP resolves it to a live
+speaker. `kube-system` has no DaemonSets at all, so ServiceLB is genuinely gone. MetalLB
+speakers run on `k3s-2` and `k3s-3` only, because `k3s-1`'s taint excludes it.
+
+Execution 218 re-ran the job unchanged: `changed=0` on all three cluster nodes. The six
+remaining `changed` entries are inside the shared `tasks/proxmox/vm-clone.yml` — the
+`proxmox_kvm` update call and `qm resize` both self-report changed against a converged
+guest. Pre-existing, non-mutating, and already true for PBS, so it is recorded here rather
+than fixed inside this slice.
+
+### The five defects, and why the gates could not have caught them
+
+1. **jsonpath quotes eaten by `command:`.** `jsonpath={...[?(@.type=="Ready")]...}` written
+   as a `cmd` string is split on whitespace with its quotes dropped, so kubectl received
+   `@.type==Ready` and answered `unrecognized identifier Ready` — 36 retries against a node
+   that had been Ready since the first attempt. Every jsonpath in the role is `argv` now,
+   including the ones containing no quotes, so the next one added by copying a neighbour
+   inherits the safe shape.
+
+2. **dpkg lock race.** A freshly booted Debian cloud image runs its own `apt-get` for the
+   first minute of its life. One guest at a time wins that race by luck; three at once lose
+   it, and `k3s-3` took the whole build down over a lock that would have cleared in twenty
+   seconds. `guest-bootstrap.yml` now sets `lock_timeout` and retries — a fix that helps
+   every app, not only this one.
+
+3. **JSON payload turned into a Python dict repr.** Ansible converts a rendered template
+   that parses as a data structure back into one and stringifies it with `repr`, so a
+   literal `{"reclaimPolicy":"Retain"}` reached the API server as
+   `{'reclaimPolicy': 'Retain'}`. Build the dict and pass it through `to_json`. The same
+   trap is documented at length in `tasks/bitwarden/upsert-item.yml`, which hit it first.
+
+4. **`reclaimPolicy` is immutable.** Defects 3 and its predecessor were both fixing the
+   delivery of a request that could never succeed: Kubernetes refuses
+   `updates to reclaimPolicy are forbidden` on an existing StorageClass. The platform now
+   declares its own class with the same provisioner, which is the better shape anyway — a
+   bundled class we had edited would be reverted by a future k3s upgrade, silently, with
+   nothing failing at the time.
+
+5. **Cluster-scoped workloads applied before the cluster had workers.** Storage and MetalLB
+   ran from inside the `serial: 1` install play on the founding node, which reads like the
+   natural home for cluster-scoped objects. But inside that play the founder is by
+   definition the only node yet in existence — and here the founder is the quorum-only node
+   with a NoSchedule taint. MetalLB's controller Deployment had nowhere to go. Nothing was
+   misconfigured; a one-node cluster was asked to run a workload before its workers joined.
+   Both now run from a Configure play after every node is Ready.
+
+Defect 5 is the one worth remembering. The taint did exactly what it was asked to do, and
+the design was still wrong, because "apply cluster-scoped things on the founder" quietly
+assumed the founder could run a pod.

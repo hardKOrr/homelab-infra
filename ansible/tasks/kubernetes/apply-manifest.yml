@@ -1,0 +1,127 @@
+---
+# Apply one app's rendered manifest into the namespace it owns, and wait for it to become
+# available.
+#
+# Inputs:
+#   k8s_manifest        — the rendered YAML, as a string
+#   k8s_namespace       — from ensure-namespace.yml
+#   k8s_api_host        — from resolve-cluster.yml
+#   k8s_wait_for        — optional list of `kind/name` to wait on (default: none)
+#   k8s_wait_timeout    — seconds to wait for each (default 300)
+#
+# Sets:
+#   k8s_apply_changed   — true when the apply altered anything
+#
+# The manifest arrives on stdin rather than as a file. A file would have to be written to
+# the node, given a mode, and removed again on every path including failure — and an app
+# manifest routinely carries an environment block that references a Secret, which makes a
+# stray copy on disk a small credential leak with a long life.
+
+- name: k8s apply | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - k8s_manifest is defined
+      - k8s_manifest | trim | length > 0
+      - k8s_namespace is defined
+      - k8s_api_host is defined
+    fail_msg: >-
+      apply-manifest.yml needs a non-empty k8s_manifest, a namespace from
+      ensure-namespace.yml, and an API host from resolve-cluster.yml.
+
+# `--namespace` is passed rather than trusted to the manifest. An object whose metadata
+# omits a namespace would otherwise land in `default`, outside the boundary that makes
+# removal safe, and it would do so silently.
+#
+# Server-side apply, so that the field ownership Kubernetes tracks is this platform's.
+# Without it, a field this manifest stops setting is left at its old value forever rather
+# than reverting — which is how an app ends up running a configuration no file describes.
+- name: k8s apply | Apply the manifest
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - apply
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - --server-side
+      - --force-conflicts
+      - -f
+      - "-"
+    stdin: "{{ k8s_manifest }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_apply
+  changed_when: _k8s_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+- name: k8s apply | Record whether anything changed
+  ansible.builtin.set_fact:
+    k8s_apply_changed: "{{ _k8s_apply is changed }}"
+
+# Rollout status rather than a fixed sleep: it returns as soon as the new pods are up and
+# fails if they never come up, which is the difference between a deploy job that reports
+# what happened and one that reports that it finished.
+- name: k8s apply | Wait for each workload to roll out
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - rollout
+      - status
+      - "{{ item }}"
+      - --timeout={{ k8s_wait_timeout | default(300) }}s
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  loop: "{{ k8s_wait_for | default([]) }}"
+  register: _k8s_rollout
+  changed_when: false
+
+# A rollout that times out leaves the pods' own reason in the namespace and nowhere else,
+# so the job prints it. Without this the operator gets `timed out waiting for the
+# condition` and has to go and find the cluster to learn that an image tag was wrong or a
+# PVC was unbound.
+- name: k8s apply | Report why a rollout did not complete
+  when: _k8s_rollout is failed
+  block:
+    - name: k8s apply | Read pod state in the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - get
+          - pods
+          - -o
+          - wide
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _k8s_pods
+      changed_when: false
+
+    - name: k8s apply | Read recent namespace events
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - get
+          - events
+          - --sort-by=.lastTimestamp
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _k8s_events
+      changed_when: false
+
+    - name: k8s apply | Fail with the namespace's own account of it
+      ansible.builtin.fail:
+        msg: >-
+          A workload in {{ k8s_namespace }} did not become available.
+
+          Pods:
+          {{ _k8s_pods.stdout }}
+
+          Recent events:
+          {{ _k8s_events.stdout_lines[-25:] | join('\n') }}

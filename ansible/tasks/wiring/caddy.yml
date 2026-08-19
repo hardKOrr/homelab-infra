@@ -155,11 +155,11 @@
           - wiring_upstream_host is defined and wiring_upstream_host | length > 0
           - wiring_upstream_port is defined and wiring_upstream_port | string | length > 0
           - wiring_domain is defined and wiring_domain | length > 0
-          - _caddy_access in ['internal', 'public']
+          - _caddy_access in ['internal', 'public', 'authenticated']
         fail_msg: >-
           wiring/caddy.yml needs the wiring contract vars: wiring_app_name,
           wiring_upstream_host, wiring_upstream_port, wiring_domain, and a
-          wiring_access of internal or public (got
+          wiring_access of internal, public or authenticated (got
           '{{ _caddy_access }}' — routing.access, not routing.proxy).
 
     - name: Wire Caddy | Assert internal route CIDRs are configured
@@ -171,6 +171,32 @@
           reverse_proxy.internal_cidrs is empty. Configure the lab CIDR before
           publishing the route.
       when: _caddy_access == 'internal'
+
+    # `authenticated` is the access class that says "anyone may reach the route, but only
+    # after an identity check". It is one field — routing.access — naming one class, and it
+    # is deliberately NOT routing.identity: access says which network path may publish the
+    # app, identity says where authentication happens. Keeping them separate is what stops
+    # `catalog` from being mistaken for an access control, and stops a private app from
+    # being required to publish a public DNS record just to satisfy a review.
+    #
+    # But the two do have to agree at exactly one point. An `authenticated` route with an
+    # identity mode that gates nothing is an app the operator believes is protected and
+    # which is in fact open to the internet — the most expensive way for these two fields
+    # to disagree. `catalog` is a launch tile and `none` is no object at all; neither
+    # stands in front of a request.
+    - name: Wire Caddy | Assert an authenticated route is actually gated
+      ansible.builtin.assert:
+        that:
+          - (wiring_identity_mode | default('catalog')) in ['forward_auth', 'oidc']
+          - (homelabinfra_infra.sso.provider | default('none')) != 'none'
+        fail_msg: >-
+          {{ wiring_app_name }} declares routing.access: authenticated, but its
+          routing.identity is '{{ wiring_identity_mode | default('catalog') }}' and the
+          lab's SSO provider is '{{ homelabinfra_infra.sso.provider | default('none') }}'.
+          That combination publishes an open route while claiming an identity gate.
+          Use routing.identity: forward_auth (enforced at this proxy) or oidc (enforced by
+          the app), or declare routing.access: public if the app is genuinely open.
+      when: _caddy_access == 'authenticated'
 
     # forward_auth without a reachable outpost would produce a route that proxies
     # every request to nothing — fail the deploy instead of publishing it.

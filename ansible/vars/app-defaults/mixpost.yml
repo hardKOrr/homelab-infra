@@ -1,0 +1,86 @@
+---
+# Default configuration for Mixpost — the first application deployed on the Kubernetes
+# hosting backend (slice 204's pilot).
+# Users override specific values in config/apps/mixpost.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# Mixpost is a self-hosted social-media scheduling tool. It was chosen as the pilot
+# because it exercises the whole backend contract without depending on anything
+# undecided: a database that needs an application-consistent dump, a real persistent
+# volume, plain HTTP ingress, its own login, and no SMTP requirement.
+#
+# WHAT MAKES THIS A KUBERNETES APP
+#
+# `hosting: kubernetes` is the only hosting kind that must be declared rather than
+# inferred. Native LXC and Docker are told apart by the presence of `stack:`; this one
+# has neither a stack nor a guest of its own, because its resources live in a namespace
+# on a cluster that outlives any single deployment of it.
+
+mixpost_defaults:
+
+  hosting: kubernetes
+
+  # Which cluster deployment to land on. Matches the `instance` of the k3s cluster job,
+  # so a lab running two clusters points each app at the one it belongs to.
+  cluster: k3s-cluster
+
+  app:
+    # Mixpost Lite. The Pro image is a paid product with a different registry path; a lab
+    # entitled to it overrides `image` here.
+    image: "inovector/mixpost:latest"
+    port: 80
+
+    # The database and cache run as pods in this instance's own namespace, owned by it and
+    # deleted with it. That keeps the pilot self-contained and is what exercises the
+    # owned-resource and delete_data contracts. It does not pre-empt slice 408's standalone
+    # postgresql/mariadb backends: an app may later name an external backend instead.
+    database:
+      image: "mysql:8.4"
+      name: mixpost
+      user: mixpost
+      storage: 8          # GB — the database volume
+    cache:
+      image: "redis:7-alpine"
+
+    # The application's own uploads and generated media.
+    storage: 10           # GB
+
+    # No worker or scheduler Deployment. Mixpost Lite's image runs Laravel's queue and
+    # scheduler inside the application container itself — upstream's compose file has one
+    # service, not three — so splitting them here would mean running processes the image
+    # already starts.
+
+  routing:
+    proxy: internal
+
+    # THE ACCESS CLASS. One field, three values, and deliberately not the same question as
+    # routing.identity below:
+    #
+    #   internal      — private. No public DNS record and no WAN route; reachable from the
+    #                   lab network or an approved VPN only.
+    #   public        — publicly resolvable and reachable with no platform identity gate.
+    #                   The app may still own its own login, as Mixpost does.
+    #   authenticated — publicly resolvable, but a platform identity check stands in front
+    #                   of it. Requires routing.identity: forward_auth or oidc; the Caddy
+    #                   wiring refuses the combination that would publish an open route
+    #                   while claiming a gate.
+    #
+    # `internal` for the pilot: this is the class provable on this lab today, since the
+    # foxglove estate resolves through a LAN-only OPNsense override. Proving `public` and
+    # `authenticated` end to end is hi-events' job, in its own slice.
+    access: internal
+
+    # WHERE authentication happens — a different question from WHO may reach the app.
+    # `catalog` gives Mixpost an Authentik launch tile and leaves Mixpost's own login in
+    # charge, which is correct for an app that owns its user model.
+    identity: catalog
+
+    estate: foxglove
+
+  # Application-consistent backup. A PBS snapshot of a cluster node is a crash-consistent
+  # disk image and cannot see inside a volume, so it is the cluster rebuild path and not a
+  # backup of this database. The artifact that matters is a quiesced dump, produced in the
+  # namespace on this schedule and pushed into the lab's existing PBS datastore.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"

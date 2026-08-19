@@ -33,36 +33,61 @@ identity check, or only through a named private path. It must continue to use
       `proxmox-backup-client` CronJobs into the existing PBS datastore. Sizes, reclaims
       and rationale are in [notes.md](notes.md). k3s version pin and upgrade policy are
       set by the provisioning row below.
-- [ ] Provision and re-run the k3s VM cluster idempotently through Ansible. Cluster join
-      material and administrative kubeconfig remain credentials. Their canonical values
-      must be organization-owned Vaultwarden items after cutover. k3s-managed copies may
-      persist only at the protected node paths that k3s requires. Jobs may create additional
-      copies only in memory or in mode-restricted temporary runtime files and must remove
-      those additional copies when the run ends. Credentials must never enter tracked
-      config, generated topology, job output or command-line arguments.
-- [ ] Add `kubernetes` as an application hosting kind while retaining the existing
-      per-instance config merge, one-job-per-app UI, failure policy and idempotent re-run
-      contract. Define deterministic namespace, release and resource ownership so deploy,
-      status and removal operate only on resources owned by the selected instance. Helm or
-      Kubernetes manifests are implementation details behind that job.
-- [ ] Keep application credentials canonical in their organization-owned Vaultwarden
-      items. The adapter may create namespace-scoped Kubernetes Secrets as runtime copies,
-      but it must redact them from output, update them idempotently when the canonical value
-      changes, and remove them with the owned application resources. A Kubernetes Secret is
-      not a second canonical secret store.
-- [ ] Give the cluster one stable internal ingress address and route the platform Caddy to
-      it. Declare how that address is owned or moved when a node fails, and make the
-      observed behavior match the declared failure-domain mode. Public TLS terminates at
-      the platform Caddy. The k3s API, node addresses, NodePorts and internal ingress must
-      remain on named private networks and must not become alternate public entry points.
-      Do not move Caddy, Vaultwarden, either Authentik estate, the runner or Proxmox/PBS
-      control services into the cluster in this slice.
+- [x] Provision and re-run the k3s VM cluster idempotently through Ansible (2026-08-18,
+      Rundeck executions 217 and 218). Three servers Ready, all three `EtcdIsVoter=True`,
+      `k3s-1` carrying its quorum-only taint and the other two clean. The re-run reports
+      `changed=0` on every cluster node; the six remaining `changed` entries are all inside
+      the shared `tasks/proxmox/vm-clone.yml` (`proxmox_kvm` update and `qm resize` both
+      self-report changed on a converged guest) — pre-existing, non-mutating, and already
+      the case for PBS. Join token and kubeconfig are written to the organization-owned
+      Vaultwarden item `homelab-infra/k3s-cluster`; the token travels host to host in
+      memory and reaches the installer as an environment variable, never argv; generated
+      facts carry topology only and pass the credential-shape check.
+- [~] `kubernetes` hosting kind added (2026-08-18); live proof still to come. `hosting:
+      kubernetes` in an app's defaults is the only hosting kind that is declared rather
+      than inferred — native and Docker are still told apart by the presence of `stack:`.
+      The config merge, one-job-per-app UI and wiring contract are unchanged.
+      **Ownership is the namespace boundary, not a label selector:** one instance owns
+      exactly one namespace `app-<instance>`, so deploy applies into it, status reads it
+      and removal deletes it. A label-filtered model over a shared namespace would be one
+      forgotten selector away from a removal job deleting a neighbour's database.
+      Namespaces are still labelled `app.kubernetes.io/managed-by: homelab-infra`, and a
+      namespace without that mark is neither adopted nor deleted — the same rule that
+      keeps this platform away from the lab's hand-built guests. Manifests rather than
+      Helm, rendered by the app's role. Seams: `tasks/kubernetes/{resolve-cluster,
+      ensure-namespace,sync-secret,apply-manifest}.yml`.
+- [x] Application credentials stay canonical in Vaultwarden (2026-08-18).
+      `tasks/kubernetes/sync-secret.yml` writes a namespace-scoped runtime copy from the
+      canonical item and nothing else: every task is `no_log`, the manifest arrives on
+      stdin rather than argv, and the Secret is deleted with its namespace. A generated
+      credential is stored in Vaultwarden *before* it is applied, so a run that failed in
+      between cannot leave a database whose password exists nowhere; a converged re-run
+      reads the recorded value back rather than minting a new one, because rotating
+      Mixpost's `APP_KEY` would make every OAuth token it holds unreadable.
+- [~] Ingress address established (2026-08-18); the Caddy route itself is still to do.
+      Traefik holds the declared VIP `192.168.0.30` via MetalLB L2 — `EXTERNAL-IP` matches
+      the declaration, the address answers HTTP 404 (Traefik with no matching route, which
+      is correct for a cluster carrying no Ingress yet), and ARP resolves it to a live
+      speaker. ServiceLB is gone: `kube-system` has no DaemonSets at all. Speakers run on
+      `k3s-2` and `k3s-3` only, because `k3s-1`'s taint correctly excludes it, so the VIP
+      moves between the two workload nodes. Only `web` (80) is exposed; `websecure` is off,
+      so TLS terminates at the platform Caddy alone. Remaining: point the platform Caddy at
+      the VIP, and confirm the VIP's observed failover against the declared mode.
 - [ ] Reuse `routing.estate` and the existing platform wiring behavior for Kubernetes
       workloads: Caddy, the selected Authentik identity mode, Uptime Kuma and DNS must
       produce the same user-visible result as an LXC- or Docker-hosted app.
-- [ ] Define one canonical application-config field for the Foxglove access classes and
-      keep it distinct from `routing.identity`. Prove the selected pilot class against the
-      corresponding behavior:
+- [~] Access classes defined on one canonical field (2026-08-18); the pilot class is not
+      yet proven live. The field is the existing `routing.access`, extended from two values
+      to three, and it remains distinct from `routing.identity` — access says which network
+      path may publish the app, identity says where authentication happens. `internal` is
+      the `private` class, `public` is `public`, and the new `authenticated` value is
+      publicly routable behind a platform identity check. `tasks/wiring/caddy.yml` already
+      separated exposure (the `remote_ip` matcher) from enforcement (the forward_auth
+      handler), so the third value needed no new mechanism — only the enum and one assert
+      refusing `authenticated` paired with an identity mode that gates nothing, which is
+      the combination that publishes an open route while claiming protection.
+      The pilot declares `internal`, the class provable on this lab today; `public` and
+      `authenticated` are hi-events' job in its own slice. Behaviour still to prove:
       - `public`: public DNS resolves, HTTPS succeeds and no platform identity gate blocks
         an anonymous client; the application may still own its own login.
       - `authenticated`: public DNS resolves, HTTPS succeeds, an anonymous client is

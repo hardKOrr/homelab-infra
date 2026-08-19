@@ -191,6 +191,76 @@
               | unique(attribute='backup-id') | list)
              if (_st_pbs.status | default(0)) == 200 else [] }}
 
+    # ── Kubernetes ─────────────────────────────────────────────────────────────
+    # Without this section a Kubernetes-hosted app is invisible to Lab Status. The three
+    # cluster VMs show up under GUESTS because they are tagged like any other guest, and
+    # the applications running inside them show up nowhere at all — which is precisely the
+    # "untracked second platform" this slice is meant to avoid.
+    #
+    # One command, read-only, and skipped entirely when no cluster is recorded. A status
+    # job must never be the thing that fails a lab report.
+    - name: Start with no cluster
+      ansible.builtin.set_fact:
+        _st_k8s_nodes: []
+        _st_k8s_apps: []
+
+    - name: Read the cluster's nodes and app namespaces
+      when:
+        - homelabinfra_infra.kubernetes is defined
+        - homelabinfra_infra.kubernetes.nodes | default([]) | length > 0
+        - homelabinfra_infra.kubernetes.nodes[0].name in (groups['all'] | default([]))
+      block:
+        # custom-columns, not jsonpath. A jsonpath that emits one line per item has to
+        # carry a literal `{"\n"}`, and a newline inside a YAML scalar inside a shell
+        # heredoc is three layers of escaping to get wrong — it was wrong twice here
+        # before this comment existed. custom-columns emits one row per item by
+        # construction, with nothing to escape.
+        - name: Read cluster node readiness
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - get
+              - nodes
+              - --no-headers
+              - -o
+              - custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,TAINTS:.spec.taints[*].key
+          delegate_to: "{{ homelabinfra_infra.kubernetes.nodes[0].name }}"
+          become: true
+          register: _st_k8s_node_raw
+          failed_when: false
+          changed_when: false
+
+        - name: Read the workloads in every homelab-infra namespace
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - get
+              - deployments,statefulsets
+              - --all-namespaces
+              - -l
+              - app.kubernetes.io/managed-by=homelab-infra
+              - --no-headers
+              - -o
+              - custom-columns=NS:.metadata.namespace,KIND:.kind,NAME:.metadata.name,READY:.status.readyReplicas,WANT:.spec.replicas
+          delegate_to: "{{ homelabinfra_infra.kubernetes.nodes[0].name }}"
+          become: true
+          register: _st_k8s_app_raw
+          failed_when: false
+          changed_when: false
+
+        # Blank lines and any stray diagnostic are dropped by requiring at least two
+        # whitespace-separated columns, which every real row has.
+        - name: Normalise what the cluster reported
+          ansible.builtin.set_fact:
+            _st_k8s_nodes: >-
+              {{ _st_k8s_node_raw.stdout_lines | default([])
+                 | map('split') | selectattr('1', 'defined') | list }}
+            _st_k8s_apps: >-
+              {{ _st_k8s_app_raw.stdout_lines | default([])
+                 | map('split') | selectattr('4', 'defined') | list }}
+
     # ── Render ─────────────────────────────────────────────────────────────────
     # One debug of a pre-split line list: Semaphore and Rundeck both render a
     # msg list one line per entry, which a single embedded-newline string does not.
@@ -228,6 +298,27 @@
               {{ '%-24s' | format(line.split('|')[0]) }} {{ '%-10s' | format(line.split('|')[2] | default('?')) }} {{ line.split('|')[1] | default('?') }}
           {% endfor %}
           {% endfor %}
+
+          KUBERNETES
+          {% if homelabinfra_infra.kubernetes is not defined %}
+            no cluster deployed — the Kubernetes hosting backend is optional
+          {% elif _st_k8s_nodes | length == 0 %}
+            unreachable — a cluster is recorded ({{ homelabinfra_infra.kubernetes.host | default('?') }})
+            but did not answer, so its workloads could not be read
+          {% else %}
+            ingress {{ homelabinfra_infra.kubernetes.ingress_vip | default('?') }}   storage {{ homelabinfra_infra.kubernetes.storage_class | default('?') }} ({{ homelabinfra_infra.kubernetes.storage_reclaim_policy | default('?') }}, node-pinned)   {{ homelabinfra_infra.kubernetes.failure_domain_mode | default('?') }}
+          {% for n in _st_k8s_nodes %}
+            {{ '%-22s' | format(n[0]) }} {{ '%-10s' | format('Ready' if n[1] == 'True' else 'NOT READY') }} {{ '' if n[2] | default('<none>') == '<none>' else n[2] }}
+          {% endfor %}
+          {% endif %}
+          {% if _st_k8s_apps | length > 0 %}
+
+          {% for a in _st_k8s_apps %}
+            {{ '%-22s' | format(a[0]) }} {{ '%-30s' | format(a[1] ~ '/' ~ a[2]) }} {{ ('0' if a[3] == '<none>' else a[3]) }} of {{ a[4] }} ready
+          {% endfor %}
+          {% elif _st_k8s_nodes | length > 0 %}
+            no applications deployed on the cluster yet
+          {% endif %}
 
           NATIVE APP UPDATES
           {% set _updates = hostvars.values() | selectattr('_st_update', 'defined') | map(attribute='_st_update') | selectattr('update_available', 'equalto', true) | list %}

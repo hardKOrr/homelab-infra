@@ -1,0 +1,101 @@
+---
+# Create the namespace one app instance owns, and label it so that ownership is a fact the
+# cluster carries rather than a convention this repo remembers.
+#
+# THE OWNERSHIP MODEL, IN ONE PLACE
+#
+# One instance owns exactly one namespace, named `app-<instance>`. Everything the instance
+# deploys — Deployment, Service, Ingress, PVCs, its database, its Secret — lives inside it
+# and nothing else does. That makes the three operations the slice requires trivially
+# correct rather than carefully filtered:
+#
+#   deploy  — apply into the namespace
+#   status  — read the namespace
+#   remove  — delete the namespace
+#
+# A filtered-by-label model over a shared namespace would work too, and would be one
+# forgotten selector away from a removal job deleting a neighbour's database. The
+# namespace boundary is enforced by Kubernetes; a label selector is enforced by whoever
+# last edited the query.
+#
+# The labels are still applied, because they are what `kubectl get -A` and any future
+# status job select on, and because a namespace carrying no owner mark is indistinguishable
+# from one a human made by hand — and this platform manages only what it created.
+#
+# Inputs:
+#   instance        — the app instance name
+#   k8s_api_host    — from resolve-cluster.yml
+#   k8s_namespace   — set by this file
+#
+# Sets:
+#   k8s_namespace   — `app-<instance>`
+
+- name: k8s namespace | Derive the instance's namespace
+  ansible.builtin.set_fact:
+    # Kubernetes names are RFC 1123 labels: lowercase alphanumeric and hyphens only. An
+    # instance name is a filename and a hostname elsewhere in this repo, so it is already
+    # close, but `sonarr_anime` is a legal instance and an illegal namespace.
+    k8s_namespace: "app-{{ instance | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+
+- name: k8s namespace | Assert the derived name is a legal Kubernetes namespace
+  ansible.builtin.assert:
+    that:
+      - k8s_namespace is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - k8s_namespace | length <= 63
+    fail_msg: >-
+      Instance `{{ instance }}` does not reduce to a legal namespace
+      (`{{ k8s_namespace }}`). Kubernetes namespaces are lowercase alphanumeric and
+      hyphens, 63 characters or fewer.
+
+- name: k8s namespace | Read the namespace's ownership label, if it exists
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_ns_owner
+  failed_when: false
+  changed_when: false
+
+# homelab-infra manages only what it creates — the same rule that keeps it away from the
+# lab's 57 hand-built LXCs. A namespace that already exists without this platform's mark
+# belongs to someone else, and adopting it would put this instance's removal job in charge
+# of deleting it.
+- name: k8s namespace | Refuse to adopt a namespace this platform did not create
+  ansible.builtin.assert:
+    that: (_k8s_ns_owner.stdout | trim) == 'homelab-infra'
+    fail_msg: >-
+      Namespace {{ k8s_namespace }} already exists and is not labelled
+      `app.kubernetes.io/managed-by: homelab-infra`. homelab-infra will not adopt a
+      namespace it did not create — its removal job deletes the whole namespace, and that
+      is not a thing to do to someone else's objects. Pick a different instance name, or
+      remove the namespace by hand if it is a leftover.
+  when: _k8s_ns_owner.rc == 0
+
+- name: k8s namespace | Create and label the namespace
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - apply
+      - -f
+      - "-"
+    stdin: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ k8s_namespace }}
+        labels:
+          app.kubernetes.io/instance: {{ instance }}
+          app.kubernetes.io/managed-by: homelab-infra
+          homelab-infra.io/instance: {{ instance }}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_ns_apply
+  changed_when: "'unchanged' not in _k8s_ns_apply.stdout"

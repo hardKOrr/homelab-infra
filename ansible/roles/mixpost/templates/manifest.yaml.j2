@@ -1,0 +1,257 @@
+{#
+  Mixpost, its MySQL and its Redis — everything the instance owns, in the namespace the
+  instance owns. Rendered by roles/mixpost/tasks/main.yml and applied through
+  tasks/kubernetes/apply-manifest.yml.
+
+  Every object carries the instance labels, and every object is namespaced. Ownership is
+  therefore the namespace boundary rather than a label selector somebody has to remember
+  to write correctly in the removal job.
+
+  No credential appears in this file. They live in the Secret that sync-secret.yml wrote
+  from the canonical Vaultwarden item, and are pulled in by reference.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+# ── MySQL ─────────────────────────────────────────────────────────────────────
+# A StatefulSet, not a Deployment. A Deployment's default rolling update would start a
+# second database pod attached to the same volume before stopping the first, and two
+# mysqld processes on one data directory is how a database gets corrupted. A StatefulSet
+# stops the old pod before starting the new one.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-db
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.database.storage }}Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ instance }}-db
+  labels:
+{{ labels }}
+spec:
+  serviceName: {{ instance }}-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: mysql
+          image: {{ app_config.app.database.image }}
+          args:
+            # Mixpost is a Laravel app and expects utf8mb4 throughout; MySQL 8's default
+            # collation differs between point releases, so it is pinned rather than
+            # inherited.
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
+          env:
+            - name: MYSQL_DATABASE
+              value: {{ app_config.app.database.name }}
+            - name: MYSQL_USER
+              value: {{ app_config.app.database.user }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: db-password }
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: db-root-password }
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          # mysqladmin ping answers as soon as the socket is up, which is earlier than the
+          # server accepts real queries during a first-run schema build. The readiness
+          # probe therefore runs an actual query, so Mixpost's migrations do not start
+          # against a server that is still initialising.
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1"']
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ instance }}-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}-db
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: database
+  ports:
+    - port: 3306
+      targetPort: 3306
+---
+# ── Redis ─────────────────────────────────────────────────────────────────────
+# Cache and queue backend. No volume: everything in it is derived, and a cache that
+# survives a restart is not worth a PVC that pins the pod to a node.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}-redis
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: cache
+    spec:
+      containers:
+        - name: redis
+          image: {{ app_config.app.cache.image }}
+          # Authenticated even though it is only reachable inside the namespace. Anything
+          # that ends up on the cluster can dial a Service; "internal" is not a
+          # credential.
+          command: [redis-server, --requirepass, $(REDIS_PASSWORD)]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: redis-password }
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}-redis
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: cache
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# ── Mixpost ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-storage
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. The storage volume is ReadWriteOnce on a node-pinned
+  # StorageClass, so a second pod cannot mount it while the first still holds it — a
+  # rolling update would deadlock waiting for a volume that will not be released.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: mixpost
+          image: {{ app_config.app.image }}
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+          ports:
+            - containerPort: {{ app_config.app.port }}
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage/app
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ app_config.app.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            # Generous: the first start runs database migrations before the HTTP server
+            # answers, and that is minutes on a first deploy rather than seconds.
+            failureThreshold: 60
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ instance }}-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ app_config.app.port }}
+---
+# ── Ingress ───────────────────────────────────────────────────────────────────
+# Plain HTTP to the in-cluster controller, which answers on the MetalLB VIP. TLS is not
+# terminated here: the platform Caddy is the sole public TLS edge and proxies to that VIP.
+# Declaring TLS here as well would put a second certificate authority in the path and give
+# the cluster its own way in.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ mixpost_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

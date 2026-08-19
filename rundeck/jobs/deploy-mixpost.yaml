@@ -1,0 +1,56 @@
+# Deploy Mixpost — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/deploy-mixpost.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# Requires the `Deploy k3s Cluster` job to have run: Mixpost has no guest of its own and
+# deploys into a namespace on that cluster.
+
+- id: 0816fdee-48a4-5f9a-b0d3-20e8bccfacbc
+  uuid: 0816fdee-48a4-5f9a-b0d3-20e8bccfacbc
+  name: Deploy Mixpost
+  group: Apps
+  description: |-
+    Deploy or update Mixpost — self-hosted social-media scheduling — on the Kubernetes
+    hosting backend, with its own MySQL and Redis in the instance's namespace.
+
+    Published on the foxglove estate at mixpost.<estate domain>, LAN-only
+    (routing.access: internal). Mixpost owns its own login; Authentik provides a launch
+    tile rather than a gate.
+
+    Re-run to converge or to update the image. Generated credentials are minted once and
+    reused from Vaultwarden afterwards — a re-run never rotates the APP_KEY, which would
+    make every OAuth token Mixpost holds for connected accounts unreadable.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Leave this as it is for the normal deployment. Change it only to run a
+      SECOND instance of this app alongside the first — a second estate's scheduler, for
+      example. The value is the config/apps/<instance>.yml filename, the Kubernetes
+      namespace (app-<instance>), the subdomain, and the name of its Vaultwarden item.
+    required: true
+    value: mixpost
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/mixpost.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/mixpost.yml "${ARGS[@]}"

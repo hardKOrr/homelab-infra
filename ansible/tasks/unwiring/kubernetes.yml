@@ -1,0 +1,164 @@
+---
+# Remove a Kubernetes-hosted app's cluster resources. The inverse of
+# tasks/kubernetes/ensure-namespace.yml and apply-manifest.yml, called by
+# playbooks/apps/remove.yml.
+#
+# WHAT `delete_data` MEANS HERE, EXACTLY
+#
+#   delete_data: false (default)  — the namespace and its workloads go; the PVCs stay.
+#   delete_data: true             — the namespace goes and its PVCs go with it.
+#
+# The PVCs are preserved by moving them out of the namespace's fate, not by asking
+# Kubernetes politely: deleting a namespace deletes every namespaced object inside it,
+# PVCs included, and no reclaim policy prevents that. So on the preserving path the
+# volumes are released from their claims first, which — because the platform StorageClass
+# is `Retain` — leaves the PersistentVolumes and the data on disk after the namespace is
+# gone. That is the whole reason the class is Retain rather than Delete.
+#
+# The released volumes are then the operator's to reattach or remove. This file will not
+# quietly garbage-collect them later; a volume that outlives its app is a restore point,
+# and the job says where it is.
+#
+# Inputs:
+#   instance                 — the app instance being removed
+#   unwire_delete_data       — bool, from the removal job's option
+#   homelabinfra_infra       — for the cluster registry entry
+
+- name: k8s unwire | Resolve the cluster
+  ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+
+- name: k8s unwire | Derive the instance's namespace
+  ansible.builtin.set_fact:
+    k8s_namespace: "app-{{ instance | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+
+- name: k8s unwire | Read the namespace's ownership label
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_rm_owner
+  failed_when: false
+  changed_when: false
+
+# Nothing to remove is a normal outcome for a removal job — the app may never have been
+# deployed to this cluster, or may already be gone — so it is reported and skipped rather
+# than failed.
+- name: k8s unwire | Note that the namespace is already absent
+  ansible.builtin.debug:
+    msg: "Namespace {{ k8s_namespace }} does not exist; nothing to remove from the cluster."
+  when: _k8s_rm_owner.rc != 0
+
+- name: k8s unwire | Remove the instance's cluster resources
+  when:
+    - _k8s_rm_owner.rc == 0
+  block:
+    # The same rule as on the way in. A namespace without this platform's mark was made by
+    # someone else, and deleting a whole namespace is not a thing to do on a guess.
+    - name: k8s unwire | Refuse to delete a namespace this platform did not create
+      ansible.builtin.assert:
+        that: (_k8s_rm_owner.stdout | trim) == 'homelab-infra'
+        fail_msg: >-
+          Namespace {{ k8s_namespace }} is not labelled
+          `app.kubernetes.io/managed-by: homelab-infra`. Refusing to delete a namespace
+          this platform did not create.
+
+    - name: k8s unwire | List the instance's persistent volume claims
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - get
+          - pvc
+          - -o
+          - jsonpath={range .items[*]}{.metadata.name}={.spec.volumeName}{"\n"}{end}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _k8s_pvcs
+      changed_when: false
+
+    # PRESERVING PATH. The claimRef is what binds a PersistentVolume to a claim; clearing
+    # it releases the volume without touching its contents. Done BEFORE the namespace is
+    # deleted, because afterwards the PVs are already gone.
+    #
+    # `Retain` is doing the real work — it is why the PV survives its claim's deletion at
+    # all — and this patch is what makes the survivor reusable instead of stuck in
+    # `Released` referencing a claim that no longer exists.
+    - name: k8s unwire | Release the volumes so they outlive the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - patch
+          - pv
+          - "{{ item.split('=')[1] }}"
+          - --type
+          - merge
+          - -p
+          - "{{ {'spec': {'claimRef': none}} | to_json }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ _k8s_pvcs.stdout_lines | select('search', '=.+') | list }}"
+      loop_control:
+        label: "{{ item.split('=')[0] }}"
+      when: not (unwire_delete_data | default(false) | bool)
+      changed_when: true
+
+    - name: k8s unwire | Delete the namespace and everything in it
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - delete
+          - namespace
+          - "{{ k8s_namespace }}"
+          - --wait=true
+          - --timeout=300s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    # DELETING PATH. Released volumes are not deleted by removing the namespace — that is
+    # the entire point of Retain — so on the explicit delete_data path they are removed by
+    # name afterwards. Without this, `delete_data: true` would leave the data on disk and
+    # report success, which is the worse of the two possible lies.
+    - name: k8s unwire | Delete the released volumes
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - delete
+          - pv
+          - "{{ item.split('=')[1] }}"
+          - --wait=false
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ _k8s_pvcs.stdout_lines | select('search', '=.+') | list }}"
+      loop_control:
+        label: "{{ item.split('=')[0] }}"
+      when: unwire_delete_data | default(false) | bool
+      changed_when: true
+
+    # Where the data went, said plainly, in the job output the operator is already reading.
+    # A restore point nobody can find is not a restore point.
+    - name: k8s unwire | State what happened to the data
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Deleted' if (unwire_delete_data | default(false) | bool) else 'RETAINED' }}
+          {{ _k8s_pvcs.stdout_lines | select('search', '=.+') | list | length }} volume(s)
+          for {{ instance }}.
+          {{ 'The data is gone.'
+             if (unwire_delete_data | default(false) | bool)
+             else 'The PersistentVolumes survive the namespace and hold the data: '
+                  ~ (_k8s_pvcs.stdout_lines | select('search', '=.+')
+                     | map('regex_replace', '^.*=', '') | join(', '))
+                  ~ '. Reattach them with a PVC naming the volume, or delete them with '
+                    'kubectl delete pv when you are sure.' }}

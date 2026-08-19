@@ -1,0 +1,53 @@
+---
+# Resolve which cluster a Kubernetes-hosted app deploys to, and which node this run will
+# talk to it through.
+#
+# Every other hosting kind reaches its target by SSH to the guest that runs the app. A
+# Kubernetes app has no such guest — it has an API. This file picks the node that API is
+# reached through, so the rest of the adapter can `delegate_to` one name.
+#
+# WHY A NODE AND NOT THE RUNNER
+#
+# The runner has no kubectl and no kubeconfig on disk, and giving it one would put a
+# cluster-admin credential on the machine that runs every other job. A cluster node
+# already has both, at paths k3s owns and protects, and this platform created the node —
+# so the adapter runs kubectl there over the SSH identity it already uses for every guest.
+# Nothing new is installed and no credential moves.
+#
+# The founding node is used rather than a random one so that two concurrent app deploys
+# queue against the same API server rather than racing two.
+#
+# Inputs:
+#   homelabinfra_infra.kubernetes  — written by playbooks/apps/k3s-cluster.yml
+#
+# Sets:
+#   k8s_api_host        — inventory hostname to delegate kubectl to
+#   k8s_cluster_facts   — the whole registry entry, for callers that need the VIP or the
+#                         storage class
+
+- name: k8s resolve | Assert a cluster has been deployed
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_infra.kubernetes is defined
+      - homelabinfra_infra.kubernetes.nodes | default([]) | length > 0
+    fail_msg: >-
+      No Kubernetes cluster is recorded in config/.generated/facts.yml. Deploy one first
+      with the `Deploy k3s Cluster` job (playbooks/apps/k3s-cluster.yml); a
+      `kind: kubernetes` app has no guest of its own to fall back to.
+
+- name: k8s resolve | Publish the cluster facts and API host
+  ansible.builtin.set_fact:
+    k8s_cluster_facts: "{{ homelabinfra_infra.kubernetes }}"
+    k8s_api_host: "{{ homelabinfra_infra.kubernetes.nodes[0].name }}"
+
+# The node is in the dynamic inventory because this platform tagged it when it created it,
+# but an inventory that has not been refreshed this run — or a node that was rebuilt under
+# a new name — would leave the delegate unresolvable, and `delegate_to` an unknown host
+# fails with a message about the host rather than about the cluster.
+- name: k8s resolve | Assert the API host is reachable through the inventory
+  ansible.builtin.assert:
+    that: k8s_api_host in hostvars
+    fail_msg: >-
+      Cluster node {{ k8s_api_host }} is recorded in the registry but is not in the
+      current inventory. Re-run the `Deploy k3s Cluster` job if the node was rebuilt or
+      renamed; its address is how every Kubernetes app deploy reaches the API.

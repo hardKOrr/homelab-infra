@@ -152,13 +152,36 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
+    # `hosting: kubernetes` is checked before the stack key, and is the only hosting kind
+    # that has to be declared rather than inferred. Docker and native are still told apart
+    # by the presence of `stack:`, exactly as the deploy playbooks do it.
+    #
+    # A Kubernetes app has NO Proxmox guest of its own. Its resources live in a namespace
+    # on a cluster that outlives it, so `_rm_hosts` is deliberately empty: Play 2, which
+    # stops a container or a systemd unit on a guest, has nothing to do and is skipped.
+    # The cluster-side removal happens in the unwiring step below.
     - name: Select the host running the app
       ansible.builtin.set_fact:
-        _rm_kind: "{{ 'docker' if app_config.stack is defined else 'native' }}"
+        _rm_kind: >-
+          {{ 'kubernetes' if (app_config.hosting | default('')) == 'kubernetes'
+             else ('docker' if app_config.stack is defined else 'native') }}
         _rm_hosts: >-
-          {{ groups['tag_' ~ (app_config.stack | regex_replace('[^A-Za-z0-9_]', '_'))] | default([])
-             if app_config.stack is defined
-             else ([instance] if instance in (groups['all'] | default([])) else []) }}
+          {{ []
+             if (app_config.hosting | default('')) == 'kubernetes'
+             else (groups['tag_' ~ (app_config.stack | regex_replace('[^A-Za-z0-9_]', '_'))] | default([])
+                   if app_config.stack is defined
+                   else ([instance] if instance in (groups['all'] | default([])) else [])) }}
+
+    # This is the Kubernetes equivalent of Play 2's compose-down, and it sits here because
+    # there is no guest for Play 2 to run on. It runs AFTER the unwiring above, which is
+    # this playbook's deliberate order: the route is withdrawn and the uptime monitor is
+    # deleted while the app still answers, so traffic drains and the removal does not page
+    # the operator. Stopping first would invert both.
+    - name: Remove the app's Kubernetes resources
+      ansible.builtin.include_tasks: ../../tasks/unwiring/kubernetes.yml
+      vars:
+        unwire_delete_data: "{{ delete_data | default(false) | bool }}"
+      when: _rm_kind == 'kubernetes'
 
     # DEGRADATION BY DESIGN — and in fact not a degradation at all: a host that is not
     # there is the success case for a removal. The guest may already be gone, or never

@@ -1,0 +1,68 @@
+---
+# Mixpost — self-hosted social-media scheduling, on the Kubernetes hosting backend.
+#
+# Copy to config/apps/mixpost.yml and change what differs for your lab. Anything you leave
+# out falls through to ansible/vars/app-defaults/mixpost.yml, which is git-managed and
+# improves on `git pull`.
+#
+# Requires a cluster: run the `Deploy k3s Cluster` job first. Mixpost has no guest of its
+# own — its database, cache, volumes and web front end all live in one namespace,
+# `app-<instance>`, on that cluster.
+#
+# CREDENTIALS ARE NOT CONFIGURED HERE. The APP_KEY, database passwords and Redis password
+# are generated on first deploy, stored in the Vaultwarden item
+# `homelab-infra/apps/<instance>`, and read back from it on every later run. Do not put
+# them in this file.
+
+cluster: k3s-cluster     # which cluster deployment to land on
+
+app:
+  # Mixpost Lite. Mixpost Pro is a paid product on a different registry path; set it here
+  # if your lab is entitled to it.
+  image: "inovector/mixpost:latest"
+
+  database:
+    image: "mysql:8.4"
+    storage: 8           # GB — grows with post history and connected-account metadata
+
+  cache:
+    image: "redis:7-alpine"
+
+  storage: 10            # GB — uploaded media awaiting publication
+
+routing:
+  # THE ACCESS CLASS — one field, three values. It answers "which network path may publish
+  # this app", which is a different question from `identity` below.
+  #
+  #   internal      Private. No public DNS record and no WAN route. Reachable from the lab
+  #                 network or an approved VPN only. This is the default and the safest
+  #                 place to start.
+  #
+  #   public        Publicly resolvable and reachable, with no platform identity gate in
+  #                 front. The app may still own its own login — Mixpost does — but
+  #                 anyone on the internet reaches that login page.
+  #
+  #   authenticated Publicly resolvable, with a platform identity check standing in front.
+  #                 Requires `identity: forward_auth` or `oidc`; the deploy refuses the
+  #                 combination that would publish an open route while claiming a gate.
+  access: internal
+
+  # WHERE authentication happens — not who may reach the app.
+  #   catalog       Authentik shows a launch tile; the app's own login is what protects it.
+  #   forward_auth  The reverse proxy demands an Authentik session before the app is
+  #                 reached at all.
+  #   oidc          The app consumes an OAuth2 client and runs the login itself.
+  #   none          No Authentik object at all.
+  #
+  # `catalog` suits Mixpost: it owns its user model and its own sessions.
+  identity: catalog
+
+  estate: foxglove       # which `domains:` estate publishes it
+  # subdomain: mixpost   # defaults to the instance name
+
+backup:
+  # A quiesced database dump, pushed into the lab's existing PBS datastore on this
+  # schedule. This — not a PBS snapshot of a cluster node — is the backup of your data: a
+  # whole-VM image is crash-consistent only and cannot see inside a volume.
+  enabled: true
+  schedule: "0 3 * * *"
