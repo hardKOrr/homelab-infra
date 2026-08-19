@@ -131,9 +131,13 @@
     - _k8sn_cpu_before.rc == 0
     - not (_k8sn_cpu_before.stdout is search('^cpu:\s*' ~ (k8s_cluster_config.proxmox.vm.cpu | regex_escape) ~ '\s*$', multiline=True))
   block:
-    - name: k3s node | Stop the node to apply the CPU model
+    # `qm shutdown`, not `qm stop`: this is an etcd member, and an ACPI shutdown lets it
+    # leave the cluster and flush rather than being cut mid-write. The guest agent is on
+    # for these VMs, so the request is delivered. `--forceStop 1` is what keeps this a
+    # power-cycle rather than a hang when the guest does not answer inside the timeout.
+    - name: k3s node | Shut the node down to apply the CPU model
       ansible.builtin.command:
-        cmd: "qm stop {{ homelabinfra_config.proxmox.vm.vmid }}"
+        cmd: "qm shutdown {{ homelabinfra_config.proxmox.vm.vmid }} --timeout 180 --forceStop 1"
       delegate_to: "{{ k8s_node.proxmox_node }}"
       register: _k8sn_stop
       changed_when: _k8sn_stop.rc == 0
