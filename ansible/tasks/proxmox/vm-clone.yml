@@ -138,6 +138,16 @@
     vmid: "{{ _vmc_vmid | int }}"
     update: true
     cores: "{{ homelabinfra_config.proxmox.vm.cores | default(2) | int }}"
+    # Proxmox's default CPU model is `kvm64`, a 2003-era baseline with no SSE4.2 and no
+    # POPCNT — below x86-64-v2. Modern distribution images are increasingly built against
+    # v2 and abort immediately on it:
+    #
+    #   Fatal glibc error: CPU does not support x86-64-v2
+    #
+    # which is what MySQL 8.4 did on the first Kubernetes app deploy, in a CrashLoopBackOff
+    # whose cause was invisible from Kubernetes. Omitted by default so existing guests are
+    # untouched; a caller that needs a modern baseline sets proxmox.vm.cpu.
+    cpu: "{{ homelabinfra_config.proxmox.vm.cpu | default(omit) }}"
     memory: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
     agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
     onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"

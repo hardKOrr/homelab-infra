@@ -104,8 +104,59 @@
       {{ homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')].bridge
          | default('vmbr0') }}
 
+# Read BEFORE the clone/update, so the comparison afterwards can tell an actual change
+# from a value that was already correct.
+- name: k3s node | Read the node VM's current CPU model
+  ansible.builtin.command:
+    cmd: "qm config {{ homelabinfra_config.proxmox.vm.vmid }}"
+  delegate_to: "{{ k8s_node.proxmox_node }}"
+  register: _k8sn_cpu_before
+  failed_when: false
+  changed_when: false
+
 - name: k3s node | Clone the node VM from the template
   ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+
+# A CPU model is not hot-pluggable. `qm set --cpu` on a running guest writes the config and
+# changes nothing about the process already running, so a node provisioned before this
+# setting existed keeps its old baseline through any number of converged re-runs — and
+# keeps failing to run images that need a newer one, with the config file insisting it is
+# fine. The power-cycle is what makes the declared value true.
+#
+# Safe to do here even mid-cluster: the install play is serial, so at most one node is
+# cycled at a time and a three-member etcd keeps quorum throughout.
+- name: k3s node | Power-cycle the node when its CPU model changed
+  when:
+    - k8s_cluster_config.proxmox.vm.cpu is defined
+    - _k8sn_cpu_before.rc == 0
+    - not (_k8sn_cpu_before.stdout is search('^cpu:\s*' ~ (k8s_cluster_config.proxmox.vm.cpu | regex_escape) ~ '\s*$', multiline=True))
+  block:
+    - name: k3s node | Stop the node to apply the CPU model
+      ansible.builtin.command:
+        cmd: "qm stop {{ homelabinfra_config.proxmox.vm.vmid }}"
+      delegate_to: "{{ k8s_node.proxmox_node }}"
+      register: _k8sn_stop
+      changed_when: _k8sn_stop.rc == 0
+      failed_when:
+        - _k8sn_stop.rc != 0
+        - "'not running' not in (_k8sn_stop.stderr | default('')) | lower"
+
+    - name: k3s node | Start the node again
+      ansible.builtin.command:
+        cmd: "qm start {{ homelabinfra_config.proxmox.vm.vmid }}"
+      delegate_to: "{{ k8s_node.proxmox_node }}"
+      register: _k8sn_start
+      retries: 10
+      delay: 5
+      until: _k8sn_start.rc == 0 or ('already running' in (_k8sn_start.stderr | default('')) | lower)
+      changed_when: _k8sn_start.rc == 0
+
+    - name: k3s node | Wait for SSH to answer again
+      ansible.builtin.wait_for:
+        host: "{{ k8s_node.ip_address }}"
+        port: 22
+        timeout: 300
+        sleep: 5
 
 - name: k3s node | Record the provisioned node
   ansible.builtin.set_fact:

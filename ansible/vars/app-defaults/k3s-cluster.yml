@@ -152,6 +152,22 @@ k3s_cluster_defaults:
     # Mirrored SSD ZFS pool, present under this name on all three nodes.
     storage: friends-pool-zfs
     vm:
+      # NOT Proxmox's default. `kvm64` is a 2003-era baseline with no SSE4.2 and no
+      # POPCNT — below x86-64-v2 — and modern container images are increasingly built
+      # against v2 and abort on sight of anything older:
+      #
+      #   Fatal glibc error: CPU does not support x86-64-v2
+      #
+      # MySQL 8.4 did exactly that on the first app deployed to this cluster, in a
+      # CrashLoopBackOff whose cause was invisible from Kubernetes — the API only knew the
+      # container kept exiting. A Kubernetes node runs whatever image an app ships, so its
+      # CPU baseline has to be current.
+      #
+      # `x86-64-v2-AES` rather than `host`: it is a portable model, so a node can still be
+      # migrated between Proxmox hosts with different silicon, while satisfying the
+      # baseline. Raise it to x86-64-v3 if every host in the lab supports it and a
+      # workload benefits.
+      cpu: x86-64-v2-AES
       agent: 1
       onboot: true
       description: "k3s cluster node, created by homelab-infra"
