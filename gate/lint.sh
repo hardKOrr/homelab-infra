@@ -7,6 +7,19 @@
 # to the full sweep — see gate/lib-scope.sh.
 set -euo pipefail
 
+# STDIN IS CLOSED FOR THE WHOLE GATE, DELIBERATELY.
+#
+# ansible-lint syntax-checks each playbook, and that pass executes every executable file
+# an inventory scan reaches -- including scripts under roles/*/files/, which it calls with
+# `--list` as if they were inventory scripts. One of them, qbittorrent's
+# webui-password.py, reads its input from stdin by design. Given an open stdin with no
+# writer it blocks forever: one gate run sat for 9h24m at 0.00s of CPU, looking exactly
+# like a slow lint rather than a stopped one.
+#
+# `< /dev/null` makes that read return EOF immediately, so such a script exits instead of
+# parking the gate. Nothing in either gate wants console input.
+exec < /dev/null
+
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
 

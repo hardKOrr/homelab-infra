@@ -9,6 +9,11 @@
 # toward checking more.
 set -uo pipefail
 
+# STDIN IS CLOSED FOR THE WHOLE GATE, DELIBERATELY. See the same note in gate/lint.sh:
+# the syntax-check pass runs executables it finds in the tree, one of which reads stdin
+# and will block forever on an open one. `< /dev/null` turns that into an immediate EOF.
+exec < /dev/null
+
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
 
