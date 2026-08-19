@@ -59,6 +59,19 @@
 # requires that data is preserved or deleted only according to an explicit option, so the
 # class is flipped to Retain and the removal job's `delete_data` becomes the only thing
 # that removes a volume.
+#
+# The payload is built as a dict and passed through `to_json`, never written as JSON text.
+# A rendered template that happens to parse as a data structure is converted back into one
+# by Ansible and then stringified with Python's repr, so the literal
+# `{"reclaimPolicy":"Retain"}` arrived at kubectl as `{'reclaimPolicy': 'Retain'}` and the
+# API server answered `invalid character '\'' looking for beginning of object key string`.
+# `to_json` marks the value as text and it survives intact. (The same trap is documented at
+# length in tasks/bitwarden/upsert-item.yml, which hit it first.)
+#
+# k3s's deploy controller reapplies a bundled addon only when the manifest file's checksum
+# changes, so this patch survives restarts. A k3s upgrade that ships a changed
+# local-storage.yaml can revert it — which is why the policy is re-asserted below on every
+# run, and why upgrades go through this same role rather than around it.
 - name: k3s storage | Set the declared reclaim policy
   ansible.builtin.command:
     argv:
@@ -70,7 +83,7 @@
       - --type
       - merge
       - -p
-      - '{"reclaimPolicy":"{{ k8s_cluster_config.storage.reclaim_policy }}"}'
+      - "{{ {'reclaimPolicy': k8s_cluster_config.storage.reclaim_policy} | to_json }}"
   when: _k3s_sc_policy.stdout | trim != k8s_cluster_config.storage.reclaim_policy
   changed_when: true
 
