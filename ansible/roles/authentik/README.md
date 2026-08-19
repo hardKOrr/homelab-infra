@@ -21,8 +21,31 @@ Account passwords are generated, stored in the estate's canonical Vaultwarden it
 changed in the UI survives every re-deploy. `rotate_password: true` on an account
 forces a new one for that run.
 
-Still set in the UI, because this repo has no config surface for them yet: social
-login sources, MFA and authenticator stages, and flow doctrine.
+**So is the rest of the identity surface.** Four more keys in the same file, each
+applied by the task file named after it, each a no-op when absent:
+
+| Key | File | What it declares |
+|---|---|---|
+| `flows` | `tasks/flows.yml`, `tasks/flow-bindings.yml` | flow instances and the stages bound into them |
+| `authenticators` | `tasks/authenticators.yml` | TOTP / WebAuthn / static / Duo / SMS setup stages, and the validation stage that decides whether MFA is required |
+| `sources.oauth` | `tasks/sources.yml` | "Sign in with Google / GitHub / …" login sources |
+| `brands` | `tasks/brands.yml` | per-domain login page identity and its flows |
+
+They share the directory's contract exactly: declared is created and kept correct,
+undeclared is never touched and never deleted. The one exception is `stages_exact:
+true` on a flow, which deletes bindings the declaration does not list — off by
+default, and the only destructive option in the role.
+
+Fields are passed to the API verbatim rather than enumerated, so a field a future
+Authentik release adds is configurable the day it ships. Only the keys that name
+another object by name — `configure_flow`, `configuration_stages`, a source's or a
+brand's flow slugs, a binding's `stage` — are resolved to internal ids here, and each
+one asserts its target exists before anything is written.
+
+OAuth client secrets never appear in config: `consumer_key` is a public identifier
+and lives beside the rest, while the matching secret is read from the estate's
+canonical Vaultwarden item as `source_<slug>_secret`, the same shape Caddy's
+`dns_api_token` uses.
 
 The admin account is `akadmin`, created by `AUTHENTIK_BOOTSTRAP_*` on first start.
 Its generated password and API token are stored in `homelab-infra/sso` under
@@ -61,5 +84,8 @@ declaring the new name.
 boundary than this — "account names, group membership, social login sources and MFA
 enforcement are operator policy". That note is superseded for groups and accounts.
 What it was really rejecting was one lab's choices hardcoded as product defaults with
-no way to override them; the answer to that is a config surface, which `directory:`
-now is. Sources and MFA do not have one yet and remain UI-only.
+no way to override them; the answer to that is a config surface, which `directory:`,
+`flows:`, `authenticators:`, `sources:` and `brands:` now are. The boundary that
+remains is the one the note should have drawn in the first place: the platform ships
+no lab's content as a default, and every object it creates is one the operator
+declared.

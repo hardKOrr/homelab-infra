@@ -1,0 +1,266 @@
+---
+# Authentik authenticator stages as code — the MFA surface.
+#
+# Two things live here, because Authentik models them the same way:
+#
+#   * the SETUP stages a user walks through to enrol a factor (TOTP, WebAuthn,
+#     static recovery codes, Duo, SMS, e-mail), and
+#   * the VALIDATION stage that decides, during login, which factors count and what
+#     happens to a user who has none — which is where "MFA is required" is actually
+#     expressed.
+#
+# A default install ships all of these, with the validation stage bound into the
+# login flow and `not_configured_action: skip`. Skip means a user without a factor
+# signs in with a password alone, so out of the box MFA is offered, not enforced.
+# Turning that into enforcement is one declaration:
+#
+#   authenticators:
+#     validate:
+#       - name: default-authentication-mfa-validation
+#         device_classes: [totp, webauthn, static]
+#         not_configured_action: configure          # skip | deny | configure
+#         configuration_stages: [default-authenticator-totp-setup]
+#     totp:
+#       - name: default-authenticator-totp-setup
+#         digits: "6"
+#         friendly_name: Authenticator app
+#
+# `configure` sends a user with no factor into the named setup stage during their
+# next login instead of letting them past — enrolment happens on first sign-in and
+# nobody has to be chased. `deny` refuses the login outright, which locks out every
+# account that has not enrolled yet; declare it only once everyone has a factor.
+#
+# WHAT IS DECLARED — config/apps/<instance>.yml, key `authenticators`: a mapping of
+# stage kind to a list of stages of that kind. The kind is the API path segment, so
+# `totp`, `static`, `webauthn`, `duo`, `sms`, `email`, `endpoint_gdtc` and
+# `validate` all work, and a kind added by a future release works without a change
+# here. Each entry needs a `name`; every other key is passed to the API verbatim,
+# except the two that are resolved from names to internal ids:
+#
+#   configure_flow          flow slug   — the flow this setup stage sends users into
+#   configuration_stages    stage names — the setup stages the validation stage offers
+#
+# SEMANTICS. Same contract as directory.yml: declared is created and kept correct,
+# undeclared is never touched and never deleted.
+#
+# ORDER. After flows.yml (a `configure_flow` may name a flow declared there) and
+# before flow-bindings.yml (a binding may name a stage created here).
+#
+# Inputs from main.yml: _authentik_api_token.
+
+- name: Authenticators | Resolve the declared authenticator stages
+  ansible.builtin.set_fact:
+    _ak_auth_declared: "{{ app_config.authenticators | default({}, true) }}"
+
+- name: Authenticators | Manage the declared authenticator stages
+  when: _ak_auth_declared | length > 0
+  vars:
+    _ak_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    _ak_auth_reserved: [kind, name, configure_flow, configuration_stages]
+  block:
+    # One flat list of {kind: totp, name: ..., ...} so a single pair of tasks covers
+    # every stage kind, rather than a task per kind that would need editing each time
+    # Authentik adds one.
+    - name: Authenticators | Flatten the declaration into one list
+      ansible.builtin.set_fact:
+        _ak_auth_stages: >-
+          {{ _ak_auth_stages | default([])
+             + (item.value | map('combine', {'kind': item.key}) | list) }}
+      loop: "{{ _ak_auth_declared | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Authenticators | Assert every stage carries a name
+      ansible.builtin.assert:
+        that: _ak_auth_stages | rejectattr('name', 'defined') | list | length == 0
+        fail_msg: >-
+          Every entry under `authenticators.<kind>` needs a `name` in
+          config/apps/{{ instance }}.yml.
+
+    # Flows resolve `configure_flow`; the all-stages list resolves
+    # `configuration_stages`, which may name a stage of a different kind.
+    - name: Authenticators | List flows and stages for name resolution
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/{{ item }}?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_auth_refs
+      loop:
+        - flows/instances/
+        - stages/all/
+      changed_when: false
+      no_log: true
+
+    - name: Authenticators | Index flows by slug and stages by name
+      ansible.builtin.set_fact:
+        _ak_auth_flow_index: >-
+          {{ dict((_ak_auth_refs.results[0].json.results | default([]) | map(attribute='slug') | list)
+                  | zip(_ak_auth_refs.results[0].json.results | default([]) | map(attribute='pk') | list)) }}
+        _ak_auth_stage_index: >-
+          {{ dict((_ak_auth_refs.results[1].json.results | default([]) | map(attribute='name') | list)
+                  | zip(_ak_auth_refs.results[1].json.results | default([]) | map(attribute='pk') | list)) }}
+
+    - name: Authenticators | Assert every referenced flow exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ak_auth_stages | selectattr('configure_flow', 'defined')
+            | map(attribute='configure_flow') | select('string') | select()
+            | reject('in', _ak_auth_flow_index.keys() | list)
+            | list | length == 0
+        fail_msg: >-
+          An `authenticators` entry names a `configure_flow` that does not exist.
+          Use the slug of a flow the installer shipped or one declared under `flows`,
+          which are created before this runs.
+
+    # Existing stages of exactly the kinds declared. Listed per kind rather than
+    # through /stages/all/, because that endpoint returns the shared fields only and
+    # drift on a kind-specific field (digits, token_count, device_classes) would be
+    # invisible to the comparison below.
+    - name: Authenticators | List existing stages of each declared kind
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/stages/authenticator/{{ item }}/?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_auth_existing
+      loop: "{{ _ak_auth_declared.keys() | list }}"
+      changed_when: false
+      no_log: true
+
+    - name: Authenticators | Index existing stages by name
+      ansible.builtin.set_fact:
+        _ak_auth_index: >-
+          {{ dict((_ak_auth_existing.results | map(attribute='json.results') | flatten
+                   | map(attribute='name') | list)
+                  | zip(_ak_auth_existing.results | map(attribute='json.results') | flatten)) }}
+
+    # Creation happens in two passes, because a validation stage routinely names
+    # setup stages declared in the same run and those have no pk until something has
+    # made them. The first pass creates every stage that references nothing.
+    #
+    # Filling the references in afterwards, with a PATCH, is what this file used to
+    # do and it does not work: Authentik refuses a validation stage whose
+    # `not_configured_action` is `configure` with no `configuration_stages` set,
+    #
+    #   When "Not configured action" is set to "Configure", you must set a
+    #   configuration stage.
+    #
+    # so the half-built object is invalid at the moment of creation and the POST 400s.
+    # The reference has to travel in the create body, which is why the second pass
+    # exists. Cost a live run to find, 2026-08-19.
+    - name: Authenticators | Create declared stages that reference no other stage
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/stages/authenticator/{{ item.kind }}/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_auth_body }}"
+        status_code: 201
+      vars:
+        _ak_auth_body: >-
+          {{ {'name': item.name}
+             | combine(item | dict2items | rejectattr('key', 'in', _ak_auth_reserved) | items2dict)
+             | combine({'configure_flow': _ak_auth_flow_index[item.configure_flow]}
+                       if item.configure_flow | default('', true) | length > 0 else {}) }}
+      loop: "{{ _ak_auth_stages }}"
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
+      when:
+        - item.name not in _ak_auth_index
+        - item.configuration_stages is not defined
+      changed_when: true
+
+    - name: Authenticators | Re-list stages after the first pass
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/{{ item }}?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_auth_recheck
+      loop: >-
+        {{ ['stages/all/']
+           + (_ak_auth_declared.keys() | map('regex_replace', '^(.*)$',
+                                             'stages/authenticator/\1/') | list) }}
+      changed_when: false
+      no_log: true
+
+    - name: Authenticators | Re-index stages by name
+      ansible.builtin.set_fact:
+        _ak_auth_stage_index: >-
+          {{ dict((_ak_auth_recheck.results[0].json.results | default([]) | map(attribute='name') | list)
+                  | zip(_ak_auth_recheck.results[0].json.results | default([]) | map(attribute='pk') | list)) }}
+        _ak_auth_index: >-
+          {{ dict((_ak_auth_recheck.results[1:] | map(attribute='json.results') | flatten
+                   | map(attribute='name') | list)
+                  | zip(_ak_auth_recheck.results[1:] | map(attribute='json.results') | flatten)) }}
+
+    - name: Authenticators | Assert every configuration stage exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ak_auth_stages | map(attribute='configuration_stages', default=[]) | flatten
+            | reject('in', _ak_auth_stage_index.keys() | list)
+            | list | length == 0
+        fail_msg: >-
+          An `authenticators` entry names a `configuration_stages` member that does
+          not exist. It has to be a stage the installer shipped or one declared under
+          `authenticators` in this same file.
+
+    # Second pass: the stages that name other stages, created whole. Everything they
+    # reference exists by now, whether it was already there or the first pass made it.
+    - name: Authenticators | Create declared stages that reference another stage
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/stages/authenticator/{{ item.kind }}/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_auth_body }}"
+        status_code: 201
+      vars:
+        _ak_auth_body: >-
+          {{ {'name': item.name}
+             | combine(item | dict2items | rejectattr('key', 'in', _ak_auth_reserved) | items2dict)
+             | combine({'configure_flow': _ak_auth_flow_index[item.configure_flow]}
+                       if item.configure_flow | default('', true) | length > 0 else {})
+             | combine({'configuration_stages':
+                        item.configuration_stages | map('extract', _ak_auth_stage_index) | list}) }}
+      loop: "{{ _ak_auth_stages }}"
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
+      when:
+        - item.name not in _ak_auth_index
+        - item.configuration_stages is defined
+      changed_when: true
+
+    # Drift is decided by merging the declaration onto what Authentik holds: if the
+    # merge changes nothing, nothing is declared differently and no call is made.
+    # Read-only fields the API returns (pk, component, flow_set) are untouched by the
+    # merge and therefore never provoke a write.
+    - name: Authenticators | Update declared stages that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/stages/authenticator/{{ item.kind }}/{{ _ak_auth_index[item.name].pk }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_auth_body }}"
+        status_code: 200
+      vars:
+        _ak_auth_body: >-
+          {{ (item | dict2items | rejectattr('key', 'in', _ak_auth_reserved) | items2dict)
+             | combine({'configure_flow': _ak_auth_flow_index[item.configure_flow]}
+                       if item.configure_flow | default('', true) | length > 0 else {})
+             | combine({'configuration_stages':
+                        item.configuration_stages | map('extract', _ak_auth_stage_index) | list}
+                       if item.configuration_stages is defined else {}) }}
+      loop: "{{ _ak_auth_stages }}"
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
+      when:
+        - item.name in _ak_auth_index
+        - (_ak_auth_index[item.name] | combine(_ak_auth_body)) != _ak_auth_index[item.name]
+      changed_when: true

@@ -54,3 +54,20 @@ authentik_defaults:
     # Accounts are yours to declare — the platform ships none. See
     # config.example/apps/authentik.example.yml for the shape.
     users: []
+
+  # ── The rest of the identity surface ─────────────────────────────────────────
+  # Flows, authenticator/MFA stages, OAuth login sources and brands, all applied
+  # through the API by the task file named after each key. Empty by default and
+  # deliberately so: a fresh Authentik ships a complete working set of flows,
+  # stages and one catch-all brand, and a platform default here would overwrite a
+  # choice the operator may have made in the UI. Declare only what the lab wants
+  # different — see config.example/apps/authentik.example.yml for worked examples
+  # of enforced MFA and a Google login source.
+  #
+  # Undeclared objects are never touched, so leaving these empty is not "unmanaged
+  # drift" — it is the installer's defaults, intact.
+  flows: []
+  authenticators: {}
+  sources:
+    oauth: []
+  brands: []

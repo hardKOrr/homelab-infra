@@ -1,0 +1,205 @@
+---
+# Authentik OAuth sources as code — "Sign in with Google / GitHub / your other IdP".
+#
+# A source is the inbound direction of SSO: Authentik as the CLIENT of somebody
+# else's identity provider, which is the mirror image of the providers that
+# tasks/wiring/authentik.yml creates for the lab's own apps.
+#
+# WHAT IS DECLARED — config/apps/<instance>.yml, key `sources.oauth`:
+#
+#   sources:
+#     oauth:
+#       - slug: google                    # required, identity and callback URL segment
+#         provider_type: google           # required — google, github, gitlab, discord,
+#                                         #   okta, entraid, apple, openidconnect, ...
+#         consumer_key: "1234.apps.googleusercontent.com"   # the client id, not a secret
+#         name: Google                    # default: the slug
+#         enabled: true
+#         user_matching_mode: email_link  # identifier | email_link | email_deny |
+#                                         #   username_link | username_deny
+#         group_matching_mode: identifier
+#         authentication_flow: default-source-authentication   # flow slug
+#         enrollment_flow: default-source-enrollment           # flow slug
+#         additional_scopes: ""
+#         # openidconnect (any provider with no built-in profile) also needs:
+#         oidc_well_known_url: https://idp.example.com/.well-known/openid-configuration
+#
+# Any other key Authentik's OAuth source API accepts is passed through unchanged.
+#
+# THE CLIENT SECRET NEVER APPEARS IN CONFIG. `consumer_key` is a public identifier
+# and lives in config next to everything else; the matching secret is read from this
+# estate's canonical Vaultwarden item (homelab-infra/sso, or
+# homelab-infra/estates/<name>/sso) under the field name
+#
+#     source_<slug>_secret            overridable per source with consumer_secret_vault_field
+#
+# which is the same shape Caddy's dns_api_token uses: config names the credential,
+# Vaultwarden holds it. Put it there with the Store Secret job before the first
+# deploy that declares the source.
+#
+# The secret is sent on every create and on every update, because Authentik never
+# returns it and drift in it is therefore unknowable from here. Re-sending the value
+# already stored is a no-op on the server; what it costs is that a source whose other
+# fields match is still reported as unchanged only when nothing else differs — the
+# comparison below deliberately ignores the secret, so an unchanged deploy stays
+# unchanged.
+#
+# SEMANTICS. Same contract as directory.yml: declared is created and kept correct,
+# undeclared is never touched and never deleted. Deleting a source strands every
+# account that signs in through it, and stays a deliberate act in the UI.
+#
+# ORDER. After flows.yml — a source names an authentication and an enrolment flow.
+#
+# Inputs from main.yml: _authentik_api_token, _authentik_recorded_sso.
+
+- name: Sources | Resolve the declared OAuth sources
+  ansible.builtin.set_fact:
+    _ak_src_oauth: "{{ (app_config.sources | default({}, true)).oauth | default([], true) }}"
+
+- name: Sources | Manage the declared OAuth sources
+  when: _ak_src_oauth | length > 0
+  vars:
+    _ak_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    # Spelled out below or resolved from a name; everything else goes to the API as
+    # written.
+    _ak_src_reserved:
+      - slug
+      - name
+      - consumer_secret
+      - consumer_secret_vault_field
+      - authentication_flow
+      - enrollment_flow
+      - pre_authentication_flow
+    # Templated lazily, once per loop iteration, with `item` in scope — which is why
+    # one definition here serves both the create and the update below instead of
+    # being written out twice.
+    _ak_src_body: >-
+      {{ {'consumer_secret': _ak_src_secrets[item.slug],
+          'name': item.name | default(item.slug, true)}
+         | combine(item | dict2items | rejectattr('key', 'in', _ak_src_reserved) | items2dict)
+         | combine({'authentication_flow': _ak_src_flow_index[item.authentication_flow]}
+                   if item.authentication_flow | default('', true) | length > 0 else {})
+         | combine({'enrollment_flow': _ak_src_flow_index[item.enrollment_flow]}
+                   if item.enrollment_flow | default('', true) | length > 0 else {})
+         | combine({'pre_authentication_flow': _ak_src_flow_index[item.pre_authentication_flow]}
+                   if item.pre_authentication_flow | default('', true) | length > 0 else {}) }}
+  block:
+    - name: Sources | Assert every source carries a slug and a provider type
+      ansible.builtin.assert:
+        that:
+          - _ak_src_oauth | rejectattr('slug', 'defined') | list | length == 0
+          - _ak_src_oauth | rejectattr('provider_type', 'defined') | list | length == 0
+        fail_msg: >-
+          Every entry under `sources.oauth` needs a `slug` and a `provider_type` in
+          config/apps/{{ instance }}.yml.
+
+    # The estate's canonical item, already resolved by main.yml, carries the client
+    # secrets alongside the admin password and the API token.
+    - name: Sources | Resolve each client secret from the estate vault item
+      ansible.builtin.set_fact:
+        _ak_src_secrets: >-
+          {{ _ak_src_secrets | default({})
+             | combine({item.slug: _authentik_recorded_sso[
+                          item.consumer_secret_vault_field
+                          | default('source_' ~ item.slug ~ '_secret', true)]
+                        | default('', true)}) }}
+      loop: "{{ _ak_src_oauth }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      no_log: true
+
+    - name: Sources | Assert every client secret is present
+      ansible.builtin.assert:
+        that: _ak_src_secrets | dict2items | selectattr('value', 'equalto', '') | list | length == 0
+        fail_msg: >-
+          An OAuth source declares a client id but no client secret was found in this
+          estate's Vaultwarden item. Store it as `source_<slug>_secret` (or the
+          `consumer_secret_vault_field` the source names) with the Store Secret job,
+          then re-run this deploy. Sources missing a secret:
+          {{ _ak_src_secrets | dict2items | selectattr('value', 'equalto', '')
+             | map(attribute='key') | join(', ') }}
+
+    - name: Sources | List flows and existing sources
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/{{ item }}?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_src_refs
+      loop:
+        - flows/instances/
+        - sources/oauth/
+      changed_when: false
+      no_log: true
+
+    - name: Sources | Index flows by slug and sources by slug
+      ansible.builtin.set_fact:
+        _ak_src_flow_index: >-
+          {{ dict((_ak_src_refs.results[0].json.results | default([]) | map(attribute='slug') | list)
+                  | zip(_ak_src_refs.results[0].json.results | default([]) | map(attribute='pk') | list)) }}
+        _ak_src_index: >-
+          {{ dict((_ak_src_refs.results[1].json.results | default([]) | map(attribute='slug') | list)
+                  | zip(_ak_src_refs.results[1].json.results | default([]))) }}
+
+    - name: Sources | Assert every referenced flow exists
+      ansible.builtin.assert:
+        that:
+          # Parenthesised deliberately: a Jinja filter binds tighter than `+`, so an
+          # unbracketed concatenation would test only the last list.
+          - >-
+            ((_ak_src_oauth | selectattr('authentication_flow', 'defined')
+              | map(attribute='authentication_flow') | list)
+             + (_ak_src_oauth | selectattr('enrollment_flow', 'defined')
+                | map(attribute='enrollment_flow') | list)
+             + (_ak_src_oauth | selectattr('pre_authentication_flow', 'defined')
+                | map(attribute='pre_authentication_flow') | list))
+            | select('string') | select()
+            | reject('in', _ak_src_flow_index.keys() | list)
+            | list | length == 0
+        fail_msg: >-
+          A `sources.oauth` entry names an `authentication_flow`, `enrollment_flow` or
+          `pre_authentication_flow` that does not exist. Use the slug of a flow the
+          installer shipped (default-source-authentication,
+          default-source-enrollment) or one declared under `flows`.
+
+    - name: Sources | Create declared sources that do not exist
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/sources/oauth/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_src_body | combine({'slug': item.slug}) }}"
+        status_code: 201
+      loop: "{{ _ak_src_oauth }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      when: item.slug not in _ak_src_index
+      changed_when: true
+      no_log: true
+
+    # The secret is in the body but not in the comparison: Authentik never returns
+    # it, so it can neither confirm nor contradict drift. Everything comparable
+    # decides whether the call is made at all.
+    - name: Sources | Update declared sources that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/sources/oauth/{{ item.slug }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_src_body }}"
+        status_code: 200
+      vars:
+        _ak_src_comparable: >-
+          {{ _ak_src_body | dict2items
+             | rejectattr('key', 'equalto', 'consumer_secret') | items2dict }}
+      loop: "{{ _ak_src_oauth }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      when:
+        - item.slug in _ak_src_index
+        - (_ak_src_index[item.slug] | combine(_ak_src_comparable)) != _ak_src_index[item.slug]
+      changed_when: true
+      no_log: true

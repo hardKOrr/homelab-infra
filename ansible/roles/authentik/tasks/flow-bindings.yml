@@ -1,0 +1,186 @@
+---
+# Authentik flow stage bindings as code — which stages a flow runs, and in what order.
+#
+# A flow instance is an empty shell; the bindings are the flow. This file attaches
+# declared stages to declared flows:
+#
+#   flows:
+#     - slug: lab-authentication
+#       designation: authentication
+#       stages:
+#         - stage: default-authentication-identification    # required, a stage name
+#           order: 10                                       # required, position in the flow
+#         - stage: default-authentication-password
+#           order: 20
+#         - stage: default-authentication-mfa-validation
+#           order: 30
+#         - stage: default-authentication-login
+#           order: 100
+#
+# Any other key Authentik's binding API accepts (`evaluate_on_plan`,
+# `re_evaluate_policies`, `policy_engine_mode`, `invalid_response_action`) is passed
+# through unchanged.
+#
+# SEMANTICS. A binding is identified by the pair (flow, stage) — one stage appears
+# at most once in one flow, which is how re-running this changes a stage's `order`
+# instead of adding a second copy of it. Declared bindings are created and kept
+# correct. Bindings on a declared flow that are NOT declared are left alone, so a
+# partial declaration adds to a flow rather than silently emptying it. A flow that
+# needs to be exactly its declaration sets `stages_exact: true`, and every binding on
+# it that is not declared is then deleted — the one destructive option in this role,
+# off by default, and it can make a login flow unusable if the declaration is
+# incomplete.
+#
+# ORDER. Last of the identity files: a binding names a flow (flows.yml) and a stage
+# (authenticators.yml, or one of the defaults the installer shipped), so both have to
+# exist first.
+#
+# Inputs from main.yml: _authentik_api_token.
+
+- name: Flow bindings | Resolve the flows that declare stages
+  ansible.builtin.set_fact:
+    _ak_fb_flows: >-
+      {{ app_config.flows | default([], true) | selectattr('stages', 'defined') | list }}
+
+- name: Flow bindings | Bind the declared stages
+  when: _ak_fb_flows | length > 0
+  vars:
+    _ak_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    _ak_fb_reserved: [stage, flow]
+  block:
+    # One flat list of {flow: <slug>, stage: <name>, order: N, ...}. The nested shape
+    # is what an operator wants to write; a flat list is what a loop can act on.
+    - name: Flow bindings | Flatten the declaration into one list
+      ansible.builtin.set_fact:
+        _ak_fb_bindings: >-
+          {{ _ak_fb_bindings | default([])
+             + (item.stages | map('combine', {'flow': item.slug}) | list) }}
+      loop: "{{ _ak_fb_flows }}"
+      loop_control:
+        label: "{{ item.slug }}"
+
+    - name: Flow bindings | Assert every binding names a stage and an order
+      ansible.builtin.assert:
+        that:
+          - _ak_fb_bindings | rejectattr('stage', 'defined') | list | length == 0
+          - _ak_fb_bindings | rejectattr('order', 'defined') | list | length == 0
+        fail_msg: >-
+          Every entry under a flow's `stages` needs a `stage` name and an `order` in
+          config/apps/{{ instance }}.yml.
+
+    - name: Flow bindings | List flows, stages and existing bindings
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/{{ item }}?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_fb_refs
+      loop:
+        - flows/instances/
+        - stages/all/
+        - flows/bindings/
+      changed_when: false
+      no_log: true
+
+    - name: Flow bindings | Index flows, stages and bindings
+      ansible.builtin.set_fact:
+        _ak_fb_flow_index: >-
+          {{ dict((_ak_fb_refs.results[0].json.results | default([]) | map(attribute='slug') | list)
+                  | zip(_ak_fb_refs.results[0].json.results | default([]) | map(attribute='pk') | list)) }}
+        _ak_fb_stage_index: >-
+          {{ dict((_ak_fb_refs.results[1].json.results | default([]) | map(attribute='name') | list)
+                  | zip(_ak_fb_refs.results[1].json.results | default([]) | map(attribute='pk') | list)) }}
+        # Keyed by "<flow pk>|<stage pk>" — the pair that identifies a binding.
+        _ak_fb_index: >-
+          {{ dict((_ak_fb_refs.results[2].json.results | default([])
+                   | map(attribute='target') | zip(_ak_fb_refs.results[2].json.results | default([])
+                                                   | map(attribute='stage'))
+                   | map('join', '|') | list)
+                  | zip(_ak_fb_refs.results[2].json.results | default([]))) }}
+
+    - name: Flow bindings | Assert every binding names a flow and a stage that exist
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ak_fb_bindings | map(attribute='flow')
+            | reject('in', _ak_fb_flow_index.keys() | list) | list | length == 0
+          - >-
+            _ak_fb_bindings | map(attribute='stage')
+            | reject('in', _ak_fb_stage_index.keys() | list) | list | length == 0
+        fail_msg: >-
+          A flow's `stages` entry names a stage that does not exist in Authentik. The
+          installer's default stages are listed in the Authentik UI under Flows and
+          Stages; a stage of your own must be declared under `authenticators`.
+
+    - name: Flow bindings | Create declared bindings that do not exist
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/bindings/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_fb_body }}"
+        status_code: 201
+      vars:
+        _ak_fb_body: >-
+          {{ {'target': _ak_fb_flow_index[item.flow],
+              'stage': _ak_fb_stage_index[item.stage]}
+             | combine(item | dict2items | rejectattr('key', 'in', _ak_fb_reserved) | items2dict) }}
+      loop: "{{ _ak_fb_bindings }}"
+      loop_control:
+        label: "{{ item.flow }}/{{ item.stage }}"
+      when: >-
+        (_ak_fb_flow_index[item.flow] ~ '|' ~ _ak_fb_stage_index[item.stage])
+        not in _ak_fb_index
+      changed_when: true
+
+    - name: Flow bindings | Update declared bindings that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/bindings/{{ _ak_fb_index[_ak_fb_key].pk }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ item | dict2items | rejectattr('key', 'in', _ak_fb_reserved) | items2dict }}"
+        status_code: 200
+      vars:
+        _ak_fb_key: "{{ _ak_fb_flow_index[item.flow] }}|{{ _ak_fb_stage_index[item.stage] }}"
+      loop: "{{ _ak_fb_bindings }}"
+      loop_control:
+        label: "{{ item.flow }}/{{ item.stage }}"
+      when:
+        - _ak_fb_key in _ak_fb_index
+        - >-
+          (_ak_fb_index[_ak_fb_key]
+           | combine(item | dict2items | rejectattr('key', 'in', _ak_fb_reserved) | items2dict))
+          != _ak_fb_index[_ak_fb_key]
+      changed_when: true
+
+    # ── Exact mode ────────────────────────────────────────────────────────────
+    # Opt-in per flow. Deletes bindings the declaration does not mention, which is
+    # what "this flow is exactly what config says" costs. Everything else in this
+    # role only ever adds or corrects.
+    - name: Flow bindings | Resolve the exact flows and the declared binding keys
+      ansible.builtin.set_fact:
+        _ak_fb_exact_pks: >-
+          {{ _ak_fb_flows | selectattr('stages_exact', 'defined') | selectattr('stages_exact')
+             | map(attribute='slug') | map('extract', _ak_fb_flow_index) | list }}
+        _ak_fb_declared_keys: >-
+          {{ _ak_fb_bindings | map(attribute='flow') | map('extract', _ak_fb_flow_index)
+             | zip(_ak_fb_bindings | map(attribute='stage') | map('extract', _ak_fb_stage_index))
+             | map('join', '|') | list }}
+
+    - name: Flow bindings | Remove undeclared bindings from exact flows
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/bindings/{{ item.pk }}/"
+        method: DELETE
+        headers: "{{ _ak_headers }}"
+        status_code: [204, 404]
+      loop: >-
+        {{ _ak_fb_refs.results[2].json.results | default([])
+           | selectattr('target', 'in', _ak_fb_exact_pks) | list }}
+      loop_control:
+        label: "{{ item.pk }}"
+      when: (item.target ~ '|' ~ item.stage) not in _ak_fb_declared_keys
+      changed_when: true

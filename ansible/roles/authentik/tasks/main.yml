@@ -10,9 +10,12 @@
 #   AUTHENTIK_BOOTSTRAP_TOKEN     akadmin's API token (first start only) — this is
 #                                 what tasks/wiring/authentik.yml authenticates with
 #
-# The role deploys Authentik and hands back its endpoint and API token. Directory
-# content — account names, groups, social login sources, MFA enforcement — is
-# operator policy set in the Authentik UI, not deployment state.
+# The role deploys Authentik and hands back its endpoint and API token, then applies
+# the identity surface declared in config/apps/<instance>.yml: groups and accounts
+# (directory.yml), flows and their stage bindings (flows.yml, flow-bindings.yml),
+# authenticator and MFA stages (authenticators.yml), OAuth login sources
+# (sources.yml) and brands (brands.yml). Every one of them is a no-op when its key is
+# absent, and none of them touches an object config does not declare.
 #
 # Continuity: the existing .env is read back before anything is generated, so a
 # re-run reuses the same values. Regenerating PG_PASS would lock the server out of
@@ -278,6 +281,32 @@
 # created and kept correct, and what is not declared is never touched or deleted.
 - name: Apply the declared directory
   ansible.builtin.include_tasks: directory.yml
+
+# ── Identity surface as code ──────────────────────────────────────────────────
+# Flows, authenticator/MFA stages, stage bindings, OAuth sources and brands. Each
+# file is a no-op when its key is absent from config, which is the common case —
+# the installer's defaults are a working identity provider on their own.
+#
+# The order is a dependency chain and is not arbitrary:
+#   flows          create the flow instances first — everything below names one
+#   authenticators stages may name a configure_flow created above
+#   flow-bindings  a binding names both a flow and a stage, so both exist by now
+#   sources        name an authentication and an enrolment flow
+#   brands         name up to six flows, including ones created in this same run
+- name: Apply the declared flows
+  ansible.builtin.include_tasks: flows.yml
+
+- name: Apply the declared authenticator and MFA stages
+  ansible.builtin.include_tasks: authenticators.yml
+
+- name: Bind the declared stages into their flows
+  ansible.builtin.include_tasks: flow-bindings.yml
+
+- name: Apply the declared OAuth sources
+  ansible.builtin.include_tasks: sources.yml
+
+- name: Apply the declared brands
+  ansible.builtin.include_tasks: brands.yml
 
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the API endpoint to the playbook

@@ -1,0 +1,128 @@
+---
+# Authentik flows as code — the flow instances themselves.
+#
+# A flow is the sequence a browser walks through to sign in, enrol, log out or
+# configure a device. Authentik ships a working default set, so most labs declare
+# nothing here and get exactly what the installer created. Declaring a flow is for
+# the lab that wants a different login experience than the default one — a
+# passwordless flow, a second authentication flow for one estate, an enrolment flow
+# for a public source.
+#
+# WHAT IS DECLARED — config/apps/<instance>.yml, key `flows`:
+#
+#   flows:
+#     - slug: lab-authentication          # required, the URL segment and identity
+#       designation: authentication       # required: authentication | authorization |
+#                                         #   invalidation | enrollment | unenrollment |
+#                                         #   recovery | stage_configuration
+#       name: Lab login                   # default: the slug
+#       title: Sign in to the lab         # default: the name
+#       authentication: none              # none | require_authenticated |
+#                                         #   require_unauthenticated | require_superuser | ...
+#       layout: stacked                   # stacked | content_left | content_right | sidebar_*
+#       denied_action: message_continue
+#       policy_engine_mode: any
+#       compatibility_mode: false
+#       stages: [...]                     # bound by flow-bindings.yml, not here
+#
+# Any other key Authentik's flow API accepts is passed through unchanged, so a field
+# added by a future release is configurable the day it ships without a change here.
+#
+# SEMANTICS. Same contract as directory.yml: a declared flow that does not exist is
+# created, a declared flow that drifted is patched back, and a flow that is NOT
+# declared is never read into, never patched and never deleted. Removing a flow from
+# config stops managing it. Deleting a flow can lock every user out of the instance
+# and stays a deliberate act in the UI.
+#
+# ORDER. Runs before authenticators.yml, because an authenticator stage's
+# `configure_flow` names a flow that has to exist first. Stage BINDINGS are the
+# other way round and run last, in flow-bindings.yml.
+#
+# Inputs from main.yml: _authentik_api_token.
+
+- name: Flows | Resolve the declared flows
+  ansible.builtin.set_fact:
+    _ak_flows: "{{ app_config.flows | default([], true) }}"
+
+- name: Flows | Manage the declared flows
+  when: _ak_flows | length > 0
+  vars:
+    _ak_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    # Keys this file spells out itself or hands to another file; everything else in
+    # a declaration is passed to the API verbatim.
+    _ak_flow_reserved: [slug, name, title, designation, stages, stages_exact]
+  block:
+    - name: Flows | Assert every flow carries a slug and a designation
+      ansible.builtin.assert:
+        that:
+          - _ak_flows | rejectattr('slug', 'defined') | list | length == 0
+          - _ak_flows | rejectattr('designation', 'defined') | list | length == 0
+        fail_msg: >-
+          Every entry under `flows` needs a `slug` and a `designation` in
+          config/apps/{{ instance }}.yml.
+
+    - name: Flows | List existing flows
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_flow_list
+      changed_when: false
+      no_log: true
+
+    - name: Flows | Index existing flows by slug
+      ansible.builtin.set_fact:
+        _ak_flow_index: >-
+          {{ dict((_ak_flow_list.json.results | default([]) | map(attribute='slug') | list)
+                  | zip(_ak_flow_list.json.results | default([]))) }}
+
+    - name: Flows | Create declared flows that do not exist
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_flow_desired }}"
+        status_code: 201
+      vars:
+        _ak_flow_desired: >-
+          {{ {'slug': item.slug,
+              'name': item.name | default(item.slug, true),
+              'title': item.title | default(item.name | default(item.slug, true), true),
+              'designation': item.designation}
+             | combine(item | dict2items | rejectattr('key', 'in', _ak_flow_reserved) | items2dict) }}
+      loop: "{{ _ak_flows }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      when: item.slug not in _ak_flow_index
+      changed_when: true
+
+    # Drift is decided by merging the declaration onto what Authentik holds: if the
+    # merge changes nothing, nothing is declared differently and no call is made.
+    # Read-only fields the API returns (pk, export_url, background_url) are untouched
+    # by the merge and therefore never provoke a write.
+    - name: Flows | Update declared flows that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/flows/instances/{{ item.slug }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_flow_desired }}"
+        status_code: 200
+      vars:
+        _ak_flow_desired: >-
+          {{ {'name': item.name | default(item.slug, true),
+              'title': item.title | default(item.name | default(item.slug, true), true),
+              'designation': item.designation}
+             | combine(item | dict2items | rejectattr('key', 'in', _ak_flow_reserved) | items2dict) }}
+      loop: "{{ _ak_flows }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      when:
+        - item.slug in _ak_flow_index
+        - (_ak_flow_index[item.slug] | combine(_ak_flow_desired)) != _ak_flow_index[item.slug]
+      changed_when: true

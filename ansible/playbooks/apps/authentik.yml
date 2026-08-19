@@ -252,11 +252,12 @@
           is in the Vaultwarden item {{ _authentik_sso_vault_item }}, under
           admin_password. facts.yml is topology only and never holds it.
           Apps register per their routing.identity mode from their next deploy
-          onward. Directory content is yours: create your accounts in the
-          Authentik UI and add them to the group '{{ wiring_auth_group }}', which
-          the first wired app creates empty. Until an account is in that group it
-          can reach no published application, and forward_auth apps will refuse
-          the sign-in.
+          onward. Accounts, groups, MFA, login sources, flows and brands are
+          declared in config/apps/{{ instance }}.yml and applied by this deploy —
+          an account reaches a published application only through the group
+          '{{ wiring_auth_group }}', so put every person in it. Each generated
+          account password is in {{ _authentik_sso_vault_item }} as
+          user_<username>_password.
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops

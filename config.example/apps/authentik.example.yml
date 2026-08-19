@@ -91,7 +91,118 @@
 # Optional per account: is_active (default true), attributes (a free-form mapping
 # Authentik exposes to policies and property mappings), path (default `users`),
 # rotate_password (default false).
+
+# ── MFA: authenticator stages ──────────────────────────────────────────────────
+# A fresh Authentik OFFERS multi-factor and does not require it: the validation
+# stage in the login flow is set to `not_configured_action: skip`, so an account
+# with no second factor signs in on a password alone. Two declarations turn that
+# into enforcement.
 #
-# Not managed from here: social login sources, MFA/authenticator stages and flow
-# doctrine. Those are Authentik objects with no config surface in this repo yet —
-# set them in the UI until there is one.
+# `configure` is the setting that makes this painless — a user with no factor is
+# sent into the named setup stage on their next login instead of being refused, so
+# enrolment happens by itself and nobody has to be chased. `deny` refuses the login
+# outright; declare it only once everybody has enrolled, or you lock the lab out.
+#
+# The keys under `authenticators` are Authentik's own stage kinds — totp, static,
+# webauthn, duo, sms, email, validate — and every field each kind accepts is passed
+# straight through, so anything the UI can set is settable here.
+#
+# authenticators:
+#   validate:
+#     - name: default-authentication-mfa-validation   # the stage the login flow runs
+#       device_classes: [totp, webauthn, static]      # which factors count
+#       not_configured_action: configure              # skip | deny | configure
+#       configuration_stages:                         # where `configure` sends them
+#         - default-authenticator-totp-setup
+#   totp:
+#     - name: default-authenticator-totp-setup
+#       friendly_name: Authenticator app              # what the login page calls it
+#       digits: "6"
+#   static:
+#     - name: default-authenticator-static-setup      # printable recovery codes
+#       token_count: 6
+
+# ── Flows and stage bindings ───────────────────────────────────────────────────
+# Only for a lab that wants a different login experience than the shipped one — a
+# second authentication flow for one estate, a passwordless flow, an enrolment flow
+# for a public source. A flow is identified by its slug; `stages` binds existing
+# stages into it in `order` sequence.
+#
+# Declared bindings are added and corrected; bindings you made in the UI on the same
+# flow are left alone unless the flow sets `stages_exact: true`, which deletes every
+# binding this file does not list — the one destructive option in this role, and it
+# can make a login flow unusable if the list is incomplete.
+#
+# flows:
+#   - slug: lab-authentication
+#     designation: authentication
+#     name: Lab login
+#     title: Sign in to the lab
+#     stages:
+#       - stage: default-authentication-identification
+#         order: 10
+#       - stage: default-authentication-password
+#         order: 20
+#       - stage: default-authentication-mfa-validation
+#         order: 30
+#       - stage: default-authentication-login
+#         order: 100
+
+# ── OAuth login sources ────────────────────────────────────────────────────────
+# "Sign in with Google / GitHub / …" — Authentik as the client of somebody else's
+# identity provider. You register the lab with that provider first and it gives you
+# a client id and a client secret.
+#
+# The client id goes here; THE CLIENT SECRET DOES NOT. Store it in the Vaultwarden
+# item `homelab-infra/sso` (or `homelab-infra/estates/<estate>/sso`) under the field
+# name `source_<slug>_secret` using the Store Secret job, exactly as Caddy's DNS
+# challenge token is stored. The deploy fails with the missing field named if it is
+# not there.
+#
+# `user_matching_mode: email_link` links a Google login to the existing account with
+# the same e-mail address, which is what makes a source an additional way into an
+# account rather than a second account.
+#
+# sources:
+#   oauth:
+#     - slug: google                  # also the callback URL segment
+#       provider_type: google         # google, github, gitlab, discord, okta,
+#                                     #   entraid, apple, openidconnect, ...
+#       name: Google
+#       consumer_key: "1234567890-abcdef.apps.googleusercontent.com"
+#       user_matching_mode: email_link
+#       enrollment_flow: default-source-enrollment
+#       authentication_flow: default-source-authentication
+#
+#     # A provider with no built-in profile needs its endpoints named:
+#     - slug: work-idp
+#       provider_type: openidconnect
+#       name: Work SSO
+#       consumer_key: "homelab"
+#       oidc_well_known_url: https://idp.example.com/.well-known/openid-configuration
+#       authorization_url: https://idp.example.com/authorize
+#       access_token_url: https://idp.example.com/token
+#       profile_url: https://idp.example.com/userinfo
+
+# ── Brands ─────────────────────────────────────────────────────────────────────
+# What the login page calls itself, and which flows it runs. A brand is matched by
+# the domain the browser asked for, so a two-estate lab can present two sign-in
+# pages — and point each at its own flows. The installer's catch-all brand
+# `authentik-default` is left alone unless you declare it, and it should be: it
+# answers every domain no declared brand matches.
+#
+# Logo and favicon are paths Authentik serves, not local files. Put your own under
+# the instance's media directory and reference them as /media/public/<file>.
+#
+# brands:
+#   - domain: auth.example.com
+#     branding_title: Example Lab
+#     branding_logo: /media/public/logo.svg
+#     branding_favicon: /media/public/favicon.png
+#     flow_authentication: default-authentication-flow
+#     flow_invalidation: default-invalidation-flow
+#     flow_user_settings: default-user-settings-flow
+#     flow_recovery: ""              # empty string = no password reset link
+#
+# LISTS REPLACE here too: declaring any of the four keys above replaces the default
+# from vars/app-defaults/authentik.yml, which is an empty list in each case.

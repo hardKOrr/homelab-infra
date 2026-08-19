@@ -1,0 +1,150 @@
+---
+# Authentik brands as code — what a login page says it is, and which flows it runs.
+#
+# A brand is matched by the domain the browser asked for, so a lab with two estates
+# can present two different sign-in pages from one Authentik, and — more than
+# cosmetics — point each at its own authentication, invalidation and recovery flows.
+# The installer ships one brand, `authentik-default`, which matches everything.
+#
+# WHAT IS DECLARED — config/apps/<instance>.yml, key `brands`:
+#
+#   brands:
+#     - domain: auth.example.com          # required; the match key and the identity
+#       default: false                    # the brand used when no domain matches
+#       branding_title: Example Lab
+#       branding_logo: /media/public/logo.svg
+#       branding_favicon: /media/public/favicon.png
+#       branding_custom_css: ""
+#       flow_authentication: default-authentication-flow    # flow slugs, resolved here
+#       flow_invalidation: default-invalidation-flow
+#       flow_recovery: ""
+#       flow_user_settings: default-user-settings-flow
+#       attributes: {}
+#
+# Any other key Authentik's brand API accepts is passed through unchanged.
+#
+# Logo and favicon are paths Authentik serves, not local files. Anything under
+# /media/public/ is served from the instance's media directory, which this role
+# creates and which the operator fills; the installer's own assets live under
+# /static/dist/assets/.
+#
+# SEMANTICS. Same contract as directory.yml: declared is created and kept correct,
+# undeclared is never touched and never deleted. In particular the installer's
+# `authentik-default` brand survives unless it is declared — and it should survive:
+# it is what answers a request for a domain no declared brand matches.
+#
+# ORDER. Last — every flow a brand names has to exist, including one created by
+# flows.yml in this same run.
+#
+# Inputs from main.yml: _authentik_api_token.
+
+- name: Brands | Resolve the declared brands
+  ansible.builtin.set_fact:
+    _ak_brands: "{{ app_config.brands | default([], true) }}"
+
+- name: Brands | Manage the declared brands
+  when: _ak_brands | length > 0
+  vars:
+    _ak_api: "http://localhost:{{ app_config.app.port }}/api/v3"
+    _ak_headers:
+      Authorization: "Bearer {{ _authentik_api_token }}"
+      Accept: "application/json"
+    # Flow references are resolved from slug to uuid; `domain` identifies the brand.
+    # Everything else goes to the API as written.
+    _ak_brand_flow_keys:
+      - flow_authentication
+      - flow_invalidation
+      - flow_recovery
+      - flow_unenrollment
+      - flow_user_settings
+      - flow_device_code
+    # Templated lazily, once per loop iteration, with `item` in scope, so the create
+    # and the update below share one definition. Serialized through JSON on purpose:
+    # a template carrying {% %} statement blocks renders to a STRING, and the body of
+    # a uri task has to be a mapping — emitting JSON and parsing it back restores the
+    # type (same reason as the estate map in tasks/load-user-vars.yml).
+    _ak_brand_body_json: >-
+      {%- set body = {} -%}
+      {%- for key, value in item.items() if key != 'domain' -%}
+      {%- set _ = body.update({key: (_ak_brand_flow_index[value]
+                                     if key in _ak_brand_flow_keys else value)}) -%}
+      {%- endfor -%}
+      {{ body | to_json }}
+    _ak_brand_body: "{{ _ak_brand_body_json | from_json }}"
+  block:
+    - name: Brands | Assert every brand carries a domain
+      ansible.builtin.assert:
+        that: _ak_brands | rejectattr('domain', 'defined') | list | length == 0
+        fail_msg: >-
+          Every entry under `brands` needs a `domain` in config/apps/{{ instance }}.yml.
+
+    - name: Brands | List flows and existing brands
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/{{ item }}?page_size=1000"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_brand_refs
+      loop:
+        - flows/instances/
+        - core/brands/
+      changed_when: false
+      no_log: true
+
+    - name: Brands | Index flows by slug and brands by domain
+      ansible.builtin.set_fact:
+        # An empty slug maps to null, which is how a brand clears a flow it should
+        # not offer — `flow_recovery: ""` means "no password reset link here".
+        _ak_brand_flow_index: >-
+          {{ dict((_ak_brand_refs.results[0].json.results | default([]) | map(attribute='slug') | list)
+                  | zip(_ak_brand_refs.results[0].json.results | default([]) | map(attribute='pk') | list))
+             | combine({'': None}) }}
+        _ak_brand_index: >-
+          {{ dict((_ak_brand_refs.results[1].json.results | default([]) | map(attribute='domain') | list)
+                  | zip(_ak_brand_refs.results[1].json.results | default([]))) }}
+
+    - name: Brands | Assert every referenced flow exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            _ak_brands | map('dict2items') | flatten
+            | selectattr('key', 'in', _ak_brand_flow_keys)
+            | map(attribute='value') | select('string')
+            | reject('in', _ak_brand_flow_index.keys() | list)
+            | list | length == 0
+        fail_msg: >-
+          A `brands` entry names a flow slug that does not exist. Use the slug of a
+          flow the installer shipped, one declared under `flows`, or an empty string
+          to leave that flow unset.
+
+    - name: Brands | Create declared brands that do not exist
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/brands/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_brand_body | combine({'domain': item.domain}) }}"
+        status_code: 201
+      loop: "{{ _ak_brands }}"
+      loop_control:
+        label: "{{ item.domain }}"
+      when: item.domain not in _ak_brand_index
+      changed_when: true
+
+    # brand_uuid, not pk: brands are the one object in this role whose primary key is
+    # not called pk.
+    - name: Brands | Update declared brands that drifted
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/brands/{{ _ak_brand_index[item.domain].brand_uuid }}/"
+        method: PATCH
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: "{{ _ak_brand_body }}"
+        status_code: 200
+      loop: "{{ _ak_brands }}"
+      loop_control:
+        label: "{{ item.domain }}"
+      when:
+        - item.domain in _ak_brand_index
+        - (_ak_brand_index[item.domain] | combine(_ak_brand_body)) != _ak_brand_index[item.domain]
+      changed_when: true
