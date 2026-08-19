@@ -112,6 +112,33 @@
       when: not (unwire_delete_data | default(false) | bool)
       changed_when: true
 
+    # DELETING PATH, FIRST HALF. `Retain` keeps the backing directory on the node when the
+    # PV object goes: the local-path provisioner only cleans up under `Delete`. So on the
+    # explicit delete path the policy is flipped on each volume — the volume, not the
+    # StorageClass, whose reclaimPolicy is immutable — BEFORE the namespace is deleted.
+    # Deleting the namespace then deletes the claims, which releases volumes that now say
+    # Delete, and the provisioner removes the directories. Without this the job would
+    # delete the PV records, report success, and leave every byte on disk.
+    - name: k8s unwire | Switch the volumes to Delete so their contents go with them
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - patch
+          - pv
+          - "{{ item.split('=')[1] }}"
+          - --type
+          - merge
+          - -p
+          - "{{ {'spec': {'persistentVolumeReclaimPolicy': 'Delete'}} | to_json }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ _k8s_pvcs.stdout_lines | select('search', '=.+') | list }}"
+      loop_control:
+        label: "{{ item.split('=')[0] }}"
+      when: unwire_delete_data | default(false) | bool
+      changed_when: true
+
     - name: k8s unwire | Delete the namespace and everything in it
       ansible.builtin.command:
         argv:
@@ -126,11 +153,10 @@
       become: true
       changed_when: true
 
-    # DELETING PATH. Released volumes are not deleted by removing the namespace — that is
-    # the entire point of Retain — so on the explicit delete_data path they are removed by
-    # name afterwards. Without this, `delete_data: true` would leave the data on disk and
-    # report success, which is the worse of the two possible lies.
-    - name: k8s unwire | Delete the released volumes
+    # DELETING PATH, SECOND HALF. A backstop for volumes the provisioner did not collect —
+    # one whose claim was already gone, so deleting the namespace released nothing. The
+    # usual case is that every volume is already absent, which is why this ignores that.
+    - name: k8s unwire | Delete any volumes the provisioner did not collect
       ansible.builtin.command:
         argv:
           - k3s
@@ -138,6 +164,7 @@
           - delete
           - pv
           - "{{ item.split('=')[1] }}"
+          - --ignore-not-found=true
           - --wait=false
       delegate_to: "{{ k8s_api_host }}"
       become: true
