@@ -60,6 +60,13 @@
 # Rollout status rather than a fixed sleep: it returns as soon as the new pods are up and
 # fails if they never come up, which is the difference between a deploy job that reports
 # what happened and one that reports that it finished.
+#
+# `failed_when: false` is load-bearing, not laziness. Without it this task ends the play
+# the moment a rollout times out, and the diagnostic block below — written specifically to
+# explain a timed-out rollout — never runs. That is exactly what happened on the first
+# Mixpost deploy: the job reported `timed out waiting for the condition` and nothing else,
+# while the namespace was holding a CrashLoopBackOff and an event log that named the cause
+# outright. The run still fails, but it fails at the end of the block, with the evidence.
 - name: k8s apply | Wait for each workload to roll out
   ansible.builtin.command:
     argv:
@@ -75,14 +82,16 @@
   become: true
   loop: "{{ k8s_wait_for | default([]) }}"
   register: _k8s_rollout
+  failed_when: false
   changed_when: false
 
 # A rollout that times out leaves the pods' own reason in the namespace and nowhere else,
 # so the job prints it. Without this the operator gets `timed out waiting for the
-# condition` and has to go and find the cluster to learn that an image tag was wrong or a
-# PVC was unbound.
+# condition` and has to go and find the cluster to learn that an image tag was wrong, a PVC
+# was unbound, or the guest CPU model is too old for the image.
 - name: k8s apply | Report why a rollout did not complete
-  when: _k8s_rollout is failed
+  when: (_k8s_rollout.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'ne', 0) | list | length) > 0
   block:
     - name: k8s apply | Read pod state in the namespace
       ansible.builtin.command:
@@ -115,13 +124,46 @@
       register: _k8s_events
       changed_when: false
 
+    # The pod's own log is where a container that starts and dies says why — an event log
+    # shows "Back-off restarting failed container" and stops there. `--previous` on a
+    # crash-looping pod is the terminated instance's output, which is the one that failed.
+    - name: k8s apply | Read the logs of pods that are not ready
+      ansible.builtin.shell:
+        cmd: |
+          set -uo pipefail
+          for pod in $(k3s kubectl -n "$NS" get pods \
+                --field-selector=status.phase!=Succeeded \
+                -o jsonpath='{range .items[?(@.status.containerStatuses[0].ready==false)]}{.metadata.name}{" "}{end}'); do
+            echo "--- $pod ---"
+            k3s kubectl -n "$NS" logs "$pod" --tail=20 --previous 2>/dev/null \
+              || k3s kubectl -n "$NS" logs "$pod" --tail=20 2>&1
+          done
+      args:
+        executable: /bin/bash
+      environment:
+        NS: "{{ k8s_namespace }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _k8s_logs
+      failed_when: false
+      changed_when: false
+
     - name: k8s apply | Fail with the namespace's own account of it
       ansible.builtin.fail:
         msg: >-
           A workload in {{ k8s_namespace }} did not become available.
 
+
           Pods:
+
           {{ _k8s_pods.stdout }}
 
+
+          Logs from pods that are not ready:
+
+          {{ _k8s_logs.stdout | default('(none read)') }}
+
+
           Recent events:
-          {{ _k8s_events.stdout_lines[-25:] | join('\n') }}
+
+          {{ _k8s_events.stdout_lines[-20:] | join('\n') }}
