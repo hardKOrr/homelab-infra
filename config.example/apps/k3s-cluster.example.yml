@@ -96,7 +96,12 @@ storage:
   #
   # Replicated storage (Longhorn) is the fix for that and is a separate piece of work. It
   # is also not a backup: see the backup block below.
-  class: local-path
+
+  # The platform declares its own StorageClass rather than using the `local-path` one
+  # k3s ships, because reclaimPolicy below is immutable on an existing class. Same
+  # provisioner, no extra components. The bundled class is demoted from default and
+  # remains usable by anything that names it explicitly.
+  class: homelab-local-path
   path: /var/lib/rancher/k3s/storage
 
   # Retain, not Delete. Deleting a namespace by hand does not thereby destroy its data —

@@ -118,7 +118,12 @@ k3s_cluster_defaults:
     #
     # Longhorn — replicated volumes that do reschedule — is wanted and has its own
     # queue row. It buys availability, not backup, and does not replace the dump below.
-    class: local-path
+    # The platform's OWN class, not the `local-path` k3s ships. reclaimPolicy is
+    # immutable once a StorageClass exists, so Retain cannot be applied to the bundled
+    # one at all — and a class we owned by editing would be reverted by a future k3s
+    # upgrade. Same provisioner, so no second controller is involved; the bundled class
+    # is demoted from default and stays available to anything naming it explicitly.
+    class: homelab-local-path
     path: /var/lib/rancher/k3s/storage
     # Retain, not Delete: an operator who deletes a namespace by hand does not thereby
     # consent to losing its data. Deliberate deletion goes through the removal job's

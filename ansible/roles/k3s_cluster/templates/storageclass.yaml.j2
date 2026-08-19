@@ -1,0 +1,32 @@
+# The platform's own default StorageClass — managed by homelab-infra.
+#
+# A separate class rather than an edit to the one k3s ships, for two reasons. The first is
+# that Kubernetes forbids it: `reclaimPolicy` is immutable, and patching k3s's `local-path`
+# answers `Forbidden: updates to reclaimPolicy are forbidden`. The second is that owning
+# the object is better anyway — k3s reapplies its bundled addons when their manifests
+# change, so a class we edited would be reverted by some future k3s upgrade, silently and
+# at the worst moment.
+#
+# It uses the SAME provisioner as the bundled class. The local-path provisioner claims
+# PersistentVolumeClaims by provisioner name, not by class name, so this needs no second
+# controller and no extra pod.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ k8s_cluster_config.storage.class }}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+    # Stated on the object itself, because this is the property most likely to be
+    # forgotten by whoever reads `kubectl get sc` two years from now and sees a
+    # three-node cluster.
+    homelab-infra.io/description: >-
+      Node-pinned. A volume is a directory on one node's disk and pins its pod to that
+      node; if the node is unavailable the pod stays Pending rather than rescheduling.
+      The control plane is highly available. Data on this class is not.
+provisioner: rancher.io/local-path
+reclaimPolicy: {{ k8s_cluster_config.storage.reclaim_policy }}
+# Matches the bundled class. Binding at first consumer lets the scheduler place the pod
+# before the volume is created, so the volume lands on the node the pod actually got
+# rather than pinning the pod to a node chosen before scheduling.
+volumeBindingMode: WaitForFirstConsumer

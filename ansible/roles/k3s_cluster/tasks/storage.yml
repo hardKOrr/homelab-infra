@@ -5,7 +5,7 @@
 #
 # WHAT THIS STORAGE IS, PLAINLY
 #
-# k3s's local-path provisioner backs a PVC with a directory on ONE node's disk. The pod
+# The local-path provisioner backs a PVC with a directory on ONE node's disk. The pod
 # that mounts it is therefore pinned to that node for the life of the volume. When the
 # node is unavailable the pod stays Pending — it does not reschedule, and the data is not
 # reachable from anywhere else. A three-node control plane does not change this. No
@@ -15,17 +15,39 @@
 # docs/meta/204-kubernetes-hosting-backend/notes.md: replicated storage (Longhorn) has
 # its own queue row, buys availability rather than backup, and does not replace the
 # application-consistent dump this slice requires.
+#
+# WHY THIS CLASS IS OURS AND NOT k3s's
+#
+# The first implementation patched k3s's bundled `local-path` class to reclaimPolicy
+# Retain. Kubernetes refuses that outright — `Forbidden: updates to reclaimPolicy are
+# forbidden` — because the field is immutable once a class exists. Declaring our own class
+# with the same provisioner is both the only way to get Retain and the better shape: k3s
+# reapplies bundled addons when their manifests change, so a class we had edited would be
+# reverted by a future k3s upgrade without anything failing at the time.
 
 - name: k3s storage | Assert the storage contract is declared
   ansible.builtin.assert:
     that:
       - k8s_cluster_config.storage.class is defined
+      - k8s_cluster_config.storage.class != 'local-path'
       - k8s_cluster_config.storage.reclaim_policy in ['Retain', 'Delete']
     fail_msg: >-
       storage.class and storage.reclaim_policy (Retain or Delete) must be declared in
-      vars/app-defaults/k3s-cluster.yml.
+      vars/app-defaults/k3s-cluster.yml, and storage.class must not be `local-path` —
+      that name belongs to the class k3s ships, whose reclaimPolicy cannot be changed.
+      Use a distinct name so the platform owns its own class.
 
-- name: k3s storage | Wait for the local-path StorageClass to exist
+# Dropped into k3s's auto-deploy directory so the cluster keeps it applied without this
+# job having to run again.
+- name: k3s storage | Declare the platform StorageClass
+  ansible.builtin.template:
+    src: storageclass.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/homelab-storageclass.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: k3s storage | Wait for the StorageClass to exist
   ansible.builtin.command:
     argv:
       - k3s
@@ -41,53 +63,51 @@
   until: _k3s_sc.rc == 0
   changed_when: false
 
-- name: k3s storage | Read the current reclaim policy
+# Two default classes is not an error Kubernetes raises; it is an ambiguity it resolves
+# arbitrarily. A PVC that names no class would then land on whichever one the API server
+# picked, which may be the bundled Delete-policy class. The annotation is mutable, unlike
+# reclaimPolicy, so the bundled class is demoted rather than replaced — it stays available
+# to anything that names it explicitly.
+- name: k3s storage | Read the bundled class's default annotation
   ansible.builtin.command:
     argv:
       - k3s
       - kubectl
       - get
       - storageclass
-      - "{{ k8s_cluster_config.storage.class }}"
+      - local-path
       - -o
-      - jsonpath={.reclaimPolicy}
-  register: _k3s_sc_policy
+      - jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
+  register: _k3s_bundled_default
+  failed_when: false
   changed_when: false
 
-# k3s ships local-path with reclaimPolicy Delete, which means removing a PVC by any
-# route — including deleting a namespace by hand — destroys the data with it. This slice
-# requires that data is preserved or deleted only according to an explicit option, so the
-# class is flipped to Retain and the removal job's `delete_data` becomes the only thing
-# that removes a volume.
-#
 # The payload is built as a dict and passed through `to_json`, never written as JSON text.
 # A rendered template that happens to parse as a data structure is converted back into one
-# by Ansible and then stringified with Python's repr, so the literal
-# `{"reclaimPolicy":"Retain"}` arrived at kubectl as `{'reclaimPolicy': 'Retain'}` and the
-# API server answered `invalid character '\'' looking for beginning of object key string`.
-# `to_json` marks the value as text and it survives intact. (The same trap is documented at
-# length in tasks/bitwarden/upsert-item.yml, which hit it first.)
-#
-# k3s's deploy controller reapplies a bundled addon only when the manifest file's checksum
-# changes, so this patch survives restarts. A k3s upgrade that ships a changed
-# local-storage.yaml can revert it — which is why the policy is re-asserted below on every
-# run, and why upgrades go through this same role rather than around it.
-- name: k3s storage | Set the declared reclaim policy
+# by Ansible and stringified with Python's repr on the way out, so a literal
+# `{"a":"b"}` reaches the command as `{'a': 'b'}` and the API server rejects it with
+# `invalid character '\'' looking for beginning of object key string`. The same trap is
+# documented at length in tasks/bitwarden/upsert-item.yml, which hit it first.
+- name: k3s storage | Demote the bundled class from being the default
   ansible.builtin.command:
     argv:
       - k3s
       - kubectl
       - patch
       - storageclass
-      - "{{ k8s_cluster_config.storage.class }}"
+      - local-path
       - --type
       - merge
       - -p
-      - "{{ {'reclaimPolicy': k8s_cluster_config.storage.reclaim_policy} | to_json }}"
-  when: _k3s_sc_policy.stdout | trim != k8s_cluster_config.storage.reclaim_policy
+      - >-
+        {{ {'metadata': {'annotations':
+             {'storageclass.kubernetes.io/is-default-class': 'false'}}} | to_json }}
+  when:
+    - _k3s_bundled_default.rc == 0
+    - (_k3s_bundled_default.stdout | trim) == 'true'
   changed_when: true
 
-- name: k3s storage | Confirm the class is the cluster default
+- name: k3s storage | Read the platform class back
   ansible.builtin.command:
     argv:
       - k3s
@@ -96,38 +116,20 @@
       - storageclass
       - "{{ k8s_cluster_config.storage.class }}"
       - -o
-      - jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
-  register: _k3s_sc_default
-  changed_when: false
-
-# A PVC that names no StorageClass gets the default one. If that is not the class whose
-# behavior is documented above, an application silently lands on storage nobody described
-# — so the default is asserted rather than assumed.
-- name: k3s storage | Assert the declared class is the default
-  ansible.builtin.assert:
-    that: (_k3s_sc_default.stdout | trim) == 'true'
-    fail_msg: >-
-      StorageClass {{ k8s_cluster_config.storage.class }} is not marked as the cluster
-      default, so a PVC that names no class would land on storage whose node-loss and
-      reclaim behavior this platform has not declared.
-
-- name: k3s storage | Read the reclaim policy back
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - get
-      - storageclass
-      - "{{ k8s_cluster_config.storage.class }}"
-      - -o
-      - jsonpath={.reclaimPolicy}
+      - jsonpath={.reclaimPolicy}/{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
   register: _k3s_sc_verify
   changed_when: false
 
-- name: k3s storage | Assert the reclaim policy matches the declaration
+# Both properties are asserted, on every run including a converged one, because a
+# converged run is exactly where an unnoticed drift would hide. A PVC that names no class
+# gets the default one, so if the wrong class is default an application silently lands on
+# storage whose node-loss and reclaim behavior this platform never described.
+- name: k3s storage | Assert the platform class is default and holds the declared policy
   ansible.builtin.assert:
-    that: (_k3s_sc_verify.stdout | trim) == k8s_cluster_config.storage.reclaim_policy
+    that:
+      - (_k3s_sc_verify.stdout | trim)
+        == (k8s_cluster_config.storage.reclaim_policy ~ '/true')
     fail_msg: >-
-      StorageClass {{ k8s_cluster_config.storage.class }} reports reclaimPolicy
-      {{ _k3s_sc_verify.stdout | trim }}, not the declared
-      {{ k8s_cluster_config.storage.reclaim_policy }}.
+      StorageClass {{ k8s_cluster_config.storage.class }} reports
+      `{{ _k3s_sc_verify.stdout | trim }}` (reclaimPolicy/is-default), not the declared
+      `{{ k8s_cluster_config.storage.reclaim_policy }}/true`.
