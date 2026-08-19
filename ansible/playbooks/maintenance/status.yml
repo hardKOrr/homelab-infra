@@ -208,8 +208,15 @@
       when:
         - homelabinfra_infra.kubernetes is defined
         - homelabinfra_infra.kubernetes.nodes | default([]) | length > 0
-        - homelabinfra_infra.kubernetes.nodes[0].name in (groups['all'] | default([]))
       block:
+        # Through the shared resolver rather than delegating straight at the inventory
+        # host: an inventory host carries no `ansible_user`, so the delegated kubectl
+        # would connect as whoever the runner is and be refused. resolve-cluster.yml
+        # registers the nodes with the platform's SSH user, exactly as
+        # tasks/proxmox/register-nodes.yml does for Proxmox node delegation.
+        - name: Resolve the cluster's delegation target
+          ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
+
         # custom-columns, not jsonpath. A jsonpath that emits one line per item has to
         # carry a literal `{"\n"}`, and a newline inside a YAML scalar inside a shell
         # heredoc is three layers of escaping to get wrong — it was wrong twice here
@@ -225,7 +232,7 @@
               - --no-headers
               - -o
               - custom-columns=NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,TAINTS:.spec.taints[*].key
-          delegate_to: "{{ homelabinfra_infra.kubernetes.nodes[0].name }}"
+          delegate_to: "{{ k8s_api_host }}"
           become: true
           register: _st_k8s_node_raw
           failed_when: false
@@ -244,7 +251,7 @@
               - --no-headers
               - -o
               - custom-columns=NS:.metadata.namespace,KIND:.kind,NAME:.metadata.name,READY:.status.readyReplicas,WANT:.spec.replicas
-          delegate_to: "{{ homelabinfra_infra.kubernetes.nodes[0].name }}"
+          delegate_to: "{{ k8s_api_host }}"
           become: true
           register: _st_k8s_app_raw
           failed_when: false

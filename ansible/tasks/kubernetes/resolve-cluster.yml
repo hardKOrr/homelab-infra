@@ -1,6 +1,6 @@
 ---
-# Resolve which cluster a Kubernetes-hosted app deploys to, and which node this run will
-# talk to it through.
+# Resolve which cluster a Kubernetes-hosted app deploys to, and make the node this run
+# talks to it through addressable.
 #
 # Every other hosting kind reaches its target by SSH to the guest that runs the app. A
 # Kubernetes app has no such guest — it has an API. This file picks the node that API is
@@ -17,11 +17,25 @@
 # The founding node is used rather than a random one so that two concurrent app deploys
 # queue against the same API server rather than racing two.
 #
+# WHY add_host RATHER THAN DELEGATING TO THE INVENTORY HOST
+#
+# The cluster nodes ARE in the dynamic inventory — this platform tagged them when it
+# created them — but an inventory host carries no `ansible_user`, so a delegated task
+# connects as whoever the runner is. That is `rundeck`, which no guest authorises:
+#
+#   fatal: [localhost -> k3s-1]: UNREACHABLE! => Failed to connect to the host via ssh:
+#   rundeck@192.168.0.21: Permission denied (publickey).
+#
+# tasks/proxmox/register-nodes.yml hit exactly this for Proxmox node delegation and solved
+# it the same way. Registering from the REGISTRY rather than the inventory has a second
+# benefit: the address comes from the facts the cluster deploy wrote, so an app deploy no
+# longer depends on the inventory having been refreshed this run.
+#
 # Inputs:
 #   homelabinfra_infra.kubernetes  — written by playbooks/apps/k3s-cluster.yml
 #
 # Sets:
-#   k8s_api_host        — inventory hostname to delegate kubectl to
+#   k8s_api_host        — host name to delegate kubectl to
 #   k8s_cluster_facts   — the whole registry entry, for callers that need the VIP or the
 #                         storage class
 
@@ -30,24 +44,30 @@
     that:
       - homelabinfra_infra.kubernetes is defined
       - homelabinfra_infra.kubernetes.nodes | default([]) | length > 0
+      - homelabinfra_infra.kubernetes.nodes[0].name is defined
+      - homelabinfra_infra.kubernetes.nodes[0].ip_address is defined
     fail_msg: >-
       No Kubernetes cluster is recorded in config/.generated/facts.yml. Deploy one first
       with the `Deploy k3s Cluster` job (playbooks/apps/k3s-cluster.yml); a
       `kind: kubernetes` app has no guest of its own to fall back to.
 
+# Every node, not only the first: a later task or a status job may want to reach a specific
+# one, and registering the whole cluster costs nothing. The private key comes from
+# ANSIBLE_PRIVATE_KEY_FILE, exported by scripts/lab-run.sh, so it is not set per host —
+# same arrangement as the Proxmox delegates.
+- name: k8s resolve | Register the cluster nodes as delegation targets
+  ansible.builtin.add_host:
+    name: "{{ item.name }}"
+    ansible_host: "{{ item.ip_address }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    groups: k8s_delegates
+  loop: "{{ homelabinfra_infra.kubernetes.nodes }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.ip_address }}"
+  changed_when: false
+  run_once: true
+
 - name: k8s resolve | Publish the cluster facts and API host
   ansible.builtin.set_fact:
     k8s_cluster_facts: "{{ homelabinfra_infra.kubernetes }}"
     k8s_api_host: "{{ homelabinfra_infra.kubernetes.nodes[0].name }}"
-
-# The node is in the dynamic inventory because this platform tagged it when it created it,
-# but an inventory that has not been refreshed this run — or a node that was rebuilt under
-# a new name — would leave the delegate unresolvable, and `delegate_to` an unknown host
-# fails with a message about the host rather than about the cluster.
-- name: k8s resolve | Assert the API host is reachable through the inventory
-  ansible.builtin.assert:
-    that: k8s_api_host in hostvars
-    fail_msg: >-
-      Cluster node {{ k8s_api_host }} is recorded in the registry but is not in the
-      current inventory. Re-run the `Deploy k3s Cluster` job if the node was rebuilt or
-      renamed; its address is how every Kubernetes app deploy reaches the API.
