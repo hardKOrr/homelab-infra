@@ -8,12 +8,12 @@
 #   delete_data: false (default)  — the namespace and its workloads go; the PVCs stay.
 #   delete_data: true             — the namespace goes and its PVCs go with it.
 #
-# The PVCs are preserved by moving them out of the namespace's fate, not by asking
-# Kubernetes politely: deleting a namespace deletes every namespaced object inside it,
-# PVCs included, and no reclaim policy prevents that. So on the preserving path the
-# volumes are released from their claims first, which — because the platform StorageClass
-# is `Retain` — leaves the PersistentVolumes and the data on disk after the namespace is
-# gone. That is the whole reason the class is Retain rather than Delete.
+# Deleting a namespace deletes every namespaced object inside it, PVCs included, and no
+# reclaim policy prevents that. What survives is the PersistentVolume behind the claim,
+# and only because the platform StorageClass is `Retain` — that is the whole reason the
+# class is Retain rather than Delete. The preserving path then clears each surviving
+# volume's claimRef so it is `Available` for reuse rather than parked in `Released`
+# pointing at a claim that no longer exists.
 #
 # The released volumes are then the operator's to reattach or remove. This file will not
 # quietly garbage-collect them later; a volume that outlives its app is a restore point,
@@ -85,33 +85,6 @@
       register: _k8s_pvcs
       changed_when: false
 
-    # PRESERVING PATH. The claimRef is what binds a PersistentVolume to a claim; clearing
-    # it releases the volume without touching its contents. Done BEFORE the namespace is
-    # deleted, because afterwards the PVs are already gone.
-    #
-    # `Retain` is doing the real work — it is why the PV survives its claim's deletion at
-    # all — and this patch is what makes the survivor reusable instead of stuck in
-    # `Released` referencing a claim that no longer exists.
-    - name: k8s unwire | Release the volumes so they outlive the namespace
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - patch
-          - pv
-          - "{{ item.split('=')[1] }}"
-          - --type
-          - merge
-          - -p
-          - "{{ {'spec': {'claimRef': none}} | to_json }}"
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      loop: "{{ _k8s_pvcs.stdout_lines | select('search', '=.+') | list }}"
-      loop_control:
-        label: "{{ item.split('=')[0] }}"
-      when: not (unwire_delete_data | default(false) | bool)
-      changed_when: true
-
     # DELETING PATH, FIRST HALF. `Retain` keeps the backing directory on the node when the
     # PV object goes: the local-path provisioner only cleans up under `Delete`. So on the
     # explicit delete path the policy is flipped on each volume — the volume, not the
@@ -151,6 +124,35 @@
           - --timeout=300s
       delegate_to: "{{ k8s_api_host }}"
       become: true
+      changed_when: true
+
+    # PRESERVING PATH. `Retain` is what makes the PersistentVolume outlive the claim the
+    # namespace deletion just destroyed; this patch is what makes the survivor reusable
+    # rather than stuck in `Released` pointing at a claim that no longer exists.
+    #
+    # AFTER the namespace, not before. Clearing claimRef while the PVC still exists does
+    # nothing durable: the PV controller sees a bound claim and writes the reference
+    # straight back, and the volume ends up Released with a stale claimRef anyway. That is
+    # what the first live removal produced, with this task reporting `changed` throughout.
+    # By this point the claim is gone, so the cleared reference stays cleared.
+    - name: k8s unwire | Release the volumes so they can be reused
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - patch
+          - pv
+          - "{{ item.split('=')[1] }}"
+          - --type
+          - merge
+          - -p
+          - "{{ {'spec': {'claimRef': none}} | to_json }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      loop: "{{ _k8s_pvcs.stdout_lines | select('search', '=.+') | list }}"
+      loop_control:
+        label: "{{ item.split('=')[0] }}"
+      when: not (unwire_delete_data | default(false) | bool)
       changed_when: true
 
     # DELETING PATH, SECOND HALF. A backstop for volumes the provisioner did not collect —
