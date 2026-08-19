@@ -188,13 +188,15 @@
 - name: k3s | Apply this node's taints
   ansible.builtin.include_tasks: taints.yml
 
-# Cluster-scoped objects, so they belong to the cluster rather than to a node and are
-# applied once. The founder is chosen because it is the node guaranteed to exist on
-# every run, including the first, when it is the only member.
-- name: k3s | Establish the persistent-storage contract
-  ansible.builtin.include_tasks: storage.yml
-  when: _k3s_is_founder
-
-- name: k3s | Establish the stable ingress address
-  ansible.builtin.include_tasks: metallb.yml
-  when: _k3s_is_founder
+# storage.yml and metallb.yml are NOT called here, though both are cluster-scoped and the
+# founder is the obvious place to put them.
+#
+# They ran here at first and MetalLB's controller Deployment sat Pending until the wait
+# timed out. Inside this `serial: 1` play the founder is, by definition, the only node
+# that exists yet — and this lab's founder is the quorum-only node carrying a NoSchedule
+# taint. There was nowhere for a pod to go. The failure was not MetalLB's and not the
+# taint's: it was asking a one-node cluster to run a workload before its workers had
+# joined.
+#
+# Both now run from the playbook's Configure play, after every node is Ready. See
+# playbooks/apps/k3s-cluster.yml.

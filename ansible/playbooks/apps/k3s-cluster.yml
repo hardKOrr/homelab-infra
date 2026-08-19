@@ -239,7 +239,46 @@
         name: k3s_cluster
 
 
-# ── Play 5: Verify, store credentials, record topology ─────────────────────────
+# ── Play 5: Cluster-scoped configuration ───────────────────────────────────────
+# Storage and ingress are properties of the cluster, not of a node, so they are applied
+# once — and only once every node has joined.
+#
+# Not `serial`, and deliberately after Play 4 rather than inside it. Both of these create
+# workloads: MetalLB runs a controller Deployment, and inside the serial play the founder
+# is by definition the only node that exists. On this lab the founder is also the
+# quorum-only node carrying a NoSchedule taint, so the controller had nowhere to schedule
+# and the wait timed out against a cluster that was working perfectly. Cluster-scoped
+# setup belongs after the cluster is whole.
+- name: "k3s cluster | Configure"
+  hosts: "k3s_cluster_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    # Guarded to the founding node rather than run on a play of its own: a play-level
+    # `hosts` templated out of another host's facts is not a shape this repo relies on.
+    - name: Establish whether this node founds the cluster
+      ansible.builtin.set_fact:
+        _k3s_is_founder: "{{ inventory_hostname == hostvars['localhost'].k8s_first_node }}"
+
+  tasks:
+    - name: Establish the persistent-storage contract
+      ansible.builtin.include_role:
+        name: k3s_cluster
+        tasks_from: storage.yml
+      when: _k3s_is_founder
+
+    - name: Establish the stable ingress address
+      ansible.builtin.include_role:
+        name: k3s_cluster
+        tasks_from: metallb.yml
+      when: _k3s_is_founder
+
+
+# ── Play 6: Verify, store credentials, record topology ─────────────────────────
 - name: "k3s cluster | Verify and record"
   hosts: localhost
   become: false
