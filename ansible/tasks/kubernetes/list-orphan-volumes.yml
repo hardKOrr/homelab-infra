@@ -1,0 +1,259 @@
+---
+# Read every PersistentVolume on the cluster and work out which of them no live claim is
+# using — the volumes the `Retain` reclaim policy deliberately left behind.
+#
+# WHY THIS EXISTS AT ALL
+#
+# The platform StorageClass is `Retain` on purpose: removing an app with
+# `delete_data: false` deletes the namespace and its claims, and the volume behind each
+# claim survives holding the data. That is the restore point the removal job promises, and
+# it is a feature. What it is not is *visible*. A PersistentVolume is cluster-scoped, the
+# namespace that named it is gone, no app owns it any more, and `kubectl get pv` is not a
+# thing an operator runs unprompted. Four such volumes sat on this lab's `k3s-3` for a day
+# before anybody counted them, and nothing in the platform would ever have mentioned them.
+#
+# So this file is the reading half of the answer, and it changes nothing. The acting half
+# is playbooks/maintenance/reclaim-volume.yml, which an operator invokes by name, on one
+# volume, on purpose. Neither half garbage-collects anything on a schedule: a volume that
+# outlives its app is a restore point until a human says otherwise, and a platform that
+# quietly tidied one away would be deleting the only copy of an application's data on the
+# strength of a heuristic.
+#
+# WHAT COUNTS AS "OURS"
+#
+# A dynamically provisioned PersistentVolume carries no namespace and inherits none of its
+# claim's labels, so the ownership marks the rest of this platform relies on — the
+# `app.kubernetes.io/managed-by` label on a namespace, the `app_<instance>` tag on a guest
+# — do not exist here. The one mark that does is the StorageClass. `homelab-local-path` is
+# a class this platform declared, deliberately named so that it is not k3s's bundled
+# `local-path`, and nothing else on this cluster provisions onto it. A volume on any other
+# class was made by someone else: it is neither reported as ours nor ever deleted by us.
+# That is the same rule that keeps this repo away from the lab's hand-built guests.
+#
+# WHY `-o json` RATHER THAN custom-columns OR jsonpath
+#
+# Nine fields per volume are wanted, and one of them lives in a different place depending
+# on which local-path provisioner build made the volume (`spec.hostPath.path` on the
+# version k3s ships, `spec.local.path` on others). A jsonpath that emits one row per item
+# also has to carry a literal `{"\n"}` through a YAML scalar and a shell — the escaping
+# defect this slice recorded twice. `-o json` has nothing to escape, `from_json` hands
+# back the whole object, and the field-by-field defaulting below fails softly on a field
+# that is simply not there.
+#
+# Inputs:
+#   k8s_api_host        — from resolve-cluster.yml; the node kubectl is delegated to
+#   homelabinfra_infra.kubernetes.storage_class — the class this platform declared
+#
+# Sets:
+#   k8s_volumes             — every PV, normalised: name, phase, capacity, reclaim_policy,
+#                             storage_class, claim, node, path, namespace, instance,
+#                             created, age, used, used_kb
+#   k8s_orphan_volumes      — the subset on this platform's class that no claim is using,
+#                             oldest first, with used/used_kb measured on the node
+#   k8s_orphan_total_kb     — what those volumes occupy on disk, in KiB
+#   k8s_orphan_total_human  — the same figure, formatted for a report line
+#   k8s_volume_read_ok      — false when the cluster did not answer; every list above is
+#                             then empty, so a caller that must not fail (Lab Status) can
+#                             still tell "read nothing" from "read an empty cluster"
+#
+# Nothing in this file can fail the play. A status report that dies while reading a volume
+# list teaches an operator less than one that says the cluster did not answer.
+
+- name: k8s volumes | Start with nothing read
+  ansible.builtin.set_fact:
+    k8s_volumes: []
+    k8s_orphan_volumes: []
+    k8s_orphan_total_kb: 0
+    k8s_orphan_total_human: "0 KiB"
+    k8s_volume_read_ok: false
+    # Reset explicitly. Facts survive an include, so a play that reads the volumes twice
+    # would otherwise accumulate the first pass into the second and report every volume
+    # twice — with the totals to match.
+    _k8s_orphan_measured: []
+
+- name: k8s volumes | Read every PersistentVolume the cluster knows about
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - pv
+      - -o
+      - json
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_pv_raw
+  failed_when: false
+  changed_when: false
+
+# The return code AND a non-empty body, not one or the other. An unreachable delegate
+# leaves rc unset and stdout absent; a cluster that simply holds no volumes still answers
+# with a JSON List whose `items` is empty. Those two must not render the same way, which
+# is the same distinction Play 3 of status.yml already draws for unreachable guests.
+- name: k8s volumes | Note whether the cluster answered
+  ansible.builtin.set_fact:
+    k8s_volume_read_ok: >-
+      {{ (_k8s_pv_raw.rc | default(1)) == 0
+         and (_k8s_pv_raw.stdout | default('') | trim | length) > 0 }}
+
+- name: k8s volumes | Normalise every volume the cluster reported
+  ansible.builtin.set_fact:
+    k8s_volumes: "{{ k8s_volumes + [_k8s_vol_row] }}"
+  loop: >-
+    {{ ((_k8s_pv_raw.stdout | from_json)['items'] | default([]))
+       if (k8s_volume_read_ok | bool) else [] }}
+  loop_control:
+    label: "{{ item.metadata.name | default('?') }}"
+  vars:
+    # Both shapes are read, first non-empty wins. Which one a volume carries is a property
+    # of the provisioner build rather than of anything this platform decided, so assuming
+    # one would leave the path empty — and an empty path is what stops the reclaim job
+    # from deleting the bytes.
+    _k8s_vol_path: >-
+      {{ (item.spec.hostPath.path | default(''))
+         | default(item.spec.local.path | default(''), true) }}
+    # The provisioner records the node it chose in an annotation, and nodeAffinity carries
+    # the same fact expressed as scheduling policy. The annotation is read first because it
+    # is one lookup instead of three levels of list indexing — but the fallback is what
+    # answers for a volume provisioned by a build that writes only the affinity.
+    #
+    # `['values']`, not `.values`. Jinja resolves dotted access with getattr FIRST, and
+    # every dict has a `.values` method, so `matchExpressions[0].values[0]` hands back
+    # `dict.values` and then subscripts a bound method — which is not an error, just an
+    # Undefined that the `default('')` swallows. The node then reads as empty, the size is
+    # never measured, and the report quietly says `?` for a volume that was sitting right
+    # there. Found by running this file against a fixture, not by reading it.
+    _k8s_vol_node: >-
+      {{ (item.metadata.annotations['local.path.provisioner/selected-node'] | default(''))
+         | default(item.spec.nodeAffinity.required.nodeSelectorTerms[0]['matchExpressions'][0]['values'][0]
+                   | default(''), true) }}
+    # The directory the provisioner creates is named `pvc-<uuid>_<namespace>_<claim>`, and
+    # once a claimRef has been cleared that name is the ONLY surviving record of which
+    # instance the volume belonged to — an `Available` volume knows nothing about its past.
+    # So the claim is used when it is still there and the path is the fallback, which is
+    # exactly the case for a volume the preserving removal path released.
+    _k8s_vol_dirparts: "{{ (_k8s_vol_path | basename).split('_') }}"
+    _k8s_vol_ns: >-
+      {{ (item.spec.claimRef.namespace | default(''))
+         | default(_k8s_vol_dirparts[1] if (_k8s_vol_dirparts | length) > 2 else '', true) }}
+    # Two self-contained expressions rather than one timedelta held in a variable: a
+    # datetime that survives one round of templating does not reliably survive two, and an
+    # age is not worth a debugging session.
+    _k8s_vol_age_d: >-
+      {{ ((now(utc=true) - (item.metadata.creationTimestamp
+                            | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days)
+         if (item.metadata.creationTimestamp | default('') | length) > 0 else 0 }}
+    _k8s_vol_age_h: >-
+      {{ (((now(utc=true) - (item.metadata.creationTimestamp
+                             | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).seconds) // 3600)
+         if (item.metadata.creationTimestamp | default('') | length) > 0 else 0 }}
+    _k8s_vol_row:
+      name: "{{ item.metadata.name | default('?') }}"
+      phase: "{{ item.status.phase | default('Unknown') }}"
+      capacity: "{{ item.spec.capacity.storage | default('?') }}"
+      reclaim_policy: "{{ item.spec.persistentVolumeReclaimPolicy | default('?') }}"
+      storage_class: "{{ item.spec.storageClassName | default('') }}"
+      claim: >-
+        {{ (item.spec.claimRef.namespace ~ '/' ~ item.spec.claimRef.name)
+           if (item.spec.claimRef.name | default('') | length) > 0 else '' }}
+      node: "{{ _k8s_vol_node }}"
+      path: "{{ _k8s_vol_path }}"
+      namespace: "{{ _k8s_vol_ns }}"
+      instance: "{{ _k8s_vol_ns | regex_replace('^app-', '') }}"
+      created: "{{ item.metadata.creationTimestamp | default('') }}"
+      age: "{{ '%dd %dh' | format(_k8s_vol_age_d | int, _k8s_vol_age_h | int) }}"
+      # Placeholders until the measurement below fills them in. A volume that is still
+      # Bound keeps them — nothing here reads inside a volume an application is using.
+      used: "?"
+      used_kb: 0
+
+# `phase` and `storage_class` are compared as the strings they are. No `owned` or `orphan`
+# boolean is carried on the row on purpose: a bool nested inside a dict inside a list comes
+# back out of set_fact as the string "False", which every truthiness test in Jinja then
+# treats as true — a filter that silently selects everything, including a neighbour's
+# volumes, in a seam whose other consumer deletes things.
+#
+# An empty class means the registry records no storage contract for this cluster, and then
+# nothing can be called ours: `storage_class == ''` would match every statically created
+# volume on the cluster instead.
+- name: k8s volumes | Reduce them to the ones this platform owns and nothing is using
+  ansible.builtin.set_fact:
+    k8s_orphan_volumes: >-
+      {{ (k8s_volumes
+          | rejectattr('phase', 'equalto', 'Bound')
+          | selectattr('storage_class', 'equalto', _k8s_platform_class)
+          | sort(attribute='created') | list)
+         if (_k8s_platform_class | length) > 0 else [] }}
+  vars:
+    _k8s_platform_class: "{{ homelabinfra_infra.kubernetes.storage_class | default('') }}"
+
+# A PV's `capacity` is what the claim ASKED for — 10Gi of a class that provisions a
+# directory, which reserves nothing at all. The figure an operator actually needs in order
+# to decide whether a leftover matters is what the directory holds, and only the node can
+# answer that. Best-effort by construction: a node that is down, a path already removed by
+# hand, or a node name this run never registered all leave the size as `?` rather than
+# failing a read-only report.
+- name: k8s volumes | Measure what each unused volume holds on its node
+  ansible.builtin.command:
+    argv:
+      - du
+      - -sk
+      - --
+      - "{{ item.path }}"
+  # The `when` below is what decides whether this runs at all; the fallback only keeps
+  # delegate_to naming a host that exists, because a delegation target is resolved
+  # whether or not the conditional ends up skipping the item.
+  delegate_to: "{{ item.node | default(k8s_api_host, true) }}"
+  become: true
+  loop: "{{ k8s_orphan_volumes }}"
+  loop_control:
+    label: "{{ item.name }} on {{ item.node | default('?') }}"
+  register: _k8s_orphan_du
+  failed_when: false
+  changed_when: false
+  ignore_unreachable: true
+  when:
+    - (item.path | default('') | length) > 0
+    # resolve-cluster.yml registers every cluster node under its declared name, and a k3s
+    # node's name is its VM hostname, so the name the provisioner recorded is normally a
+    # delegate this run knows. Normally is not always — a renamed node would make
+    # delegate_to fail hard on a host Ansible has never heard of, and a status report may
+    # not die of that.
+    - item.node in (groups['k8s_delegates'] | default([]))
+
+# KiB from `du -sk`, so the total is arithmetic rather than an attempt to add the strings
+# "199M" and "212M". `du` prints "<kb>\t<path>", and a skipped or failed measurement has no
+# stdout at all, which is what leaves the placeholder `?` in place.
+- name: k8s volumes | Attach the measured size to each unused volume
+  ansible.builtin.set_fact:
+    _k8s_orphan_measured: >-
+      {{ _k8s_orphan_measured + [item.0 | combine({'used_kb': _k8s_du_kb | int,
+                                                   'used': _k8s_du_human})] }}
+  loop: "{{ k8s_orphan_volumes | zip(_k8s_orphan_du.results | default([])) | list }}"
+  loop_control:
+    label: "{{ item.0.name }}"
+  vars:
+    _k8s_du_kb: "{{ (item.1.stdout | default('')).split() | first | default(0, true) }}"
+    _k8s_du_human: >-
+      {{ '?' if (item.1.stdout | default('') | length) == 0
+         else ('%.1f GiB' | format((_k8s_du_kb | int) / 1048576)
+               if (_k8s_du_kb | int) >= 1048576
+               else ('%.0f MiB' | format((_k8s_du_kb | int) / 1024)
+                     if (_k8s_du_kb | int) >= 1024
+                     else '%d KiB' | format(_k8s_du_kb | int))) }}
+
+- name: k8s volumes | Publish the measured list and its total
+  ansible.builtin.set_fact:
+    k8s_orphan_volumes: "{{ _k8s_orphan_measured }}"
+    k8s_orphan_total_kb: "{{ _k8s_total_kb }}"
+    # The same three-branch formatting as a single volume's size, so the total and the
+    # rows under it are never expressed in different units.
+    k8s_orphan_total_human: >-
+      {{ '%.1f GiB' | format((_k8s_total_kb | int) / 1048576)
+         if (_k8s_total_kb | int) >= 1048576
+         else ('%.0f MiB' | format((_k8s_total_kb | int) / 1024)
+               if (_k8s_total_kb | int) >= 1024
+               else '%d KiB' | format(_k8s_total_kb | int)) }}
+  vars:
+    _k8s_total_kb: >-
+      {{ _k8s_orphan_measured | map(attribute='used_kb') | map('int') | sum }}

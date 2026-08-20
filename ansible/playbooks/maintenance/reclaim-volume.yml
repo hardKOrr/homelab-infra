@@ -1,0 +1,433 @@
+---
+# Reclaim ONE named PersistentVolume that no claim is using — the deliberate, explicit,
+# operator-invoked counterpart to the retained volumes Lab Status now reports.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/reclaim-volume.yml \
+#     -e volume=pvc-9b1f... -e action=report
+#   ansible-playbook -i inventory/ playbooks/maintenance/reclaim-volume.yml \
+#     -e volume=pvc-9b1f... -e action=release
+#   ansible-playbook -i inventory/ playbooks/maintenance/reclaim-volume.yml \
+#     -e volume=pvc-9b1f... -e action=delete
+#
+# Semaphore/Rundeck: job parameters
+#   volume  — the PersistentVolume's name, exactly as Lab Status prints it (required)
+#   action  — report (default) | release | delete
+#
+# WHY THIS IS A JOB AND NOT A CLEANUP TASK
+#
+# The platform StorageClass is `Retain`, and that is not an oversight to be swept up
+# afterwards: removing an app with `delete_data: false` deletes the namespace and its
+# claims and deliberately leaves the volume holding the data, so that re-deploying the app
+# can find it again. A volume nothing is using is therefore a restore point by default.
+# Nothing in this repository deletes one on a schedule, on a heuristic, or as a side effect
+# of some other job — because the thing being deleted may be the only copy of an
+# application's data, and a platform that guesses about that is worse than one that leaves
+# litter. So an operator names one volume, and names what should happen to it.
+#
+# THE THREE ACTIONS
+#
+#   report   Changes nothing. Prints exactly what the other two actions would do to this
+#            volume: its phase, its claim, its node, its directory, and how much that
+#            directory actually holds. This is the default, so a mistyped run is a read.
+#
+#   release  Clears a stale `claimRef` so a `Released` volume becomes `Available` and can
+#            be reused. THE DATA IS NOT TOUCHED. This is the cheap remedy for a volume
+#            left `Released` by the removal defect this slice recorded — its claim is long
+#            deleted, and the only thing standing between the volume and reuse is a
+#            reference to an object that no longer exists.
+#
+#   delete   Destroys the volume: the PersistentVolume object AND the directory the
+#            local-path provisioner left on the node. Both, because under `Retain` the
+#            provisioner never runs its cleanup pod, so deleting the object alone removes
+#            the record and leaves every byte on disk — the exact defect found in this
+#            slice's first `delete_data: true` implementation. The data is gone afterwards
+#            and this platform has no copy of it.
+#
+# WHY NOT THE FLIP-TO-`Delete` TRICK THAT REMOVAL USES
+#
+# `tasks/unwiring/kubernetes.yml` deletes data by patching each volume to `Delete` and then
+# deleting the namespace, so the PV controller releases the volume and the provisioner's own
+# cleanup pod removes the directory. That works there because a *bound* claim is about to be
+# destroyed, and it is the Released transition that makes the controller run the deleter.
+# Here there is no claim left to destroy: an `Available` volume set to `Delete` transitions
+# nowhere and is simply never collected, and a `Released` one depends on a controller pass
+# this job would then have to poll for. So this path removes the directory itself. Same
+# outcome, no cleanup pod to wait on, and it behaves identically for both orphan shapes.
+#
+# WHAT IT REFUSES
+#
+#   - a volume that is still `Bound`. Its claim is live and something is using it; the way
+#     to remove a running app's data is the Remove App job with delete_data=true, which
+#     unwires the app first.
+#   - a volume on any StorageClass other than the one this platform declared. A
+#     dynamically provisioned PV carries no namespace and inherits none of its claim's
+#     labels, so the class is the only ownership mark it has — see the header of
+#     tasks/kubernetes/list-orphan-volumes.yml. Anything else was made by someone else.
+#   - a delete whose directory does not look like a path the provisioner created, or whose
+#     node cannot be reached to confirm it. Both refusals exist so that `rm -rf` is never
+#     pointed at a path this platform did not recognise.
+#
+# UNLIKE Lab Status, THIS JOB FAILS LOUDLY. The provider no-op rule
+# (docs/specs/provider-noop-wiring.md) makes an absent provider a silent skip during a
+# deploy, because the deploy was not about that provider. Here the operator asked for one
+# named volume on the Kubernetes backend: a lab with no cluster, an unreachable cluster or
+# an unknown volume name is a question this job cannot answer, and answering "fine" would
+# be a lie about a destructive request.
+
+- name: "Reclaim Volume | {{ action | default('report') }} {{ volume | default('(none)') }}"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false   # absent pre-bootstrap — the cluster assert below then explains
+
+  vars:
+    _rv_action: "{{ action | default('report') }}"
+
+  tasks:
+    - name: Assert the parameters are usable
+      ansible.builtin.assert:
+        that:
+          - volume is defined and volume | length > 0
+          - _rv_action in ['report', 'release', 'delete']
+        fail_msg: >-
+          Pass the volume name and what to do with it:
+          -e volume=<PersistentVolume name> -e action=report|release|delete.
+          `report` changes nothing and prints what the other two would do. Lab Status
+          prints the names under RETAINED VOLUMES.
+
+    - name: Resolve the cluster
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
+
+    - name: Read the cluster's volumes
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/list-orphan-volumes.yml
+
+    # The seam swallows every failure so that a status report survives them. This job must
+    # not: acting on a stale or empty reading is how the wrong volume gets deleted.
+    - name: Assert the cluster answered
+      ansible.builtin.assert:
+        that: k8s_volume_read_ok | bool
+        fail_msg: >-
+          The cluster did not answer `kubectl get pv` through {{ k8s_api_host }}. Nothing
+          was changed. Check the node is up and the cluster is healthy — Lab Status reports
+          node readiness — and run this again.
+
+    - name: Find the named volume
+      ansible.builtin.set_fact:
+        # The orphan list carries the measured size; the full list carries everything,
+        # including the Bound volumes this job refuses. Look in both, so a refusal can say
+        # WHICH refusal it is rather than "no such volume".
+        _rv_all: "{{ k8s_volumes | selectattr('name', 'equalto', volume) | list }}"
+        _rv_unused: "{{ k8s_orphan_volumes | selectattr('name', 'equalto', volume) | list }}"
+
+    - name: Assert the volume exists
+      ansible.builtin.assert:
+        that: (_rv_all | length) == 1
+        fail_msg: >-
+          No PersistentVolume named `{{ volume }}` exists on this cluster
+          ({{ k8s_volumes | length }} volume(s) read). Names are the full
+          `pvc-<uuid>` form printed by Lab Status under RETAINED VOLUMES — not the claim
+          name and not the directory name.
+
+    - name: Take the volume's record
+      ansible.builtin.set_fact:
+        _rv: "{{ (_rv_unused | first) if (_rv_unused | length) > 0 else (_rv_all | first) }}"
+
+    # OWNERSHIP, FIRST. Checked before the phase, because "this is not ours" is the more
+    # fundamental refusal: a foreign volume's phase is none of our business either.
+    - name: Refuse a volume this platform did not provision
+      ansible.builtin.assert:
+        that: _rv.storage_class == (homelabinfra_infra.kubernetes.storage_class | default(''))
+        fail_msg: >-
+          {{ volume }} is on StorageClass `{{ _rv.storage_class | default('(none)') }}`,
+          not this platform's `{{ homelabinfra_infra.kubernetes.storage_class | default('(unrecorded)') }}`.
+          homelab-infra manages only what it creates, and a PersistentVolume's class is the
+          only ownership mark it carries. Delete it by hand if it really is yours.
+
+    # LIVE VOLUME, SECOND. `Bound` means a PersistentVolumeClaim still references it and an
+    # application may be writing to it right now. Removing an app's data is the removal
+    # job's business, because that job stops the app and unwires it first; doing it here
+    # would pull a filesystem out from under a running pod.
+    - name: Refuse a volume that is still in use
+      ansible.builtin.assert:
+        that: _rv.phase != 'Bound'
+        fail_msg: >-
+          {{ volume }} is Bound to {{ _rv.claim | default('a live claim', true) }} and is in
+          use. Nothing was changed. To remove that application and its data, run Remove App
+          with delete_data=true — it unwires the app and stops it before its storage goes.
+
+    # Everything the two acting paths would do, said before either of them does it, and
+    # printed on the `report` path as the whole point of that path. A destructive job that
+    # cannot be asked what it is about to destroy gets run blind.
+    - name: State exactly what this volume is
+      ansible.builtin.debug:
+        msg:
+          - "Volume:      {{ _rv.name }}"
+          - "Phase:       {{ _rv.phase }}{{ '  (claimRef still points at ' ~ _rv.claim ~ ', which no longer exists)' if _rv.claim | length > 0 else '  (no claim reference)' }}"
+          - "Belonged to: {{ _rv.instance | default('unknown', true) }}{{ ' (namespace ' ~ _rv.namespace ~ ')' if _rv.namespace | length > 0 else '' }}"
+          - "On disk:     {{ _rv.used | default('?', true) }} in {{ _rv.path | default('(no path recorded)', true) }} on node {{ _rv.node | default('?', true) }}"
+          - "Declared:    {{ _rv.capacity }} on {{ _rv.storage_class }}, reclaim policy {{ _rv.reclaim_policy }}, created {{ _rv.created }} ({{ _rv.age }} ago)"
+          - >-
+            release: clears the claim reference so the volume becomes Available and can be
+            reused. The data is untouched.
+          - >-
+            delete: destroys {{ _rv.path | default('(no path recorded)', true) }} on
+            {{ _rv.node | default('?', true) }} and then the PersistentVolume object.
+            {{ _rv.used | default('?', true) }} of application data is gone afterwards, and
+            this platform holds no copy of it.
+          - "This run: action={{ _rv_action }}"
+
+    - name: Say that a report changed nothing
+      ansible.builtin.debug:
+        msg: >-
+          Nothing was changed. Re-run with -e action=release to make this volume reusable,
+          or -e action=delete to destroy it and its data.
+      when: _rv_action == 'report'
+
+    # ── release ────────────────────────────────────────────────────────────────────────
+    # The cheap remedy, and the right one for a volume left Released by the removal defect
+    # recorded in docs/meta/204-kubernetes-hosting-backend/notes.md: the claim it points at
+    # was deleted with its namespace, so the reference is a fossil. Clearing it returns the
+    # volume to Available with every byte still in place.
+    - name: Release the volume
+      when: _rv_action == 'release'
+      block:
+        - name: Note that the volume is already reusable
+          ansible.builtin.debug:
+            msg: >-
+              {{ volume }} is already {{ _rv.phase }} with no claim reference — there is
+              nothing to clear, and it can be reattached as it stands. Nothing was changed.
+          when: _rv.claim | length == 0
+
+        - name: Refuse to release a volume in a phase clearing a claim cannot fix
+          ansible.builtin.assert:
+            that: _rv.phase in ['Released', 'Available']
+            fail_msg: >-
+              {{ volume }} is `{{ _rv.phase }}`. Clearing a claim reference returns a
+              Released volume to Available; it does not repair a volume the provisioner
+              or the API server reports as failed. Inspect it with
+              `kubectl describe pv {{ volume }}` on {{ k8s_api_host }}, and use
+              action=delete once you are sure the data is not wanted.
+
+        # The payload is built as a dict and passed through `to_json`, never written as
+        # JSON text: Ansible converts a rendered template that parses as a data structure
+        # back into one and stringifies it with Python's repr, so a literal
+        # {"spec":{"claimRef":null}} reaches the API server as {'spec': {'claimRef': None}}
+        # and is rejected. tasks/unwiring/kubernetes.yml carries the same shape for the
+        # same reason, and tasks/bitwarden/upsert-item.yml documents the trap at length.
+        - name: Clear the stale claim reference
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - patch
+              - pv
+              - "{{ volume }}"
+              - --type
+              - merge
+              - -p
+              - "{{ {'spec': {'claimRef': none}} | to_json }}"
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          when: _rv.claim | length > 0
+          changed_when: true
+
+        # Read back rather than assumed. This is the exact patch that reported `changed` on
+        # every run while achieving nothing, because it ran while the PVC still existed and
+        # the PV controller wrote the reference straight back. It cannot happen here — the
+        # claim is gone — but a patch whose effect is never verified is how that went
+        # unnoticed for two runs.
+        - name: Read the volume's phase back
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - get
+              - pv
+              - "{{ volume }}"
+              - -o
+              - jsonpath={.status.phase}
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          register: _rv_phase_after
+          changed_when: false
+          when: _rv.claim | length > 0
+
+        - name: Assert the volume came back Available
+          ansible.builtin.assert:
+            that: (_rv_phase_after.stdout | trim) == 'Available'
+            fail_msg: >-
+              {{ volume }} reports `{{ _rv_phase_after.stdout | trim }}` after the claim
+              reference was cleared, not `Available`. The data is untouched. Inspect it
+              with `kubectl describe pv {{ volume }}` on {{ k8s_api_host }}.
+          when: _rv.claim | length > 0
+
+        - name: Report the release
+          ansible.builtin.debug:
+            msg: >-
+              {{ volume }} is Available. Its {{ _rv.used | default('?', true) }} of
+              {{ _rv.instance | default('data', true) }} data is untouched on
+              {{ _rv.node | default('?', true) }}, and a PVC naming this volume can now
+              bind to it.
+          when: _rv.claim | length > 0
+
+    # ── delete ─────────────────────────────────────────────────────────────────────────
+    - name: Delete the volume and its data
+      when: _rv_action == 'delete'
+      block:
+        # A path this platform recognises, or nothing happens. The provisioner names its
+        # directories `pvc-<uuid>_<namespace>_<claim>` under the cluster's storage root, so
+        # a path that does not look like that is either a statically created volume whose
+        # backing store belongs to someone else, or a field this job misread. `rm -rf` gets
+        # pointed only at something that passed all four tests.
+        - name: Assert the directory is one the provisioner created
+          ansible.builtin.assert:
+            that:
+              - (_rv.path | default('') | length) > 0
+              - _rv.path is match('^/')
+              - (_rv.path.split('/') | reject('equalto', '') | list | length) >= 3
+              - (_rv.path | basename) is match('^pvc-[0-9a-fA-F-]{8,}')
+              - "'..' not in _rv.path"
+            fail_msg: >-
+              {{ volume }} records the backing path `{{ _rv.path | default('(none)') }}`,
+              which is not the `.../pvc-<uuid>_<namespace>_<claim>` shape the local-path
+              provisioner creates. Refusing to delete a directory this platform does not
+              recognise. Delete the PersistentVolume object by hand if that is what you
+              want, and deal with its storage yourself.
+
+        # Only checked when the registry actually carries a storage root. It does not
+        # today — the cluster's generated facts record the class, not the path — so this
+        # asserts nothing yet and tightens by itself the day that field is added, rather
+        # than hard-coding a second copy of /var/lib/rancher/k3s/storage here for the two
+        # of them to drift apart.
+        - name: Assert the directory is under the cluster's storage root
+          ansible.builtin.assert:
+            that: _rv.path is match(homelabinfra_infra.kubernetes.storage_path | regex_escape)
+            fail_msg: >-
+              {{ _rv.path }} is not under the cluster's declared storage root
+              {{ homelabinfra_infra.kubernetes.storage_path | default('') }}.
+          when: (homelabinfra_infra.kubernetes.storage_path | default('') | length) > 0
+
+        - name: Assert the volume belonged to an app this platform deployed
+          ansible.builtin.assert:
+            that: _rv.namespace is match('^app-')
+            fail_msg: >-
+              {{ volume }} does not record an `app-<instance>` namespace, in its claim
+              reference or in its directory name, so nothing shows it was provisioned for
+              an application this platform deployed. Refusing to delete it.
+
+        # The node the volume lives on has to be one resolve-cluster.yml registered, or
+        # there is no SSH identity to reach it with and `delegate_to` would fail on a host
+        # Ansible has never heard of. Said as a sentence here rather than as that error.
+        - name: Assert the volume's node is a cluster node this platform knows
+          ansible.builtin.assert:
+            that: _rv.node in (groups['k8s_delegates'] | default([]))
+            fail_msg: >-
+              {{ volume }} records node `{{ _rv.node | default('(none)') }}`, which is not
+              one of the cluster nodes in config/.generated/facts.yml
+              ({{ groups['k8s_delegates'] | default([]) | join(', ') }}). Nothing was
+              changed. A node renamed after the volume was provisioned needs the
+              directory removed by hand.
+
+        # The node has to answer BEFORE anything is destroyed. If it does not, the delete
+        # would remove the record and strand the bytes on a node nobody is looking at —
+        # which is precisely the failure this slice already found once, and the reason
+        # `delete_data: true` had to learn to flip the reclaim policy.
+        - name: Confirm the node can be reached and the directory is there
+          ansible.builtin.stat:
+            path: "{{ _rv.path }}"
+          delegate_to: "{{ _rv.node }}"
+          become: true
+          register: _rv_dir
+          failed_when: false
+          ignore_unreachable: true
+
+        - name: Refuse to delete the record while its data is out of reach
+          ansible.builtin.assert:
+            that: _rv_dir.stat is defined
+            fail_msg: >-
+              Node {{ _rv.node }} did not answer, so {{ _rv.path }} cannot be removed.
+              Nothing was changed — deleting the PersistentVolume object now would delete
+              the only record of where the data is and leave the data itself on the node.
+              Bring the node back and run this again.
+
+        # DIRECTORY FIRST, OBJECT SECOND, and the order is deliberate.
+        #
+        # Either half can fail on its own, so the question is which interrupted state an
+        # operator can still see. Deleting the object first would leave a directory that no
+        # Kubernetes query returns and that Lab Status therefore cannot report — invisible
+        # bytes, which is the exact problem this whole change exists to end. Deleting the
+        # directory first leaves a PersistentVolume that Lab Status keeps listing, now
+        # reporting 0 KiB on disk, and re-running this job finishes the work.
+        #
+        # `file: state=absent` rather than a shell `rm -rf`: no shell, no globbing, and the
+        # path is passed as a value rather than pasted into a command line.
+        - name: Delete the directory on the node
+          ansible.builtin.file:
+            path: "{{ _rv.path }}"
+            state: absent
+          delegate_to: "{{ _rv.node }}"
+          become: true
+
+        - name: Delete the PersistentVolume object
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - delete
+              - pv
+              - "{{ volume }}"
+              - --ignore-not-found=true
+              - --wait=true
+              - --timeout=120s
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          changed_when: true
+
+        - name: Report the deletion
+          ansible.builtin.debug:
+            msg: >-
+              {{ volume }} is gone: {{ _rv.used | default('?', true) }} removed from
+              {{ _rv.path }} on {{ _rv.node }}, and the PersistentVolume object deleted.
+              {{ ('The ' ~ _rv.instance ~ ' restore point that volume held no longer exists.')
+                 if (_rv.instance | length) > 0 else '' }}
+
+    # A state change notifies, a read does not — docs/specs/one-click-idempotent.md. The
+    # message says which of the two happened, because "reclaimed" on its own does not
+    # distinguish a volume made reusable from one destroyed. A release of a volume that was
+    # already Available changed nothing and says nothing: a notification for a no-op is how
+    # an operator learns to ignore notifications.
+    - name: Notify what was reclaimed
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: >-
+          {{ 'Volume deleted' if _rv_action == 'delete' else 'Volume released' }}
+        notify_priority: "{{ 'high' if _rv_action == 'delete' else 'default' }}"
+        notify_message: >-
+          {{ volume }} ({{ _rv.instance | default('unknown app', true) }},
+          {{ _rv.used | default('?', true) }} on {{ _rv.node | default('?', true) }})
+          {{ 'was deleted with its data. There is no copy.'
+             if _rv_action == 'delete'
+             else 'had its stale claim reference cleared and is Available for reuse. The data is untouched.' }}
+      when: >-
+        _rv_action == 'delete'
+        or (_rv_action == 'release' and (_rv.claim | length) > 0)
+
+    # The last task of the play, because notify.yml records an undelivered notification as a
+    # fatal degradation rather than raising it — and a degradation nobody gates on is exactly
+    # the "catch it, print it, exit 0" shape this repo forbids. The volume is already gone or
+    # already released by the time this runs, so failing here aborts nothing: it refuses to
+    # report green on a destruction nobody was told about.
+    - name: Fail if anything about this reclaim did not work
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ volume }} reclaim"

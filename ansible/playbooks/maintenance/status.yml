@@ -11,6 +11,10 @@
 #   - Docker containers on each guest that runs Docker (name, image, state)
 #   - Native LXC apps with an update available (lab-update-check, same source as
 #     playbooks/maintenance/check-native-updates.yml — this one only displays)
+#   - The Kubernetes cluster: node readiness, the workloads in every managed namespace,
+#     and every PersistentVolume no claim is using — the volumes a removal with
+#     delete_data: false deliberately retained, which nothing else in the platform would
+#     ever mention (tasks/kubernetes/list-orphan-volumes.yml)
 #   - Uptime Kuma monitors (via the REST API)
 #   - PBS snapshots per guest, newest first (via the PBS API)
 #
@@ -118,6 +122,11 @@
       {{ _st_guests | map('extract', hostvars)
          | rejectattr('_st_containers', 'defined')
          | map(attribute='inventory_hostname') | list }}
+    # Set by tasks/kubernetes/list-orphan-volumes.yml, and undefined on a lab with no
+    # cluster or a cluster that did not answer — both of which render as no section at all.
+    # Play vars are templated where they are used, not where they are declared, so a fact
+    # this play sets later is visible here.
+    _st_k8s_orphans: "{{ k8s_orphan_volumes | default([]) }}"
 
   tasks:
     # ── Uptime Kuma ────────────────────────────────────────────────────────────
@@ -268,6 +277,14 @@
               {{ _st_k8s_app_raw.stdout_lines | default([])
                  | map('split') | selectattr('4', 'defined') | list }}
 
+        # The volumes no claim is using. A `Retain` StorageClass means a removed app leaves
+        # its data behind on purpose, and until this line existed the platform never
+        # mentioned that anywhere: the namespace is gone, the app is gone, and several
+        # hundred megabytes of it sit on one node with nothing pointing at them. Read-only
+        # and tolerant of every failure — see the seam's header.
+        - name: Read the volumes nothing is using
+          ansible.builtin.include_tasks: ../../tasks/kubernetes/list-orphan-volumes.yml
+
     # ── Render ─────────────────────────────────────────────────────────────────
     # One debug of a pre-split line list: Semaphore and Rundeck both render a
     # msg list one line per entry, which a single embedded-newline string does not.
@@ -325,6 +342,24 @@
           {% endfor %}
           {% elif _st_k8s_nodes | length > 0 %}
             no applications deployed on the cluster yet
+          {% endif %}
+          {% if _st_k8s_orphans | length > 0 %}
+
+            RETAINED VOLUMES ({{ _st_k8s_orphans | length }} unused, {{ k8s_orphan_total_human | default('?') }} on disk)
+              Kept on purpose: the platform StorageClass is Retain, so removing an app with
+              delete_data: false deletes its namespace and claims and leaves the volume holding
+              the data. Nothing removes these for you — that is what makes them a restore point.
+              Available = reusable now; reattach it with a PVC naming the volume.
+              Released  = still points at the claim that was deleted, and cannot be reused
+                          until that reference is cleared.
+              {{ '%-40s' | format('VOLUME') }} {{ '%-9s' | format('PHASE') }} {{ '%-8s' | format('ON DISK') }} of {{ '%-6s' | format('ASKED') }} {{ '%-8s' | format('NODE') }} {{ '%-14s' | format('WAS APP') }} AGE
+          {% for v in _st_k8s_orphans %}
+              {{ '%-40s' | format(v.name) }} {{ '%-9s' | format(v.phase) }} {{ '%-8s' | format(v.used) }} of {{ '%-6s' | format(v.capacity) }} {{ '%-8s' | format(v.node | default('?', true)) }} {{ '%-14s' | format(v.instance | default('?', true)) }} {{ v.age }}{{ '   stale claim ' ~ v.claim if v.claim | length > 0 else '' }}
+          {% endfor %}
+              Clear or destroy one with the Reclaim Volume job:
+                playbooks/maintenance/reclaim-volume.yml -e volume=<name> -e action=report|release|delete
+          {% elif _st_k8s_nodes | length > 0 and k8s_volume_read_ok | default(false) | bool %}
+            no retained volumes — nothing on {{ homelabinfra_infra.kubernetes.storage_class | default('the platform class') }} is unclaimed
           {% endif %}
 
           NATIVE APP UPDATES

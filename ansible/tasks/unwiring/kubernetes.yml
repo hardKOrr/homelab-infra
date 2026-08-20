@@ -189,5 +189,7 @@
              else 'The PersistentVolumes survive the namespace and hold the data: '
                   ~ (_k8s_pvcs.stdout_lines | select('search', '=.+')
                      | map('regex_replace', '^.*=', '') | join(', '))
-                  ~ '. Reattach them with a PVC naming the volume, or delete them with '
-                    'kubectl delete pv when you are sure.' }}
+                  ~ '. Reattach them with a PVC naming the volume, or clear and destroy '
+                    'one with the Reclaim Volume job. Do NOT use `kubectl delete pv`: '
+                    'under Retain that removes the record and strands every byte on the '
+                    'node, where nothing this platform runs can find it again.' }}
