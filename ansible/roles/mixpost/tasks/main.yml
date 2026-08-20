@@ -196,6 +196,18 @@
              | default('') }}
       no_log: true
 
+    # A literal block is deliberate. Building this value with `\n` inside a Jinja string
+    # leaves the two characters backslash+n in the Secret after Ansible's native-value
+    # conversion, so the MySQL client sees one invalid line and reports `using password:
+    # NO`. The live file must contain three real lines and a trailing newline.
+    - name: Mixpost | Render the MySQL backup defaults file
+      ansible.builtin.set_fact:
+        _mp_backup_my_cnf: |
+          [client]
+          user=root
+          password={{ _mp_db_root_password }}
+      no_log: true
+
     # The one place the backup's credentials become a runtime object, through the same seam
     # every other application credential uses. Both values are canonical elsewhere and are
     # copied here, never generated here:
@@ -218,12 +230,9 @@
       ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
       vars:
         k8s_secret_name: "{{ instance }}-backup"
-        # The `\n` sequences are Jinja string escapes, not YAML ones — a folded scalar
-        # would turn real line breaks into spaces and hand mysqldump a one-line file it
-        # reads as nothing at all.
         k8s_secret_data: >-
           {{ {'pbs-password': k8s_pbs_password,
-              'my.cnf': '[client]\nuser=root\npassword=' ~ _mp_db_root_password ~ '\n'}
+              'my.cnf': _mp_backup_my_cnf}
              | combine({'ntfy-token': _mp_ntfy_token}
                        if _mp_ntfy_token | length > 0 else {}) }}
 

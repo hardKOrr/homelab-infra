@@ -145,6 +145,17 @@
       {{ restore_target }}'s database. That credential is generated and stored by the
       target's own deploy — run `Deploy Mixpost` for {{ restore_target }} first.
 
+# Keep real line breaks in the runtime file. A Jinja string containing `\n` survives
+# Ansible's native-value conversion with literal backslash+n characters and MySQL ignores
+# the resulting one-line defaults file.
+- name: Restore | Render the target's MySQL defaults file
+  ansible.builtin.set_fact:
+    _mp_r_my_cnf: |
+      [client]
+      user=root
+      password={{ _mp_r_db_root_password }}
+  no_log: true
+
 # The credential the restore Job needs, in the target's namespace, through the same seam
 # the deploy uses. `pbs-password` is the PBS API token secret, canonical in the Vaultwarden
 # item `homelab-infra/backups`; `my.cnf` is the TARGET's MySQL root credential, canonical in
@@ -157,15 +168,13 @@
 # file asks for. Recorded rather than worked around: nothing selects on that label, and the
 # object still lives and dies with the TARGET's namespace, which is what actually bounds it.
 #
-# The `\n` sequences are Jinja string escapes, not YAML ones — a folded scalar would turn
-# real line breaks into spaces and hand mysql a one-line file it reads as nothing at all.
 - name: Restore | Sync the restore credentials into the target namespace
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
   vars:
     k8s_secret_name: "{{ _mp_r_secret }}"
     k8s_secret_data: >-
       {{ {'pbs-password': k8s_pbs_password,
-          'my.cnf': '[client]\nuser=root\npassword=' ~ _mp_r_db_root_password ~ '\n'} }}
+          'my.cnf': _mp_r_my_cnf} }}
 
 - name: Restore | Render the restore job
   ansible.builtin.set_fact:
