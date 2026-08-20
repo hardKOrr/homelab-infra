@@ -21,6 +21,7 @@ ansible/
       <app>.yml                    # deploy app (idempotent — re-run = update config/binary)
       remove.yml                   # remove app: stop container, unwire Caddy/Authentik/Uptime Kuma/DNS
       migrate-servarr.yml          # stage an existing Servarr app's config onto a lab instance
+      k3s-cluster.yml              # build/converge the k3s cluster (the Kubernetes hosting backend)
     proxmox/
       create-lxc.yml
       create-vm.yml
@@ -42,6 +43,12 @@ ansible/
       vm-create.yml
       ip-to-vmid.yml
       attach-host-mounts.yml       # attach storage the node already mounts to a guest
+    kubernetes/                    # Kubernetes hosting backend seams
+      provision-node.yml           # one cluster VM, via the shared vm-clone seam
+      resolve-cluster.yml          # read cluster topology + delegate from generated facts
+      ensure-namespace.yml         # one instance owns exactly one namespace app-<instance>
+      sync-secret.yml              # namespace-scoped runtime copy of a canonical Vaultwarden item
+      apply-manifest.yml           # apply a role-rendered manifest into that namespace
     wiring/                        # platform wiring tasks (conditional on provider)
       caddy.yml
       nginx.yml
@@ -73,6 +80,7 @@ ansible/
     docker/                        # installs Docker Engine (Debian only)
     _template-native/              # copy for new native LXC apps; includes files/ with lab script placeholders
     _template-docker/              # copy for new Docker apps
+    k3s_cluster/                   # builds the cluster itself — not an app role
     servarr/                       # Sonarr/Radarr/Lidarr/Prowlarr — one role, four apps
                                    # (same program, different media type; see the role header)
     <app>/                         # one role per deployable app; ships files/lab-* scripts
@@ -136,10 +144,47 @@ Never `set_fact: homelabinfra_instance: {key: val}` — it destroys all sibling 
 |---|---|---|
 | Native LXC | Single-binary or package-installed services | Pihole, Caddy, Vaultwarden |
 | Docker on LXC | Multi-container stacks | Authentik, media stack, monitoring |
-| Docker on VM | Needs full kernel | k3s, kernel module deps |
-| VM | Needs own installer or full OS | PBS |
+| Docker on VM | Needs full kernel | kernel module deps |
+| VM | Needs own installer or full OS | PBS, the k3s cluster nodes |
+| Kubernetes | Ordinary OCI workload that wants scheduling and restart behavior | Mixpost (pilot) |
 
-OCI guests are outside this project's supported hosting model.
+Proxmox OCI guests are outside this project's supported hosting model. That is a
+statement about the Proxmox guest type, not about OCI images: an OCI image runs here
+either under Docker on a stack host or as a Kubernetes workload.
+
+### Which one to start with
+
+Start with **Docker on LXC** for anything that ships a Docker image. It is the safe
+default, it is what most of this repository already does, and a working Docker app has no
+reason to move.
+
+Choose the others only for the reason in their row:
+
+- **Native LXC** when the app is a single binary or an apt package and Docker would only
+  add a layer. Baseline platform services take this path.
+- **VM** when the app owns its installer or needs its own kernel — PBS, and the k3s nodes
+  themselves.
+- **Kubernetes** as a deliberate choice for a new app, never as a migration of a working
+  one. `hosting: kubernetes` is the only hosting kind that is declared rather than
+  inferred; native and Docker are still told apart by the presence of `stack:`.
+
+**What the Kubernetes backend does and does not buy.** It buys scheduling, restart and a
+rolling update that a compose file does not have. It does not buy application-level high
+availability: the default StorageClass is node-pinned, so a pod whose volume lives on an
+unavailable node stays `Pending` rather than moving. The control plane tolerates one node
+loss; the application data does not. Prefer the backend for stateless or easily-restored
+workloads, and read
+`homelabinfra_infra.kubernetes.failure_domain_mode` / `storage_class` rather than counting
+nodes when describing availability.
+
+Caddy, Vaultwarden, both Authentik estates, the runner and Proxmox/PBS stay **outside** the
+cluster by decision: the cluster's own publishing, secrets and backup paths depend on them.
+The platform Caddy remains the sole public TLS edge, and it proxies to one stable internal
+ingress VIP — the cluster publishes nothing itself.
+
+`ansible/playbooks/apps/README.md` step 1 carries the same table for the app-author path,
+and the standing decisions and their rationale are in
+`docs/meta/204-kubernetes-hosting-backend/`.
 
 ## Stack Model
 
@@ -221,6 +266,9 @@ Bootstrap
 Per-App
   Deploy <App>                ← apps/<app>.yml  (one job per app; instance baked in, no params)
   Remove App                  ← apps/remove.yml (params: instance, app (optional), delete_data)
+
+Backend
+  Deploy k3s Cluster          ← apps/k3s-cluster.yml (idempotent; re-run converges the cluster)
 
 Per-Stack
   Wire Media Stack            ← stacks/wire-media-stack.yml (no params)

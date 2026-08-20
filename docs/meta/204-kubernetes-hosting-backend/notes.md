@@ -263,3 +263,93 @@ than fixed inside this slice.
 Defect 5 is the one worth remembering. The taint did exactly what it was asked to do, and
 the design was still wrong, because "apply cluster-scoped things on the founder" quietly
 assumed the founder could run a pod.
+
+## 2026-08-19 — Pilot deployed and removed (close-plan step 3)
+
+Rundeck executions 219–229 against the live cluster. `mixpost` deployed into
+`app-mixpost`, served, and was removed twice — once by each `delete_data` path. Four more
+defects were found, all of them by running the thing.
+
+### What the runs prove
+
+`delete_data: false` (execution 229): the namespace is gone, both PersistentVolumes are
+`Available` with `claimRef` cleared, and 199 MB of application data is still on `k3s-3`.
+That is the restore point the retain path promises.
+
+`delete_data: true` (execution 227): the namespace is gone, both PersistentVolumes are
+gone, their directories are gone from the node, and 211 MB came back.
+
+### The four defects
+
+1. **The readiness probe could never pass.** `httpGet: /` — the application answers `302`
+   to `APP_URL + /mixpost`, `APP_URL` is `https`, and kubelet follows redirects, so the
+   prober re-requested `https://<pod-ip>:80/mixpost`: TLS against a plaintext port. It
+   failed 582 times over 91 minutes while the application answered `200` to any plain
+   request. The probe now asks for `/mixpost/login`. Nothing was wrong with the
+   application or with the manifest's syntax — only with the interaction between the
+   application's redirect and the prober's redirect-following.
+
+2. **The retaining path's `claimRef` patch was undone as it was written.** It ran while the
+   PVC still existed, so the PV controller wrote the reference straight back: the task
+   reported `changed` on every run and left volumes `Released` holding a stale claim — the
+   exact state its own comment said it prevented. The comment's premise was false too:
+   under `Retain` the PVs outlive the namespace, which the run demonstrated. The patch now
+   runs after the namespace deletion.
+
+3. **`delete_data: true` deleted the records, not the data.** Found by reading, before
+   running. Under `Retain` the local-path provisioner never runs its cleanup pod, so
+   deleting the PVCs removed the PV objects and left every byte on the node. Removal now
+   flips each volume to `Delete` before the namespace goes.
+
+4. **A gate run could hang indefinitely.** `ansible-lint` executes files in the tree as
+   inventory scripts; `webui-password.py` reads stdin by design and blocked for 9 h 24 m at
+   0.00 s CPU. Both gates now `exec < /dev/null`. Verified after the fix: 6 m 45 s for both
+   gates together.
+
+Defects 2 and 3 have the same shape as the cluster build's defect 3 — code whose comment
+asserts behavior the code cannot produce, passing every gate.
+
+## 2026-08-20 — Live audit of the cluster, with the pilot removed
+
+Read-only check through the Proxmox guest agent, cluster clock 00:12 UTC.
+
+Healthy: three nodes `Ready` on `v1.31.5+k3s1`, all three `EtcdIsVoter=True`, `k3s-1`
+still carrying `homelab-infra.io/quorum-only:NoSchedule` and the other two clean. Traefik
+holds `192.168.0.30` as its `LoadBalancer` address, MetalLB speakers on the two untainted
+nodes only, `kube-system` free of DaemonSets. Node load is nil (`k3s-1` 927 MiB of 2 GB,
+the workload nodes under 11 %).
+
+Not serving anything: no `Ingress` object anywhere, no application namespace, no CronJob,
+and no route on the platform Caddy pointing at the VIP. The pilot is removed, so the
+cluster is idle infrastructure rather than a hosting backend in use.
+
+Left on the node: four orphan PersistentVolumes, ~400 MB on `k3s-3`. Two are `Available`
+with no claim — the legitimate restore point from execution 229. Two are `Released`
+holding stale `app-mixpost/*` claims — litter from the runs before defect 2 was fixed.
+
+### New finding — the bundled StorageClass is default again
+
+Both `homelab-local-path` and k3s's bundled `local-path` currently carry
+`storageclass.kubernetes.io/is-default-class: "true"`.
+
+`storage.yml` demotes the bundled class and the code is correct, but the demotion does not
+survive: k3s's deploy controller re-applies its packaged addon manifest
+`/var/lib/rancher/k3s/server/manifests/local-storage.yaml` on every start of the `k3s`
+unit, and line 96 of that file sets the annotation back to `"true"`. The nodes have
+restarted since the last converge, so the patch is gone. An Ansible re-run demotes it
+again, and reports `changed` every time.
+
+No volume landed on the wrong class. With two defaults the `DefaultStorageClass` admission
+plugin picks the newest by `creationTimestamp`, and `homelab-local-path`
+(`01:09:32Z`) is newer than the bundled class (`00:55:46Z`). That is an accident of build
+order, not a guarantee: a k3s upgrade that recreates the bundled class makes it the newer
+one, and every subsequent PVC that names no class silently gets `Delete` reclaim on a
+class this platform never described.
+
+This is the same trap the storage decision already named — "a bundled class we had edited
+would be reverted by a future k3s upgrade, silently, with nothing failing at the time" —
+except the trigger is a service restart, not an upgrade. The durable fix belongs to the
+open persistent-storage row: stop editing the bundled addon at all. Either shadow the
+manifest with a `local-storage.yaml.skip` file and ship the provisioner ourselves, or start
+the servers with `--disable=local-storage` and own both the provisioner Deployment and the
+class. Both need a cluster re-converge, so neither was applied during this read-only check.

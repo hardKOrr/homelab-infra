@@ -43,7 +43,10 @@ identity check, or only through a named private path. It must continue to use
       Vaultwarden item `homelab-infra/k3s-cluster`; the token travels host to host in
       memory and reaches the installer as an environment variable, never argv; generated
       facts carry topology only and pass the credential-shape check.
-- [~] `kubernetes` hosting kind added (2026-08-18); live proof still to come. `hosting:
+- [x] `kubernetes` hosting kind added (2026-08-18), proven live 2026-08-19 (Rundeck
+      executions 219-229): the pilot deployed into `app-mixpost`, served, and was
+      removed by both `delete_data` paths. Four defects surfaced by that run are
+      recorded in [notes.md](notes.md). `hosting:
       kubernetes` in an app's defaults is the only hosting kind that is declared rather
       than inferred — native and Docker are still told apart by the presence of `stack:`.
       The config merge, one-job-per-app UI and wiring contract are unchanged.
@@ -97,14 +100,26 @@ identity check, or only through a named private path. It must continue to use
         the named private path, such as the LAN or an approved VPN, resolves the hostname
         and reaches it over HTTPS.
       LAN-only DNS is evidence only for the `private` class.
-- [ ] Extend status, removal, notifications, registry bookkeeping and app ownership records
+- [~] Extend status, removal, notifications, registry bookkeeping and app ownership records
       so a Kubernetes workload does not become an untracked second platform. Removal must
       withdraw platform wiring and preserve or delete application data only according to
-      an explicit option.
-- [ ] Declare the persistent-storage contract: the default StorageClass, physical data
+      an explicit option. Removal is done and proven on both `delete_data` paths
+      (2026-08-19), and `maintenance/status.yml` reads the cluster and its managed
+      namespaces. Left open: four orphaned PersistentVolumes remain on `k3s-3` from
+      those runs — two `Available`, two `Released` with stale claims — so nothing yet
+      reports or reclaims a volume the retain path left behind.
+- [!] Declare the persistent-storage contract: the default StorageClass, physical data
       location, capacity ownership, node-loss behavior, PVC reclaim behavior and the exact
       effect of the removal `delete_data` option. A node-local default must not imply
       failover that the storage layer cannot provide.
+      **Known defect, found 2026-08-20:** the demotion of k3s's bundled `local-path`
+      class does not survive a restart of the `k3s` unit — the deploy controller
+      re-applies the packaged addon manifest and sets `is-default-class` back to
+      true. The cluster currently has two default classes; the platform class wins
+      only because its `creationTimestamp` is newer. The fix — stop editing the
+      bundled addon, and either skip its manifest or run with
+      `--disable=local-storage` while owning the provisioner — belongs to this row
+      and needs a cluster re-converge. See [notes.md](notes.md).
 - [ ] Define an application-consistent backup contract for databases and persistent
       volumes, including quiesce or dump mechanism, schedule, retention, encryption,
       destination, restore owner and restore procedure. The destination must be PBS-backed

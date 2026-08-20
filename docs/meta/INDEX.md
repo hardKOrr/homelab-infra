@@ -511,7 +511,7 @@ queue. 408 is a catalog: it is waiting on code, and the work queue above is that
 
 | Slice | Waiting on |
 |---|---|
-| 204 Kubernetes hosting backend | implementation has not started — topology, cluster, owned-resource adapter, storage and restore contract, and Foxglove live acceptance |
+| 204 Kubernetes hosting backend | **cluster and adapter are built and proven live** (2026-08-18/19): three nodes Ready across three Proxmox nodes, the Mixpost pilot deployed and removed on both `delete_data` paths. Waiting on the storage-contract defect (two default StorageClasses after any `k3s` restart), the backup and restore proof, the Caddy route to the ingress VIP, and the node-loss test |
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 408 app-catalog | **code, not observation.** It is the source of the work queue above; it closes when its batches are built, and it is the one live slice a session can act on directly |
 

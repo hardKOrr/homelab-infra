@@ -12,7 +12,7 @@ Five steps. Most of the work is step 3.
 | **Native LXC** | Single binary or apt-installable; no Docker needed | Vaultwarden, Caddy, Ntfy |
 | **Docker on VM** | Needs full kernel (rare) | Home Assistant (USB passthrough) |
 | **VM** | Has its own installer (rare) | PBS |
-| **Kubernetes** | The app is an ordinary OCI workload and wants orchestration | see below |
+| **Kubernetes** | The app is an ordinary OCI workload and wants orchestration | Mixpost — see below |
 
 When in doubt, Docker on LXC is the safe default for anything with a Docker image.
 
