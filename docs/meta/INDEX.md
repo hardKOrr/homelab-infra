@@ -46,14 +46,12 @@ and the same for `test.sh`.
 
 | Priority | Slice | Repository work | Complete |
 |---:|---|---|:---:|
-| 1 | [204 — Kubernetes hosting backend](204-kubernetes-hosting-backend/README.md) | Implement the reproducible k3s provisioning path, owned-resource app adapter, persistent-storage and restore contract, and existing platform-wiring integration; Foxglove access, failure and recovery remain live slice acceptance | [ ] |
-| 2 | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | One `maintenance:` schedule primitive resolved global → estate → stack → app; populate the never-set Proxmox `startup` order; make `watchtower_schedule` reachable; Tier 1 guest-reboot job including the k3s cluster as one unit; Tier 2 armed full-lab descent including the Proxmox nodes | [ ] |
-| 3 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup all 36 `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/…`, `Operate`, `Recover`, `Setup`); rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` only — no rename, no step change | [ ] |
+| 1 | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | One `maintenance:` schedule primitive resolved global → estate → stack → app; populate the never-set Proxmox `startup` order; make `watchtower_schedule` reachable; Tier 1 guest-reboot job including the k3s cluster as one unit; Tier 2 armed full-lab descent including the Proxmox nodes | [ ] |
+| 2 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup all 36 `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/…`, `Operate`, `Recover`, `Setup`); rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` only — no rename, no step change | [ ] |
 
-The Kubernetes row is an active queue alongside the application-coverage rows below. It adds
-a hosting backend; it does not authorize a wholesale migration of stable applications. Slice
-408 is reserved for the application catalog created in another session and is not renumbered
-here.
+The Kubernetes hosting backend is closed and does not authorize a wholesale migration of
+stable applications. Slice 408 remains reserved for the application catalog created in
+another session and is not renumbered here.
 
 The previous queue's theme was: **a deploy that could not do what it was asked must not exit 0.** An audit on
 2026-08-10 found 22 places that catch a failure and print it as a `debug` message. Eight are
@@ -511,9 +509,15 @@ Each live slice either has repository work in the queue above or is code-complet
 gate-green, waiting on acceptance evidence. Acceptance-only items do not replace the active
 queue. 408 is a catalog: it is waiting on code, and the work queue above is that code.
 
+**204 closed, 2026-08-20.** Fresh-cluster executions 234–253 proved guarded PV reclaim,
+three-node rebuild, converged Mixpost deploy and platform wiring, PBS backup, clean
+cross-instance restore with application login, the declared node-pinned behavior during a
+real `k3s-3` outage, recovery, destructive cleanup and a final green Lab Status. The live
+run found and fixed multiline MySQL credentials, PBS restore `/tmp` semantics and
+zero-replica restore retry state; both full gates pass.
+
 | Slice | Waiting on |
 |---|---|
-| 204 Kubernetes hosting backend | **cluster and adapter are built and proven live** (2026-08-18/19): three nodes Ready across three Proxmox nodes, the Mixpost pilot deployed and removed on both `delete_data` paths. Waiting on the storage-contract defect (two default StorageClasses after any `k3s` restart), the backup and restore proof, the Caddy route to the ingress VIP, and the node-loss test |
 | 504 wire-media-stack | **one box left** — the adoption PUT, which needs a migration that completes, which is deliberately not wanted yet |
 | 408 app-catalog | **code, not observation.** It is the source of the work queue above; it closes when its batches are built, and it is the one live slice a session can act on directly |
 
@@ -529,7 +533,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Observability | app **405** (closed) |
 | Config model | provenance **010** (closed), onboarding **012** (closed), estates **008** (closed) |
 | Networking | IP allocation **011** (closed), OPNsense **304** (closed) |
-| Kubernetes | hosting backend **204** |
+| Kubernetes | hosting backend **204** (closed) |
 | Media | apps **505** (closed), wiring **504**, remaining apps **408** batch A |
 | App coverage | catalog **408** |
 | Runners / UI | Rundeck **601** (closed) |

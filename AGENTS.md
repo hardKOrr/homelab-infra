@@ -243,7 +243,7 @@ ingress VIP — the cluster publishes nothing itself.
 
 `ansible/playbooks/apps/README.md` step 1 carries the same table for the app-author path,
 and the standing decisions and their rationale are in
-`docs/meta/204-kubernetes-hosting-backend/`.
+`docs/meta/done/204-kubernetes-hosting-backend/`.
 
 ## Stack Model
 

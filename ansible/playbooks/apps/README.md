@@ -23,7 +23,7 @@ contract, and the default StorageClass is node-pinned: a pod whose volume lives 
 unavailable node stays Pending rather than moving. Prefer it for stateless or
 easily-restored workloads. A working Docker app has no reason to migrate. Caddy,
 Vaultwarden, either Authentik estate, the runner and Proxmox/PBS stay outside the cluster
-by decision, not by omission — see `docs/meta/204-kubernetes-hosting-backend/`.
+by decision, not by omission — see `docs/meta/done/204-kubernetes-hosting-backend/`.
 
 ---
 

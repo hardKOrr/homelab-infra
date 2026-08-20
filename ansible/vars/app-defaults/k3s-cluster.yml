@@ -16,7 +16,7 @@
 # which failure domain. So each node names its Proxmox node and its address, and the
 # VMID is still derived from the address by the usual 168<oct3><oct4> rule.
 #
-# See docs/meta/204-kubernetes-hosting-backend/notes.md for the reasoning behind the
+# See docs/meta/done/204-kubernetes-hosting-backend/notes.md for the reasoning behind the
 # sizes, the taint, the ingress choice and the storage class.
 
 k3s_cluster_defaults:

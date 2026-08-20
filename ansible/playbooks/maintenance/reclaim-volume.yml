@@ -195,7 +195,7 @@
 
     # ── release ────────────────────────────────────────────────────────────────────────
     # The cheap remedy, and the right one for a volume left Released by the removal defect
-    # recorded in docs/meta/204-kubernetes-hosting-backend/notes.md: the claim it points at
+    # recorded in docs/meta/done/204-kubernetes-hosting-backend/notes.md: the claim it points at
     # was deleted with its namespace, so the reference is a fossil. Clearing it returns the
     # volume to Available with every byte still in place.
     - name: Release the volume

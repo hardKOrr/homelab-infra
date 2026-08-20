@@ -353,3 +353,83 @@ open persistent-storage row: stop editing the bundled addon at all. Either shado
 manifest with a `local-storage.yaml.skip` file and ship the provisioner ourselves, or start
 the servers with `--disable=local-storage` and own both the provisioner Deployment and the
 class. Both need a cluster re-converge, so neither was applied during this read-only check.
+
+## 2026-08-20 — Fresh-cluster acceptance and closure
+
+Executions 234–253 completed the remaining live path. Execution 234 reimported the jobs;
+235 established the clean baseline; 236 and 237 proved report and guarded destructive
+deletion of one retained volume. Execution 238 then destroyed and rebuilt all three k3s VMs
+from their declared configuration. Execution 239 deployed Mixpost through the Foxglove
+Caddy route, and a disposable account created through Mixpost's own model authenticated on
+the source application. Execution 242 was the converged deploy: `ok=162 changed=1 failed=0`,
+where the one change was the corrected backup Secret rather than a workload or wiring
+change.
+
+### Backup and restore
+
+Execution 243 created PBS snapshot `host/mixpost/2026-08-20T18:13:26Z`. It contains
+`database.pxar`, `storage.pxar` and `index.json`. Execution 245 listed it without changing
+the target. Execution 246 read the named snapshot's index and described the replacement
+with `overwrite=false`. Execution 249 restored it into the separately deployed
+`app-mixpost-restore` namespace, loaded a 21,557-byte SQL dump, reported database row and
+storage counts, carried the source `APP_KEY` into the target's canonical Vaultwarden item
+and runtime Secret, cleared Redis and completed with `ok=90 changed=7 failed=0`.
+
+The artifact proof was followed by an application proof. The source account's random
+password stayed in a root-only temporary file on `k3s-1`; it never entered a job argument or
+log. The same credentials submitted through the restored application's real CSRF-protected
+login form reached `/mixpost`, and the restored profile name was visible. The check passed
+again after the node-loss recovery below.
+
+Four failures made the final restore trustworthy rather than merely green:
+
+1. Execution 240 failed before PBS because the backup Secret's `my.cnf` held literal `\n`
+   characters. Commit `68d3bd2` renders both backup and restore files as YAML literal
+   blocks. Execution 241 correctly still failed against the deploy-time Secret from 239;
+   execution 242 refreshed it before the successful backup.
+2. Execution 247 reached PBS but restore failed with `EOPNOTSUPP` before it cleared target
+   storage. `proxmox-backup-client` opens an unnamed temporary file beneath `/tmp`; the
+   container image's overlay filesystem does not implement that operation. Commit
+   `9008494` tested an ACL/xattr hypothesis, and execution 248 disproved it with the same
+   errno. Commit `eb9dac3` restored normal metadata handling and mounted a dedicated
+   memory-backed `emptyDir` at `/tmp`; execution 249 passed.
+3. A failed restore deliberately leaves the web deployment at zero replicas. The successful
+   retry then read that safety state as its desired state and finished green but unavailable.
+   Mixpost's manifest declares exactly one web replica, so commit `ff5f5e0` makes successful
+   restore return to one and keeps only the rescue path at zero. Execution 250 reconverged
+   the already-restored target and the HTTPS/application checks passed.
+4. These are live-runtime contracts. Static rendering, server-side dry-run, lint and syntax
+   checks could validate none of the three interactions above: Ansible native-value string
+   conversion, `O_TMPFILE` on a container overlay, or a retry beginning from deliberate
+   safety state.
+
+### One-node loss
+
+Before the loss, both database pods and PVs were on `k3s-2`; both web pods and their storage
+PVs were on `k3s-3`. MetalLB speakers ran on the two workload nodes. VM `168000023`
+(`k3s-3` on `pve-host-3`) was stopped abruptly.
+
+The API remained responsive and `k3s-1` plus `k3s-2` stayed Ready. `k3s-3` transitioned to
+NotReady, the surviving MetalLB speaker remained on `k3s-2`, and both HTTPS routes returned
+502. At `2026-08-20T19:06:02Z`, after the five-minute NoExecute toleration, Kubernetes
+evicted the restored web pod. Its replacement stayed Pending. The scheduler's exact
+constraints were one quorum-only node, one unreachable node and one `volume node affinity
+conflict`. The control plane therefore tolerated the loss while application data correctly
+did not move.
+
+Starting only VM `168000023` returned `k3s-3` to Ready. Both web pods attached to their
+original node-pinned volumes and passed readiness; Redis rescheduled onto `k3s-2`; both
+MetalLB speakers were healthy. The restored application login and profile check passed
+after recovery.
+
+### Cleanup and final state
+
+Executions 251 and 252 removed `mixpost-restore` and `mixpost` with `delete_data=true`,
+including their platform wiring and four PVs. The disposable password file was then deleted
+from `k3s-1`. The source PBS snapshot remains as the proved recovery artifact; project
+config and canonical Vaultwarden items remain under the repository's restore-point policy.
+
+Execution 253 was the final read-only status: all three VMs running, all three Kubernetes
+nodes Ready, no application namespaces, no retained PVs, one default
+`homelab-local-path` StorageClass with `Retain`, and `changed=0 failed=0`. Both full WSL
+gates passed after each final restore fix and before closure.

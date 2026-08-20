@@ -13,7 +13,7 @@
 # workload on this StorageClass may be described as application-highly-available.
 #
 # That is a deliberate first choice, recorded in
-# docs/meta/204-kubernetes-hosting-backend/notes.md: replicated storage (Longhorn) has
+# docs/meta/done/204-kubernetes-hosting-backend/notes.md: replicated storage (Longhorn) has
 # its own queue row, buys availability rather than backup, and does not replace the
 # application-consistent dump this slice requires.
 #
