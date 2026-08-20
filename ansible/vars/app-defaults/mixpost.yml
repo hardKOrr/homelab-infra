@@ -81,6 +81,108 @@ mixpost_defaults:
   # disk image and cannot see inside a volume, so it is the cluster rebuild path and not a
   # backup of this database. The artifact that matters is a quiesced dump, produced in the
   # namespace on this schedule and pushed into the lab's existing PBS datastore.
+  #
+  # THE WHOLE CONTRACT, IN ONE BLOCK
+  #
+  #   quiesce      mysqldump --single-transaction, run against the instance's own MySQL
+  #                from a pod in the instance's own namespace. See the CronJob template
+  #                for why that is the right quiesce for this application.
+  #   contents     the database dump AND the application's storage volume. Mixpost's
+  #                uploads are not reconstructible from the database — a restored row
+  #                pointing at a missing file is a broken post, not a recovered one.
+  #   destination  the lab's existing PBS datastore, reached with proxmox-backup-client.
+  #                One destination, one retention policy, one restore tool.
+  #   schedule     `schedule` below, as a Kubernetes CronJob in the app's namespace.
+  #   retention    `retention_days` below, applied by the client's own prune after each
+  #                successful push.
+  #   encryption   `encryption` below. See the comment on it.
+  #   restore      `playbooks/maintenance/restore-app.yml`, whose header is the procedure.
+  #   owner        the lab operator. Nothing restores automatically; a restore replaces
+  #                live data and is always a decision somebody makes.
   backup:
     enabled: true
+
+    # Cron in the CronJob's own timezone (see `timezone` below), not in UTC-by-default.
     schedule: "0 3 * * *"
+
+    # Applied as `proxmox-backup-client prune --keep-daily`, which is exactly this many
+    # days for the daily schedule above. Pruning marks snapshots for removal; the disk
+    # space comes back when PBS runs its own garbage collection, which PBS schedules
+    # itself and this platform does not drive.
+    retention_days: 14
+
+    # Blank means "the datastore this lab's PBS already serves", read from
+    # homelabinfra_infra.backups at deploy time. Set it only for a lab that keeps
+    # application dumps in a different datastore from its VM snapshots.
+    datastore: ""
+
+    # The PBS backup-id this instance's snapshots are filed under, as `host/<id>`.
+    # Blank means the instance name, which keeps one app's history in one group and
+    # cannot collide with the `vm/<vmid>` groups the nightly vzdump job writes.
+    backup_id: ""
+
+    # Cron interprets this. Left unset the CronJob would run in the controller
+    # manager's timezone — UTC on this cluster — and "03:00" would not be 03:00 to
+    # the operator reading the job history.
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+
+    # Hard stop for one run. A backup that hangs holds the storage volume's mount and
+    # blocks the next night's run under concurrencyPolicy: Forbid, so it is better to
+    # fail loudly after an hour than to wedge the schedule silently.
+    timeout_seconds: 3600
+
+    # GB. Scratch space for the SQL dump before it is pushed, as an emptyDir on the
+    # node. Sized to the database volume: a dump is smaller than the InnoDB files it
+    # came from, so this has headroom. Exceeding it evicts the pod, which is a clear
+    # failure rather than a node that quietly fills up.
+    scratch_size: 8
+
+    # DECLARED, AND DELIBERATELY OFF.
+    #
+    # proxmox-backup-client can encrypt client-side with a key file, and the key is then
+    # the only thing that can read the backup. In this lab that trades one risk for a
+    # worse one: the datastore already sits on lab-controlled storage behind the lab's
+    # own network, while a lost key makes every snapshot unreadable forever, and the
+    # only safe home for that key is Vaultwarden — which would make reading a Mixpost
+    # backup depend on Vaultwarden being up first, in exactly the disaster where it
+    # might not be.
+    #
+    # `none` is therefore a decision, not an omission: the snapshots are protected by
+    # the datastore's own access control and by PBS's API token, not by a client key.
+    # A lab that wants client-side encryption needs a key-custody decision of its own
+    # first — where the key lives, who can read it, and how a restore gets it before
+    # anything else is running — which is a slice, not a flag.
+    encryption: none
+
+    # HOW proxmox-backup-client GETS INTO A POD.
+    #
+    # There is no official Proxmox-published container image for the backup client, and
+    # this lab has no private registry to build one into. The three options were:
+    #
+    #   1. a community image (fdrake/proxmox-backup-client and friends) — one more
+    #      third-party maintainer in the path of the container that holds the PBS
+    #      credential, updated on somebody else's schedule.
+    #   2. build our own and push it — needs a registry the lab does not have.
+    #   3. a stock Debian image that installs the client from Proxmox's own signed apt
+    #      repository on each run.
+    #
+    # Option 3 is taken. The bytes come from Proxmox and Debian over TLS, signed by the
+    # Proxmox release key that ansible/roles/pbs/defaults/main.yml already trusts for
+    # the server itself — so client and server are installed from the same source, on
+    # the same release train, with no new party to trust.
+    #
+    # The cost is real and is stated rather than hidden: THE BACKUP JOB NEEDS OUTBOUND
+    # NETWORK ACCESS TO deb.debian.org AND download.proxmox.com EVERY TIME IT RUNS. A
+    # lab that is offline at 03:00, or a Debian mirror having a bad night, is a failed
+    # backup — which notifies, rather than passing silently. A lab that wants that
+    # dependency gone points `image` at its own prebuilt image carrying the client, and
+    # nothing else in this block changes.
+    #
+    # `suite` and `key_url` track the PBS the platform installs (Debian 12 / bookworm,
+    # see roles/pbs). Client and server should move together: raise both or neither.
+    client:
+      image: "debian:12-slim"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

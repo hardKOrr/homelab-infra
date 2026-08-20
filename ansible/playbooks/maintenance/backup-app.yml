@@ -1,0 +1,158 @@
+---
+# Run one application's backup now, instead of waiting for its schedule.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/backup-app.yml -e instance=mixpost
+#
+# Semaphore/Rundeck: job parameters
+#   instance — the app instance to back up (required)
+#   app      — only when the instance was deployed under a different name from the app.
+#              Defaults to `instance`.
+#
+# WHY THIS EXISTS AND WHAT IT IS NOT
+#
+# It is not a second implementation of the backup. It runs the CronJob the deploy already
+# installed, with `kubectl create job --from=cronjob/…`, so the on-demand backup and the
+# scheduled one are byte-for-byte the same pod template. Two copies of a backup definition
+# is how the tested one and the nightly one quietly stop matching, and the difference is
+# discovered on the night the wrong one runs.
+#
+# It exists because three ordinary things need a snapshot at a moment somebody chose:
+#
+#   - proving the backup contract at all, which needs a snapshot before a restore can be
+#     attempted, and 03:00 tomorrow is not a test cycle
+#   - taking a known-good point before a risky change to an application
+#   - confirming a fix after a backup failed overnight
+#
+# The job waits for the result and prints everything the pod said, so a failure is visible
+# here rather than in a notification the operator has to go and correlate.
+
+- name: "Backup App | Run the application backup now"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    _ba_app: "{{ app | default(instance, true) }}"
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance to back up: -e instance=mixpost"
+
+    - name: Load app defaults (optional — absent for an app with no defaults file)
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/{{ _ba_app }}.yml"
+        name: _app_defaults
+      failed_when: false
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ (_app_defaults | default({})).get(_ba_defaults_key, {})
+             | combine(_instance_config | default({}), recursive=True) }}
+      vars:
+        _ba_defaults_key: "{{ _ba_app | replace('-', '_') }}_defaults"
+
+    # The CronJob only exists for a Kubernetes app that declared a backup and whose deploy
+    # found a PBS to push to. Everything else is either backed up by PBS's whole-guest
+    # snapshots or not backed up at all, and neither is something this job can start.
+    - name: Assert this app has an in-cluster backup
+      ansible.builtin.assert:
+        that:
+          - app_config.hosting | default('') == 'kubernetes'
+          - app_config.backup.enabled | default(false) | bool
+        fail_msg: >-
+          {{ instance }} has no in-cluster backup to run. In-cluster application backups
+          are a Kubernetes-hosting-backend contract, declared per app under `backup:`;
+          a native or Docker app is covered by PBS's whole-guest snapshots instead, which
+          PBS runs on its own schedule.
+
+  tasks:
+    - name: Resolve the cluster and its API host
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
+
+    - name: Derive the instance's namespace
+      ansible.builtin.set_fact:
+        # Same derivation as tasks/kubernetes/ensure-namespace.yml, not a second
+        # convention.
+        k8s_namespace: "app-{{ instance | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+
+    # `kubectl create job --from=cronjob/…` against a namespace that is not there, or a
+    # CronJob the deploy never installed, answers with a bare NotFound naming neither the
+    # application nor what to do about it. Both cases have the same cause and it is worth
+    # saying out loud: this instance's backup is declared in config but is not deployed.
+    - name: Read the instance's backup CronJob
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - get
+          - "cronjob/{{ instance }}-backup"
+          - -o
+          - jsonpath={.spec.schedule}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _ba_cronjob
+      failed_when: false
+      changed_when: false
+
+    - name: Assert the backup is deployed
+      ansible.builtin.assert:
+        that: _ba_cronjob.rc == 0
+        fail_msg: >-
+          No CronJob `{{ instance }}-backup` exists in namespace {{ k8s_namespace }}, so
+          there is no backup definition to run. {{ instance }} declares a backup, so either
+          it has never been deployed, or the deploy that ran found no Proxmox Backup Server
+          to push to and said so at the time. Deploy the app and re-run this job.
+
+    # Named for the run rather than for the app, so this Job's NAME never collides with one
+    # the CronJob controller created and the two are told apart in `kubectl get jobs`.
+    #
+    # It does not make them mutually exclusive, and that is worth stating rather than
+    # implying: `concurrencyPolicy: Forbid` governs only the Jobs the CronJob owns, and a
+    # Job created with `--from=` is not one of them. Clicking this at 03:00 can therefore
+    # run alongside the schedule. Both would take a consistent dump and file a separate
+    # snapshot, so the cost is duplicated work rather than a damaged backup — but it is a
+    # reason not to schedule this job.
+    - name: Run the backup job
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/run-job.yml
+      vars:
+        k8s_job_name: "{{ instance }}-backup-manual"
+        k8s_job_from_cronjob: "{{ instance }}-backup"
+        k8s_job_timeout: "{{ app_config.backup.timeout_seconds | default(3600) | int }}"
+
+    - name: State where the snapshot went
+      ansible.builtin.debug:
+        msg:
+          - "Backup complete. The job's own output above names the PBS group it wrote to."
+          - "This was the same definition the schedule runs
+             ({{ _ba_cronjob.stdout | default('?') }}), started early — not a second copy."
+          - "List what PBS now holds, and restore from it, with the `Restore App` job:
+             instance={{ instance }}, overwrite=false."
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} backed up"
+        notify_message: >-
+          An on-demand application backup of {{ instance }} completed and was pushed to the
+          lab's PBS datastore. Restore it with the `Restore App` job.

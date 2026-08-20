@@ -1,0 +1,105 @@
+---
+# Resolve where an in-cluster backup pushes to, and how it authenticates when it gets
+# there. The one place that turns "the lab has a PBS" into the three values
+# proxmox-backup-client actually needs.
+#
+# WHY THIS LIVES UNDER tasks/kubernetes/ AND NOT SOMEWHERE MORE OBVIOUS
+#
+# Nothing here is Kubernetes-specific — it is PBS connection resolution. It sits with the
+# other adapter seams because it exists for them: every other consumer of PBS in this repo
+# is a Proxmox-side integration (tasks/bootstrap/configure-pbs.yml registers a storage
+# backend and a vzdump job), and this is the first caller that needs the CLIENT's view of
+# the same server. If a second hosting backend ever needs it too, it moves up a level; a
+# file used once should not be filed as though it were shared.
+#
+# THERE IS EXACTLY ONE SOURCE OF TRUTH FOR PBS AND THIS IS NOT IT
+#
+# The datastore, its host and the API token id come from `homelabinfra_infra.backups`,
+# written by tasks/bootstrap/configure-pbs.yml when PBS was deployed. The token secret
+# comes from the canonical Vaultwarden item `homelab-infra/backups`, overlaid onto the same
+# key by tasks/load-user-vars.yml. Nothing here invents a second copy of any of it, and
+# nothing here writes anything back.
+#
+# Inputs:
+#   homelabinfra_infra.backups     — the PBS registry entry (topology + overlaid secret)
+#   k8s_pbs_datastore_override     — optional; use a datastore other than the lab's default
+#
+# Sets:
+#   k8s_pbs_available    — false when this lab has no usable PBS. The CALLER decides what
+#                          that means: a lab with no backup provider is a no-op, a lab that
+#                          declared one and cannot reach it is a failure.
+#   k8s_pbs_datastore    — the datastore name
+#   k8s_pbs_repository   — `<token-id>@<host>:<datastore>`, the client's PBS_REPOSITORY
+#   k8s_pbs_fingerprint  — the server certificate's SHA-256 fingerprint
+#   k8s_pbs_password     — the API token secret. no_log, and never printed by this file.
+
+- name: k8s pbs | Decide whether this lab has a usable PBS
+  ansible.builtin.set_fact:
+    k8s_pbs_available: >-
+      {{ (_pbs.host | default('') | length > 0)
+         and (_pbs.datastore | default('') | length > 0)
+         and (_pbs.api_token_id | default('') | length > 0)
+         and (_pbs.api_token_secret | default('') | length > 0) }}
+  vars:
+    _pbs: "{{ (homelabinfra_infra | default({})).backups | default({}) }}"
+  no_log: true
+
+- name: k8s pbs | Resolve the PBS connection
+  when: k8s_pbs_available | bool
+  vars:
+    _pbs: "{{ homelabinfra_infra.backups }}"
+    # The registry records `host` with a scheme and port, because every host in that
+    # registry does (ansible/vars/CONTRACT.md §3) and its other consumers concatenate API
+    # paths onto it. proxmox-backup-client wants a bare host — it supplies both the scheme
+    # and the default port 8007 itself — so the scheme and port come back off here rather
+    # than being recorded twice in two shapes.
+    _pbs_bare_host: >-
+      {{ _pbs.host | regex_replace('^https?://', '') | regex_replace(':\d+$', '') }}
+  block:
+    - name: k8s pbs | Read the PBS certificate fingerprint
+      ansible.builtin.uri:
+        url: "{{ _pbs.host }}/api2/json/nodes/localhost/certificates/info"
+        headers:
+          Authorization: "PBSAPIToken={{ _pbs.api_token_id }}:{{ _pbs.api_token_secret }}"
+        validate_certs: false
+      register: _k8s_pbs_certs
+      # A momentary blip should not fail an application deploy, but a PBS that is genuinely
+      # not there must. Retries draw that line without needing to guess which one it is.
+      retries: 3
+      delay: 5
+      until: _k8s_pbs_certs.status | default(0) == 200
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    # The declared backup provider is unreachable, which is not the same thing as a lab
+    # that chose not to have one. Said in full here because the caller's next move —
+    # skip the backup, or fail the deploy — depends on knowing which of the two it is,
+    # and because `no_log` above would otherwise leave the operator with `censored`.
+    - name: k8s pbs | Fail when the declared PBS does not answer
+      ansible.builtin.fail:
+        msg: >-
+          PBS is declared in config/.generated/facts.yml at {{ _pbs.host }} but did not
+          answer its certificate endpoint (HTTP
+          {{ _k8s_pbs_certs.status | default('no response') }}). The in-cluster backup
+          cannot be configured without the server's certificate fingerprint, which is what
+          lets a Job verify a self-signed PBS without a prompt it cannot answer. Check that
+          the PBS guest is running and that its API token is still valid — re-running the
+          `Deploy PBS` job reissues the token and rewrites the registry entry.
+      when: (_k8s_pbs_certs.status | default(0)) != 200
+
+    # `| first`, exactly as tasks/bootstrap/configure-pbs.yml does when it registers the
+    # same server as a PVE storage backend. One selection rule for one server: if that
+    # rule is ever wrong, it is wrong in both places at once and is found once.
+    - name: k8s pbs | Publish the client's view of the PBS target
+      ansible.builtin.set_fact:
+        k8s_pbs_datastore: "{{ _datastore }}"
+        k8s_pbs_repository: "{{ _pbs.api_token_id }}@{{ _pbs_bare_host }}:{{ _datastore }}"
+        k8s_pbs_fingerprint: >-
+          {{ _k8s_pbs_certs.json.data | selectattr('fingerprint', 'defined')
+             | map(attribute='fingerprint') | first }}
+        k8s_pbs_password: "{{ _pbs.api_token_secret }}"
+      vars:
+        _datastore: >-
+          {{ (k8s_pbs_datastore_override | default('', true)) or _pbs.datastore }}
+      no_log: true

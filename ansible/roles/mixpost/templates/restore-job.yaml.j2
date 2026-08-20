@@ -1,0 +1,230 @@
+{#
+  The restore side of the backup contract, as one Kubernetes Job in the TARGET instance's
+  namespace. Rendered by roles/mixpost/tasks/restore.yml and run through
+  tasks/kubernetes/run-job.yml.
+
+  It has two modes, and the mode is the safety mechanism:
+
+    plan     — reads only. Lists what PBS holds for this application, proves the named
+               snapshot is readable with the credentials this namespace has, and reports
+               what the target currently contains. Writes nothing, anywhere.
+    restore  — replaces the target's database and its storage volume with the snapshot's.
+
+  A restore is the one operation in this repository that destroys data on purpose, so the
+  destruction is never the default and never implicit. `plan` is what runs when the
+  operator has not said otherwise, and the same Job in the same namespace with the same
+  credentials produces the evidence that the real run will work — which means the first
+  time a restore is attempted is not the first time any of it has been exercised.
+
+  WHY THE JOB DOES THE WORK AND NOT THE RUNNER
+
+  The artifacts are large, the database is only reachable inside the namespace, and the
+  storage volume is a node-pinned ReadWriteOnce claim that only a pod on the right node can
+  mount. Pulling all of that through the Ansible controller would move the data twice and
+  need a credential on the runner. Running it in the namespace keeps the data on the node
+  it already lives on, and the credentials in the namespace they are already deleted with.
+#}
+{% set r = restore_target_config %}
+{% set client = app_config.backup.client %}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ _mp_r_job_name }}
+  labels:
+    app.kubernetes.io/instance: {{ _mp_r_target }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: restore
+spec:
+  # One attempt. A restore that failed half way has already changed the target, and
+  # silently starting again from the top is the last thing anybody wants: the operator
+  # should read what happened and decide.
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ _mp_r_timeout | int }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ _mp_r_target }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: restore
+    spec:
+      restartPolicy: Never
+
+      # ── Step 1: PBS ──────────────────────────────────────────────────────────
+      # Same install path as the backup CronJob, for the same reason and with the same
+      # cost: no official image ships proxmox-backup-client and this lab has no registry
+      # to build one into, so it comes from Proxmox's own signed apt repository at run
+      # time and this Job needs outbound network to do its work.
+      initContainers:
+        - name: fetch
+          image: {{ client.image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              export DEBIAN_FRONTEND=noninteractive
+              # Never `set -x`: PBS_PASSWORD is in this process's environment.
+
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+              install -d -m 0755 /etc/apt/keyrings
+              curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                > /etc/apt/sources.list.d/pbs-client.list
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+{% if _mp_r_mode == 'plan' %}
+
+              echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
+              # The group argument narrows the listing to this application. Older clients
+              # do not take one, so an unnarrowed listing is the fallback rather than a
+              # failed plan — this step exists to inform, and half the answer beats none.
+              proxmox-backup-client snapshot list "host/${BACKUP_ID}" \
+                || proxmox-backup-client snapshot list
+
+              if [ -n "${SNAPSHOT:-}" ]; then
+                echo
+                echo "=== files in ${SNAPSHOT} ==="
+                # This is the part that proves the plan: it authenticates, resolves the
+                # snapshot and reads its index. If this succeeds, the restore's access to
+                # PBS is not what will go wrong.
+                proxmox-backup-client snapshot files "${SNAPSHOT}"
+              else
+                echo
+                echo "No snapshot named. Re-run with one of the identifiers above to check"
+                echo "that it is readable and to see what a restore would replace."
+              fi
+
+              echo
+              echo "=== what the target namespace holds NOW ==="
+              echo "storage volume: $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+{% else %}
+
+              echo "=== restoring ${SNAPSHOT} ==="
+
+              # The database first, into scratch. Nothing in the target has been touched at
+              # this point, so a snapshot that turns out to be unreadable costs nothing.
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /artifact
+              echo "database dump: $(wc -c < /artifact/database.sql) bytes"
+
+              # Then the uploads, straight into the live volume. Said plainly because it is
+              # the destructive half: what is in the volume now is removed, and what the
+              # snapshot holds takes its place. A restore that only added files would leave
+              # the target holding a mixture of two different points in time, which is
+              # neither of them and is worse than either.
+              echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+              find /app-storage -mindepth 1 -delete
+              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
+              echo "restored storage volume: now $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+{% endif %}
+          env:
+            - name: PBS_REPOSITORY
+              value: "{{ k8s_pbs_repository }}"
+            - name: PBS_FINGERPRINT
+              value: "{{ k8s_pbs_fingerprint }}"
+            - name: PBS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ _mp_r_secret }}, key: pbs-password }
+            - name: BACKUP_ID
+              value: "{{ _mp_r_backup_id }}"
+            - name: SNAPSHOT
+              value: "{{ _mp_r_snapshot }}"
+            - name: PBS_KEY_URL
+              value: "{{ client.key_url }}"
+            - name: PBS_APT_REPO
+              value: "{{ client.repository }} {{ client.suite }} {{ client.component }}"
+          volumeMounts:
+            - name: artifact
+              mountPath: /artifact
+            - name: app-storage
+              mountPath: /app-storage
+{% if _mp_r_mode == 'plan' %}
+              # Read-only in plan mode, enforced by the kubelet rather than by the script
+              # being careful. A plan that could write is not a plan.
+              readOnly: true
+{% endif %}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+      # ── Step 2: the database ─────────────────────────────────────────────────
+      # The database client comes from the same image the database itself runs, for the
+      # same reason as the backup job: a MariaDB client cannot authenticate to MySQL 8's
+      # default plugin, and the failure reads as a wrong password rather than a wrong
+      # client.
+      containers:
+        - name: {{ 'inspect' if _mp_r_mode == 'plan' else 'load' }}
+          image: {{ r.app.database.image }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+{% if _mp_r_mode == 'plan' %}
+              echo "=== database the restore would replace: {{ r.app.database.name }} on ${DB_HOST} ==="
+              mysql --defaults-extra-file=/etc/restore-credentials/my.cnf \
+                --host="${DB_HOST}" --table \
+                -e "SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.tables WHERE table_schema='{{ r.app.database.name }}' ORDER BY TABLE_ROWS DESC LIMIT 15;"
+              echo
+              echo "A restore would DROP that database and rebuild it from the snapshot."
+{% else %}
+              # Dropped and recreated, not loaded over. mysqldump emits DROP TABLE before
+              # each CREATE TABLE, so loading over the top would replace every table the
+              # snapshot contains — and silently keep every table it does not, which is
+              # how a restore ends up holding a schema that never existed at any point in
+              # time. Privileges granted on a database name survive DROP DATABASE in
+              # MySQL, so the application user keeps its access.
+              mysql --defaults-extra-file=/etc/restore-credentials/my.cnf \
+                --host="${DB_HOST}" \
+                -e 'DROP DATABASE IF EXISTS `{{ r.app.database.name }}`; CREATE DATABASE `{{ r.app.database.name }}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
+
+              # The dump was taken with --databases, so it carries its own CREATE DATABASE
+              # and USE and needs no database named on the command line.
+              mysql --defaults-extra-file=/etc/restore-credentials/my.cnf \
+                --host="${DB_HOST}" < /artifact/database.sql
+
+              # Evidence, in the job log, that rows arrived — the difference between a
+              # restore that reported success and a restore somebody can believe.
+              echo "=== restored into {{ r.app.database.name }} ==="
+              mysql --defaults-extra-file=/etc/restore-credentials/my.cnf \
+                --host="${DB_HOST}" --table \
+                -e "SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.tables WHERE table_schema='{{ r.app.database.name }}' ORDER BY TABLE_ROWS DESC LIMIT 15;"
+{% endif %}
+          env:
+            - name: DB_HOST
+              value: {{ _mp_r_target }}-db
+          volumeMounts:
+            - name: credentials
+              mountPath: /etc/restore-credentials
+              readOnly: true
+            - name: artifact
+              mountPath: /artifact
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+      volumes:
+        - name: credentials
+          secret:
+            secretName: {{ _mp_r_secret }}
+            # 0444 for the same reason as the backup job: the mysql image may not run as
+            # root, and the mysql client rejects only world-WRITABLE defaults files. The
+            # file exists only in this pod's tmpfs.
+            defaultMode: 0444
+            items:
+              - key: my.cnf
+                path: my.cnf
+        - name: artifact
+          emptyDir:
+            sizeLimit: {{ app_config.backup.scratch_size | int }}Gi
+        - name: app-storage
+          persistentVolumeClaim:
+            claimName: {{ _mp_r_target }}-storage
+{% if _mp_r_mode == 'plan' %}
+            readOnly: true
+{% endif %}

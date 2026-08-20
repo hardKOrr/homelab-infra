@@ -1,0 +1,395 @@
+---
+# Restore one Mixpost instance's application data from a PBS snapshot, into the namespace
+# of a Mixpost instance that is already deployed.
+#
+# Called by playbooks/maintenance/restore-app.yml, whose header carries the operator-facing
+# procedure. This file is the mechanism; that header is the documentation.
+#
+# THE SHAPE OF A RESTORE, AND WHY IT IS THIS SHAPE
+#
+# A backup is only a backup if a restore has been done. Slice 204's acceptance is therefore
+# not "the CronJob ran" but "the pilot came back into a FRESH namespace and its data was
+# verified there" — which is why the target is a parameter rather than an assumption. The
+# source instance owns the snapshot; the target instance owns the namespace it lands in.
+# When they are the same instance, this is a real recovery of a live application. When they
+# differ, it is the drill, and the drill uses exactly the same code path as the recovery.
+#
+# WHAT IS DELIBERATELY NOT AUTOMATED
+#
+# Nothing restores on a schedule and nothing restores on a failure. A restore replaces
+# live data with older data; that is always a decision a person makes, with a snapshot they
+# chose, and the plan mode below exists so they can make it with evidence.
+#
+# Inputs:
+#   instance               — the instance that OWNS the backup (the PBS backup-id)
+#   app_config             — the source instance's merged config
+#   restore_target         — the instance whose namespace receives the restore
+#   restore_target_config  — the target instance's merged config
+#   restore_snapshot       — a PBS snapshot identifier, or '' to just list what exists
+#   restore_overwrite      — false: plan only, write nothing. true: perform the restore.
+
+- name: Restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - restore_target is defined and restore_target | length > 0
+      - restore_target_config is defined
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+    fail_msg: >-
+      A restore needs a target instance and, to actually run, a snapshot to restore from.
+      Run it once without `snapshot` to list what PBS holds for this application, then
+      again naming one of the identifiers it printed.
+
+- name: Restore | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Restore | Derive the target namespace
+  ansible.builtin.set_fact:
+    # Same derivation as tasks/kubernetes/ensure-namespace.yml, not a second convention.
+    k8s_namespace: "app-{{ restore_target | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+
+- name: Restore | Read the target namespace's ownership label
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _mp_r_owner
+  failed_when: false
+  changed_when: false
+
+# A restore does not create the application it restores into. It needs a running database
+# to load a dump into and a bound volume to write files onto, and both of those are the
+# deploy job's work. Saying so here is the difference between a clear instruction and a
+# Job that fails ten minutes later on a Service that does not resolve.
+- name: Restore | Require a deployed target
+  ansible.builtin.assert:
+    that:
+      - _mp_r_owner.rc == 0
+      - (_mp_r_owner.stdout | trim) == 'homelab-infra'
+    fail_msg: >-
+      Namespace {{ k8s_namespace }} does not exist, or is not labelled
+      `app.kubernetes.io/managed-by: homelab-infra`. Deploy the target instance first —
+      `Deploy Mixpost` with instance={{ restore_target }} — and run the restore against the
+      namespace it creates. For the clean-restore drill that is the whole point: deploy a
+      second instance under a new name, restore into it, and verify there without touching
+      the live one.
+
+# The dump carries its own CREATE DATABASE and USE, taken from the SOURCE's database name.
+# Loading it into a target that calls its database something else would faithfully rebuild
+# the source's database beside the target's and leave the target's own database empty —
+# with every step reporting success. Refused up front instead.
+- name: Restore | Require both instances to use the same database name
+  ansible.builtin.assert:
+    that: app_config.app.database.name == restore_target_config.app.database.name
+    fail_msg: >-
+      {{ instance }} keeps its data in database `{{ app_config.app.database.name }}` and
+      {{ restore_target }} uses `{{ restore_target_config.app.database.name }}`. A dump
+      names the database it came from, so restoring across the two would populate the wrong
+      one. Give the target the same `app.database.name` and re-deploy it first.
+
+- name: Restore | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Restore | Require a PBS to restore from
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No Proxmox Backup Server is recorded in config/.generated/facts.yml, so there is
+      nothing to restore from. This platform's application backups live in the lab's PBS
+      datastore and nowhere else.
+
+- name: Restore | Resolve the restore's identity
+  ansible.builtin.set_fact:
+    _mp_r_mode: "{{ 'restore' if restore_overwrite | bool else 'plan' }}"
+    _mp_r_target: "{{ restore_target }}"
+    _mp_r_snapshot: "{{ restore_snapshot | default('') }}"
+    _mp_r_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _mp_r_secret: "{{ restore_target }}-restore"
+    _mp_r_job_name: "{{ restore_target }}-restore-{{ 'plan' if not (restore_overwrite | bool) else 'run' }}"
+    # ONE budget, read by both the Job's own activeDeadlineSeconds and the play's wait, so
+    # the two can never disagree about how long this is allowed to take. A plan reads an
+    # index and counts rows; giving it the restore's full hour only means a plan that hangs
+    # is reported an hour after it stopped being useful.
+    _mp_r_timeout: >-
+      {{ 900 if not (restore_overwrite | bool)
+         else (app_config.backup.timeout_seconds | default(3600) | int) }}
+
+# Read under no_log and asserted separately, so the check names the missing credential
+# without the assert ever holding the value. An absent root password would otherwise build
+# a `[client]` stanza with `password=` and nothing after it, and every mysql call in the
+# restore Job would fail with `Access denied` — a message that blames the credential rather
+# than saying there is not one.
+- name: Restore | Read the target's database root credential
+  ansible.builtin.set_fact:
+    # From the TARGET's merged config, which the caller built with the target's own
+    # Vaultwarden overlay. The target's database is the one being written, so it is the
+    # target's password that opens it — never the source's.
+    _mp_r_db_root_password: "{{ restore_target_config.app.db_root_password | default('') }}"
+  no_log: true
+
+- name: Restore | Require the target's database root credential
+  ansible.builtin.assert:
+    that: _mp_r_db_root_password | default('') | length > 0
+    fail_msg: >-
+      No `db_root_password` is recorded in the Vaultwarden item
+      `homelab-infra/apps/{{ restore_target }}`, so this restore has no way to open
+      {{ restore_target }}'s database. That credential is generated and stored by the
+      target's own deploy — run `Deploy Mixpost` for {{ restore_target }} first.
+
+# The credential the restore Job needs, in the target's namespace, through the same seam
+# the deploy uses. `pbs-password` is the PBS API token secret, canonical in the Vaultwarden
+# item `homelab-infra/backups`; `my.cnf` is the TARGET's MySQL root credential, canonical in
+# `homelab-infra/apps/<target>` — the target's own database is the one being written, so it
+# is the target's password that opens it, never the source's.
+#
+# NOT overridden here: `instance`. It reaches this play as `-e instance=…` from the job,
+# and extra vars outrank an include's vars, so setting it here would be quietly ignored —
+# the Secret carries the SOURCE instance's `app.kubernetes.io/instance` label whatever this
+# file asks for. Recorded rather than worked around: nothing selects on that label, and the
+# object still lives and dies with the TARGET's namespace, which is what actually bounds it.
+#
+# The `\n` sequences are Jinja string escapes, not YAML ones — a folded scalar would turn
+# real line breaks into spaces and hand mysql a one-line file it reads as nothing at all.
+- name: Restore | Sync the restore credentials into the target namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ _mp_r_secret }}"
+    k8s_secret_data: >-
+      {{ {'pbs-password': k8s_pbs_password,
+          'my.cnf': '[client]\nuser=root\npassword=' ~ _mp_r_db_root_password ~ '\n'} }}
+
+- name: Restore | Render the restore job
+  ansible.builtin.set_fact:
+    _mp_r_manifest: "{{ lookup('ansible.builtin.template', 'restore-job.yaml.j2') }}"
+
+# ── Plan: read-only, and the default ──────────────────────────────────────────
+- name: Restore | Show what a restore would do
+  when: not (restore_overwrite | bool)
+  block:
+    - name: Restore | Run the plan job
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+      vars:
+        k8s_job_name: "{{ _mp_r_job_name }}"
+        k8s_job_manifest: "{{ _mp_r_manifest }}"
+        k8s_job_timeout: "{{ _mp_r_timeout }}"
+
+    - name: Restore | State what a real run would replace
+      ansible.builtin.debug:
+        msg:
+          - "PLAN ONLY — nothing was changed."
+          - "Source: PBS group host/{{ _mp_r_backup_id }} in datastore
+             {{ k8s_pbs_datastore }}{{ ', snapshot ' ~ _mp_r_snapshot
+                if _mp_r_snapshot | length > 0 else ' (no snapshot named)' }}."
+          - "Target: namespace {{ k8s_namespace }} — database
+             {{ restore_target_config.app.database.name }} on {{ restore_target }}-db, and
+             the {{ restore_target }}-storage volume. Both are listed above as they stand
+             now; a real run DROPS that database and empties that volume before writing the
+             snapshot's contents."
+          - "To do it: re-run this job with the same snapshot and overwrite=true."
+
+# ── Restore: the destructive path ─────────────────────────────────────────────
+- name: Restore | Restore the snapshot into the target
+  when: restore_overwrite | bool
+  block:
+    - name: Restore | Read the target's current replica count
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - get
+          - "deployment/{{ restore_target }}"
+          - -o
+          - jsonpath={.spec.replicas}
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _mp_r_replicas
+      changed_when: false
+
+    # Stopped, not left running. The application would otherwise be reading a database that
+    # is being dropped underneath it and writing files into a directory being emptied — and
+    # Laravel's queue worker runs inside the same container, so "nobody is using it" is not
+    # a thing an operator can arrange by not clicking on anything.
+    - name: Restore | Stop the target application
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ restore_target }}"
+          - --replicas=0
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    # Scaling to zero returns as soon as the request is accepted, not when the pod is gone,
+    # and the pod holds the storage volume until it terminates. Waiting for the deletion is
+    # what stops the restore Job racing the pod it just asked to stop.
+    - name: Restore | Wait for the application pod to go away
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - wait
+          - --for=delete
+          - pod
+          - "--selector=app.kubernetes.io/instance={{ restore_target }},app.kubernetes.io/component=web"
+          - --timeout=300s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+    - name: Restore | Run the restore job
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+      vars:
+        k8s_job_name: "{{ _mp_r_job_name }}"
+        k8s_job_manifest: "{{ _mp_r_manifest }}"
+        k8s_job_timeout: "{{ _mp_r_timeout }}"
+
+    # THE ENCRYPTION KEY HAS TO TRAVEL WITH THE DATA.
+    #
+    # Laravel encrypts selected columns with APP_KEY, and Mixpost uses that for the OAuth
+    # tokens it holds for every connected account. Restoring one instance's rows into
+    # another instance's namespace therefore restores rows the target cannot decrypt: the
+    # posts and the media come back, the connected accounts silently do not, and the
+    # failure looks like an application bug rather than a missing key.
+    #
+    # Written to the target's canonical Vaultwarden item FIRST and to the running Secret
+    # second, because the role reads the vault on every deploy — if only the Secret were
+    # patched, the next `Deploy Mixpost` for the target would put its own old key back and
+    # break the restored data again, at a moment unrelated to the restore.
+    - name: Restore | Carry the source's application key across
+      when:
+        - restore_target != instance
+        - (app_config.app.app_key | default('')) | length > 0
+      block:
+        - name: Restore | Record the source's application key against the target
+          ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+          vars:
+            vault_item_name: "homelab-infra/apps/{{ restore_target }}"
+            vault_item_merge: true
+            vault_item_fields:
+              app_key: "{{ app_config.app.app_key }}"
+            vault_item_secret_fields:
+              - app_key
+
+        # A merge patch on stdin, not `kubectl apply` and not `-p '<json>'`. `apply` with a
+        # single key would prune every other key in the environment Secret, because
+        # kubectl's three-way merge deletes what the last applied configuration had and this
+        # one does not. `-p` would put a base64-encoded credential in argv, where `ps` and
+        # Ansible's own module arguments can both see it. `--patch-file /dev/stdin` is
+        # neither.
+        - name: Restore | Point the target's running environment at the restored key
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - --namespace
+              - "{{ k8s_namespace }}"
+              - patch
+              - "secret/{{ restore_target }}-env"
+              - --type
+              - merge
+              - --patch-file
+              - /dev/stdin
+            stdin: "{{ {'data': {'APP_KEY': app_config.app.app_key | b64encode}} | to_json }}"
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          changed_when: true
+          no_log: true
+
+    # Redis holds Mixpost's cache and its queue and has no volume of its own, so restarting
+    # it empties it. Without this the application comes back up in front of restored data
+    # while still answering from cached values built from the data that was replaced — a
+    # restore that looks like it did not work, for a reason that has nothing to do with the
+    # backup.
+    - name: Restore | Clear the target's cache
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - restart
+          - "deployment/{{ restore_target }}-redis"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    - name: Restore | Start the target application again
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ restore_target }}"
+          - "--replicas={{ _mp_r_replicas.stdout | default('1', true) | trim or '1' }}"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    - name: Restore | Wait for the target application to come back
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - status
+          - "deployment/{{ restore_target }}"
+          - --timeout=600s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+    # The last word of a restore is not "done", it is "here is how to satisfy yourself that
+    # it worked". Slice 204's acceptance is a VERIFIED restore, and a job that stops at
+    # "completed" has proved that a Job exited zero, which is a different claim.
+    - name: Restore | State how to verify the restored application
+      ansible.builtin.debug:
+        msg:
+          - "Restored {{ _mp_r_snapshot }} into namespace {{ k8s_namespace }}."
+          - "The table row counts above are the database's own account of what arrived, and
+             the file count is the storage volume's."
+          - "Now verify the application, not the artifact: open
+             https://{{ restore_target }}.<estate domain>/mixpost, sign in with the
+             credentials that worked on {{ instance }} — the accounts came from the same
+             database — and check that the posts, their media and the connected accounts
+             are all present."
+          - "{{ 'The source application key was carried across, so encrypted columns
+                 (connected-account tokens) are readable in the target.'
+                if restore_target != instance
+                else 'Restored in place, so the application key is unchanged.' }}"
+
+  rescue:
+    # Left down on purpose. A restore that failed part way has a target whose database or
+    # storage may hold half of one point in time and half of another, and bringing that
+    # back up in front of users is worse than leaving it stopped. The operator decides.
+    - name: Restore | Report a failed restore and leave the target stopped
+      ansible.builtin.fail:
+        msg: >-
+          The restore of {{ _mp_r_snapshot }} into {{ k8s_namespace }} did not complete, and
+          {{ restore_target }} has been LEFT SCALED TO 0 rather than started again — its
+          data may be partially replaced. The Job's own output is above. When you have
+          decided what to do, either re-run this restore, or start the application as it
+          stands with:
+          k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ restore_target }}
+          --replicas={{ _mp_r_replicas.stdout | default('1', true) | trim or '1' }}

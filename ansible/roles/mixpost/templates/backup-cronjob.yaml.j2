@@ -1,0 +1,293 @@
+{#
+  The application-consistent backup for one Mixpost instance: a CronJob in the instance's
+  own namespace that dumps its database, archives its uploads, and pushes both into the
+  lab's existing PBS datastore with proxmox-backup-client.
+
+  Rendered by roles/mixpost/tasks/main.yml and applied through
+  tasks/kubernetes/apply-manifest.yml. Owned by the namespace like everything else the
+  instance owns, so removal deletes it and nothing has to remember it exists.
+
+  WHY THIS EXISTS WHEN PBS ALREADY SNAPSHOTS THE CLUSTER NODES
+
+  PBS backs up the k3s VMs on the lab's normal nightly schedule. That is the node rebuild
+  path and nothing more: a whole-VM image is crash-consistent, it is taken with no
+  knowledge of what MySQL was doing at the time, and it cannot address a single
+  application's volume for a restore. Recovering one app's database from it means
+  restoring an entire cluster node beside the live one and digging the files out. The
+  artifact that actually restores an application is produced here, by the application's
+  own database, in the application's own namespace.
+
+  NO CREDENTIAL APPEARS IN THIS FILE, AND NONE APPEARS IN ANY COMMAND LINE
+
+  The PBS token secret and the MySQL root password live in the Secret that
+  tasks/kubernetes/sync-secret.yml wrote from the canonical Vaultwarden items. The PBS
+  secret reaches the client as PBS_PASSWORD, which is the documented environment input the
+  client reads instead of prompting. The MySQL password never becomes an argument or an
+  environment variable at all: it is mounted as a `[client]` stanza and handed to mysqldump
+  with --defaults-extra-file, so it is not visible in `ps`, in the Job's argv, or in
+  anything the job prints. Both are deleted with the namespace.
+#}
+{% set b = app_config.backup %}
+{#
+  One set of labels, emitted at three different depths. Held UNINDENTED and placed with
+  `indent`, because a block carrying its own leading spaces is only correct at the one
+  depth it was written for: pasted verbatim under `jobTemplate.metadata` it produced
+  four-space children of a six-space key, and the whole manifest was rejected by the YAML
+  parser before Kubernetes ever saw it.
+#}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: backup
+{% endset %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ b.schedule }}"
+  # Without this the schedule is read in the controller manager's timezone, which is UTC
+  # here, and the operator who wrote "03:00" gets a job at some other hour of their night.
+  timeZone: "{{ _mp_backup_timezone }}"
+  # Forbid, not Allow. Two concurrent runs would dump the same database twice into the same
+  # PBS group and, worse, both mount the storage volume — and the second one would be
+  # starting precisely because the first is stuck, which is when piling on helps least.
+  concurrencyPolicy: Forbid
+  # A cluster that was down over the scheduled time still runs the backup when it comes
+  # back, provided it comes back within the hour. Without a deadline a missed schedule is
+  # skipped outright and the first night after an outage silently has no backup.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  # Kept deliberately: a failed backup's pod is the only place its reason exists, and the
+  # operator normally learns about it from the notification hours later.
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      # Two retries, then stop and stay failed. A backup that cannot reach PBS will not
+      # start reaching it by being retried thirty times, and the default backoffLimit of 6
+      # turns one bad night into six identical failure notifications.
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ b.timeout_seconds | int }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          # Never, not OnFailure. OnFailure restarts the containers inside the same pod and
+          # each restart overwrites the log of the attempt before it; a fresh pod per
+          # attempt keeps every attempt's output readable.
+          restartPolicy: Never
+
+          # ── Step 1: the quiesced dump ────────────────────────────────────────
+          # An initContainer rather than a second container, because the ordering is the
+          # whole point: containers in a pod start together, initContainers run to
+          # completion first. The upload must not begin until the dump has finished.
+          #
+          # WHY mysqldump --single-transaction IS THE RIGHT QUIESCE HERE
+          #
+          # Mixpost is a Laravel application and every table it creates is InnoDB.
+          # --single-transaction opens one REPEATABLE READ transaction and takes the whole
+          # dump inside it, so every table is read at the same point in the database's
+          # history, without taking a global read lock and without the application seeing
+          # a single moment of downtime. The alternatives are worse for this workload:
+          # --lock-all-tables blocks writes for the length of the dump, and a file-level
+          # copy of /var/lib/mysql taken while mysqld is running is not a backup at all,
+          # it is the crash-consistent image this whole CronJob exists to replace.
+          #
+          # It runs from the SAME image the database itself runs, not from a distribution
+          # package. A MariaDB client — which is what `default-mysql-client` is on Debian —
+          # cannot authenticate to MySQL 8 with its default caching_sha2_password plugin,
+          # and the failure reads as a wrong password rather than a wrong client. Using the
+          # server's own image makes client and server the same build by construction, and
+          # the node has already pulled it to run the database.
+          initContainers:
+            - name: dump
+              image: {{ app_config.app.database.image }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  umask 077
+                  # --defaults-extra-file MUST be the first argument; mysqldump reads it
+                  # before it parses anything else and ignores it anywhere later.
+                  mysqldump \
+                    --defaults-extra-file=/etc/backup-credentials/my.cnf \
+                    --host="${DB_HOST}" \
+                    --single-transaction \
+                    --routines --triggers --events \
+                    --hex-blob \
+                    --set-gtid-purged=OFF \
+                    --databases "${DB_NAME}" \
+                    > /artifact/database.sql
+                  echo "dumped ${DB_NAME}: $(wc -c < /artifact/database.sql) bytes"
+              env:
+                - name: DB_HOST
+                  value: {{ instance }}-db
+                - name: DB_NAME
+                  value: {{ app_config.app.database.name }}
+              volumeMounts:
+                - name: credentials
+                  mountPath: /etc/backup-credentials
+                  readOnly: true
+                - name: artifact
+                  mountPath: /artifact
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+
+          # ── Step 2: push both artifacts into PBS ─────────────────────────────
+          containers:
+            - name: push
+              image: {{ b.client.image }}
+              # IfNotPresent, so the first successful run caches the image on the node and
+              # a registry outage at 03:00 does not by itself cost a backup.
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  export DEBIAN_FRONTEND=noninteractive
+
+                  # Never `set -x` in this script. The client reads its credential from
+                  # PBS_PASSWORD, and a trace would print the environment into the job log.
+
+                  notify() {
+                    [ -n "${NTFY_URL:-}" ] || return 0
+                    if [ -n "${NTFY_TOKEN:-}" ]; then
+                      curl -fsS -m 15 -X POST \
+                        -H "Title: $1" -H "Priority: high" \
+                        -H "Authorization: Bearer ${NTFY_TOKEN}" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    else
+                      curl -fsS -m 15 -X POST \
+                        -H "Title: $1" -H "Priority: high" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    fi
+                  }
+                  # The whole reason a nightly job notifies at all: a backup that stops
+                  # working stops quietly. The operator finds out at restore time unless
+                  # something says so on the night it happened.
+                  on_exit() {
+                    if [ "$1" -eq 0 ]; then
+                      return 0
+                    fi
+                    notify "Backup FAILED: {{ instance }}" \
+                      "The nightly application backup for {{ instance }} exited $1. It pushes to PBS datastore {{ _mp_backup_datastore }} as host/{{ _mp_backup_id }}. Read the failed job's output with: kubectl -n {{ k8s_namespace }} logs -l app.kubernetes.io/component=backup --all-containers --prefix"
+                    return 0
+                  }
+                  trap 'on_exit $?' EXIT
+
+                  # The client is installed at run time from Proxmox's own repository
+                  # because no official image ships it and this lab has no registry to
+                  # build one into. See the `backup.client` comment in
+                  # vars/app-defaults/mixpost.yml for the options and the trade-off; the
+                  # cost is that this job needs outbound network every time it runs.
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+                  install -d -m 0755 /etc/apt/keyrings
+                  curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+                  echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                    > /etc/apt/sources.list.d/pbs-client.list
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+
+                  # Two archives in one snapshot, deliberately. They are one application's
+                  # state at one moment and a restore needs both halves; filing them as one
+                  # snapshot makes "which dump goes with which uploads" unanswerable by
+                  # mistake.
+                  #
+                  # The dump is pushed UNCOMPRESSED. PBS chunks and compresses server-side
+                  # and deduplicates across snapshots, so last night's SQL and tonight's
+                  # SQL share almost every chunk. Gzipping first would produce a completely
+                  # different byte stream each night and cost the deduplication that makes
+                  # a nightly full dump affordable at all.
+                  proxmox-backup-client backup \
+                    database.pxar:/artifact \
+                    storage.pxar:/app-storage \
+                    --backup-id "${BACKUP_ID}"
+
+                  # Retention. Pruning marks snapshots for removal; PBS reclaims the space
+                  # in its own garbage collection, which PBS schedules and this platform
+                  # does not drive.
+                  proxmox-backup-client prune "host/${BACKUP_ID}" \
+                    --keep-daily "${RETENTION_DAYS}"
+
+                  echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
+              env:
+                # Not secret, and useful in the log when a restore has to find this
+                # snapshot again: an API token id is an identity, not a credential.
+                - name: PBS_REPOSITORY
+                  value: "{{ _mp_backup_repository }}"
+                # PBS serves a self-signed certificate. Pinning its fingerprint is what
+                # lets the client verify the server without a prompt it cannot answer from
+                # a Job. It is read from PBS at DEPLOY time, so regenerating the PBS
+                # certificate breaks this job until the deploy is re-run — which is stated
+                # here because the failure would otherwise look like a network problem.
+                - name: PBS_FINGERPRINT
+                  value: "{{ _mp_backup_fingerprint }}"
+                - name: PBS_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: pbs-password }
+                - name: BACKUP_ID
+                  value: "{{ _mp_backup_id }}"
+                - name: RETENTION_DAYS
+                  value: "{{ b.retention_days | int }}"
+                - name: PBS_KEY_URL
+                  value: "{{ b.client.key_url }}"
+                - name: PBS_APT_REPO
+                  value: "{{ b.client.repository }} {{ b.client.suite }} {{ b.client.component }}"
+{% if _mp_ntfy_url | length > 0 %}
+                - name: NTFY_URL
+                  value: "{{ _mp_ntfy_url }}"
+{% endif %}
+{% if _mp_ntfy_token | length > 0 %}
+                - name: NTFY_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: ntfy-token }
+{% endif %}
+              volumeMounts:
+                - name: artifact
+                  mountPath: /artifact
+                  readOnly: true
+                # READ-ONLY, and not negotiable. This pod exists to copy the application's
+                # uploads out; nothing it does should be able to change them. The volume is
+                # ReadWriteOnce and the application pod holds it, which is fine — RWO is a
+                # per-NODE constraint, and the node-pinned StorageClass guarantees this pod
+                # lands on the same node as the pod already using it.
+                - name: app-storage
+                  mountPath: /app-storage
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+
+          volumes:
+            - name: credentials
+              secret:
+                secretName: {{ instance }}-backup
+                # 0444 rather than 0400. The mysql image may run as a non-root user, and a
+                # root-owned 0400 file would then be unreadable — a permissions failure
+                # that reads like a wrong password. The mysql client refuses only
+                # WORLD-WRITABLE defaults files, so world-readable inside this pod's own
+                # tmpfs is both accepted and safe: the file exists nowhere else.
+                defaultMode: 0444
+                items:
+                  - key: my.cnf
+                    path: my.cnf
+            - name: artifact
+              emptyDir:
+                sizeLimit: {{ b.scratch_size | int }}Gi
+            - name: app-storage
+              persistentVolumeClaim:
+                claimName: {{ instance }}-storage
+                readOnly: true

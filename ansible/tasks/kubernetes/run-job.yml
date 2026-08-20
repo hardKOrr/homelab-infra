@@ -1,0 +1,207 @@
+---
+# Run ONE Kubernetes Job in an instance's namespace, wait for it to finish, and put its
+# output in front of the operator whatever the outcome.
+#
+# tasks/kubernetes/apply-manifest.yml is the wrong tool for this and deliberately stays
+# that way. It applies long-lived workloads and waits on `rollout status`, which a Job does
+# not have — a Job has no rollout, it has a completion. It is also idempotent by design,
+# and a one-shot operator action is not: running a backup twice makes two snapshots, and
+# that is the point of asking for it twice.
+#
+# A JOB IS IMMUTABLE, SO THIS DELETES BEFORE IT CREATES
+#
+# `kubectl apply` over a completed Job fails on the pod template's immutable fields, and
+# `kubectl create job` fails outright when the name is taken. Neither failure means
+# anything to the operator, so the previous run of the same named Job is removed first.
+#
+# --cascade=foreground, not the default background. Background deletion removes the Job
+# object immediately and reaps its pods afterwards, so `--wait` returns while the old pods
+# are still there — and the log read below selects on `job-name`, which the old pod still
+# carries. The operator would then be shown the PREVIOUS run's output as though it were
+# this one's. Foreground deletion holds the Job until its pods are gone, which is the thing
+# --wait was there to wait for.
+#
+# On success the Job is cleaned up; on failure it is LEFT IN PLACE. The pod is where the
+# reason lives, and an operator who wants to look again should not find that the tidying
+# already happened.
+#
+# Inputs:
+#   k8s_job_name          — the Job's name in the namespace
+#   k8s_namespace         — from ensure-namespace.yml, or derived by the caller
+#   k8s_api_host          — from resolve-cluster.yml
+#   k8s_job_manifest      — the rendered Job YAML, as a string; OR
+#   k8s_job_from_cronjob  — the name of a CronJob to run one Job from, right now
+#   k8s_job_timeout       — seconds to wait for completion (default 1800)
+#   k8s_job_must_succeed  — default true. false reports the outcome and lets the caller
+#                           decide, for a caller that treats failure as information.
+#
+# Sets:
+#   k8s_job_succeeded     — bool
+#   k8s_job_log           — everything the Job's pod printed, all containers
+
+- name: k8s job | Assert inputs
+  ansible.builtin.assert:
+    that:
+      - k8s_job_name is defined and k8s_job_name | length > 0
+      - k8s_namespace is defined
+      - k8s_api_host is defined
+      - (k8s_job_manifest | default('') | trim | length > 0)
+        or (k8s_job_from_cronjob | default('') | length > 0)
+    fail_msg: >-
+      run-job.yml needs k8s_job_name, a namespace, an API host, and either a
+      k8s_job_manifest to apply or a k8s_job_from_cronjob to run one from.
+
+- name: k8s job | Remove any previous run of this job
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - job
+      - "{{ k8s_job_name }}"
+      - --ignore-not-found=true
+      - --cascade=foreground
+      - --wait=true
+      - --timeout=120s
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  changed_when: false
+
+# Same reasoning as apply-manifest.yml: the manifest arrives on stdin, never as a file on
+# the node, because a Job manifest routinely references — and sometimes carries — the
+# things a stray copy on disk should not hold.
+- name: k8s job | Create the job from its manifest
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - apply
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - -f
+      - "-"
+    stdin: "{{ k8s_job_manifest }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: k8s_job_manifest | default('') | trim | length > 0
+  changed_when: true
+
+# `create job --from=cronjob/...` is how a scheduled job is run early without a second
+# copy of its definition. The alternative — rendering the same pod template twice, once for
+# the schedule and once for on demand — is how the two drift apart, and the drift is only
+# discovered on the night the scheduled one runs something the tested one did not.
+- name: k8s job | Create the job from its cronjob
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - create
+      - job
+      - "{{ k8s_job_name }}"
+      - "--from=cronjob/{{ k8s_job_from_cronjob }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: k8s_job_from_cronjob | default('') | length > 0
+  changed_when: true
+
+# Polled rather than `kubectl wait --for=condition=complete`, because that waits out the
+# full timeout on a Job that has already given up: it cannot watch for two conditions at
+# once, and the one that fires is the wrong one. Reading both conditions means a failed
+# Job is reported the moment it fails, with its log, instead of thirty minutes later.
+- name: k8s job | Wait for the job to finish
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - get
+      - job
+      - "{{ k8s_job_name }}"
+      - -o
+      - jsonpath={range .status.conditions[*]}{.type}={.status};{end}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_job_state
+  retries: "{{ ((k8s_job_timeout | default(1800) | int) / 10) | round(0, 'ceil') | int }}"
+  delay: 10
+  until: >-
+    'Complete=True' in (_k8s_job_state.stdout | default(''))
+    or 'Failed=True' in (_k8s_job_state.stdout | default(''))
+  failed_when: false
+  changed_when: false
+
+- name: k8s job | Record the outcome
+  ansible.builtin.set_fact:
+    k8s_job_succeeded: "{{ 'Complete=True' in (_k8s_job_state.stdout | default('')) }}"
+
+# Selected by label rather than `logs job/<name>`, which reads one container of one pod.
+# A Job here routinely has an initContainer doing the work that matters, and its output is
+# the half an operator actually needs.
+- name: k8s job | Read everything the job printed
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - logs
+      - "--selector=job-name={{ k8s_job_name }}"
+      - --all-containers=true
+      - --prefix=true
+      - --tail=-1
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_job_logs
+  failed_when: false
+  changed_when: false
+
+- name: k8s job | Publish the job's output
+  ansible.builtin.set_fact:
+    k8s_job_log: "{{ _k8s_job_logs.stdout | default('') }}"
+
+- name: k8s job | Show the job's output
+  ansible.builtin.debug:
+    # splitlines() rather than one long scalar: Ansible prints a list one entry per line,
+    # and a job log collapsed onto a single line is a job log nobody reads.
+    msg: "{{ (k8s_job_log | default('') | trim or '(the job printed nothing)').splitlines() }}"
+
+- name: k8s job | Delete the job now that it has succeeded
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - job
+      - "{{ k8s_job_name }}"
+      - --ignore-not-found=true
+      - --wait=false
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  when: k8s_job_succeeded | bool
+  changed_when: true
+
+# The Job's own log is quoted into the failure, not left for the operator to go and find.
+# The same reasoning as apply-manifest.yml's diagnostic block: a job that reports only
+# "did not complete" costs a cluster login to learn anything at all.
+- name: k8s job | Fail with what the job said
+  ansible.builtin.fail:
+    msg: >-
+      Job {{ k8s_job_name }} in {{ k8s_namespace }}
+      {{ 'failed' if 'Failed=True' in (_k8s_job_state.stdout | default(''))
+         else 'did not finish within ' ~ (k8s_job_timeout | default(1800) | string) ~ 's' }}.
+      The Job has been left in place so its pods can be examined.
+
+
+      What it printed:
+
+      {{ k8s_job_log | default('(nothing)') }}
+  when:
+    - not (k8s_job_succeeded | bool)
+    - k8s_job_must_succeed | default(true) | bool

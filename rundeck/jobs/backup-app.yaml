@@ -1,0 +1,56 @@
+# Backup App — generated companion to the Semaphore template of the same name.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/backup-app.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: cd05b253-5012-5911-9713-48bd5e7da85d
+  uuid: cd05b253-5012-5911-9713-48bd5e7da85d
+  name: Backup App
+  group: Maintenance
+  description: |-
+    Run one Kubernetes-hosted application's backup now rather than waiting for its nightly
+    schedule: a quiesced database dump plus its storage volume, pushed into the lab's PBS
+    datastore.
+
+    It starts the CronJob the deploy already installed, so this and the scheduled run are
+    the same definition — there is no second copy to drift. The job waits for the result
+    and prints everything the pod said.
+
+    Use it before a risky change, after fixing a failed overnight backup, or to produce a
+    snapshot to rehearse a restore against.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: App instance to back up, e.g. mixpost
+    required: true
+  - name: app
+    description: Only if the instance name differs from the app name (instance
+      mixpost-restore of app mixpost). Leave blank otherwise.
+    required: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/backup-app.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          ARGS=()
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          if [ -n "${RD_OPTION_APP:-}" ]; then
+            ARGS+=(-e "app=$RD_OPTION_APP")
+          fi
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/maintenance/backup-app.yml "${ARGS[@]}"

@@ -1,0 +1,202 @@
+---
+# Restore one application's data from the lab's Proxmox Backup Server.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/restore-app.yml -e instance=mixpost
+#   ansible-playbook -i inventory/ playbooks/maintenance/restore-app.yml -e instance=mixpost \
+#       -e snapshot=host/mixpost/2026-08-19T03:00:00Z -e target=mixpost-restore -e overwrite=true
+#
+# Semaphore/Rundeck: job parameters
+#   instance   — the instance that OWNS the backup. Required.
+#   app        — only when the instance was deployed under a different name from the app
+#                (instance mixpost-restore of app mixpost). Defaults to `instance`.
+#   target     — the instance whose namespace receives the data. Defaults to `instance`,
+#                which means restoring the application over itself.
+#   snapshot   — a PBS snapshot identifier, e.g. host/mixpost/2026-08-19T03:00:00Z.
+#                Leave blank to list what PBS holds and change nothing.
+#   overwrite  — false (default) plans and writes nothing. true performs the restore.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE RESTORE PROCEDURE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# What this restores is the application-consistent artifact the app's own backup CronJob
+# pushes to PBS every night: a quiesced database dump plus the application's storage
+# volume, filed together as one snapshot in the PBS group `host/<instance>`. It is not the
+# nightly whole-VM snapshot of the cluster nodes — that is the node rebuild path, it is
+# crash-consistent only, and it cannot address one application's data.
+#
+# ── 1. Find the snapshot ──────────────────────────────────────────────────────
+#
+#   Restore App: instance=mixpost, overwrite=false, snapshot blank
+#
+# Lists every snapshot PBS holds for the application, newest last, and stops. Nothing is
+# changed and nothing is scaled down. Copy the identifier you want.
+#
+# ── 2. Decide where it lands ──────────────────────────────────────────────────
+#
+# THE DRILL — a clean restore into a fresh namespace, which is what proves the backup:
+#
+#   Deploy Mixpost: instance=mixpost-restore
+#
+# gives a second, empty instance in its own namespace `app-mixpost-restore`, with its own
+# database, its own volumes and its own published hostname. The live application is not
+# involved at any point. Restore into that.
+#
+# THE RECOVERY — the live application has lost its data: leave `target` blank so it
+# restores over itself. Everything below is identical; only the blast radius differs.
+#
+# ── 3. Check the plan ─────────────────────────────────────────────────────────
+#
+#   Restore App: instance=mixpost, snapshot=host/mixpost/…, target=mixpost-restore,
+#                overwrite=false
+#
+# Runs a read-only Job in the target's namespace that authenticates to PBS, reads the
+# named snapshot's index, and prints what the target holds right now — its tables with
+# their row counts, and the size and file count of its storage volume. That is exactly
+# what a real run replaces. If this step works, nothing about the credentials, the
+# network path or the snapshot is what will fail in step 4.
+#
+# ── 4. Restore ────────────────────────────────────────────────────────────────
+#
+#   the same parameters, overwrite=true
+#
+# In order: the target's web Deployment is scaled to 0 and waited out, so nothing is
+# reading the database or writing to the volume; the snapshot's database dump is fetched
+# to scratch space; the storage volume is emptied and rewritten from the snapshot; the
+# target's database is dropped, recreated and loaded from the dump; the source's
+# application key is carried across when restoring into a different instance, so
+# Laravel-encrypted columns remain readable; Redis is restarted to drop a cache built from
+# the replaced data; and the application is scaled back to the replica count it had.
+#
+# If any of that fails, the target is LEFT SCALED TO 0 on purpose. Half-restored data
+# in front of users is worse than an application that is plainly down.
+#
+# ── 5. Verify — this is the step that closes the row ──────────────────────────
+#
+# The job prints the restored database's tables and row counts and the storage volume's
+# file count. That is the artifact's account of itself. Then check the application:
+# open it, sign in with the credentials that worked on the source instance (the accounts
+# came from the same database), and confirm the posts, their media and the connected
+# accounts are all present. A restore is proved by the application, not by an exit code.
+#
+# ── Afterwards ────────────────────────────────────────────────────────────────
+#
+# The drill's second instance is a full deployment: remove it with `Remove App`,
+# instance=mixpost-restore, delete_data=true, when you have finished verifying.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Only apps whose role ships a `restore.yml` can be restored this way — today that is the
+# Kubernetes-hosted `mixpost`. The playbook says so plainly rather than failing on a
+# missing file.
+
+- name: "Restore App | Restore application data from PBS"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    # Defaults live here rather than in every reference below, so the plan/restore
+    # distinction is decided in exactly one place. Not passing `overwrite` means planning:
+    # the destructive path is never what an incomplete invocation does.
+    _ra_app: "{{ app | default(instance, true) }}"
+    _ra_target: "{{ target | default(instance, true) }}"
+    _ra_snapshot: "{{ snapshot | default('', true) }}"
+    _ra_overwrite: "{{ overwrite | default(false) | bool }}"
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: >-
+          Provide the instance that owns the backup: -e instance=mixpost
+
+    # Tolerated rather than required, so an unknown app name produces the assert below —
+    # which names the actual problem — instead of an include_vars file-not-found crash.
+    - name: Load app defaults (optional — absent for an app with no defaults file)
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/{{ _ra_app }}.yml"
+        name: _app_defaults
+      failed_when: false
+
+    - name: Load the source instance's config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    # Loaded separately, because the target is a different deployment with its own
+    # overrides — its own database image, its own storage sizing, possibly its own
+    # database name. Assuming the source's config described the target is how a restore
+    # writes into the wrong place while reporting success.
+    - name: Load the target instance's config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ _ra_target }}.yml"
+        name: _target_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    # Same merge as the deploy playbook, for both instances. The vault overlay matters
+    # here in particular: the source's app_key and the target's db_root_password are both
+    # canonical Vaultwarden values and neither exists anywhere else.
+    - name: Merge the source and target configs
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+        restore_target_config: >-
+          {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+             | combine(_target_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[_ra_target] | default({})}, recursive=True) }}
+      vars:
+        # The same key derivation playbooks/apps/remove.yml uses: an app whose file name
+        # carries a hyphen declares its defaults under an underscored name.
+        _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
+
+    # The restore path is Kubernetes-shaped: it loads a dump into a namespaced database and
+    # writes into a PersistentVolumeClaim. A native or Docker app has neither, and would
+    # need its own restore.yml written against how IT stores things.
+    - name: Assert this app has a restore path
+      ansible.builtin.assert:
+        that:
+          - app_config.hosting | default('') == 'kubernetes'
+          - app_config.backup is defined
+        fail_msg: >-
+          {{ _ra_app }} is not a Kubernetes-hosted app with a declared backup contract, so
+          this job has nothing to restore. Application backup and restore is currently
+          implemented for the Kubernetes hosting backend only; a native or Docker app is
+          covered by PBS's whole-guest snapshots, which are restored from PBS itself.
+
+  tasks:
+    - name: Restore the application
+      ansible.builtin.include_role:
+        name: "{{ _ra_app }}"
+        tasks_from: restore
+      vars:
+        restore_target: "{{ _ra_target }}"
+        restore_snapshot: "{{ _ra_snapshot }}"
+        restore_overwrite: "{{ _ra_overwrite }}"
+
+    # The plan path changes nothing, and a read-only job does not notify
+    # (docs/specs/one-click-idempotent.md). A restore is about as state-changing as this
+    # platform gets, so that one does.
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ _ra_target }} restored from backup"
+        notify_priority: high
+        notify_message: >-
+          {{ _ra_target }} was restored from PBS snapshot {{ _ra_snapshot }},
+          taken from {{ instance }}'s backups. Its database and storage volume were
+          replaced. Verify the application before trusting it.
+      when: _ra_overwrite | bool

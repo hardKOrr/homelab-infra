@@ -120,3 +120,159 @@
     # Longer than the adapter's default: the first deploy pulls three images and runs
     # Laravel's migrations before the web container answers a probe.
     k8s_wait_timeout: 600
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+#
+# Last, and after the workload is up, on purpose. The CronJob mounts the storage volume
+# and dumps the database; both of those have to exist before there is anything to schedule
+# against, and a backup configured for a deploy that then failed would be a schedule
+# pointing at nothing.
+#
+# The contract itself — what is dumped, how it is quiesced, where it goes, how long it is
+# kept, and what encryption was decided — is declared in the `backup:` block of
+# vars/app-defaults/mixpost.yml and implemented by templates/backup-cronjob.yaml.j2. The
+# restore side is playbooks/maintenance/restore-app.yml, whose header is the procedure.
+
+- name: Mixpost | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+# A lab that has not deployed PBS has no backup provider, and a provider that is not there
+# is a silent no-op rather than an error — the same rule the wiring tasks follow. It is
+# said out loud all the same, because "no backup" is not a detail to discover later.
+#
+# The other case, a PBS that IS declared and does not answer, never reaches here:
+# resolve-pbs-target.yml fails the run outright. A declared provider that cannot do what it
+# was asked must not finish green.
+- name: Mixpost | Note that this lab has no backup target
+  ansible.builtin.debug:
+    msg: >-
+      {{ instance }} declares backup.enabled, but no Proxmox Backup Server is recorded in
+      config/.generated/facts.yml, so no backup was scheduled. Deploy PBS and re-run this
+      job. Until then the application's data exists in exactly one place: the volumes on
+      the cluster node that holds them.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (k8s_pbs_available | default(false) | bool)
+
+- name: Mixpost | Configure the nightly application backup
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - k8s_pbs_available | default(false) | bool
+  block:
+    - name: Mixpost | Resolve the backup's identity and destination
+      ansible.builtin.set_fact:
+        # `host/<backup-id>` is the PBS group this instance's snapshots are filed under.
+        # Defaulting it to the instance name keeps one application's history in one group,
+        # and cannot collide with the `vm/<vmid>` groups the lab's nightly vzdump job
+        # writes into the same datastore.
+        _mp_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        _mp_backup_timezone: >-
+          {{ app_config.backup.timezone | default('', true)
+             or homelabinfra_config.timezone | default('UTC') }}
+        _mp_backup_repository: "{{ k8s_pbs_repository }}"
+        _mp_backup_fingerprint: "{{ k8s_pbs_fingerprint }}"
+        _mp_backup_datastore: "{{ k8s_pbs_datastore }}"
+        # The failure notification uses the platform's own notification provider, so a lab
+        # that chose `none` gets a CronJob that simply does not notify rather than one that
+        # fails trying. Only ntfy has a publisher (docs/specs/one-click-idempotent.md).
+        _mp_ntfy_url: >-
+          {{ (homelabinfra_infra.notifications.host ~ '/'
+              ~ (homelabinfra_infra.notifications.topic | default('homelab')))
+             if (((homelabinfra_infra | default({})).notifications | default({})).provider
+                 | default('none') == 'ntfy'
+                 and (homelabinfra_infra.notifications.host | default('') | length > 0))
+             else '' }}
+
+    # Separate, and no_log, because it is the only value in this block that is a credential
+    # — the rest are a datastore name, a cron expression and an API token ID, all of which
+    # are worth seeing in the job output. Splitting them keeps the readable half readable.
+    - name: Mixpost | Read the notification publish token
+      ansible.builtin.set_fact:
+        _mp_ntfy_token: >-
+          {{ ((homelabinfra_infra | default({})).notifications | default({})).token
+             | default('') }}
+      no_log: true
+
+    # The one place the backup's credentials become a runtime object, through the same seam
+    # every other application credential uses. Both values are canonical elsewhere and are
+    # copied here, never generated here:
+    #
+    #   pbs-password  — the PBS API token secret, canonical in the Vaultwarden item
+    #                   `homelab-infra/backups`, written when PBS was deployed. It reaches
+    #                   the client as PBS_PASSWORD, which is the documented environment
+    #                   input, so it is never an argument and never in `ps`.
+    #   my.cnf        — the MySQL root credential, canonical in
+    #                   `homelab-infra/apps/<instance>`, in the form mysqldump reads with
+    #                   --defaults-extra-file. Root rather than the application user
+    #                   because the dump includes routines, triggers and events, which the
+    #                   application user is not granted.
+    #   ntfy-token    — the publish token for the failure notification, when the lab's Ntfy
+    #                   has one.
+    #
+    # Being a Secret in this namespace, it is deleted when the namespace is, which is what
+    # makes `Remove App` take the backup credential with it.
+    - name: Mixpost | Sync the backup credentials into the namespace
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+      vars:
+        k8s_secret_name: "{{ instance }}-backup"
+        # The `\n` sequences are Jinja string escapes, not YAML ones — a folded scalar
+        # would turn real line breaks into spaces and hand mysqldump a one-line file it
+        # reads as nothing at all.
+        k8s_secret_data: >-
+          {{ {'pbs-password': k8s_pbs_password,
+              'my.cnf': '[client]\nuser=root\npassword=' ~ _mp_db_root_password ~ '\n'}
+             | combine({'ntfy-token': _mp_ntfy_token}
+                       if _mp_ntfy_token | length > 0 else {}) }}
+
+    - name: Mixpost | Render the backup CronJob
+      ansible.builtin.set_fact:
+        _mp_backup_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
+
+    # No k8s_wait_for: a CronJob has nothing to roll out. It is accepted or it is refused,
+    # and the next thing that happens is the schedule firing.
+    - name: Mixpost | Apply the backup CronJob
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ _mp_backup_manifest }}"
+
+    # The honest sentence, in the job output the operator is already reading. A backup
+    # whose schedule, destination and restore command are only in a file is a backup
+    # nobody will find at the moment they need it.
+    - name: Mixpost | State the backup contract
+      ansible.builtin.debug:
+        msg:
+          - "Backup: mysqldump --single-transaction of {{ app_config.app.database.name }},
+             plus the application's storage volume, pushed to PBS datastore
+             {{ _mp_backup_datastore }} as host/{{ _mp_backup_id }}."
+          - "Schedule: {{ app_config.backup.schedule }} ({{ _mp_backup_timezone }}).
+             Retention: {{ app_config.backup.retention_days }} daily snapshots.
+             Encryption: {{ app_config.backup.encryption }}."
+          - "Run one now: the `Backup App` job, or
+             playbooks/maintenance/backup-app.yml -e instance={{ instance }}."
+          - "Restore: the `Restore App` job, or
+             playbooks/maintenance/restore-app.yml -e instance={{ instance }} —
+             read that playbook's header for the procedure."
+
+# Turning the backup off has to actually remove it. `kubectl apply` never prunes what a
+# manifest stopped describing, so a CronJob applied by an earlier run would otherwise keep
+# firing every night against a contract the config no longer declares — the worst kind of
+# leftover, because it looks like it is working.
+- name: Mixpost | Remove the backup CronJob when the backup is disabled
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - cronjob
+      - "{{ instance }}-backup"
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _mp_backup_removed
+  when: not (app_config.backup.enabled | default(false) | bool)
+  changed_when: "'deleted' in (_mp_backup_removed.stdout | default(''))"
