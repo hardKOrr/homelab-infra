@@ -116,18 +116,26 @@ identity check, or only through a named private path. It must continue to use
       never been executed, and its storage-root guard was inert until `storage_path` was
       added to the generated facts in the same change — both need the supervised live
       proof.
-- [!] Declare the persistent-storage contract: the default StorageClass, physical data
+- [x] Declare the persistent-storage contract: the default StorageClass, physical data
       location, capacity ownership, node-loss behavior, PVC reclaim behavior and the exact
       effect of the removal `delete_data` option. A node-local default must not imply
       failover that the storage layer cannot provide.
-      **Known defect, found 2026-08-20:** the demotion of k3s's bundled `local-path`
-      class does not survive a restart of the `k3s` unit — the deploy controller
-      re-applies the packaged addon manifest and sets `is-default-class` back to
-      true. The cluster currently has two default classes; the platform class wins
-      only because its `creationTimestamp` is newer. The fix — stop editing the
-      bundled addon, and either skip its manifest or run with
-      `--disable=local-storage` while owning the provisioner — belongs to this row
-      and needs a cluster re-converge. See [notes.md](notes.md).
+      **Defect found and fixed 2026-08-20 (Rundeck executions 230 and 231).** Demoting
+      k3s's bundled `local-path` class could not survive a restart of the unit: the deploy
+      controller re-stages the packaged addon on every start and marks its own class
+      default again. The audit found both classes marked default, the platform's winning
+      only by a newer `creationTimestamp` — a coin toss deciding which reclaim policy an
+      unqualified PVC got. `local-storage` is now on the node disable list and the role
+      owns the provisioner Deployment, RBAC and ConfigMap; `default-local-storage-path` is
+      gone, because it only ever substituted into a manifest that is no longer staged.
+      Execution 230 converged it live: the `local-storage` addon and its manifest were
+      deleted by k3s itself, the bundled class disappeared, and the platform provisioner
+      came up in namespace `homelab-storage` registered as `rancher.io/local-path` — the
+      name every existing volume records. **One default StorageClass remains, asserted on
+      every run.** All four PersistentVolumes survived with their data byte-identical
+      (405860 KiB across the four directories on `k3s-3`, storage root still mode 700).
+      Execution 231 immediately after reported `changed=0` on all three cluster nodes; the
+      six on `localhost` are the documented `vm-clone.yml` baseline.
 - [ ] Define an application-consistent backup contract for databases and persistent
       volumes, including quiesce or dump mechanism, schedule, retention, encryption,
       destination, restore owner and restore procedure. The destination must be PBS-backed

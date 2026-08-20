@@ -352,9 +352,10 @@
               Available = reusable now; reattach it with a PVC naming the volume.
               Released  = still points at the claim that was deleted, and cannot be reused
                           until that reference is cleared.
-              {{ '%-40s' | format('VOLUME') }} {{ '%-9s' | format('PHASE') }} {{ '%-8s' | format('ON DISK') }} of {{ '%-6s' | format('ASKED') }} {{ '%-8s' | format('NODE') }} {{ '%-14s' | format('WAS APP') }} AGE
+              {{ '%-40s' | format('VOLUME') }} {{ '%-9s' | format('PHASE') }} {{ '%-8s' | format('ON DISK') }} {{ '%-6s' | format('NODE') }} AGE
           {% for v in _st_k8s_orphans %}
-              {{ '%-40s' | format(v.name) }} {{ '%-9s' | format(v.phase) }} {{ '%-8s' | format(v.used) }} of {{ '%-6s' | format(v.capacity) }} {{ '%-8s' | format(v.node | default('?', true)) }} {{ '%-14s' | format(v.instance | default('?', true)) }} {{ v.age }}{{ '   stale claim ' ~ v.claim if v.claim | length > 0 else '' }}
+              {{ '%-40s' | format(v.name) }} {{ '%-9s' | format(v.phase) }} {{ '%-8s' | format(v.used) }} {{ '%-6s' | format(v.node | default('?', true)) }} {{ v.age }}
+                {{ v.capacity }} requested, was {{ v.instance | default('?', true) }}{{ ', stale claim ' ~ v.claim if v.claim | length > 0 else '' }}
           {% endfor %}
               Clear or destroy one with the Reclaim Volume job:
                 playbooks/maintenance/reclaim-volume.yml -e volume=<name> -e action=report|release|delete
