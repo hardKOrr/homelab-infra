@@ -106,13 +106,7 @@ spec:
 
               # The database first, into scratch. Nothing in the target has been touched at
               # this point, so a snapshot that turns out to be unreadable costs nothing.
-              # Kubernetes emptyDir and local-path volumes do not promise support for
-              # every ACL and xattr recorded by pxar. Preserve ownership and ordinary
-              # modes, which the application needs, but do not make restore depend on
-              # metadata these volume filesystems can reject with errno 95.
-              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /artifact \
-                --ignore-acls true \
-                --ignore-xattrs true
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /artifact
               echo "database dump: $(wc -c < /artifact/database.sql) bytes"
 
               # Then the uploads, straight into the live volume. Said plainly because it is
@@ -122,9 +116,7 @@ spec:
               # neither of them and is worse than either.
               echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
               find /app-storage -mindepth 1 -delete
-              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage \
-                --ignore-acls true \
-                --ignore-xattrs true
+              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
               echo "restored storage volume: now $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
 {% endif %}
           env:
@@ -144,6 +136,12 @@ spec:
             - name: PBS_APT_REPO
               value: "{{ client.repository }} {{ client.suite }} {{ client.component }}"
           volumeMounts:
+            # proxmox-backup-client opens an unnamed temporary file with O_TMPFILE while
+            # restoring. The image's overlay-backed /tmp rejects that operation with
+            # EOPNOTSUPP; a dedicated tmpfs supplies the filesystem contract the client
+            # requires without making temporary client state persistent.
+            - name: pbs-tmp
+              mountPath: /tmp
             - name: artifact
               mountPath: /artifact
             - name: app-storage
@@ -217,6 +215,10 @@ spec:
               memory: 256Mi
 
       volumes:
+        - name: pbs-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
         - name: credentials
           secret:
             secretName: {{ _mp_r_secret }}
