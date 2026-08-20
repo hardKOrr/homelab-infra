@@ -2,6 +2,23 @@
 
 Ansible-based homelab automation platform. Goal: one click in Rundeck or Semaphore deploys a fully configured, cross-wired application on Proxmox. Designed to be shared — others clone, supply their lab configuration, run bootstrap, and have a working lab.
 
+## Where the Rules Live
+
+This file is the concise project instruction source: facts, layout, conventions, and the
+commands that verify a change. It is deliberately short. When it and a deeper document
+disagree, the deeper document wins on its own subject:
+
+| Subject | Authority |
+|---|---|
+| `homelabinfra_*` variable shapes and config file schema | `ansible/vars/CONTRACT.md` |
+| Reviewable code contracts (layering, merges, Jinja, secrets, wiring, one-click) | `docs/specs/` |
+| Module, flow, and seam map | `docs/architecture.md` |
+| Gate scope, timing, and WSL bootstrap | `gate/README.md` |
+| Work state, past decisions, and standing lessons | `docs/meta/` — history, never normative |
+
+Do not add rationale to this file. Decisions and failed attempts belong in `docs/meta/` and
+in Git history.
+
 ## Philosophy
 
 - **Fire-and-forget provisioning** — create correct once, not drift enforcement. We do not police drift.
@@ -35,13 +52,36 @@ ansible/
       check-native-updates.yml     # compare installed vs latest GitHub release for native LXC apps, notify via Ntfy
       restart-app.yml              # restart a native app via lab-restart-app; param: instance
       tail-applog.yml              # tail app logs via lab-tail-applog; params: instance, lines
+      config-doctor.yml            # validate the config/ tree without deploying anything
+      get-config.yml               # print one instance's merged effective config
+      configure-app.yml            # edit one config/apps/<instance>.yml key through the audited write path
+      store-secret.yml             # put one secret into its canonical Vaultwarden item
+      vaultwarden-enroll.yml       # enrol the human owner and the automation account
+      vaultwarden-cutover.yml      # verify the vault, then write the vault-mode state file
+      vaultwarden-recovery.yml     # re-establish access after a lost automation credential
   tasks/
     load-user-vars.yml
+    resolve-estate.yml             # overlay the app's routing.estate scope onto the infra facts
+    notify.yml                     # the one notification seam; no-op when the provider is none
+    report-degradation.yml         # record a failure without aborting the run
+    assert-no-degradations.yml     # last task of a play: fail if anything recorded was fatal
     network/generate-ip.yml
+    config/
+      run-doctor.yml               # run scripts/config-doctor.sh and fail the play on an error
+      write-config-file.yml        # the only path that writes into config/; backs up and diffs
+    bitwarden/                     # Vaultwarden session, canonical item read, item upsert, teardown
+    vaultwarden/token-sink.yml     # where the controller keeps the Vaultwarden admin token
+    kuma/                          # Uptime Kuma socket.io transport (it has no REST API)
     proxmox/
       lxc-create.yml
       vm-create.yml
+      vm-clone.yml                 # shared clone seam; also used by kubernetes/provision-node.yml
+      ensure-cloud-template.yml
+      ensure-guest-running.yml
       ip-to-vmid.yml
+      register-nodes.yml
+      resolve-startup.yml          # boot order and delay for a guest
+      record-app-on-guest.yml      # stamp tag app_<instance> + a notes row on the guest
       attach-host-mounts.yml       # attach storage the node already mounts to a guest
     kubernetes/                    # Kubernetes hosting backend seams
       provision-node.yml           # one cluster VM, via the shared vm-clone seam
@@ -68,6 +108,9 @@ ansible/
       uptime-kuma.yml
       opnsense.yml
       pihole.yml
+      kubernetes.yml               # delete the instance's namespace
+      registry.yml                 # forget the instance in config/.generated/facts.yml
+      guest-record.yml             # withdraw the guest tag and notes row
     guest-bootstrap.yml            # post-provisioning: packages, hostname, timezone, unattended-upgrades + Ntfy hook
     stack/
       find-or-create-host.yml      # find existing tag_<stack> host or provision new one; adds to app_deploy group
@@ -85,9 +128,20 @@ ansible/
                                    # (same program, different media type; see the role header)
     <app>/                         # one role per deployable app; ships files/lab-* scripts
   vars/
+    CONTRACT.md                    # authoritative variable-loading contract for homelabinfra_*
     homelabinfra-defaults.yml      # global defaults (git-managed)
+    stack-defaults.yml             # sizing per stack host, so it does not depend on deploy order
     media-wiring.yml               # media app kinds: API versions, implementations, categories
     app-defaults/<app>.yml         # per-app sensible defaults (git-managed)
+  scripts/                         # committed helpers the playbooks and the runner shell out to
+    lab-run.sh                     # runner entrypoint: refresh the checkout, then run one job
+    config-doctor.sh               # validate the config/ tree
+    redact-config.sh               # strip secrets from a config dump
+    vault-runtime.py               # build the in-memory Vaultwarden runtime contract
+    allocate-ip.py, registry-forget.py, secret-shape.py, semaphore-run.sh,
+    resolve-python.sh, with-proxmox-env.sh
+  files/
+    proxmox/guest-app-record.py    # read-modify-write of a guest's tags and notes region
   inventory/
     proxmox.yml
 
@@ -112,11 +166,16 @@ config.example/                    # in git — fully documented templates for u
   apps/<app>.example.yml
 
 docs/
+  README.md                        # entry point: what is normative here and what is history
   architecture.md                  # module, flow, and seam map
   specs/                           # normative implementation and review contracts
-  meta/                            # current work queue and implementation history
+  meta/                            # work state and history — never normative
+    INDEX.md                       # the work queue, kept as a table
+    LESSONS.md                     # standing facts that outlived the slice that produced them
+    <NNN>-<slug>/                  # one live slice; done/ and no-target/ hold the rest
 
-gate/                              # lint, parser, syntax, and focused regression checks
+gate/                              # lint, parser, syntax, link, and focused regression checks
+  README.md                        # exact scope rules and the one-time WSL bootstrap
 ```
 
 ## Config Hierarchy
@@ -204,6 +263,13 @@ Before wiring, `ansible/tasks/resolve-estate.yml` overlays the app's `routing.es
 scope (domain, sso, dns) onto those facts — multi-domain labs declare estates in
 `infrastructure.yml` under `domains:`; single-domain labs are untouched.
 
+**A configured provider that fails is not a no-op.** A provider set to `none` is skipped
+silently; a provider that is declared and then does not do what it was asked must record the
+failure with `ansible/tasks/report-degradation.yml` and let the play continue, and the play's
+last task must be `ansible/tasks/assert-no-degradations.yml`. The run therefore attempts
+everything it can and then refuses to exit 0, so the operator gets one message naming every
+problem. Never catch a wiring failure, print it with `debug`, and finish green.
+
 ## Baseline Apps (Bootstrap Order)
 
 `ansible/playbooks/bootstrap.yml` deploys in dependency order. Each app records topology before
@@ -239,6 +305,9 @@ values but do not yet have publishers.
 | App removal | `remove.yml` | Semaphore/Rundeck job — stops container, unwires everything | Ntfy: "X removed" |
 | Lab status | `status.yml` | Semaphore/Rundeck job — read-only | Console/Semaphore output |
 | App-to-app wiring | `wire-media-stack.yml` | Semaphore/Rundeck job — idempotent, safe to re-run | Ntfy: "Media stack wired: N connections confirmed" |
+| Config validation | `config-doctor.yml` | Semaphore/Rundeck job — read-only, deploys nothing | Console/Semaphore output |
+| Config edit | `configure-app.yml` | Writes one key through `tasks/config/write-config-file.yml` — backs up to `config/.backups/` and diffs into the job log | Job console |
+| Secret storage | `store-secret.yml` | Puts one secret into its canonical Vaultwarden item | Job console (never prints the value) |
 
 ### Feedback Loop (Container Updates)
 Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs Rollback Container job.
@@ -279,7 +348,21 @@ Maintenance
   Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
   Restart App                 ← maintenance/restart-app.yml (param: instance)
   Tail App Log                ← maintenance/tail-applog.yml (params: instance, lines)
+
+Config and Secrets
+  Config Doctor               ← maintenance/config-doctor.yml
+  Get Config                  ← maintenance/get-config.yml (param: instance)
+  Configure App               ← maintenance/configure-app.yml (params: instance, key, value)
+  Store Secret                ← maintenance/store-secret.yml
+  Vaultwarden Enrollment      ← maintenance/vaultwarden-enroll.yml
+  Vaultwarden Cutover         ← maintenance/vaultwarden-cutover.yml
+  Vaultwarden Recovery        ← maintenance/vaultwarden-recovery.yml
 ```
+
+`rundeck/jobs/` is the complete set and also carries `reimport-jobs.yaml`, which reloads the
+job definitions from the checkout. `semaphore/project.json` currently lags it — it has no
+template for `Deploy k3s Cluster`, `Deploy Mixpost`, or the three Vaultwarden jobs. Adding a
+playbook means adding a job on both sides.
 
 ## Secrets
 
@@ -354,9 +437,13 @@ that has vanished or a Proxmox that refuses the update never fails a deploy.
 Two gates are invoked from the repo root:
 
 ```
-wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/lint.sh'
-wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/test.sh'
+wsl bash -lc 'bash gate/lint.sh'
+wsl bash -lc 'bash gate/test.sh'
 ```
+
+No absolute path is baked into either command. `wsl` inherits the Windows working directory,
+so both resolve against whatever checkout you are standing in — a hard-coded home directory
+would only be correct on the machine it was written on.
 
 The wrappers narrow to affected files when the working tree permits it. A clean tree, `--all`,
 or a change to a shared Ansible or gate path runs the full repository. **Allow at least 20 minutes
@@ -366,7 +453,8 @@ command in a short timeout. If the caller times out, its WSL child can keep runn
 the `ansible-lint` lock; inspect the existing process and wait for or stop that exact process
 before retrying. Do not start a second lint gate while the first is still running.
 
-`lint.sh` runs ansible-lint and the Jinja parser check. `test.sh` runs `--syntax-check` over its
+`lint.sh` runs ansible-lint (profile `min`), the Jinja parser check, and `check-links.py`, which
+validates repository-local Markdown links. `test.sh` runs `--syntax-check` over its
 selected playbooks and focused regressions for Vaultwarden handling, IP allocation, and registry
 removal. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to `localhost,` so the
 dynamic inventory plugin never asks for credentials. See `gate/README.md` for exact scope rules.

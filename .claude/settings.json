@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Edit(//c/Users/korr/source/repos/homelab-infra/**)",
-      "Write(//c/Users/korr/source/repos/homelab-infra/**)",
+      "Edit(/**)",
+      "Write(/**)",
       "Bash(wsl bash -lc 'bash gate/lint.sh')",
       "Bash(wsl bash -lc 'bash gate/test.sh')",
       "Bash(wsl bash -lc 'bash gate/lint.sh --all')",
@@ -23,32 +23,7 @@
       "Bash(ssh -o ConnectTimeout=* root@192.168.13.24* 'hostname*')",
       "PowerShell(Get-ChildItem *)",
       "PowerShell(Get-Content *)",
-      "PowerShell(Test-Path *)",
-      "Bash(python -)",
-      "Bash(python -c ' *)",
-      "Bash(bash -n ansible/scripts/lab-run.sh)",
-      "Bash(sed -i 's/^#   LAB_FORCE      unused; the refresh refuses outright on a dirty tracked tree$/#                  It also refuses outright when the tree has uncommitted tracked changes./' ansible/scripts/lab-run.sh)",
-      "Bash(wsl bash *)",
-      "Bash(PROXMOX_API_TOKEN=abc123 bash ansible/scripts/config-doctor.sh /c/Users/korr/AppData/Local/Temp/claude/c--Users-korr-source-repos-homelab-infra/8b2f2c63-d4ad-4a1d-ac51-26d7fdcd098c/scratchpad/cfg)",
-      "Bash(echo \"rc=$?\")",
-      "Bash(cat)",
-      "Bash(python3 -)",
-      "Bash(PROXMOX_API_TOKEN=abc123 bash ansible/scripts/config-doctor.sh __TRACKED_VAR__/cfg)",
-      "Bash(bash ansible/scripts/redact-config.sh /c/Users/korr/AppData/Local/Temp/claude/c--Users-korr-source-repos-homelab-infra/8b2f2c63-d4ad-4a1d-ac51-26d7fdcd098c/scratchpad/cfg)",
-      "Bash(wsl bash -lc ' *)",
-      "Read(//c/Users/korr/AppData/Local/Temp/claude/c--Users-korr-source-repos-homelab-infra/8b2f2c63-d4ad-4a1d-ac51-26d7fdcd098c/scratchpad/**)",
-      "Bash(sed -i 's|-i localhost, playbooks|-i localhost, -c local playbooks|g' test_configure_app.sh)",
-      "Bash(grep -vE \"^ok: |^skipping: |^TASK|^PLAY \\\\[|^$\")",
-      "Bash(rm -rf config)",
-      "Bash(rm -rf __TRACKED_VAR__/cfg013)",
-      "Bash(mkdir -p __TRACKED_VAR__/cfg013/apps __TRACKED_VAR__/cfg013/.generated)",
-      "Bash(cp config.example/proxmox.yml __TRACKED_VAR__/cfg013/proxmox.yml)",
-      "Bash(cp config.example/infrastructure.yml __TRACKED_VAR__/cfg013/infrastructure.yml)",
-      "Bash(PROXMOX_API_TOKEN=abc123 bash ansible/scripts/config-doctor.sh __TRACKED_VAR__/cfg013)",
-      "Bash(LAB_ENV_FILE=__TRACKED_VAR__/etc/lab-run.env bash __TRACKED_VAR__/repo/ansible/scripts/lab-run.sh dummy.yml)",
-      "Bash(timeout 300 bash gate/test.sh)",
-      "Bash(grep -iE 'config/|\\\\.env$|secret')",
-      "Bash(echo \"exit=$? \\(1 = nothing sensitive staged\\)\")"
+      "PowerShell(Test-Path *)"
     ]
   },
   "enabledPlugins": {

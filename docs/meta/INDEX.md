@@ -39,7 +39,7 @@ Two things that are *not* work, and must never be presented as the next thing to
   code. The work queue below is the authority on what is left to build.
 
 Gates (both green, both under WSL):
-`wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/lint.sh'`
+`wsl bash -lc 'bash gate/lint.sh'`
 and the same for `test.sh`.
 
 ## The work queue

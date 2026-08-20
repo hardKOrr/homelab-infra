@@ -8,8 +8,8 @@ one-liner can mis-expand on the Windows side and silently run zero iterations wh
 Invoked as:
 
 ```
-lint: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/lint.sh'
-test: wsl bash -lc 'cd /mnt/c/Users/korr/source/repos/homelab-infra && bash gate/test.sh'
+lint: wsl bash -lc 'bash gate/lint.sh'
+test: wsl bash -lc 'bash gate/test.sh'
 ```
 
 Append `--all` to either to force the full sweep (see *Scope* below).
