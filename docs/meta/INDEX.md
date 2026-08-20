@@ -48,6 +48,7 @@ and the same for `test.sh`.
 |---:|---|---|:---:|
 | 1 | [204 — Kubernetes hosting backend](204-kubernetes-hosting-backend/README.md) | Implement the reproducible k3s provisioning path, owned-resource app adapter, persistent-storage and restore contract, and existing platform-wiring integration; Foxglove access, failure and recovery remain live slice acceptance | [ ] |
 | 2 | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | One `maintenance:` schedule primitive resolved global → estate → stack → app; populate the never-set Proxmox `startup` order; make `watchtower_schedule` reachable; Tier 1 guest-reboot job including the k3s cluster as one unit; Tier 2 armed full-lab descent including the Proxmox nodes | [ ] |
+| 3 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup all 36 `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/…`, `Operate`, `Recover`, `Setup`); rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` only — no rename, no step change | [ ] |
 
 The Kubernetes row is an active queue alongside the application-coverage rows below. It adds
 a hosting backend; it does not authorize a wholesale migration of stable applications. Slice

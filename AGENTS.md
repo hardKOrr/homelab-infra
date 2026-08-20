@@ -324,9 +324,11 @@ Each native app role ships three scripts to `/usr/local/bin/` (installed by the 
 
 All three are no-ops (exit 1) in the template — each app role replaces them with real implementations in `ansible/roles/<app>/files/`.
 
-## UI Job Structure (Semaphore + Rundeck)
+## UI Job Structure (Rundeck)
 
-Both are supported. Playbooks are UI-agnostic. Job definitions live in `semaphore/` and `rundeck/` and are importable.
+Playbooks are UI-agnostic, and that has not changed — nothing in `ansible/` may depend on a
+particular UI. What has changed is which UI this repository keeps current: **Rundeck**. The
+lab runs on it, and `rundeck/jobs/` is the authoritative set of jobs.
 
 ```
 Bootstrap
@@ -348,6 +350,11 @@ Maintenance
   Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
   Restart App                 ← maintenance/restart-app.yml (param: instance)
   Tail App Log                ← maintenance/tail-applog.yml (params: instance, lines)
+  Backup App                  ← maintenance/backup-app.yml (params: instance, app)
+  Restore App                 ← maintenance/restore-app.yml (params: instance, app, target,
+                                snapshot, overwrite — overwrite defaults false)
+  Reclaim Volume              ← maintenance/reclaim-volume.yml (params: volume,
+                                action report|release|delete — defaults report)
 
 Config and Secrets
   Config Doctor               ← maintenance/config-doctor.yml
@@ -360,9 +367,16 @@ Config and Secrets
 ```
 
 `rundeck/jobs/` is the complete set and also carries `reimport-jobs.yaml`, which reloads the
-job definitions from the checkout. `semaphore/project.json` currently lags it — it has no
-template for `Deploy k3s Cluster`, `Deploy Mixpost`, or the three Vaultwarden jobs. Adding a
-playbook means adding a job on both sides.
+job definitions from the checkout. Adding a playbook that an operator runs means adding a
+job there.
+
+`semaphore/project.json` is **not** kept in parity and must not be treated as a second
+half of that job (operator decision, 2026-08-19: Semaphore was evaluated and Rundeck was
+chosen). It stays in the repository as a starting point for someone who prefers Semaphore,
+it is accurate for the jobs it does define, and it is missing everything added since —
+`Deploy k3s Cluster`, `Deploy Mixpost` and the three Vaultwarden jobs among them. Bringing
+it back to parity is only worth doing if someone actually adopts it. Do not spend a slice's
+time updating it, and do not report a Semaphore gap as an outstanding defect.
 
 ## Secrets
 

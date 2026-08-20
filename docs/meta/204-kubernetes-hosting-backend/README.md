@@ -106,8 +106,16 @@ identity check, or only through a named private path. It must continue to use
       an explicit option. Removal is done and proven on both `delete_data` paths
       (2026-08-19), and `maintenance/status.yml` reads the cluster and its managed
       namespaces. Left open: four orphaned PersistentVolumes remain on `k3s-3` from
-      those runs — two `Available`, two `Released` with stale claims — so nothing yet
-      reports or reclaims a volume the retain path left behind.
+      those runs — two `Available`, two `Released` with stale claims. Reporting and
+      reclaim are now written (2026-08-20): `tasks/kubernetes/list-orphan-volumes.yml`
+      feeds a RETAINED VOLUMES section in Lab Status, and `maintenance/reclaim-volume.yml`
+      offers `report` (default) / `release` / `delete` on one named volume. Measured live:
+      the four hold 396 MiB, all on `k3s-3` under `/var/lib/rancher/k3s/storage/`.
+      `unwiring/kubernetes.yml` no longer tells the operator to run `kubectl delete pv`,
+      which under Retain strands the bytes. Left open: the destructive `delete` path has
+      never been executed, and its storage-root guard was inert until `storage_path` was
+      added to the generated facts in the same change — both need the supervised live
+      proof.
 - [!] Declare the persistent-storage contract: the default StorageClass, physical data
       location, capacity ownership, node-loss behavior, PVC reclaim behavior and the exact
       effect of the removal `delete_data` option. A node-local default must not imply
@@ -126,9 +134,35 @@ identity check, or only through a named private path. It must continue to use
       or explicitly declared. Prove a clean restore of the Foxglove pilot into a fresh
       application namespace and verify application data after restore; VM snapshots alone
       do not satisfy this criterion.
+      **Code complete 2026-08-20, unproven.** A CronJob dumps MySQL with
+      `--single-transaction` and pushes `database.pxar` + `storage.pxar` into the existing
+      PBS datastore, pruned to `retention_days`. `Backup App` starts that same CronJob
+      rather than defining a second one. `Restore App` is three deliberate steps with
+      `overwrite=false` enforced as the default: list snapshots, then verify credentials
+      and index, then restore — and a cross-instance restore carries the source `APP_KEY`
+      into the target's Vaultwarden item before its Secret, so Laravel-encrypted tokens
+      stay readable. Verified only statically: templates render, parse, and pass
+      `apply --dry-run=server --server-side` on v1.31.5+k3s1. **No CronJob has ever been
+      created and no snapshot exists in PBS**, so the PBS token's datastore permissions
+      and the `mysql:8.4` dump flags are both still unexercised. The restore drill is
+      Deploy Mixpost → Backup App → Restore App into `mixpost-restore` → sign in with the
+      source's credentials.
 - [ ] Deploy one low-risk Foxglove business application end to end, re-run it with no
       unwanted change, restart or lose one cluster node, and confirm the result matches the
       declared failure-domain behavior.
+- [ ] `tasks/kubernetes/apply-manifest.yml` reports `changed` on every run, so no
+      Kubernetes app can ever demonstrate a converged re-run. Its `changed_when` rejects
+      lines matching ` unchanged$`, but the apply uses `--server-side`, which prints
+      `serverside-applied` unconditionally — verified live on 2026-08-20 against
+      v1.31.5+k3s1, where a converged StorageClass printed `serverside-applied` under
+      `--server-side` and `configured` without it. Until this is fixed the "re-run with no
+      unwanted change" acceptance below cannot be met by observation.
+- [ ] `playbooks/apps/mixpost.yml` has neither `report-degradation.yml` nor
+      `assert-no-degradations.yml`, though it runs the Caddy, Authentik, Uptime Kuma and
+      DNS wiring the platform contract covers. Verified 2026-08-20. Until the assert is its
+      last task, any wiring seam that records a degradation there is swallowed and the run
+      finishes green — so the backup/restore path deliberately hard-fails instead of
+      recording, and that choice should be revisited once the assert exists.
 - [ ] Both repository gates pass under WSL, followed by live acceptance from a fresh
       cluster path rather than only a previously converged cluster.
 
