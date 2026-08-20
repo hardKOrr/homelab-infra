@@ -444,9 +444,15 @@ redundant — this table still said the work was open, so a session re-ran it. *
 outlives its work costs a live re-run.** Update the row when the run lands, not later.
 
 **The access group is the platform's to create — answered 2026-08-11, `a19105a`.** 403
-deliberately removed *directory-content* management from the Authentik role, and that
-boundary stands: account names, membership, social login sources and MFA doctrine belong to
-the operator. The access group is not content, it is the platform's own ACL primitive, and
+deliberately removed *directory-content* management from the Authentik role. **That boundary
+no longer stands, and this paragraph outlived it.** Groups, accounts and membership are
+declared in `config/apps/<instance>.yml` and applied by `roles/authentik/tasks/directory.yml`
+(`a4511ed`); flows, stage bindings, authenticator/MFA stages, OAuth login sources and brands
+followed in `5ddd7b7` (`flows.yml`, `flow-bindings.yml`, `authenticators.yml`, `sources.yml`,
+`brands.yml`). What is declared is created and kept correct; what is not declared is never
+touched. What survives of 403's boundary is only the *content* of a particular lab's
+directory — which accounts and which doctrine — not whether the platform can express it. The
+access group is not content, it is the platform's own ACL primitive, and
 the platform that hardcodes `wiring_auth_group: homelab-users` in all twelve app playbooks
 has to be the one that creates it. `wiring/authentik.yml` now creates it when absent —
 empty, `is_superuser: false`, 400 accepted alongside 201 so concurrent deploys race
