@@ -1,0 +1,42 @@
+---
+# Resolve a guest's Proxmox `startup` string (boot order) for lxc-create, vm-create
+# and vm-clone. Slice 205.
+#
+# Proxmox starts guests with onboot=1 in ascending `order`, waiting `up` seconds after
+# each one before continuing. Guests with no startup string start last, in vmid order.
+# This platform sets onboot=true by default and has never set `startup` — so every
+# guest returned from every reboot in arbitrary order, and an app could reach for
+# Vaultwarden, Caddy or DNS before they existed. That is true of any reboot, not only
+# a maintenance one, which is why the ordering lives on the guest at the hypervisor
+# rather than in a playbook that is not running while the lab boots.
+#
+# Inputs:
+#   resolve_startup_guest — the guest's config dict (homelabinfra_config.proxmox.lxc
+#     or .vm). Optional keys `boot_order` and `boot_up`; both are bookkeeping keys and
+#     are filtered out of the module arguments by the create tasks' own allowlists.
+#   homelabinfra_config.infrastructure.maintenance.boot.{order,up} — lab-wide fallback
+#     for a guest that declares neither. Defaults live in vars/homelabinfra-defaults.yml.
+#
+# Output:
+#   _proxmox_startup — e.g. "order=10,up=20", or '' when ordering is switched off
+#     lab-wide with `boot: {order: none}`. An empty string means the caller omits the
+#     key entirely and Proxmox keeps its own default, so a lab that wants nothing to do
+#     with boot ordering is left exactly as it was.
+
+- name: Resolve startup | Compute the boot order string
+  ansible.builtin.set_fact:
+    _proxmox_startup: >-
+      {{ '' if _rs_order in ['', 'none', none]
+         else 'order=' ~ (_rs_order | int) ~ ',up=' ~ (_rs_up | int) }}
+  vars:
+    # `default(x, true)` on the guest keys deliberately: an empty string left by a
+    # templated override means "not set", not "order zero".
+    _rs_defaults: >-
+      {{ ((homelabinfra_config.infrastructure | default({})).maintenance
+          | default({})).boot | default({}) }}
+    _rs_order: >-
+      {{ (resolve_startup_guest | default({})).boot_order
+         | default(_rs_defaults.order | default(50), true) }}
+    _rs_up: >-
+      {{ (resolve_startup_guest | default({})).boot_up
+         | default(_rs_defaults.up | default(15), true) }}

@@ -124,6 +124,13 @@
     timeout: "{{ homelabinfra_config.proxmox.vm.timeout | default(300) | int }}"
   when: _vmc_existing.rc != 0
 
+# Boot order (slice 205) — a cloned VM is created from an explicit argument list rather
+# than the create tasks' allowlist, so it resolves `startup` the same way by hand.
+- name: VM clone | Resolve the boot order
+  ansible.builtin.include_tasks: resolve-startup.yml
+  vars:
+    resolve_startup_guest: "{{ homelabinfra_config.proxmox.vm | default({}) }}"
+
 # A clone carries the template's sizing and no cloud-init identity, so everything
 # that makes this VM itself is applied here.
 - name: VM clone | Apply per-VM configuration
@@ -151,6 +158,7 @@
     memory: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
     agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
     onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"
+    startup: "{{ _proxmox_startup if (_proxmox_startup | length > 0) else omit }}"
     tags: "{{ homelabinfra_config.proxmox.vm.tags | default(['homelab-infra']) }}"
     description: "{{ homelabinfra_config.proxmox.vm.description | default(omit) }}"
     ciuser: "{{ homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user) }}"

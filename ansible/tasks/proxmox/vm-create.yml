@@ -104,6 +104,18 @@
         }, recursive=True) }}
   when: homelabinfra_instance.network is defined
 
+# Boot order (slice 205) — same reasoning and same seam as lxc-create.yml.
+- name: Resolve the VM's boot order
+  ansible.builtin.include_tasks: resolve-startup.yml
+  vars:
+    resolve_startup_guest: "{{ homelabinfra_instance.vm }}"
+
+- name: Apply the resolved boot order
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'vm': {'startup': _proxmox_startup}}, recursive=True) }}
+  when: _proxmox_startup | length > 0
+
 - name: Build VM module arguments from the community.proxmox.proxmox_kvm allowlist
   ansible.builtin.set_fact:
     vm_module_args: >-

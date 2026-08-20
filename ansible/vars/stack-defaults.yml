@@ -34,6 +34,8 @@ stack_defaults:
   # or a co-tenant's memory spike would land on the lab's login path. The worker is the
   # memory-hungry piece.
   sso_stack:
+    # Boot tier 40 — SSO precedes the apps that authenticate through it.
+    boot_order: 40
     cores: 4
     memory: 4096
     disk_volume:
@@ -46,6 +48,9 @@ stack_defaults:
   # Disk is the number that matters: Prometheus' TSDB grows with retention and with every
   # node_exporter tasks/guest-bootstrap.yml adds to the lab.
   monitoring_stack:
+    # Boot tier 70 — last on purpose. Uptime Kuma must not page about services that are
+    # still on their way up, and Prometheus gaps during an ascent are expected.
+    boot_order: 70
     cores: 4
     memory: 4096
     disk_volume:

@@ -18,6 +18,9 @@ pbs_defaults:
       agent: 1
       onboot: true
       description: "Proxmox Backup Server, created by homelab-infra"
+      # Boot tier 60 — backups start after the guests they back up, and a backup that
+      # begins mid-ascent competes with them for the same disks.
+      boot_order: 60
       tags:
         - homelab-infra
         - pbs

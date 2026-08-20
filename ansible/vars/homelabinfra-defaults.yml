@@ -15,6 +15,23 @@ homelabinfra_defaults:
         user: homelab-infra
         uid: 1313
         gid: 1313
+    # Boot order (slice 205). Proxmox starts onboot guests in ascending `order`,
+    # waiting `up` seconds after each before continuing. These are the values a guest
+    # that declares no `proxmox.boot_order` of its own receives, so an ordinary app
+    # starts after every platform service it depends on and before the monitoring that
+    # would otherwise page about it.
+    #
+    # The tiers the platform services claim, for reference when placing a new one:
+    #   10 reverse proxy · 20 secrets · 30 notifications · 40 SSO · 45 cluster nodes
+    #   50 ordinary apps and stack hosts · 60 backups · 70 uptime monitoring
+    #
+    # Uptime Kuma is deliberately last: it must not alarm about services that are
+    # still on their way up. Set `order: none` to switch ordering off lab-wide and
+    # leave every guest exactly as Proxmox would have had it.
+    maintenance:
+      boot:
+        order: 50
+        up: 15
   networks: {}
   ansible:
     ssh_user: root

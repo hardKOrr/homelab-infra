@@ -6,6 +6,9 @@
 caddy_defaults:
   proxmox:
     type: lxc                   # native LXC — single Go binary from the official apt repo
+    # Boot tier 10 — the edge answers first, so a guest that comes up behind it is
+    # reachable the moment it is ready. See vars/homelabinfra-defaults.yml.
+    boot_order: 10
     ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
     cores: 1
     memory: 512                 # MB — raise only for very high request volume

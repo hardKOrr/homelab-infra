@@ -168,6 +168,34 @@ dns:
 # once, which on a Debian node is usually the first account ever created there —
 # the platform ended up sharing an id with an unrelated file server.
 
+# ── Maintenance (optional) ─────────────────────────────────────────────────────
+# Boot order. Proxmox starts guests with onboot=1 in ascending `order`, waiting
+# `up` seconds after each one before starting the next. This platform sets onboot
+# on everything it creates, so without an order the whole lab races back after a
+# reboot and apps reach for Caddy, Vaultwarden or DNS before those exist.
+#
+# The ordering is written onto the guest at the hypervisor, so it holds for ANY
+# reboot — a maintenance run, a power cut, someone rebooting a node by hand.
+#
+# These are the values a guest that declares nothing of its own receives. The
+# platform services claim tiers below the default already:
+#
+#   10 reverse proxy        40 SSO stack           60 backups
+#   20 secrets              45 cluster nodes       70 uptime monitoring
+#   30 notifications        50 apps and stacks
+#
+# Uptime Kuma is last deliberately — it must not page about services that are
+# still on their way up. An individual app overrides its own tier with
+# `proxmox.boot_order` in config/apps/<instance>.yml; a stack host's tier belongs
+# to the stack, in the `stacks:` block below.
+#
+# Omit the block to accept the defaults. Set `order: none` to switch boot ordering
+# off lab-wide and leave every guest exactly as Proxmox would have had it.
+# maintenance:
+#   boot:
+#     order: 50    # default tier for a guest that declares none | none to disable
+#     up: 15       # seconds to wait after a guest before starting the next tier
+
 # ── Backups ────────────────────────────────────────────────────────────────────
 # PBS is deployed as a VM by bootstrap. Configure the datastore path here.
 # Bootstrap will configure the backup schedule — PBS runs backups autonomously.

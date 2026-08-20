@@ -223,6 +223,8 @@ carries its reason.
 | `dns.host` | required for external providers | not in Proxmox inventory |
 | `dns.api_key` | optional | |
 | `dns.instance` | optional | |
+| `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
+| `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |
 | `backups.retention` | optional | |
@@ -233,6 +235,7 @@ carries its reason.
 | `stacks.<name>.{cores,memory,disk_volume}` | optional | deep-merged over `vars/stack-defaults.yml`; applies when the stack host is CREATED |
 | `stacks.<name>.pool` | optional | pool the stack host allocates from. A stack whose name matches a pool name inherits it without this key; a pool named here must exist on the network |
 | `stacks.<name>.ip_address` | optional | pins the stack host to an exact address, honoured or refused with the conflict named |
+| `stacks.<name>.boot_order` | optional | the stack host's Proxmox startup tier. A property of the stack, like its sizing — an app cannot set it, or the tier would depend on deploy order |
 
 ### Runtime secrets and external unlock material (slice 014)
 

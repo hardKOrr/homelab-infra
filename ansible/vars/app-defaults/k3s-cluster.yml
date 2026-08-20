@@ -171,6 +171,11 @@ k3s_cluster_defaults:
       agent: 1
       onboot: true
       description: "k3s cluster node, created by homelab-infra"
+      # Boot tier 45 — after the platform services a workload wires to, before ordinary
+      # apps. All three nodes share one tier deliberately: embedded etcd needs its peers
+      # to come up together, so staggering them only delays quorum.
+      boot_order: 45
+      boot_up: 0
       tags:
         - homelab-infra
         - k3s

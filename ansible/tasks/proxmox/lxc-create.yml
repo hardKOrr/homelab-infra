@@ -156,6 +156,20 @@
     homelabinfra_instance: >-
       {{ homelabinfra_instance | combine({'lxc': {'features': _lxc_features_api}}, recursive=True) }}
 
+# Boot order (slice 205). `startup` is in the allowlist below and was never set by
+# anything, so guests came back from a reboot in arbitrary order. `boot_order`/`boot_up`
+# are bookkeeping keys and are filtered out by that same allowlist.
+- name: Resolve the container's boot order
+  ansible.builtin.include_tasks: resolve-startup.yml
+  vars:
+    resolve_startup_guest: "{{ homelabinfra_instance.lxc }}"
+
+- name: Apply the resolved boot order
+  ansible.builtin.set_fact:
+    homelabinfra_instance: >-
+      {{ homelabinfra_instance | combine({'lxc': {'startup': _proxmox_startup}}, recursive=True) }}
+  when: _proxmox_startup | length > 0
+
 - name: Build LXC module arguments from the community.proxmox.proxmox allowlist
   ansible.builtin.set_fact:
     lxc_module_args: >-
