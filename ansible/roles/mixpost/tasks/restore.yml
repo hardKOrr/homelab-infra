@@ -209,22 +209,6 @@
 - name: Restore | Restore the snapshot into the target
   when: restore_overwrite | bool
   block:
-    - name: Restore | Read the target's current replica count
-      ansible.builtin.command:
-        argv:
-          - k3s
-          - kubectl
-          - --namespace
-          - "{{ k8s_namespace }}"
-          - get
-          - "deployment/{{ restore_target }}"
-          - -o
-          - jsonpath={.spec.replicas}
-      delegate_to: "{{ k8s_api_host }}"
-      become: true
-      register: _mp_r_replicas
-      changed_when: false
-
     # Stopped, not left running. The application would otherwise be reading a database that
     # is being dropped underneath it and writing files into a directory being emptied — and
     # Laravel's queue worker runs inside the same container, so "nobody is using it" is not
@@ -349,7 +333,10 @@
           - "{{ k8s_namespace }}"
           - scale
           - "deployment/{{ restore_target }}"
-          - "--replicas={{ _mp_r_replicas.stdout | default('1', true) | trim or '1' }}"
+          # The manifest declares exactly one web replica. Do not read the value at the
+          # start of this run: a failed prior attempt deliberately left it at zero, and a
+          # retry must not mistake that safety state for the desired steady state.
+          - --replicas=1
       delegate_to: "{{ k8s_api_host }}"
       become: true
       changed_when: true
@@ -401,4 +388,4 @@
           decided what to do, either re-run this restore, or start the application as it
           stands with:
           k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ restore_target }}
-          --replicas={{ _mp_r_replicas.stdout | default('1', true) | trim or '1' }}
+          --replicas=1
