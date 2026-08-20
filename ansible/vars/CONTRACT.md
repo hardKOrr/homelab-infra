@@ -48,7 +48,8 @@ dns:           { provider, host }
 backups:       { instance, host, datastore, datastore_path, api_token_id }
 vaultwarden:   { host, port }
 kubernetes:    { instance, provider, version, host, ingress_vip, ingress_controller,
-                 storage_class, storage_reclaim_policy, failure_domain_mode, nodes }
+                 storage_class, storage_reclaim_policy, storage_path,
+                 failure_domain_mode, nodes }
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
 runner:                              # the host this platform runs FROM — see below
@@ -114,6 +115,7 @@ Vaultwarden item `homelab-infra/<instance>` and never appear here.
 | `ingress_controller` | in-cluster controller terminating plain HTTP on the VIP (`traefik`) |
 | `storage_class` | default StorageClass. `local-path` is **node-pinned**: a pod whose volume lives on an unavailable node stays Pending rather than rescheduling |
 | `storage_reclaim_policy` | `Retain` — only the removal job's explicit `delete_data` removes a volume |
+| `storage_path` | the directory on each node that every volume lives under. Topology, not a secret. `maintenance/reclaim-volume.yml` refuses to delete a directory that is not under it, so the guard is inert while this is absent |
 | `failure_domain_mode` | `distinct-nodes` when every server sits on a different Proxmox node, `single` otherwise. Consumers describing availability read this rather than counting nodes |
 | `nodes` | the node declarations verbatim: name, Proxmox placement, address, sizing, taints |
 

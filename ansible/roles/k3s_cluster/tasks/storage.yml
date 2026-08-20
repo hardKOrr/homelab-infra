@@ -1,7 +1,8 @@
 ---
 # Make the declared persistent-storage contract true on the cluster.
 #
-# Runs once, on the founding node: a StorageClass is cluster-scoped.
+# Runs once, on the founding node: a StorageClass is cluster-scoped, and so is the
+# provisioner that serves it.
 #
 # WHAT THIS STORAGE IS, PLAINLY
 #
@@ -16,14 +17,26 @@
 # its own queue row, buys availability rather than backup, and does not replace the
 # application-consistent dump this slice requires.
 #
-# WHY THIS CLASS IS OURS AND NOT k3s's
+# WHY THE WHOLE PROVISIONER IS OURS AND NOT k3s's
 #
 # The first implementation patched k3s's bundled `local-path` class to reclaimPolicy
 # Retain. Kubernetes refuses that outright — `Forbidden: updates to reclaimPolicy are
-# forbidden` — because the field is immutable once a class exists. Declaring our own class
-# with the same provisioner is both the only way to get Retain and the better shape: k3s
-# reapplies bundled addons when their manifests change, so a class we had edited would be
-# reverted by a future k3s upgrade without anything failing at the time.
+# forbidden` — because the field is immutable once a class exists. So the platform
+# declared its own class and demoted the bundled one from being the default.
+#
+# That demotion could not hold either, and the reason is worth stating because the code
+# was correct and still produced a wrong cluster. k3s re-stages its packaged addons into
+# /var/lib/rancher/k3s/server/manifests on every start of the service, and the packaged
+# local-storage.yaml marks its class default. A restart of the unit therefore restored a
+# second default class, this job re-demoted it and reported `changed`, and the cluster
+# spent every interval in between with two defaults — resolved by the API server picking
+# whichever had the newer creationTimestamp. The platform's class won that by an accident
+# of build order, and a k3s upgrade that recreates the bundled class would have flipped it
+# without anything failing at the time.
+#
+# The addon is therefore disabled outright in config.yaml.j2 and this platform owns the
+# provisioner Deployment, its RBAC, its ConfigMap and its StorageClass. There is now
+# exactly one thing in the cluster that can declare a default class, and it is this role.
 
 - name: k3s storage | Assert the storage contract is declared
   ansible.builtin.assert:
@@ -31,14 +44,31 @@
       - k8s_cluster_config.storage.class is defined
       - k8s_cluster_config.storage.class != 'local-path'
       - k8s_cluster_config.storage.reclaim_policy in ['Retain', 'Delete']
+      - k8s_cluster_config.storage.path | default('') | length > 0
+      - k8s_cluster_config.storage.provisioner_image | default('') is search(':')
+      - k8s_cluster_config.storage.helper_image | default('') is search(':')
     fail_msg: >-
-      storage.class and storage.reclaim_policy (Retain or Delete) must be declared in
-      vars/app-defaults/k3s-cluster.yml, and storage.class must not be `local-path` —
-      that name belongs to the class k3s ships, whose reclaimPolicy cannot be changed.
-      Use a distinct name so the platform owns its own class.
+      storage.class, storage.path, storage.reclaim_policy (Retain or Delete) and the two
+      pinned images storage.provisioner_image and storage.helper_image must be declared in
+      vars/app-defaults/k3s-cluster.yml. storage.class must not be `local-path` — that name
+      belongs to the class k3s used to ship, and this cluster runs with that addon
+      disabled. The images must carry an explicit tag: a floating `latest` means two nodes
+      rebuilt a month apart run different storage controllers against the same volumes.
 
-# Dropped into k3s's auto-deploy directory so the cluster keeps it applied without this
-# job having to run again.
+# Dropped into k3s's auto-deploy directory rather than applied with `kubectl` from here.
+# Anything in that directory is applied and kept applied by the cluster itself, so the
+# objects survive a control-plane restart without this job running again, and a manifest
+# that could not be applied yet is retried by k3s every fifteen seconds instead of leaving
+# the cluster half-configured. It is the same mechanism the MetalLB manifest uses, and the
+# reason the Namespace and the objects inside it can share one file.
+- name: k3s storage | Declare the platform's local-path provisioner
+  ansible.builtin.template:
+    src: local-path-provisioner.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/homelab-local-path-provisioner.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
 - name: k3s storage | Declare the platform StorageClass
   ansible.builtin.template:
     src: storageclass.yaml.j2
@@ -47,65 +77,89 @@
     group: root
     mode: "0600"
 
-- name: k3s storage | Wait for the StorageClass to exist
+# A StorageClass with no running provisioner is a promise the cluster cannot keep: a PVC
+# that names it binds nothing and its pod sits Pending with an event nobody reads. On the
+# converge that first disables the bundled addon there is a real window of exactly this
+# shape — k3s removes its provisioner as soon as the restarted service notices the disable,
+# and ours is applied a moment later — so the contract is not met until this wait passes.
+# Retried rather than waited once, because the Deployment does not exist at all until k3s's
+# deploy controller has walked the manifests directory.
+- name: k3s storage | Wait for the platform's provisioner to become available
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - -n
+      - "{{ k3s_storage_namespace }}"
+      - wait
+      - "deployment/{{ k3s_storage_provisioner_deployment }}"
+      - --for=condition=Available
+      - --timeout=30s
+  register: _k3s_lpp_ready
+  retries: 10
+  delay: 15
+  until: _k3s_lpp_ready.rc == 0
+  changed_when: false
+
+# Every class and its default annotation in one read, then filtered here — rather than a
+# jsonpath filter expression selecting on the annotation. The annotation's key contains
+# dots that have to be escaped inside the path, and kubectl's jsonpath handles that in a
+# plain field reference but not dependably inside a `[?(...)]` predicate. Reading
+# everything and filtering in Jinja has no such corner.
+#
+# argv, not a cmd string: `command:` splits a cmd on whitespace and drops the quotes, which
+# is how a jsonpath in this role once reached kubectl as `@.type==Ready` and failed 36
+# times against a node that had been Ready throughout.
+- name: k3s storage | Read every StorageClass and its default annotation
   ansible.builtin.command:
     argv:
       - k3s
       - kubectl
       - get
       - storageclass
-      - "{{ k8s_cluster_config.storage.class }}"
       - -o
-      - name
-  register: _k3s_sc
+      - jsonpath={range .items[*]}{.metadata.name}={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}
+  register: _k3s_sc_defaults
   retries: 20
   delay: 5
-  until: _k3s_sc.rc == 0
+  until: >-
+    (_k3s_sc_defaults.stdout_lines | select('search', '=true$')
+     | map('regex_replace', '=true$', '') | sort | list)
+    == [k8s_cluster_config.storage.class]
   changed_when: false
+  # The `until` here is a wait, not the verdict. On the converge that first disables the
+  # bundled addon the cluster genuinely holds two default classes for a few seconds, until
+  # the deploy controller's next pass removes the one it no longer owns; retrying is how
+  # that stops being a spurious failure. When it does run out, an exhausted retry loop
+  # reports only that it gave up, so the error is left to the assert below — which can name
+  # the classes it found and say what a second default actually does to a PVC.
+  ignore_errors: true  # noqa: ignore-errors
 
-# Two default classes is not an error Kubernetes raises; it is an ambiguity it resolves
-# arbitrarily. A PVC that names no class would then land on whichever one the API server
-# picked, which may be the bundled Delete-policy class. The annotation is mutable, unlike
-# reclaimPolicy, so the bundled class is demoted rather than replaced — it stays available
-# to anything that names it explicitly.
-- name: k3s storage | Read the bundled class's default annotation
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - get
-      - storageclass
-      - local-path
-      - -o
-      - jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
-  register: _k3s_bundled_default
-  failed_when: false
-  changed_when: false
-
-# The payload is built as a dict and passed through `to_json`, never written as JSON text.
-# A rendered template that happens to parse as a data structure is converted back into one
-# by Ansible and stringified with Python's repr on the way out, so a literal
-# `{"a":"b"}` reaches the command as `{'a': 'b'}` and the API server rejects it with
-# `invalid character '\'' looking for beginning of object key string`. The same trap is
-# documented at length in tasks/bitwarden/upsert-item.yml, which hit it first.
-- name: k3s storage | Demote the bundled class from being the default
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - patch
-      - storageclass
-      - local-path
-      - --type
-      - merge
-      - -p
-      - >-
-        {{ {'metadata': {'annotations':
-             {'storageclass.kubernetes.io/is-default-class': 'false'}}} | to_json }}
-  when:
-    - _k3s_bundled_default.rc == 0
-    - (_k3s_bundled_default.stdout | trim) == 'true'
-  changed_when: true
+# The assert that the demotion patch should always have been. "Our class is default" was
+# true on a cluster that also had a second default class, which is precisely the state the
+# audit found — so the property worth checking is not that ours is marked, it is that
+# nothing else is. The retry above gives the cluster time to converge; this refuses to call
+# the job successful if it did not.
+#
+# It runs on a converged re-run too, because a converged run is exactly where an unnoticed
+# drift hides. A PVC that names no class gets the default one, so a wrong default means an
+# application silently lands on storage whose node-loss and reclaim behavior this platform
+# never described.
+- name: k3s storage | Assert exactly one default StorageClass, and that it is ours
+  ansible.builtin.assert:
+    that:
+      - _k3s_defaults == [k8s_cluster_config.storage.class]
+    fail_msg: >-
+      The cluster reports default StorageClasses {{ _k3s_defaults }}, not exactly
+      [{{ k8s_cluster_config.storage.class }}]. With more than one default the API server
+      picks whichever has the newer creationTimestamp, so every PVC that names no class is
+      a coin toss between reclaim policies. With none, such a PVC never binds at all.
+      All classes and their annotations:
+      {{ _k3s_sc_defaults.stdout_lines | default([]) | join(', ') }}.
+  vars:
+    _k3s_defaults: >-
+      {{ _k3s_sc_defaults.stdout_lines | default([]) | select('search', '=true$')
+         | map('regex_replace', '=true$', '') | sort | list }}
 
 - name: k3s storage | Read the platform class back
   ansible.builtin.command:
@@ -116,20 +170,57 @@
       - storageclass
       - "{{ k8s_cluster_config.storage.class }}"
       - -o
-      - jsonpath={.reclaimPolicy}/{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
+      - jsonpath={.provisioner}/{.reclaimPolicy}
   register: _k3s_sc_verify
   changed_when: false
 
-# Both properties are asserted, on every run including a converged one, because a
-# converged run is exactly where an unnoticed drift would hide. A PVC that names no class
-# gets the default one, so if the wrong class is default an application silently lands on
-# storage whose node-loss and reclaim behavior this platform never described.
-- name: k3s storage | Assert the platform class is default and holds the declared policy
+# The provisioner name is checked alongside the reclaim policy because it is the field that
+# silently unbinds this platform from its own history. PersistentVolumes record the
+# provisioner that made them; change it and the volumes already on this cluster belong to
+# nobody, deletion stops working, and nothing reports an error — the disk simply never
+# comes back.
+- name: k3s storage | Assert the platform class holds the declared policy and provisioner
   ansible.builtin.assert:
     that:
       - (_k3s_sc_verify.stdout | trim)
-        == (k8s_cluster_config.storage.reclaim_policy ~ '/true')
+        == ('rancher.io/local-path/' ~ k8s_cluster_config.storage.reclaim_policy)
     fail_msg: >-
       StorageClass {{ k8s_cluster_config.storage.class }} reports
-      `{{ _k3s_sc_verify.stdout | trim }}` (reclaimPolicy/is-default), not the declared
-      `{{ k8s_cluster_config.storage.reclaim_policy }}/true`.
+      `{{ _k3s_sc_verify.stdout | trim }}` (provisioner/reclaimPolicy), not
+      `rancher.io/local-path/{{ k8s_cluster_config.storage.reclaim_policy }}`.
+      reclaimPolicy is immutable, so a class holding the wrong one has to be deleted and
+      redeclared — and every volume already bound through it has to be accounted for first.
+
+# Read-only, and never fatal. The bundled `local-path` class is removed from the cluster
+# along with the rest of the disabled addon, and an existing bound volume does not care —
+# a StorageClass is consulted when a volume is provisioned, not afterwards. What does care
+# is a PVC written by hand that names `local-path` explicitly: it will wait forever for a
+# class that no longer exists. Nothing this platform deploys does that, so this reports
+# rather than fails, and it gives the operator the exact list to fix.
+- name: k3s storage | Look for volumes still naming the class k3s used to ship
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - pv,pvc
+      - --all-namespaces
+      - --no-headers
+      - -o
+      - custom-columns=KIND:.kind,NS:.metadata.namespace,NAME:.metadata.name,CLASS:.spec.storageClassName
+  register: _k3s_bundled_users
+  changed_when: false
+  failed_when: false
+
+- name: k3s storage | Report volumes that still name the bundled class
+  ansible.builtin.debug:
+    msg: >-
+      These volumes name the StorageClass `local-path`, which no longer exists on this
+      cluster — k3s removed it when its local-storage addon was disabled. Bound volumes
+      keep working; a PVC in this list that is not yet bound never will be. Repoint it at
+      {{ k8s_cluster_config.storage.class }}:
+      {{ _k3s_stale | join(' | ') }}
+  vars:
+    _k3s_stale: >-
+      {{ _k3s_bundled_users.stdout_lines | default([]) | select('search', '\slocal-path$') | list }}
+  when: _k3s_stale | length > 0

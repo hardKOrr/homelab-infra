@@ -98,15 +98,33 @@ storage:
   # is also not a backup: see the backup block below.
 
   # The platform declares its own StorageClass rather than using the `local-path` one
-  # k3s ships, because reclaimPolicy below is immutable on an existing class. Same
-  # provisioner, no extra components. The bundled class is demoted from default and
-  # remains usable by anything that names it explicitly.
+  # k3s ships, because reclaimPolicy below is immutable on an existing class and Retain
+  # could therefore never be applied to the bundled one.
+  #
+  # It also runs its own copy of the provisioner. Demoting the bundled class and leaving
+  # k3s's addon in place did not hold: k3s re-stages its packaged manifests on every
+  # start of the service, and that manifest marks its own class default again. The
+  # cluster then had two default StorageClasses, and which one an unqualified PVC landed
+  # on was decided by creationTimestamp order. So `local-storage` is on the node's
+  # disable list, and the provisioner Deployment, its RBAC and its ConfigMap belong to
+  # this repo. Exactly one thing declares a default class, and the deploy asserts it.
   class: homelab-local-path
+
+  # k3s's historical path, kept deliberately: volumes created before the switch and
+  # after it are the same directories, run by the same setup and teardown scripts.
+  # Moving this strands every volume the cluster already holds.
   path: /var/lib/rancher/k3s/storage
 
   # Retain, not Delete. Deleting a namespace by hand does not thereby destroy its data —
   # only the removal job's explicit `delete_data` option removes a volume.
   reclaim_policy: Retain
+
+  # The storage controller is this platform's to upgrade now, so its images are pinned
+  # like cluster.version is. These two are the exact pair k3s v1.31.5+k3s1 ships in its
+  # own addon. Raise them together with cluster.version, and never let the provisioner
+  # NAME (`rancher.io/local-path`) change — every existing volume names it.
+  # provisioner_image: "rancher/local-path-provisioner:v0.0.30"
+  # helper_image: "rancher/mirrored-library-busybox:1.36.1"
 
 backup:
   # PBS snapshots of the node VMs are your cluster REBUILD path and nothing more. A

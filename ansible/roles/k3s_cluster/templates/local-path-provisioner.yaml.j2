@@ -1,0 +1,251 @@
+# The platform's own local-path provisioner — managed by homelab-infra.
+#
+# WHY THIS EXISTS AT ALL
+#
+# k3s ships a local-path provisioner and a `local-path` StorageClass as a packaged addon.
+# The platform wants a different reclaim policy, and reclaimPolicy is immutable once a
+# StorageClass exists, so it has always declared its own class. What it could not do was
+# keep k3s's class from also being the default: k3s re-stages and re-applies its packaged
+# manifest on every start of the service, and that manifest marks its class default. Every
+# restart of the unit undid the demotion, and for the window until the next Ansible run the
+# cluster had two default classes with the winner decided by creationTimestamp.
+#
+# So the addon is disabled in config.yaml.j2 and the workload behind it is declared here.
+# Owning the Deployment is the point of choosing `--disable` over shadowing the manifest
+# with a `local-storage.yaml.skip` file: a skip file leaves the already-applied Deployment
+# running in kube-system with nothing describing it and nothing responsible for upgrading
+# it. This platform manages what it creates; it does not inherit orphans.
+#
+# THE PROVISIONER NAME IS NOT NEGOTIABLE
+#
+# `rancher.io/local-path` is kept byte for byte. PersistentVolumes carry the provisioner
+# that made them in `pv.kubernetes.io/provisioned-by`, and the volumes already on this
+# cluster carry that string. Rename the provisioner and every existing volume becomes
+# something no controller in the cluster claims — nothing fails loudly, deletion simply
+# stops working and the data quietly accumulates. Same name, same on-disk layout, same
+# storage path: the existing volumes are still ours after the switch.
+#
+# WHY ITS OWN NAMESPACE RATHER THAN kube-system
+#
+# The bundled addon's objects live in kube-system under well-known names. k3s's deploy
+# controller deletes an addon's objects by matching the objectset ownership labels it
+# stamped on them, so a manifest of ours that reused those names would be two controllers
+# writing the same objects — the disable pass deleting what our pass had just adopted, in
+# whichever order the leader happened to walk the manifests directory. A separate namespace
+# removes the question instead of reasoning about the race. It also means that an operator
+# who ever takes `local-storage` back off the disable list gets k3s's provisioner beside
+# ours rather than on top of it.
+#
+# The namespace carries the platform's managed-by mark, exactly as an application namespace
+# does. The Deployment deliberately does NOT: maintenance/status.yml lists workloads with
+# `-l app.kubernetes.io/managed-by=homelab-infra` to answer "which applications are
+# running", and a storage controller reported as an application is a lab report that lies.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ k3s_storage_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: homelab-infra
+    # Helper pods mount a host path, which the `restricted` Pod Security Standard forbids.
+    # Nothing enables Pod Security admission on this cluster today, and an unlabelled
+    # namespace would inherit whatever a future hardening pass sets cluster-wide — at which
+    # point volume creation would start failing for a reason nobody would connect to a
+    # change made months earlier. Stating the level the provisioner actually needs keeps
+    # that decision from reaching this namespace by accident.
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: local-path-provisioner-service-account
+  namespace: {{ k3s_storage_namespace }}
+---
+# Cluster-scoped rights: the provisioner watches PVCs and StorageClasses everywhere and
+# creates and deletes PersistentVolumes, which are cluster-scoped objects. Read-only on
+# nodes, because it has to know which node a pod was scheduled to before it can decide
+# where the directory goes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: homelab-local-path-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumeclaims", "configmaps", "pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: homelab-local-path-provisioner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homelab-local-path-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: local-path-provisioner-service-account
+    namespace: {{ k3s_storage_namespace }}
+---
+# Writing pods is granted in this namespace ONLY, and it is the one right the kube-system
+# copy of this addon takes cluster-wide. The provisioner creates a short-lived helper pod
+# to make or remove a volume's directory, and that pod is always created in the
+# provisioner's own namespace — so a namespaced Role covers it, and a controller that can
+# create pods in every namespace is a privilege escalation waiting for a bug.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: homelab-local-path-provisioner
+  namespace: {{ k3s_storage_namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: homelab-local-path-provisioner
+  namespace: {{ k3s_storage_namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: homelab-local-path-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: local-path-provisioner-service-account
+    namespace: {{ k3s_storage_namespace }}
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: local-path-config
+  namespace: {{ k3s_storage_namespace }}
+data:
+  # Where volumes actually land, and the reason `default-local-storage-path` is no longer
+  # in the node configuration: with the bundled addon disabled that flag substitutes into a
+  # manifest that is never staged, so this ConfigMap is the only place the path can be
+  # stated and be true. It is still the same single declaration in
+  # vars/app-defaults/k3s-cluster.yml, and it deliberately stays on k3s's historical
+  # default path — the volumes this cluster already holds live there, and moving the path
+  # would strand them.
+  #
+  # Built from a dict through `to_json` rather than typed out as JSON text. Hand-written
+  # JSON inside a YAML block scalar inside a Jinja template is three quoting rules deep,
+  # and a path containing anything that needs escaping would produce a config file the
+  # provisioner rejects at start with a message about the file, not about the path.
+  config.json: |-
+    {{ {'nodePathMap': [{'node': 'DEFAULT_PATH_FOR_NON_LISTED_NODES',
+                         'paths': [k8s_cluster_config.storage.path]}]}
+        | to_json(indent=2) | indent(4) }}
+  # k3s's variants of these, not upstream's. The `chmod 700` on the parent directory is
+  # k3s's own addition: without it the storage root is left world-traversable, and every
+  # volume this cluster already holds was created under that rule. Keeping the scripts
+  # identical means a directory made by the bundled provisioner and one made by ours are
+  # indistinguishable, which is what lets the switch happen under live data.
+  setup: |-
+    #!/bin/sh
+    set -eu
+    mkdir -m 0777 -p "${VOL_DIR}"
+    chmod 700 "${VOL_DIR}/.."
+  teardown: |-
+    #!/bin/sh
+    set -eu
+    rm -rf "${VOL_DIR}"
+  # The helper pod runs on whichever node the volume belongs to. The provisioner sets that
+  # pod's nodeName itself instead of letting the scheduler place it, and appends a
+  # tolerate-everything toleration, so k3s-1's quorum-only NoSchedule taint cannot strand a
+  # setup or teardown. That matters for teardown in particular: a directory that cannot be
+  # removed is disk this lab never gets back.
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      containers:
+      - name: helper-pod
+        image: "{{ k8s_cluster_config.storage.helper_image }}"
+        imagePullPolicy: IfNotPresent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ k3s_storage_provisioner_deployment }}
+  namespace: {{ k3s_storage_namespace }}
+  labels:
+    app.kubernetes.io/name: local-path-provisioner
+    app.kubernetes.io/part-of: homelab-infra
+spec:
+  replicas: 1
+  # Nothing gains from keeping old ReplicaSets of a single-replica controller, and every
+  # one of them is an object in etcd on a cluster whose quorum node has 2 GB.
+  revisionHistoryLimit: 0
+  selector:
+    matchLabels:
+      app: local-path-provisioner
+  template:
+    metadata:
+      labels:
+        app: local-path-provisioner
+    spec:
+      serviceAccountName: local-path-provisioner-service-account
+      # Storage provisioning is a prerequisite for every stateful workload on the cluster,
+      # so it must not be the thing evicted to make room for one. Kubernetes places no
+      # namespace restriction on the critical priority classes, so this holds outside
+      # kube-system.
+      priorityClassName: system-node-critical
+      # CriticalAddonsOnly and the control-plane taints are tolerated so the provisioner
+      # still schedules on a cluster whose servers were later tainted away from ordinary
+      # workloads.
+      #
+      # homelab-infra.io/quorum-only is deliberately NOT tolerated. k3s-1 exists to hold an
+      # etcd vote beside the CARP BACKUP firewall peer on a host with no memory to spare,
+      # and a controller that can land there is a workload on a node this lab decided would
+      # carry none. The provisioner does not need to run on the node whose disk it is
+      # writing to — the helper pod goes to the volume's node, the controller does not.
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: local-path-provisioner
+          image: "{{ k8s_cluster_config.storage.provisioner_image }}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - local-path-provisioner
+            - start
+            - --config
+            - /etc/config/config.json
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config/
+          env:
+            # POD_NAMESPACE is how the provisioner learns where to create helper pods and
+            # where to re-read its ConfigMap; CONFIG_MOUNT_PATH is how it finds the mount
+            # again when the config changes. Both are required once this runs anywhere
+            # other than the upstream default namespace.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CONFIG_MOUNT_PATH
+              value: /etc/config/
+      volumes:
+        - name: config-volume
+          configMap:
+            name: local-path-config

@@ -244,11 +244,21 @@
 # once — and only once every node has joined.
 #
 # Not `serial`, and deliberately after Play 4 rather than inside it. Both of these create
-# workloads: MetalLB runs a controller Deployment, and inside the serial play the founder
-# is by definition the only node that exists. On this lab the founder is also the
-# quorum-only node carrying a NoSchedule taint, so the controller had nowhere to schedule
-# and the wait timed out against a cluster that was working perfectly. Cluster-scoped
-# setup belongs after the cluster is whole.
+# workloads: MetalLB runs a controller Deployment, storage runs the local-path provisioner
+# this platform now owns, and inside the serial play the founder is by definition the only
+# node that exists. On this lab the founder is also the quorum-only node carrying a
+# NoSchedule taint, so the controller had nowhere to schedule and the wait timed out
+# against a cluster that was working perfectly. Cluster-scoped setup belongs after the
+# cluster is whole.
+#
+# That ordering also decides what happens on the converge that first disables k3s's bundled
+# local-storage addon. Play 4 restarts each node's service, which is when k3s deletes the
+# addon it no longer owns — its provisioner included — and Play 5 then applies ours. So
+# there is a short window with a default StorageClass and no provisioner behind it. That is
+# the right way round: a PVC created in that window waits and is then served, whereas
+# applying our provisioner first, from inside the serial play, would put it back on the
+# tainted founder with nowhere to run. PersistentVolumes, their claims and the data on disk
+# are not part of the disabled addon and are untouched throughout.
 - name: "k3s cluster | Configure"
   hosts: "k3s_cluster_{{ instance | default('_instance_unset') }}"
   become: true
@@ -375,6 +385,12 @@
           ingress_controller: "{{ k8s_cluster_config.ingress.controller }}"
           storage_class: "{{ k8s_cluster_config.storage.class }}"
           storage_reclaim_policy: "{{ k8s_cluster_config.storage.reclaim_policy }}"
+          # Topology, not a secret: it is the directory every volume on this cluster lives
+          # under. Recorded because `maintenance/reclaim-volume.yml` refuses to delete a
+          # directory that is not under it, and that guard is inert while the field is
+          # absent — the one check standing between a misread `spec.local.path` and an
+          # `rm -rf` on a path this platform never created.
+          storage_path: "{{ k8s_cluster_config.storage.path }}"
           failure_domain_mode: "{{ k8s_cluster_config.cluster.failure_domain_mode }}"
           # The declarations verbatim. Every field in them is topology — name, Proxmox
           # placement, address, sizing, taints, template vmid — so there is nothing to

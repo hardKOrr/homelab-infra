@@ -24,8 +24,31 @@ node-name: "{{ inventory_hostname }}"
 # Traefik is NOT disabled. It is the in-cluster ingress controller, and without one an
 # Ingress resource means nothing. It terminates plain HTTP on a private address only —
 # public TLS stays at the platform Caddy.
+#
+# local-storage is disabled because this platform owns the local-path provisioner and its
+# StorageClass rather than editing the ones k3s ships. The first implementation kept the
+# bundled addon and patched its class down from being the default. That patch cannot hold:
+# k3s writes its packaged addons into /var/lib/rancher/k3s/server/manifests on EVERY start
+# of the unit, its deploy controller re-applies any file whose modification time changed,
+# and line 96 of the packaged local-storage.yaml sets
+# `storageclass.kubernetes.io/is-default-class: "true"`. So a restart of the service — not
+# merely a k3s upgrade, which is the failure the original comment predicted — silently
+# restored a second default class. The audit on 2026-08-20 found both classes marked
+# default, with the platform's own winning only because its creationTimestamp happened to
+# be the newer one. That is a coin toss deciding which reclaim policy an application's
+# data gets, and the next k3s upgrade flips the coin.
+#
+# `disable` is not merely "do not deploy". k3s's deploy controller treats a disabled
+# manifest as something to remove: it deletes the resources the addon created, deletes the
+# Addon record, and deletes the manifest file itself, then never writes it again. So an
+# already-built cluster converges onto this by re-running the job — the bundled
+# Deployment, ServiceAccount, RBAC, ConfigMap and `local-path` StorageClass all go away on
+# their own. PersistentVolumes, PersistentVolumeClaims and the data under
+# storage.path are NOT part of that addon and are not touched, which is what makes the
+# transition safe on a cluster that already holds volumes.
 disable:
   - servicelb
+  - local-storage
 
 # TLS for the API server, so the kubeconfig works when addressed by node IP or VIP
 # rather than only by localhost.
@@ -35,9 +58,19 @@ tls-san:
   - "{{ node.ip_address }}"
 {% endfor %}
 
-# Written by the local-path provisioner. Declared here so the storage contract in
-# app-defaults and the path k3s actually uses cannot drift apart.
-default-local-storage-path: "{{ k8s_cluster_config.storage.path }}"
+# `default-local-storage-path` used to be declared here and is deliberately gone. The flag
+# does exactly one thing in k3s: it substitutes %{DEFAULT_LOCAL_STORAGE_PATH}% into the
+# packaged local-storage.yaml as that manifest is staged to disk. Nothing else in k3s ever
+# reads it. With `local-storage` on the disable list above, the manifest is never staged,
+# so the flag would be a declaration that looks authoritative and controls nothing — the
+# worst kind of configuration to leave lying about, because the next reader will change it
+# and expect the storage path to move.
+#
+# storage.path now reaches the provisioner the only way it can once the addon is ours: as
+# the nodePathMap entry in the local-path-config ConfigMap that
+# templates/local-path-provisioner.yaml.j2 renders. One declaration in
+# vars/app-defaults/k3s-cluster.yml still feeds it, so the contract and the path in use
+# still cannot drift apart.
 
 # Applied at registration, so a node is tainted before the scheduler ever considers it.
 # tasks/taints.yml re-asserts the same set on every run, which is what catches a taint

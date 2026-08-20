@@ -1,15 +1,22 @@
 # The platform's own default StorageClass — managed by homelab-infra.
 #
-# A separate class rather than an edit to the one k3s ships, for two reasons. The first is
-# that Kubernetes forbids it: `reclaimPolicy` is immutable, and patching k3s's `local-path`
-# answers `Forbidden: updates to reclaimPolicy are forbidden`. The second is that owning
-# the object is better anyway — k3s reapplies its bundled addons when their manifests
-# change, so a class we edited would be reverted by some future k3s upgrade, silently and
-# at the worst moment.
+# A class of our own rather than an edit to the one k3s ships, for two reasons. The first
+# is that Kubernetes forbids it: `reclaimPolicy` is immutable, and patching k3s's
+# `local-path` answers `Forbidden: updates to reclaimPolicy are forbidden`. The second is
+# that k3s re-stages and re-applies its packaged addons on every start of the service, so
+# an edit to one of them survives only until the next restart — which is exactly how this
+# cluster ended up with two default classes and no error to show for it.
 #
-# It uses the SAME provisioner as the bundled class. The local-path provisioner claims
-# PersistentVolumeClaims by provisioner name, not by class name, so this needs no second
-# controller and no extra pod.
+# It is the ONLY default class on this cluster, and that is now true by construction rather
+# than by patching: `local-storage` is on the disable list in the node configuration, so
+# k3s's class does not exist here at all. tasks/storage.yml asserts on every run that
+# exactly one default class exists and that it is this one.
+#
+# The provisioner name is the same string the bundled class used, because the provisioner
+# is the same program — this platform runs its own copy of it, declared in
+# local-path-provisioner.yaml.j2. PersistentVolumes record the provisioner that created
+# them, so this string is what keeps volumes made before the switch claimed by the
+# controller running after it.
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -26,7 +33,7 @@ metadata:
       The control plane is highly available. Data on this class is not.
 provisioner: rancher.io/local-path
 reclaimPolicy: {{ k8s_cluster_config.storage.reclaim_policy }}
-# Matches the bundled class. Binding at first consumer lets the scheduler place the pod
+# What the local-path provisioner expects. Binding at first consumer lets the scheduler place the pod
 # before the volume is created, so the volume lands on the node the pod actually got
 # rather than pinning the pod to a node chosen before scheduling.
 volumeBindingMode: WaitForFirstConsumer

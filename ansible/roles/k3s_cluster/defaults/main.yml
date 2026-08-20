@@ -14,6 +14,16 @@ k3s_data_dir: /var/lib/rancher/k3s
 k3s_kubeconfig: /etc/rancher/k3s/k3s.yaml
 k3s_server_token_path: /var/lib/rancher/k3s/server/token
 
+# Where the platform's own local-path provisioner lives. Not in the app-defaults contract,
+# because these are the names of objects this role creates rather than choices a lab makes:
+# a user who changed them would only be renaming things the role already agrees on. They
+# are named here so the manifest template and the readiness wait in tasks/storage.yml
+# cannot drift apart — the wait is the only thing that proves the storage contract is met
+# rather than merely declared, and a wait pointed at the wrong name proves nothing while
+# still passing.
+k3s_storage_namespace: homelab-storage
+k3s_storage_provisioner_deployment: local-path-provisioner
+
 # How long to wait for a joining server to report Ready. Three minutes is generous for a
 # LAN join and short enough that a genuinely stuck node fails the job rather than
 # hanging it.

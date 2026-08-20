@@ -109,7 +109,9 @@ k3s_cluster_defaults:
 
   # ── Persistent storage ──────────────────────────────────────────────────────
   storage:
-    # k3s's bundled local-path provisioner, on the VM's own SSD-backed disk.
+    # The local-path provisioner, on the VM's own SSD-backed disk — deployed and owned by
+    # this platform rather than by k3s. `local-storage` is on the disable list in the node
+    # configuration, so the addon k3s ships is not running here at all.
     #
     # NODE-PINNED, DELIBERATELY. A PVC is a directory on one node's disk and pins its
     # pod to that node for life. Losing the node leaves the pod Pending until the node
@@ -118,17 +120,41 @@ k3s_cluster_defaults:
     #
     # Longhorn — replicated volumes that do reschedule — is wanted and has its own
     # queue row. It buys availability, not backup, and does not replace the dump below.
-    # The platform's OWN class, not the `local-path` k3s ships. reclaimPolicy is
-    # immutable once a StorageClass exists, so Retain cannot be applied to the bundled
-    # one at all — and a class we owned by editing would be reverted by a future k3s
-    # upgrade. Same provisioner, so no second controller is involved; the bundled class
-    # is demoted from default and stays available to anything naming it explicitly.
+    #
+    # WHY THE PLATFORM OWNS THE PROVISIONER AND NOT JUST THE CLASS
+    #
+    # reclaimPolicy is immutable once a StorageClass exists, so Retain could never be
+    # applied to the bundled class and the platform has always declared its own. What did
+    # not work was leaving the bundled addon in place and demoting its class: k3s re-stages
+    # its packaged manifests on every start of the service, and that manifest marks its own
+    # class default. A restart — not merely an upgrade — restored a second default class,
+    # and which one an unqualified PVC landed on was decided by creationTimestamp order.
+    # The addon is therefore disabled outright and the provisioner Deployment, its RBAC and
+    # its ConfigMap are declared by roles/k3s_cluster. Exactly one thing in this cluster
+    # declares a default StorageClass now, and the deploy asserts that is still true.
     class: homelab-local-path
+    # k3s's historical default path, kept deliberately. Volumes this cluster already holds
+    # live here, and the setup and teardown scripts the provisioner runs are k3s's, so a
+    # directory made before the switch and one made after are the same thing. Moving this
+    # path strands every existing volume.
     path: /var/lib/rancher/k3s/storage
     # Retain, not Delete: an operator who deletes a namespace by hand does not thereby
     # consent to losing its data. Deliberate deletion goes through the removal job's
     # explicit delete_data option, which is the only thing that removes a PVC.
     reclaim_policy: Retain
+    # Pinned like cluster.version and ingress.metallb_version, and for the same reason: the
+    # storage controller is now this platform's to upgrade, and a floating tag means the
+    # component holding every application's data changes underneath the lab on whichever
+    # day a node happened to pull a new image.
+    #
+    # v0.0.30 and this busybox tag are the exact pair k3s v1.31.5+k3s1 ships in its own
+    # local-storage addon, so the provisioner serving these volumes is the one they were
+    # created by. Raise them together with cluster.version, after checking what the new k3s
+    # release pins in its manifests/local-storage.yaml — the provisioner name
+    # `rancher.io/local-path` must not change, or every existing PersistentVolume stops
+    # being claimed by anything.
+    provisioner_image: "rancher/local-path-provisioner:v0.0.30"
+    helper_image: "rancher/mirrored-library-busybox:1.36.1"
 
   # ── Backup ──────────────────────────────────────────────────────────────────
   backup:

@@ -83,10 +83,17 @@ playbook IS the update. `ansible/playbooks/apps/remove.yml` mirrors deploy: stop
   token travels host to host in memory and is canonical only in Vaultwarden. The cluster publishes
   nothing itself — the API, node addresses and the MetalLB ingress VIP stay on private networks,
   and the platform Caddy remains the sole public TLS edge. Two properties are asserted rather than
-  documented, because both are the kind that quietly stop being true: that every server sits on a
-  distinct Proxmox node when `failure_domain_mode: distinct-nodes` is declared, and that a
-  quorum-only node still carries its `NoSchedule` taint. The default StorageClass is node-pinned,
-  so a control plane that tolerates a node loss does **not** imply application data that does —
+  documented, because all are the kind that quietly stop being true: that every server sits on a
+  distinct Proxmox node when `failure_domain_mode: distinct-nodes` is declared, that a
+  quorum-only node still carries its `NoSchedule` taint, and that exactly one default
+  StorageClass exists and is the platform's. That last one is asserted because it failed: k3s
+  re-stages its packaged addon manifests on every service start, so demoting the bundled
+  `local-path` class was undone by the next restart and left two defaults, with an unqualified
+  PVC landing on whichever was older. `local-storage` is therefore disabled on the nodes and
+  `roles/k3s_cluster` owns the provisioner Deployment, its RBAC and its ConfigMap outright —
+  applied from the Configure play, never from the `serial: 1` founder play, whose node is the
+  tainted quorum-only one. The default StorageClass is node-pinned, so a control plane that
+  tolerates a node loss does **not** imply application data that does —
   `homelabinfra_infra.kubernetes.failure_domain_mode` and `storage_class` are what consumers read
   rather than counting nodes.
 - **Proxmox boundary**: `community.proxmox` modules are API clients; `pct`/`qm` shell waits are
