@@ -106,7 +106,13 @@ spec:
 
               # The database first, into scratch. Nothing in the target has been touched at
               # this point, so a snapshot that turns out to be unreadable costs nothing.
-              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /artifact
+              # Kubernetes emptyDir and local-path volumes do not promise support for
+              # every ACL and xattr recorded by pxar. Preserve ownership and ordinary
+              # modes, which the application needs, but do not make restore depend on
+              # metadata these volume filesystems can reject with errno 95.
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /artifact \
+                --ignore-acls true \
+                --ignore-xattrs true
               echo "database dump: $(wc -c < /artifact/database.sql) bytes"
 
               # Then the uploads, straight into the live volume. Said plainly because it is
@@ -116,7 +122,9 @@ spec:
               # neither of them and is worse than either.
               echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
               find /app-storage -mindepth 1 -delete
-              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
+              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage \
+                --ignore-acls true \
+                --ignore-xattrs true
               echo "restored storage volume: now $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
 {% endif %}
           env:
