@@ -35,6 +35,29 @@
 # Server-side apply, so that the field ownership Kubernetes tracks is this platform's.
 # Without it, a field this manifest stops setting is left at its old value forever rather
 # than reverting — which is how an app ends up running a configuration no file describes.
+#
+# Server-side apply always prints `serverside-applied`, including when the live object is
+# already identical. Use the API server's diff first so Ansible can distinguish a real
+# desired-state change without giving up server-side field ownership.
+- name: k8s apply | Compare the manifest with live state
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - diff
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - --server-side=true
+      - --force-conflicts
+      - -f
+      - "-"
+    stdin: "{{ k8s_manifest }}"
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _k8s_diff
+  failed_when: _k8s_diff.rc not in [0, 1]
+  changed_when: false
+
 - name: k8s apply | Apply the manifest
   ansible.builtin.command:
     argv:
@@ -51,7 +74,7 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _k8s_apply
-  changed_when: _k8s_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+  changed_when: _k8s_diff.rc == 1
 
 - name: k8s apply | Record whether anything changed
   ansible.builtin.set_fact:
