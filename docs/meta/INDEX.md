@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**13 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**14 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 **408 app-catalog entered 2026-08-17** — the application coverage the platform intends to
 have, in three implementation batches. It is the work queue's source of rows from here on.
 **Its four open decisions were answered the same day**: databases are instanced apps
@@ -69,6 +69,13 @@ option waits for its named Batch B backend and the shared provisioning contract.
 | 2 | [414 — SuiteCRM](414-suitecrm/README.md) | SuiteCRM 8 on a separately deployed MariaDB instance; prove the production hosting path and run both scheduler and asynchronous workers | [ ] |
 | 3 | [415 — Twenty CRM](415-twenty-crm/README.md) | Twenty server and worker consuming separate PostgreSQL and Redis instances, with persistent file storage and logic execution off by default | [ ] |
 | 4 | [416 — EspoCRM](416-espocrm/README.md) | Official EspoCRM containers consuming a separate MariaDB instance; preserve app/customization data and run the daemon plus optional WebSocket process | [ ] |
+
+Email-marketing coverage has one dedicated application slice. It waits for the Batch B MariaDB
+and Redis backends and owns the first campaign-delivery use of the shared outbound-mail contract.
+
+| Order | Slice | Repository work | Complete |
+|---:|---|---|:---:|
+| 1 | [417 — AcelleMail email marketing](417-acellemail-email-marketing/README.md) | Licensed AcelleMail source deployed as an app, worker and scheduler; separate MariaDB and Redis instances; sending-provider, public tracking and bounce/complaint handling; application-consistent recovery | [ ] |
 
 The Kubernetes hosting backend is closed and does not authorize a wholesale migration of
 stable applications. Slice 408 remains reserved for the application catalog created in
@@ -138,7 +145,7 @@ A row is a role (or a reuse of `servarr`), a playbook in `ansible/playbooks/apps
 | B1 | postgresql | The database-provisioning contract (an app asks for a database + role, gets credentials back via Vaultwarden) is the work; the LXC is not |
 | B2 | mariadb, mysql, redis | The other backends Batch C rows ask for. All take B1's provisioning contract; MySQL 8 is distinct because Ghost does not support MariaDB |
 | B3 | influxdb, wireguard, homepage, opnsense | Standalone backends, the dashboard, and a *new* OPNsense VM — which never adopts the firewall slice 304 wires to. homepage should generate its config from `config/.generated/facts.yml` |
-| C | Batch C, 31 rows | Ordinary deploys. Blocked behind B1 only; 408's four decisions were resolved 2026-08-17 |
+| C | Batch C, 32 rows | Ordinary deploys. Blocked behind B1 only; 408's four decisions were resolved 2026-08-17 |
 
 The first GPU row (ollama, comfyui, immich or frigate) builds the GPU contract for both
 modes — shared iGPU bound into an LXC, and a whole adapter passed through to a VM — not
@@ -559,6 +566,7 @@ Slices are cut on the code axis, so one subject spans several.
 | App coverage | catalog **408** |
 | Wife-friendly website hosting | static/Publii **409**, WordPress **410**, Ghost **411**, Silex **412** |
 | CRM options | Odoo **413**, SuiteCRM **414**, Twenty **415**, EspoCRM **416** |
+| Email marketing | AcelleMail **417**, Mautic catalog row in **408** |
 | Runners / UI | Rundeck **601** (closed) |
 | Day-2 ops | rollback **502** (closed) |
 

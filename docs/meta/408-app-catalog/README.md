@@ -165,6 +165,7 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | silex | Docker | services_stack | Silex | Private drag-and-drop builder whose static exports publish into separate `static-site` instances. Protect the builder and its optional Claude MCP surface; public sites must not depend on builder availability |
 | static-site | Native LXC | own guest | Publii-compatible static output | One instance per public site. Restricted SFTP publication into an atomic staging path; Publii runs on the editor's computer and is the first accepted client, not a server dependency |
 | mautic | Docker | services_stack | mautic/mautic | MariaDB. Sends mail — needs an SMTP contract this platform does not have |
+| acellemail | Docker | services_stack | AcelleMail licensed source bundle | Dedicated campaign and newsletter application. Uses separate MariaDB and Redis instances; runs app, queue-worker and scheduler services. The operator supplies the commercial source bundle and license material. Public tracking, unsubscribe and provider-callback paths rule out blanket forward authentication; see slice 417 |
 | mixpost | Kubernetes | — | inovector/mixpost | Slice 204's proven pilot. Its namespaced MySQL was an acceptance workload; the Batch B provisioning contract may later point it at a standalone MariaDB instance |
 | hi-events | Kubernetes | — | HiEventsDev/hi.events | The recorded second Kubernetes consumer: Postgres-backed, and the first application that must prove the public access class and SMTP contract |
 | odoo | Docker | services_stack | odoo/odoo | Broad CRM-plus-business-suite option. PostgreSQL, with an application filestore that must be recovered with it. Start from Community and state any material Enterprise-only limit |
@@ -205,7 +206,7 @@ single row's implementer re-decides it.
   because passthrough removes that adapter from every other guest on the node. Whoever
   implements the first GPU row builds the contract for both modes, not only the mode that
   row needs.
-- **SMTP is a platform contract; its shape is not yet decided.** mautic, hi.events,
+- **SMTP is a platform contract; its shape is not yet decided.** mautic, acellemail, hi.events,
   paperless-ngx and nextcloud all send mail, and `notifications` (Ntfy) is not the same
   thing. The lab wants a mail provider configured once and handed to apps. Provider,
   relay and setup are open. The first row that needs mail scopes it as an
