@@ -45,16 +45,24 @@
            'due': _dog_due,
            'text': _dog_text,
            'cron': maintenance_schedule.cron,
+           'oncalendar': maintenance_schedule.oncalendar | default([]),
+           'schedule': maintenance_schedule,
            'monitor_only': maintenance_schedule.monitor_only,
            'conflict': maintenance_schedule.conflict | default('', true),
            'reboot': _dog_reboot,
          })] }}
   vars:
-    # `force` overrides the window and nothing else. It never overrides the two
-    # structural exclusions below — a forced run must not reboot the machine running it,
-    # and must not take a cluster node down outside the cordon/drain path.
-    _dog_due: >-
-      {{ maintenance_schedule.due or (force | default(false) | bool) }}
+    # `due` is reported, never acted on by this job. Routine reboots belong to the guest's
+    # own systemd timer, which fires when the window opens whether or not anything is
+    # running here — see tasks/maintenance/install-guest-timer.yml for why that is not a
+    # poller. This job reboots ONLY when an operator asks for it now, with force=true.
+    _dog_due: "{{ maintenance_schedule.due }}"
+    # force is the operator saying "do it now", so it does not consult the window at all.
+    # It never overrides the two structural exclusions below: a forced run must not reboot
+    # the machine running it, and must not take a cluster node down outside the
+    # cordon/drain path.
+    _dog_forced: "{{ force | default(false) | bool }}"
+
     _dog_is_cluster_node: "{{ _gm_guest.host in _gm_cluster_nodes }}"
     # The runner is inside the lab. Rebooting it from a job it is running kills the job
     # mid-flight and leaves no report of what else happened — and Tier 1's whole promise
@@ -63,7 +71,7 @@
     _dog_is_runner: >-
       {{ (hostvars[_gm_guest.host].ansible_host | default('')) in (_gm_self_ips | default([])) }}
     _dog_reboot: >-
-      {{ _gm_guest.reachable and _gm_guest.needs_reboot and _dog_due
+      {{ _gm_guest.reachable and _gm_guest.needs_reboot and _dog_forced
          and not _dog_is_cluster_node and not _dog_is_runner
          and not (dry_run | default(false) | bool) }}
     _dog_text: >-
@@ -72,5 +80,4 @@
          else ('the runner — never rebooted by this job'
                if _dog_is_runner
                else maintenance_schedule.text
-                    ~ (' (FORCED)' if (force | default(false) | bool)
-                                      and not maintenance_schedule.due else '')) }}
+                    ~ (' — FORCED NOW' if _dog_forced else '')) }}

@@ -1,0 +1,162 @@
+---
+# Install a guest's own maintenance timer. Slice 205.
+# Runs ON the guest, with become. Called from tasks/guest-bootstrap.yml and from the
+# Guest Maintenance job when an operator re-applies the schedules.
+#
+# THIS IS HOW A SCHEDULE IS ENFORCED, and it is deliberately not a job that polls.
+#
+# The schedule is already a schedule. Having something wake up every hour to ask "is it
+# time yet" would re-implement the primitive on top of itself, bury the runner's execution
+# history under thousands of runs that did nothing, and make the window depend on the
+# control plane being up at the moment it opened. It would also be drift enforcement, in a
+# platform whose first principle is that it does not enforce drift.
+#
+# So the guest owns its window. systemd already does this job, exactly as
+# unattended-upgrades runs from its own timer and Watchtower runs its own cron: we
+# configure the tool and get out of the way. A guest whose window opens while the runner
+# is down still reboots. Nothing has to be watching.
+#
+# The service is a no-op unless `/var/run/reboot-required` exists, so the timer firing is
+# cheap and the common case costs one stat.
+#
+# Inputs:
+#   maintenance_schedule — the resolved answer from resolve-schedule.yml. `.oncalendar`
+#     drives the timer; an EMPTY list (mode `never`) removes the timer instead, which is
+#     what notify-only means.
+#   homelabinfra_infra.notifications — optional; when the provider is ntfy the guest
+#     announces its own reboot, using the publish credential guest-bootstrap already
+#     wrote to /etc/homelab-infra/ntfy.env for unattended-upgrades. No new secret.
+#
+# WHEN THE WINDOW CHANGES. The timer is written at deploy time, like stack sizing and the
+# Watchtower cron — this platform creates correct once rather than reconciling forever.
+# Editing `maintenance.schedule` therefore takes effect on each guest's next deploy, or
+# immediately across the lab via the Guest Maintenance job, which exists for that.
+
+- name: Guest timer | Remove the maintenance timer when the schedule is `never`
+  when: (maintenance_schedule.oncalendar | default([])) | length == 0
+  block:
+    - name: Guest timer | Stop and disable the timer
+      ansible.builtin.systemd:
+        name: homelab-maintenance.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Guest timer | Remove the unit files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/homelab-maintenance.timer
+        - /etc/systemd/system/homelab-maintenance.service
+        - /usr/local/sbin/lab-maintenance-reboot
+      register: _igt_removed
+
+    # An explicit reload rather than a handler: this task file is included from several
+    # places, and a handler would not run until the end of whichever play imported it.
+    - name: Guest timer | Reload systemd after removing the timer
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: _igt_removed is changed
+
+- name: Guest timer | Install the maintenance timer
+  when: (maintenance_schedule.oncalendar | default([])) | length > 0
+  block:
+    # Ships as a named script rather than an inline ExecStart for the same reason the
+    # native app roles ship lab-restart-app and lab-tail-applog: an operator debugging a
+    # reboot that did or did not happen can read and run the exact thing systemd runs.
+    - name: Guest timer | Install lab-maintenance-reboot
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/lab-maintenance-reboot
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/usr/bin/env bash
+          # Installed by homelab-infra (slice 205). Run from homelab-maintenance.timer,
+          # which fires when THIS guest's maintenance window opens.
+          #
+          # Window: {{ maintenance_schedule.text }}
+          #
+          # unattended-upgrades installs kernel and libc updates and deliberately does not
+          # reboot (Automatic-Reboot "false"). Without this the guest would run unpatched
+          # code it believed it had patched, indefinitely. The update is continuous; only
+          # the reboot waits for the window.
+          set -uo pipefail
+
+          [ -f /var/run/reboot-required ] || exit 0
+
+          PKGS=""
+          if [ -r /var/run/reboot-required.pkgs ]; then
+            PKGS=$(sort -u /var/run/reboot-required.pkgs | head -6 | paste -sd, -)
+          fi
+
+          logger -t homelab-maintenance -- "window open, rebooting for: ${PKGS:-pending kernel or libc update}"
+
+          CREDS=/etc/homelab-infra/ntfy.env
+          if [ -r "$CREDS" ]; then
+            # shellcheck disable=SC1090
+            . "$CREDS"
+            if [ -n "${NTFY_URL:-}" ]; then
+              AUTH=()
+              [ -n "${NTFY_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $NTFY_TOKEN")
+              curl -sf -X POST "$NTFY_URL" \
+                "${AUTH[@]}" \
+                -H "Title: Maintenance reboot on $(hostname)" \
+                -d "Rebooting in its maintenance window for: ${PKGS:-pending kernel or libc update}" \
+                >/dev/null || true
+            fi
+          fi
+
+          # Give the notification a moment to leave before the network goes.
+          sleep 2
+          systemctl reboot
+
+    - name: Guest timer | Install the maintenance unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/homelab-maintenance.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=homelab-infra maintenance reboot (only if one is pending)
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/lab-maintenance-reboot
+
+    # Persistent=false deliberately. A guest that was down when its window passed must not
+    # reboot the moment it comes back — it has just booted, so whatever needed the reboot
+    # has already been picked up, and rebooting again would be a second outage for nothing.
+    #
+    # RandomizedDelaySec spreads a shared window across the guests that share it. Every
+    # guest on one lab-wide window would otherwise reboot on the same second, which is the
+    # simultaneous descent Tier 2 arranges deliberately but not something a routine kernel
+    # update should trigger by accident.
+    - name: Guest timer | Install the timer for {{ maintenance_schedule.text }}
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/homelab-maintenance.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=homelab-infra maintenance window ({{ maintenance_schedule.text }})
+
+          [Timer]
+          {% for line in maintenance_schedule.oncalendar %}
+          OnCalendar={{ line }}
+          {% endfor %}
+          RandomizedDelaySec=300
+          Persistent=false
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Guest timer | Enable the timer
+      ansible.builtin.systemd:
+        name: homelab-maintenance.timer
+        state: started
+        enabled: true
+        daemon_reload: true

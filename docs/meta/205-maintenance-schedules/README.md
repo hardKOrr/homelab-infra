@@ -40,10 +40,12 @@ estate's guests, and the two estates' schedules are independent clocks.
       `-WithUsers` alongside it, in `tasks/bootstrap/configure-unattended-upgrades.yml`.
 - [x] `watchtower_schedule` reachable from config, plus `watchtower_monitor_only` for
       `never` and a `TZ` so the cron is read on the lab's clock rather than UTC.
-- [x] Tier 1 job — `playbooks/maintenance/guest-maintenance.yml`. Reboots guests
-      reporting `/var/run/reboot-required` whose resolved schedule is due, simultaneously
-      within a schedule. Runner stays up; it refuses to reboot itself or a Proxmox node.
-      Idempotent, with `dry_run` and `force` parameters.
+- [x] Tier 1 — the schedule enforces itself. `tasks/maintenance/install-guest-timer.yml`
+      writes `homelab-maintenance.timer` onto each guest from its resolved window; the
+      guest reboots itself when the window opens, and only if a reboot is pending. Nothing
+      polls. `playbooks/maintenance/guest-maintenance.yml` is operator-triggered and never
+      scheduled: apply the timers after a config change, report what is pending, and
+      `force=true` to reboot now. It refuses to reboot itself or a Proxmox node.
 - [x] Kubernetes nodes included: cordon, drain, reboot, uncordon, as one unit
       (`tasks/maintenance/cluster-reboot.yml`). The cold start is named as such in the
       job log rather than implied to be a rolling one.

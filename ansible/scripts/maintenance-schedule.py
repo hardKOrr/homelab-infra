@@ -320,6 +320,45 @@ def now_in(timezone):
         return datetime.datetime.now()
 
 
+def oncalendar_of(mode, minutes):
+    """The window as systemd OnCalendar lines, for a timer on the guest itself.
+
+    This is how a schedule is ENFORCED. The guest owns a timer set to its own window and
+    decides for itself whether it needs the reboot when that window opens; nothing polls
+    it and nothing has to be running elsewhere for the window to be honoured. A job that
+    woke every hour to ask "is it time yet" would re-implement the schedule on top of
+    itself and would miss any window that opened while the control plane was down.
+
+    `never` yields no lines, and the caller removes the timer entirely -- notify-only.
+    `always` becomes an hourly check, which is what "reboot whenever it is needed" means
+    once something has to name a moment.
+
+    systemd accepts repeated OnCalendar= lines, so a window that opens at different times
+    on different days is several lines rather than an approximation.
+    """
+    if mode == "never" or not minutes:
+        return []
+    if mode == "always":
+        return ["*-*-* *:00:00"]
+
+    grouped = {}
+    order = []
+    for start, _ in runs_of(minutes):
+        day, hour, minute = clock_of(start)
+        key = (hour, minute)
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(day)
+
+    lines = []
+    for hour, minute in order:
+        days = grouped[(hour, minute)]
+        prefix = "" if len(days) == 7 else ",".join(days) + " "
+        lines.append("%s*-*-* %02d:%02d:00" % (prefix, hour, minute))
+    return lines
+
+
 def combine(resolved):
     """Intersect several resolved schedules -- the shared-host rule."""
     if len(resolved) == 1:
@@ -392,6 +431,7 @@ def main():
             "cron": cron,
             "cron_note": cron_note,
             "next_open": next_open(mode, minutes, now),
+            "oncalendar": oncalendar_of(mode, minutes),
             "monitor_only": mode == "never",
             "conflict": conflict,
             "sources": [

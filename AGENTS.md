@@ -306,7 +306,8 @@ values but do not yet have publishers.
 | Container updates | Watchtower | Configure at Docker host creation | Ntfy: "X updated to vY — run Rollback if broken" |
 | Container rollback | `rollback-container.yml` | Semaphore/Rundeck job, takes container name + image tag | Ntfy: "X rolled back to vY" |
 | OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` with systemd drop-in → Ntfy. `Automatic-Reboot` is off by decision — the update is continuous, the reboot is scheduled | Ntfy: "N packages updated on hostname" |
-| Guest reboots | `guest-maintenance.yml` (scheduled hourly) | Reboot guests holding `/var/run/reboot-required` whose maintenance window is open; converge each Docker host's Watchtower schedule | Ntfy: "Lab maintenance: N guest(s) rebooted" |
+| Guest reboots | `homelab-maintenance.timer` on each guest | Write the timer from the guest's resolved window at deploy time; the guest reboots itself when the window opens and only if a reboot is pending | Ntfy: "Maintenance reboot on hostname" (from the guest) |
+| Applying a changed window | `guest-maintenance.yml` (operator-triggered, never scheduled) | Re-write every guest's timer from current config, report what is pending, and `force=true` to reboot now | Ntfy only when something was forced |
 | Whole-lab descent | `lab-descent.yml` + `verify-ascent.yml` | Arm a staggered node-by-node descent the nodes execute themselves; verify the ascent afterwards | Ntfy: "Lab descent armed" / "Lab ascent complete" |
 | Native LXC app updates | `check-native-updates.yml` (scheduled weekly) | Calls `lab-update-check` on all managed hosts, aggregates JSON results | Ntfy: "Vaultwarden vX.Z available, you have vX.Y — re-run deploy to update" |
 | App restart | `restart-app.yml` | Calls `lab-restart-app` on named host; param: instance | Ntfy: "X restarted" |
@@ -342,9 +343,22 @@ only the disruptive half waits — guest reboots, node reboots, container restar
 - The **cluster is one unit**: `local-path` is node-pinned, so a drained pod does not move.
   Its reboot is a real workload outage and is scheduled as one, never node-by-node.
 
+**Nothing polls.** A resolved schedule becomes a systemd `OnCalendar` on the guest itself
+(`homelab-maintenance.timer`), exactly as unattended-upgrades and Watchtower already run
+from their own timers — we configure the tool and get out of the way. A job waking every
+hour to ask "is it time yet" would re-implement the schedule on top of itself, bury the
+runner's execution history under thousands of no-op runs, and make the window depend on
+the control plane being up at the moment it opened. Tier 2 works the same way for the
+same reason: it arms a one-shot timer on each node and exits.
+
+The timer is written at deploy time, like stack sizing and the Watchtower cron. Editing a
+window therefore reaches an already-deployed lab through the operator-triggered **Guest
+Maintenance** job, which re-applies every timer and reports what is pending.
+
 `ansible/scripts/maintenance-schedule.py` owns the arithmetic;
-`ansible/tasks/maintenance/resolve-schedule.yml` is the only seam. Full contract in
-`ansible/vars/CONTRACT.md`.
+`ansible/tasks/maintenance/resolve-schedule.yml` is the only seam, and
+`ansible/tasks/maintenance/install-guest-timer.yml` is the only enforcement point. Full
+contract in `ansible/vars/CONTRACT.md`.
 
 ### Feedback Loop (Container Updates)
 Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs Rollback Container job.
@@ -385,8 +399,8 @@ Per-Stack
 Maintenance
   Lab Status                  ← maintenance/status.yml
   Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
-  Guest Maintenance           ← maintenance/guest-maintenance.yml (hourly; params: dry_run,
-                                force)
+  Guest Maintenance           ← maintenance/guest-maintenance.yml (operator-triggered, never
+                                scheduled; params: dry_run, force)
   Arm Lab Descent             ← maintenance/lab-descent.yml (params: confirm, at, stagger,
                                 drain, disarm — never scheduled)
   Verify Lab Ascent           ← maintenance/verify-ascent.yml

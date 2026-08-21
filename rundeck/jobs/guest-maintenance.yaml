@@ -6,24 +6,24 @@
 # It refreshes the checkout to origin/<branch>, validates config/ and execs
 # ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
 #
-# SCHEDULED HOURLY, and that is the point rather than an intensity setting. The job only
-# acts when a guest is both waiting on a reboot and inside its window; a window narrower
-# than the gap between runs would simply be missed. A run with nothing pending changes
-# nothing, sends nothing and finishes green.
+# NEVER SCHEDULED, and that is load-bearing. The schedule is already a schedule: each guest
+# owns a systemd timer set to its own resolved window and reboots itself when that window
+# opens. A job polling hourly to ask "is it time yet" would re-implement the primitive on
+# top of itself, bury Rundeck's execution history under thousands of no-op runs a year, and
+# enforce drift in a platform that deliberately does not. This job is what an OPERATOR runs:
+# show me what is pending, or apply the schedules now.
 
 - id: a1af8186-7694-4977-b2bc-b55562422b23
   uuid: a1af8186-7694-4977-b2bc-b55562422b23
   name: Guest Maintenance
   group: Maintenance
   description: |-
-    Reboot the guests that are waiting on one, inside the maintenance window their apps declared, and converge each Docker host's container-restart schedule to match. Idempotent. Never reboots a Proxmox node or the runner; the Kubernetes cluster is cordoned, drained and rebooted as one unit. Runs hourly.
+    Operator-triggered. Re-applies every guest's maintenance timer from the current config, and reports which guests are waiting on a reboot and when their window next opens. Routine reboots need no job at all — each guest owns a systemd timer for its own window. Use force=true to reboot everything pending right now. Never reboots a Proxmox node or the runner; the Kubernetes cluster is cordoned, drained and rebooted as one unit.
   loglevel: INFO
   executionEnabled: true
-  scheduleEnabled: true
+  scheduleEnabled: false
   nodeFilterEditable: false
   multipleExecutions: false
-  schedule:
-    crontab: '0 5 * ? * * *'
   options:
   - name: dry_run
     description: Report what would happen and change nothing.

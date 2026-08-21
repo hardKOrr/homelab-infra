@@ -266,10 +266,18 @@ and two windows that never overlap are reported as a conflict rather than settle
 picking a winner. Container restarts stay finer-grained — Watchtower restarts one
 container, so it follows that app's own schedule.
 
-`ansible/scripts/maintenance-schedule.py` owns the arithmetic and
-`ansible/tasks/maintenance/resolve-schedule.yml` is the seam. Consumers read the resolved
-answer (`mode`, `due`, `text`, `cron`, `monitor_only`, `next_open`, `conflict`) and never
-re-derive it.
+A resolved schedule is **enforced by the guest**, not by anything watching it. It becomes
+a systemd `OnCalendar` in `homelab-maintenance.timer` on the guest, written at deploy time,
+and the guest reboots itself when the window opens — and only if `/var/run/reboot-required`
+is actually there. `never` removes the timer, which is what notify-only means. Nothing
+polls: a job asking "is it time yet" on a fixed interval would re-implement the schedule on
+top of itself and would miss any window that opened while the control plane was down.
+
+`ansible/scripts/maintenance-schedule.py` owns the arithmetic,
+`ansible/tasks/maintenance/resolve-schedule.yml` is the seam, and
+`ansible/tasks/maintenance/install-guest-timer.yml` is the enforcement point. Consumers read
+the resolved answer (`mode`, `due`, `text`, `cron`, `oncalendar`, `monitor_only`,
+`next_open`, `conflict`) and never re-derive it.
 
 ### Runtime secrets and external unlock material (slice 014)
 

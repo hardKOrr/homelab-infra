@@ -125,3 +125,54 @@ that there was nothing to reach. Tier 1 now converges Watchtower on every Docker
 visits, which is where a *schedule* belongs and which closes the gap in practice. Whether
 the app-deploy path should also configure it at creation time belongs to the slice that owns
 that path — this one deliberately did not go widen it.
+
+## 2026-08-21 — correction: the schedule enforces itself
+
+The first implementation kept the primitive and then bolted the wrong executor onto it: a
+Rundeck job scheduled hourly that woke up, evaluated `due`, and did nothing 23 times a day.
+The operator rejected it on sight, and was right on two counts.
+
+**It re-implemented the primitive on top of itself.** We collapsed the `maintenance_class`
+enum into a schedule precisely because a schedule already says when. Having a poller ask a
+schedule what time it is puts the enum back, wearing a cron.
+
+**It would have poisoned the execution history.** Roughly 8,760 executions a year, almost
+all of them no-ops, in the same list an operator scans to find the deploy that broke
+something. Every other job here is operator-triggered or weekly.
+
+There is a third count nobody had to raise: it was drift enforcement, in a platform whose
+first stated principle is that it does not enforce drift. The tell was already in the same
+slice — Tier 2 arms a one-shot systemd timer on each node and exits, because the runner
+cannot supervise its own reboot. Tier 1 had the same answer available for a plainer reason
+and did not take it.
+
+**The fix.** The resolver also emits `oncalendar`, and
+`tasks/maintenance/install-guest-timer.yml` writes `homelab-maintenance.timer` onto the
+guest. The guest reboots itself when its window opens, and only if
+`/var/run/reboot-required` is there — one stat in the common case. `never` removes the
+timer. This is the same shape as unattended-upgrades and Watchtower, which is the house
+style: configure the tool, get out of the way. It also survives the runner being down,
+which the poller did not.
+
+`guest-maintenance.yml` keeps its place as what an OPERATOR runs — apply the timers after a
+config change, report what is pending, and `force=true` to reboot now. `scheduleEnabled` is
+false and the comment in the job file says why, so nobody restores the crontab as a
+convenience later.
+
+`RandomizedDelaySec=300` on the timer is new and deliberate: every guest on one lab-wide
+window would otherwise reboot on the same second. Tier 2 arranges a simultaneous descent on
+purpose; a routine kernel update should not trigger one by accident.
+
+**Still open.** The timer is applied by the operator job and (for a fresh guest) at
+bootstrap. It is NOT yet re-applied automatically when an app lands on a shared host and
+narrows that host's intersected window. The natural seam is
+`tasks/proxmox/record-app-on-guest.yml` — one call site, and the exact moment a guest's app
+set changes — rather than editing sixteen app playbooks. Not built yet.
+
+## Lesson
+
+An architectural decision that removes a concept has to be carried through to the
+*mechanism*, not just the *vocabulary*. Collapsing the enum into a schedule was accepted and
+recorded, and the implementation still shipped a poller — which is the enum again, expressed
+as an interval. When a decision says "X already expresses this", the test is whether X is
+what actually executes.

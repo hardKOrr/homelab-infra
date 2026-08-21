@@ -124,6 +124,31 @@ expect cron "0 0 * * * *" "{\"chains\":[[$(g '"always"')]]}"
 expect cron "0 30 2 * * *" "{\"chains\":[[$(g '{"days":"any","start":"02:30","duration":60}')]]}"
 expect cron "0 0 4 * * 1,3" "{\"chains\":[[$(g '{"days":["Mon","Wed"],"start":"04:00","duration":60}')]]}"
 
+# -- The OnCalendar the guest's own timer receives ----------------------------------
+# This is how a schedule is ENFORCED: the guest holds a systemd timer for its own window
+# and reboots itself when it opens. Nothing polls, so these strings are the mechanism and
+# not a display detail.
+oncal() {
+  printf '%s' "$1" | python3 "$sched"     | python3 -c "import json,sys; print('|'.join(json.load(sys.stdin)['oncalendar']))"
+}
+expect_oncal() {
+  local want="$1" request="$2" got
+  got="$(oncal "$request")"
+  [ "$got" = "$want" ] || fail "expected oncalendar '$want', got '$got', for: $request"
+}
+
+expect_oncal "*-*-* 04:00:00"     "{\"chains\":[[$(g '{"days":"any","start":"04:00","duration":120}')]]}"
+expect_oncal "Sun *-*-* 03:00:00" "{\"chains\":[[$(g "$sunday_window")]]}"
+expect_oncal "Mon,Wed *-*-* 04:00:00" "{\"chains\":[[$(g '{"days":["Mon","Wed"],"start":"04:00","duration":60}')]]}"
+# `always` still has to name a moment once it becomes a timer; hourly is that moment.
+expect_oncal "*-*-* *:00:00"      "{\"chains\":[[$(g '"always"')]]}"
+# `never` yields no lines at all, and the caller REMOVES the timer — notify only.
+expect_oncal ""                   "{\"chains\":[[$(g '"never"')]]}"
+# A window that wraps midnight opens on the day it opens, not on the day it ends.
+expect_oncal "Sat *-*-* 23:00:00" "{\"chains\":[[$(g "$wrap")]]}"
+# An intersected shared-host window is enforced as the intersection, not as either input.
+expect_oncal "Sun *-*-* 03:00:00" "{\"chains\":[[$(a sonarr "$early")],[$(a radarr "$late")]]}"
+
 # -- Refusals -----------------------------------------------------------------------
 refuse "not 'always', 'never'"  "{\"chains\":[[$(g '"sometimes"')]]}"
 refuse "does not know the day"  "{\"chains\":[[$(g '{"days":["Funday"],"start":"03:00","duration":60}')]]}"

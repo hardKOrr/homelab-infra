@@ -1,14 +1,28 @@
 ---
-# Tier 1 maintenance: reboot the guests that are waiting for one, inside the schedule
-# their apps declared, and converge each Docker host's container-restart schedule to
-# match. Slice 205.
+# Tier 1 maintenance, operator-triggered: push every guest's resolved maintenance window
+# onto the guest as a systemd timer, converge each Docker host's container-restart
+# schedule, and report what is waiting on a reboot. Slice 205.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/guest-maintenance.yml
 #   ansible-playbook -i inventory/ playbooks/maintenance/guest-maintenance.yml -e dry_run=true
 #   ansible-playbook -i inventory/ playbooks/maintenance/guest-maintenance.yml -e force=true
 #
-# Rundeck: scheduled hourly. Parameters: dry_run (default false), force (default false).
+# Rundeck: NEVER scheduled. Parameters: dry_run (default false), force (default false).
+#
+# THIS JOB DOES NOT WAIT FOR ANYONE'S WINDOW, because nothing here needs to. Each guest
+# owns a `homelab-maintenance.timer` set to its own resolved window and reboots itself
+# when that window opens -- see tasks/maintenance/install-guest-timer.yml. A job that woke
+# every hour to ask "is it time yet" would re-implement the schedule on top of itself,
+# bury Rundeck's execution history under thousands of runs that did nothing, and make the
+# window depend on the control plane being up at the moment it opened.
+#
+# So this job is what an OPERATOR runs, and it does exactly three things:
+#   - APPLY. Re-write every guest's timer from the current config. This is how an edited
+#     `maintenance.schedule` reaches a lab that is already deployed.
+#   - REPORT. Which guests hold /var/run/reboot-required, and what window governs them.
+#   - FORCE. With force=true, reboot everything pending right now, ignoring windows. That
+#     is the operator saying "do it now", not a schedule being honoured.
 #
 # WHAT THIS FIXES. unattended-upgrades installs kernel and libc updates on every guest
 # and never reboots — `Automatic-Reboot` is off by decision, see
@@ -17,9 +31,7 @@
 # patched. This job is the half that was missing. Maintenance windows are the shape of
 # the fix, not the motivation for it.
 #
-# IDEMPOTENT. A run with nothing pending changes nothing and reports so. Run it as often
-# as you like; hourly is the intended cadence, because a window narrower than the gap
-# between runs would otherwise be missed.
+# IDEMPOTENT. A converged lab re-runs to no changes.
 #
 # SIMULTANEOUS WITHIN A SCHEDULE, ORDERED ON THE WAY BACK UP. Everything due goes down
 # together rather than one guest at a time: a hundred apps at two minutes each is a
@@ -100,8 +112,9 @@
           ({{ homelabinfra_config.timezone | default('runner local time', true) }}).
           {{ 'DRY RUN — nothing will be rebooted or reconfigured.'
              if dry_run | default(false) | bool else '' }}
-          {{ 'FORCED — schedules are reported but not enforced.'
-             if force | default(false) | bool else '' }}
+          {{ 'FORCED — everything pending reboots now, whatever its window says.'
+             if force | default(false) | bool
+             else 'Applying timers and reporting. Routine reboots are the guests own timers.' }}
 
 
 # ── Play 2: does this guest want a reboot, and does it run Docker ──────────────
@@ -237,30 +250,32 @@
         label: "{{ item.host }}"
       changed_when: false
 
-    - name: Enrol the Docker hosts whose restart schedule is convergeable
+    - name: Enrol every reachable guest for schedule application
       ansible.builtin.add_host:
         name: "{{ item.host }}"
-        groups: maintenance_watchtower
+        groups: maintenance_apply
         ansible_host: "{{ hostvars[item.host].ansible_host | default(omit) }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
         gm_cron: "{{ item.cron | default('') }}"
         gm_monitor_only: "{{ item.monitor_only | default(false) }}"
+        gm_schedule: "{{ item.schedule }}"
+        gm_runs_docker: "{{ item.runs_docker }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       loop: >-
-        {{ _gm_decisions | selectattr('runs_docker') | selectattr('reachable') | list }}
+        {{ _gm_decisions | selectattr('reachable')
+           | rejectattr('host', 'in', _gm_cluster_nodes) | list }}
       loop_control:
         label: "{{ item.host }}"
       changed_when: false
       when: not (dry_run | default(false) | bool)
 
 
-# ── Play 4: converge the container-restart schedule ────────────────────────────
-# Watchtower restarts every container it updated, so its cron IS the container half of
-# the maintenance schedule. Converging it here rather than only at host-creation time is
-# what makes an edited window take effect: the operator changes one line in
-# infrastructure.yml and the next maintenance run applies it everywhere.
-- name: "Guest maintenance | Converge container restart schedules"
-  hosts: maintenance_watchtower
+# ── Play 4: push the schedule onto the guests ──────────────────────────────────
+# The guest's own timer is the enforcement mechanism, and Watchtower's cron is the
+# container half of the same schedule. Both are written here as well as at host-creation
+# time, which is what makes an edited window reach a lab that is already deployed.
+- name: "Guest maintenance | Apply schedules"
+  hosts: maintenance_apply
   become: true
   gather_facts: true
   ignore_unreachable: true
@@ -270,15 +285,24 @@
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
   tasks:
+    - name: Install this guest's maintenance timer
+      ansible.builtin.include_tasks: ../../tasks/maintenance/install-guest-timer.yml
+      vars:
+        maintenance_schedule: "{{ gm_schedule }}"
+
     - name: Configure Watchtower for this host's schedule
-      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-watchtower.yml
+      ansible.builtin.include_tasks: ../../tasks/bootstrap/configure-watchtower.yml
       vars:
         watchtower_schedule: "{{ gm_cron }}"
         watchtower_monitor_only: "{{ gm_monitor_only }}"
         watchtower_timezone: "{{ homelabinfra_config.timezone | default('UTC', true) }}"
+      when: gm_runs_docker | bool
 
 
-# ── Play 5: reboot, all at once ────────────────────────────────────────────────
+# ── Play 5: reboot now, all at once ────────────────────────────────────────────
+# Only reached with force=true. Routine reboots never come through here -- they happen on
+# each guest's own timer, with no job running at all.
+#
 # Ansible's fork count governs how simultaneous this really is. That is deliberate and
 # left alone: raising forks is a runner-side setting, and the ascent is ordered by the
 # hypervisor regardless of the order the descent happened to take.
@@ -330,15 +354,16 @@
     - name: Notify the outcome
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
-        notify_title: "Lab maintenance: {{ _gm_rebooted | length }} guest(s) rebooted"
+        notify_title: "Lab maintenance: {{ _gm_rebooted | length }} guest(s) rebooted on request"
         notify_message: >-
-          Rebooted: {{ _gm_rebooted | join(', ') | default('nothing', true) }}.
-          Waiting for their window:
+          Rebooted on request: {{ _gm_rebooted | join(', ') | default('nothing', true) }}.
+          Left for their own maintenance window:
           {{ _gm_waiting | join(', ') | default('nothing', true) }}.
           {{ _gm_cluster_summary | default('') }}
-      # Nothing happened and nothing is pending: a maintenance run that found a healthy
-      # lab is not an event, and notifying on it trains the operator to ignore the topic.
-      when: (_gm_rebooted | length + _gm_waiting | length) > 0
+      # Only a forced reboot is an event worth publishing. Applying timers is bookkeeping,
+      # and a guest waiting for its own window is the system working as designed --
+      # notifying on either trains the operator to ignore the topic.
+      when: _gm_rebooted | length > 0
 
     - name: Fail if anything did not work
       ansible.builtin.import_tasks: ../../tasks/assert-no-degradations.yml
