@@ -269,7 +269,16 @@
 # manifest stopped describing, so a CronJob applied by an earlier run would otherwise keep
 # firing every night against a contract the config no longer declares — the worst kind of
 # leftover, because it looks like it is working.
-- name: Mixpost | Remove the backup CronJob when the backup is disabled
+#
+# TWO WAYS TO STOP HAVING A BACKUP, AND BOTH HAVE TO REMOVE THE SCHEDULE.
+#
+# The obvious one is `backup.enabled: false`. The other is a lab that still declares the
+# backup but no longer has a PBS to push to — the block above skips its apply and prints a
+# warning, and an earlier run's CronJob would have been left in place to fire at 03:00
+# against a destination that is gone. That is the same leftover wearing a different hat,
+# and the failure would be a nightly notification blaming the network. The condition is
+# therefore "no backup was configured this run", not "the backup was switched off".
+- name: Mixpost | Remove the backup CronJob when no backup was configured
   ansible.builtin.command:
     argv:
       - k3s
@@ -283,5 +292,6 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _mp_backup_removed
-  when: not (app_config.backup.enabled | default(false) | bool)
+  when: not ((app_config.backup.enabled | default(false) | bool)
+             and (k8s_pbs_available | default(false) | bool))
   changed_when: "'deleted' in (_mp_backup_removed.stdout | default(''))"
