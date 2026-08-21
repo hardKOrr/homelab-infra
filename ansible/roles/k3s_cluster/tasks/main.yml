@@ -112,6 +112,13 @@
   changed_when: _k3s_install.rc == 0
   when: _k3s_install_due
   no_log: true
+  # `failed_when: false` is load-bearing here, exactly as it is in
+  # tasks/kubernetes/apply-manifest.yml's rollout wait. Without it a non-zero rc ends the
+  # play on THIS task — and because the task is `no_log`, the only thing the operator sees
+  # is "the output has been hidden due to the fact that no_log is specified". The task
+  # below exists to print the installer's own stderr and would never run. The run still
+  # fails, one task later, with the evidence.
+  failed_when: false
 
 - name: k3s | Report a failed install
   ansible.builtin.fail:
