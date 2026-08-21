@@ -227,6 +227,9 @@ carries its reason.
 | `dns.instance` | optional | |
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
+| `maintenance.schedule` | optional | when the lab may be DISRUPTED — `always`, `never`, or a window `{days, start, duration}`. Defaults to nightly 04:00 for 120 minutes. Update cadence is unaffected; only reboots and container restarts wait for it. `never` is notify-only |
+| `domains.<estate>.maintenance.schedule` | optional | that estate's own window. Estates are independent clocks — a schedule is never merged or inherited ACROSS estates |
+| `stacks.<name>.maintenance.schedule` | optional | the window for everything on that stack host |
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |
 | `backups.retention` | optional | |
@@ -238,6 +241,35 @@ carries its reason.
 | `stacks.<name>.pool` | optional | pool the stack host allocates from. A stack whose name matches a pool name inherits it without this key; a pool named here must exist on the network |
 | `stacks.<name>.ip_address` | optional | pins the stack host to an exact address, honoured or refused with the conflict named |
 | `stacks.<name>.boot_order` | optional | the stack host's Proxmox startup tier. A property of the stack, like its sizing — an app cannot set it, or the tier would depend on deploy order |
+
+#### Maintenance schedules (slice 205)
+
+`maintenance.schedule` is one primitive, resolved through the same chain as everything
+else: **global → estate → stack → app**. `always` means "disrupt whenever it is needed",
+a window means "only then", and `never` means notify-only. There is no separate class or
+mode enum, because a schedule already expresses all three.
+
+A narrower layer **replaces** what it inherits, whole. Half-merging two windows produces
+a third window nobody declared, and the operator would have no way to read what a guest
+will actually do. This mirrors the same decision for estates in §3.
+
+An app declares its own in `config/apps/<instance>.yml`:
+
+```yaml
+maintenance:
+  schedule: never                # or always, or {days:, start:, duration:}
+```
+
+Several apps on one guest **intersect** rather than compete: a shared stack host may only
+reboot inside every one of their windows, one app scheduled `never` holds the whole guest,
+and two windows that never overlap are reported as a conflict rather than settled by
+picking a winner. Container restarts stay finer-grained — Watchtower restarts one
+container, so it follows that app's own schedule.
+
+`ansible/scripts/maintenance-schedule.py` owns the arithmetic and
+`ansible/tasks/maintenance/resolve-schedule.yml` is the seam. Consumers read the resolved
+answer (`mode`, `due`, `text`, `cron`, `monitor_only`, `next_open`, `conflict`) and never
+re-derive it.
 
 ### Runtime secrets and external unlock material (slice 014)
 

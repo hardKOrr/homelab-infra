@@ -1,0 +1,185 @@
+---
+# Reboot the k3s cluster as ONE maintenance unit. Slice 205.
+# Included by playbooks/maintenance/guest-maintenance.yml, on localhost.
+#
+# WHY THE CLUSTER IS ONE UNIT AND NOT THREE NODES
+#
+# The default StorageClass is node-pinned (local-path), so draining a node does not
+# relocate a pod that owns a local volume — it leaves it Pending until that node comes
+# back. Rebooting the nodes one at a time on independent clocks would therefore schedule
+# three separate workload outages where the operator authorised one, and each would last
+# until its own node returned. The cluster's reboot is a real outage; it is named as one
+# and it happens inside a single window.
+#
+# The embedded-etcd quorum makes the same point from the other side: taking all three
+# nodes down together is a cold cluster start rather than a rolling restart. Survivable,
+# and the correct trade against a lab that is partly broken for hours — but it is a
+# different operation, so this file says so in the job log rather than implying a rolling
+# update happened.
+#
+# Cordon and drain still earn their place before a simultaneous reboot: they stop new
+# work being scheduled and let running pods terminate gracefully instead of being killed
+# by the reboot. Neither is expected to move a pod anywhere.
+#
+# The cluster's schedule is the intersection of the schedules of every app in it, exactly
+# as a shared stack host's is. A cluster app is recorded in config/apps/<instance>.yml
+# with `hosting: kubernetes`, so the same instance files feed the same resolver.
+#
+# Inputs:
+#   _gm_instances, _gm_cluster_nodes, dry_run, force — see decide-one-guest.yml
+#   homelabinfra_infra.kubernetes — the cluster registry entry
+#
+# Sets:
+#   _gm_cluster_summary — one sentence for the run's notification
+
+- name: Cluster | Resolve the node delegate
+  ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+
+- name: Cluster | Collect the apps hosted in the cluster
+  ansible.builtin.set_fact:
+    _cr_apps_json: >-
+      {%- set out = [] -%}
+      {%- for name, cfg in (_gm_instances | dictsort) -%}
+        {%- if (cfg.hosting | default('')) == 'kubernetes' -%}
+          {%- set _ = out.append({
+                'name': name,
+                'estate': (cfg.routing | default({})).estate | default('', true),
+                'stack': '',
+                'schedule': (cfg.maintenance | default({})).schedule | default(none, true)}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+
+- name: Cluster | Resolve the cluster's schedule
+  ansible.builtin.include_tasks: resolve-schedule.yml
+  vars:
+    resolve_schedule_apps: "{{ _cr_apps_json | from_json }}"
+
+- name: Cluster | Ask each node whether it wants a reboot
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: _cr_pending
+  delegate_to: "{{ item }}"
+  loop: "{{ _gm_cluster_nodes }}"
+  failed_when: false
+  changed_when: false
+
+- name: Cluster | Decide
+  ansible.builtin.set_fact:
+    _cr_wanting: >-
+      {{ _cr_pending.results | selectattr('stat.exists', 'defined')
+         | selectattr('stat.exists') | map(attribute='item') | list }}
+    _cr_due: >-
+      {{ maintenance_schedule.due or (force | default(false) | bool) }}
+
+- name: Cluster | Report the decision
+  ansible.builtin.debug:
+    msg: >-
+      Cluster: {{ _cr_wanting | length }} of {{ _gm_cluster_nodes | length }} node(s)
+      waiting on a reboot. Window: {{ maintenance_schedule.text }}.
+      {{ 'Rebooting the whole cluster together — this is a cold start, not a rolling one.'
+         if (_cr_wanting | length > 0 and _cr_due and not (dry_run | default(false) | bool))
+         else 'Nothing to do this run.' }}
+      {{ maintenance_schedule.conflict | default('', true) }}
+
+- name: Cluster | Maintain
+  when:
+    - _cr_wanting | length > 0
+    - _cr_due | bool
+    - not (dry_run | default(false) | bool)
+  block:
+    - name: Cluster | Cordon every node
+      ansible.builtin.command:
+        argv: [k3s, kubectl, cordon, "{{ item }}"]
+      delegate_to: "{{ k8s_api_host }}"
+      loop: "{{ _gm_cluster_nodes }}"
+      changed_when: true
+
+    # Best-effort by decision. A drain that cannot evict a pod — a local-path volume it
+    # cannot move, a PodDisruptionBudget it cannot satisfy — must not stop the reboot the
+    # operator scheduled. The pod is terminated by the reboot moments later either way;
+    # what the drain buys is the graceful shutdown for everything it CAN evict.
+    - name: Cluster | Drain every node
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - drain
+          - "{{ item }}"
+          - --ignore-daemonsets
+          - --delete-emptydir-data
+          - --force
+          - --timeout=120s
+      delegate_to: "{{ k8s_api_host }}"
+      loop: "{{ _gm_cluster_nodes }}"
+      register: _cr_drain
+      changed_when: true
+      failed_when: false
+
+    - name: Cluster | Reboot every node together
+      ansible.builtin.reboot:
+        msg: "homelab-infra maintenance: {{ maintenance_schedule.text }}"
+        reboot_timeout: 900
+        post_reboot_delay: 30
+      delegate_to: "{{ item }}"
+      loop: "{{ _gm_cluster_nodes }}"
+
+    # Uncordon has to wait for the API to answer at all: after a cold start the first
+    # node back has no quorum and every kubectl call fails until the others join.
+    - name: Cluster | Wait for the API server to answer
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, nodes, "-o", "name"]
+      delegate_to: "{{ k8s_api_host }}"
+      register: _cr_api
+      until: _cr_api.rc == 0
+      retries: 30
+      delay: 20
+      changed_when: false
+
+    - name: Cluster | Uncordon every node
+      ansible.builtin.command:
+        argv: [k3s, kubectl, uncordon, "{{ item }}"]
+      delegate_to: "{{ k8s_api_host }}"
+      loop: "{{ _gm_cluster_nodes }}"
+      changed_when: true
+
+    # A node that comes back NotReady is a real failure and the operator must hear about
+    # it — but it is recorded rather than raised, so the rest of the maintenance run
+    # still reports what it did.
+    - name: Cluster | Check every node came back Ready
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, nodes, "--no-headers"]
+      delegate_to: "{{ k8s_api_host }}"
+      register: _cr_ready
+      changed_when: false
+      failed_when: false
+
+    # `kubectl get nodes --no-headers` prints "<name> <status> <roles> <age> <version>",
+    # and the status of a healthy node is exactly "Ready". "NotReady" and
+    # "Ready,SchedulingDisabled" both fail this test, and both are things the operator
+    # needs to hear about after a cold start.
+    - name: Cluster | Find the nodes that did not come back Ready
+      ansible.builtin.set_fact:
+        _cr_notready: >-
+          {{ (_cr_ready.stdout_lines | default([]))
+             | reject('search', '^\\S+\\s+Ready\\s') | list }}
+
+    - name: Cluster | Record nodes that did not come back Ready
+      ansible.builtin.include_tasks: ../report-degradation.yml
+      vars:
+        degradation_component: "kubernetes cluster"
+        degradation_reason: >-
+          {{ _cr_notready | length }} node(s) are not Ready after the maintenance reboot:
+          {{ _cr_notready | join('; ') }}. The cluster came back from a cold start —
+          check etcd quorum on those nodes.
+        degradation_fatal: true
+      when: _cr_notready | length > 0
+
+- name: Cluster | Summarise for the notification
+  ansible.builtin.set_fact:
+    _gm_cluster_summary: >-
+      {{ ('Cluster rebooted as one unit (' ~ _gm_cluster_nodes | length ~ ' nodes) — cold start.'
+          if (_cr_wanting | length > 0 and _cr_due and not (dry_run | default(false) | bool))
+          else ('Cluster: ' ~ _cr_wanting | length ~ ' node(s) waiting for '
+                ~ maintenance_schedule.text ~ '.'
+                if _cr_wanting | length > 0 else 'Cluster: nothing pending.')) }}

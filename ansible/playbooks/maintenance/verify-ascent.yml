@@ -1,0 +1,168 @@
+---
+# Read-only: did the lab come back? Slice 205.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/verify-ascent.yml
+#
+# Rundeck: "Verify Lab Ascent". No parameters. Output goes to the job console.
+#
+# The companion to playbooks/maintenance/lab-descent.yml. A Tier 2 descent cannot report
+# its own outcome — the runner goes down with its node — so the report is a separate job
+# run afterwards, from a lab that is back up. It is also useful on its own after any
+# unplanned outage: a power cut leaves exactly the same question.
+#
+# It answers three things and nothing else:
+#   1. Which tagged guests are not running.
+#   2. Which running guests are not reachable over SSH — up in Proxmox's view but not
+#      actually serving, which is the failure a status page misses.
+#   3. Whether every Kubernetes node came back Ready.
+#
+# It CHANGES NOTHING and it never restarts anything. Deciding whether a guest that did not
+# return should be started is the operator's call — a guest may be deliberately stopped,
+# and this platform does not police drift. `playbooks/maintenance/status.yml` is the
+# fuller picture; this job is the narrow post-outage question.
+#
+# It DOES fail when something did not come back, unlike status.yml. That difference is
+# deliberate: status is a pull action whose red would teach nothing, whereas this job is
+# asked one yes-or-no question and must answer it honestly enough for a scheduled run to
+# be worth watching.
+
+# ── Play 1: what does Proxmox think is running ─────────────────────────────────
+- name: "Verify ascent | Survey"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    # Proxmox's own view first: a guest that is not `running` never got as far as needing
+    # an SSH check, and separating the two tells the operator whether the problem is the
+    # hypervisor's or the guest's.
+    - name: Collect the guests that are not running
+      ansible.builtin.set_fact:
+        _va_down_json: >-
+          {%- set out = [] -%}
+          {%- for host in groups['tag_homelab_infra'] | default([]) -%}
+            {%- if (hostvars[host].proxmox_status | default('')) != 'running' -%}
+              {%- set _ = out.append(host) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out | to_json }}
+
+    - name: Publish the stopped list
+      ansible.builtin.set_fact:
+        _va_down: "{{ _va_down_json | from_json }}"
+
+
+# ── Play 2: are the running ones actually serving ──────────────────────────────
+- name: "Verify ascent | Reach every running guest"
+  hosts: tag_homelab_infra
+  become: false
+  gather_facts: false
+  ignore_unreachable: true
+
+  vars:
+    ansible_user: >-
+      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
+
+  tasks:
+    # A bare connection check. Anything heavier would start reporting on the app rather
+    # than on the ascent, and Uptime Kuma already owns that question.
+    - name: Confirm the guest answers
+      ansible.builtin.ping:
+      register: _va_ping
+      failed_when: false
+
+    - name: Record that it answered
+      ansible.builtin.set_fact:
+        _va_reachable: "{{ _va_ping is defined and _va_ping is not failed }}"
+
+
+# ── Play 3: the cluster ────────────────────────────────────────────────────────
+- name: "Verify ascent | Report"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Resolve the cluster delegate
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
+      when: (homelabinfra_infra | default({})).kubernetes is defined
+
+    - name: Ask the cluster which nodes are Ready
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, nodes, "--no-headers"]
+      delegate_to: "{{ k8s_api_host }}"
+      register: _va_nodes
+      changed_when: false
+      failed_when: false
+      when: k8s_api_host is defined
+
+    # A guest Proxmox calls running but that will not answer SSH is the failure a status
+    # page misses: up in the hypervisor's view, not actually serving.
+    - name: Collect the running guests that do not answer
+      ansible.builtin.set_fact:
+        _va_unreachable_json: >-
+          {%- set out = [] -%}
+          {%- for host in groups['tag_homelab_infra'] | default([]) -%}
+            {%- if host not in _va_down and not (hostvars[host]._va_reachable | default(false)) -%}
+              {%- set _ = out.append(host) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out | to_json }}
+
+    # `kubectl get nodes --no-headers` prints "<name> <status> <roles> <age> <version>".
+    # Exactly "Ready" passes; "NotReady" and "Ready,SchedulingDisabled" both do not, and a
+    # node left cordoned after a descent is something the operator needs to hear about.
+    - name: Collect what did not come back
+      ansible.builtin.set_fact:
+        _va_unreachable: "{{ _va_unreachable_json | from_json }}"
+        _va_notready: >-
+          {{ (_va_nodes.stdout_lines | default([]))
+             | reject('search', '^\\S+\\s+Ready\\s') | list }}
+
+    - name: Decide whether the ascent is clean
+      ansible.builtin.set_fact:
+        _va_clean: >-
+          {{ (_va_down | length) == 0 and (_va_unreachable | length) == 0
+             and (_va_notready | length) == 0 }}
+
+    - name: Report the ascent
+      ansible.builtin.debug:
+        msg: >-
+          {{ (groups['tag_homelab_infra'] | default([]) | length) }} tagged guest(s).
+          Not running: {{ _va_down | join(', ') | default('none', true) }}.
+          Running but unreachable:
+          {{ _va_unreachable | join(', ') | default('none', true) }}.
+          Cluster nodes not Ready:
+          {{ _va_notready | join(' / ') | default('none', true) }}.
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: >-
+          {{ 'Lab ascent complete' if _va_clean else 'Lab ascent INCOMPLETE' }}
+        notify_priority: "{{ 'default' if _va_clean else 'high' }}"
+        notify_message: >-
+          {{ 'Every tagged guest is running and answering, and every cluster node is Ready.'
+             if _va_clean
+             else ('Did not come back — stopped: '
+                   ~ (_va_down | join(', ') | default('none', true))
+                   ~ '; unreachable: '
+                   ~ (_va_unreachable | join(', ') | default('none', true))
+                   ~ '; cluster not Ready: '
+                   ~ (_va_notready | length) ~ ' node(s).') }}
+
+    - name: Fail when the lab did not fully come back
+      ansible.builtin.fail:
+        msg: >-
+          The ascent is incomplete. Stopped: {{ _va_down | join(', ') | default('none', true) }}.
+          Running but unreachable: {{ _va_unreachable | join(', ') | default('none', true) }}.
+          Cluster nodes not Ready: {{ _va_notready | join(' / ') | default('none', true) }}.
+      when: not _va_clean

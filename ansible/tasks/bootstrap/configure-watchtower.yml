@@ -17,6 +17,25 @@
 #     feedback loop. Any other provider (or absent facts) deploys Watchtower
 #     without notifications — updates still run.
 #   watchtower_schedule — optional cron (6-field), default daily at 04:00.
+#   watchtower_monitor_only — optional bool, default false.
+#   watchtower_timezone — optional; the lab's clock, default UTC.
+#
+# THE SCHEDULE IS THE CONTAINER-RESTART HALF OF THE MAINTENANCE SCHEDULE (slice 205).
+# Watchtower does not merely fetch — it restarts every container it updated, which is a
+# real service interruption. Until slice 205 `watchtower_schedule` was read here and set
+# by nothing in the repository, so every stack host in every lab was hardcoded to 04:00
+# daily and container restarts were, from a service owner's point of view, arbitrary.
+#
+# Callers resolve it from the stack's schedule via tasks/maintenance/resolve-schedule.yml
+# and pass `maintenance_schedule.cron` / `.monitor_only` in. A schedule of `never` is
+# notify-only: WATCHTOWER_MONITOR_ONLY makes Watchtower pull the new image and announce
+# it without restarting anything, so the operator still learns an update exists and
+# decides for themselves when it lands.
+#
+# TZ is passed because the cron is declared on the LAB's clock. The container's default
+# is UTC, so a window declared as 03:00 would otherwise fire at whatever 03:00 UTC is
+# locally -- the same class of defect as evaluating the reboot window on the runner's
+# clock rather than the lab's.
 
 - name: Watchtower | Derive Ntfy notification URL
   ansible.builtin.set_fact:
@@ -70,7 +89,9 @@
           volumes:
             - /var/run/docker.sock:/var/run/docker.sock:ro
           environment:
-            WATCHTOWER_SCHEDULE: "{{ watchtower_schedule | default('0 0 4 * * *') }}"
+            TZ: "{{ watchtower_timezone | default('UTC', true) }}"
+            WATCHTOWER_SCHEDULE: "{{ watchtower_schedule | default('0 0 4 * * *', true) }}"
+            WATCHTOWER_MONITOR_ONLY: "{{ watchtower_monitor_only | default(false) | bool | lower }}"
             WATCHTOWER_CLEANUP: "true"
             WATCHTOWER_LABEL_ENABLE: "true"
       {% if _watchtower_ntfy_url is defined %}

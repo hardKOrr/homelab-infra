@@ -195,6 +195,43 @@ dns:
 #   boot:
 #     order: 50    # default tier for a guest that declares none | none to disable
 #     up: 15       # seconds to wait after a guest before starting the next tier
+#
+# ── When the lab may be disrupted ──────────────────────────────────────────────
+# One schedule governs every disruptive action: guest reboots, node reboots and
+# container restarts. Update CADENCE is not scheduled — packages and images are
+# still fetched as often as possible. Only the disruptive half waits.
+#
+# This exists because reboots otherwise never happen. unattended-upgrades installs
+# kernel and libc updates on every guest and deliberately does not reboot, so
+# without a window the lab runs unpatched code it believes it patched.
+#
+# Three forms, and nothing else to learn:
+#
+#   schedule: always              reboot and restart whenever something needs it
+#   schedule: never               never disrupt automatically; notify only
+#   schedule:                     a maintenance window
+#     days: [Sun]                 day names, or `any`
+#     start: "03:00"              on the lab's own clock (see `timezone` in
+#                                 config/proxmox.yml)
+#     duration: 120               minutes; the window may run past midnight
+#
+# The default is nightly 04:00 for two hours, which is exactly when container
+# restarts already happened before this key existed.
+#
+# An estate narrows it under `domains.<name>.maintenance.schedule`, a stack under
+# `stacks.<name>.maintenance.schedule`, and one app under `maintenance.schedule` in
+# its own config/apps/<instance>.yml. A narrower layer REPLACES the wider one whole.
+#
+# Two estates keep independent clocks — a schedule is never inherited across them.
+#
+# Apps sharing one stack host INTERSECT: the host may only reboot inside every one
+# of their windows, and one app set to `never` holds the whole host. Two windows
+# that never overlap are reported as a conflict, not settled by picking a winner.
+#
+#   schedule:
+#     days: [Sun]
+#     start: "03:00"
+#     duration: 120
 
 # ── Backups ────────────────────────────────────────────────────────────────────
 # PBS is deployed as a VM by bootstrap. Configure the datastore path here.

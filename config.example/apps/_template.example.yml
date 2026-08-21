@@ -40,3 +40,23 @@
 #                          #   forward_auth — Authentik login enforced at the reverse proxy
 #   subdomain: APP_NAME    # hostname on the domain (default: the instance name)
 #   estate: personal       # which `domains:` estate this app belongs to (multi-domain labs)
+
+# ── Maintenance schedule override ──────────────────────────────────────────────
+# When THIS app may be disrupted — rebooted, or its container restarted after an
+# update. Inherited from the stack, the estate, and finally the lab-wide default in
+# config/infrastructure.yml; set it here only when this app differs.
+#
+# maintenance:
+#   schedule: never      # never disrupt automatically — pull updates and notify only
+#
+# Or a window of its own:
+#
+# maintenance:
+#   schedule:
+#     days: [Sun]
+#     start: "03:00"
+#     duration: 120
+#
+# On a SHARED stack host this narrows the whole host: the guest may only reboot
+# inside every co-located app's window, and `never` here holds the entire host.
+# Container restarts stay per-app, because Watchtower restarts one container.

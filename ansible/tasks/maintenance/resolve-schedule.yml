@@ -1,0 +1,102 @@
+---
+# Resolve the maintenance schedule that governs one guest. Slice 205.
+#
+# A SCHEDULE is the platform's single primitive for "when may this be disrupted".
+# `always` is "reboot whenever it is needed", a window is a maintenance window, and
+# `never` is notify-only. There is no separate class or mode enum: one concept,
+# resolved through the same global -> estate -> stack -> app chain the rest of the
+# platform uses, so there is no second vocabulary to keep in sync.
+#
+# Update CADENCE is not scheduled. Packages and images are still fetched as often as
+# possible; only the disruptive half -- the reboot, the container restart -- waits for
+# the window.
+#
+# Inputs:
+#   resolve_schedule_apps — list of the apps whose schedules govern this guest. Each
+#     entry: {name: <instance>, estate: <name or ''>, stack: <name or ''>,
+#             schedule: <declaration or omitted>}. An EMPTY list resolves the lab-wide
+#     default alone, which is what a guest carrying no app record gets.
+#   homelabinfra_config.infrastructure.maintenance.schedule            — global layer
+#   homelabinfra_config.infrastructure.domains.<estate>.maintenance.schedule — estate
+#   homelabinfra_config.infrastructure.stacks.<stack>.maintenance.schedule   — stack
+#   homelabinfra_config.timezone — the lab's clock; a window is declared on it
+#
+# Output:
+#   maintenance_schedule — the resolver's whole answer:
+#     .mode         always | window | never
+#     .due          may this guest be disrupted at this moment
+#     .text         the window in words, for the job log and the notification
+#     .cron         6-field cron for the container updater; null when mode is never
+#     .monitor_only true when the updater must fetch and notify but not restart
+#     .conflict     set when apps sharing the guest cannot both be honoured
+#     .sources      what each app contributed, so a held guest names who held it
+#
+# A LAYER REPLACES WHAT IT INHERITS, WHOLE. A narrower scope that declares a schedule
+# does not merge its keys into the wider one: half-merging two windows produces a third
+# window nobody declared, and the operator would have no way to read what the guest
+# will actually do. This mirrors the same decision in tasks/resolve-estate.yml.
+#
+# SEVERAL APPS ON ONE GUEST intersect rather than compete. A stack host is shared, and
+# rebooting it disrupts every app on it -- so it may reboot only inside every one of
+# their windows. One app scheduled `never` therefore holds the whole guest, and two
+# windows that never overlap are reported as a conflict rather than settled by picking
+# a winner. Container restarts stay finer-grained than the guest reboot: Watchtower
+# restarts one container, so it is governed by that app's own schedule.
+#
+# Estate is a hard boundary and this file does not enforce it -- the CALLER decides
+# which guests it is resolving. A descent computed for one estate must not include
+# another estate's guests; the two estates' schedules are independent clocks.
+
+- name: Resolve schedule | Build the override chains
+  ansible.builtin.set_fact:
+    # One chain per app, lowest precedence first. An app that declares nothing still
+    # contributes a chain, because the global or its stack's schedule still governs it.
+    # Serialized through JSON because the loop below is a statement template, which
+    # Ansible would otherwise hand back as a string rather than a list.
+    _ms_chains_json: >-
+      {%- set chains = [] -%}
+      {%- set infra = homelabinfra_config.infrastructure | default({}) -%}
+      {%- set global_layer = {'name': 'lab default',
+                              'schedule': (infra.maintenance | default({})).schedule
+                                          | default(none, true)} -%}
+      {%- for app in resolve_schedule_apps | default([]) -%}
+        {%- set estate = app.estate | default('', true) -%}
+        {%- set stack = app.stack | default('', true) -%}
+        {%- set chain = [global_layer] -%}
+        {%- if estate | length > 0 -%}
+          {%- set _ = chain.append({
+                'name': 'estate ' ~ estate,
+                'schedule': (((infra.domains | default({}))[estate] | default({})).maintenance
+                             | default({})).schedule | default(none, true)}) -%}
+        {%- endif -%}
+        {%- if stack | length > 0 -%}
+          {%- set _ = chain.append({
+                'name': 'stack ' ~ stack,
+                'schedule': (((infra.stacks | default({}))[stack] | default({})).maintenance
+                             | default({})).schedule | default(none, true)}) -%}
+        {%- endif -%}
+        {%- set _ = chain.append({'name': app.name | default('app'),
+                                  'schedule': app.schedule | default(none, true)}) -%}
+        {%- set _ = chains.append(chain) -%}
+      {%- endfor -%}
+      {%- if chains | length == 0 -%}
+        {%- set _ = chains.append([global_layer]) -%}
+      {%- endif -%}
+      {{ chains | to_json }}
+
+- name: Resolve schedule | Ask the resolver
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ playbook_dir }}/../../scripts/maintenance-schedule.py"
+    stdin: >-
+      {{ {'chains': _ms_chains_json | from_json,
+          'timezone': homelabinfra_config.timezone | default('', true)} | to_json }}
+  register: _ms_answer
+  changed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Resolve schedule | Publish the answer
+  ansible.builtin.set_fact:
+    maintenance_schedule: "{{ _ms_answer.stdout | from_json }}"

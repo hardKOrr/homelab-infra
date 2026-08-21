@@ -1,0 +1,346 @@
+---
+# Tier 1 maintenance: reboot the guests that are waiting for one, inside the schedule
+# their apps declared, and converge each Docker host's container-restart schedule to
+# match. Slice 205.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/guest-maintenance.yml
+#   ansible-playbook -i inventory/ playbooks/maintenance/guest-maintenance.yml -e dry_run=true
+#   ansible-playbook -i inventory/ playbooks/maintenance/guest-maintenance.yml -e force=true
+#
+# Rundeck: scheduled hourly. Parameters: dry_run (default false), force (default false).
+#
+# WHAT THIS FIXES. unattended-upgrades installs kernel and libc updates on every guest
+# and never reboots — `Automatic-Reboot` is off by decision, see
+# tasks/bootstrap/configure-unattended-upgrades.yml. `/var/run/reboot-required`
+# therefore accumulates indefinitely and the lab runs unpatched code it believes it
+# patched. This job is the half that was missing. Maintenance windows are the shape of
+# the fix, not the motivation for it.
+#
+# IDEMPOTENT. A run with nothing pending changes nothing and reports so. Run it as often
+# as you like; hourly is the intended cadence, because a window narrower than the gap
+# between runs would otherwise be missed.
+#
+# SIMULTANEOUS WITHIN A SCHEDULE, ORDERED ON THE WAY BACK UP. Everything due goes down
+# together rather than one guest at a time: a hundred apps at two minutes each is a
+# 200-minute window, and a lab wholly down for four minutes is a better outcome than one
+# partly broken for three hours. The ascent is ordered instead, by the Proxmox `startup`
+# tier this platform writes on every guest (tasks/proxmox/resolve-startup.yml) — at the
+# hypervisor, where it keeps working after the control plane is gone.
+#
+# THE RUNNER STAYS UP. This job never reboots a Proxmox node, and it refuses to reboot
+# the guest it is running on. A descent that includes the hypervisors cannot be
+# supervised from inside it; that is Tier 2 (playbooks/maintenance/lab-descent.yml).
+#
+# THE CLUSTER IS ONE UNIT. k3s nodes are cordoned, drained and rebooted together, never
+# node-by-node on independent clocks. The default StorageClass is node-pinned, so a
+# drained pod with a local volume does not move — the reboot is a real workload outage
+# rather than a rolling one, and pretending otherwise would schedule three outages where
+# the operator authorised one.
+#
+# ESTATE IS A HARD BOUNDARY. Each app's schedule resolves through its own estate, so two
+# estates keep independent clocks. Nothing here merges them.
+
+# ── Play 1: what is out there, and what is recorded on it ──────────────────────
+- name: "Guest maintenance | Survey"
+  hosts: localhost
+  become: false
+  # The runner's own addresses are needed below, so that this job cannot reboot the
+  # machine it is running on. That is the only reason facts are gathered here.
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Resolve the config directory and the runner's own addresses
+      ansible.builtin.set_fact:
+        _gm_config_dir: "{{ playbook_dir }}/../../../config"
+        _gm_self_ips: >-
+          {{ (ansible_all_ipv4_addresses | default([]))
+             + (ansible_all_ipv6_addresses | default([])) }}
+
+    # Instance files are the authored half of an app's schedule. The filename IS the
+    # instance name, which is also what the guest's `app_<instance>` tag records, so the
+    # two join without any registry lookup.
+    #
+    # Serialized through JSON deliberately: a statement template hands Ansible a string
+    # rather than a mapping, and every consumer below expects a mapping.
+    - name: Read every instance file
+      ansible.builtin.set_fact:
+        _gm_instances_json: >-
+          {%- set out = {} -%}
+          {%- for path in query('ansible.builtin.fileglob', _gm_config_dir ~ '/apps/*.yml') -%}
+            {%- set cfg = lookup('ansible.builtin.file', path) | from_yaml -%}
+            {%- set _ = out.update({(path | basename | splitext | first):
+                                    (cfg if cfg is mapping else {})}) -%}
+          {%- endfor -%}
+          {{ out | to_json }}
+
+    - name: Publish the instance map
+      ansible.builtin.set_fact:
+        _gm_instances: "{{ _gm_instances_json | from_json }}"
+
+    # Cluster nodes are ordinary tagged guests to the inventory, and they must not be
+    # rebooted as ordinary guests — Play 5 owns them.
+    - name: Identify the cluster nodes
+      ansible.builtin.set_fact:
+        _gm_cluster_nodes: >-
+          {{ ((homelabinfra_infra | default({})).kubernetes | default({})).nodes
+             | default([]) | map(attribute='name') | list }}
+
+    - name: Report what the clock says
+      ansible.builtin.debug:
+        msg: >-
+          Maintenance run on the lab clock
+          ({{ homelabinfra_config.timezone | default('runner local time', true) }}).
+          {{ 'DRY RUN — nothing will be rebooted or reconfigured.'
+             if dry_run | default(false) | bool else '' }}
+          {{ 'FORCED — schedules are reported but not enforced.'
+             if force | default(false) | bool else '' }}
+
+
+# ── Play 2: does this guest want a reboot, and does it run Docker ──────────────
+# Read-only. An unreachable guest records nothing and Play 3 reports it as unknown
+# rather than failing the run: a guest that is already down needs no reboot from us.
+- name: "Guest maintenance | Ask each guest"
+  hosts: tag_homelab_infra
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+
+  vars:
+    # The Proxmox dynamic inventory carries no connection user; without this the play
+    # connects as whoever runs Ansible (rundeck on a runner) and every guest is
+    # unreachable. Same arrangement as maintenance/status.yml.
+    ansible_user: >-
+      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
+
+  tasks:
+    - name: Check whether a reboot is pending
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: _gm_reboot_stat
+      failed_when: false
+
+    - name: Read what is waiting on the reboot
+      ansible.builtin.slurp:
+        src: /var/run/reboot-required.pkgs
+      register: _gm_reboot_pkgs
+      failed_when: false
+      when: _gm_reboot_stat.stat.exists | default(false)
+
+    - name: Check whether this guest runs Docker
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: _gm_docker_stat
+      failed_when: false
+
+    - name: Record what this guest reported
+      ansible.builtin.set_fact:
+        _gm_reachable: true
+        _gm_needs_reboot: "{{ _gm_reboot_stat.stat.exists | default(false) }}"
+        _gm_runs_docker: "{{ _gm_docker_stat.stat.exists | default(false) }}"
+        _gm_reboot_reason: >-
+          {{ ((_gm_reboot_pkgs.content | default('') | b64decode).split()
+              | unique | list)[:6] | join(', ') | default('', true) }}
+
+
+# ── Play 3: resolve each guest's schedule and decide ───────────────────────────
+- name: "Guest maintenance | Decide"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    # A guest's candidacy is decided here rather than on the guest so that the whole
+    # decision — including the shared-host conflict rule — is made in one place and can
+    # be printed as one table.
+    - name: Build the candidate list
+      ansible.builtin.set_fact:
+        _gm_candidates_json: >-
+          {%- set out = [] -%}
+          {%- set stacks = (homelabinfra_config.infrastructure | default({})).stacks | default({}) -%}
+          {%- for host in groups['tag_homelab_infra'] | default([]) -%}
+            {%- set hv = hostvars[host] -%}
+            {%- set tags = hv.proxmox_tags_parsed | default([]) -%}
+            {%- set apps = tags | select('match', '^app_') | map('regex_replace', '^app_', '') | list -%}
+            {%- set stack_tags = tags | select('search', '_stack$') | list
+                                 + (tags | select('in', stacks | list) | list) -%}
+            {%- set _ = out.append({
+                  'host': host,
+                  'reachable': hv._gm_reachable | default(false),
+                  'needs_reboot': hv._gm_needs_reboot | default(false),
+                  'runs_docker': hv._gm_runs_docker | default(false),
+                  'reason': hv._gm_reboot_reason | default(''),
+                  'stack': (stack_tags | unique | list | first) | default('', true),
+                  'apps': apps}) -%}
+          {%- endfor -%}
+          {{ out | to_json }}
+
+    - name: Publish the candidate list
+      ansible.builtin.set_fact:
+        _gm_candidates: "{{ _gm_candidates_json | from_json }}"
+        _gm_decisions: []
+
+    - name: Resolve each guest's schedule
+      ansible.builtin.include_tasks: ../../tasks/maintenance/decide-one-guest.yml
+      loop: "{{ _gm_candidates }}"
+      loop_control:
+        loop_var: _gm_guest
+        label: "{{ _gm_guest.host }}"
+
+    - name: Report the decision for every guest
+      ansible.builtin.debug:
+        msg: >-
+          {{ '%-24s' | format(item.host) }}
+          {{ '%-9s' | format('REBOOT' if item.due and item.needs_reboot
+                             else ('waiting' if item.needs_reboot else 'clean')) }}
+          {{ item.text }}{{ '  [' ~ item.reason ~ ']' if item.reason | length > 0 else '' }}
+      loop: "{{ _gm_decisions }}"
+      loop_control:
+        label: "{{ item.host }}"
+
+    # A conflict is a real operator problem — two apps on one guest were promised
+    # windows that cannot both be kept — and it must not pass as a quiet skip. It is
+    # non-fatal: the run still reboots every guest it legitimately can, and the report
+    # at the end names the conflict so it gets fixed rather than rediscovered.
+    - name: Record shared-host schedule conflicts
+      ansible.builtin.include_tasks: ../../tasks/report-degradation.yml
+      vars:
+        degradation_component: "{{ item.host }}"
+        degradation_reason: "{{ item.conflict }}"
+        degradation_fatal: false
+      loop: >-
+        {{ _gm_decisions | selectattr('conflict', 'defined')
+           | selectattr('conflict', 'string') | selectattr('conflict', 'ne', '')
+           | selectattr('needs_reboot') | list }}
+      loop_control:
+        label: "{{ item.host }}"
+
+    # add_host rather than a `when` on a later play: the reboot play must target
+    # exactly the guests decided here, carrying the connection user and the reason.
+    - name: Enrol the guests that are due for a reboot
+      ansible.builtin.add_host:
+        name: "{{ item.host }}"
+        groups: maintenance_reboot
+        ansible_host: "{{ hostvars[item.host].ansible_host | default(omit) }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        gm_reason: "{{ item.reason }}"
+        gm_window: "{{ item.text }}"
+      loop: "{{ _gm_decisions | selectattr('reboot') | list }}"
+      loop_control:
+        label: "{{ item.host }}"
+      changed_when: false
+
+    - name: Enrol the Docker hosts whose restart schedule is convergeable
+      ansible.builtin.add_host:
+        name: "{{ item.host }}"
+        groups: maintenance_watchtower
+        ansible_host: "{{ hostvars[item.host].ansible_host | default(omit) }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        gm_cron: "{{ item.cron | default('') }}"
+        gm_monitor_only: "{{ item.monitor_only | default(false) }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+      loop: >-
+        {{ _gm_decisions | selectattr('runs_docker') | selectattr('reachable') | list }}
+      loop_control:
+        label: "{{ item.host }}"
+      changed_when: false
+      when: not (dry_run | default(false) | bool)
+
+
+# ── Play 4: converge the container-restart schedule ────────────────────────────
+# Watchtower restarts every container it updated, so its cron IS the container half of
+# the maintenance schedule. Converging it here rather than only at host-creation time is
+# what makes an edited window take effect: the operator changes one line in
+# infrastructure.yml and the next maintenance run applies it everywhere.
+- name: "Guest maintenance | Converge container restart schedules"
+  hosts: maintenance_watchtower
+  become: true
+  gather_facts: true
+  ignore_unreachable: true
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Configure Watchtower for this host's schedule
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-watchtower.yml
+      vars:
+        watchtower_schedule: "{{ gm_cron }}"
+        watchtower_monitor_only: "{{ gm_monitor_only }}"
+        watchtower_timezone: "{{ homelabinfra_config.timezone | default('UTC', true) }}"
+
+
+# ── Play 5: reboot, all at once ────────────────────────────────────────────────
+# Ansible's fork count governs how simultaneous this really is. That is deliberate and
+# left alone: raising forks is a runner-side setting, and the ascent is ordered by the
+# hypervisor regardless of the order the descent happened to take.
+- name: "Guest maintenance | Reboot"
+  hosts: maintenance_reboot
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+
+  tasks:
+    - name: Reboot {{ inventory_hostname }}
+      ansible.builtin.reboot:
+        msg: "homelab-infra maintenance: {{ gm_window }}"
+        reboot_timeout: 600
+        # The guest comes back with its Proxmox `startup` tier honoured only on a NODE
+        # reboot; a single guest restarting on its own has nothing to order it against,
+        # which is exactly why this tier never touches the hypervisors.
+        post_reboot_delay: 15
+
+
+# ── Play 6: the cluster, as one unit ───────────────────────────────────────────
+- name: "Guest maintenance | Kubernetes cluster"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Maintain the cluster
+      ansible.builtin.include_tasks: ../../tasks/maintenance/cluster-reboot.yml
+      when:
+        - (homelabinfra_infra | default({})).kubernetes is defined
+        - _gm_cluster_nodes | length > 0
+
+
+# ── Play 7: report ─────────────────────────────────────────────────────────────
+- name: "Guest maintenance | Report"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Summarise
+      ansible.builtin.set_fact:
+        _gm_rebooted: "{{ groups['maintenance_reboot'] | default([]) }}"
+        _gm_waiting: >-
+          {{ _gm_decisions | selectattr('needs_reboot') | rejectattr('reboot')
+             | map(attribute='host') | list }}
+
+    - name: Notify the outcome
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Lab maintenance: {{ _gm_rebooted | length }} guest(s) rebooted"
+        notify_message: >-
+          Rebooted: {{ _gm_rebooted | join(', ') | default('nothing', true) }}.
+          Waiting for their window:
+          {{ _gm_waiting | join(', ') | default('nothing', true) }}.
+          {{ _gm_cluster_summary | default('') }}
+      # Nothing happened and nothing is pending: a maintenance run that found a healthy
+      # lab is not an event, and notifying on it trains the operator to ignore the topic.
+      when: (_gm_rebooted | length + _gm_waiting | length) > 0
+
+    - name: Fail if anything did not work
+      ansible.builtin.import_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "this maintenance run"

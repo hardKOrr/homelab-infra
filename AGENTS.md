@@ -52,6 +52,9 @@ ansible/
       check-native-updates.yml     # compare installed vs latest GitHub release for native LXC apps, notify via Ntfy
       restart-app.yml              # restart a native app via lab-restart-app; param: instance
       tail-applog.yml              # tail app logs via lab-tail-applog; params: instance, lines
+      guest-maintenance.yml        # Tier 1: reboot guests inside their maintenance window
+      lab-descent.yml              # Tier 2: arm a whole-lab descent the nodes execute themselves
+      verify-ascent.yml            # read-only: did everything come back after a descent
       config-doctor.yml            # validate the config/ tree without deploying anything
       get-config.yml               # print one instance's merged effective config
       configure-app.yml            # edit one config/apps/<instance>.yml key through the audited write path
@@ -83,6 +86,11 @@ ansible/
       resolve-startup.yml          # boot order and delay for a guest
       record-app-on-guest.yml      # stamp tag app_<instance> + a notes row on the guest
       attach-host-mounts.yml       # attach storage the node already mounts to a guest
+    maintenance/                   # when the lab may be disrupted (slice 205)
+      resolve-schedule.yml         # global -> estate -> stack -> app; intersects shared hosts
+      decide-one-guest.yml         # what Tier 1 does to one guest, and why
+      cluster-reboot.yml           # the k3s cluster cordoned, drained, rebooted as ONE unit
+      arm-node-descent.yml         # one node's one-shot systemd descent timer
     kubernetes/                    # Kubernetes hosting backend seams
       provision-node.yml           # one cluster VM, via the shared vm-clone seam
       resolve-cluster.yml          # read cluster topology + delegate from generated facts
@@ -138,6 +146,7 @@ ansible/
     config-doctor.sh               # validate the config/ tree
     redact-config.sh               # strip secrets from a config dump
     vault-runtime.py               # build the in-memory Vaultwarden runtime contract
+    maintenance-schedule.py          # resolve a schedule; is disruption allowed right now
     allocate-ip.py, registry-forget.py, secret-shape.py, semaphore-run.sh,
     resolve-python.sh, with-proxmox-env.sh
   files/
@@ -296,7 +305,9 @@ values but do not yet have publishers.
 |---|---|---|---|
 | Container updates | Watchtower | Configure at Docker host creation | Ntfy: "X updated to vY — run Rollback if broken" |
 | Container rollback | `rollback-container.yml` | Semaphore/Rundeck job, takes container name + image tag | Ntfy: "X rolled back to vY" |
-| OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` with systemd drop-in → Ntfy | Ntfy: "N packages updated on hostname" |
+| OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` with systemd drop-in → Ntfy. `Automatic-Reboot` is off by decision — the update is continuous, the reboot is scheduled | Ntfy: "N packages updated on hostname" |
+| Guest reboots | `guest-maintenance.yml` (scheduled hourly) | Reboot guests holding `/var/run/reboot-required` whose maintenance window is open; converge each Docker host's Watchtower schedule | Ntfy: "Lab maintenance: N guest(s) rebooted" |
+| Whole-lab descent | `lab-descent.yml` + `verify-ascent.yml` | Arm a staggered node-by-node descent the nodes execute themselves; verify the ascent afterwards | Ntfy: "Lab descent armed" / "Lab ascent complete" |
 | Native LXC app updates | `check-native-updates.yml` (scheduled weekly) | Calls `lab-update-check` on all managed hosts, aggregates JSON results | Ntfy: "Vaultwarden vX.Z available, you have vX.Y — re-run deploy to update" |
 | App restart | `restart-app.yml` | Calls `lab-restart-app` on named host; param: instance | Ntfy: "X restarted" |
 | App log tail | `tail-applog.yml` | Calls `lab-tail-applog` on named host; output to job console | Job console |
@@ -308,6 +319,32 @@ values but do not yet have publishers.
 | Config validation | `config-doctor.yml` | Semaphore/Rundeck job — read-only, deploys nothing | Console/Semaphore output |
 | Config edit | `configure-app.yml` | Writes one key through `tasks/config/write-config-file.yml` — backs up to `config/.backups/` and diffs into the job log | Job console |
 | Secret storage | `store-secret.yml` | Puts one secret into its canonical Vaultwarden item | Job console (never prints the value) |
+
+### Maintenance Windows
+
+One primitive decides when anything may be **disrupted**: `maintenance.schedule`, resolved
+through the same chain as everything else — global → estate → stack → app. `always` is
+"disrupt whenever it is needed", a window `{days, start, duration}` is a maintenance
+window, and `never` is notify-only. There is no separate class or mode enum.
+
+Update *cadence* is not scheduled. Packages and images are fetched as often as possible;
+only the disruptive half waits — guest reboots, node reboots, container restarts.
+
+- A narrower layer **replaces** what it inherits, whole. Estates are independent clocks and
+  a schedule is never inherited across them.
+- Apps sharing one guest **intersect**: the guest may reboot only inside every one of their
+  windows, one app set to `never` holds the whole guest, and windows that never overlap are
+  reported as a conflict rather than settled by picking a winner.
+- Within a window disruption is **simultaneous**, not sequenced — a lab wholly down for four
+  minutes beats one partly broken for three hours. Ordering applies to the **ascent**, and
+  is enforced by the Proxmox `startup` tier on each guest, not by a playbook that is no
+  longer running once the reboot begins.
+- The **cluster is one unit**: `local-path` is node-pinned, so a drained pod does not move.
+  Its reboot is a real workload outage and is scheduled as one, never node-by-node.
+
+`ansible/scripts/maintenance-schedule.py` owns the arithmetic;
+`ansible/tasks/maintenance/resolve-schedule.yml` is the only seam. Full contract in
+`ansible/vars/CONTRACT.md`.
 
 ### Feedback Loop (Container Updates)
 Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs Rollback Container job.
@@ -348,6 +385,11 @@ Per-Stack
 Maintenance
   Lab Status                  ← maintenance/status.yml
   Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
+  Guest Maintenance           ← maintenance/guest-maintenance.yml (hourly; params: dry_run,
+                                force)
+  Arm Lab Descent             ← maintenance/lab-descent.yml (params: confirm, at, stagger,
+                                drain, disarm — never scheduled)
+  Verify Lab Ascent           ← maintenance/verify-ascent.yml
   Restart App                 ← maintenance/restart-app.yml (param: instance)
   Tail App Log                ← maintenance/tail-applog.yml (params: instance, lines)
   Backup App                  ← maintenance/backup-app.yml (params: instance, app)

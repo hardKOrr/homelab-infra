@@ -1,0 +1,58 @@
+# Guest Maintenance — Tier 1 of slice 205.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/guest-maintenance.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# SCHEDULED HOURLY, and that is the point rather than an intensity setting. The job only
+# acts when a guest is both waiting on a reboot and inside its window; a window narrower
+# than the gap between runs would simply be missed. A run with nothing pending changes
+# nothing, sends nothing and finishes green.
+
+- id: a1af8186-7694-4977-b2bc-b55562422b23
+  uuid: a1af8186-7694-4977-b2bc-b55562422b23
+  name: Guest Maintenance
+  group: Maintenance
+  description: |-
+    Reboot the guests that are waiting on one, inside the maintenance window their apps declared, and converge each Docker host's container-restart schedule to match. Idempotent. Never reboots a Proxmox node or the runner; the Kubernetes cluster is cordoned, drained and rebooted as one unit. Runs hourly.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: true
+  nodeFilterEditable: false
+  multipleExecutions: false
+  schedule:
+    crontab: '0 5 * ? * * *'
+  options:
+  - name: dry_run
+    description: Report what would happen and change nothing.
+    value: 'false'
+    values:
+    - 'false'
+    - 'true'
+    required: true
+  - name: force
+    description: Reboot everything that is waiting, ignoring the window. Still never reboots a Proxmox node or the runner.
+    value: 'false'
+    values:
+    - 'false'
+    - 'true'
+    required: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/guest-maintenance.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          ARGS=()
+          ARGS+=(-e "dry_run=${RD_OPTION_DRY_RUN:-false}")
+          ARGS+=(-e "force=${RD_OPTION_FORCE:-false}")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/maintenance/guest-maintenance.yml "${ARGS[@]}"

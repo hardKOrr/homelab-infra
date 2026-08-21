@@ -1,0 +1,195 @@
+---
+# Arm (or disarm) one Proxmox node's share of a Tier 2 lab descent. Slice 205.
+# Included in a loop by playbooks/maintenance/lab-descent.yml.
+#
+# Inputs:
+#   _ld_node   — the node's name, a `proxmox_delegates` host
+#   _ld_index  — its position in the sorted node list; the stagger multiplier
+#   at         — optional "YYYY-MM-DD HH:MM" the operator supplied
+#   stagger    — minutes between node reboots (default 15)
+#   drain      — seconds allowed for the guests to shut down (default 180)
+#   disarm     — remove the unit and timer instead of installing them
+#   maintenance_schedule — the lab-wide resolved schedule
+#
+# The unit is a ONE-SHOT with its own timer, and the script disables that timer before it
+# does anything else. A descent that somehow re-armed itself would put the lab into a
+# reboot loop with no control plane left to stop it, so the disable is the first line of
+# the script rather than a cleanup at the end.
+
+- name: Arm descent | Remove any previous descent from {{ _ld_node }}
+  ansible.builtin.systemd:
+    name: homelab-descent.timer
+    state: stopped
+    enabled: false
+  delegate_to: "{{ _ld_node }}"
+  become: true
+  failed_when: false
+
+- name: Arm descent | Clear the unit files on {{ _ld_node }}
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/homelab-descent.timer
+    - /etc/systemd/system/homelab-descent.service
+    - /usr/local/sbin/homelab-descent
+  delegate_to: "{{ _ld_node }}"
+  become: true
+  when: disarm | default(false) | bool
+
+- name: Arm descent | Install
+  when: not (disarm | default(false) | bool)
+  block:
+    # An absolute OnCalendar time, not a delay. The nodes execute this without a control
+    # plane, and a relative timer would drift with every daemon-reload between now and
+    # then. systemd parses "YYYY-MM-DD HH:MM:SS" in the node's own timezone, which
+    # tasks/guest-bootstrap.yml sets from homelabinfra_config.timezone.
+    - name: Arm descent | Compute this node's firing time
+      ansible.builtin.set_fact:
+        _and_fire: >-
+          {{ '%Y-%m-%d %H:%M:%S' | strftime((_and_base_epoch | int) + (_and_offset | int)) }}
+      vars:
+        # The operator's own time wins outright; otherwise the descent is armed for the
+        # next opening of the lab's declared window, which is why the window was declared.
+        _and_base: >-
+          {{ (at ~ ':00') if (at | default('', true) | length > 0)
+             else maintenance_schedule.next_open }}
+        _and_base_epoch: >-
+          {{ (_and_base | to_datetime('%Y-%m-%dT%H:%M:%S')).timestamp() | int
+             if 'T' in _and_base
+             else (_and_base | to_datetime('%Y-%m-%d %H:%M:%S')).timestamp() | int }}
+        _and_offset: >-
+          {{ _ld_index | int * (stagger | default(15) | int) * 60 }}
+
+    - name: Arm descent | Install the descent script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/homelab-descent
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/usr/bin/env bash
+          # Installed by homelab-infra (slice 205). Runs once, from a systemd timer, on
+          # the node itself, because the machine that armed it is a guest on one of these
+          # nodes and cannot survive its own descent to supervise it.
+          set -uo pipefail
+
+          # FIRST, so that nothing below can leave a descent armed for the next boot.
+          systemctl disable --now homelab-descent.timer >/dev/null 2>&1 || true
+
+          log() { logger -t homelab-descent -- "$*"; echo "homelab-descent: $*"; }
+          log "descent starting on $(hostname)"
+
+          # Guests this platform created, on this node, running. Anything untagged is left
+          # to Proxmox's own node-shutdown behaviour: homelab-infra manages what it
+          # created and does not police guests it did not make.
+          mapfile -t GUESTS < <(
+            pvesh get /cluster/resources --type vm --output-format json 2>/dev/null |
+            python3 -c '
+          import json, sys
+          node = sys.argv[1]
+          try:
+              rows = json.load(sys.stdin)
+          except Exception:
+              sys.exit(0)
+          for row in rows:
+              if row.get("node") != node:
+                  continue
+              if row.get("status") != "running":
+                  continue
+              tags = (row.get("tags") or "").replace(",", ";").split(";")
+              if "homelab-infra" not in [t.strip() for t in tags]:
+                  continue
+              print("%s %s" % (row.get("type"), row.get("vmid")))
+          ' "$(hostname)"
+          )
+
+          # The count is taken the long way round rather than with bash's array-length
+          # form. Ansible TEMPLATES this content before it is ever written, and that form
+          # begins with a brace followed by a hash — which Jinja reads as the start of a
+          # comment that never ends. The copy task then fails with "Missing end of comment
+          # tag", saying nothing about shell. gate/lint.sh's jinja-parse check caught it,
+          # and caught it a second time in the comment that first explained it.
+          #
+          # The +"..." guard keeps `set -u` quiet when this node carries no tagged guest
+          # at all, which is a legitimate state and must not abort the node's reboot.
+          GUEST_COUNT=$(printf '%s\n' ${GUESTS[@]+"${GUESTS[@]}"} | grep -c . || true)
+          log "shutting down ${GUEST_COUNT:-0} tagged guest(s) in parallel"
+          for entry in ${GUESTS[@]+"${GUESTS[@]}"}; do
+            kind="${entry%% *}"; vmid="${entry##* }"
+            if [ "$kind" = "lxc" ]; then
+              pct shutdown "$vmid" --timeout {{ drain | default(180) | int }} &
+            else
+              qm shutdown "$vmid" --timeout {{ drain | default(180) | int }} &
+            fi
+          done
+          wait
+
+          # A guest that ignored its shutdown request must not hold the node up forever.
+          # The node reboot terminates it either way; this only decides how long the
+          # graceful path is given.
+          log "guests down (or out of time); rebooting the node"
+          systemctl reboot
+      delegate_to: "{{ _ld_node }}"
+      become: true
+
+    - name: Arm descent | Install the one-shot unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/homelab-descent.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=homelab-infra scheduled lab descent (one shot)
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/homelab-descent
+      delegate_to: "{{ _ld_node }}"
+      become: true
+
+    # Persistent=false on purpose. A node that was itself down when its firing time passed
+    # must NOT descend the moment it comes back — by then the descent it belonged to is
+    # over, and rebooting into the middle of a recovered lab is the opposite of what the
+    # operator scheduled.
+    - name: Arm descent | Install the timer for {{ _and_fire }}
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/homelab-descent.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=homelab-infra scheduled lab descent
+
+          [Timer]
+          OnCalendar={{ _and_fire }}
+          AccuracySec=1s
+          Persistent=false
+
+          [Install]
+          WantedBy=timers.target
+      delegate_to: "{{ _ld_node }}"
+      become: true
+
+    - name: Arm descent | Enable the timer on {{ _ld_node }}
+      ansible.builtin.systemd:
+        name: homelab-descent.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+      delegate_to: "{{ _ld_node }}"
+      become: true
+
+    - name: Arm descent | Confirm what {{ _ld_node }} will do
+      ansible.builtin.command:
+        argv: [systemctl, list-timers, homelab-descent.timer, --all, --no-pager]
+      delegate_to: "{{ _ld_node }}"
+      become: true
+      register: _and_listed
+      changed_when: false
+
+    - name: Arm descent | Report
+      ansible.builtin.debug:
+        msg: "{{ _ld_node }} will descend at {{ _and_fire }} — {{ _and_listed.stdout_lines | default([]) | join(' / ') }}"

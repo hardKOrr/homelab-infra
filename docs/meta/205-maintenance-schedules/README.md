@@ -1,6 +1,6 @@
 # 205 — Maintenance schedules
 
-**Status:** open
+**Status:** implemented — not yet executed against the live lab
 **Subject:** Maintenance schedules
 **Related:** 008 (estate contract), 100/201/202 (unattended-upgrades, Watchtower, PBS
 schedules this slice unifies), 203 (guest app record), 204 (Kubernetes backend), 503 (lab status)
@@ -28,36 +28,51 @@ estate's guests, and the two estates' schedules are independent clocks.
 
 ## Remaining
 
-- [ ] `maintenance:` config block accepted in `config/infrastructure.yml`, resolved through
+- [x] Proxmox `startup` order populated from the resolved model (commit `caec23d`).
+      `tasks/proxmox/resolve-startup.yml` and the `maintenance.boot` config block.
+- [x] `maintenance.schedule` accepted in `config/infrastructure.yml`, resolved through
       global → estate → stack → app, with `never` meaning notify-only. Documented in
-      `ansible/vars/CONTRACT.md` and `config.example/`.
-- [ ] Proxmox `startup` order populated from the resolved model. The key is already a
-      passthrough field in `tasks/proxmox/lxc-create.yml` and `vm-create.yml` and is
-      currently never set, so guests return from any reboot in arbitrary order — including
-      reboots this platform did not cause. Independently shippable and worth shipping first.
-- [ ] `Unattended-Upgrade::Automatic-Reboot "false"` stated explicitly in
-      `tasks/bootstrap/configure-unattended-upgrades.yml`. It is already the effective
-      behaviour because the directive is absent; the slice makes the intent legible and
-      guarantees no future package default silently reboots a guest outside its schedule.
-- [ ] `watchtower_schedule` reachable from config. It is read by
-      `tasks/bootstrap/configure-watchtower.yml` and set by nothing in the repository, so
-      every stack host is hardcoded to 04:00 daily. It becomes the container-restart half
-      of the resolved schedule.
-- [ ] Tier 1 job — guest maintenance. Reboots guests reporting `/var/run/reboot-required`
-      whose resolved schedule is due, simultaneously within a schedule. Runner stays up and
-      reports the outcome. Idempotent; a run with nothing pending changes nothing.
-- [ ] Kubernetes nodes included: cordon, drain, reboot, uncordon. The default
-      StorageClass is node-pinned, so a drained pod with a local volume does not move — the
-      cluster is one maintenance unit whose reboot is a real workload outage, not a rolling
-      one. It is scheduled as a unit, never node-by-node on independent clocks.
-- [ ] Tier 2 job — full lab descent, including Proxmox nodes. The runner is inside the
-      blast radius, so Ansible arms the descent and exits; the nodes execute it from a
-      detached one-shot unit at a wall-clock time. A separate read-only job verifies the
-      ascent afterwards. Node access is not new: `tasks/proxmox/attach-host-mounts.yml`,
-      `ensure-cloud-template.yml` and `register-nodes.yml` already run node-level commands.
-- [ ] Shared-host conflict rule implemented: a guest's reboot uses the most restrictive
-      schedule among the apps recorded on it (`tag_app_<instance>` and the notes region
-      from slice 203). Container restarts may still be finer-grained than the guest reboot.
+      `ansible/vars/CONTRACT.md` and `config.example/`. The arithmetic lives in
+      `ansible/scripts/maintenance-schedule.py`, with `gate/test-maintenance-schedule.sh`
+      covering the modes, midnight and week wrap, the override chain, the shared-host
+      intersection, and every refusal.
+- [x] `Unattended-Upgrade::Automatic-Reboot "false"` stated explicitly, with
+      `-WithUsers` alongside it, in `tasks/bootstrap/configure-unattended-upgrades.yml`.
+- [x] `watchtower_schedule` reachable from config, plus `watchtower_monitor_only` for
+      `never` and a `TZ` so the cron is read on the lab's clock rather than UTC.
+- [x] Tier 1 job — `playbooks/maintenance/guest-maintenance.yml`. Reboots guests
+      reporting `/var/run/reboot-required` whose resolved schedule is due, simultaneously
+      within a schedule. Runner stays up; it refuses to reboot itself or a Proxmox node.
+      Idempotent, with `dry_run` and `force` parameters.
+- [x] Kubernetes nodes included: cordon, drain, reboot, uncordon, as one unit
+      (`tasks/maintenance/cluster-reboot.yml`). The cold start is named as such in the
+      job log rather than implied to be a rolling one.
+- [x] Tier 2 job — `playbooks/maintenance/lab-descent.yml` arms a detached one-shot
+      systemd timer on each node and exits; `verify-ascent.yml` reports the ascent.
+      Nodes are staggered so the CARP pair and the etcd quorum are never lost together.
+- [x] Shared-host conflict rule implemented, in the resolver rather than in a playbook:
+      a guest's window is the intersection of its apps' windows, one `never` holds the
+      whole guest, and disjoint windows are reported as a conflict with both named.
+
+### Not verified by execution
+
+Everything above passes lint, syntax check and the focused resolver tests. Tier 1 has not
+been run against the live lab, and Tier 2 has not been armed — arming it reboots every
+hypervisor, so it wants a deliberate maintenance evening rather than a build session.
+Run `Guest Maintenance` with `dry_run=true` first; it changes nothing and prints the
+decision table for every guest.
+
+### Found while doing this, not fixed here
+
+`playbooks/docker/create-docker-host.yml` has **no caller anywhere in the repository**.
+It is the only thing that ever deployed Watchtower, so Watchtower is not running on any
+stack host — every Docker app role dutifully sets
+`com.centurylinklabs.watchtower.enable=true` on a container nothing watches. Stack hosts
+are created by `tasks/stack/find-or-create-host.yml`, which never configures it.
+
+Tier 1 now converges Watchtower on every Docker guest it visits, which closes the hole in
+practice and is where the schedule belongs anyway. Whether the app-deploy path should also
+configure it at creation time is a question for the slice that owns that path.
 
 ## Deferred
 

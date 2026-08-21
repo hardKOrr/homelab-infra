@@ -1,0 +1,76 @@
+---
+# Decide what Tier 1 maintenance does to ONE guest. Slice 205.
+# Included in a loop by playbooks/maintenance/guest-maintenance.yml, on localhost.
+#
+# Inputs:
+#   _gm_guest         — one entry from that playbook's candidate list:
+#                       {host, reachable, needs_reboot, runs_docker, reason, stack, apps}
+#   _gm_instances     — instance name -> the authored config/apps/<instance>.yml
+#   _gm_cluster_nodes — names of the k3s nodes, which this tier never reboots singly
+#   _gm_self_ips      — the runner's own addresses
+#   dry_run, force    — job parameters
+#
+# Appends one decision to `_gm_decisions`.
+#
+# The guest's schedule is the INTERSECTION of the schedules of every app recorded on it,
+# because rebooting a shared stack host disrupts all of them. A guest carrying no app
+# record — a stack host whose apps predate slice 203's guest record, or a bare platform
+# guest — resolves the lab-wide default alone. That is the honest answer: nothing has
+# claimed a narrower window, so the lab's own window applies.
+
+- name: Decide guest | Build this guest's app schedules
+  ansible.builtin.set_fact:
+    _dog_apps_json: >-
+      {%- set out = [] -%}
+      {%- for name in _gm_guest.apps -%}
+        {%- set cfg = _gm_instances[name] | default({}) -%}
+        {%- set _ = out.append({
+              'name': name,
+              'estate': (cfg.routing | default({})).estate | default('', true),
+              'stack': cfg.stack | default(_gm_guest.stack, true),
+              'schedule': (cfg.maintenance | default({})).schedule | default(none, true)}) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+
+- name: Decide guest | Resolve the schedule
+  ansible.builtin.include_tasks: resolve-schedule.yml
+  vars:
+    resolve_schedule_apps: "{{ _dog_apps_json | from_json }}"
+
+- name: Decide guest | Record the decision
+  ansible.builtin.set_fact:
+    _gm_decisions: >-
+      {{ _gm_decisions + [_gm_guest | combine({
+           'mode': maintenance_schedule.mode,
+           'due': _dog_due,
+           'text': _dog_text,
+           'cron': maintenance_schedule.cron,
+           'monitor_only': maintenance_schedule.monitor_only,
+           'conflict': maintenance_schedule.conflict | default('', true),
+           'reboot': _dog_reboot,
+         })] }}
+  vars:
+    # `force` overrides the window and nothing else. It never overrides the two
+    # structural exclusions below — a forced run must not reboot the machine running it,
+    # and must not take a cluster node down outside the cordon/drain path.
+    _dog_due: >-
+      {{ maintenance_schedule.due or (force | default(false) | bool) }}
+    _dog_is_cluster_node: "{{ _gm_guest.host in _gm_cluster_nodes }}"
+    # The runner is inside the lab. Rebooting it from a job it is running kills the job
+    # mid-flight and leaves no report of what else happened — and Tier 1's whole promise
+    # is that the runner stays up and tells you the outcome. A runner that needs a reboot
+    # is Tier 2's business, or a hand-run one.
+    _dog_is_runner: >-
+      {{ (hostvars[_gm_guest.host].ansible_host | default('')) in (_gm_self_ips | default([])) }}
+    _dog_reboot: >-
+      {{ _gm_guest.reachable and _gm_guest.needs_reboot and _dog_due
+         and not _dog_is_cluster_node and not _dog_is_runner
+         and not (dry_run | default(false) | bool) }}
+    _dog_text: >-
+      {{ 'cluster node — rebooted with the cluster'
+         if _dog_is_cluster_node
+         else ('the runner — never rebooted by this job'
+               if _dog_is_runner
+               else maintenance_schedule.text
+                    ~ (' (FORCED)' if (force | default(false) | bool)
+                                      and not maintenance_schedule.due else '')) }}

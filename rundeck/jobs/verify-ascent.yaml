@@ -1,0 +1,33 @@
+# Verify Lab Ascent — the read-only companion to Arm Lab Descent (slice 205).
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/verify-ascent.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+#
+# Unlike Lab Status this job goes RED when something did not come back. Status is a pull
+# action whose red would teach nothing; this one is asked a single yes-or-no question
+# after an outage and has to answer it honestly enough to be worth watching.
+
+- id: 4c758158-4124-4104-94e9-453be1ae784e
+  uuid: 4c758158-4124-4104-94e9-453be1ae784e
+  name: Verify Lab Ascent
+  group: Maintenance
+  description: |-
+    Read-only: after a lab descent or an unplanned outage, report which tagged guests are not running, which are running but do not answer SSH, and whether every Kubernetes node came back Ready. Changes nothing and starts nothing — deciding what to do about a guest that stayed down is the operator's call. Fails when the ascent is incomplete.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/verify-ascent.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/maintenance/verify-ascent.yml

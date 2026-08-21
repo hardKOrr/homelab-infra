@@ -19,6 +19,14 @@
 # after clearing notifications.token from config/.generated/facts.yml.
 # An absent token falls back to an unauthenticated POST, which is what an Ntfy deployed
 # before slice 401 (open by default) expects.
+#
+# REBOOTING IS NOT THIS FILE'S JOB (slice 205). `Automatic-Reboot "false"` below is
+# already the effective behaviour when the directive is absent, and it is stated anyway:
+# a guest must reboot inside the maintenance schedule its apps declared, decided by
+# playbooks/maintenance/guest-maintenance.yml, and never because a package default
+# changed underneath us. Packages are still installed continuously — only the reboot
+# waits. `/var/run/reboot-required` is what this file leaves behind and what the
+# maintenance job acts on.
 
 - name: Enable automatic apt upgrades
   ansible.builtin.copy:
@@ -40,6 +48,8 @@
         "${distro_id}ESM:${distro_codename}-infra-security";
         "${distro_id}:${distro_codename}-updates";
       };
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
       Unattended-Upgrade::Remove-Unused-Dependencies "true";
       Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
       Unattended-Upgrade::MinimalSteps "true";

@@ -1,0 +1,68 @@
+# Arm Lab Descent — Tier 2 of slice 205.
+# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/lab-descent.yaml
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+#
+# NEVER SCHEDULED. This reboots every hypervisor in the lab, and the runner goes down with
+# its own node partway through — the job therefore ARMS a descent that the nodes execute
+# themselves and exits. It cannot report the outcome, by construction; run "Verify Lab
+# Ascent" afterwards. `confirm` must be typed as the word DESCEND, so a checkbox left
+# ticked from a previous run cannot start one.
+
+- id: ca715bcc-f147-4804-aa51-295c71d2d3d1
+  uuid: ca715bcc-f147-4804-aa51-295c71d2d3d1
+  name: Arm Lab Descent
+  group: Maintenance
+  description: |-
+    Arm a full lab descent: every tagged guest shut down gracefully, then every Proxmox node rebooted, staggered so the CARP gateway pair and the etcd quorum are never lost at once. Ansible arms it and exits — the nodes execute it from a one-shot systemd timer, and the ascent is automatic via each guest's Proxmox startup order. Set disarm=true to cancel an armed descent. Run "Verify Lab Ascent" afterwards.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: confirm
+    description: Type DESCEND to arm. Anything else refuses. Not needed to disarm.
+    required: false
+  - name: at
+    description: 'Wall-clock time on the lab''s own clock, "YYYY-MM-DD HH:MM". Leave empty to arm for the next opening of the lab maintenance window.'
+    required: false
+  - name: stagger
+    description: Minutes between one node's reboot and the next. Must exceed a node's full down-and-up time, or the nodes reboot together.
+    value: '15'
+    required: true
+  - name: drain
+    description: Seconds each guest is given to shut down gracefully before the node reboots anyway.
+    value: '180'
+    required: true
+  - name: disarm
+    description: Remove the armed descent from every node and change nothing else.
+    value: 'false'
+    values:
+    - 'false'
+    - 'true'
+    required: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/lab-descent.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          ARGS=()
+          ARGS+=(-e "disarm=${RD_OPTION_DISARM:-false}")
+          ARGS+=(-e "stagger=${RD_OPTION_STAGGER:-15}")
+          ARGS+=(-e "drain=${RD_OPTION_DRAIN:-180}")
+          # `if` rather than `[ ... ] && ...`: under `set -e` a failing test at the end
+          # of an && list exits the whole step, so an empty optional field would abort
+          # the job instead of simply being left out.
+          if [ -n "${RD_OPTION_CONFIRM:-}" ]; then ARGS+=(-e "confirm=$RD_OPTION_CONFIRM"); fi
+          if [ -n "${RD_OPTION_AT:-}" ]; then ARGS+=(-e "at=$RD_OPTION_AT"); fi
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/maintenance/lab-descent.yml "${ARGS[@]}"

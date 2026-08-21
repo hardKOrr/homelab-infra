@@ -32,6 +32,26 @@ homelabinfra_defaults:
       boot:
         order: 50
         up: 15
+      # When this lab may be DISRUPTED — the one primitive behind guest reboots, node
+      # reboots and container restarts alike (slice 205). Update cadence is untouched:
+      # packages and images are still fetched as often as possible, and only the
+      # disruptive half waits for the window.
+      #
+      #   always                                 disrupt whenever something needs it
+      #   never                                  never disrupt; notify only
+      #   {days:, start:, duration:}             a maintenance window
+      #
+      # An estate, a stack or one app narrows this through the ordinary override chain,
+      # and a narrower layer REPLACES this whole rather than merging keys into it.
+      #
+      # The default is nightly 04:00-06:00 on the lab's own clock. 04:00 is not
+      # arbitrary: it is exactly what Watchtower was hardcoded to before this key
+      # existed, so a lab that says nothing keeps the container-restart behaviour it
+      # already had — and gains the guest reboot it never had.
+      schedule:
+        days: any
+        start: "04:00"
+        duration: 120
   networks: {}
   ansible:
     ssh_user: root

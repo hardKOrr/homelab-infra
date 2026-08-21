@@ -1,0 +1,142 @@
+---
+# Tier 2 maintenance: arm a full lab descent, including the Proxmox nodes themselves.
+# Slice 205.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/maintenance/lab-descent.yml \
+#     -e confirm=DESCEND [-e at="2026-08-23 03:00"] [-e stagger=15] [-e drain=180]
+#   ansible-playbook -i inventory/ playbooks/maintenance/lab-descent.yml -e disarm=true
+#
+# Rundeck: "Arm Lab Descent". Parameters: confirm, at, stagger, drain, disarm.
+#
+# WHY THIS IS NOT AN ANSIBLE REBOOT LOOP
+#
+# The runner is inside the blast radius. It is a guest on one of the nodes this descent
+# reboots, so the moment the descent reaches that node the play dies mid-flight and
+# nothing reports what happened to the rest of the lab. There is no supervising position
+# available from inside the thing being shut down.
+#
+# So Ansible ARMS the descent and exits. Each node receives a one-shot systemd unit and a
+# timer set to an absolute wall-clock time; the nodes execute the descent themselves, and
+# the ascent is automatic — `onboot: true` is this platform's default and the Proxmox
+# `startup` tier written on every guest orders the way back up
+# (tasks/proxmox/resolve-startup.yml). Fire and forget: make the descent correct and the
+# ascent automatic, then get out of the way. Do not pretend to supervise what cannot be
+# observed. Afterwards, `playbooks/maintenance/verify-ascent.yml` reports what came back.
+#
+# Node access is not new. tasks/proxmox/attach-host-mounts.yml, ensure-cloud-template.yml
+# and register-nodes.yml already run node-level commands over the same SSH identity.
+#
+# NODES ARE STAGGERED, GUESTS ARE NOT
+#
+# Within one node the guests go down together, for the reason Tier 1 gives: a lab wholly
+# down for four minutes beats one partly broken for three hours. The NODES are staggered,
+# by `stagger` minutes each, and that is not a style choice:
+#
+#   - The OPNsense CARP pair puts its peers on different nodes. Rebooting both nodes
+#     together leaves the lab with no gateway, and therefore no route by which anything
+#     could recover or report.
+#   - The k3s nodes run embedded etcd. Taking them all at once is a cold cluster start.
+#     Staggered node reboots let the cluster keep quorum through the descent.
+#
+# A stagger shorter than a node's full down-and-up cycle collapses back into a
+# simultaneous reboot, so the default is deliberately generous.
+#
+# WHAT IS AND IS NOT SHUT DOWN GRACEFULLY
+#
+# Guests this platform created — tagged `homelab-infra` — are shut down by name, in
+# parallel, with a timeout, before the node reboots. Anything else on the node is left to
+# Proxmox's own node-shutdown behaviour, because this platform manages what it creates
+# and does not police guests it did not make. An operator with untagged guests on a node
+# should check their own shutdown settings before arming this.
+#
+# DISARMING. `-e disarm=true` removes the timer and unit from every node and changes
+# nothing else. It is safe to run at any time before the descent fires, and it is the
+# documented way out of an armed descent.
+
+- name: "Lab descent | Arm"
+  hosts: localhost
+  become: false
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    # This reboots every hypervisor in the lab. A job parameter is the confirmation, and
+    # it is a word rather than a boolean so that it cannot be satisfied by a stray
+    # default or a checkbox left ticked from a previous run.
+    - name: Assert the operator meant it
+      ansible.builtin.assert:
+        that: confirm | default('') == 'DESCEND'
+        fail_msg: >-
+          This arms a reboot of every Proxmox node and every guest in the lab. Re-run with
+          -e confirm=DESCEND if that is what you want. To cancel an already-armed descent,
+          run with -e disarm=true.
+      when: not (disarm | default(false) | bool)
+
+    - name: Register the Proxmox nodes as delegates
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+
+    - name: Resolve the lab-wide schedule
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-schedule.yml
+      vars:
+        resolve_schedule_apps: []
+      when: not (disarm | default(false) | bool)
+
+    # `at` is the operator's own wall-clock time and wins outright. Without it the descent
+    # is armed for the next opening of the lab's own maintenance window, which is the
+    # whole point of having declared one. A lab-wide schedule of `never` refuses: the
+    # operator declared that nothing is ever disrupted automatically, and a Tier 2 descent
+    # is the largest disruption there is.
+    - name: Assert the lab has a time to descend at
+      ansible.builtin.assert:
+        that:
+          - (at | default('') | length > 0) or maintenance_schedule.mode != 'never'
+        fail_msg: >-
+          The lab-wide maintenance schedule is `never`, so there is no window to arm a
+          descent in. Pass an explicit time with -e at="YYYY-MM-DD HH:MM", or declare a
+          maintenance.schedule in config/infrastructure.yml.
+      when: not (disarm | default(false) | bool)
+
+    - name: Report what will be armed
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'DISARMING the lab descent on '
+             ~ (groups['proxmox_delegates'] | default([]) | length) ~ ' node(s).'
+             if disarm | default(false) | bool
+             else ('Arming a lab descent at ' ~ _ld_at
+                   ~ ' (lab clock: ' ~ (homelabinfra_config.timezone | default('runner local')) ~ ')'
+                   ~ ', nodes staggered ' ~ (stagger | default(15)) ~ ' minute(s) apart, '
+                   ~ (drain | default(180)) ~ 's to shut the guests down. Window: '
+                   ~ maintenance_schedule.text ~ '.') }}
+      vars:
+        _ld_at: "{{ at | default(maintenance_schedule.next_open, true) }}"
+
+    - name: Arm or disarm each node
+      ansible.builtin.include_tasks: ../../tasks/maintenance/arm-node-descent.yml
+      loop: "{{ groups['proxmox_delegates'] | default([]) | sort }}"
+      loop_control:
+        loop_var: _ld_node
+        index_var: _ld_index
+        label: "{{ _ld_node }}"
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: >-
+          {{ 'Lab descent disarmed' if disarm | default(false) | bool else 'Lab descent armed' }}
+        notify_priority: high
+        notify_message: >-
+          {{ 'The armed lab descent was cancelled on every node. Nothing will reboot.'
+             if disarm | default(false) | bool
+             else ('Every Proxmox node and every guest will reboot, starting '
+                   ~ (at | default(maintenance_schedule.next_open, true))
+                   ~ '. Nodes are staggered ' ~ (stagger | default(15))
+                   ~ ' minute(s) apart. The runner goes down with its node, so this job '
+                   ~ 'will not report the outcome — run "Verify Lab Ascent" afterwards. '
+                   ~ 'To cancel, run "Arm Lab Descent" with disarm=true.') }}
