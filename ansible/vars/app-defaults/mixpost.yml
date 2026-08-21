@@ -178,10 +178,23 @@ mixpost_defaults:
     # dependency gone points `image` at its own prebuilt image carrying the client, and
     # nothing else in this block changes.
     #
+    # THE IMAGE MUST ALREADY CARRY curl, AND THAT IS NOT A DETAIL.
+    #
+    # The job's failure notification is a curl POST to Ntfy. `debian:12-slim`, which this
+    # was until 2026-08-20, ships no curl and no package lists, so the script had to
+    # `apt-get update && apt-get install curl` before it could notify about anything — and
+    # that apt step is precisely the thing that fails on the night the WAN is down. The
+    # trap fired, curl was not there, the `|| true` swallowed it, and the one failure mode
+    # the notification exists for was the one it could not report. `buildpack-deps` is the
+    # official Debian image with curl and ca-certificates already in it, on the same
+    # bookworm train as everything else here, so the notifier works before the first
+    # network-dependent line runs. Any replacement image must ship curl for the same
+    # reason.
+    #
     # `suite` and `key_url` track the PBS the platform installs (Debian 12 / bookworm,
     # see roles/pbs). Client and server should move together: raise both or neither.
     client:
-      image: "debian:12-slim"
+      image: "buildpack-deps:bookworm-curl"
       key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
       repository: "http://download.proxmox.com/debian/pbs-client"
       suite: bookworm
