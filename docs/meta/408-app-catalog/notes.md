@@ -98,3 +98,37 @@ not something this platform models.
 
 The "Not application rows" section is gone: both of its entries left it, and an empty
 section that exists to hold exclusions invites new ones.
+
+## 2026-08-20 — catalog reconciled with the completed Kubernetes backend
+
+Slice 204 closed with a fresh-cluster deployment, application-consistent backup and
+restore, node-loss recovery and cleanup. Its result changes the catalog's hosting
+recommendations without authorizing a wholesale migration of working applications.
+
+The first Kubernetes group is stateless, disposable, scheduled or easily restored
+workloads. A database-driven web application can be stateless at the application layer
+when it points at a separately deployed Batch B database instance. That makes the database
+provisioning contract more important: an application names an instance and receives a
+database, role and credentials without knowing whether the backend eventually runs on an
+LXC or Kubernetes. Shared instances also need explicit capacity ownership so one consumer
+cannot starve the rest.
+
+This does not make databases automatic Kubernetes workloads. The live failure test proved
+that the control plane and ingress tolerate a node loss while a pod with a node-local
+volume stays Pending. Kubernetes pod replacement, storage reachability and database-native
+HA are separate mechanisms. PostgreSQL, MariaDB and InfluxDB therefore start as standalone
+LXCs. A future Kubernetes database design must select and prove replication, election,
+failover, fencing, backup and restore rather than treating a StatefulSet as that design.
+
+Shared Kubernetes storage moved forward from an eventual enhancement to an early platform
+prerequisite. Before storage-heavy application rows or database HA move to the cluster, the
+platform must define the storage failure domains against Proxmox, access modes, capacity,
+snapshots and restore, then repeat the one-node-loss proof. The catalog deliberately does
+not select a storage implementation; the operator has additional Proxmox requirements to
+bring to that design.
+
+The definite Kubernetes rows are now `mixpost`, already proven, and `hi-events`, already
+recorded by slice 204 as the second consumer. `flaresolverr`, `homepage`, `searxng`,
+`litellm`, `kometa`, `jellyseerr` and `maintainerr` are marked as candidates. Candidate is
+not a hidden commitment: each implementation still verifies upstream persistence, mounts,
+security context and recovery before selecting its default backend.

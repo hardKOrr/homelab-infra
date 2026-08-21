@@ -22,9 +22,43 @@ declaration of intent, not a plan that has shipped.
 implementation time, and would be stale here within a release. A row names the upstream
 project so the implementer knows what to go and read; it does not pre-decide the image.
 
-**Stack assignment is a proposal.** It is the default that a row's `app-defaults` file
-should carry unless implementation finds a reason against it. Any instance overrides it in
-`config/apps/<instance>.yml`, which is what makes multiple instances possible.
+**Hosting and stack assignment are proposals.** They are the defaults that a row's
+`app-defaults` file should carry unless implementation finds a reason against them. A role
+must implement and prove every backend it offers; `hosting` is not a free per-instance
+switch between unrelated deployment paths.
+
+## Hosting after the Kubernetes backend
+
+Slice 204 added Kubernetes as another hosting backend; it did not make Kubernetes the
+destination for every OCI image. Select the backend per application from the workload it
+actually has:
+
+- Start Kubernetes with stateless, disposable, scheduled or easily restored workloads.
+  Scheduling and restart behavior are useful there, and a lost workload node does not
+  strand irreplaceable application data.
+- A database-driven application can be stateless at the application layer when it names a
+  separately deployed database instance and keeps uploads or other durable files outside
+  the pod. This is the main seam between Batch B and the Kubernetes candidates below. The
+  database must have enough reserved capacity that sharing it cannot starve its consumers.
+- Keep device-bound and host-path-bound workloads on the guest that owns those devices or
+  paths. Shared media libraries, download directories, USB devices and GPUs are positive
+  reasons to retain the Docker-on-LXC or VM rows.
+- Do not describe a database as highly available merely because it runs in Kubernetes.
+  Kubernetes can replace a pod; shared storage can make its volume reachable elsewhere;
+  database replication, leader election, failover, fencing and application-consistent
+  recovery remain database contracts. PostgreSQL, MariaDB and InfluxDB keep their initial
+  standalone-LXC recommendation until those contracts are designed and proved.
+
+The current `homelab-local-path` StorageClass is deliberately node-pinned. Its restore path
+is proven, but its data does not follow a pod after node loss. Shared Kubernetes storage is
+therefore an early platform prerequisite, not a distant optimization: define its Proxmox
+failure domains, access modes, capacity ownership, snapshot and restore behavior, and prove
+node loss before moving storage-heavy catalog rows or database HA onto it. Shared storage
+does not by itself authorize either move.
+
+The tables use **Kubernetes candidate** where the workload shape is promising but the
+implementation must still verify upstream persistence, mounts, security context and backup
+requirements. **Kubernetes** means the backend decision is already made.
 
 ## Why sonarr, radarr, lidarr and prowlarr share one role — and sabnzbd does not
 
@@ -66,11 +100,11 @@ Built already: `sonarr`, `radarr`, `lidarr`, `prowlarr` (all via `servarr`), `sa
 | bazarr | Docker | media_stack | morpheus65535/bazarr | **The gap that matters most.** `ansible/tasks/app-wiring/bazarr-arr.yml` and a `bazarr` kind in `media-wiring.yml` already exist and have nothing to wire — 504 wires an app this repo cannot deploy |
 | plex | Docker | media_stack | plexinc/pms-docker | Claim token is a per-lab secret → Vaultwarden. `routing.identity: catalog` — Plex owns its own auth. The custom access URL needs the **explicit port** |
 | tautulli | Docker | media_stack | Tautulli/Tautulli | Reads Plex; needs Plex's token. No media-registry kind |
-| jellyseerr | Docker | media_stack | fallenbagel/jellyseerr | The "seer". Requests front-end over Jellyfin/Plex + Sonarr/Radarr — a real consumer of the media registry's API keys |
-| flaresolverr | Docker | media_stack | FlareSolverr/FlareSolverr | No UI, no route, `routing.identity: none`. Consumed by Prowlarr as an indexer proxy — the wiring is a Prowlarr setting, not a reverse-proxy route |
+| jellyseerr | Kubernetes candidate | — | fallenbagel/jellyseerr | The "seer". Requests front-end over Jellyfin/Plex + Sonarr/Radarr — a real consumer of the media registry's API keys. It has no media-library mount; verify its own persistent state and restore path |
+| flaresolverr | Kubernetes candidate | — | FlareSolverr/FlareSolverr | Stateless internal service. No UI, no route, `routing.identity: none`. Consumed by Prowlarr as an indexer proxy — the wiring is a Prowlarr setting, not a reverse-proxy route |
 | unpackerr | Docker | media_stack | Unpackerr/unpackerr | No UI. Needs every *arr's API key at deploy time — the first app whose config is assembled from the media registry rather than from its own file |
-| kometa | Docker | media_stack | Kometa-Team/Kometa | Scheduled run, not a service. No port, no route, no Uptime Kuma monitor. Config is a YAML the operator owns; the platform places it and schedules the run |
-| maintainerr | Docker | media_stack | jorenn92/Maintainerr | Consumes Plex + the *arrs; same registry-driven config as unpackerr |
+| kometa | Kubernetes candidate | — | Kometa-Team/Kometa | A Kubernetes CronJob is the natural runtime if the cluster can reach the media library. No port, no route, no Uptime Kuma monitor. Config is a YAML the operator owns |
+| maintainerr | Kubernetes candidate | — | jorenn92/Maintainerr | Consumes Plex + the *arrs through APIs; verify its own persistent state and restore path. Same registry-driven config as unpackerr |
 | deemix | Docker | media_stack | deemix (web UI fork) | `deemix` kind already declared in `media-wiring.yml`. ARL is a per-lab secret → Vaultwarden |
 | slskd | Docker | media_stack | slskd/slskd | The operator's "soulseekd". `slskd` kind already declared. Soulseek credentials → Vaultwarden |
 | readarr | Docker | media_stack | (servarr role) | Not requested, but its kind is already in `media-wiring.yml` and the role already handles v1 root folders. Cheapest row in this file: an `app-defaults` file and a playbook |
@@ -93,13 +127,13 @@ coverage.
 
 | App | Hosting | Stack | Upstream | Notes |
 |---|---|---|---|---|
-| postgresql | Native LXC | own guest | PostgreSQL | Standalone backend. Needs a **provisioning contract**: an app asks for a database + role, the backend creates it and hands the credentials back through Vaultwarden. That contract is the actual work; the LXC is trivial |
-| mariadb | Native LXC | own guest | MariaDB | The backend bookstack, wordpress, mautic and mixpost need. Same provisioning contract as postgresql — build that contract once, against both |
+| postgresql | Native LXC initially | own guest | PostgreSQL | Standalone backend. Needs a backend-independent **provisioning contract**: an app asks for a database + role, the backend creates it and hands the credentials back through Vaultwarden. Kubernetes hosting remains a later database-HA decision, not an application prerequisite |
+| mariadb | Native LXC initially | own guest | MariaDB | The backend bookstack, wordpress, mautic and mixpost need. Same backend-independent provisioning contract as postgresql — build that contract once, against both |
 | influxdb | Native LXC or Docker | own guest | InfluxDB | Same shape as postgresql: standalone, wired to. Decide 2.x vs 3.x at implementation |
 | redis | Native LXC or Docker | own guest | Redis / Valkey | Wanted by immich, paperless-ngx, mixpost and plane. Cache, not a database — an app may still be given its own instance, but little is lost when several share one |
 | opnsense | VM | own guest | OPNsense | **Deployable, and separate from the firewall the lab already runs.** `infrastructure.dns.provider: opnsense` (slice 304) wires to an OPNsense this platform did not create and must never adopt. This row builds a *new* VM: an appliance ISO install with its own installer, so the work is media fetch, VM create and console-driven first boot — not a package install |
 | wireguard | Native LXC | own guest | wg-quick / wg-easy | **Inbound** WAN server, not a client. Needs its own port forward and a public endpoint; `routing.proxy` does not apply — this is UDP, and a reverse proxy is not in the path |
-| homepage | Docker | services_stack | gethomepage/homepage | The lab dashboard. Natural consumer of `config/.generated/facts.yml` — this platform already knows every app's URL, so its config should be generated, not hand-written |
+| homepage | Kubernetes candidate | — | gethomepage/homepage | Stateless lab dashboard and natural consumer of `config/.generated/facts.yml` — this platform already knows every app's URL, so its config should be generated, not hand-written |
 
 ## Batch C — applications
 
@@ -120,17 +154,17 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | bookstack | Docker | services_stack | BookStackApp/BookStack | MySQL/MariaDB — the one backend Batch B does not cover. See the open decision below |
 | karakeep | Docker | services_stack | karakeep-app/karakeep | Bookmarks and read-later (formerly Hoarder) |
 | actual-budget | Docker | services_stack | actualbudget/actual | Single container, own auth → `routing.identity: catalog` |
-| searxng | Docker | services_stack | searxng/searxng | Metasearch; usually internal-only |
+| searxng | Kubernetes candidate | — | searxng/searxng | Mostly stateless metasearch workload; usually internal-only. Keep any cache disposable or external |
 | n8n | Docker | services_stack | n8n-io/n8n | Postgres. Holds credentials to everything it automates — treat its data as secret-bearing |
 | plane | Docker | services_stack | makeplane/plane | Multi-container (Postgres, Redis, object storage). Heaviest row in this table |
 | forgejo | Docker | services_stack | forgejo/forgejo | Postgres. Git-over-SSH needs a second published port — a reverse proxy does not carry it |
 | forgejo-runner | Docker | services_stack | forgejo/runner | Registers **against** forgejo with a runner token — an app-to-app wiring task, the same shape as `ansible/tasks/app-wiring/` |
 | wordpress | Docker | services_stack | WordPress | MariaDB. Same database decision as bookstack |
 | mautic | Docker | services_stack | mautic/mautic | MariaDB. Sends mail — needs an SMTP contract this platform does not have |
-| mixpost | Docker | services_stack | inovector/mixpost | MySQL + Redis |
-| hi-events | Docker | services_stack | HiEventsDev/hi.events | Postgres |
+| mixpost | Kubernetes | — | inovector/mixpost | Slice 204's proven pilot. Its namespaced MySQL was an acceptance workload; the Batch B provisioning contract may later point it at a standalone MariaDB instance |
+| hi-events | Kubernetes | — | HiEventsDev/hi.events | The recorded second Kubernetes consumer: Postgres-backed, and the first application that must prove the public access class and SMTP contract |
 | odoo | Docker | services_stack | odoo/odoo | Postgres, and opinionated about its version pairing — pin both together |
-| litellm | Docker | ai_stack | BerriAI/litellm | Proxy in front of the model backends. Holds provider API keys → Vaultwarden |
+| litellm | Kubernetes candidate | — | BerriAI/litellm | Stateless proxy when durable state is external. Holds provider API keys → Vaultwarden |
 | ollama | Docker | ai_stack | ollama/ollama | **Dedicated GPU.** Model storage is large and belongs on a mount |
 | open-webui | Docker | ai_stack | open-webui/open-webui | Fronts ollama and/or litellm — wire it to whichever is deployed |
 | comfyui | Docker | ai_stack | comfyanonymous/ComfyUI | **Dedicated GPU.** Models mount, same as ollama |
@@ -144,7 +178,13 @@ single row's implementer re-decides it.
 - **Database backends are instanced apps, not a platform singleton.** Each backend is a
   one-click row, and an app names the *instance* it uses. One shared Postgres and four
   dedicated ones are equally valid. MariaDB and Redis join Batch B. See the Batch B
-  preamble.
+  preamble. The provisioning interface must not depend on whether a later implementation
+  hosts that database on an LXC or on Kubernetes.
+- **Kubernetes starts with stateless applications; shared storage comes early.** External
+  database instances let many database-driven web applications join that first group. The
+  current node-local StorageClass remains correct for the proved pilot, but it is not the
+  final storage contract for storage-heavy applications or database HA. Shared storage is
+  designed and failure-tested before those rows move.
 - **nextcloud and owncloud both ship.** So do jellyfin, plex and the newly added emby. The
   catalog offers options and the lab picks. Overlap between rows is not a defect; a default
   that silently deploys two of the same thing would be.
@@ -171,6 +211,9 @@ single row's implementer re-decides it.
       `app-defaults` file, and passes both gates
 - [ ] Batch A accepted — a live media-stack wiring run places every new registry entry
 - [ ] Batch B implemented, including the database-provisioning contract postgresql needs
+- [ ] Shared Kubernetes storage scoped and implemented before storage-heavy applications
+      or database HA move onto the cluster; acceptance includes capacity ownership,
+      snapshots, application-consistent restore and one-node loss
 - [ ] Batch C implemented
 - [x] The open decisions are resolved and recorded above (2026-08-17)
 - [x] `hermes agent` identified — NousResearch/hermes-agent, now a Batch C row (2026-08-17)
