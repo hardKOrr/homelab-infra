@@ -208,6 +208,22 @@
              snapshot's contents."
           - "To do it: re-run this job with the same snapshot and overwrite=true."
 
+    # Same reasoning as the `always` at the end of this file, for the path that does not
+    # reach it: the plan Job is finished with these credentials the moment it exits.
+    - name: Restore | Remove the plan's credentials from the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - "secret/{{ _mp_r_secret }}"
+          - --ignore-not-found=true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
 # ── Restore: the destructive path ─────────────────────────────────────────────
 - name: Restore | Restore the snapshot into the target
   when: restore_overwrite | bool
@@ -392,3 +408,27 @@
           stands with:
           k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ restore_target }}
           --replicas=1
+
+  # Whatever happened. The Secret this run created holds the PBS API token AND the target's
+  # MySQL ROOT password — the two most privileged values in the application's namespace —
+  # and it exists only for the length of one Job. sync-secret.yml's contract is that a
+  # runtime copy dies with its namespace, which is true and is not enough here: a namespace
+  # lives for months and this credential is wanted for minutes. It is re-synced at the top
+  # of every run, so removing it costs a failed restore nothing on retry.
+  #
+  # `always`, not the end of the block: a restore that failed is exactly the run whose
+  # credentials should not be the thing left behind.
+  always:
+    - name: Restore | Remove the restore credentials from the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - "secret/{{ _mp_r_secret }}"
+          - --ignore-not-found=true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
