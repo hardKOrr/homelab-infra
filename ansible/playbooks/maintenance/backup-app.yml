@@ -155,3 +155,13 @@
         notify_message: >-
           An on-demand application backup of {{ instance }} completed and was pushed to the
           lab's PBS datastore. Restore it with the `Restore App` job.
+
+    # The last task of the play. notify.yml records an undelivered notification as a FATAL
+    # degradation rather than raising it, so without this gate a backup whose "it worked"
+    # message never reached anyone reports green — the "catch it, print it, exit 0" shape
+    # this repo forbids. The snapshot is already in PBS by the time this runs, so failing
+    # here aborts nothing: it refuses to call the run successful when nobody was told.
+    - name: Fail if anything about this backup did not work
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ instance }} backup"

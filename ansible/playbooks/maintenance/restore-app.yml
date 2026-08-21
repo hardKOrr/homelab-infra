@@ -200,3 +200,13 @@
           taken from {{ instance }}'s backups. Its database and storage volume were
           replaced. Verify the application before trusting it.
       when: _ra_overwrite | bool
+
+    # The last task of the play, and it matters most here: a restore is the single most
+    # consequential state change this platform makes. notify.yml records an undelivered
+    # notification as a FATAL degradation, and without this gate the one job that replaced
+    # an application's database could finish green with nobody having been told it ran.
+    # The restore is already complete by this point, so this aborts nothing.
+    - name: Fail if anything about this restore did not work
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ _ra_target }} restore"
