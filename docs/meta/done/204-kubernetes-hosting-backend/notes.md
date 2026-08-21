@@ -433,3 +433,47 @@ Execution 253 was the final read-only status: all three VMs running, all three K
 nodes Ready, no application namespaces, no retained PVs, one default
 `homelab-local-path` StorageClass with `Retain`, and `changed=0 failed=0`. Both full WSL
 gates passed after each final restore fix and before closure.
+
+## 2026-08-21 — Re-proving the backend after a review pass, executions 254–267
+
+The slice closed on 2026-08-20 with a clean cluster. A review pass the next morning then
+changed nine files across this exact path — `provision-node.yml`, the k3s role,
+`derive-namespace.yml`, the Mixpost role's backup and restore tasks, both maintenance
+playbooks, `reclaim-volume.yml` and a new 108-line backup-freshness section in
+`status.yml` — and not one of them had been executed. Under this repository's own standing
+rule that is nine files of presumed-broken code sitting on top of a closed acceptance, so
+the whole cycle was run again against them.
+
+| Execution | Job | Result |
+|---|---|---|
+| 254 | Lab Status | Baseline: three nodes Ready, no namespaces, no retained volumes |
+| 255 | Deploy k3s Cluster | `changed=0` on all three nodes; the six `localhost` changes are the documented `vm-clone.yml` baseline |
+| 256 | Deploy Mixpost | Fresh deploy through the Foxglove route, backup CronJob applied, no degradation |
+| 257 | Backup App | PBS snapshot `host/mixpost/2026-08-21T19:27:52Z` |
+| 258 | Restore App (list) | Read-only listing; the plan's credentials were removed at the end |
+| 259 | Restore App (`overwrite=true`) | Restored over the live instance; credentials removed; app back to one replica and serving |
+| 260 | Lab Status | **Found the one defect below** |
+| 262 | Lab Status | Fix verified live |
+| 263 | Remove App (`delete_data=false`) | Two volumes retained by name |
+| 264–266 | Reclaim Volume | Report, then delete of both volumes |
+| 267 | Lab Status | Clean: nodes Ready, no namespaces, no CronJobs, no retained volumes |
+
+### The defect: a hand-run backup reported as never run
+
+Execution 260 printed `mixpost-backup  0d 0h ago  never run` — two opposite statements in
+one row, in the table whose whole purpose is telling an operator whether backups still
+work.
+
+`Backup App` runs `kubectl create job --from=cronjob`, which owns the Job to the CronJob.
+The controller therefore advances `lastSuccessfulTime` and never touches
+`lastScheduleTime`. Both the never-run test and the staleness comparison read
+`lastScheduleTime` alone. The visible symptom was the milder half: with the never-run
+branch not matching, the staleness test would have string-compared a real RFC 3339
+timestamp against the literal `<none>`, found `'2' < '<'`, and alarmed about the backup the
+operator had just watched succeed.
+
+Commit `35f3694` makes never-run require both timestamps absent and guards staleness on a
+schedule having fired at all. Execution 262 then read `0d 0h ago  ok`.
+
+This is the same shape as every defect this slice found: rendering, lint and syntax-check
+passed the file, and only a run against a real CronJob's status could see it.
