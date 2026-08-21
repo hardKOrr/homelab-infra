@@ -333,8 +333,17 @@
             # fixed width, so lexical order IS chronological order — and the comparison
             # that decides whether to alarm should not depend on two datetime conversions
             # going right.
+            #
+            # Guarded on lastScheduleTime being set at all, because the two timestamps do
+            # not move together. `kubectl create job --from=cronjob` — what the Backup App
+            # job runs — owns its Job to the CronJob, so a manual run advances
+            # lastSuccessfulTime and never touches lastScheduleTime. Unguarded, the string
+            # comparison then reads a real timestamp against the literal `<none>`, decides
+            # a successful backup is stale, and alarms about the very run the operator
+            # just watched finish.
             _st_cron_stale: >-
-              {{ _st_cron_ok == '<none>' or _st_cron_ok < _st_cron_sched }}
+              {{ _st_cron_sched != '<none>'
+                 and (_st_cron_ok == '<none>' or _st_cron_ok < _st_cron_sched) }}
             _st_cron_d: >-
               {{ ((now(utc=true) - (_st_cron_ok | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days)
                  if _st_cron_ok != '<none>' else 0 }}
@@ -356,10 +365,16 @@
               # Order matters: suspended beats running beats never-run beats stale. A
               # suspended job that also looks stale is suspended, and saying so stops an
               # operator chasing a backup they turned off themselves.
+              #
+              # Never-run means neither timestamp is set. A schedule that has not fired yet
+              # but whose job an operator already ran by hand HAS run, and reporting it as
+              # never run beside a LAST SUCCESS of `0d 0h ago` says two opposite things in
+              # one row.
               state: >-
                 {{ 'SUSPENDED' if (item[2] | lower) == 'true'
                    else ('running now' if item[5] != '<none>'
                          else ('never run' if _st_cron_sched == '<none>'
+                                              and _st_cron_ok == '<none>'
                                else ('LAST RUN DID NOT SUCCEED' if _st_cron_stale | bool
                                      else 'ok'))) }}
 
