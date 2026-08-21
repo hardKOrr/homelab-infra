@@ -162,17 +162,13 @@
         timeout: 300
         sleep: 5
 
-- name: k3s node | Record the provisioned node
-  ansible.builtin.set_fact:
-    k8s_provisioned_nodes: >-
-      {{ (k8s_provisioned_nodes | default([])) + [{
-           'name': k8s_node.name,
-           'ip_address': k8s_node.ip_address,
-           'proxmox_node': k8s_node.proxmox_node,
-           'vmid': homelabinfra_instance.vm.vmid,
-           'taints': k8s_node.taints | default([])
-         }] }}
-
+# There is deliberately no `k8s_provisioned_nodes` accumulator here any more. One was
+# built up per node — name, address, Proxmox node, vmid, taints — and nothing ever read
+# it: the registry entry in apps/k3s-cluster.yml Play 6 records `cluster.nodes` verbatim,
+# because those declarations ARE the topology and a reshaped copy is one more thing to keep
+# in step. A fact that nothing consumes reads like a contract to a later author, so it is
+# gone rather than left as scaffolding. The one thing this file must hand forward is the
+# delegation target below.
 - name: k3s node | Hand the node to the deploy group
   ansible.builtin.add_host:
     name: "{{ k8s_node.name }}"
