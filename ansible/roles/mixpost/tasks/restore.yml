@@ -44,9 +44,12 @@
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
 
 - name: Restore | Derive the target namespace
-  ansible.builtin.set_fact:
-    # Same derivation as tasks/kubernetes/ensure-namespace.yml, not a second convention.
-    k8s_namespace: "app-{{ restore_target | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/derive-namespace.yml
+  vars:
+    # The TARGET, not `instance`. This is the one caller that routinely means a different
+    # instance from the one on the command line, and the reason derive-namespace.yml takes
+    # its input under a name extra vars cannot outrank.
+    k8s_namespace_for: "{{ restore_target }}"
 
 - name: Restore | Read the target namespace's ownership label
   ansible.builtin.command:

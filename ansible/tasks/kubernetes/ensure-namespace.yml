@@ -31,21 +31,9 @@
 #   k8s_namespace   — `app-<instance>`
 
 - name: k8s namespace | Derive the instance's namespace
-  ansible.builtin.set_fact:
-    # Kubernetes names are RFC 1123 labels: lowercase alphanumeric and hyphens only. An
-    # instance name is a filename and a hostname elsewhere in this repo, so it is already
-    # close, but `sonarr_anime` is a legal instance and an illegal namespace.
-    k8s_namespace: "app-{{ instance | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
-
-- name: k8s namespace | Assert the derived name is a legal Kubernetes namespace
-  ansible.builtin.assert:
-    that:
-      - k8s_namespace is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
-      - k8s_namespace | length <= 63
-    fail_msg: >-
-      Instance `{{ instance }}` does not reduce to a legal namespace
-      (`{{ k8s_namespace }}`). Kubernetes namespaces are lowercase alphanumeric and
-      hyphens, 63 characters or fewer.
+  ansible.builtin.include_tasks: derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ instance }}"
 
 - name: k8s namespace | Read the namespace's ownership label, if it exists
   ansible.builtin.command:

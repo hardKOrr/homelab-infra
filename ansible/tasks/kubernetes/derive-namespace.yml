@@ -1,0 +1,52 @@
+---
+# Turn one instance name into the namespace that instance owns, and refuse a name that
+# does not reduce to a legal one.
+#
+# WHY THIS IS A FILE AND NOT THREE LINES REPEATED
+#
+# `app-<instance>` is the ownership boundary of the whole Kubernetes hosting backend: the
+# deploy applies into it, status reads it, and REMOVAL DELETES IT AND EVERYTHING IN IT.
+# The expression was copied into four places — ensure-namespace.yml, unwiring/kubernetes.yml,
+# maintenance/backup-app.yml and roles/mixpost/tasks/restore.yml — three of them carrying a
+# comment promising it was "not a second convention", which is precisely what a fourth copy
+# of a regex is. A divergence between the copy that creates a namespace and the copy that
+# deletes one is not a cosmetic bug, so there is now one copy.
+#
+# Inputs:
+#   k8s_namespace_for  — the instance name to derive from.
+#
+#   NOT `instance`. Every one of these playbooks receives `instance` as an extra var, and
+#   extra vars outrank an include's vars, so a caller restoring INTO a different instance
+#   could not override it — roles/mixpost/tasks/restore.yml records that trap against a
+#   Secret label. A separate input name means the caller says which instance it means and
+#   is actually heard.
+#
+# Sets:
+#   k8s_namespace      — `app-<instance>`
+
+- name: k8s namespace | Assert an instance name was supplied
+  ansible.builtin.assert:
+    that:
+      - k8s_namespace_for is defined
+      - k8s_namespace_for | string | length > 0
+    fail_msg: >-
+      derive-namespace.yml needs k8s_namespace_for — the instance whose namespace is
+      wanted. Callers pass it explicitly rather than relying on `instance`, so that a job
+      acting on a second instance (a restore target, for example) names the one it means.
+
+- name: k8s namespace | Derive the instance's namespace
+  ansible.builtin.set_fact:
+    # Kubernetes names are RFC 1123 labels: lowercase alphanumeric and hyphens only. An
+    # instance name is a filename and a hostname elsewhere in this repo, so it is already
+    # close, but `sonarr_anime` is a legal instance and an illegal namespace.
+    k8s_namespace: "app-{{ k8s_namespace_for | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+
+- name: k8s namespace | Assert the derived name is a legal Kubernetes namespace
+  ansible.builtin.assert:
+    that:
+      - k8s_namespace is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - k8s_namespace | length <= 63
+    fail_msg: >-
+      Instance `{{ k8s_namespace_for }}` does not reduce to a legal namespace
+      (`{{ k8s_namespace }}`). Kubernetes namespaces are lowercase alphanumeric and
+      hyphens, 63 characters or fewer.

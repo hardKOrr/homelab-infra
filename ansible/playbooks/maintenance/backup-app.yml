@@ -89,10 +89,9 @@
       ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
 
     - name: Derive the instance's namespace
-      ansible.builtin.set_fact:
-        # Same derivation as tasks/kubernetes/ensure-namespace.yml, not a second
-        # convention.
-        k8s_namespace: "app-{{ instance | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/derive-namespace.yml
+      vars:
+        k8s_namespace_for: "{{ instance }}"
 
     # `kubectl create job --from=cronjob/…` against a namespace that is not there, or a
     # CronJob the deploy never installed, answers with a bare NotFound naming neither the

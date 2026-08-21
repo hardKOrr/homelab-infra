@@ -28,8 +28,9 @@
   ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
 
 - name: k8s unwire | Derive the instance's namespace
-  ansible.builtin.set_fact:
-    k8s_namespace: "app-{{ instance | lower | regex_replace('[^a-z0-9-]', '-') | regex_replace('^-+|-+$', '') }}"
+  ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ instance }}"
 
 - name: k8s unwire | Read the namespace's ownership label
   ansible.builtin.command:
