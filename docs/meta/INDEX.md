@@ -47,7 +47,7 @@ and the same for `test.sh`.
 | Priority | Slice | Repository work | Complete |
 |---:|---|---|:---:|
 | 1 | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | One `maintenance:` schedule primitive resolved global → estate → stack → app; populate the never-set Proxmox `startup` order; make `watchtower_schedule` reachable; Tier 1 guest-reboot job including the k3s cluster as one unit; Tier 2 armed full-lab descent including the Proxmox nodes | [ ] |
-| 2 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup all 36 `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/…`, `Operate`, `Recover`, `Setup`); rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` only — no rename, no step change | [ ] |
+| 2 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup every `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/<subject>`, `Operate`, `Recover`, `Setup`) with **no catch-all group**, and add a small closed `tags:` vocabulary as the second axis; rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` and `tags:` only — no rename, no step change | [ ] |
 | 3 | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Read-only triage playbook over a Plex log bundle: signature table `ansible/vars/plex-log-signatures.yml`, findings ranked by provenance not by count, `ET`-prefix normalization, correlation of failures by release group, and scanner noise ranked informational. Reports only — applies no fix | [ ] |
 
 Website hosting is four option slices, ordered by fit for a lightly technical editor. They remain

@@ -15,32 +15,47 @@ an app, and verbs that act on any app. `Maintenance` holds ten and mixes three l
 blast radius, so the job that prints a status table and the job that destroys a volume are
 six rows apart in one alphabetical column.
 
-The change is the `group:` value and nothing else. No step, option, schedule or script is
-touched, and no job is renamed. Every job carries a stable `uuid` and *Reimport Jobs* posts
-with `dupeOption=update&uuidOption=preserve`, so a group change is an in-place update:
-execution history, the weekly schedule on *Check Native App Updates*, and every API
+The change is the `group:` and `tags:` values and nothing else. No step, option, schedule
+or script is touched, and no job is renamed. Every job carries a stable `uuid` and
+*Reimport Jobs* posts with `dupeOption=update&uuidOption=preserve`, so this is an in-place
+update: execution history, the weekly schedule on *Check Native App Updates*, and every API
 reference by UUID survive it. Rollback is reverting the commit and re-running the import.
 
 The top level sorts by verb — `Deploy`, `Operate`, `Recover`, `Setup` — because that is the
 question an operator arrives with, and because subject is the axis that grows. Slice 408
-adds application rows in three batches; they land under `Deploy/` without the top level
-moving. `Recover` exists so that the four jobs which can lose data, plus the one that can
-lose the credential path to everything else, are not reachable by mis-clicking one row
-above the job that was wanted.
+adds application rows in three batches; they land under a named `Deploy/<subject>` without
+the top level moving. `Recover` exists so that the four jobs which can lose data, plus the
+one that can lose the credential path to everything else, are not reachable by mis-clicking
+one row above the job that was wanted.
+
+**No group is a catch-all.** Every group is named by what it holds, and an application
+either fits an existing subject or opens a named one. A group meaning "the rest" is the
+defect this slice removes, not a level to push it down to.
+
+**Tags are the second axis.** A group is one hierarchy, so any job that belongs in two
+places is a zero-sum fight. A small closed tag vocabulary — subject plus a `destructive` /
+`read-only` risk pair — settles those placements instead. Zero jobs carry tags today, so
+this is additive.
 
 ## Remaining
 
-- [ ] Target tree agreed, including the three judgment calls recorded in notes.md
-      (*Remove App*, *Wire Media Stack*, and whether `Setup` earns a fourth root).
-- [ ] `group:` rewritten in all 36 files under `rundeck/jobs/`, one line per file.
+- [ ] `group:` rewritten in every file under `rundeck/jobs/`, one line per file, against
+      the tree in notes.md.
+- [ ] `tags:` added per the closed vocabulary in notes.md.
 - [ ] `AGENTS.md` **UI Job Structure (Rundeck)** section rewritten in the same commit. It
       is the written form of this tree, and it already promises a `Backend` group that does
       not exist in `rundeck/jobs/`.
-- [ ] *Reimport Jobs* run against the live project, reporting `36 imported, 0 failed`, with
-      the console confirming no job was duplicated and no group was orphaned.
+- [ ] *Reimport Jobs* run against the live project, reporting `0 failed`, with the console
+      confirming no job was duplicated and no group was orphaned.
+- [ ] During that same run, confirm Rundeck 6 actually exposes tag filtering in the job
+      list. If it does not, the three placements tags were meant to settle return to being
+      judgment calls.
+
+Deliberately out of scope, recorded in notes.md: installing the `rd` CLI on the runner, and
+deriving `group:`/`tags:` in `render-job.py` from a per-job `category:`.
 
 ## Links
-- `rundeck/jobs/*.yaml` — the `group:` value on each job is the whole of the change
+- `rundeck/jobs/*.yaml` — the `group:` and `tags:` values on each job are the whole of the change
 - `rundeck/jobs/reimport-jobs.yaml` — the rollout and rollback path
 - `AGENTS.md` — the UI Job Structure section this slice keeps true
 - notes.md — the target tree, the reasoning, the verified migration mechanics, and what was

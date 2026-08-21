@@ -15,7 +15,8 @@ Deploy/Platform    Caddy, Vaultwarden, Ntfy, Authentik, Uptime Kuma, Observabili
 Deploy/Backend     k3s Cluster
 Deploy/Media       Jellyfin, Lidarr, Prowlarr, qBittorrent, Radarr, SABnzbd, Sonarr,
                    Migrate Servarr
-Deploy/Apps        Mixpost                       ← 408 subdivides here
+Deploy/Web         Mixpost            ← 408 adds Publii, WordPress, Ghost, Silex
+                                      ← 408's CRM rows open Deploy/Business
 Operate            Lab Status, Tail App Log, Restart App, Check Native App Updates,
                    Wire Media Stack, Backup App
 Operate/Config     Config Doctor, Get Config, Configure App, Store Secret
@@ -24,6 +25,10 @@ Recover            Rollback Container, Restore App, Reclaim Volume, Remove App,
 Setup              Bootstrap Platform, Vaultwarden Enrollment, Vaultwarden Cutover,
                    Reimport Jobs
 ```
+
+Every group is named by what it holds. There is no catch-all, and adding an application
+means choosing an existing subject or opening a named one — never dropping a row into a
+bucket that means "the rest".
 
 ### Why verb at the top and subject underneath
 
@@ -78,13 +83,28 @@ Checked against the repository and the live runner on 2026-08-20:
   stack behind checkboxes. The tree grows because the catalog grows, and that is the
   intended shape.
 
-## Open — operator's call
+## Resolved by the tag axis, 2026-08-21
 
-| Question | Chosen | The case against |
+Three placements were open because each job genuinely belongs in two places. A group is one
+hierarchy, so those were zero-sum. Tags are a second, orthogonal axis, and they settle all
+three without a coin flip:
+
+| Job | Group | Tags |
 |---|---|---|
-| Where does *Remove App* go? | `Recover` — its `delete_data` option destroys volumes, the same blast radius as the rest of that group | Removal is the inverse of deployment and operators look for it beside *Deploy*; `Deploy/Lifecycle` is defensible |
-| Where does *Wire Media Stack* go? | `Operate` — idempotent and safe to re-run, which is what that group means | It only ever concerns media apps, so `Deploy/Media` keeps the whole media workflow in one place |
-| Does `Setup` earn a fourth root? | Yes — these are things done *to the lab*, not to an app in it | It is four jobs, three of which run about once; `Operate/Setup` would give three roots |
+| *Remove App* | `Recover` — its `delete_data` option destroys volumes | `destructive`, `lifecycle` |
+| *Wire Media Stack* | `Operate` — idempotent and safe to re-run | `media` |
+| *Bootstrap Platform*, *Vaultwarden Enrollment*, *Vaultwarden Cutover*, *Reimport Jobs* | `Setup` keeps its own root — these are done to the lab, not to an app in it | `platform` / `vault` |
+
+### The tag vocabulary
+
+Small and closed on purpose. A tag axis that anyone may extend becomes a second flat list.
+
+- **Subject** — `platform`, `backend`, `media`, `web`, `business`, `vault`
+- **Risk** — `destructive` for anything that can lose data or the credential path;
+  `read-only` for anything that changes nothing
+
+Nothing else until a concrete job needs it. Zero jobs in `rundeck/jobs/` carry tags today,
+so this is additive on top of the `group:` rewrite.
 
 ## Dead end — this was first written as a published artifact
 
@@ -93,3 +113,45 @@ this repository records intent, scope and open decisions in `docs/meta/`, and a 
 home for the same facts is exactly what "one fact, one home" in `docs/meta/README.md`
 forbids. The artifact is superseded by this slice and carries no information this file
 does not.
+
+## 2026-08-21 — the correction that produced the tree above
+
+The first version of this slice proposed `Deploy/Apps` alongside `Deploy/Media`. That is
+the defect the slice exists to remove, restated one level down: `Media` names a subject,
+`Apps` names the remainder. It held one job then and slice 408 would have put seven more
+into it, at which point it is the eighteen-row `Apps` group again.
+
+A catch-all group is not a grouping decision, it is a deferred one. Rejected.
+
+The opposite over-correction — one group per application — was considered and is also
+wrong. It trades a bucket that means nothing for a hierarchy with no grouping left in it.
+Logical subjects at a useful size are the whole answer: an application's group is the
+thing it is for, and if no existing subject fits, a new named subject opens.
+
+### Also recorded here
+
+- **The Rundeck CLI.** `rundeck-cli` is installed nowhere — `rundeck/bootstrap-rundeck.sh`
+  installs the server package only, and `rd` appears in this repository purely as
+  documentation (`rundeck/README.md:99` and every job-file header). Installing it on the
+  runner is worth doing so that operator and session runs are a recorded command
+  (`rd run -j '<group>/<name>' -f`) rather than a hand-driven REST call. It is **not** a
+  replacement for the import path: `render-job.py` injects the secure `storagePath`
+  options at import time, so the import must pipe rendered YAML, which the existing `curl`
+  loop in `reimport-jobs.yaml` already does.
+- **Deriving `group:` and `tags:` instead of typing them.** `render-job.py` already
+  rewrites every job on the way in. Giving each job a `category:` and letting the renderer
+  compute the group and tags would make a leftover bucket impossible to create by hand.
+  Worth doing, but after the tree lands — the tree is the decision, the derivation is
+  bookkeeping.
+- **Slice 205's new jobs.** `guest-maintenance.yml`, `lab-descent.yml` and
+  `verify-ascent.yml` have no files in `rundeck/jobs/` yet. When they arrive,
+  *Guest Maintenance* and *Verify Ascent* are `Operate`, and *Lab Descent* is `Recover`
+  with the `destructive` tag. The "36 jobs" count throughout this slice is as of
+  2026-08-20 and moves when 205 lands.
+
+### Still unverified
+
+How Rundeck 6 surfaces tag filtering in the job list UI has not been checked against the
+live runner. If the filter is buried, the tag axis is theoretical and the three placements
+above go back to being judgment calls. Check this during the *Reimport Jobs* run rather
+than as separate work.
