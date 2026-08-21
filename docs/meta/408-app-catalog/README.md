@@ -163,7 +163,10 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | mautic | Docker | services_stack | mautic/mautic | MariaDB. Sends mail — needs an SMTP contract this platform does not have |
 | mixpost | Kubernetes | — | inovector/mixpost | Slice 204's proven pilot. Its namespaced MySQL was an acceptance workload; the Batch B provisioning contract may later point it at a standalone MariaDB instance |
 | hi-events | Kubernetes | — | HiEventsDev/hi.events | The recorded second Kubernetes consumer: Postgres-backed, and the first application that must prove the public access class and SMTP contract |
-| odoo | Docker | services_stack | odoo/odoo | Postgres, and opinionated about its version pairing — pin both together |
+| odoo | Docker | services_stack | odoo/odoo | Broad CRM-plus-business-suite option. PostgreSQL, with an application filestore that must be recovered with it. Start from Community and state any material Enterprise-only limit |
+| suitecrm | Native LXC candidate | own guest | salesagility/SuiteCRM-Core | Traditional full-suite CRM. MariaDB; SuiteCRM 8 also needs scheduler cron and an asynchronous worker. Verify an upstream-supported production install before fixing the hosting kind |
+| twenty | Docker | services_stack | twentyhq/twenty | Modern workflow-oriented CRM. PostgreSQL + Redis, separate server and worker processes, and persistent file storage. Keep logic execution disabled unless explicitly configured |
+| espocrm | Docker | services_stack | espocrm/espocrm | Focused conventional CRM using the official image. MariaDB plus persistent app/customization data; run its daemon and add the WebSocket process only when configured |
 | litellm | Kubernetes candidate | — | BerriAI/litellm | Stateless proxy when durable state is external. Holds provider API keys → Vaultwarden |
 | ollama | Docker | ai_stack | ollama/ollama | **Dedicated GPU.** Model storage is large and belongs on a mount |
 | open-webui | Docker | ai_stack | open-webui/open-webui | Fronts ollama and/or litellm — wire it to whichever is deployed |

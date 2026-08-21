@@ -132,3 +132,16 @@ recorded by slice 204 as the second consumer. `flaresolverr`, `homepage`, `searx
 `litellm`, `kometa`, `jellyseerr` and `maintainerr` are marked as candidates. Candidate is
 not a hidden commitment: each implementation still verifies upstream persistence, mounts,
 security context and recovery before selecting its default backend.
+
+## 2026-08-20 — CRM options expanded
+
+The operator requested four CRM options: Odoo, SuiteCRM, Twenty and EspoCRM. Odoo was already a
+Batch C row. SuiteCRM, Twenty and EspoCRM are now adjacent rows, and slices 413–416 preserve the
+different reasons to choose each one. They are selectable alternatives, not an instruction to
+deploy all four and not a default-selection decision.
+
+Upstream verification changed the dependency detail. Odoo and Twenty consume PostgreSQL; Twenty
+also consumes Redis. SuiteCRM and EspoCRM start with MariaDB. Twenty and EspoCRM have supported
+container deployment surfaces. SuiteCRM's documented production path starts with a pre-built
+package on Apache, so its hosting kind remains a native-LXC candidate until implementation proves
+the exact path.
