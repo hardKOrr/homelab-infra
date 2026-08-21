@@ -212,6 +212,7 @@
       ansible.builtin.set_fact:
         _st_k8s_nodes: []
         _st_k8s_apps: []
+        _st_k8s_cron: []
 
     - name: Read the cluster's nodes and app namespaces
       when:
@@ -276,6 +277,91 @@
             _st_k8s_apps: >-
               {{ _st_k8s_app_raw.stdout_lines | default([])
                  | map('split') | selectattr('4', 'defined') | list }}
+
+        # THE SCHEDULED WORK, AND WHETHER IT IS STILL WORKING.
+        #
+        # A Deployment that stops running is loud: the workload table above shows `0 of 1
+        # ready` and Uptime Kuma fires. A CronJob that stops working is silent, and it is
+        # the one carrying the application backups. Nothing else in this platform reports
+        # on it: the failure notification is fired by the job's own pod, so the failures it
+        # cannot report — no network, wrong image, the pod never started — are exactly the
+        # ones nobody hears about. This section is the second, independent place that
+        # would have to also be wrong for a dead backup to stay invisible.
+        #
+        # `.status.active` is read alongside the two timestamps because without it a
+        # backup that is running RIGHT NOW looks identical to one that failed: in both
+        # cases the last scheduled run is newer than the last successful one. A status
+        # report that cries wolf every night at 03:05 is a status report nobody reads.
+        - name: Read the scheduled jobs and how they last went
+          ansible.builtin.command:
+            argv:
+              - k3s
+              - kubectl
+              - get
+              - cronjobs
+              - --all-namespaces
+              - -l
+              - app.kubernetes.io/managed-by=homelab-infra
+              - --no-headers
+              - -o
+              - custom-columns=NS:.metadata.namespace,NAME:.metadata.name,SUSPEND:.spec.suspend,SCHED:.status.lastScheduleTime,OK:.status.lastSuccessfulTime,ACTIVE:.status.active[*].name
+          delegate_to: "{{ k8s_api_host }}"
+          become: true
+          register: _st_k8s_cron_raw
+          failed_when: false
+          changed_when: false
+
+        # Built row by row rather than rendered in the template, for the reason
+        # list-orphan-volumes.yml records: an age is a datetime subtraction, and a
+        # datetime that survives one round of templating does not reliably survive two.
+        # The verdict is computed here too, so the report renders a decision rather than
+        # asking its reader to compare two timestamps in their head.
+        - name: Work out whether each scheduled job is still working
+          ansible.builtin.set_fact:
+            _st_k8s_cron: "{{ _st_k8s_cron + [_st_cron_row] }}"
+          loop: >-
+            {{ _st_k8s_cron_raw.stdout_lines | default([])
+               | map('split') | selectattr('5', 'defined') | list }}
+          loop_control:
+            label: "{{ item[1] | default('?') }}"
+          vars:
+            # custom-columns writes `<none>` for a field that is not set, so every row has
+            # six columns and an absent timestamp is a value rather than a missing index.
+            _st_cron_sched: "{{ item[3] }}"
+            _st_cron_ok: "{{ item[4] }}"
+            # Compared as strings, deliberately. Both are RFC 3339 in UTC with the same
+            # fixed width, so lexical order IS chronological order — and the comparison
+            # that decides whether to alarm should not depend on two datetime conversions
+            # going right.
+            _st_cron_stale: >-
+              {{ _st_cron_ok == '<none>' or _st_cron_ok < _st_cron_sched }}
+            _st_cron_d: >-
+              {{ ((now(utc=true) - (_st_cron_ok | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).days)
+                 if _st_cron_ok != '<none>' else 0 }}
+            _st_cron_h: >-
+              {{ (((now(utc=true) - (_st_cron_ok | to_datetime('%Y-%m-%dT%H:%M:%SZ'))).seconds) // 3600)
+                 if _st_cron_ok != '<none>' else 0 }}
+            _st_cron_row:
+              # The CronJob name only, NOT `namespace/name`. Both are built from the same
+              # instance — namespace `app-<instance>`, CronJob `<instance>-backup` — so the
+              # pair is redundant, and it is redundant at a cost: `app-mixpost-restore/
+              # mixpost-restore-backup` is 42 characters, which overflows the column and
+              # wraps the row in the job console. That is the defect commit bb9eb51 fixed
+              # in the retained-volumes table, reintroduced by a second table. The name
+              # alone is still unambiguous, because it carries the instance.
+              name: "{{ item[1] }}"
+              age: >-
+                {{ 'never' if _st_cron_ok == '<none>'
+                   else '%dd %dh ago' | format(_st_cron_d | int, _st_cron_h | int) }}
+              # Order matters: suspended beats running beats never-run beats stale. A
+              # suspended job that also looks stale is suspended, and saying so stops an
+              # operator chasing a backup they turned off themselves.
+              state: >-
+                {{ 'SUSPENDED' if (item[2] | lower) == 'true'
+                   else ('running now' if item[5] != '<none>'
+                         else ('never run' if _st_cron_sched == '<none>'
+                               else ('LAST RUN DID NOT SUCCEED' if _st_cron_stale | bool
+                                     else 'ok'))) }}
 
         # The volumes no claim is using. A `Retain` StorageClass means a removed app leaves
         # its data behind on purpose, and until this line existed the platform never
@@ -342,6 +428,28 @@
           {% endfor %}
           {% elif _st_k8s_nodes | length > 0 %}
             no applications deployed on the cluster yet
+          {% endif %}
+          {% if _st_k8s_cron | length > 0 %}
+
+            SCHEDULED JOBS
+              STATE compares the last run the schedule started against the
+              last one that succeeded, so it is right whatever the schedule
+              is. A backup failing every night reads LAST RUN DID NOT
+              SUCCEED here even when its own failure notification never got
+              out — which is exactly what this table is for.
+              {{ '%-32s' | format('JOB') }} {{ '%-14s' | format('LAST SUCCESS') }} STATE
+          {% for c in _st_k8s_cron %}
+              {{ '%-32s' | format(c.name) }} {{ '%-14s' | format(c.age) }} {{ c.state }}
+          {% endfor %}
+          {% if _st_k8s_cron | rejectattr('state', 'equalto', 'ok') | list | length > 0 %}
+              Read what a failed one said, on a cluster node:
+                k3s kubectl -n app-<instance> logs --all-containers --prefix \
+                  -l app.kubernetes.io/component=backup
+              Run one now, and watch it, with the Backup App job.
+          {% endif %}
+          {% elif _st_k8s_nodes | length > 0 %}
+
+            no scheduled jobs on the cluster — no application has a backup CronJob
           {% endif %}
           {% if _st_k8s_orphans | length > 0 %}
 
