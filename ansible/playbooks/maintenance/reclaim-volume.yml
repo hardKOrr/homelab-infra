@@ -304,14 +304,22 @@
               recognise. Delete the PersistentVolume object by hand if that is what you
               want, and deal with its storage yourself.
 
-        # Only checked when the registry actually carries a storage root. It does not
-        # today — the cluster's generated facts record the class, not the path — so this
-        # asserts nothing yet and tightens by itself the day that field is added, rather
-        # than hard-coding a second copy of /var/lib/rancher/k3s/storage here for the two
-        # of them to drift apart.
+        # LIVE. `apps/k3s-cluster.yml` records `kubernetes.storage_path` in the generated
+        # facts specifically so this check has a root to compare against — the two were
+        # written for each other. An earlier draft of this comment said the field did not
+        # exist yet and that this asserted nothing; that was true for about a day and is
+        # exactly the wrong thing to leave next to an `rm -rf`, so it is corrected rather
+        # than deleted. The `when` remains because a cluster recorded before the field
+        # existed still has no root to check, and the guards above and below still apply.
+        #
+        # The trailing `/` is the whole point of the comparison. `match` anchors at the
+        # start and nowhere else, so a bare prefix of `/var/lib/rancher/k3s/storage` also
+        # accepts `/var/lib/rancher/k3s/storage-old/pvc-…` — a different directory that
+        # merely begins with the right letters. Comparing against the root WITH its
+        # separator is what makes this "under the root" rather than "starts like it".
         - name: Assert the directory is under the cluster's storage root
           ansible.builtin.assert:
-            that: _rv.path is match(homelabinfra_infra.kubernetes.storage_path | regex_escape)
+            that: _rv.path is match((homelabinfra_infra.kubernetes.storage_path | regex_replace('/+$', '') ~ '/') | regex_escape)
             fail_msg: >-
               {{ _rv.path }} is not under the cluster's declared storage root
               {{ homelabinfra_infra.kubernetes.storage_path | default('') }}.
