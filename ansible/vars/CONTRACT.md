@@ -408,13 +408,21 @@ as `media_stack`), `app:` (port, data_path, config_path, plus app-specific keys)
 `access`, `identity`, plus optional `subdomain` and `estate`). `routing.proxy`
 (`internal | external | none`) selects **which** reverse proxy serves the app in a two-proxy
 topology; `none` means the app is not routed at all, which is how the reverse proxy itself
-avoids routing itself. `routing.access` (`internal | public`, default `internal`) is a
-separate axis: it decides **who** may reach the app through that proxy. `internal` makes
+avoids routing itself. `routing.access` (`internal | public | authenticated`, default `internal`)
+is a separate axis: it decides **who** may reach the app through that proxy. `internal` makes
 `tasks/wiring/caddy.yml` add a `remote_ip` matcher restricting the route to
 `reverse_proxy.internal_cidrs`; `public` emits the route with no source matcher, which on a
-WAN-facing Caddy publishes the app to the internet. The two were one flag until 2026-08-02,
-and `routing.proxy: external` no longer widens access — exposure is only ever
-`routing.access`. `routing.identity` is the identity-mode
+WAN-facing Caddy publishes the app to the internet. `authenticated` (added 2026-08-18 by the
+Kubernetes hosting backend) emits the same open route as `public` and additionally **asserts that
+the app is really gated**: `routing.identity` must be `forward_auth` or `oidc` and `sso.provider`
+must not be `none`. An `authenticated` route whose identity mode is `catalog` (a launch tile) or
+`none` (no object at all) is an app the operator believes is protected and which is in fact open
+to the internet. Access and identity stay separate fields — access is the network path, identity
+is where authentication happens — and this is the one point at which the two must agree.
+Enforcement of all three classes is Caddy's: `tasks/wiring/nginx.yml` does not read the access
+class at all, so an Nginx lab publishes every route with no source matcher. The proxy/access split
+dates from 2026-08-02, and `routing.proxy: external` no longer widens access — exposure is only
+ever `routing.access`. `routing.identity` is the identity-mode
 enum `none | catalog | oidc | forward_auth` (default `catalog`): `none` skips Authentik
 entirely, `catalog` creates an Application tile only, `oidc` creates an OAuth2 provider +
 Application (client_id/secret handed back to the deploy as `authentik_oidc_client_id/_secret`

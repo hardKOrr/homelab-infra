@@ -7,12 +7,15 @@
 #   wiring_upstream_host:  IP or hostname of the app container
 #   wiring_upstream_port:  port the app listens on
 #   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com)
-#   wiring_access:         internal | public (default: internal). This is the app's
-#                          EXPOSURE, from routing.access — not which proxy serves it
-#                          (routing.proxy). `internal` restricts the route to
+#   wiring_access:         internal | public | authenticated (default: internal). This is
+#                          the app's EXPOSURE, from routing.access — not which proxy serves
+#                          it (routing.proxy). `internal` restricts the route to
 #                          reverse_proxy.internal_cidrs with a remote_ip matcher;
 #                          `public` publishes it to every source address, which on a
-#                          WAN-facing Caddy means the internet.
+#                          WAN-facing Caddy means the internet; `authenticated` publishes
+#                          the same open route and requires that routing.identity actually
+#                          gates it (forward_auth or oidc, with an SSO provider), which is
+#                          asserted below.
 #   wiring_identity_mode:  catalog | oidc | forward_auth | none (default: catalog).
 #                          Only `forward_auth` changes this file's output — that mode
 #                          fronts the app with the Authentik outpost (see below).
