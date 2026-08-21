@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**8 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**13 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 **408 app-catalog entered 2026-08-17** — the application coverage the platform intends to
 have, in three implementation batches. It is the work queue's source of rows from here on.
 **Its four open decisions were answered the same day**: databases are instanced apps
@@ -48,6 +48,17 @@ and the same for `test.sh`.
 |---:|---|---|:---:|
 | 1 | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | One `maintenance:` schedule primitive resolved global → estate → stack → app; populate the never-set Proxmox `startup` order; make `watchtower_schedule` reachable; Tier 1 guest-reboot job including the k3s cluster as one unit; Tier 2 armed full-lab descent including the Proxmox nodes | [ ] |
 | 2 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup all 36 `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/…`, `Operate`, `Recover`, `Setup`); rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` only — no rename, no step change | [ ] |
+| 3 | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Read-only triage playbook over a Plex log bundle: signature table `ansible/vars/plex-log-signatures.yml`, findings ranked by provenance not by count, `ET`-prefix normalization, correlation of failures by release group, and scanner noise ranked informational. Reports only — applies no fix | [ ] |
+
+Website hosting is four option slices, ordered by fit for a lightly technical editor. They remain
+part of 408's application coverage; database-backed options wait for their named Batch B backend.
+
+| Order | Slice | Repository work | Complete |
+|---:|---|---|:---:|
+| 1 | [409 — Publii static-site hosting](409-publii-static-site/README.md) | Generic static-site role with restricted SFTP publication, atomic replacement, Caddy/Kuma wiring, PBS recovery and a Publii acceptance run | [ ] |
+| 2 | [410 — WordPress website hosting](410-wordpress-site/README.md) | Block-editor WordPress app consuming a separately deployed MariaDB instance; credential continuity and application-consistent backup/restore | [ ] |
+| 3 | [411 — Ghost publication hosting](411-ghost-publication/README.md) | Publication-first Ghost app consuming a separately deployed MySQL 8 instance plus the platform SMTP contract; optional Mailgun bulk delivery stays distinct | [ ] |
+| 4 | [412 — Silex visual website builder](412-silex-visual-builder/README.md) | Authentik-protected drag-and-drop builder with optional Claude integration; publishes static output into slice 409 targets without putting the builder on the public site route | [ ] |
 
 CRM coverage is four selectable option slices. None is an automatic default. Each database-backed
 option waits for its named Batch B backend and the shared provisioning contract.
@@ -125,7 +136,7 @@ A row is a role (or a reuse of `servarr`), a playbook in `ansible/playbooks/apps
 | A4 | flaresolverr, deemix, slskd | No new mechanism. `deemix` and `slskd` kinds are already declared |
 | A5 | unpackerr, maintainerr, kometa | **Build the mechanism first.** These are configured *from* the whole media registry, not from their own file — no app does that yet. kometa is a scheduled run with no port, no route and no monitor |
 | B1 | postgresql | The database-provisioning contract (an app asks for a database + role, gets credentials back via Vaultwarden) is the work; the LXC is not |
-| B2 | mariadb, redis | The other two backends Batch C rows ask for. Both take B1's provisioning contract; build it once against Postgres and MariaDB |
+| B2 | mariadb, mysql, redis | The other backends Batch C rows ask for. All take B1's provisioning contract; MySQL 8 is distinct because Ghost does not support MariaDB |
 | B3 | influxdb, wireguard, homepage, opnsense | Standalone backends, the dashboard, and a *new* OPNsense VM — which never adopts the firewall slice 304 wires to. homepage should generate its config from `config/.generated/facts.yml` |
 | C | Batch C, 31 rows | Ordinary deploys. Blocked behind B1 only; 408's four decisions were resolved 2026-08-17 |
 
@@ -546,6 +557,7 @@ Slices are cut on the code axis, so one subject spans several.
 | Kubernetes | hosting backend **204** (closed) |
 | Media | apps **505** (closed), wiring **504**, remaining apps **408** batch A |
 | App coverage | catalog **408** |
+| Wife-friendly website hosting | static/Publii **409**, WordPress **410**, Ghost **411**, Silex **412** |
 | CRM options | Odoo **413**, SuiteCRM **414**, Twenty **415**, EspoCRM **416** |
 | Runners / UI | Rundeck **601** (closed) |
 | Day-2 ops | rollback **502** (closed) |

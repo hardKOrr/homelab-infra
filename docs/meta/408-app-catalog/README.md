@@ -129,6 +129,7 @@ coverage.
 |---|---|---|---|---|
 | postgresql | Native LXC initially | own guest | PostgreSQL | Standalone backend. Needs a backend-independent **provisioning contract**: an app asks for a database + role, the backend creates it and hands the credentials back through Vaultwarden. Kubernetes hosting remains a later database-HA decision, not an application prerequisite |
 | mariadb | Native LXC initially | own guest | MariaDB | The backend bookstack, wordpress, mautic and mixpost need. Same backend-independent provisioning contract as postgresql — build that contract once, against both |
+| mysql | Native LXC initially | own guest | MySQL 8 | Ghost's supported production database; MariaDB is explicitly unsupported. Implements the same backend-independent provisioning contract without becoming a private Ghost sidecar |
 | influxdb | Native LXC or Docker | own guest | InfluxDB | Same shape as postgresql: standalone, wired to. Decide 2.x vs 3.x at implementation |
 | redis | Native LXC or Docker | own guest | Redis / Valkey | Wanted by immich, paperless-ngx, mixpost and plane. Cache, not a database — an app may still be given its own instance, but little is lost when several share one |
 | opnsense | VM | own guest | OPNsense | **Deployable, and separate from the firewall the lab already runs.** `infrastructure.dns.provider: opnsense` (slice 304) wires to an OPNsense this platform did not create and must never adopt. This row builds a *new* VM: an appliance ISO install with its own installer, so the work is media fetch, VM create and console-driven first boot — not a package install |
@@ -160,6 +161,9 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | forgejo | Docker | services_stack | forgejo/forgejo | Postgres. Git-over-SSH needs a second published port — a reverse proxy does not carry it |
 | forgejo-runner | Docker | services_stack | forgejo/runner | Registers **against** forgejo with a runner token — an app-to-app wiring task, the same shape as `ansible/tasks/app-wiring/` |
 | wordpress | Docker | services_stack | WordPress | MariaDB. Same database decision as bookstack |
+| ghost | Native LXC candidate | own guest | Ghost | Publication-first option with memberships and newsletters. Requires MySQL 8, transactional mail and optional Mailgun bulk delivery; verify Ghost 6's supported production installation path before fixing the hosting kind |
+| silex | Docker | services_stack | Silex | Private drag-and-drop builder whose static exports publish into separate `static-site` instances. Protect the builder and its optional Claude MCP surface; public sites must not depend on builder availability |
+| static-site | Native LXC | own guest | Publii-compatible static output | One instance per public site. Restricted SFTP publication into an atomic staging path; Publii runs on the editor's computer and is the first accepted client, not a server dependency |
 | mautic | Docker | services_stack | mautic/mautic | MariaDB. Sends mail — needs an SMTP contract this platform does not have |
 | mixpost | Kubernetes | — | inovector/mixpost | Slice 204's proven pilot. Its namespaced MySQL was an acceptance workload; the Batch B provisioning contract may later point it at a standalone MariaDB instance |
 | hi-events | Kubernetes | — | HiEventsDev/hi.events | The recorded second Kubernetes consumer: Postgres-backed, and the first application that must prove the public access class and SMTP contract |
