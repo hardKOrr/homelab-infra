@@ -167,7 +167,24 @@ nothing but `censored`. Reading why Radarr refused a root folder cost a hand-run
 the container, and the response body held no secret at any point. Any `no_log` task that can
 fail on what the server said needs `failed_when: false` plus a following task that re-raises
 from the response alone. This is the same defect shape as 016's silenced collection grant,
-which cost three passes across two sessions.
+which cost three passes across two sessions. **Third instance, found by review on
+2026-08-20:** the k3s installer task was `no_log` with a purpose-built "Report a failed
+install" task after it — and no `failed_when: false`, so the play ended on the silenced task
+and the reporter was unreachable code. The remedy was already written down here; the half
+that gets forgotten is always `failed_when: false`, because the file looks complete without
+it. When a `no_log` task is followed by a task that reads its `stderr`, the pair is only
+real if the first one is allowed to survive its own failure.
+
+**The degradation ledger is per play, and a missing gate is invisible.** `notify.yml`
+records an undelivered notification as a FATAL degradation, which only means anything if
+that play's last task is `assert-no-degradations.yml`. `backup-app.yml` and
+`restore-app.yml` shipped without it — recording into a ledger nothing read, so the one job
+that replaces an application's database could finish green with nobody having been told it
+ran. Nothing detects this: both halves are individually correct, lint has no opinion, and a
+run only diverges on the day the notification provider is down. The rule is mechanical, so
+apply it mechanically — **a play that includes `notify.yml` or `report-degradation.yml` ends
+with `assert-no-degradations.yml`, with no judgement call about whether this particular job
+matters enough.**
 
 **Green is not even templated.** Both gates passed over an expression that could not render:
 a `vars:` entry is a templated STRING even when its expression ends in `| int`, so range
