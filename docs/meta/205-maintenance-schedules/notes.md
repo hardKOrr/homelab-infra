@@ -299,3 +299,28 @@ from inside its provisioning branch because a converge onto an existing VM has n
 clone; `provision-node.yml` calls it per node because each of the three needs one before its
 own clone. Both are correct where they are, and the k3s job remains the one that exercises
 the path.
+
+**Verified live on `083023c`.**
+
+- Execution 277, Deploy k3s Cluster: all three templates replaced. Each node reported
+  `Replacing template debian-12-cloud (vmid NNNN) on pve-host-N: it was built from an
+  unrecorded image, and the declared image is now
+  debian-12-genericcloud-amd64-20260821-2577.qcow2`, then destroyed and rebuilt at the SAME
+  vmid — 9002, 9003, 9001, still one per node, all `homelab-infra;role_template`, all
+  stamped, `ctime` within 57 seconds of each other. The operator's untagged 9000 on
+  pve-host-3 was not touched. `failed=0`.
+- The drift is closed by measurement, not by assertion: the cached image on all three nodes
+  is `sha256 3ac58d009df21d570bb10811ae1e07afd1125e9669c87897bfb58e52b8f5c937`, identical.
+- Execution 278, the same job again: every write in the template path reported `skipping` —
+  the replace decision, the destroy, the facet retag and all nine build steps. Only the
+  reads ran.
+- `changed=6` survives on the second run, from `VM clone | Apply per-VM configuration` and
+  `VM clone | Resize the disk` once per node. Pre-existing: execution 276, before this
+  change, reported the identical six. Not template work, and not opened here.
+- Execution 279, Deploy PBS: `ok=136/67, changed=0, failed=0`, no degradations. The removed
+  `cloud_template.vmid: 9000` default breaks nothing on the converge path, which skips the
+  template seam entirely.
+
+The already-provisioned k3s-3 VM keeps the older Debian image it was cloned from — a
+template rebuild does not reach a guest that already exists, and replacing a healthy etcd
+member to equalise a point release is not worth the outage. Future clones are identical.
