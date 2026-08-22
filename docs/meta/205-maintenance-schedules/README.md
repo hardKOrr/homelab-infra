@@ -1,6 +1,6 @@
 # 205 — Maintenance schedules
 
-**Status:** implemented — not yet executed against the live lab
+**Status:** built — Tier 1 executed against the live lab 2026-08-22; Tier 2 not armed
 **Subject:** Maintenance schedules
 **Related:** 008 (estate contract), 100/201/202 (unattended-upgrades, Watchtower, PBS
 schedules this slice unifies), 203 (guest app record), 204 (Kubernetes backend), 503 (lab status)
@@ -56,13 +56,31 @@ estate's guests, and the two estates' schedules are independent clocks.
       a guest's window is the intersection of its apps' windows, one `never` holds the
       whole guest, and disjoint windows are reported as a conflict with both named.
 
-### Not verified by execution
+### Executed 2026-08-22 — Tier 1
 
-Everything above passes lint, syntax check and the focused resolver tests. Tier 1 has not
-been run against the live lab, and Tier 2 has not been armed — arming it reboots every
-hypervisor, so it wants a deliberate maintenance evening rather than a build session.
-Run `Guest Maintenance` with `dry_run=true` first; it changes nothing and prints the
-decision table for every guest.
+Run on the live lab as Rundeck executions 271 (`dry_run=true`) and 272 (apply), both
+`succeeded`, against revision `6476ce1`.
+
+- The dry run printed the decision table for all thirteen tagged guests: every one `clean`,
+  `daily 04:00 +120m` for the ordinary guests, `cluster node — rebooted with the cluster`
+  for `k3s-1/2/3`, and `the runner — never rebooted by this job` for `homelab-rundeck`.
+  It rebooted and reconfigured nothing.
+- The apply wrote the timer to every non-cluster guest and left the cluster nodes alone,
+  which is the intended split. On `caddy` (LXC `168000010`) the installed unit reads
+  `OnCalendar=*-*-* 04:00:00` with `RandomizedDelaySec=300` and `Persistent=false`,
+  is `enabled`, and `list-timers` shows the next firing at 04:04:52 the following day.
+- The guard path was exercised directly: with no `/var/run/reboot-required`,
+  `lab-maintenance-reboot` exits 0 without rebooting and without notifying.
+- The guest's Ntfy publish path answers `HTTP 200` with the credential in
+  `/etc/homelab-infra/ntfy.env`, so the window-open message has a working route out.
+
+Still unexecuted: a real window firing with a reboot genuinely pending, and Tier 2, which
+reboots every hypervisor and wants a deliberate maintenance evening.
+
+One guest is in the candidate list that should not be. `debian-12-cloud` is the cloud-init
+template VM: it carries the `homelab-infra` tag, has no address, and is `UNREACHABLE` on
+every probe. It is ignored rather than fatal, and its decision row is harmless, but a
+template is not a guest and should be filtered out of the candidate list.
 
 ### Found while doing this, not fixed here
 

@@ -3,7 +3,7 @@
 The work queue. This file stays a table — prose belongs in [LESSONS.md](LESSONS.md),
 per-session narrative in a slice's own `notes.md`, slice shape in [README.md](README.md).
 
-**14 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
+**15 live · 45 archived in [done/](done/) · 3 unreachable in [no-target/](no-target/).**
 **408 app-catalog entered 2026-08-17** — the application coverage the platform intends to
 have, in three implementation batches. It is the work queue's source of rows from here on.
 **Its four open decisions were answered the same day**: databases are instanced apps
@@ -47,8 +47,9 @@ and the same for `test.sh`.
 | Priority | Slice | Repository work | Complete |
 |---:|---|---|:---:|
 | 1 | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | One `maintenance:` schedule primitive resolved global → estate → stack → app; populate the never-set Proxmox `startup` order; make `watchtower_schedule` reachable; Tier 1 guest-reboot job including the k3s cluster as one unit; Tier 2 armed full-lab descent including the Proxmox nodes | [ ] |
-| 2 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup every `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/<subject>`, `Operate`, `Recover`, `Setup`) with **no catch-all group**, and add a small closed `tags:` vocabulary as the second axis; rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` and `tags:` only — no rename, no step change | [ ] |
-| 3 | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Read-only triage playbook over a Plex log bundle: signature table `ansible/vars/plex-log-signatures.yml`, findings ranked by provenance not by count, `ET`-prefix normalization, correlation of failures by release group, and scanner noise ranked informational. Reports only — applies no fix | [ ] |
+| 2 | [507 — Stale service detection](507-stale-service-detection/README.md) | `needrestart` on every guest; the unattended-upgrades Ntfy hook reports services left running against replaced code; `lab-maintenance-reboot` restarts them inside the declared window only; stale count in `status.yml`. Found live 2026-08-22 — an in-place JDK update left `rundeckd` active, answering HTTP and unable to spawn any process, with no signal anywhere | [ ] |
+| 3 | [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Regroup every `rundeck/jobs/*.yaml` from four flat groups into a verb-first tree (`Deploy/<subject>`, `Operate`, `Recover`, `Setup`) with **no catch-all group**, and add a small closed `tags:` vocabulary as the second axis; rewrite the `AGENTS.md` UI Job Structure section in the same commit; verify with one Reimport Jobs run. `group:` and `tags:` only — no rename, no step change | [ ] |
+| 4 | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Read-only triage playbook over a Plex log bundle: signature table `ansible/vars/plex-log-signatures.yml`, findings ranked by provenance not by count, `ET`-prefix normalization, correlation of failures by release group, and scanner noise ranked informational. Reports only — applies no fix | [ ] |
 
 Website hosting is four option slices, ordered by fit for a lightly technical editor. They remain
 part of 408's application coverage; database-backed options wait for their named Batch B backend.

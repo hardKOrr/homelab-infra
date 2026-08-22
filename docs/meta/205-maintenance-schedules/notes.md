@@ -176,3 +176,27 @@ An architectural decision that removes a concept has to be carried through to th
 recorded, and the implementation still shipped a poller — which is the enum again, expressed
 as an interval. When a decision says "X already expresses this", the test is whether X is
 what actually executes.
+
+## 2026-08-22 — first live execution of Tier 1
+
+`master` pushed (6476ce1), `Reimport Jobs` run, `Guest Maintenance` run dry and then for
+real. Evidence is in the README's "Executed 2026-08-22" section; three things worth
+keeping here.
+
+**The reimport was blocked by a fault this slice cannot see.** Execution 268 failed with
+`Cannot run program "/bin/sh": Failed to exec spawn helper`. unattended-upgrades had
+replaced the JDK under a `rundeckd` JVM running since 2026-08-17. A restart fixed it
+outright. It matters to this slice because Tier 1 looked at that same host and correctly
+reported `homelab-rundeck  clean` — no reboot was pending, because a JDK update sets no
+such flag. The window mechanism is not wrong; the *pending-reboot* signal is simply not
+the only kind of staleness a guest can carry. That gap is now slice 507.
+
+**Cluster nodes get no timer, by design and in fact.** The apply run shows `k3s-1/2/3` at
+`ok=3 changed=0` while every other guest changed 4 or 7 items. The cluster is rebooted as
+one unit by `cluster-reboot.yml`, so a per-node timer would be exactly the node-by-node
+rolling reboot `local-path` makes unsafe.
+
+**`debian-12-cloud` should not be a candidate.** The cloud-init template carries the
+`homelab-infra` tag and no address, so both guest probes report UNREACHABLE and are
+ignored. Harmless today. The fix is to filter templates out of the candidate list, not to
+widen what `ignore_unreachable` covers.
