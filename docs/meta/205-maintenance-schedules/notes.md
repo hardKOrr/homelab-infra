@@ -217,3 +217,22 @@ The rejected alternative was to retag the template `homelab-infra-template` inst
 anchored regex `(^|;)homelab-infra(;|$)`, so the live template would stop being recognised
 and every PBS and k3s deploy would hit the vmid assert. Ownership and facet stay separate
 tags, and nothing matches on a prefix of the platform's own tag.
+
+**Verified live, both halves, no manual patching.**
+
+- Execution 273, Lab Status on `9c805c7`: `GUESTS (12 tagged homelab-infra)`, no
+  `debian-12-cloud`, nothing unreachable. The lab has **three** of these templates — 9002,
+  9003, 9001, one per node — all named `debian-12-cloud`; the inventory keys hosts by name,
+  which is why 205 saw one entry rather than three.
+- Execution 274, Deploy PBS, was the wrong vehicle for the retag and is worth recording as
+  such: `apps/pbs.yml` wraps `ensure-cloud-template.yml` in its `_existing_hosts | length == 0`
+  provisioning block, so a converge onto an existing PBS VM skips it entirely.
+  `tasks/kubernetes/provision-node.yml` calls it unconditionally, once per node, with
+  `proxmox.node` pointed at that node — so Deploy k3s Cluster is the job that exercises it,
+  and it reaches every node's template rather than one.
+- Execution 275, Deploy k3s Cluster: the retag ran `changed` delegated to pve-host-1, -2 and
+  -3 in turn, and all three templates went to `homelab-infra;role_template`. The operator's
+  untagged hand-built 9000 on pve-host-3 was not touched.
+- Execution 276, the same job again: `Adopt the vmid of the template we already built` still
+  returned `ok` on all three — the anchored ownership regex matches inside the two-tag string
+  — and the retag reported `skipping` on all three. Idempotent.
