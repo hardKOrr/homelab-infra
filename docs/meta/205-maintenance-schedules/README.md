@@ -77,10 +77,12 @@ Run on the live lab as Rundeck executions 271 (`dry_run=true`) and 272 (apply), 
 Still unexecuted: a real window firing with a reboot genuinely pending, and Tier 2, which
 reboots every hypervisor and wants a deliberate maintenance evening.
 
-One guest is in the candidate list that should not be. `debian-12-cloud` is the cloud-init
-template VM: it carries the `homelab-infra` tag, has no address, and is `UNREACHABLE` on
-every probe. It is ignored rather than fatal, and its decision row is harmless, but a
-template is not a guest and should be filtered out of the candidate list.
+One guest was in the candidate list that should not have been. `debian-12-cloud` is the
+cloud-init template VM: it carries the `homelab-infra` tag, has no address, and was
+`UNREACHABLE` on every probe. It was ignored rather than fatal, and its decision row was
+harmless, but a template is not a guest. Fixed 2026-08-22 in the inventory rather than in
+this slice — `ansible/inventory/proxmox.yml` now filters on the plugin's own
+`proxmox_template` fact, so no template reaches any `tag_*` group. See notes.md.
 
 ### Found while doing this, not fixed here
 

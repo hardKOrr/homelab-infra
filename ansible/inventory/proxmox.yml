@@ -17,6 +17,24 @@ token_secret: "{{ lookup('env', 'PROXMOX_API_TOKEN_SECRET') }}"
 # Homelab Proxmox nodes use self-signed TLS certs; skip verification deliberately.
 validate_certs: false
 want_facts: true
+
+# Templates are not guests. `debian-12-cloud` — the cloud-init template this platform builds
+# and clones — carries the `homelab-infra` tag like everything else we create, so it landed in
+# `tag_homelab_infra` and `proxmox_clients` and every guest-wide job then tried to reach a VM
+# that has no address and never boots: both Tier 1 maintenance probes reported it UNREACHABLE.
+#
+# The plugin already knows. `_handle_item` publishes `proxmox_template` for every entry, and
+# `filters` is evaluated BEFORE `compose`, `groups` and `keyed_groups` run, so a filtered
+# template joins no group at all rather than being excluded at each of the six consumers.
+# Nothing that clones the template reads it from here — ensure-cloud-template.yml and
+# vm-clone.yml both work through pvesh/qm against the node.
+#
+# This also drops templates we did not create, which is correct rather than incidental: an
+# addressless entry contributes nothing to the in-use list that network/generate-ip.yml builds
+# from `proxmox_clients`, and that task already had to defend against exactly this one.
+filters:
+  - not (proxmox_template | default(false) | bool)
+
 # The plugin namespaces every fact it publishes as `proxmox_*`, and these expressions are
 # evaluated against those hostvars. Bare `type` and `tags` do not exist, so the previous
 # `type == 'node'` / `key: tags` matched nothing and silently produced no groups at all —

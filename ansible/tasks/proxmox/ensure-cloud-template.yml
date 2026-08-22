@@ -17,6 +17,12 @@
 # overwrites an existing template — deleting the template VM is the way to force a
 # rebuild.
 #
+# Tags: `homelab-infra` marks it as ours and is what adoption matches on. `role_template`
+# is the facet tag, in the same `<facet>_<value>` form as the `app_<instance>` and
+# `kind_<hosting>` tags a guest carries, and it says this object is a template rather than
+# a guest. Ownership and facet are deliberately separate tags: the platform's own tag has
+# to keep meaning exactly one thing, so nothing here matches on a prefix of it.
+#
 # Inputs:
 #   cloud_template_vmid     — vmid to BUILD the template at when none exists yet
 #                             (default 9000); an already-built template is found by
@@ -49,6 +55,7 @@
          | default(homelabinfra_config.proxmox.storage | default('local-lvm'), true) }}
     _ct_bridge: "{{ cloud_template_bridge | default('vmbr0') }}"
     _ct_cache_dir: /var/lib/vz/template/cache
+    _ct_facet_tag: role_template
 
 - name: Cloud template | Assert required inputs
   ansible.builtin.assert:
@@ -128,6 +135,40 @@
       proxmox.cloud_template.vmid in config/apps/<instance>.yml.
   when: _ct_existing.rc == 0
 
+# Every lab that already has a template built one before the facet tag existed, and the build
+# block below never runs for those — discovery adopts them and stops. Without this the tag
+# would only ever reach a lab that deletes its template to force a rebuild, which is nobody's
+# plan, and the live lab's template would stay indistinguishable from a guest in the Proxmox UI.
+#
+# Read-modify-write on the guest's own tag list, the same discipline as
+# files/proxmox/guest-app-record.py: a hand-applied tag survives, and a template that already
+# carries the facet writes nothing. PVE stores tags sorted, so sorting here keeps a re-run from
+# reporting a change that is only an ordering difference.
+- name: Cloud template | Read the existing template's tags
+  ansible.builtin.set_fact:
+    # `qm config` prints `tags: a;b` or omits the line entirely when the guest carries none,
+    # and the untagged case is the one that matters here — it must reach an empty list rather
+    # than an error, because that is the state of every template built before this tag.
+    _ct_current_tags: >-
+      {{ (_ct_existing.stdout_lines | select('match', '^tags:') | first | default('tags:', true))
+         | regex_replace('^tags:', '')
+         | split(';') | map('trim') | reject('equalto', '') | list }}
+  when: _ct_existing.rc == 0
+
+- name: Cloud template | Add the facet tag to a template built before it existed
+  ansible.builtin.command:
+    argv:
+      - qm
+      - set
+      - "{{ _ct_vmid }}"
+      - --tags
+      - "{{ (_ct_current_tags + [_ct_facet_tag]) | unique | sort | join(';') }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  when:
+    - _ct_existing.rc == 0
+    - _ct_facet_tag not in _ct_current_tags
+
 - name: Cloud template | Build the template
   when: _ct_existing.rc != 0
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
@@ -174,9 +215,10 @@
           - serial0
           # Tagged like every other guest this platform creates, so the template is
           # recognisable as ours on a lab full of hand-built ones — which is the same
-          # distinction the vmid assert above enforces.
+          # distinction the vmid assert above enforces. The second tag is the facet —
+          # see the file header.
           - --tags
-          - homelab-infra
+          - "homelab-infra;{{ _ct_facet_tag }}"
           - --description
           - "Debian cloud-init template built by homelab-infra. Delete this VM to force a rebuild."
       changed_when: true

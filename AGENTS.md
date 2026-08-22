@@ -485,6 +485,14 @@ backups:
 `community.proxmox` plugin → groups: `proxmox_nodes`, `proxmox_clients`, `tag_<tagname>`.
 All resources created by this system are tagged `homelab-infra`. Existing untagged resources are never touched.
 
+**Templates are not in the inventory.** The plugin's `filters` option drops every guest
+whose `proxmox_template` fact is true, and it is evaluated before `compose`, `groups` and
+`keyed_groups`, so a template joins no group at all — not `proxmox_clients`, not
+`tag_homelab_infra`. Our own cloud-init template carries the `homelab-infra` tag like
+everything else we create, and without this every guest-wide job tried to reach a VM that
+has no address and never boots. A job that needs the template works through `pvesh`/`qm`
+against the node, as `ensure-cloud-template.yml` and `vm-clone.yml` already do.
+
 ## What a Guest Records About Itself
 
 Every app deploy stamps the guest it lands on, and every removal withdraws that stamp

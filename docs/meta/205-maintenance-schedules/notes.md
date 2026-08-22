@@ -200,3 +200,20 @@ rolling reboot `local-path` makes unsafe.
 `homelab-infra` tag and no address, so both guest probes report UNREACHABLE and are
 ignored. Harmless today. The fix is to filter templates out of the candidate list, not to
 widen what `ignore_unreachable` covers.
+
+Fixed 2026-08-22, outside the slice, because it turned out to be an inventory fact rather
+than a maintenance one. `community.proxmox.proxmox` already publishes `proxmox_template`
+and evaluates its `filters` option before `compose`, `groups` and `keyed_groups` run, so
+one filter in `ansible/inventory/proxmox.yml` keeps every template out of
+`tag_homelab_infra` and `proxmox_clients` — no change at any of the six consumers, and no
+per-job exclusion to remember when the seventh is written. The template also now carries
+the facet tag `role_template` alongside `homelab-infra`, in the same `<facet>_<value>`
+form as `app_<instance>` and `kind_<hosting>`, so it is distinguishable in the Proxmox UI;
+`ensure-cloud-template.yml` adds it read-modify-write to a template built before the tag
+existed, since that path adopts rather than rebuilds.
+
+The rejected alternative was to retag the template `homelab-infra-template` instead of
+`homelab-infra`. It does not work: adoption in `ensure-cloud-template.yml` matches the
+anchored regex `(^|;)homelab-infra(;|$)`, so the live template would stop being recognised
+and every PBS and k3s deploy would hit the vmid assert. Ownership and facet stay separate
+tags, and nothing matches on a prefix of the platform's own tag.
