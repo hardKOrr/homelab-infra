@@ -30,14 +30,31 @@
 #   network: default
 
 # ── Cloud-init template ────────────────────────────────────────────────────────
-# Shared by every VM app. Built once, then reused. Delete the template VM in
-# Proxmox to force a rebuild on the next deploy.
+# Shared by every VM app on the same Proxmox node, and built once per node — Proxmox
+# refuses to clone a VM across storage that is not shared, so a template on one node
+# cannot provision a VM on another.
+#
+# Each node keeps exactly ONE. Changing image_url replaces that node's template in place
+# on the next deploy instead of leaving a second one beside it; the image it was built
+# from is stamped on the template, which is how the replacement is decided. Deleting the
+# template VM in Proxmox also forces a rebuild.
+#
+# Pin image_url to a dated snapshot rather than `latest`. Templates built from `latest`
+# on different days are different images, and nothing tells you until a guest behaves
+# unlike its peers. When a pinned URL 404s — Debian prunes old snapshot directories after
+# a few weeks — take the newest directory from
+# https://cloud.debian.org/images/cloud/bookworm/ and put it here.
+#
+# vmid is optional and normally omitted: a free slot in 9000-9099 is chosen on the target
+# node, and a template this platform already built there is adopted wherever it sits. Set
+# it only to demand a particular slot.
 # proxmox:
 #   cloud_template:
-#     vmid: 9000
 #     name: debian-12-cloud
-#     image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+#     image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 #     storage: local-lvm
+#     vmid: 9000
+#     vmid_range: [9000, 9099]
 
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:

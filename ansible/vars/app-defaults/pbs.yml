@@ -26,12 +26,26 @@ pbs_defaults:
         - pbs
     network: default
 
-    # The cloud-init template every VM clones from. Built on first use and reused
-    # afterwards; delete the template VM in Proxmox to force a rebuild.
+    # The cloud-init template every VM clones from. One per Proxmox node — Proxmox
+    # refuses to clone across non-shared storage — and each node keeps exactly one:
+    # changing image_url below replaces the node's template in place rather than adding
+    # a second one beside it.
+    #
+    # PINNED, not `latest`. The three templates in the live lab were built from `latest`
+    # seventeen days apart and were therefore three different images, which is invisible
+    # until a cluster node behaves unlike its peers. A dated snapshot is the identity the
+    # template is stamped with, so `bump this URL` is the entire update gesture.
+    #
+    # Debian prunes old snapshot directories after a few weeks. When this URL 404s, pick
+    # the newest directory from https://cloud.debian.org/images/cloud/bookworm/ and put it
+    # here; the next deploy rebuilds each node's template from it.
+    #
+    # vmid is deliberately absent: a free slot in 9000-9099 is chosen on the target node,
+    # and a template this platform already built is adopted wherever it sits. Set
+    # `vmid:` only to demand a particular slot.
     cloud_template:
-      vmid: 9000
       name: debian-12-cloud
-      image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
     port: 8007                  # PBS web UI and REST API (HTTPS, self-signed by default)

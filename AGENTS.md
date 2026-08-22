@@ -485,6 +485,19 @@ backups:
 `community.proxmox` plugin → groups: `proxmox_nodes`, `proxmox_clients`, `tag_<tagname>`.
 All resources created by this system are tagged `homelab-infra`. Existing untagged resources are never touched.
 
+**One cloud-init template per Proxmox node, and exactly one.** Proxmox refuses
+`qm clone --target` unless the source VM is on shared storage, and this lab's only
+image-capable storage is a local ZFS pool per node — so a template on one node cannot
+provision a VM on another, and three templates named `debian-12-cloud` is the correct
+state, not duplication to clean up. What a node must never do is accumulate them:
+`ensure-cloud-template.yml` stamps the image it built from onto the template
+(`homelab-infra-image=<basename>` in the description) and replaces a template whose stamp
+no longer matches the declared `cloud_template.image_url`, rebuilding at the same vmid.
+Pin that URL to a dated Debian snapshot — templates built from `latest` on different days
+are different images — and bumping it is the entire update gesture.
+`cloud_template.vmid` is optional: a free slot in 9000-9099 is chosen on the target node
+when there is nothing to adopt.
+
 **Templates are not in the inventory.** The plugin's `filters` option drops every guest
 whose `proxmox_template` fact is true, and it is evaluated before `compose`, `groups` and
 `keyed_groups`, so a template joins no group at all — not `proxmox_clients`, not

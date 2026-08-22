@@ -236,3 +236,66 @@ tags, and nothing matches on a prefix of the platform's own tag.
 - Execution 276, the same job again: `Adopt the vmid of the template we already built` still
   returned `ok` on all three — the anchored ownership regex matches inside the two-tag string
   — and the retag reported `skipping` on all three. Idempotent.
+
+## Three templates: not a defect to remove, a drift to close (2026-08-22)
+
+The three `debian-12-cloud` templates the executions above turned up looked like
+duplication worth deleting. They are not. Proxmox refuses `qm clone --target` unless the
+source VM sits on shared storage — `/usr/share/perl5/PVE/API2/Qemu.pm` on pve-host-1:
+
+```
+4366:  "Target node. Only allowed if the original VM is on shared storage."
+4421:  # clone only works if target storage is shared
+4422:  die "can't clone to non-shared storage '$storage'\n"
+```
+
+and `/etc/pve/storage.cfg` has exactly one image-capable storage, `friends-pool-zfs`,
+declared without `shared 1` — a separate local ZFS pool on each node. `local` is a `dir`
+with `content iso,vztmpl`; both `pbs-*` entries are `content backup`. So one template
+cannot provision a VM on another node, all three are in use (9002 → k3s-1, 9003 → k3s-2,
+9001 → k3s-3 and PBS), and deleting two would leave two of three cluster nodes unable to
+reprovision. Collapsing to one template is a shared-storage decision (NFS or Ceph for every
+VM disk in the lab), not an Ansible change.
+
+**The real defect was that the three were not the same image.** All were built from the
+moving `.../bookworm/latest/...` URL: 9001 on 2026-08-05, 9002 and 9003 on 2026-08-22
+(`ctime` in `qm config`, and Debian's snapshot listing shows `20260805-2561` and
+`20260821-2577` as separate builds). `ensure-cloud-template.yml` adopted by name plus tag
+and never compared image identity, so k3s-3 ran a Debian snapshot seventeen days older than
+its peers and nothing reported it. That is invisible until a node behaves unlike the others.
+
+**What changed.** One template per node stays; a node keeps exactly one.
+
+- The declared image is stamped on the template it built, as
+  `homelab-infra-image=<basename>` inside the single-line description. A template whose
+  stamp does not match the declared identity is destroyed and rebuilt **at the same vmid** —
+  replaced, never accumulated beside a newer one.
+- Replacement is keyed on the DECLARED identity, never on upstream drift. Pointing at
+  `latest` means the bytes behind one URL change without notice, so a check against the live
+  image would rebuild templates unattended on Debian's schedule. Bumping
+  `cloud_template.image_url` is now the whole update gesture, and nothing else replaces a
+  template.
+- `image_url` is therefore pinned to `20260821-2577` in both `app-defaults/pbs.yml` and
+  `app-defaults/k3s-cluster.yml`. Debian prunes old snapshot directories after a few weeks;
+  when the pin 404s, the newest directory from
+  `https://cloud.debian.org/images/cloud/bookworm/` replaces it. A loud download failure is
+  the right trade against silently building three different images again.
+- Replacing is safe without a pre-check because `vm-clone.yml` sets `full: true` — no guest
+  depends on a template's base disk, confirmed on the live pools (`zfs list -o name,origin`
+  shows no dataset originating from a `base-90xx-disk-0@__base__`). A hand-made linked clone
+  would make `qm destroy` fail loudly, which is the correct outcome.
+- `cloud_template.vmid` is now optional. Discovery adopts what this platform already built on
+  the target node; otherwise a free vmid in 9000-9099 is chosen there, checked against every
+  guest in the cluster rather than only VMs. This reverses the earlier "fail rather than
+  choose a slot" rule, whose stated risk was scattering a new template per run — that risk
+  depended on discovery being unreliable, and discovery by name plus owner tag on one node is
+  not. What the old rule actually produced was a per-node `template_vmid` hand-maintained in
+  the k3s node declarations and a PBS default of `9000` that collides with the conventional
+  hand-built slot — which is exactly the collision this lab has on pve-host-3. Both are gone;
+  an explicit `vmid:` still wins.
+
+The PBS asymmetry recorded above is left as it is. `apps/pbs.yml` calls the template seam
+from inside its provisioning branch because a converge onto an existing VM has nothing to
+clone; `provision-node.yml` calls it per node because each of the three needs one before its
+own clone. Both are correct where they are, and the k3s job remains the one that exercises
+the path.

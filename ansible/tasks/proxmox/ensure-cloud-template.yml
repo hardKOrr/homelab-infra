@@ -13,9 +13,9 @@
 #
 # Idempotent: a template named cloud_template_name and tagged `homelab-infra` on the
 # target node is adopted wherever it sits, so this is a no-op on every run after the
-# first even if it was not built at cloud_template_vmid. It never rebuilds or
-# overwrites an existing template — deleting the template VM is the way to force a
-# rebuild.
+# first even if it was not built at cloud_template_vmid. The one thing that rebuilds a
+# template is a change to the declared image identity — see the replacement rule below.
+# Deleting the template VM also forces a rebuild.
 #
 # Tags: `homelab-infra` marks it as ours and is what adoption matches on. `role_template`
 # is the facet tag, in the same `<facet>_<value>` form as the `app_<instance>` and
@@ -23,12 +23,41 @@
 # a guest. Ownership and facet are deliberately separate tags: the platform's own tag has
 # to keep meaning exactly one thing, so nothing here matches on a prefix of it.
 #
+# ONE TEMPLATE PER NODE, AND ONLY ONE. Proxmox refuses `qm clone --target` unless the
+# source VM sits on shared storage (PVE/API2/Qemu.pm: "clone only works if target storage
+# is shared"), and this lab's only image-capable storage is a local ZFS pool per node. So a
+# template on one node cannot provision a VM on another, and every node that hosts a VM
+# needs its own copy. What must not happen is a node ACCUMULATING copies: when the image
+# this platform declares changes, the node's existing template is replaced in place at the
+# same vmid, not left behind beside a newer one.
+#
+# Replacement is keyed on a DECLARED identity, never on upstream drift. Debian prunes old
+# snapshot directories from cloud.debian.org, and pointing at `latest` means the bytes
+# behind one URL change without notice — so a check against the live image would rebuild
+# templates unattended, on someone else's schedule. Instead the identity that was built
+# from is stamped on the template, and the template is replaced only when the operator
+# changes the declared one. Bumping cloud_template_image_url to a newer pinned snapshot is
+# therefore the whole update gesture; nothing else replaces a template.
+#
+# Replacing is safe because every clone this repo makes is a FULL clone (vm-clone.yml sets
+# `full: true`), so no guest depends on the template's base disk. A linked clone made by
+# hand would make `qm destroy` fail loudly rather than silently break that guest, which is
+# the correct outcome and is why nothing here pre-checks for one.
+#
 # Inputs:
-#   cloud_template_vmid     — vmid to BUILD the template at when none exists yet
-#                             (default 9000); an already-built template is found by
-#                             name and tag regardless of this value
+#   cloud_template_vmid     — vmid to BUILD the template at when none exists yet. Optional:
+#                             when it is not given, a free vmid inside
+#                             cloud_template_vmid_range is chosen on the target node. An
+#                             already-built template is found by name and tag regardless of
+#                             this value
+#   cloud_template_vmid_range — [first, last] slots the automatic choice may use
+#                             (default [9000, 9099])
 #   cloud_template_name     — template name other tasks clone by (default debian-12-cloud)
 #   cloud_template_image_url— cloud image to build from (default Debian 12 genericcloud)
+#   cloud_template_image_id — declared image identity; changing it replaces the template.
+#                             Defaults to the basename of cloud_template_image_url, so a
+#                             pinned snapshot URL carries its own identity and no second
+#                             value has to be kept in step
 #   cloud_template_storage  — storage for the imported disk; defaults to the lab-wide
 #                             homelabinfra_config.proxmox.storage, written by bootstrap
 #   cloud_template_bridge   — bridge for net0 (default vmbr0)
@@ -36,7 +65,7 @@
 #   homelabinfra_config.ansible.ssh_public_key
 #
 # Output:
-#   homelabinfra_cloud_template.{vmid,name,created}
+#   homelabinfra_cloud_template.{vmid,name,image_id,created,replaced}
 
 # Node names are not resolvable on their own — see the file's header. Every delegate_to
 # below depends on this having run.
@@ -45,7 +74,11 @@
 
 - name: Cloud template | Set build facts
   ansible.builtin.set_fact:
-    _ct_vmid: "{{ cloud_template_vmid | default(9000) | int }}"
+    # Empty means "choose one" — see the header. `default(x, true)` so an empty string
+    # handed down from a config default counts as absent rather than as a vmid.
+    _ct_declared_vmid: "{{ cloud_template_vmid | default('', true) }}"
+    _ct_vmid_range: "{{ cloud_template_vmid_range | default([9000, 9099]) }}"
+    _ct_adopted: false
     _ct_name: "{{ cloud_template_name | default('debian-12-cloud') }}"
     _ct_url: >-
       {{ cloud_template_image_url
@@ -56,6 +89,13 @@
     _ct_bridge: "{{ cloud_template_bridge | default('vmbr0') }}"
     _ct_cache_dir: /var/lib/vz/template/cache
     _ct_facet_tag: role_template
+    _ct_owner_tag: homelab-infra
+
+# Split from the block above because it reads _ct_url, which is not yet defined while that
+# same set_fact is still being evaluated.
+- name: Cloud template | Derive the declared image identity
+  ansible.builtin.set_fact:
+    _ct_image_id: "{{ cloud_template_image_id | default(_ct_url | basename, true) }}"
 
 - name: Cloud template | Assert required inputs
   ansible.builtin.assert:
@@ -80,9 +120,12 @@
 #
 # `min` rather than `first`: identical templates on a node are pathological, but picking
 # deterministically keeps a run from cloning a different one each time.
+#
+# Every guest, not just VMs: a Proxmox vmid is unique across the cluster and across guest
+# types, so the free-slot search below has to see containers too.
 - name: Cloud template | Look for a template this platform already built
   ansible.builtin.command:
-    cmd: pvesh get /cluster/resources --type vm --output-format json
+    cmd: pvesh get /cluster/resources --output-format json
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _ct_resources
   changed_when: false
@@ -90,11 +133,14 @@
 - name: Cloud template | Adopt the vmid of the template we already built
   ansible.builtin.set_fact:
     _ct_vmid: "{{ _ct_discovered | map('int') | min }}"
+    _ct_adopted: true
   vars:
     # `tags` is absent from the resource entry when a guest carries none, so it is filtered
     # for definedness before the tag match.
     _ct_discovered: >-
       {{ (_ct_resources.stdout | from_json)
+         | selectattr('vmid', 'defined')
+         | selectattr('node', 'defined')
          | selectattr('node', 'eq', homelabinfra_config.proxmox.node)
          | selectattr('template', 'defined')
          | selectattr('template', 'eq', 1)
@@ -104,6 +150,47 @@
          | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
          | map(attribute='vmid') | list }}
   when: _ct_discovered | length > 0
+
+# Nothing was adopted, so this run may have to build. Which slot it builds in is decided
+# here rather than by the caller. The earlier design required the caller to name a vmid and
+# failed rather than choose one, on the reasoning that an automatic choice would scatter a
+# new template per run. That reasoning depended on discovery being unreliable; it is not —
+# the adopt task above matches on name plus this platform's tag on the target node, so a
+# second run finds what the first one built and never reaches this task. What the old rule
+# actually produced was a per-node vmid hand-maintained in the k3s node declarations, and a
+# PBS default of 9000 that collides with the conventional hand-built template slot on any
+# lab that already has one. An explicit cloud_template_vmid still wins where an operator
+# wants a particular slot.
+- name: Cloud template | Use the vmid the caller asked for
+  ansible.builtin.set_fact:
+    _ct_vmid: "{{ _ct_declared_vmid | int }}"
+  when:
+    - not _ct_adopted
+    - _ct_declared_vmid | string | length > 0
+
+- name: Cloud template | Choose a free vmid to build the template at
+  ansible.builtin.set_fact:
+    _ct_vmid: "{{ _ct_free | first }}"
+  vars:
+    _ct_used: >-
+      {{ (_ct_resources.stdout | from_json)
+         | selectattr('vmid', 'defined') | map(attribute='vmid') | map('int') | list }}
+    _ct_free: >-
+      {{ range(_ct_vmid_range[0] | int, (_ct_vmid_range[1] | int) + 1)
+         | difference(_ct_used) | list }}
+  when:
+    - not _ct_adopted
+    - _ct_declared_vmid | string | length == 0
+    - _ct_free | length > 0
+
+- name: Cloud template | Refuse to build without a slot to build in
+  ansible.builtin.assert:
+    that: _ct_vmid is defined
+    fail_msg: >-
+      No free vmid between {{ _ct_vmid_range[0] }} and {{ _ct_vmid_range[1] }} is available
+      for the cloud-init template '{{ _ct_name }}' on node
+      {{ homelabinfra_config.proxmox.node }}. Widen proxmox.cloud_template.vmid_range or
+      free a slot.
 
 - name: Cloud template | Check whether the template already exists
   ansible.builtin.command:
@@ -121,9 +208,10 @@
 # exist, while adopting a guest this repo did not create — against the philosophy that
 # homelab-infra manages only what it creates.
 #
-# So the guard is on the name. Failing is deliberate rather than silently choosing a free
-# vmid: which slot holds the template is a fact about the lab that has to stay stable across
-# runs, and picking one automatically would scatter a new template per run.
+# So the guard is on the name, and it still matters even though the slot is now chosen
+# automatically: an operator who names a vmid explicitly can name an occupied one, and the
+# run has to stop rather than adopt what is sitting there. The automatic choice cannot reach
+# this assert, because it only ever picks a vmid no guest in the cluster holds.
 - name: Cloud template | Assert the existing VM at this vmid is our template
   ansible.builtin.assert:
     that: _ct_existing.stdout is search('^name:\s*' ~ (_ct_name | regex_escape) ~ '\s*$', multiline=True)
@@ -135,10 +223,11 @@
       proxmox.cloud_template.vmid in config/apps/<instance>.yml.
   when: _ct_existing.rc == 0
 
-# Every lab that already has a template built one before the facet tag existed, and the build
-# block below never runs for those — discovery adopts them and stops. Without this the tag
-# would only ever reach a lab that deletes its template to force a rebuild, which is nobody's
-# plan, and the live lab's template would stay indistinguishable from a guest in the Proxmox UI.
+# Every lab that already has a template built one before the facet tag existed, and an adopted
+# template whose image identity still matches never reaches the build block. Without this the
+# tag would only ever reach a lab that rebuilds, and the live lab's template would stay
+# indistinguishable from a guest in the Proxmox UI. Skipped when this run is about to replace
+# the template anyway — the rebuild writes both tags itself.
 #
 # Read-modify-write on the guest's own tag list, the same discipline as
 # files/proxmox/guest-app-record.py: a hand-applied tag survives, and a template that already
@@ -155,6 +244,56 @@
          | split(';') | map('trim') | reject('equalto', '') | list }}
   when: _ct_existing.rc == 0
 
+# The stamp is a single line inside the description, deliberately: `qm config` prints a
+# multi-line description with escapes, and a value that has to be parsed back out of that is
+# a value that will eventually be parsed wrong. One line, one regex, no ambiguity.
+#
+# A template with no stamp is every template built before this rule existed. Its real image
+# is unknowable — the live lab's three were built from the moving `latest` URL seventeen days
+# apart — so it does not match the declared identity and is replaced once. That is the
+# intended outcome, not a casualty of it: the point of the stamp is that a node's template is
+# a known image rather than whatever `latest` happened to be on the day it was built.
+- name: Cloud template | Read the image identity stamped on the existing template
+  ansible.builtin.set_fact:
+    _ct_stamped_image_id: >-
+      {{ (_ct_existing.stdout | regex_findall('homelab-infra-image=([^\s,)]+)')
+          | first | default('', true)) }}
+  when: _ct_existing.rc == 0
+
+# Only a template this platform owns may be replaced. The name assert above already refused a
+# foreign guest at this vmid, but ownership is carried by the tag, and destroying a guest is
+# the one action here that must not rest on a name match alone.
+- name: Cloud template | Decide whether the template has to be replaced
+  ansible.builtin.set_fact:
+    _ct_replace: >-
+      {{ _ct_existing.rc == 0
+         and _ct_owner_tag in (_ct_current_tags | default([]))
+         and (_ct_stamped_image_id | default('', true)) != _ct_image_id }}
+
+- name: Cloud template | Report the replacement before making it
+  ansible.builtin.debug:
+    msg: >-
+      Replacing template {{ _ct_name }} (vmid {{ _ct_vmid }}) on
+      {{ homelabinfra_config.proxmox.node }}: it was built from
+      {{ _ct_stamped_image_id if (_ct_stamped_image_id | default('', true) | length > 0)
+         else 'an unrecorded image' }},
+      and the declared image is now {{ _ct_image_id }}.
+  when: _ct_replace | bool
+
+# `--purge` clears the vmid out of backup jobs and HA resources too, so the rebuild at the
+# same vmid does not inherit references to the guest that used to be there.
+- name: Cloud template | Remove the superseded template
+  ansible.builtin.command:
+    argv:
+      - qm
+      - destroy
+      - "{{ _ct_vmid }}"
+      - --purge
+      - "1"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  when: _ct_replace | bool
+
 - name: Cloud template | Add the facet tag to a template built before it existed
   ansible.builtin.command:
     argv:
@@ -167,10 +306,11 @@
   changed_when: true
   when:
     - _ct_existing.rc == 0
+    - not (_ct_replace | bool)
     - _ct_facet_tag not in _ct_current_tags
 
 - name: Cloud template | Build the template
-  when: _ct_existing.rc != 0
+  when: _ct_existing.rc != 0 or (_ct_replace | bool)
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   block:
     - name: Cloud template | Ensure the image cache directory exists
@@ -219,8 +359,14 @@
           # see the file header.
           - --tags
           - "homelab-infra;{{ _ct_facet_tag }}"
+          # The stamp the replacement rule reads back. `homelab-infra-image=` rather than
+          # `image:` so the marker cannot be confused with anything an operator writes, and
+          # so a description edited by hand keeps working as long as this token survives.
           - --description
-          - "Debian cloud-init template built by homelab-infra. Delete this VM to force a rebuild."
+          - >-
+            Debian cloud-init template built by homelab-infra
+            (homelab-infra-image={{ _ct_image_id }}).
+            Delete this VM, or change the declared image, to force a rebuild.
       changed_when: true
 
     # PVE 8+ imports straight into a disk slot; no separate `qm importdisk` step.
@@ -279,4 +425,6 @@
     homelabinfra_cloud_template:
       vmid: "{{ _ct_vmid | int }}"
       name: "{{ _ct_name }}"
-      created: "{{ _ct_existing.rc != 0 }}"
+      image_id: "{{ _ct_image_id }}"
+      created: "{{ _ct_existing.rc != 0 or (_ct_replace | bool) }}"
+      replaced: "{{ _ct_replace | bool }}"

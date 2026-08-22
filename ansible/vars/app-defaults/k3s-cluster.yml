@@ -9,6 +9,12 @@
 #
 # WHY THE NODE LIST IS EXPLICIT AND STATIC
 #
+# Nodes carry no template_vmid. Each Proxmox node does need its own copy of the
+# cloud-init template — Proxmox will not clone across non-shared storage — but which vmid
+# holds it is not a decision worth asking an operator to make and then keep in step with
+# reality. tasks/proxmox/ensure-cloud-template.yml adopts the template this platform
+# already built on the target node, and otherwise picks a free slot in 9000-9099.
+#
 # Every other guest in this repo takes its address from tasks/network/generate-ip.yml
 # and its VMID from that address. Cluster members cannot: etcd peers identify each
 # other by address, a node that comes back on a different IP is a new member and not a
@@ -58,10 +64,6 @@ k3s_cluster_defaults:
         # asserted on every re-run.
         taints:
           - "homelab-infra.io/quorum-only=true:NoSchedule"
-        # Distinct per node: a Proxmox VMID is cluster-wide unique and each node needs
-        # its own local copy of the cloud-init template (friends-pool is a local pool
-        # per node, not shared storage, so a template cannot be cloned across nodes).
-        template_vmid: 9002
 
       - name: k3s-2
         proxmox_node: pve-host-2
@@ -70,7 +72,6 @@ k3s_cluster_defaults:
         memory: 16384
         disk_size: 100
         taints: []
-        template_vmid: 9003
 
       - name: k3s-3
         proxmox_node: pve-host-3
@@ -79,8 +80,6 @@ k3s_cluster_defaults:
         memory: 12288
         disk_size: 60
         taints: []
-        # pve-host-3 already carries the template this repo built for PBS.
-        template_vmid: 9001
 
   # ── Ingress ─────────────────────────────────────────────────────────────────
   ingress:
@@ -205,9 +204,26 @@ k3s_cluster_defaults:
       tags:
         - homelab-infra
         - k3s
+    # The cloud-init template every VM clones from. One per Proxmox node — Proxmox
+    # refuses to clone across non-shared storage — and each node keeps exactly one:
+    # changing image_url below replaces the node's template in place rather than adding
+    # a second one beside it.
+    #
+    # PINNED, not `latest`. The three templates in the live lab were built from `latest`
+    # seventeen days apart and were therefore three different images, which is invisible
+    # until a cluster node behaves unlike its peers. A dated snapshot is the identity the
+    # template is stamped with, so `bump this URL` is the entire update gesture.
+    #
+    # Debian prunes old snapshot directories after a few weeks. When this URL 404s, pick
+    # the newest directory from https://cloud.debian.org/images/cloud/bookworm/ and put it
+    # here; the next deploy rebuilds each node's template from it.
+    #
+    # vmid is deliberately absent: a free slot in 9000-9099 is chosen on the target node,
+    # and a template this platform already built is adopted wherever it sits. Set
+    # `vmid:` only to demand a particular slot.
     cloud_template:
       name: debian-12-cloud
-      image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   # ── Routing ─────────────────────────────────────────────────────────────────
   # The cluster itself publishes nothing. The Kubernetes API, the node addresses and

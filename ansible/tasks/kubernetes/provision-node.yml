@@ -14,7 +14,7 @@
 #
 # Inputs:
 #   k8s_node            — one entry from cluster.nodes: name, proxmox_node, ip_address,
-#                         cores, memory, disk_size, template_vmid
+#                         cores, memory, disk_size (template_vmid optional)
 #   k8s_cluster_config  — the merged k3s-cluster config (proxmox.*, cluster.*)
 #
 # Mutates:
@@ -30,10 +30,9 @@
       - k8s_node.proxmox_node is defined and k8s_node.proxmox_node | length > 0
       - k8s_node.ip_address is defined
       - k8s_node.ip_address | ansible.utils.ipaddr('address')
-      - k8s_node.template_vmid is defined
     fail_msg: >-
-      Every entry in cluster.nodes needs name, proxmox_node, a literal ip_address and
-      template_vmid. Cluster members cannot take a generated or DHCP address — etcd
+      Every entry in cluster.nodes needs name, proxmox_node and a literal ip_address.
+      Cluster members cannot take a generated or DHCP address — etcd
       peers identify each other by address, so a node that returns on a different one
       is a new member rather than a recovered one.
 
@@ -89,14 +88,21 @@
   ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
 
 # Built per node, not once. friends-pool is a local ZFS pool on each Proxmox node
-# rather than shared storage, so a template on one node cannot be cloned onto another.
+# rather than shared storage, so a template on one node cannot be cloned onto another —
+# Proxmox refuses `qm clone --target` outright in that case.
+#
 # ensure-cloud-template.yml adopts an existing tagged template of the right name on the
 # target node, so this is a no-op everywhere it has already run — including pve-host-3,
-# whose template PBS built.
+# whose template PBS built. It picks a free vmid itself when there is nothing to adopt;
+# a node declaration only carries template_vmid when the operator wants a specific slot.
+#
+# This is the job that exercises the template path. apps/pbs.yml calls the same file from
+# inside its `no existing host` provisioning branch, so a converge onto an existing PBS VM
+# never reaches it, and only ever touches one node's template in any case.
 - name: k3s node | Ensure this Proxmox node has the cloud-init template
   ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
   vars:
-    cloud_template_vmid: "{{ k8s_node.template_vmid }}"
+    cloud_template_vmid: "{{ k8s_node.template_vmid | default('', true) }}"
     cloud_template_name: "{{ k8s_cluster_config.proxmox.cloud_template.name }}"
     cloud_template_image_url: "{{ k8s_cluster_config.proxmox.cloud_template.image_url }}"
     cloud_template_storage: "{{ k8s_cluster_config.proxmox.storage }}"

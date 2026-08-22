@@ -101,7 +101,7 @@
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
           vars:
-            cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid }}"
+            cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
             cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
             cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
             cloud_template_storage: "{{ app_config.proxmox.cloud_template.storage }}"
