@@ -1,6 +1,6 @@
 # 602 — Rundeck job tree
 
-**Status:** built
+**Status:** done
 **Subject:** Rundeck job tree
 **Related:** 601 (the job definitions this reshapes), 408 (the application catalog that
 feeds the selectable set), 600 (Semaphore, no-target — not kept in parity)
@@ -25,8 +25,9 @@ or reimport. Job names, UUIDs, steps, options, schedules, and playbooks are unch
       or a stale projected `group:` before importing any job.
 - [x] built 2026-08-23 — `AGENTS.md`, `rundeck/README.md`, and the architecture map describe
       the same tree and ownership boundary.
-- [ ] Run **Reimport Jobs** against the live project and confirm `39 succeeded, 0 failed`,
-      no duplicate UUID, the weekly update schedule preserved, and no old flat group left.
+- [x] observed 2026-08-23 — **Reimport Jobs** execution 280 ran revision `2522869`,
+      reported `39 imported, 0 failed`, retained 39 unique UUIDs, left only the five new
+      roots, and preserved **Check Native App Updates** at Monday 06:00.
 
 ## Links
 

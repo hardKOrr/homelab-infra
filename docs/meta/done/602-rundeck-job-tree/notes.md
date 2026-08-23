@@ -184,3 +184,19 @@ are the normal observation surfaces; PBS owns backup inventory; Watchtower and
 unattended-upgrades own routine updates. A later Ntfy action may enter Rundeck contextually
 without moving the execution implementation out of Rundeck. `Wire Media Stack` remains under
 the neutral `Manage/Integrations` group; generalizing that implementation is separate work.
+
+## 2026-08-23 — live import, execution 280
+
+The runner began at revision `083023c` with **Reimport Jobs** still in `Config`. Execution
+280 refreshed the checkout to `2522869`, ran the new complete-tree preflight, and imported
+all 39 source jobs with zero failures. The REST readback then reported:
+
+- 39 jobs and 39 unique UUIDs;
+- roots `Applications`, `Manage`, `Platform`, `Recover`, and `Setup`;
+- zero remaining `Apps`, `Bootstrap`, `Config`, or `Maintenance` roots;
+- **Reimport Jobs** under `Setup/Automation`;
+- **Check Native App Updates** under `Manage/Applications/Updates`, still schedule-enabled
+  for Monday at 06:00.
+
+The runner checkout also read back as the full `2522869e43972c0ab11ee544c3b24bb0986c2b59`.
+No rollback was needed. This is the live acceptance that closes the slice.
