@@ -10,14 +10,15 @@
 # job is that path once the bootstrap script has run.
 #
 # Job UUIDs in the repo are stable, so this updates jobs in place rather than duplicating
-# them. Jobs deleted from the repo are NOT removed here; delete those in the UI.
+# them. UUIDs listed in rundeck/retired-jobs.yml are then deleted; any failed deletion
+# fails this job so the UI cannot remain wrong behind a green execution.
 
 - id: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
   uuid: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
   name: Reimport Jobs
   group: Setup/Automation
   description: |-
-    Pull the latest job definitions out of the repo and import them into this project. Run it after a change to rundeck/jobs/*.yaml reaches the tracked branch — a new job, a new option, a changed description. Playbook changes do NOT need this: every job refreshes the checkout before it runs. Updates jobs in place by UUID and never duplicates them; jobs removed from the repo stay until you delete them in the UI.
+    Pull the latest job definitions out of the repo and import them into this project. Run it after a change to rundeck/jobs/*.yaml reaches the tracked branch — a new job, a new option, a changed description. Playbook changes do NOT need this: every job refreshes the checkout before it runs. Updates jobs in place by UUID and never duplicates them; jobs listed in rundeck/retired-jobs.yml are removed, and any failed removal makes this job fail.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -72,7 +73,7 @@
           # repository has withdrawn, and deleting them here is what makes a reorganization
           # in the repo look the same in the UI. A UUID that is already gone is not an
           # error.
-          retired=0
+          retired=0; retire_failed=0
           while read -r uuid; do
             [ -n "$uuid" ] || continue
             code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 -X DELETE \
@@ -81,9 +82,10 @@
             case "$code" in
               204) retired=$((retired + 1)); echo "[reimport] retired $uuid" ;;
               404) : ;;
-              *)   echo "[reimport] could not retire $uuid (HTTP $code)" ;;
+              *)   retire_failed=$((retire_failed + 1));
+                   echo "[reimport] FAILED to retire $uuid (HTTP $code)" ;;
             esac
           done < <("$LAB_VENV/bin/python3" -c "import sys,yaml;print('\n'.join((yaml.safe_load(open(sys.argv[1],encoding='utf-8')) or {}).get('jobs') or {}))" "$LAB_REPO/rundeck/retired-jobs.yml")
-          echo "[reimport] $retired retired job(s) deleted"
+          echo "[reimport] $retired retired job(s) deleted, $retire_failed failed"
 
-          [ "$failed" -eq 0 ]
+          [ "$failed" -eq 0 ] && [ "$retire_failed" -eq 0 ]

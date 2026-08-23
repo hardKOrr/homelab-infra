@@ -331,16 +331,18 @@ fi
 
 # ── Instance lists for the job forms ──────────────────────────────────────────
 # Every generated per-application job offers its instances as a dropdown sourced from
-# these files. Rewriting them here, once per job, is what keeps the lists current without
-# a reimport: a Configure job that creates radarr-4k publishes it to every Radarr job by
-# the time the next one is opened. Best-effort — a lab whose runner has no such directory
-# still runs every job, it just types instance names instead of picking them.
+# these files. Rewriting them before and after Ansible is what keeps the lists current
+# without a reimport: a Configure job publishes the file it just created before it exits,
+# so the next form already contains it. Best-effort — a lab whose runner has no such
+# directory still runs every job, it just types instance names instead of picking them.
 LAB_OPTION_DIR="${LAB_OPTION_DIR:-/var/lib/rundeck/app-instances}"
-if [ "$_lab_configured" = "1" ]; then
+_lab_refresh_instance_lists() {
+  [ "$_lab_configured" = "1" ] || return 0
   "$LAB_VENV/bin/python3" "$LAB_REPO/ansible/scripts/app-instances.py" \
     --repo "$LAB_REPO" --out "$LAB_OPTION_DIR" \
     || log "instance lists not refreshed — the job forms fall back to typed names"
-fi
+}
+_lab_refresh_instance_lists
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 playbook="$1"; shift
@@ -351,9 +353,16 @@ log "ansible-playbook $playbook $*"
 # doctor: it reaches no Proxmox API and cannot resolve a token when the vault is down,
 # which is when it runs. Every other playbook goes through the wrapper, which resolves
 # the connection and fails loudly if it cannot.
+_lab_run_status=0
 if [ "$_lab_recovery" = "1" ]; then
-  "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@"
+  "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@" || _lab_run_status=$?
 else
   bash scripts/with-proxmox-env.sh ../config/proxmox.yml \
-    "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@"
+    "$ANSIBLE_PLAYBOOK" -i inventory/ "$playbook" "$@" || _lab_run_status=$?
 fi
+
+# Configure App writes config/apps/<instance>.yml during the playbook. Refresh again after
+# it returns so the new instance is present when the operator opens the next job form; the
+# pre-run refresh alone was necessarily one execution behind.
+_lab_refresh_instance_lists
+exit "$_lab_run_status"

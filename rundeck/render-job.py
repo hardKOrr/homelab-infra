@@ -20,6 +20,7 @@ like a single-job one.
 from __future__ import annotations
 
 import copy
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -33,7 +34,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 APPLICATION_CATALOG = REPO_ROOT / "catalog" / "applications.yml"
 JOB_GROUPS = REPO_ROOT / "rundeck" / "job-groups.yml"
 APP_ACTIONS = REPO_ROOT / "rundeck" / "app-actions.yml"
+RETIRED_JOBS = REPO_ROOT / "rundeck" / "retired-jobs.yml"
 APP_DEFAULTS = REPO_ROOT / "ansible" / "vars" / "app-defaults"
+INFRASTRUCTURE_CONFIG = REPO_ROOT / "config" / "infrastructure.yml"
 
 # Placeholders a template must carry, so a template can never be mistaken for a job and
 # imported as itself.
@@ -121,6 +124,89 @@ def hosting_of(slug: str) -> tuple[str, str]:
     return hosting, str(stack)
 
 
+def estate_context() -> dict:
+    """Return the authored estate names and the one unambiguous default.
+
+    A single-estate checkout keeps the historical `<app>` default. Once `domains:` has
+    two or more entries, declaration order is not identity: exactly one entry must say
+    `default: true`, and estate-scoped applications default to `<app>-<estate>`.
+    """
+    if not INFRASTRUCTURE_CONFIG.is_file():
+        return {"names": [], "default": "", "multiple": False}
+    with INFRASTRUCTURE_CONFIG.open(encoding="utf-8") as handle:
+        document = yaml.safe_load(handle) or {}
+    domains = document.get("domains") or {}
+    if not isinstance(domains, dict):
+        raise ValueError(f"{INFRASTRUCTURE_CONFIG}: domains must be a mapping")
+    names = list(domains)
+    invalid = [
+        name for name in names
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name)
+    ]
+    if invalid:
+        raise ValueError(
+            f"{INFRASTRUCTURE_CONFIG}: estate names must use lowercase letters, digits and hyphens"
+        )
+    if len(names) < 2:
+        return {
+            "names": names,
+            "default": names[0] if names else "",
+            "multiple": False,
+        }
+    defaults = [
+        name for name, value in domains.items()
+        if isinstance(value, dict) and value.get("default") is True
+    ]
+    if len(defaults) != 1:
+        raise ValueError(
+            f"{INFRASTRUCTURE_CONFIG}: a multi-estate domains map must declare exactly one"
+            " default: true"
+        )
+    return {"names": names, "default": defaults[0], "multiple": True}
+
+
+def default_instance(app: dict, estates: dict) -> str:
+    """The one-click default, with explicit identity in a multi-estate lab."""
+    slug = app["slug"]
+    if app["scope"] != "estate" or not estates["multiple"]:
+        return slug
+    return f"{slug}-{estates['default']}"
+
+
+def set_application_options(job: dict, app: dict, estates: dict) -> None:
+    """Attach the live instance provider and estate-aware defaults to one app job."""
+    options = job.get("options") or []
+    instance_option = next((option for option in options if option.get("name") == "instance"), None)
+    if instance_option is not None:
+        instance_option["value"] = default_instance(app, estates)
+        instance_option["valuesUrl"] = (
+            f"file:/var/lib/rundeck/app-instances/{app['slug']}.json"
+        )
+        instance_option["enforced"] = False
+        if app["scope"] == "estate" and estates["multiple"]:
+            instance_option["description"] = (
+                str(instance_option.get("description") or "").rstrip()
+                + f" Multi-estate names use {app['slug']}-<estate>[-<variant>];"
+                  " the dropdown label also names the estate."
+            )
+
+    # Configure is the audited path that creates the instance file. In a multi-estate
+    # lab, make the estate explicit there so a new `<app>-<estate>` name and its authored
+    # routing.estate cannot silently disagree.
+    if job.get("name") == f"Configure {app['name']}":
+        if app["scope"] == "lab":
+            job["options"] = [option for option in options if option.get("name") != "estate"]
+        elif estates["multiple"]:
+            estate_option = next(
+                (option for option in options if option.get("name") == "estate"), None
+            )
+            if estate_option is not None:
+                estate_option["required"] = True
+                estate_option["value"] = estates["default"]
+                estate_option["valuesUrl"] = "file:/var/lib/rundeck/app-instances/estates.json"
+                estate_option["enforced"] = True
+
+
 def load_applications() -> dict[str, dict]:
     applications = load_document(APPLICATION_CATALOG, "applications", version=2)
     resolved: dict[str, dict] = {}
@@ -163,8 +249,14 @@ def load_applications() -> dict[str, dict]:
             "stack": stack,
             "essential": bool(entry.get("essential")),
             "extra": list(entry.get("extra") or []),
+            "exclude": list(entry.get("exclude") or []),
+            "scope": entry.get("scope") or "lab",
             "actions": entry.get("actions"),
         }
+        if resolved[slug]["scope"] not in {"lab", "estate"}:
+            raise ValueError(
+                f"{APPLICATION_CATALOG}: applications.{slug}.scope must be lab or estate"
+            )
     return resolved
 
 
@@ -201,7 +293,8 @@ def actions_for(app: dict, actions: dict[str, dict]) -> list[str]:
             and not (action["essential_excluded"] and app["essential"])
         ]
         selected += [name for name in app["extra"] if name not in selected]
-    unknown = [name for name in selected if name not in actions]
+        selected = [name for name in selected if name not in app["exclude"]]
+    unknown = [name for name in selected + app["exclude"] if name not in actions]
     if unknown:
         raise ValueError(f"{APPLICATION_CATALOG}: {app['slug']} names unknown action(s) {unknown}")
     return sorted(selected)
@@ -223,6 +316,7 @@ def substitute(node, values: dict[str, str]):
 def expand_template(template: list[dict], action: str, applications: dict[str, dict],
                     actions: dict[str, dict]) -> list[dict]:
     jobs: list[dict] = []
+    estates = estate_context()
     for slug in sorted(applications):
         app = applications[slug]
         if action not in actions_for(app, actions):
@@ -231,11 +325,13 @@ def expand_template(template: list[dict], action: str, applications: dict[str, d
             "%SLUG%": app["slug"],
             "%NAME%": app["name"],
             "%STACK%": app["stack"],
+            "%SCOPE%": app["scope"],
         })
         job["group"] = f"{app['group']}/Maintenance"
         identity = str(uuid.uuid5(UUID_NAMESPACE, f"rundeck/app-action/{action}/{slug}"))
         job["id"] = identity
         job["uuid"] = identity
+        set_application_options(job, app, estates)
         jobs.append(job)
     return jobs
 
@@ -246,6 +342,20 @@ def load_job(path: Path) -> list[dict]:
     if not isinstance(jobs, list) or len(jobs) != 1 or not isinstance(jobs[0], dict):
         raise ValueError(f"{path}: Rundeck job document must contain exactly one job")
     return jobs
+
+
+def load_retired_jobs() -> dict[str, str]:
+    retired = load_document(RETIRED_JOBS, "jobs")
+    for identity, name in retired.items():
+        try:
+            parsed = str(uuid.UUID(str(identity)))
+        except ValueError as error:
+            raise ValueError(f"{RETIRED_JOBS}: {identity!r} is not a UUID") from error
+        if parsed != identity or not isinstance(name, str) or not name:
+            raise ValueError(
+                f"{RETIRED_JOBS}: retired job UUIDs and names must be canonical non-empty strings"
+            )
+    return retired
 
 
 def classify() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
@@ -330,19 +440,29 @@ def check_tree(job_directory: Path) -> None:
                 )
             identities[identity] = f"{filename}:{job.get('name')}"
 
+    collisions = sorted(set(identities) & set(load_retired_jobs()))
+    if collisions:
+        raise ValueError(
+            f"{RETIRED_JOBS}: active job UUID(s) are also retired: {', '.join(collisions)}"
+        )
+
 
 def render(job_path: Path) -> list[dict]:
     groups, _, templates = classify()
     jobs = load_job(job_path)
+    applications = load_applications()
 
     if job_path.name in templates:
-        jobs = expand_template(jobs, templates[job_path.name], load_applications(), load_actions())
+        jobs = expand_template(jobs, templates[job_path.name], applications, load_actions())
     else:
         if job_path.name not in groups:
             raise ValueError(f"{job_path.name}: job is not classified")
         # Group is a projection of the repository-owned classifications. The source value
         # remains for reviewability and --check rejects drift.
         jobs[0]["group"] = groups[job_path.name]
+        app = next((item for item in applications.values() if item["job"] == job_path.name), None)
+        if app is not None:
+            set_application_options(jobs[0], app, estate_context())
 
     for job in jobs:
         scripts = "\n".join(

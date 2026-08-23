@@ -29,6 +29,75 @@ spec = importlib.util.spec_from_file_location("render_job", repo / "rundeck" / "
 render_job = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(render_job)
 
+# Multi-estate rendering has no fixture in the gitignored config/ tree. Supply one here so
+# the default instance, explicit estate choice and rollback exclusions stay regression-tested.
+multi_estate = work / "infrastructure.yml"
+multi_estate.write_text(
+    "domains:\n"
+    "  personal:\n"
+    "    domain: personal.example.test\n"
+    "    default: true\n"
+    "  foxglove:\n"
+    "    domain: foxglove.example.test\n",
+    encoding="utf-8",
+)
+render_job.INFRASTRUCTURE_CONFIG = multi_estate
+
+deploy_radarr = render_job.render(repo / "rundeck" / "jobs" / "deploy-radarr.yaml")[0]
+radarr_instance = next(option for option in deploy_radarr["options"] if option["name"] == "instance")
+assert radarr_instance["value"] == "radarr-personal"
+assert radarr_instance["valuesUrl"].endswith("/radarr.json")
+
+configure_radarr = next(
+    job for job in render_job.render(repo / "rundeck" / "jobs" / "configure-app.yaml")
+    if job["name"] == "Configure Radarr"
+)
+estate_option = next(option for option in configure_radarr["options"] if option["name"] == "estate")
+assert estate_option["required"] is True
+assert estate_option["value"] == "personal"
+assert estate_option["enforced"] is True
+
+configure_caddy = next(
+    job for job in render_job.render(repo / "rundeck" / "jobs" / "configure-app.yaml")
+    if job["name"] == "Configure Caddy"
+)
+assert all(option["name"] != "estate" for option in configure_caddy["options"])
+
+rollback_names = {
+    job["name"] for job in render_job.render(repo / "rundeck" / "jobs" / "rollback-container.yaml")
+}
+assert "Rollback Radarr" in rollback_names
+assert "Rollback Authentik" not in rollback_names
+assert "Rollback Observability" not in rollback_names
+rollback_radarr = next(
+    job for job in render_job.render(repo / "rundeck" / "jobs" / "rollback-container.yaml")
+    if job["name"] == "Rollback Radarr"
+)
+rollback_script = rollback_radarr["sequence"]["commands"][0]["script"]
+assert 'app=radarr' in rollback_script and 'stack=' not in rollback_script
+
+multi_estate.write_text(
+    "domains:\n"
+    "  personal: {domain: personal.example.test}\n"
+    "  foxglove: {domain: foxglove.example.test}\n",
+    encoding="utf-8",
+)
+try:
+    render_job.estate_context()
+except ValueError as error:
+    assert "exactly one default: true" in str(error)
+else:
+    raise AssertionError("multi-estate rendering accepted an order-dependent default")
+multi_estate.write_text(
+    "domains:\n"
+    "  personal:\n"
+    "    domain: personal.example.test\n"
+    "    default: true\n"
+    "  foxglove:\n"
+    "    domain: foxglove.example.test\n",
+    encoding="utf-8",
+)
+
 failures = []
 for path in sorted((repo / "rundeck" / "jobs").glob("*.yaml")):
     for job in render_job.render(path):
@@ -52,6 +121,65 @@ if failures:
     print("\n".join(f"ERROR: {failure}" for failure in failures), file=sys.stderr)
     sys.exit(1)
 PY
+
+# The option publisher must label every estate and reject an unnamed estate-scoped instance.
+"$python" - "$repo" "$work" <<'PY'
+import importlib.util, pathlib, sys, yaml
+
+repo, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "app_instances", repo / "ansible" / "scripts" / "app-instances.py"
+)
+app_instances = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(app_instances)
+
+applications = app_instances.load_applications(repo / "catalog" / "applications.yml")
+estates = app_instances.load_estates(work / "infrastructure.yml")
+fixture = work / "fixture"
+(fixture / "config" / "apps").mkdir(parents=True)
+(fixture / "config" / "apps" / "radarr-personal.yml").write_text(
+    "routing:\n  estate: personal\n", encoding="utf-8"
+)
+(fixture / "config" / "apps" / "radarr-foxglove-4k.yml").write_text(
+    "routing:\n  estate: foxglove\n", encoding="utf-8"
+)
+instances, unmatched, invalid = app_instances.collect(fixture, applications, estates)
+assert not unmatched and not invalid
+assert {entry["value"] for entry in instances["radarr"]} == {
+    "radarr-personal", "radarr-foxglove-4k"
+}
+assert {entry["name"] for entry in instances["radarr"]} == {
+    "radarr-personal — personal", "radarr-foxglove-4k — foxglove"
+}
+
+(fixture / "config" / "apps" / "radarr.yml").write_text("{}\n", encoding="utf-8")
+_, _, invalid = app_instances.collect(fixture, applications, estates)
+assert invalid and "radarr-personal" in invalid[0]
+PY
+
+# Config validation must reject an order-dependent default before any job can run.
+mkdir -p "$work/doctor/apps"
+cp "$repo/config.example/proxmox.yml" "$work/doctor/proxmox.yml"
+"$python" - "$work/doctor/infrastructure.yml" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(
+    "domains:\n"
+    "  personal: {domain: personal.example.test}\n"
+    "  foxglove: {domain: foxglove.example.test}\n"
+    "reverse_proxy: {provider: none}\n"
+    "sso: {provider: none}\n"
+    "notifications: {provider: none}\n"
+    "dns: {provider: none}\n"
+    "backups: {datastore_path: /backup}\n",
+    encoding="utf-8",
+)
+PY
+if doctor_output="$(PROXMOX_API_TOKEN=test VAULTWARDEN_ADMIN_TOKEN=test \
+    bash "$repo/ansible/scripts/config-doctor.sh" "$work/doctor" 2>&1)"; then
+    echo "ERROR: config-doctor accepted a multi-estate map with no explicit default" >&2
+    exit 1
+fi
+grep -q "multi-estate map must declare exactly one default: true" <<<"$doctor_output"
 
 # The instance lists the generated job forms read must be produced from the same catalog.
 "$python" "$repo/ansible/scripts/app-instances.py" --repo "$repo" --out "$work/instances"

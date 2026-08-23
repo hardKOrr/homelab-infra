@@ -65,15 +65,26 @@
 
 - name: Resolve estate | Compute estate names
   ansible.builtin.set_fact:
-    _estate_domains: "{{ _estate_infra_cfg.domains | default({}) }}"
-    # Default estate: the entry with `default: true`, else the first declared entry,
-    # else '' (no domains map — the implicit single estate).
+    _estate_domains: "{{ (_estate_infra_cfg | default({})).domains | default({}) }}"
+    _estate_defaults: >-
+      {{ (_estate_infra_cfg | default({})).domains | default({}) | dict2items
+         | selectattr('value.default', 'defined')
+         | selectattr('value.default')
+         | map(attribute='key') | list }}
+
+- name: Resolve estate | Require one explicit multi-estate default
+  ansible.builtin.assert:
+    that: _estate_defaults | length == 1
+    fail_msg: >-
+      A multi-estate infrastructure.yml must declare exactly one domains.<estate>.default:
+      true. Declaration order does not decide the default estate.
+  when: _estate_domains | length > 1
+
+- name: Resolve estate | Select the default estate
+  ansible.builtin.set_fact:
     _estate_default: >-
-      {{ (_estate_infra_cfg.domains | default({}) | dict2items
-          | selectattr('value.default', 'defined')
-          | selectattr('value.default')
-          | map(attribute='key') | list | first)
-         | default(_estate_infra_cfg.domains | default({}) | list | first | default(''), true) }}
+      {{ (_estate_defaults | first)
+         | default(_estate_domains | list | first | default(''), true) }}
 
 - name: Resolve estate | Select the app's estate
   ansible.builtin.set_fact:

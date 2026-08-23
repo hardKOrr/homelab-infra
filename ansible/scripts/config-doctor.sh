@@ -32,14 +32,16 @@ config_dir="${1:-$(cd -- "$script_dir/../.." && pwd)/config}"
 
 py_bin="$(bash "$script_dir/resolve-python.sh")" || exit 1
 
-exec "$py_bin" - "$config_dir" <<'PY'
+exec "$py_bin" - "$config_dir" "$script_dir/../.." <<'PY'
 import os
+import re
 import sys
 import glob
 
 import yaml
 
 CONFIG_DIR = sys.argv[1]
+REPO_ROOT = os.path.abspath(sys.argv[2])
 PROBLEMS = []          # (severity, file, key path, message)
 
 
@@ -162,6 +164,7 @@ else:
 # ── config/infrastructure.yml ─────────────────────────────────────────────────
 INFRA_FILE = os.path.join(CONFIG_DIR, "infrastructure.yml")
 infra, found = load(INFRA_FILE)
+default_estate = ""
 if not found:
     report("ERROR", "infrastructure.yml", "-",
            "does not exist at %s -- bootstrap-rundeck.sh writes it; "
@@ -181,11 +184,16 @@ else:
             if len(defaults) > 1:
                 report("ERROR", "infrastructure.yml", "domains",
                        "more than one estate declares default: true (%s)" % ", ".join(defaults))
-            if not defaults:
-                report("WARN", "infrastructure.yml", "domains",
-                       "no estate declares default: true -- the first declared entry "
-                       "(%s) will be the default" % next(iter(domains)))
+            if len(domains) > 1 and not defaults:
+                report("ERROR", "infrastructure.yml", "domains",
+                       "a multi-estate map must declare exactly one default: true -- "
+                       "declaration order must not decide which estate is unnamed")
+            default_estate = defaults[0] if defaults else next(iter(domains))
             for name, estate in domains.items():
+                if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+                    report("ERROR", "infrastructure.yml", "domains",
+                           "estate names become instance-name segments -- use lowercase "
+                           "letters, digits and hyphens only (got %r)" % name)
                 if not isinstance(estate, dict) or not estate.get("domain"):
                     report("ERROR", "infrastructure.yml", "domains.%s.domain" % name, "required")
                 # Per-estate DNS selection: the non-secret half of a provider the
@@ -257,6 +265,12 @@ MAPPING_KEYS = ["proxmox", "app", "routing", "update", "resources", "network"]
 
 app_files = sorted(glob.glob(os.path.join(CONFIG_DIR, "apps", "*.yml")))
 estate_names = set((infra.get("domains") or {}).keys()) if isinstance(infra, dict) else set()
+catalog, catalog_found = load(os.path.join(REPO_ROOT, "catalog", "applications.yml"))
+catalog_apps = catalog.get("applications", {}) if catalog_found else {}
+estate_scoped_slugs = sorted(
+    slug for slug, entry in catalog_apps.items()
+    if isinstance(entry, dict) and entry.get("scope") == "estate"
+)
 
 for path in app_files:
     where = "apps/" + os.path.basename(path)
@@ -288,6 +302,22 @@ for path in app_files:
             report("ERROR", where, "routing.estate",
                    "%r is not declared under domains: in infrastructure.yml (have: %s)"
                    % (estate, ", ".join(sorted(estate_names))))
+
+    if len(estate_names) > 1:
+        owner = max(
+            (slug for slug in estate_scoped_slugs
+             if instance == slug or instance.startswith(slug + "-")),
+            key=len,
+            default=None,
+        )
+        if owner:
+            routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
+            selected_estate = routing.get("estate") or default_estate
+            expected = "%s-%s" % (owner, selected_estate)
+            if instance != expected and not instance.startswith(expected + "-"):
+                report("ERROR", where, "-",
+                       "multi-estate instance for estate %s must be named %s[-<variant>]"
+                       % (selected_estate, expected))
 
     if instance != instance.strip() or "/" in instance or " " in instance:
         report("ERROR", where, "-",

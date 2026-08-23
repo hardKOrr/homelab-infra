@@ -66,13 +66,30 @@
   become: false
   no_log: true
 
-# Estate scoping: mirror of tasks/resolve-estate.yml's default-estate rule — the
-# entry with `default: true`, else the first declared entry, else '' (no map).
+# Estate scoping mirrors tasks/resolve-estate.yml: a multi-estate map has one explicit
+# default; a single estate is unambiguous without the marker.
 - name: Generated facts | Load domain declarations
   ansible.builtin.include_vars:
     file: "{{ _generated_facts_file | dirname }}/../infrastructure.yml"
     name: _generated_facts_infra_cfg
   failed_when: false
+
+- name: Generated facts | Compute estate defaults
+  ansible.builtin.set_fact:
+    _gf_domains: "{{ (_generated_facts_infra_cfg | default({})).domains | default({}) }}"
+    _gf_defaults: >-
+      {{ (_generated_facts_infra_cfg | default({})).domains | default({}) | dict2items
+         | selectattr('value.default', 'defined')
+         | selectattr('value.default')
+         | map(attribute='key') | list }}
+
+- name: Generated facts | Require one explicit multi-estate default
+  ansible.builtin.assert:
+    that: _gf_defaults | length == 1
+    fail_msg: >-
+      A multi-estate infrastructure.yml must declare exactly one domains.<estate>.default:
+      true. Declaration order does not decide the default estate.
+  when: _gf_domains | length > 1
 
 - name: Generated facts | Resolve estate scope
   ansible.builtin.set_fact:
@@ -81,12 +98,8 @@
   vars:
     _gf_estate: "{{ generated_facts_estate | default('', true) }}"
     _gf_default: >-
-      {{ (_generated_facts_infra_cfg.domains | default({}) | dict2items
-          | selectattr('value.default', 'defined')
-          | selectattr('value.default')
-          | map(attribute='key') | list | first)
-         | default(_generated_facts_infra_cfg.domains | default({}) | list | first
-                   | default(''), true) }}
+      {{ (_gf_defaults | first)
+         | default(_gf_domains | list | first | default(''), true) }}
 
 - name: Generated facts | Ensure config/.generated exists
   ansible.builtin.file:

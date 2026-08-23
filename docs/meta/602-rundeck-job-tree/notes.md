@@ -229,7 +229,7 @@ Two scope questions went back to the operator, both answered 2026-08-23:
 
 ### Generated, not written
 
-104 jobs from 39 source files. Eight day-2 templates in `rundeck/jobs/` carry `%SLUG%`,
+102 jobs from 39 source files. Eight day-2 templates in `rundeck/jobs/` carry `%SLUG%`,
 `%NAME%`, `%STACK%`, `'%GROUP%'` and `'%UUID%'`; `rundeck/app-actions.yml` says which
 hosting kinds implement each; `render-job.py` expands one template into one job per
 applicable application, with a `uuid5` identity per (action, application) so execution
@@ -273,17 +273,16 @@ Baking the instance in would have broken the second-instance case the Deploy job
 support. Instead every generated job's `instance` option keeps the app name as its default —
 still one click — and takes its value list from
 `/var/lib/rundeck/app-instances/<app>.json`, written by `ansible/scripts/app-instances.py`
-at the start of every `lab-run`. Never stale: a Configure job that creates `radarr-4k`
-publishes it to every Radarr job without a reimport.
+before and after every `lab-run`. A Configure job publishes the file it created before it
+exits, so every later Radarr form sees it without a reimport.
 
 Rejected: enumerating instances into the job definition at import time. Correct only until
 the next Configure job, and a stale list is worse than no list.
 
-The instance → application link is the instance filename: `<app>` or `<app>-<suffix>`,
-longest slug wins. Nothing else in the tree records which app an instance file configures,
-and this is already the convention every `config.example/apps/*.example.yml` header teaches.
-The option is not `enforced`, so an instance named outside it can still be typed; the script
-names it on stderr.
+The instance → application link is the instance filename; longest slug wins. Single-estate
+labs use `<app>[-<variant>]`. Once two or more estates exist, one explicit `default: true`
+is mandatory and estate-scoped applications use `<app>-<estate>[-<variant>]` for every
+estate, including the default. There is no unnamed primary estate.
 
 ### Withdrawal
 
@@ -302,3 +301,28 @@ deletes.
   configure. Reversed.
 - `Manage/Applications` and `Recover/Applications`, both introduced this morning, are gone.
   `Manage` now holds only what is scoped to the lab.
+
+## 2026-08-23 — pre-import review corrections
+
+The focused review found four runtime gaps that the structural renderer test did not answer:
+
+- Deploy jobs had no `valuesUrl`; only generated Maintenance jobs used the instance files.
+- `lab-run` refreshed those files before Configure wrote a new instance, leaving the next
+  form one execution behind.
+- Rollback baked in the app default stack instead of reading an instance override, and it
+  offered buttons for Authentik and Observability even though each has multiple images and
+  the rollback playbook selects only one service.
+- Reimport printed a failed retired-job deletion but could still exit zero.
+
+All four were corrected before live import. Rollback now uses `resolve-app-target.yml` and
+is excluded for the two multi-service applications. Every application job receives the live
+instance provider. `lab-run` refreshes the provider before and after Ansible. Retirement
+failures contribute to Reimport's exit status, and the renderer rejects a retired UUID that
+is still active.
+
+The same review exposed an identity ambiguity in the existing estate contract: an omitted
+`default: true` made the first YAML entry the default, and instance names omitted that estate
+while naming every later one. The settled rule is symmetric. A `domains:` map with two or
+more entries declares exactly one default, and every estate-scoped instance is
+`<app>-<estate>[-<variant>]`, including the default estate. Lab-scoped platform services are
+not renamed because one instance serves every estate.

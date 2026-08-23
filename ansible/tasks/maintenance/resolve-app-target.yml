@@ -16,13 +16,14 @@
 #   app       — the application the instance belongs to. Defaults to `instance`; the
 #               Rundeck jobs always pass it, because a second instance named radarr-4k is
 #               still app radarr and its defaults live in app-defaults/radarr.yml.
+#   resolve_app_target_kinds — allowed hosting kinds; defaults to [native, docker]
 #
 # Outputs, on localhost:
 #   _rat_kind         native | docker
 #   _rat_stack        the stack tag for a Docker app, else ''
 #   _rat_host         the inventory host the action must run on
 #   group apptarget_<instance>, holding that one host, with these facts attached:
-#     app_target_kind, app_target_instance, app_target_project_dir
+#     app_target_kind, app_target_stack, app_target_instance, app_target_project_dir
 #
 # PATH CONSTRAINT: the include_vars paths below are relative to `playbook_dir`, so this
 # file may only be included from a playbook in playbooks/<subdir>/ — the same constraint,
@@ -72,10 +73,10 @@
 
 - name: Resolve app target | Refuse an action this hosting kind does not implement
   ansible.builtin.assert:
-    that: _rat_kind in ['native', 'docker']
+    that: _rat_kind in (resolve_app_target_kinds | default(['native', 'docker']))
     fail_msg: >-
-      {{ instance }} is hosted on {{ _rat_kind }}, which has no guest-level restart or log
-      path. Use the application's own Maintenance jobs for that hosting kind.
+      {{ instance }} is hosted on {{ _rat_kind }}, but this action supports only
+      {{ resolve_app_target_kinds | default(['native', 'docker']) | join(', ') }}.
 
 - name: Resolve app target | Refresh inventory to get current Proxmox state
   ansible.builtin.meta: refresh_inventory
@@ -109,6 +110,7 @@
          | default(hostvars[_rat_host].ansible_default_ipv4.address | default('')) }}
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
     app_target_kind: "{{ _rat_kind }}"
+    app_target_stack: "{{ _rat_stack }}"
     app_target_instance: "{{ instance }}"
     app_target_project_dir: "/opt/{{ instance }}"
   changed_when: false

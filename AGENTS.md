@@ -314,7 +314,7 @@ values but do not yet have publishers.
 | Concern | Tool | Our responsibility | Notification |
 |---|---|---|---|
 | Container updates | Watchtower | Configure at Docker host creation | Ntfy: "X updated to vY — run Rollback if broken" |
-| Container rollback | `rollback-container.yml` | One **Rollback &lt;App&gt;** job per Docker app; the stack tag is baked in, so it takes only the image tag | Ntfy: "X rolled back to vY" |
+| Container rollback | `rollback-container.yml` | One **Rollback &lt;App&gt;** job per supported single-image Docker app; the host resolves from the effective instance config, so it takes only the image tag | Ntfy: "X rolled back to vY" |
 | OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` with systemd drop-in → Ntfy. `Automatic-Reboot` is off by decision — the update is continuous, the reboot is scheduled | Ntfy: "N packages updated on hostname" |
 | Guest reboots | `homelab-maintenance.timer` on each guest | Write the timer from the guest's resolved window at deploy time; the guest reboots itself when the window opens and only if a reboot is pending | Ntfy: "Maintenance reboot on hostname" (from the guest) |
 | Applying a changed window | `guest-maintenance.yml` (operator-triggered, never scheduled) | Re-write every guest's timer from current config, report what is pending, and `force=true` to reboot now | Ntfy only when something was forced |
@@ -416,7 +416,7 @@ Applications
 
 Platform
   Access and Identity
-    Authentik                 ← Deploy + Configure, Remove, Restart, Rollback, Tail Log
+    Authentik                 ← Deploy + Configure, Remove, Restart, Tail Log
     Caddy                     ← Deploy + Configure, Restart, Tail Log   (no Remove)
     Vaultwarden               ← Deploy + Configure, Restart, Tail Log   (no Remove)
   Backup
@@ -454,26 +454,29 @@ and `Recover/Applications` no longer exist.
 
 **Per-application jobs are generated, not written.** `rundeck/app-actions.yml` names one
 template per day-2 action, and `rundeck/render-job.py` expands each template into one job
-per application it applies to — 16 applications and 8 actions render as 104 jobs from 39
+per application it applies to — 16 applications and 8 actions render as 102 jobs from 39
 source files. The expansion answers from the catalog and from
 `ansible/vars/app-defaults/<app>.yml` what the operator used to type: the instance, the
 application an instance belongs to, and the stack tag a Docker app runs on. Adding an
 application therefore adds its whole Maintenance folder at the same time.
 
 **Which actions exist is derived from the hosting kind, and the absences are deliberate.**
-A Docker app gets Rollback and no Backup; a Kubernetes app gets Backup and Restore and no
-Rollback; a native LXC app gets neither. An action missing from a folder is missing because
-it is not implemented for that hosting kind — offering a button that fails when pressed is
-worse than not offering it. Deriving the ACTION SET from hosting is not the same as
-grouping by hosting, which stays forbidden: Docker, LXC, VM, Kubernetes, stack assignment
-and dependencies never determine an application's group.
+A supported single-image Docker app gets Rollback and no Backup; a Kubernetes app gets
+Backup and Restore and no Rollback; a native LXC app gets neither. Authentik and
+Observability exclude Rollback because each is a multi-service Compose project and the
+generic rollback seam pins one image. An action missing from a folder is missing because it
+cannot be implemented truthfully — offering a button that fails or changes only part of an
+application is worse than not offering it. Deriving the ACTION SET from hosting is not the
+same as grouping by hosting, which stays forbidden: Docker, LXC, VM, Kubernetes, stack
+assignment and dependencies never determine an application's group.
 
 **Multiple instances are a dropdown, not a memory test.** Each generated job's `instance`
 option defaults to the application's own name and offers every instance of that application
 from `/var/lib/rundeck/app-instances/<app>.json`, which `ansible/scripts/app-instances.py`
-rewrites at the start of every job. An instance file must be named `<app>` or
-`<app>-<suffix>` to be recognized as that application's — the option is not enforced, so an
-instance named anything else can still be typed.
+rewrites before and after every job. A single-estate instance is `<app>[-<variant>]`. When
+`domains:` has two or more entries, it must declare one explicit default and every
+estate-scoped instance is `<app>-<estate>[-<variant>]`; there is no unnamed primary estate.
+Lab-scoped platform services keep their ordinary names.
 
 `catalog/applications.yml` is the canonical purpose/type classification for every deployable
 application; `rundeck/job-groups.yml` classifies the lab-wide operator jobs;

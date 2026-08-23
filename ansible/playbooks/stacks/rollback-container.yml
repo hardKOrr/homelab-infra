@@ -4,18 +4,18 @@
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/stacks/rollback-container.yml \
-#     -e stack=media_stack -e container=radarr-4k -e image_tag=5.1.3
+#     -e container=radarr-personal-4k -e app=radarr -e image_tag=5.1.3
 #
 # Semaphore/Rundeck parameters:
-#   stack:       stack host tag (e.g. media_stack)
 #   container:   app instance name — also the Compose project dir /opt/<container>
+#   app:         application slug whose defaults resolve the instance's hosting
 #   image_tag:   image tag to roll back to (e.g. 5.1.3)
 #                if omitted, re-pins the tag already in the Compose file, which
 #                only freezes anything when that tag is a real version. A project
 #                still on `:latest` needs an explicit tag — the play says so in
 #                its output and in the notification.
 #
-# What it does, on the stack host looked up via tag_<stack>:
+# What it does, on the stack host resolved from the instance config over app defaults:
 #   1. Read /opt/<container>/docker-compose.yml and pick the service to roll back
 #      (the service named <container>, else the project's only/first service)
 #   2. Rewrite that service's image tag in place
@@ -47,41 +47,24 @@
     - name: Assert parameters are provided
       ansible.builtin.assert:
         that:
-          - stack is defined and stack | length > 0
           - container is defined and container | length > 0
+          - app is defined and app | length > 0
         fail_msg: >-
-          Provide the stack tag and container name:
-          -e stack=media_stack -e container=radarr-4k [-e image_tag=5.1.3]
+          Provide the application and instance name:
+          -e app=radarr -e container=radarr-personal-4k [-e image_tag=5.1.3]
 
-    - name: Refresh inventory to get current Proxmox state
-      ansible.builtin.meta: refresh_inventory
-
-    - name: Select the stack host
-      ansible.builtin.set_fact:
-        _rb_stack_hosts: "{{ groups['tag_' ~ stack] | default([]) }}"
-
-    - name: Assert the stack host exists
-      ansible.builtin.assert:
-        that: _rb_stack_hosts | length > 0
-        fail_msg: >-
-          No Proxmox guest is tagged {{ stack }}. Check the stack name — tags are
-          the stack id as written in vars/app-defaults/<app>.yml (e.g. media_stack).
-
-    - name: Add stack host to the rollback group
-      ansible.builtin.add_host:
-        name: "{{ _rb_stack_hosts[0] }}"
-        groups: "rollback_{{ container }}"
-        ansible_host: >-
-          {{ hostvars[_rb_stack_hosts[0]].ansible_host
-             | default(hostvars[_rb_stack_hosts[0]].ansible_default_ipv4.address | default('')) }}
-        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    - name: Resolve the Docker host from the effective instance config
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        instance: "{{ container }}"
+        resolve_app_target_kinds: [docker]
 
 
 # ── Play 2: Rewrite the tag and recreate the service ───────────────────────────
 # The default() can only fire during --syntax-check — Play 1 has already asserted
 # `container` is defined by the time this pattern is resolved for real.
 - name: "Rollback | Recreate {{ container | default('(no container)') }}"
-  hosts: "rollback_{{ container | default('_container_unset') }}"
+  hosts: "apptarget_{{ container | default('_container_unset') }}"
   become: true
   gather_facts: false
 
@@ -101,7 +84,7 @@
     # own published port, which needs no config file at all.
     - name: Load app defaults (optional — second port source)
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ container }}.yml"
+        file: "{{ playbook_dir }}/../../vars/app-defaults/{{ app }}.yml"
         name: _rb_app_defaults
       failed_when: false
 
@@ -283,9 +266,10 @@
       failed_when: false   # absent pre-bootstrap — notify.yml no-ops
 
   vars:
-    _rb_host: "{{ (groups['rollback_' ~ container] | default([]) | first) | default('') }}"
+    _rb_host: "{{ (groups['apptarget_' ~ container] | default([]) | first) | default('') }}"
     _rb_old: "{{ hostvars[_rb_host]._rb_old_ref | default('unknown') }}"
     _rb_new: "{{ hostvars[_rb_host]._rb_new_ref | default('unknown') }}"
+    _rb_stack: "{{ hostvars[_rb_host].app_target_stack | default('unknown') }}"
 
   tasks:
     - name: Notify rollback complete
@@ -294,7 +278,7 @@
         notify_title: "{{ container }} rolled back"
         notify_priority: high
         notify_message: >-
-          {{ container }} on {{ stack }} moved from {{ _rb_old }} to {{ _rb_new }}.
+          {{ container }} on {{ _rb_stack }} moved from {{ _rb_old }} to {{ _rb_new }}.
           {{ 'This tag is pinned — Watchtower will not auto-update it until the app deploy playbook is re-run.'
              if _rb_new is not search(':latest$') and _rb_new != 'unknown'
              else 'Still on a floating tag — re-run with -e image_tag=<version> to pin a release.' }}

@@ -20,20 +20,28 @@ or reimport. Job names, UUIDs, steps, options, schedules, and playbooks are unch
 ### Phase 2 — one folder per application (2026-08-23)
 
 - [x] built — the leaf of the tree is the application: `…/<App>` holds Deploy, and
-      `…/<App>/Maintenance` holds its day-2 jobs. 104 jobs render from 39 source files.
+      `…/<App>/Maintenance` holds its day-2 jobs. 102 jobs render from 39 source files.
 - [x] built — eight per-application templates, `rundeck/app-actions.yml`, and catalog
       schema 2 covering platform services as well as optional applications.
 - [x] built — the expansion answers instance, app and stack from the repository; which
       actions exist is derived from the hosting kind and the absences are deliberate.
 - [x] built — `instance` is a live dropdown from `/var/lib/rundeck/app-instances/<app>.json`,
-      rewritten by `ansible/scripts/app-instances.py` at the start of every job.
+      rewritten before and after every job. Multi-estate defaults and labels name every
+      estate explicitly as `<app>-<estate>[-<variant>]`.
 - [x] built — `Restart` and `Tail Log` now serve Docker apps as well as native ones, through
       `ansible/tasks/maintenance/resolve-app-target.yml`. Without this the expansion would
       have produced ten buttons that fail when pressed.
+- [x] corrected — Rollback also resolves the effective instance stack. Authentik and
+      Observability expose no Rollback because the generic seam cannot roll their multiple
+      images back as one application.
+- [x] corrected — a multi-estate map requires one explicit default, and every estate-scoped
+      instance uses `<app>-<estate>[-<variant>]`, including the default estate.
+- [x] corrected — Deploy jobs use the live instance provider, Configure refreshes it before
+      returning, and a failed retired-job deletion makes Reimport fail.
 - [x] built — `rundeck/retired-jobs.yml` and the deletion pass in **Reimport Jobs**, so the
       eight retired generic jobs do not survive as orphans.
 - [ ] observed — run **Reimport Jobs** TWICE (the deletion ships inside the new definition),
-      then confirm: 104 jobs imported, the eight retired UUIDs gone, the instance dropdown
+      then confirm: 102 jobs imported, the eight retired UUIDs gone, the instance dropdown
       populated on a Deploy job, one Restart against a Docker app and one against a native
       app, and one Rollback that no longer asks for a stack tag.
 

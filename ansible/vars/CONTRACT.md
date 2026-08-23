@@ -367,7 +367,7 @@ estate, so existing labs are untouched.
 domains:
   personal:
     domain: homelab.example.com
-    default: true                  # exactly one entry; else the first entry is default
+    default: true                  # required when two or more estates exist
   foxglove:
     domain: foxglove.example.com
     dns_challenge:                 # optional — per-estate ACME DNS-01 (caddy role)
@@ -380,6 +380,12 @@ domains:
       provider: opnsense           # pihole | adguard | opnsense | none
       host: 192.168.1.1            # non-secret half only; see below
 ```
+
+A `domains:` map with two or more entries must declare exactly one `default: true`.
+Declaration order never decides identity. Estate-scoped instances use
+`<app>-<estate>[-<variant>]` for every estate, including the default estate; for example,
+`radarr-personal`, `radarr-foxglove`, and `radarr-foxglove-4k`. A single-estate lab keeps
+the short `<app>[-<variant>]` form.
 
 **`domains.<name>.dns` — DNS is selected per estate, and the credential is not
 duplicated.** `infrastructure.dns.provider` is global, so without this block a lab
@@ -483,3 +489,8 @@ The whole file merges over `<app>_defaults` via `combine(recursive=True)`, later
 Because the merge is recursive, an override must match the default's shape: replacing a mapping (e.g.
 `app:`) with a scalar clobbers the entire subtree, so instance files never restate a mapping key as a
 bare scalar.
+
+When `infrastructure.yml` declares two or more estates, an estate-scoped catalog application
+must use `<app>-<estate>[-<variant>]` as its instance name and must author the same estate in
+`routing.estate`. There is no unsuffixed default estate. Lab-scoped platform services keep
+their ordinary instance names because one deployment serves the whole lab.

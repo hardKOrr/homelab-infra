@@ -8,10 +8,11 @@ schema_version: 1
 # as itself.
 #
 # APPLICABILITY is the hosting kind the action is actually implemented for, derived from
-# ansible/vars/app-defaults/<slug>.yml. An action absent from an application's folder is
-# absent because it does not work for that hosting kind, not because it was forgotten:
-# offering a Rollback for a Kubernetes workload or a Backup for a Docker app would put a
-# button in front of an operator that fails when pressed.
+# ansible/vars/app-defaults/<slug>.yml, then narrowed by a catalog `exclude:` when one
+# application cannot implement the generic action truthfully. An action absent from an
+# application's folder is absent deliberately: offering a Rollback for a Kubernetes
+# workload, or for a multi-image Compose project when the seam pins one image, would put a
+# misleading button in front of the operator.
 #
 #   hosting             hosting kinds this action is implemented for
 #   essential_excluded  true withholds the action from applications marked essential

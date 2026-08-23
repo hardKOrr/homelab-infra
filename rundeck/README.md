@@ -132,7 +132,7 @@ renderer also injects the secure Key Storage options required by that job.
 
 Everything an operator does to one application is in that application's own folder: its
 Deploy job, and a `Maintenance` folder with its day-2 jobs. 16 applications and 8 action
-templates render as 104 jobs from 39 source files.
+templates render as 102 jobs from 39 source files.
 
 **What the expansion answers, so the operator does not have to.** The generic day-2 jobs
 each asked for an instance name, an app name and — for a rollback — a stack tag, all of
@@ -141,9 +141,9 @@ which the platform already knew. Generating one job per application answers them
 
 | Was typed | Now |
 |---|---|
-| `instance` | prefilled with the application's own name, and offered as a dropdown |
+| `instance` | estate-aware default, and offered as a live dropdown on Deploy and Maintenance jobs |
 | `app` (when an instance is named differently) | baked into the step |
-| `stack` (Rollback) | baked in from the application's defaults |
+| `stack` (Rollback) | resolved from the instance override over application defaults |
 | `source_config_path` (Migrate) | defaulted to `/var/lib/<app>` |
 
 **Which actions an application gets is derived from its hosting kind**, read from its own
@@ -152,28 +152,31 @@ Docker app from a native LXC one. Native gets Configure, Restart, Tail Log and R
 Docker adds Rollback; Kubernetes gets Configure, Backup, Restore and Remove. Migrate is
 opt-in through the catalog's `extra:` and belongs to the Servarr family alone.
 
-An action absent from a folder is absent because it is not implemented for that hosting
-kind. There is no Backup for a Docker app — its data is covered by the guest's PBS backup
-and there is no per-application CronJob to start — and no Rollback for a Kubernetes
-workload. A button that fails when pressed is worse than no button.
+An action absent from a folder is absent because it is not implemented safely. There is no
+Backup for a Docker app — its data is covered by the guest's PBS backup and there is no
+per-application CronJob to start — and no Rollback for a Kubernetes workload. Authentik and
+Observability also exclude Rollback: each is a multi-service Compose project, while the
+generic rollback seam pins one image. A button that misstates what it changed is worse than
+no button.
 
 An application marked `essential:` in the catalog gets no Remove job. The platform does not
 offer a one-click removal of the reverse proxy or the vault every other job depends on.
 
 ### Instances are a dropdown, not a memory test
 
-Each generated job's `instance` option defaults to the application's own name — so the
-normal case is still one click — and offers every instance of that application from
+Each application job's `instance` option has a one-click default and offers every instance
+of that application from
 `/var/lib/rundeck/app-instances/<app>.json`. `../ansible/scripts/app-instances.py` rewrites
-those files at the start of every job from the `config/apps/*.yml` that exist right then, so
-a second instance created by a Configure job is offered by every job for that application
+those files before and after every job from the `config/apps/*.yml` that exist right then,
+so a second instance created by Configure is offered when the operator opens the next job
 without a reimport.
 
-An instance file is matched to its application by name: `<app>` or `<app>-<suffix>`
-(`radarr`, `radarr-4k`), the convention already documented in every
-`config.example/apps/*.example.yml`. The longest matching slug wins, so `uptime-kuma` is not
-read as an instance of `uptime`. The option is **not** enforced, so an instance named
-outside the convention can still be typed in; `app-instances.py` reports it on stderr.
+In a single-estate lab, the instance form is `<app>[-<variant>]` (`radarr`, `radarr-4k`).
+When `domains:` declares two or more estates, exactly one estate must be the explicit
+default and every estate-scoped instance is `<app>-<estate>[-<variant>]`
+(`radarr-personal`, `radarr-foxglove-4k`). The dropdown labels include the estate. The
+longest matching application slug wins, so `uptime-kuma` is not read as an instance of
+`uptime`.
 
 Copying a job file to get a second instance is not necessary, and the copy is worse: its
 UUID has to be changed by hand and it drifts from the original on every later edit.

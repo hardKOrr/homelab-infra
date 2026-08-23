@@ -1,10 +1,9 @@
 # Rollback Container — a PER-APPLICATION TEMPLATE, not a job.
 #
 # rundeck/render-job.py expands this file into one "Rollback <App>" job per Docker-hosted
-# application, filed under that application's own Maintenance folder. The stack tag comes
-# from the application's own defaults, so the operator supplies only the version to pin —
-# the two questions this job used to ask (which stack, which container) are already
-# answered by the expansion.
+# application, filed under that application's own Maintenance folder. The playbook resolves
+# the effective stack from the selected instance's config over the application defaults, so
+# an instance-level stack override still reaches the correct host.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
@@ -28,7 +27,7 @@
   options:
   - name: instance
     description: Which %NAME% instance to roll back — its Compose project is
-      /opt/<instance> on the %STACK% host. Leave it as it is unless this lab runs more
+      /opt/<instance> on its resolved stack host. Leave it as it is unless this lab runs more
       than one.
     required: true
     value: '%SLUG%'
@@ -49,13 +48,12 @@
           # Job options arrive as RD_OPTION_* environment variables — Rundeck's
           # ${option.x} tokens would collide with shell expansion in a script step.
           #
-          # `stack` is not an option: it is declared in ansible/vars/app-defaults/%SLUG%.yml
-          # and baked in at render time. An instance moved to another stack host is the one
-          # case that needs the generic playbook run by hand.
+          # `stack` is not an option: the playbook resolves the effective instance config,
+          # including a per-instance stack override, through resolve-app-target.yml.
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
-          ARGS+=(-e "stack=%STACK%")
           ARGS+=(-e "container=$RD_OPTION_INSTANCE")
+          ARGS+=(-e "app=%SLUG%")
           if [ -n "${RD_OPTION_IMAGE_TAG:-}" ]; then
             ARGS+=(-e "image_tag=$RD_OPTION_IMAGE_TAG")
           fi

@@ -23,6 +23,8 @@ schema_version: 2
 #   type      second group segment; omit for Platform entries, which have no type axis
 #   essential true withholds the Remove job — the platform cannot function without it
 #   extra     day-2 actions beyond the ones the hosting kind implies (see rundeck/app-actions.yml)
+#   exclude   derived actions this application cannot implement safely
+#   scope     estate when each instance belongs to one named estate; omit for lab-wide services
 #   actions   explicit action list, replacing derivation entirely. Use only when the
 #             hosting kind genuinely does not describe the thing (the k3s cluster).
 #
@@ -38,6 +40,11 @@ applications:
     job: deploy-authentik.yaml
     root: Platform
     category: Access and Identity
+    scope: estate
+    # Authentik is a four-service Compose project. The generic rollback seam can only
+    # select and pin one image, so presenting Rollback Authentik would actually roll back
+    # PostgreSQL (the first service) and then claim the application was rolled back.
+    exclude: [rollback]
 
   caddy:
     name: Caddy
@@ -52,6 +59,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Media Servers
+    scope: estate
 
   k3s-cluster:
     name: k3s Cluster
@@ -69,6 +77,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Library Automation
+    scope: estate
     extra: [migrate]
 
   mixpost:
@@ -77,6 +86,7 @@ applications:
     root: Applications
     category: Content & Publishing
     type: Social Publishing
+    scope: estate
 
   ntfy:
     name: Ntfy
@@ -89,6 +99,9 @@ applications:
     job: deploy-observability.yaml
     root: Platform
     category: Monitoring and Notifications
+    # Prometheus and Grafana are separate services. The generic rollback seam cannot
+    # truthfully roll this application back as one unit.
+    exclude: [rollback]
 
   pbs:
     name: PBS
@@ -102,6 +115,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Indexer Management
+    scope: estate
     extra: [migrate]
 
   qbittorrent:
@@ -110,6 +124,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Download Clients
+    scope: estate
 
   radarr:
     name: Radarr
@@ -117,6 +132,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Library Automation
+    scope: estate
     extra: [migrate]
 
   sabnzbd:
@@ -125,6 +141,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Download Clients
+    scope: estate
 
   sonarr:
     name: Sonarr
@@ -132,6 +149,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Library Automation
+    scope: estate
     extra: [migrate]
 
   uptime-kuma:

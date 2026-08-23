@@ -12,10 +12,10 @@
 # grow a parameter per key (or a separate job per app), the common dozen are named and
 # the long tail is free-form YAML validated before it is written.
 #
-# ONE job for every app, not one per app: which app an instance file belongs to is
-# decided by which Deploy job you run against it, so this playbook does not need to
-# know. It writes an override layer over vars/app-defaults/<app>.yml — every parameter
-# is optional, and an empty instance file is a valid one meaning "all defaults".
+# Rundeck generates one Configure job per catalog application from one shared template.
+# The generated job supplies the application slug and whether its identity is estate- or
+# lab-scoped. This playbook remains UI-agnostic and writes the same override layer over
+# vars/app-defaults/<app>.yml for every application.
 #
 # Idempotent: writing the same values twice reports "unchanged". Every write is backed
 # up under config/apps/.backups/ and diffed into the job log by
@@ -27,6 +27,8 @@
 #
 # Parameters (all optional except instance):
 #   instance    filename and instance name — becomes the hostname and subdomain
+#   app         application slug (generated Rundeck jobs always supply it)
+#   app_scope   lab | estate (generated Rundeck jobs always supply it)
 #   stack       Docker stack host, e.g. media_stack (Docker apps)
 #   network     named network from config/proxmox.yml (native LXC apps)
 #   vmid        explicit Proxmox VMID (required on a dhcp network)
@@ -72,6 +74,50 @@
           identity must be one of {{ _identity_modes | join(' | ') }}.
           Got: {{ identity }}
       when: identity is defined and identity | length > 0
+
+    - name: Load estate declarations
+      ansible.builtin.include_vars:
+        file: "{{ _config_dir }}/infrastructure.yml"
+        name: _configure_infrastructure
+      failed_when: false
+
+    - name: Resolve the multi-estate naming context
+      ansible.builtin.set_fact:
+        _configure_domains: "{{ (_configure_infrastructure | default({})).domains | default({}) }}"
+        _configure_default_estates: >-
+          {{ (_configure_infrastructure | default({})).domains | default({}) | dict2items
+             | selectattr('value.default', 'defined')
+             | selectattr('value.default')
+             | map(attribute='key') | list }}
+
+    - name: Require one explicit default estate
+      ansible.builtin.assert:
+        that: _configure_default_estates | length == 1
+        fail_msg: >-
+          A multi-estate infrastructure.yml must declare exactly one domains.<estate>.default:
+          true. Declaration order does not decide the default estate.
+      when: _configure_domains | length > 1
+
+    - name: Resolve the authored estate
+      ansible.builtin.set_fact:
+        _configure_estate: >-
+          {{ estate | default(
+               (_configure_default_estates | first | default(''))
+               if app_scope | default('lab') == 'estate' and _configure_domains | length > 1
+               else '', true) }}
+
+    - name: Enforce an explicit estate in the instance identity
+      ansible.builtin.assert:
+        that:
+          - _configure_estate in _configure_domains
+          - instance is match('^' ~ app ~ '-' ~ _configure_estate ~ '(-.+)?$')
+        fail_msg: >-
+          {{ app }} on estate {{ _configure_estate }} must be named
+          {{ app }}-{{ _configure_estate }}[-<variant>]. Every estate is named once a lab
+          declares more than one; there is no unnamed primary estate.
+      when:
+        - app_scope | default('lab') == 'estate'
+        - _configure_domains | length > 1
 
     - name: Assert proxy is a recognised value
       ansible.builtin.assert:
@@ -158,7 +204,8 @@
              | combine({'identity': identity} if (identity | default('')) | length > 0 else {})
              | combine({'proxy': proxy} if (proxy | default('')) | length > 0 else {})
              | combine({'access': access} if (access | default('')) | length > 0 else {})
-             | combine({'estate': estate} if (estate | default('')) | length > 0 else {}) }}
+             | combine({'estate': _configure_estate}
+                       if (_configure_estate | default('')) | length > 0 else {}) }}
 
     - name: Merge existing, authored and extra layers
       ansible.builtin.set_fact:

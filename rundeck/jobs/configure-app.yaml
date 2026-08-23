@@ -100,6 +100,8 @@
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          ARGS+=(-e "app=%SLUG%")
+          ARGS+=(-e "app_scope=%SCOPE%")
           for opt in stack network vmid cores memory disk port subdomain identity proxy access estate; do
             var="RD_OPTION_$(printf '%s' "$opt" | tr '[:lower:]' '[:upper:]')"
             value="${!var:-}"
