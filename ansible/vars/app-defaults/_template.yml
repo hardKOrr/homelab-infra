@@ -46,6 +46,12 @@ APP_NAME_defaults:
 
   # ── Routing ─────────────────────────────────────────────────────────────────
   routing:
+    subdomain: APP_NAME  # the published hostname on the estate domain. DECLARE IT, do not
+                         #   leave it to fall through: the fallback is the INSTANCE name, so
+                         #   an estate-scoped app named radarr-personal would otherwise
+                         #   publish radarr-personal.<domain>. Naming it here is what keeps
+                         #   the instance name (filename, guest hostname, Proxmox tag) free
+                         #   to carry identity without the URL following it around.
     proxy: internal      # internal | external — WHICH reverse proxy handles this app
     access: internal     # internal | public — WHO may reach it. internal restricts the
                          #   route to reverse_proxy.internal_cidrs; public opens it to
@@ -55,5 +61,7 @@ APP_NAME_defaults:
                          #   catalog      — Authentik Application tile only; the app keeps its own login
                          #   oidc         — OAuth2 provider + Application; the app consumes client_id/secret
                          #   forward_auth — proxy provider; the reverse proxy enforces Authentik login
-    # subdomain: APP_NAME  # hostname on the domain (default: the instance name)
-    # estate: personal     # which `domains:` estate this app belongs to (default estate if unset)
+    # estate: personal     # which `domains:` estate this app belongs to (default estate if
+                           #   unset). Leave it unset here: an estate name is one lab's, and
+                           #   this file ships to every lab. Authoring it belongs in
+                           #   config/apps/<instance>.yml.

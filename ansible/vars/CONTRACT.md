@@ -358,10 +358,26 @@ does not answer "who changed this and why". `.backups/` is inside the gitignored
 tree, so the runner's refresh cannot touch it, and PBS carries it off the host with the rest
 of the guest.
 
-**`domains:` — named estates (optional).** An estate is a domain scope with its own
-SSO instance (and optionally DNS and ACME DNS-challenge token), sharing the rest of
-the platform. The plain `domain:` scalar stays valid as shorthand for one default
-estate, so existing labs are untouched.
+**`domains:` — named estates (optional).** An estate is a **separate** domain scope: its
+own domain, its own SSO, its own DNS and ACME DNS-challenge material, and its own
+applications. Treat estates as independent by default and share only what is named as
+shared. The plain `domain:` scalar stays valid as shorthand for one default estate, so
+existing labs are untouched.
+
+**What is shared is an explicit, named list — not a residue.** `catalog/applications.yml`
+requires a `scope` on every application, and it has exactly two values:
+
+| `scope` | Meaning | Instance name |
+|---|---|---|
+| `estate` | one deployment per estate | `<app>-<estate>[-<variant>]` |
+| `lab` | one deployment serves every estate | `<app>[-<variant>]` |
+
+`lab` is the deliberate exception, and each entry in the catalog records why it earns it —
+the single TLS edge, the vault that is the platform's root of trust, one backup server, one
+notification hub, one metrics stack, one status view, one cluster. There is no default
+value: an application nobody classified is rejected at render time rather than landing
+silently on the shared side. Adding to the shared set is a decision somebody makes and
+writes down.
 
 ```yaml
 domains:
@@ -478,8 +494,15 @@ reverse proxy. Enforcement is the reverse-proxy wiring's job: `tasks/wiring/cadd
 `sso.host`, and emit the outpost handler chain (Caddy) or the Authentik `auth_request`
 snippet (NPM) only for `forward_auth`; every other mode keeps the plain route it always
 had. The boolean `routing.auth` is **superseded** by `routing.identity`
-— nothing reads it. `routing.subdomain` overrides the hostname on the estate domain (default:
-the instance name); `routing.estate` names a `domains:` estate (§5).
+— nothing reads it. `routing.subdomain` is the hostname on the estate domain. **Every routed application
+declares it in `vars/app-defaults/<app>.yml`**, and an instance file overrides it only to
+publish that instance somewhere else. The fall-back when nothing declares it is the
+instance name, and that fall-back is a trap rather than a feature: it couples the published
+URL to the filename, so an estate-scoped instance named `radarr-personal` would publish
+`radarr-personal.<domain>`. Declaring the subdomain per application is what leaves the
+instance name free to carry identity — filename, guest hostname, Proxmox tag — without the
+URL following it around. `routing.estate` names a `domains:` estate (§5); do not set it in
+`app-defaults/`, which ships to every lab and cannot know one lab's estate names.
 Media-stack instances may add three optional `app:` keys read only by
 `wire-media-stack.yml`: `media_kind` (the app kind — its presence is what enrols
 the instance in media wiring), `host` (an explicit base URL, for an app this lab

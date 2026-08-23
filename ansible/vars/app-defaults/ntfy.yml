@@ -34,6 +34,7 @@ ntfy_defaults:
     binary_path: /usr/bin/ntfy
 
   routing:
+    subdomain: ntfy                        # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal            # LAN-only by default; publish it if you want phone
                                 # notifications off-LAN without a VPN

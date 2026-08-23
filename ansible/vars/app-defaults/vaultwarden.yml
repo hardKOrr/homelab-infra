@@ -30,6 +30,7 @@ vaultwarden_defaults:
     binary_path: /usr/local/bin/vaultwarden
 
   routing:
+    subdomain: vaultwarden                 # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal            # LAN-only: the vault is the platform's root of trust
     identity: catalog           # catalog tile only — Vaultwarden has its own auth

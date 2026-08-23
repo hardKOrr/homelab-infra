@@ -478,6 +478,19 @@ rewrites before and after every job. A single-estate instance is `<app>[-<varian
 estate-scoped instance is `<app>-<estate>[-<variant>]`; there is no unnamed primary estate.
 Lab-scoped platform services keep their ordinary names.
 
+**Estates are separate; the shared set is named.** Every entry in `catalog/applications.yml`
+must declare `scope: estate` (one deployment per estate) or `scope: lab` (one deployment
+serves every estate), and there is no default — an unclassified application is rejected at
+render time rather than landing silently on the shared side. `lab` is the deliberate
+exception and each entry records why it earns it: the single TLS edge, the vault, one PBS,
+one Ntfy, one metrics stack, one status view, one cluster.
+
+**The instance name never reaches a URL.** Every routed application declares
+`routing.subdomain` in its own `vars/app-defaults/<app>.yml`, so `radarr-personal`
+publishes `radarr.personal.example.com`. The fall-back when nothing declares one is the
+instance name, which would drag estate and variant suffixes into the hostname; the gate
+rejects a routed application that leaves it out.
+
 `catalog/applications.yml` is the canonical purpose/type classification for every deployable
 application; `rundeck/job-groups.yml` classifies the lab-wide operator jobs;
 `rundeck/app-actions.yml` classifies the per-application templates. `rundeck/render-job.py`
@@ -525,8 +538,10 @@ Declares roles, provider choices, and non-secret connection shape. Generated top
 in `.generated/facts.yml`; credentials go in canonical Vaultwarden items.
 
 ```yaml
-# Optional multi-domain: a `domains:` map of named estates (own domain + own
-# Authentik per estate, optional per-estate dns_challenge token for Caddy).
+# Optional multi-domain: a `domains:` map of named estates. An estate is a
+# SEPARATE domain scope — own domain, own Authentik, own DNS and ACME material,
+# own applications. Only what catalog/applications.yml marks `scope: lab` is
+# shared across them. Two or more estates must declare exactly one `default: true`.
 # The plain `domain:` scalar remains the single-estate shorthand.
 
 reverse_proxy:

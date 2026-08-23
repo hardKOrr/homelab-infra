@@ -51,6 +51,7 @@ mixpost_defaults:
     # already starts.
 
   routing:
+    subdomain: mixpost                     # hostname on the estate domain, independent of the instance name
     proxy: internal
 
     # THE ACCESS CLASS. One field, three values, and deliberately not the same question as

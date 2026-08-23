@@ -48,6 +48,47 @@ radarr_instance = next(option for option in deploy_radarr["options"] if option["
 assert radarr_instance["value"] == "radarr-personal"
 assert radarr_instance["valuesUrl"].endswith("/radarr.json")
 
+# An application whose own defaults route it to another estate is prefilled for THAT
+# estate, so the offered name never contradicts the application's configuration.
+deploy_mixpost = render_job.render(repo / "rundeck" / "jobs" / "deploy-mixpost.yaml")[0]
+mixpost_instance = next(
+    option for option in deploy_mixpost["options"] if option["name"] == "instance"
+)
+assert mixpost_instance["value"] == "mixpost-foxglove", mixpost_instance["value"]
+
+# Every routed application declares its published hostname, so an estate-suffixed instance
+# name can never reach a URL. Only unrouted applications may leave it out.
+defaults_dir = repo / "ansible" / "vars" / "app-defaults"
+for slug, app in render_job.load_applications().items():
+    defaults = render_job.app_defaults_of(slug)
+    routing = defaults.get("routing") or {}
+    if routing.get("proxy", "none") == "none":
+        continue
+    assert routing.get("subdomain"), (
+        f"app-defaults/{slug}.yml declares no routing.subdomain, so its hostname would"
+        " follow the instance name"
+    )
+
+# scope is required, not defaulted: an unclassified application must not land silently on
+# the shared side of the estate boundary.
+catalog_text = (repo / "catalog" / "applications.yml").read_text(encoding="utf-8")
+try:
+    render_job.load_document  # touch, so a rename of the loader is caught here too
+    original = render_job.APPLICATION_CATALOG
+    unscoped = work / "unscoped-catalog.yml"
+    unscoped.write_text(
+        catalog_text.replace("    scope: estate\n", "\n", 1), encoding="utf-8"
+    )
+    render_job.APPLICATION_CATALOG = unscoped
+    try:
+        render_job.load_applications()
+    except ValueError as error:
+        assert "scope must be declared" in str(error), str(error)
+    else:
+        raise AssertionError("an application with no scope was accepted")
+finally:
+    render_job.APPLICATION_CATALOG = original
+
 configure_radarr = next(
     job for job in render_job.render(repo / "rundeck" / "jobs" / "configure-app.yaml")
     if job["name"] == "Configure Radarr"

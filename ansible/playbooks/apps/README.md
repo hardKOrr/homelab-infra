@@ -60,7 +60,14 @@ Add the application to `catalog/applications.yml`:
     root: Applications                  # Applications | Platform
     category: Media & Entertainment     # the broad purpose an operator recognizes
     type: Library Automation            # the application type; omit for a Platform entry
+    scope: estate                       # REQUIRED. estate | lab — see below
 ```
+
+`scope` says which side of the estate boundary the application sits on. Estates are
+separate, so `estate` is the ordinary answer: one deployment per estate, instances named
+`<app>-<estate>[-<variant>]`. `lab` means one deployment serves every estate, and it is the
+deliberate exception — comment the entry with why it earns it. There is no default; an
+application with no `scope` is rejected at render time.
 
 Do not classify it by Docker, LXC, VM, Kubernetes, stack, database dependency, or another
 execution detail. Add jobs that act on the lab rather than on one application to

@@ -231,6 +231,7 @@ k3s_cluster_defaults:
   # public entry points — applications are published individually, through the
   # platform Caddy, by their own deploy jobs.
   routing:
+    subdomain: k3s-cluster             # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal
     identity: none

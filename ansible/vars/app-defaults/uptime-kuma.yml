@@ -28,6 +28,7 @@ uptime_kuma_defaults:
     monitor_interval: 60          # seconds between checks, applied to every monitor
 
   routing:
+    subdomain: uptime-kuma                 # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal            # LAN-only: an uptime dashboard maps the whole estate
     identity: catalog             # catalog tile only — Uptime Kuma has its own login;

@@ -70,6 +70,7 @@ sabnzbd_defaults:
     pgid: 1313
 
   routing:
+    subdomain: sabnzbd                     # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal
     # catalog, NOT forward_auth — the opposite of the *arr apps, and deliberately.

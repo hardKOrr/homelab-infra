@@ -176,7 +176,19 @@ When `domains:` declares two or more estates, exactly one estate must be the exp
 default and every estate-scoped instance is `<app>-<estate>[-<variant>]`
 (`radarr-personal`, `radarr-foxglove-4k`). The dropdown labels include the estate. The
 longest matching application slug wins, so `uptime-kuma` is not read as an instance of
-`uptime`.
+`uptime`. An application whose own defaults declare `routing.estate` is prefilled for that
+estate rather than for the lab default, so the offered name never contradicts the
+application's configuration.
+
+Only applications the catalog marks `scope: estate` are suffixed. A `scope: lab` service —
+the TLS edge, the vault, PBS, Ntfy, the metrics stack, the status view, the cluster — keeps
+its ordinary name because one deployment serves every estate.
+
+**The suffix never reaches a URL.** Every routed application declares `routing.subdomain`
+in `../ansible/vars/app-defaults/<app>.yml`, so `radarr-personal` publishes
+`radarr.personal.example.com`. Without that declaration the hostname falls back to the
+instance name and the estate suffix would show up in the address; the gate rejects a routed
+application that omits it.
 
 Copying a job file to get a second instance is not necessary, and the copy is worse: its
 UUID has to be changed by hand and it drifts from the original on every later edit.

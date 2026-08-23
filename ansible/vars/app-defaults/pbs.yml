@@ -55,6 +55,7 @@ pbs_defaults:
                                          # name; playbooks/apps/remove.yml stops this
 
   routing:
+    subdomain: pbs                         # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal            # LAN-only: PBS holds every backup
     identity: catalog           # catalog tile only — PBS has its own login and API tokens

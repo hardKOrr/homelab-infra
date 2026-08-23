@@ -97,12 +97,8 @@ def load_document(path: Path, key: str, version: int = 1) -> dict:
     return mapping
 
 
-def hosting_of(slug: str) -> tuple[str, str]:
-    """Hosting kind and stack tag for an application, read from its own defaults.
-
-    This is the platform's existing rule, not a second one: an explicit `hosting:` wins,
-    otherwise the presence of `stack:` is what tells a Docker app from a native LXC app.
-    """
+def app_defaults_of(slug: str) -> dict:
+    """The `<app>_defaults` dict for one application (CONTRACT.md §2)."""
     path = APP_DEFAULTS / f"{slug}.yml"
     if not path.exists():
         raise ValueError(
@@ -111,16 +107,25 @@ def hosting_of(slug: str) -> tuple[str, str]:
         )
     with path.open(encoding="utf-8") as handle:
         document = yaml.safe_load(handle) or {}
-    # Each defaults file wraps its content in one `<app>_defaults:` key (CONTRACT.md §2).
-    defaults = next(
+    return next(
         (value for key, value in document.items()
          if key.endswith("_defaults") and isinstance(value, dict)),
         {},
     )
+
+
+def hosting_of(defaults: dict, slug: str) -> tuple[str, str]:
+    """Hosting kind and stack tag for an application, read from its own defaults.
+
+    This is the platform's existing rule, not a second one: an explicit `hosting:` wins,
+    otherwise the presence of `stack:` is what tells a Docker app from a native LXC app.
+    """
     stack = defaults.get("stack") or ""
     hosting = defaults.get("hosting") or ("docker" if stack else "native")
     if hosting not in HOSTING_KINDS:
-        raise ValueError(f"{path}: hosting {hosting!r} is not one of {HOSTING_KINDS}")
+        raise ValueError(
+            f"{APP_DEFAULTS / (slug + '.yml')}: hosting {hosting!r} is not one of {HOSTING_KINDS}"
+        )
     return hosting, str(stack)
 
 
@@ -166,11 +171,21 @@ def estate_context() -> dict:
 
 
 def default_instance(app: dict, estates: dict) -> str:
-    """The one-click default, with explicit identity in a multi-estate lab."""
+    """The one-click default, with explicit identity in a multi-estate lab.
+
+    An application that declares its own `routing.estate` is prefilled for THAT estate, not
+    for the lab default. Prefilling `mixpost-personal` for an application whose defaults
+    route it to the foxglove estate would offer a one-click deploy that contradicts the
+    application's own configuration. An estate this lab has not declared is ignored rather
+    than fatal: `app-defaults/` ships to every lab, and one lab's estate name means nothing
+    in another.
+    """
     slug = app["slug"]
     if app["scope"] != "estate" or not estates["multiple"]:
         return slug
-    return f"{slug}-{estates['default']}"
+    declared = app["estate"]
+    estate = declared if declared in estates["names"] else estates["default"]
+    return f"{slug}-{estate}"
 
 
 def set_application_options(job: dict, app: dict, estates: dict) -> None:
@@ -202,7 +217,11 @@ def set_application_options(job: dict, app: dict, estates: dict) -> None:
             )
             if estate_option is not None:
                 estate_option["required"] = True
-                estate_option["value"] = estates["default"]
+                # Same rule as the instance default: the application's own declared estate
+                # wins, so the prefilled name and the prefilled estate always agree.
+                estate_option["value"] = (
+                    app["estate"] if app["estate"] in estates["names"] else estates["default"]
+                )
                 estate_option["valuesUrl"] = "file:/var/lib/rundeck/app-instances/estates.json"
                 estate_option["enforced"] = True
 
@@ -238,8 +257,21 @@ def load_applications() -> dict[str, dict]:
             )
         seen_jobs[job] = slug
 
-        hosting, stack = hosting_of(slug)
+        defaults = app_defaults_of(slug)
+        hosting, stack = hosting_of(defaults, slug)
         segments = [root, category] + ([app_type] if app_type else []) + [name]
+        # `scope` is REQUIRED, not defaulted. Omitting it would put an application on the
+        # shared side of the estate boundary silently, and the shared side is meant to be
+        # the deliberate exception — a small named set of services the estates agree to
+        # hold in common, not whatever nobody classified.
+        scope = entry.get("scope")
+        if scope not in {"lab", "estate"}:
+            raise ValueError(
+                f"{APPLICATION_CATALOG}: applications.{slug}.scope must be declared as"
+                " lab (one deployment serves every estate) or estate (one deployment"
+                " per estate)"
+            )
+        routing = defaults.get("routing") or {}
         resolved[slug] = {
             "slug": slug,
             "name": name,
@@ -250,13 +282,10 @@ def load_applications() -> dict[str, dict]:
             "essential": bool(entry.get("essential")),
             "extra": list(entry.get("extra") or []),
             "exclude": list(entry.get("exclude") or []),
-            "scope": entry.get("scope") or "lab",
+            "scope": scope,
+            "estate": str(routing.get("estate") or ""),
             "actions": entry.get("actions"),
         }
-        if resolved[slug]["scope"] not in {"lab", "estate"}:
-            raise ValueError(
-                f"{APPLICATION_CATALOG}: applications.{slug}.scope must be lab or estate"
-            )
     return resolved
 
 

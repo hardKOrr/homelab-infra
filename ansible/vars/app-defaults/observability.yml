@@ -36,6 +36,7 @@ observability_defaults:
     # above is still live — it is the port Prometheus scrapes every guest on.
 
   routing:
+    subdomain: observability               # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal            # LAN-only: Grafana exposes metrics for every guest
     identity: catalog           # catalog tile only — Grafana has its own login and user

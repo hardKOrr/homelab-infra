@@ -326,3 +326,49 @@ while naming every later one. The settled rule is symmetric. A `domains:` map wi
 more entries declares exactly one default, and every estate-scoped instance is
 `<app>-<estate>[-<variant>]`, including the default estate. Lab-scoped platform services are
 not renamed because one instance serves every estate.
+
+## 2026-08-23 — the estate suffix must not reach the URL
+
+Phase 2's per-application expansion, then `f3da324`'s estate-aware naming, left one thing
+unpaid. `routing.subdomain` falls back to the **instance name**, and only Authentik ever
+declared a default (`subdomain: auth`). Marking eight applications `scope: estate` therefore
+renamed their instances to `<app>-<estate>` and, with them, their published hostnames:
+`radarr-personal.personal.example.com`.
+
+**Every routed application now declares its own `routing.subdomain`.** The value is the app
+slug, which is what the fall-back already produced for a canonical single instance, so no
+existing lab's URL moves. What changes is that the URL no longer follows the filename: the
+instance name is free to carry identity — filename, guest hostname, Proxmox tag, dropdown
+entry — while the address stays `radarr.personal.example.com`.
+
+Caddy is exempt (`proxy: none` — it is the proxy). The k3s cluster declares one although
+nothing wires it today, so the gate's rule needs no exception list.
+
+The gate now asserts it: a routed application with no `routing.subdomain` fails.
+
+### `scope` is required, and the shared set is named
+
+Estates are separate. The earlier framing — "an estate is a domain scope with its own SSO
+instance, sharing the rest of the platform" — was rejected by the operator and is gone from
+CONTRACT §5. What replaces it: estates are independent, and the shared set is an explicit
+named list rather than a residue.
+
+Mechanically that means `scope` has no default. It was `entry.get("scope") or "lab"`, which
+put an unclassified application on the shared side silently — the exact implicitness the
+decision was meant to remove. It is now rejected at render time, and every `scope: lab`
+entry in the catalog carries the reason it earns the exception.
+
+### An application's own estate beats the lab default
+
+`mixpost` declares `routing.estate: foxglove` in its git-managed defaults, so prefilling
+`mixpost-personal` from the lab default offered a one-click deploy that contradicted the
+application's own configuration. `default_instance()` and the instance-list seed now prefer
+a declared estate, falling back to the lab default when the lab has never heard of it —
+`app-defaults/` ships to every lab, and one lab's estate name means nothing in another.
+
+**Left alone deliberately, and worth a decision:** `estate: foxglove` in
+`ansible/vars/app-defaults/mixpost.yml` is one lab's estate name in a git-managed file that
+this project intends to be cloned. A fresh clone with different estate names gets a value
+its config-doctor will reject. The template now says not to do this. Removing it from
+mixpost's defaults would move that application to the default estate on the live lab, which
+is not a change to make on someone's behalf.

@@ -40,6 +40,12 @@ or reimport. Job names, UUIDs, steps, options, schedules, and playbooks are unch
       returning, and a failed retired-job deletion makes Reimport fail.
 - [x] built — `rundeck/retired-jobs.yml` and the deletion pass in **Reimport Jobs**, so the
       eight retired generic jobs do not survive as orphans.
+- [x] built — every routed application declares `routing.subdomain`, so an estate-suffixed
+      instance name never reaches a published URL; the gate rejects one that omits it.
+- [x] built — `scope` is required in the catalog with no default, and CONTRACT §5 states
+      that estates are separate and the shared set is explicitly named.
+- [x] built — an application that declares its own `routing.estate` is prefilled for that
+      estate rather than for the lab default.
 - [ ] observed — run **Reimport Jobs** TWICE (the deletion ships inside the new definition),
       then confirm: 102 jobs imported, the eight retired UUIDs gone, the instance dropdown
       populated on a Deploy job, one Restart against a Docker app and one against a native

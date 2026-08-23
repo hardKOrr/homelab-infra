@@ -24,7 +24,10 @@ schema_version: 2
 #   essential true withholds the Remove job — the platform cannot function without it
 #   extra     day-2 actions beyond the ones the hosting kind implies (see rundeck/app-actions.yml)
 #   exclude   derived actions this application cannot implement safely
-#   scope     estate when each instance belongs to one named estate; omit for lab-wide services
+#   scope     REQUIRED. estate = one deployment per estate, so its instances are named
+#             <app>-<estate>[-<variant>]. lab = one deployment serves every estate.
+#             There is no default: the shared side of the estate boundary is a deliberate,
+#             named exception, not whatever nobody got round to classifying.
 #   actions   explicit action list, replacing derivation entirely. Use only when the
 #             hosting kind genuinely does not describe the thing (the k3s cluster).
 #
@@ -51,6 +54,7 @@ applications:
     job: deploy-caddy.yaml
     root: Platform
     category: Access and Identity
+    scope: lab                          # the platform's single TLS edge fronts every estate
     essential: true
 
   jellyfin:
@@ -66,6 +70,7 @@ applications:
     job: deploy-k3s-cluster.yaml
     root: Platform
     category: Hosting
+    scope: lab                          # one cluster hosts workloads from every estate
     # The cluster is a hosting backend, not an app instance: it has no container to
     # restart, no compose project to tail and no removal path. Re-running Deploy is the
     # whole of its day-2 story, so only its config file is separately editable.
@@ -93,12 +98,14 @@ applications:
     job: deploy-ntfy.yaml
     root: Platform
     category: Monitoring and Notifications
+    scope: lab                          # one notification hub for the whole lab
 
   observability:
     name: Observability
     job: deploy-observability.yaml
     root: Platform
     category: Monitoring and Notifications
+    scope: lab                          # one metrics and dashboard stack covers every guest
     # Prometheus and Grafana are separate services. The generic rollback seam cannot
     # truthfully roll this application back as one unit.
     exclude: [rollback]
@@ -108,6 +115,7 @@ applications:
     job: deploy-pbs.yaml
     root: Platform
     category: Backup
+    scope: lab                          # one backup server holds every estate's snapshots
 
   prowlarr:
     name: Prowlarr
@@ -157,10 +165,12 @@ applications:
     job: deploy-uptime-kuma.yaml
     root: Platform
     category: Monitoring and Notifications
+    scope: lab                          # one status view of the whole lab
 
   vaultwarden:
     name: Vaultwarden
     job: deploy-vaultwarden.yaml
     root: Platform
     category: Access and Identity
+    scope: lab                          # one vault is the platform's root of trust
     essential: true

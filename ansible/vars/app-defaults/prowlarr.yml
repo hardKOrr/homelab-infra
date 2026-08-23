@@ -33,6 +33,7 @@ prowlarr_defaults:
     pgid: 1313
 
   routing:
+    subdomain: prowlarr                    # hostname on the estate domain, independent of the instance name
     proxy: internal
     access: internal
     # Coupled to AuthenticationMethod External — the reverse proxy is the only
