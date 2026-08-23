@@ -1,17 +1,23 @@
-# Tail App Log — generated companion to the Semaphore template of the same name.
-# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/tail-applog.yaml
+# Tail App Log — a PER-APPLICATION TEMPLATE, not a job.
+#
+# rundeck/render-job.py expands this file into one "Tail <App> Log" job per application
+# whose hosting kind implements a log tail (see rundeck/app-actions.yml), filed under that
+# application's own Maintenance folder. The %TOKEN% placeholders are substituted per
+# application; id, uuid and group are assigned by the renderer.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
 # It refreshes the checkout to origin/<branch>, validates config/ and execs
 # ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
 
-- id: 5850deaf-a5be-5a34-8d9c-27c847227af8
-  uuid: 5850deaf-a5be-5a34-8d9c-27c847227af8
-  name: Tail App Log
-  group: Manage/Applications/Diagnostics
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Tail %NAME% Log
+  group: '%GROUP%'
   description: |-
-    Stream recent log lines from a native LXC app into this job's console.
+    Stream recent %NAME% log lines into this job's console. A native LXC app is read
+    through its lab-tail-applog script; a Docker app's Compose service logs are read on
+    the stack host it runs on. Read-only.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,8 +25,12 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: App instance name, e.g. vaultwarden
+    description: Which %NAME% instance. Leave it as it is unless this lab runs more than
+      one — the list is every config/apps/<instance>.yml file that belongs to %SLUG%.
     required: true
+    value: '%SLUG%'
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   - name: lines
     description: How many log lines to show
     required: true
@@ -38,6 +48,7 @@
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          ARGS+=(-e "app=%SLUG%")
           : "${RD_OPTION_LINES:?lines is required}"
           ARGS+=(-e "lines=$RD_OPTION_LINES")
 

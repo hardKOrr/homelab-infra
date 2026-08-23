@@ -1,25 +1,26 @@
 ---
-# Tail recent log output for a native LXC app.
-# Output is printed to the Semaphore/Rundeck job console.
+# Tail recent log output for one app instance, whichever way it is installed.
+# Output is printed to the Semaphore/Rundeck job console. Read-only.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml -e instance=vaultwarden
-#   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml -e instance=vaultwarden -e lines=100
+#   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml \
+#       -e instance=radarr-4k -e app=radarr -e lines=100
 #
-# Semaphore/Rundeck: job parameters = instance (required), lines (optional, default 50)
+# Semaphore/Rundeck: job parameters
+#   instance — the app instance name (required)
+#   app      — the application it is an instance of. Defaults to `instance`.
+#   lines    — how many lines to show (default 50)
+#
+# A native LXC app is read through the lab-tail-applog script its role installed. A Docker
+# app's logs come from its Compose project on the stack host. See
+# tasks/maintenance/resolve-app-target.yml for why the target is resolved rather than
+# assumed to be the instance name.
 
-# Play 1 asserts on localhost so a missing `instance` fails with the friendly
-# message below — Play 2's hosts pattern would otherwise die first with an
-# opaque inventory error.
-- name: Tail App Log | Validate parameters
+- name: Tail App Log | Resolve the target
   hosts: localhost
   gather_facts: false
   tasks:
-    - name: Assert instance name provided
-      ansible.builtin.assert:
-        that: instance is defined and instance | length > 0
-        fail_msg: "Pass the app instance name: -e instance=<name>"
-
     # The connection user must be loaded here, before the guest play: the Proxmox
     # dynamic inventory carries no ansible_user, so Play 2 would connect as the
     # account running Ansible — rundeck on a runner — and every guest is
@@ -27,22 +28,36 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
+    - name: Resolve which host holds this instance
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+
 # The default() can only fire during --syntax-check: Play 1 has already
-# asserted `instance` is defined by the time this play's pattern is resolved.
+# resolved `instance` by the time this play's pattern is resolved.
 - name: Tail App Log | {{ instance | default('(no instance)') }}
-  hosts: "{{ instance | default('_instance_unset') }}"
+  hosts: "apptarget_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
-  vars:
-    ansible_user: >-
-      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
   tasks:
-    - name: Fetch log output
+    - name: Fetch log output from a native app
       ansible.builtin.command: "/usr/local/bin/lab-tail-applog {{ lines | default('50') }}"
-      register: _logs
+      register: _logs_native
       changed_when: false
       failed_when: false
+      when: app_target_kind | default('native') == 'native'
+
+    # `docker compose logs` rather than a module: this reads output, it changes nothing,
+    # and community.docker has no log-reading module to reach for.
+    - name: Fetch log output from a Docker app
+      ansible.builtin.command:
+        cmd: "docker compose logs --no-color --tail {{ lines | default('50') }}"
+        chdir: "{{ app_target_project_dir }}"
+      register: _logs_docker
+      changed_when: false
+      failed_when: false
+      when: app_target_kind | default('native') == 'docker'
 
     - name: Print log output
       ansible.builtin.debug:
-        msg: "{{ _logs.stdout_lines }}"
+        msg: >-
+          {{ (_logs_native if _logs_native is not skipped else _logs_docker).stdout_lines
+             | default(['(no output — the app produced no log lines)']) }}

@@ -9,7 +9,7 @@
 - id: a2035f11-a8dc-5574-b9de-7411820c51ba
   uuid: a2035f11-a8dc-5574-b9de-7411820c51ba
   name: Deploy Uptime Kuma
-  group: Platform/Monitoring and Notifications
+  group: Platform/Monitoring and Notifications/Uptime Kuma
   description: |-
     Deploy or update Uptime Kuma. Every later app deploy registers its own monitor here.
   loglevel: INFO

@@ -1,19 +1,22 @@
-# Backup App — generated companion to the Semaphore template of the same name.
-# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/backup-app.yaml
+# Backup App — a PER-APPLICATION TEMPLATE, not a job.
+#
+# rundeck/render-job.py expands this file into one "Backup <App>" job per Kubernetes-hosted
+# application, filed under that application's own Maintenance folder. Docker and native
+# applications get no Backup job: their data is covered by the guest's PBS backup, and
+# there is no per-application backup CronJob to start.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
 # It refreshes the checkout to origin/<branch>, validates config/ and execs
 # ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
 
-- id: cd05b253-5012-5911-9713-48bd5e7da85d
-  uuid: cd05b253-5012-5911-9713-48bd5e7da85d
-  name: Backup App
-  group: Manage/Applications/Backup
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Backup %NAME%
+  group: '%GROUP%'
   description: |-
-    Run one Kubernetes-hosted application's backup now rather than waiting for its nightly
-    schedule: a quiesced database dump plus its storage volume, pushed into the lab's PBS
-    datastore.
+    Run this %NAME% instance's backup now rather than waiting for its nightly schedule: a
+    quiesced database dump plus its storage volume, pushed into the lab's PBS datastore.
 
     It starts the CronJob the deploy already installed, so this and the scheduled run are
     the same definition — there is no second copy to drift. The job waits for the result
@@ -28,12 +31,13 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: App instance to back up, e.g. mixpost
+    description: Which %NAME% instance to back up. Leave it as it is unless this lab runs
+      more than one — the list is every config/apps/<instance>.yml file that belongs to
+      %SLUG%.
     required: true
-  - name: app
-    description: Only if the instance name differs from the app name (instance
-      mixpost-restore of app mixpost). Leave blank otherwise.
-    required: false
+    value: '%SLUG%'
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   sequence:
     keepgoing: false
     strategy: node-first
@@ -47,9 +51,7 @@
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
-          if [ -n "${RD_OPTION_APP:-}" ]; then
-            ARGS+=(-e "app=$RD_OPTION_APP")
-          fi
+          ARGS+=(-e "app=%SLUG%")
 
           # lab-run refreshes the checkout, runs config-doctor, and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.

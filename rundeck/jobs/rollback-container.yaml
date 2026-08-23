@@ -1,31 +1,42 @@
-# Rollback Container — generated companion to the Semaphore template of the same name.
-# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/rollback-container.yaml
+# Rollback Container — a PER-APPLICATION TEMPLATE, not a job.
+#
+# rundeck/render-job.py expands this file into one "Rollback <App>" job per Docker-hosted
+# application, filed under that application's own Maintenance folder. The stack tag comes
+# from the application's own defaults, so the operator supplies only the version to pin —
+# the two questions this job used to ask (which stack, which container) are already
+# answered by the expansion.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
 # It refreshes the checkout to origin/<branch>, validates config/ and execs
 # ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
 
-- id: 17be5a66-0344-519d-9b0a-c5b3795c7365
-  uuid: 17be5a66-0344-519d-9b0a-c5b3795c7365
-  name: Rollback Container
-  group: Recover/Applications
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Rollback %NAME%
+  group: '%GROUP%'
   description: |-
-    Pin a Docker app to an earlier image tag and recreate it. Run this when a Watchtower update breaks something. Notifies via Ntfy.
+    Pin %NAME% to an earlier image tag and recreate its container. Run this when a
+    Watchtower update breaks it — the Watchtower notification names the version it came
+    from. Pinning stops Watchtower auto-updating this container until Deploy %NAME% is
+    re-run. Notifies via Ntfy.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
   nodeFilterEditable: false
   multipleExecutions: false
   options:
-  - name: stack
-    description: Stack tag the container runs on, e.g. media_stack
+  - name: instance
+    description: Which %NAME% instance to roll back — its Compose project is
+      /opt/<instance> on the %STACK% host. Leave it as it is unless this lab runs more
+      than one.
     required: true
-  - name: container
-    description: App instance name — its Compose project is /opt/<instance>
-    required: true
+    value: '%SLUG%'
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   - name: image_tag
-    description: Tag to roll back to, e.g. 5.1.3. Leave blank to re-pin the tag already in the Compose file.
+    description: Tag to roll back to, e.g. 5.1.3. Leave blank to re-pin the tag already in
+      the Compose file — which freezes nothing if that tag is `latest`.
     required: false
   sequence:
     keepgoing: false
@@ -37,11 +48,14 @@
           set -euo pipefail
           # Job options arrive as RD_OPTION_* environment variables — Rundeck's
           # ${option.x} tokens would collide with shell expansion in a script step.
+          #
+          # `stack` is not an option: it is declared in ansible/vars/app-defaults/%SLUG%.yml
+          # and baked in at render time. An instance moved to another stack host is the one
+          # case that needs the generic playbook run by hand.
           ARGS=()
-          : "${RD_OPTION_STACK:?stack is required}"
-          ARGS+=(-e "stack=$RD_OPTION_STACK")
-          : "${RD_OPTION_CONTAINER:?container is required}"
-          ARGS+=(-e "container=$RD_OPTION_CONTAINER")
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "stack=%STACK%")
+          ARGS+=(-e "container=$RD_OPTION_INSTANCE")
           if [ -n "${RD_OPTION_IMAGE_TAG:-}" ]; then
             ARGS+=(-e "image_tag=$RD_OPTION_IMAGE_TAG")
           fi

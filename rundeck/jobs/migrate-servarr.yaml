@@ -1,23 +1,25 @@
-# Migrate Servarr — bring an existing Sonarr/Radarr/Lidarr/Readarr/Prowlarr's
-# configuration onto a lab instance. Load with:
-#   rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/migrate-servarr.yaml
+# Migrate Servarr — a PER-APPLICATION TEMPLATE, not a job.
+#
+# rundeck/render-job.py expands this file into one "Migrate <App>" job per application that
+# opts in with `extra: [migrate]` in catalog/applications.yml — the Servarr family, which
+# share one role and one migration path. Hosting kind never selects this action.
 #
 # Non-destructive: the source app is stopped only for the copy, started again
 # afterwards even on failure, and never modified. Run the app's Deploy job after
 # this one — it starts the app on the migrated database and verifies it.
 
-- id: 086482e8-59a6-57f1-8c4f-f0f3f9d86a39
-  uuid: 086482e8-59a6-57f1-8c4f-f0f3f9d86a39
-  name: Migrate Servarr
-  group: Manage/Applications/Migration
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Migrate %NAME%
+  group: '%GROUP%'
   description: |-
     NOT READY FOR A LIVE CUTOVER — see docs/meta/done/505-app-servarr/notes.md.
     Peer references are not rewritten, wiring would duplicate rather than repair,
     and the source keeps running. Exercise it against a throwaway instance.
 
-    Copy an existing Servarr app's configuration — history, library, profiles,
-    indexers and its API key — onto a lab instance. Run the app's Deploy job
-    afterwards. The source app is left running and unchanged.
+    Copy an existing %NAME% installation's configuration — history, library, profiles,
+    indexers and its API key — onto a lab instance. Run Deploy %NAME% afterwards. The
+    source app is left running and unchanged.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -25,15 +27,19 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: "Target lab instance name, e.g. radarr-1080p"
+    description: Target lab %NAME% instance. Leave it as it is unless the migration lands
+      on a second instance, e.g. %SLUG%-1080p.
     required: true
+    value: '%SLUG%'
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   - name: source_host
-    description: "Address of the existing app, e.g. 192.168.1.15"
+    description: "Address of the existing %NAME%, e.g. 192.168.1.15"
     required: true
   - name: source_config_path
-    description: "Its configuration directory, e.g. /var/lib/radarr"
+    description: "Its configuration directory on that host"
     required: true
-    value: /var/lib/radarr
+    value: /var/lib/%SLUG%
   sequence:
     keepgoing: false
     strategy: node-first
@@ -45,8 +51,7 @@
           # Job options arrive as RD_OPTION_* environment variables. Rundeck's
           # ${option.x} tokens are NOT expanded inside a script step — bash sees
           # them first and dies with "bad substitution", which is how execution
-          # 107 failed on line 4 before reaching Ansible. Every other job in this
-          # directory already reads RD_OPTION_*; this one was missed.
+          # 107 failed on line 4 before reaching Ansible.
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
           : "${RD_OPTION_SOURCE_HOST:?source_host is required}"

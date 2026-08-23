@@ -1,6 +1,6 @@
 # 602 — Rundeck job tree
 
-**Status:** done
+**Status:** open — phase 2 built 2026-08-23, awaiting the live import
 **Subject:** Rundeck job tree
 **Related:** 601 (the job definitions this reshapes), 408 (the application catalog that
 feeds the selectable set), 600 (Semaphore, no-target — not kept in parity)
@@ -16,6 +16,28 @@ other placement. The renderer projects and validates both classifications before
 or reimport. Job names, UUIDs, steps, options, schedules, and playbooks are unchanged.
 
 ## Remaining
+
+### Phase 2 — one folder per application (2026-08-23)
+
+- [x] built — the leaf of the tree is the application: `…/<App>` holds Deploy, and
+      `…/<App>/Maintenance` holds its day-2 jobs. 104 jobs render from 39 source files.
+- [x] built — eight per-application templates, `rundeck/app-actions.yml`, and catalog
+      schema 2 covering platform services as well as optional applications.
+- [x] built — the expansion answers instance, app and stack from the repository; which
+      actions exist is derived from the hosting kind and the absences are deliberate.
+- [x] built — `instance` is a live dropdown from `/var/lib/rundeck/app-instances/<app>.json`,
+      rewritten by `ansible/scripts/app-instances.py` at the start of every job.
+- [x] built — `Restart` and `Tail Log` now serve Docker apps as well as native ones, through
+      `ansible/tasks/maintenance/resolve-app-target.yml`. Without this the expansion would
+      have produced ten buttons that fail when pressed.
+- [x] built — `rundeck/retired-jobs.yml` and the deletion pass in **Reimport Jobs**, so the
+      eight retired generic jobs do not survive as orphans.
+- [ ] observed — run **Reimport Jobs** TWICE (the deletion ships inside the new definition),
+      then confirm: 104 jobs imported, the eight retired UUIDs gone, the instance dropdown
+      populated on a Deploy job, one Restart against a Docker app and one against a native
+      app, and one Rollback that no longer asks for a stack tag.
+
+### Phase 1 — the catalog-first tree (2026-08-23)
 
 - [x] built 2026-08-23 — all 39 source jobs moved from the four flat groups into the
       nested `Applications`, `Platform`, `Manage`, `Recover`, and `Setup` tree.

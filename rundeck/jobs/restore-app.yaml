@@ -1,25 +1,24 @@
-# Restore App — generated companion to the Semaphore template of the same name.
-# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/restore-app.yaml
+# Restore App — a PER-APPLICATION TEMPLATE, not a job.
 #
-# The step calls `lab-run`, the single entry point installed by
-# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
-# It refreshes the checkout to origin/<branch>, validates config/ and execs
-# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+# rundeck/render-job.py expands this file into one "Restore <App>" job per Kubernetes-hosted
+# application, filed under that application's own Maintenance folder next to its Backup
+# job. A restore belongs beside the backup that produced the snapshot, not in a separate
+# recovery branch the operator has to go and find under pressure.
 #
 # The full procedure — find a snapshot, choose where it lands, check the plan, restore,
 # verify — is in the header of ansible/playbooks/maintenance/restore-app.yml.
 
-- id: 167f4948-8faf-5f01-9208-c294f7b416ec
-  uuid: 167f4948-8faf-5f01-9208-c294f7b416ec
-  name: Restore App
-  group: Recover/Applications
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Restore %NAME%
+  group: '%GROUP%'
   description: |-
-    Restore one application's data from the lab's Proxmox Backup Server: the quiesced
+    Restore this %NAME% instance's data from the lab's Proxmox Backup Server: the quiesced
     database dump and storage volume its own backup job pushes there, not a whole-VM
     snapshot.
 
     Run it with overwrite=false first. With no snapshot named it lists what PBS holds for
-    the application; with one named it proves that snapshot is readable and prints exactly
+    the instance; with one named it proves that snapshot is readable and prints exactly
     what the target holds today. Neither writes anything.
 
     overwrite=true then replaces the target's database and storage volume with the
@@ -36,20 +35,21 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: The app instance that OWNS the backup — its snapshots are filed in PBS
-      under host/<instance>.
+    description: The %NAME% instance that OWNS the backup — its snapshots are filed in PBS
+      under host/<instance>. Leave it as it is unless this lab runs more than one.
     required: true
-  - name: app
-    description: Only if the instance name differs from the app name (instance
-      mixpost-restore of app mixpost). Leave blank otherwise.
-    required: false
+    value: '%SLUG%'
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   - name: target
     description: The instance whose namespace receives the data. Leave blank to restore the
       application over itself. Set it to a second, already-deployed instance to rehearse a
       clean restore without touching the live one.
     required: false
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   - name: snapshot
-    description: PBS snapshot identifier, e.g. host/mixpost/2026-08-19T03:00:00Z. Leave
+    description: PBS snapshot identifier, e.g. host/%SLUG%/2026-08-19T03:00:00Z. Leave
       blank to list what PBS holds and change nothing.
     required: false
   - name: overwrite
@@ -72,9 +72,7 @@
           ARGS=()
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
-          if [ -n "${RD_OPTION_APP:-}" ]; then
-            ARGS+=(-e "app=$RD_OPTION_APP")
-          fi
+          ARGS+=(-e "app=%SLUG%")
           if [ -n "${RD_OPTION_TARGET:-}" ]; then
             ARGS+=(-e "target=$RD_OPTION_TARGET")
           fi

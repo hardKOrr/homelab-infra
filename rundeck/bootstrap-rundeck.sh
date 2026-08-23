@@ -1223,6 +1223,11 @@ else
     RD_API="$RD_API" REPO_DIR="$REPO_DIR" VENV_DIR="$VENV_DIR" bash -s <<'IMPORT'
 set -euo pipefail
 n=0; f=0
+# The generated per-application jobs offer their instances as a dropdown read from these
+# files. Write them before the import so the option provider resolves on the first visit;
+# lab-run.sh rewrites them at the start of every job afterwards.
+"$VENV_DIR/bin/python3" "$REPO_DIR/ansible/scripts/app-instances.py" \
+  --repo "$REPO_DIR" --out /var/lib/rundeck/app-instances || true
 "$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/render-job.py" --check "$REPO_DIR/rundeck/jobs"
 for job in "$REPO_DIR"/rundeck/jobs/*.yaml; do
   [ -f "$job" ] || continue

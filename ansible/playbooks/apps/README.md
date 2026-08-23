@@ -51,14 +51,37 @@ Do a find-and-replace of `APP_NAME` → `sonarr` across all four files.
 
 ## Step 3 — Classify the application
 
-Add the selectable application to `catalog/applications.yml`. Choose the broad purpose an
-operator recognizes, then the application type. Do not classify it by Docker, LXC, VM,
-Kubernetes, stack, database dependency, or another execution detail.
+Add the application to `catalog/applications.yml`:
 
-The Rundeck job group is projected as
-`Applications/<category>/<type>`. Add platform services and non-application actions to
-`rundeck/job-groups.yml` instead. `render-job.py --check` rejects an unclassified job or a
-source `group:` that has drifted from its classification.
+```yaml
+  sonarr:
+    name: Sonarr                        # the folder name and the "Deploy Sonarr" job name
+    job: deploy-sonarr.yaml
+    root: Applications                  # Applications | Platform
+    category: Media & Entertainment     # the broad purpose an operator recognizes
+    type: Library Automation            # the application type; omit for a Platform entry
+```
+
+Do not classify it by Docker, LXC, VM, Kubernetes, stack, database dependency, or another
+execution detail. Add jobs that act on the lab rather than on one application to
+`rundeck/job-groups.yml` instead.
+
+The entry produces the whole folder, not just the Deploy job: `render-job.py` projects the
+group `<root>/<category>/<type>/<name>` and expands every applicable day-2 template into
+`<that group>/Maintenance`. Which actions apply is read from
+`vars/app-defaults/<app>.yml` — an explicit `hosting:` wins, otherwise the presence of
+`stack:` tells Docker from native — so **Step 4 is what decides the app's Maintenance
+folder**, and nothing here has to list its jobs.
+
+Two optional fields:
+
+- `extra: [migrate]` opts into an action no hosting kind selects. Only the Servarr family
+  uses it today.
+- `essential: true` withholds the Remove job, for a service the platform cannot run
+  without.
+
+`render-job.py --check` rejects an unclassified job, a source `group:` that has drifted from
+its classification, a template no application selects, and any UUID collision.
 
 ---
 
@@ -171,7 +194,7 @@ stay estate-agnostic.
 - [ ] `roles/<app>/` — idempotent, health check included, no hardcoded values
 - [ ] `playbooks/apps/<app>.yml` — three-play pattern, correct hosts target
 - [ ] `config.example/apps/<app>.example.yml` — user-facing knobs only
-- [ ] `catalog/applications.yml` — purpose/type classification for the selectable app
+- [ ] `catalog/applications.yml` — purpose/type classification; it also generates the app's Maintenance folder
 - [ ] `rundeck/jobs/deploy-<app>.yaml` — stable UUID and projected catalog group
 - [ ] App-to-app wiring added to relevant `stacks/wire-<stack>.yml`
 - [ ] Re-run is idempotent (no spurious changes on second run)

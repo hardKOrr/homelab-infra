@@ -9,7 +9,7 @@
 - id: d4ef9a86-ba44-4fa3-99b0-468b3e541f32
   uuid: d4ef9a86-ba44-4fa3-99b0-468b3e541f32
   name: Deploy Jellyfin
-  group: Applications/Media & Entertainment/Media Servers
+  group: Applications/Media & Entertainment/Media Servers/Jellyfin
   description: |-
     Deploy or update Jellyfin — the media stack's media server (Docker on
     media_stack). Completes Jellyfin's first-run wizard, creates the admin

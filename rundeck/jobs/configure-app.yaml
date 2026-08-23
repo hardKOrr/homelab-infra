@@ -1,22 +1,27 @@
-# Configure App — write config/apps/<instance>.yml from this survey.
-# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/configure-app.yaml
+# Configure App — a PER-APPLICATION TEMPLATE, not a job.
+#
+# rundeck/render-job.py expands this file into one "Configure <App>" job per application,
+# filed under that application's own Maintenance folder. It writes
+# config/apps/<instance>.yml from this survey.
+#
+# ONE JOB PER APPLICATION, reversing the earlier single generic job. The generic job was
+# argued for on the grounds that which app an instance belongs to is decided by the Deploy
+# job, so this job need not know. True — and it still meant the operator arrived at a form
+# with an empty instance box and no indication of which app it was about to configure. The
+# expansion prefills the instance, files the job beside that app's Deploy job, and the job
+# list grows by generated entries rather than by hand-written ones.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
 # It refreshes the checkout to origin/<branch>, validates config/ and execs
 # ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
-#
-# ONE job for every app, deliberately — not one job per app. Which app an instance file
-# belongs to is decided by which Deploy job you run against it, so this job does not need
-# to know, and the job list gains one entry rather than N. The common keys are named
-# below; everything else goes in extra_yaml.
 
-- id: 3df2e225-6d36-5dac-bed2-3875eba8ae1d
-  uuid: 3df2e225-6d36-5dac-bed2-3875eba8ae1d
-  name: Configure App
-  group: Manage/Applications/Configuration
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Configure %NAME%
+  group: '%GROUP%'
   description: |-
-    Create or edit config/apps/<instance>.yml without an SSH session. Every field is an OVERRIDE — anything you leave blank keeps its current value, and anything absent from the file falls through to the app's defaults. The previous content is kept under config/apps/.backups/ and the job log shows a unified diff of exactly what changed. Anything not covered by the fields below goes in Extra YAML.
+    Create or edit this %NAME% instance's config/apps/<instance>.yml without an SSH session. Every field is an OVERRIDE — anything you leave blank keeps its current value, and anything absent from the file falls through to %NAME%'s defaults. The previous content is kept under config/apps/.backups/ and the job log shows a unified diff of exactly what changed. Anything not covered by the fields below goes in Extra YAML.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -24,8 +29,11 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: 'Instance name. This IS the filename, the guest hostname and the subdomain: lowercase letters, digits and hyphens (e.g. radarr, radarr-4k).'
+    description: 'Which %NAME% instance. This IS the filename, the guest hostname and the subdomain. Type a new name to create a second instance: lowercase letters, digits and hyphens (e.g. %SLUG%-4k).'
     required: true
+    value: '%SLUG%'
+    valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
+    enforced: false
   - name: stack
     description: Docker apps only — which shared stack host to place this app on (e.g. media_stack). Leave blank for native LXC apps and to keep the current value.
     required: false

@@ -66,4 +66,24 @@
             fi
           done
           echo "[reimport] $imported imported, $failed failed"
+
+          # Import is additive: a job the repo stopped generating survives in Rundeck's
+          # database as a clickable orphan. rundeck/retired-jobs.yml names the UUIDs this
+          # repository has withdrawn, and deleting them here is what makes a reorganization
+          # in the repo look the same in the UI. A UUID that is already gone is not an
+          # error.
+          retired=0
+          while read -r uuid; do
+            [ -n "$uuid" ] || continue
+            code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 -X DELETE \
+              -H "X-Rundeck-Auth-Token: $RUNDECK_API_TOKEN" -H "Accept: application/json" \
+              "$RUNDECK_URL/api/47/job/$uuid")"
+            case "$code" in
+              204) retired=$((retired + 1)); echo "[reimport] retired $uuid" ;;
+              404) : ;;
+              *)   echo "[reimport] could not retire $uuid (HTTP $code)" ;;
+            esac
+          done < <("$LAB_VENV/bin/python3" -c "import sys,yaml;print('\n'.join((yaml.safe_load(open(sys.argv[1],encoding='utf-8')) or {}).get('jobs') or {}))" "$LAB_REPO/rundeck/retired-jobs.yml")
+          echo "[reimport] $retired retired job(s) deleted"
+
           [ "$failed" -eq 0 ]

@@ -1,53 +1,148 @@
-schema_version: 1
+schema_version: 2
 
-# Human-facing application classification. This is independent of hosting kind,
-# stack assignment, and Rundeck: those are execution details, not how an operator
-# finds an application. The Rundeck renderer projects category/type into its job tree.
+# Human-facing classification of everything this platform deploys. It is independent of
+# hosting kind, stack assignment and Rundeck: those are execution details, not how an
+# operator finds an application.
+#
+# The Rundeck renderer projects each entry to a leaf folder named after the application:
+#
+#     <root>/<category>[/<type>]/<name>            <- the Deploy job
+#     <root>/<category>[/<type>]/<name>/Maintenance <- every day-2 job for that instance
+#
+# WHY A LEAF FOLDER PER APPLICATION. The day-2 jobs used to be one generic job per verb,
+# each asking the operator to type an instance name, an app name and a stack tag that the
+# platform already knows. That is the opposite of one-click. Expanding one template per
+# application answers those questions from this file and from the app's own defaults, so
+# the normal case is a click and the second-instance case is a dropdown.
+#
+# FIELDS
+#   name      display name; the Deploy job is "Deploy <name>" and the leaf folder is <name>
+#   job       the deploy job file in rundeck/jobs/
+#   root      Applications (optional software) | Platform (capabilities the lab runs on)
+#   category  first group segment under the root
+#   type      second group segment; omit for Platform entries, which have no type axis
+#   essential true withholds the Remove job — the platform cannot function without it
+#   extra     day-2 actions beyond the ones the hosting kind implies (see rundeck/app-actions.yml)
+#   actions   explicit action list, replacing derivation entirely. Use only when the
+#             hosting kind genuinely does not describe the thing (the k3s cluster).
+#
+# HOSTING IS NOT DECLARED HERE. Which day-2 actions exist is derived from
+# ansible/vars/app-defaults/<slug>.yml — `hosting:` when present, otherwise the presence of
+# `stack:` tells Docker from native, exactly as the rest of the platform decides it. That
+# keeps one source of truth. Deriving the ACTION SET from hosting is not the same thing as
+# grouping by hosting, which this file still forbids.
+
 applications:
+  authentik:
+    name: Authentik
+    job: deploy-authentik.yaml
+    root: Platform
+    category: Access and Identity
+
+  caddy:
+    name: Caddy
+    job: deploy-caddy.yaml
+    root: Platform
+    category: Access and Identity
+    essential: true
+
   jellyfin:
     name: Jellyfin
     job: deploy-jellyfin.yaml
+    root: Applications
     category: Media & Entertainment
     type: Media Servers
+
+  k3s-cluster:
+    name: k3s Cluster
+    job: deploy-k3s-cluster.yaml
+    root: Platform
+    category: Hosting
+    # The cluster is a hosting backend, not an app instance: it has no container to
+    # restart, no compose project to tail and no removal path. Re-running Deploy is the
+    # whole of its day-2 story, so only its config file is separately editable.
+    actions: [configure]
 
   lidarr:
     name: Lidarr
     job: deploy-lidarr.yaml
+    root: Applications
     category: Media & Entertainment
     type: Library Automation
+    extra: [migrate]
 
   mixpost:
     name: Mixpost
     job: deploy-mixpost.yaml
+    root: Applications
     category: Content & Publishing
     type: Social Publishing
+
+  ntfy:
+    name: Ntfy
+    job: deploy-ntfy.yaml
+    root: Platform
+    category: Monitoring and Notifications
+
+  observability:
+    name: Observability
+    job: deploy-observability.yaml
+    root: Platform
+    category: Monitoring and Notifications
+
+  pbs:
+    name: PBS
+    job: deploy-pbs.yaml
+    root: Platform
+    category: Backup
 
   prowlarr:
     name: Prowlarr
     job: deploy-prowlarr.yaml
+    root: Applications
     category: Media & Entertainment
     type: Indexer Management
+    extra: [migrate]
 
   qbittorrent:
     name: qBittorrent
     job: deploy-qbittorrent.yaml
+    root: Applications
     category: Media & Entertainment
     type: Download Clients
 
   radarr:
     name: Radarr
     job: deploy-radarr.yaml
+    root: Applications
     category: Media & Entertainment
     type: Library Automation
+    extra: [migrate]
 
   sabnzbd:
     name: SABnzbd
     job: deploy-sabnzbd.yaml
+    root: Applications
     category: Media & Entertainment
     type: Download Clients
 
   sonarr:
     name: Sonarr
     job: deploy-sonarr.yaml
+    root: Applications
     category: Media & Entertainment
     type: Library Automation
+    extra: [migrate]
+
+  uptime-kuma:
+    name: Uptime Kuma
+    job: deploy-uptime-kuma.yaml
+    root: Platform
+    category: Monitoring and Notifications
+
+  vaultwarden:
+    name: Vaultwarden
+    job: deploy-vaultwarden.yaml
+    root: Platform
+    category: Access and Identity
+    essential: true

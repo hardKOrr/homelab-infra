@@ -1,0 +1,114 @@
+---
+# Resolve which host a day-2 action runs on for one app instance, and how the app is
+# installed there.
+#
+# WHY THIS EXISTS. `Restart App` and `Tail App Log` used to target the instance name as an
+# inventory host and run /usr/local/bin/lab-restart-app on it. That is correct for a native
+# LXC app, which owns its guest — and wrong for every Docker app, whose instance name is
+# not a guest at all: the guest is the shared stack host, and the app is a Compose project
+# under /opt/<instance>. Ten of the sixteen applications in the catalog are Docker apps, so
+# the per-application Maintenance folders would have offered ten Restart buttons that fail
+# with an inventory error. Resolving the target once, here, is what lets both playbooks
+# serve both hosting kinds.
+#
+# Inputs:
+#   instance  — the app instance name (required)
+#   app       — the application the instance belongs to. Defaults to `instance`; the
+#               Rundeck jobs always pass it, because a second instance named radarr-4k is
+#               still app radarr and its defaults live in app-defaults/radarr.yml.
+#
+# Outputs, on localhost:
+#   _rat_kind         native | docker
+#   _rat_stack        the stack tag for a Docker app, else ''
+#   _rat_host         the inventory host the action must run on
+#   group apptarget_<instance>, holding that one host, with these facts attached:
+#     app_target_kind, app_target_instance, app_target_project_dir
+#
+# PATH CONSTRAINT: the include_vars paths below are relative to `playbook_dir`, so this
+# file may only be included from a playbook in playbooks/<subdir>/ — the same constraint,
+# and the same reason, as tasks/config/run-doctor.yml. Both current callers live in
+# playbooks/maintenance/.
+
+- name: Resolve app target | Assert the instance is named
+  ansible.builtin.assert:
+    that: instance is defined and instance | length > 0
+    fail_msg: "Pass the app instance name: -e instance=<name>"
+
+- name: Resolve app target | Resolve the application
+  ansible.builtin.set_fact:
+    _rat_app: "{{ app | default(instance, true) }}"
+
+- name: Resolve app target | Load the application defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../vars/app-defaults/{{ _rat_app }}.yml"
+    name: _rat_defaults_file
+  failed_when: false
+
+- name: Resolve app target | Load the instance config
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+    name: _rat_instance_config
+  failed_when: false
+
+# Every defaults file wraps its content in one `<app>_defaults:` key — see
+# ansible/vars/CONTRACT.md §2. Hyphenated slugs use underscores in that key.
+- name: Resolve app target | Read the declared hosting shape
+  ansible.builtin.set_fact:
+    _rat_stack: >-
+      {{ _rat_instance_config.stack
+         | default((_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
+                    | default({})).stack | default(''), true) }}
+    _rat_declared_hosting: >-
+      {{ (_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
+          | default({})).hosting | default('') }}
+
+# The platform's one rule, not a second one: an explicit `hosting:` wins, otherwise the
+# presence of `stack:` is what tells a Docker app from a native LXC app.
+- name: Resolve app target | Decide the hosting kind
+  ansible.builtin.set_fact:
+    _rat_kind: >-
+      {{ _rat_declared_hosting
+         | default('docker' if _rat_stack | length > 0 else 'native', true) }}
+
+- name: Resolve app target | Refuse an action this hosting kind does not implement
+  ansible.builtin.assert:
+    that: _rat_kind in ['native', 'docker']
+    fail_msg: >-
+      {{ instance }} is hosted on {{ _rat_kind }}, which has no guest-level restart or log
+      path. Use the application's own Maintenance jobs for that hosting kind.
+
+- name: Resolve app target | Refresh inventory to get current Proxmox state
+  ansible.builtin.meta: refresh_inventory
+
+- name: Resolve app target | Select the stack host for a Docker app
+  ansible.builtin.set_fact:
+    _rat_host: "{{ (groups['tag_' ~ _rat_stack] | default([])) | first | default('') }}"
+  when: _rat_kind == 'docker'
+
+- name: Resolve app target | A native app owns the guest that carries its name
+  ansible.builtin.set_fact:
+    _rat_host: "{{ instance }}"
+  when: _rat_kind == 'native'
+
+- name: Resolve app target | Assert the target host exists
+  ansible.builtin.assert:
+    that:
+      - _rat_host | length > 0
+      - _rat_host in hostvars
+    fail_msg: >-
+      {{ 'No Proxmox guest is tagged ' ~ _rat_stack ~ ' — check the stack name.'
+         if _rat_kind == 'docker'
+         else 'No Proxmox guest is named ' ~ instance ~ ' — check the instance name.' }}
+
+- name: Resolve app target | Put the target in its own group
+  ansible.builtin.add_host:
+    name: "{{ _rat_host }}"
+    groups: "apptarget_{{ instance }}"
+    ansible_host: >-
+      {{ hostvars[_rat_host].ansible_host
+         | default(hostvars[_rat_host].ansible_default_ipv4.address | default('')) }}
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    app_target_kind: "{{ _rat_kind }}"
+    app_target_instance: "{{ instance }}"
+    app_target_project_dir: "/opt/{{ instance }}"
+  changed_when: false

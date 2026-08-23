@@ -1,25 +1,31 @@
 ---
-# Restart a native LXC app via its lab-restart-app script.
+# Restart one app instance, whichever way it is installed.
 # Notifies via Ntfy on success or failure (silent no-op if ntfy is not the
 # configured notifications provider).
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/restart-app.yml -e instance=vaultwarden
+#   ansible-playbook -i inventory/ playbooks/maintenance/restart-app.yml \
+#       -e instance=radarr-4k -e app=radarr
 #
-# Semaphore/Rundeck: job parameter = instance (the app instance name)
+# Semaphore/Rundeck: job parameters
+#   instance — the app instance name (required)
+#   app      — the application it is an instance of. Defaults to `instance`; the generated
+#              per-application jobs always pass it.
+#
+# A native LXC app owns its guest and is restarted through the lab-restart-app script its
+# role installed. A Docker app is a Compose project under /opt/<instance> on a shared stack
+# host, and is restarted there. tasks/maintenance/resolve-app-target.yml decides which,
+# and its header records why targeting the instance name directly was wrong for ten of the
+# sixteen catalogued applications.
 
-# Play 1 asserts on localhost so a missing `instance` fails with the friendly
-# message below — Play 2's hosts pattern would otherwise die first with an
-# opaque inventory error.
-- name: Restart App | Validate parameters
+# Play 1 resolves on localhost so a missing or unresolvable `instance` fails with a
+# friendly message — Play 2's hosts pattern would otherwise die first with an opaque
+# inventory error.
+- name: Restart App | Resolve the target
   hosts: localhost
   gather_facts: false
   tasks:
-    - name: Assert instance name provided
-      ansible.builtin.assert:
-        that: instance is defined and instance | length > 0
-        fail_msg: "Pass the app instance name: -e instance=<name>"
-
     # The connection user must be loaded here, before the guest play: the Proxmox
     # dynamic inventory carries no ansible_user, so Play 2 would connect as the
     # account running Ansible — rundeck on a runner — and every guest is
@@ -27,20 +33,35 @@
     - name: Load user vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
+    - name: Resolve which host holds this instance
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+
 # The default() can only fire during --syntax-check: Play 1 has already
-# asserted `instance` is defined by the time this play's pattern is resolved.
+# resolved `instance` by the time this play's pattern is resolved.
 - name: Restart App | {{ instance | default('(no instance)') }}
-  hosts: "{{ instance | default('_instance_unset') }}"
+  hosts: "apptarget_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
-  vars:
-    ansible_user: >-
-      {{ hostvars['localhost'].homelabinfra_config.ansible.ssh_user | default('root') }}
   tasks:
-    - name: Restart app
+    - name: Restart a native app through its own script
       ansible.builtin.command: /usr/local/bin/lab-restart-app
       changed_when: true
       register: _restart
+      when: app_target_kind | default('native') == 'native'
+
+    - name: Restart a Docker app's Compose project
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_target_project_dir }}"
+        state: restarted
+      register: _restart_compose
+      when: app_target_kind | default('native') == 'docker'
+
+    # One fact the notification play can read whichever branch ran. Deliberately not
+    # named `_restart`: a set_fact that reads the registered variable of the same name
+    # is a recursive template, not an assignment.
+    - name: Record the outcome
+      ansible.builtin.set_fact:
+        _restart_result: "{{ _restart if _restart is not skipped else _restart_compose }}"
 
 # Runs even when the restart play failed (localhost is still healthy), so the
 # outcome is read back from the target's hostvars to word the message honestly.
@@ -56,29 +77,19 @@
         name: homelabinfra_infra
       failed_when: false   # absent pre-bootstrap — notify below no-ops
   vars:
+    _restart_host: "{{ (groups['apptarget_' ~ instance] | default([]) | first) | default('') }}"
     _restart_ok: >-
-      {{ hostvars[instance]._restart is defined
-         and hostvars[instance]._restart is not failed }}
+      {{ _restart_host | length > 0
+         and hostvars[_restart_host]._restart_result is defined
+         and hostvars[_restart_host]._restart_result is not failed }}
   tasks:
-    - name: Notify via Ntfy
-      ansible.builtin.uri:
-        url: "{{ homelabinfra_infra.notifications.host }}/{{ homelabinfra_infra.notifications.topic | default('homelab') }}"
-        method: POST
-        # Ntfy is closed by default (slice 401) — carry the publish token when the
-        # registry has one. An Ntfy predating that change has no token and stays open.
-        headers: >-
-          {{ {'Title': instance ~ ' restart ' ~ (_restart_ok | bool | ternary('complete', 'FAILED')),
-              'Priority': _restart_ok | bool | ternary('default', 'high')}
-             | combine({'Authorization': 'Bearer ' ~ homelabinfra_infra.notifications.token}
-                       if homelabinfra_infra.notifications.token | default('') | length > 0
-                       else {}) }}
-        body: >-
-          {{ _restart_ok | bool
-             | ternary(instance ~ ' was restarted manually.',
-                       instance ~ ' restart FAILED — check the job output.') }}
-        body_format: raw
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.notifications is defined
-        - homelabinfra_infra.notifications.provider | default('none') == 'ntfy'
-        - homelabinfra_infra.notifications.host is defined
+    - name: Notify restart outcome
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} {{ 'restarted' if _restart_ok | bool else 'failed to restart' }}"
+        notify_priority: "{{ 'default' if _restart_ok | bool else 'high' }}"
+        notify_message: >-
+          {{ instance }}
+          {{ 'was restarted on ' ~ _restart_host ~ '.'
+             if _restart_ok | bool
+             else 'did not restart — check the job log.' }}

@@ -1,0 +1,53 @@
+schema_version: 1
+
+# Day-2 actions that exist once per application instead of once for the whole lab.
+#
+# Each entry names a template in rundeck/jobs/. The renderer expands one template into one
+# job per application it applies to, filed under that application's own Maintenance folder
+# with the instance, app name and stack tag already answered. A template is never imported
+# as itself.
+#
+# APPLICABILITY is the hosting kind the action is actually implemented for, derived from
+# ansible/vars/app-defaults/<slug>.yml. An action absent from an application's folder is
+# absent because it does not work for that hosting kind, not because it was forgotten:
+# offering a Rollback for a Kubernetes workload or a Backup for a Docker app would put a
+# button in front of an operator that fails when pressed.
+#
+#   hosting             hosting kinds this action is implemented for
+#   essential_excluded  true withholds the action from applications marked essential
+#   opt_in              true means hosting never selects it; only a catalog `extra:` does
+
+actions:
+  backup:
+    template: backup-app.yaml
+    hosting: [kubernetes]
+
+  configure:
+    template: configure-app.yaml
+    hosting: [native, docker, kubernetes]
+
+  migrate:
+    template: migrate-servarr.yaml
+    hosting: []
+    opt_in: true
+
+  remove:
+    template: remove-app.yaml
+    hosting: [native, docker, kubernetes]
+    essential_excluded: true
+
+  restart:
+    template: restart-app.yaml
+    hosting: [native, docker]
+
+  restore:
+    template: restore-app.yaml
+    hosting: [kubernetes]
+
+  rollback:
+    template: rollback-container.yaml
+    hosting: [docker]
+
+  tail:
+    template: tail-applog.yaml
+    hosting: [native, docker]

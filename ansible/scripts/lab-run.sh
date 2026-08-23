@@ -56,7 +56,7 @@ if [ -r "$LAB_ENV_FILE" ]; then
   _lab_configured=1
   while IFS='=' read -r _key _value; do
     case "$_key" in
-      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR|LAB_SSH_KEY|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)
+      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR|LAB_SSH_KEY|LAB_OPTION_DIR|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)
         [ -n "${!_key:-}" ] || printf -v "$_key" '%s' "$_value" ;;
     esac
   done < <(grep -E '^(LAB_[A-Z_]+|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)=' "$LAB_ENV_FILE" || true)
@@ -327,6 +327,19 @@ if [ "$LAB_DOCTOR" != "0" ] && [ "$_lab_recovery" != "1" ]; then
   PYTHON="${PYTHON:-$LAB_VENV/bin/python3}" \
     bash scripts/config-doctor.sh "$LAB_REPO/config" \
     || die "config-doctor found errors — nothing was changed. Fix them with the Configure App job, or see Get Config."
+fi
+
+# ── Instance lists for the job forms ──────────────────────────────────────────
+# Every generated per-application job offers its instances as a dropdown sourced from
+# these files. Rewriting them here, once per job, is what keeps the lists current without
+# a reimport: a Configure job that creates radarr-4k publishes it to every Radarr job by
+# the time the next one is opened. Best-effort — a lab whose runner has no such directory
+# still runs every job, it just types instance names instead of picking them.
+LAB_OPTION_DIR="${LAB_OPTION_DIR:-/var/lib/rundeck/app-instances}"
+if [ "$_lab_configured" = "1" ]; then
+  "$LAB_VENV/bin/python3" "$LAB_REPO/ansible/scripts/app-instances.py" \
+    --repo "$LAB_REPO" --out "$LAB_OPTION_DIR" \
+    || log "instance lists not refreshed — the job forms fall back to typed names"
 fi
 
 # ── Run ───────────────────────────────────────────────────────────────────────

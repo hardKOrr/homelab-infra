@@ -9,7 +9,7 @@
 - id: e39eb614-b1c0-5cb4-a739-cc8bee4cee48
   uuid: e39eb614-b1c0-5cb4-a739-cc8bee4cee48
   name: Deploy Caddy
-  group: Platform/Access and Identity
+  group: Platform/Access and Identity/Caddy
   description: |-
     Deploy or update Caddy, including Cloudflare DNS-01 TLS. Before Vaultwarden
     cutover it uses the temporary encrypted Cloudflare input; afterwards it reads

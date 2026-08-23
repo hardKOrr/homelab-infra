@@ -1,34 +1,21 @@
 schema_version: 1
 
-# Complete classification for jobs that are not application-catalog deploys.
-# Application deploy groups are derived from catalog/applications.yml instead.
+# Classification for jobs that act on the lab as a whole rather than on one application.
+#
+# Everything that is scoped to a single application — its Deploy job and every day-2 action
+# in its Maintenance folder — is classified in catalog/applications.yml and expanded from
+# the templates named in rundeck/app-actions.yml. Do not add a per-application job here.
 jobs:
-  backup-app.yaml: Manage/Applications/Backup
   bootstrap.yaml: Setup/Platform
-  check-native-updates.yaml: Manage/Applications/Updates
+  check-native-updates.yaml: Manage/Lab/Updates
   config-doctor.yaml: Manage/Configuration/Validation
-  configure-app.yaml: Manage/Applications/Configuration
-  deploy-authentik.yaml: Platform/Access and Identity
-  deploy-caddy.yaml: Platform/Access and Identity
-  deploy-k3s-cluster.yaml: Platform/Hosting
-  deploy-ntfy.yaml: Platform/Monitoring and Notifications
-  deploy-observability.yaml: Platform/Monitoring and Notifications
-  deploy-pbs.yaml: Platform/Backup
-  deploy-uptime-kuma.yaml: Platform/Monitoring and Notifications
-  deploy-vaultwarden.yaml: Platform/Access and Identity
   get-config.yaml: Manage/Configuration/Files
   guest-maintenance.yaml: Manage/Lab/Maintenance
   lab-descent.yaml: Manage/Lab/Maintenance
   lab-status.yaml: Manage/Lab/Health
-  migrate-servarr.yaml: Manage/Applications/Migration
   reclaim-volume.yaml: Manage/Storage/Volumes
   reimport-jobs.yaml: Setup/Automation
-  remove-app.yaml: Manage/Applications/Lifecycle
-  restart-app.yaml: Manage/Applications/Lifecycle
-  restore-app.yaml: Recover/Applications
-  rollback-container.yaml: Recover/Applications
   store-secret.yaml: Manage/Configuration/Secrets
-  tail-applog.yaml: Manage/Applications/Diagnostics
   vaultwarden-cutover.yaml: Setup/Credentials
   vaultwarden-enrollment.yaml: Setup/Credentials
   vaultwarden-recovery.yaml: Recover/Credentials

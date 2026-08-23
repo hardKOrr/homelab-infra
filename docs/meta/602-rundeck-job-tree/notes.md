@@ -200,3 +200,105 @@ all 39 source jobs with zero failures. The REST readback then reported:
 
 The runner checkout also read back as the full `2522869e43972c0ab11ee544c3b24bb0986c2b59`.
 No rollback was needed. This is the live acceptance that closes the slice.
+
+## 2026-08-23 — the operator rejects the verb-first Manage branch
+
+The tree built earlier today shipped and the operator used it. The verdict on
+`Manage/Applications`: "we're on a 1-click deploy platform we built and then ask for a
+bunch of hyper specific information."
+
+That is exactly right, and it was a defect of the job set, not of the tree. `Backup App`
+asked for an instance and an app. `Rollback Container` asked for a stack tag, a container
+name and a version. `Remove App` asked for an instance, an app and a delete flag. Every one
+of those questions except the version and the flag has an answer the repository already
+holds — in `catalog/applications.yml`, in `ansible/vars/app-defaults/<app>.yml`, or in the
+instance filename. Grouping by verb made the questions necessary: one job serving sixteen
+applications cannot know which one the operator means.
+
+**Decision: the leaf of the tree is the application.** `…/<App>` holds Deploy; `…/<App>/
+Maintenance` holds that application's day-2 jobs. Requested shape, verbatim:
+`Media > Library > Sonarr > Deploy + Maintenance(Backup, Configure, Tail, Remove, Restart,
+Migrate, Update)`.
+
+Two scope questions went back to the operator, both answered 2026-08-23:
+
+- Platform services get the same treatment as catalog applications, not a flat exception.
+- `Recover/Applications` disappears: Restore and Rollback move into the application's own
+  Maintenance folder. A restore belongs next to the backup that produced the snapshot,
+  which is where the operator is already looking. `Recover` keeps Vaultwarden Recovery.
+
+### Generated, not written
+
+104 jobs from 39 source files. Eight day-2 templates in `rundeck/jobs/` carry `%SLUG%`,
+`%NAME%`, `%STACK%`, `'%GROUP%'` and `'%UUID%'`; `rundeck/app-actions.yml` says which
+hosting kinds implement each; `render-job.py` expands one template into one job per
+applicable application, with a `uuid5` identity per (action, application) so execution
+history survives every later reimport.
+
+The import loops did not change. A template renders as a multi-job YAML document, which the
+Rundeck import endpoint accepts exactly like the single-job ones it already posted.
+
+### What the expansion answers, and what it refuses to
+
+Answered: instance (prefilled with the app's own name), the app an instance belongs to,
+the stack tag, and Migrate's `source_config_path` default. Left as questions: an image tag,
+a PBS snapshot, a delete flag, a source host — genuinely unknowable.
+
+Refused: an action its hosting kind does not implement. Backup and Restore exist for
+Kubernetes workloads only, because they start a CronJob that only a Kubernetes deploy
+installs. Rollback exists for Docker apps only. This is why Sonarr's folder has no Backup
+job even though the operator's sketch listed one — a button that fails when pressed is
+worse than an absent button, and the honest gap is recorded here rather than papered over.
+
+"Update" from the sketch has no job either, and deliberately: re-running Deploy **is** the
+update path for a native app, and Watchtower owns it for a Docker app. `Check Native App
+Updates` stays one lab-wide scheduled sweep under `Manage/Lab/Updates`.
+
+### The gap the expansion exposed, and closed
+
+`Restart App` and `Tail App Log` ran `/usr/local/bin/lab-restart-app` on a host named after
+the instance. Correct for the four native LXC apps that own a guest; wrong for the ten
+Docker apps, whose instance name is not a guest at all — the guest is the shared stack host
+and the app is a Compose project under `/opt/<instance>`. Grouped by verb this was invisible:
+one job, and whoever ran it against a Docker app got an inventory error and assumed they had
+typed something wrong. Expanded per application it would have been ten broken buttons.
+
+`ansible/tasks/maintenance/resolve-app-target.yml` now resolves the target and the install
+kind once, and both playbooks serve both hosting kinds. `restart-app.yml` also moved off its
+hand-rolled `uri` call onto `tasks/notify.yml`, the documented notification seam.
+
+### Multiple instances: a dropdown, not a memory test
+
+Baking the instance in would have broken the second-instance case the Deploy jobs already
+support. Instead every generated job's `instance` option keeps the app name as its default —
+still one click — and takes its value list from
+`/var/lib/rundeck/app-instances/<app>.json`, written by `ansible/scripts/app-instances.py`
+at the start of every `lab-run`. Never stale: a Configure job that creates `radarr-4k`
+publishes it to every Radarr job without a reimport.
+
+Rejected: enumerating instances into the job definition at import time. Correct only until
+the next Configure job, and a stale list is worse than no list.
+
+The instance → application link is the instance filename: `<app>` or `<app>-<suffix>`,
+longest slug wins. Nothing else in the tree records which app an instance file configures,
+and this is already the convention every `config.example/apps/*.example.yml` header teaches.
+The option is not `enforced`, so an instance named outside it can still be typed; the script
+names it on stderr.
+
+### Withdrawal
+
+Import is additive, so the eight retired generic jobs would have survived as clickable
+orphans in groups nothing else occupies — the reorganization correct in the repo and wrong
+in the UI. `rundeck/retired-jobs.yml` names their UUIDs and **Reimport Jobs** deletes them
+after importing. That deletion ships inside the new Reimport definition, so this change
+needs **two** Reimport runs: the first imports the definition that can delete, the second
+deletes.
+
+### Reversals recorded
+
+- `configure-app.yaml`'s header argued for one generic Configure job on the grounds that
+  which app an instance belongs to is decided by the Deploy job. True, and it still left the
+  operator at a form with an empty instance box and no sign of which app it was about to
+  configure. Reversed.
+- `Manage/Applications` and `Recover/Applications`, both introduced this morning, are gone.
+  `Manage` now holds only what is scoped to the lab.

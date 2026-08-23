@@ -131,7 +131,7 @@ resolvable in DNS.
 |---|---|
 | Understand the jobs and how to import them | [`rundeck/README.md`](rundeck/README.md) |
 | Use Semaphore instead of Rundeck | [`semaphore/README.md`](semaphore/README.md) |
-| Change an app's configuration | the **Configure App** job, or [`config.example/`](config.example/) |
+| Change an app's configuration | that app's **Configure** job, or [`config.example/`](config.example/) |
 | Know exactly what a config key does | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
 | See what is built and what is planned | [`docs/meta/INDEX.md`](docs/meta/INDEX.md) |
@@ -154,12 +154,13 @@ tracked branch, and because nothing under `config/` is tracked, your configurati
 survives untouched. A fix pushed to the repo therefore reaches your platform on the next
 click, with no action from you, and the job log names the commit it ran.
 
-You never need SSH to read or change that configuration. Four jobs in the **Config**
-group do it from the UI:
+You never need SSH to read or change that configuration. Four jobs do it from the UI —
+one per application, and three under **Manage > Configuration**:
 
-- **Configure App** — writes `config/apps/<instance>.yml` from a form. Every field is an
-  override; blank fields keep their current value. The previous content is kept under
-  `.backups/` and the job log shows a diff of exactly what changed.
+- **Configure &lt;App&gt;**, in that application's own Maintenance folder — writes
+  `config/apps/<instance>.yml` from a form. Every field is an override; blank fields keep
+  their current value. The previous content is kept under `.backups/` and the job log shows
+  a diff of exactly what changed.
 - **Get Config** — reads the whole set back out, secrets redacted, plus an unredacted
   archive on the runner as a restore point.
 - **Store Secret** — puts a credential into Vaultwarden without a file ever existing on

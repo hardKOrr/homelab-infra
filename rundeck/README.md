@@ -96,17 +96,23 @@ source file before posting it to the REST import endpoint. Job UUIDs are stable 
 use `dupeOption=update&uuidOption=preserve`, so a group change updates the existing job and
 keeps its execution history and schedule.
 
-Two files own classification:
+Three files own classification:
 
-- `../catalog/applications.yml` classifies deployable applications by human purpose and
-  application type. The renderer projects each one to
-  `Applications/<category>/<type>`.
-- `job-groups.yml` classifies platform services and operator actions.
+- `../catalog/applications.yml` classifies every deployable application by human purpose and
+  application type. The renderer projects each one to a leaf folder named after the
+  application: `<root>/<category>[/<type>]/<name>`.
+- `app-actions.yml` names the day-2 action templates and the hosting kinds each is
+  implemented for. The renderer expands each template into one job per application it
+  applies to, under `<that application's folder>/Maintenance`.
+- `job-groups.yml` classifies the jobs that act on the lab rather than on one application.
 
-The source job keeps the projected `group:` for reviewability. Before any import,
-`render-job.py --check` rejects a missing or extra job, duplicate classification, stale
-group, or application name that no longer matches its catalog entry. Hosting kind, stack,
-dependencies, and other execution details do not control navigation.
+The source job keeps the projected `group:` for reviewability; a template declares the
+literal placeholders `'%GROUP%'` and `'%UUID%'` instead, so it can never be mistaken for a
+job and imported as itself. Before any import, `render-job.py --check` rejects a missing or
+extra job, duplicate classification, stale group, an application name that no longer matches
+its catalog entry, a template that no application selects, and any UUID collision across the
+whole expanded set. Hosting kind, stack, dependencies, and other execution details do not
+control navigation.
 
 The top-level tree is:
 
@@ -114,23 +120,75 @@ The top-level tree is:
 |---|---|
 | `Applications` | Browse optional applications by purpose, type, and name |
 | `Platform` | Deploy access, identity, monitoring, backup, and hosting capabilities |
-| `Manage` | Routine application, configuration, integration, lab, and storage actions |
-| `Recover` | Restore applications or recover credentials |
+| `Manage` | Lab-wide configuration, integration, health, and storage actions |
+| `Recover` | Recover credentials |
 | `Setup` | Establish credentials, bootstrap the platform, and reload automation definitions |
 
 Run `python3 rundeck/render-job.py --check rundeck/jobs` to validate the complete tree.
 Normally, use **Reimport Jobs** rather than importing an individual raw source file: the
 renderer also injects the secure Key Storage options required by that job.
 
-**One job per app, still no typing.** Each Deploy job carries a required `instance`
-option whose *value is already the app's own name*, so Rundeck prefills it and the normal
-deployment stays one click. Changing it is how a second instance of the same app is
-deployed alongside the first — a second estate's Authentik, per the estate contract that
-an estate's SSO is an ordinary app deploy. The instance name is the
-`config/apps/<instance>.yml` filename, the guest hostname and the subdomain.
+### One folder per application
 
-Copying a job file to get a second instance is no longer necessary, and the copy is worse:
-its UUID has to be changed by hand and it drifts from the original on every later edit.
+Everything an operator does to one application is in that application's own folder: its
+Deploy job, and a `Maintenance` folder with its day-2 jobs. 16 applications and 8 action
+templates render as 104 jobs from 39 source files.
+
+**What the expansion answers, so the operator does not have to.** The generic day-2 jobs
+each asked for an instance name, an app name and — for a rollback — a stack tag, all of
+which the platform already knew. Generating one job per application answers them from
+`../catalog/applications.yml` and `../ansible/vars/app-defaults/<app>.yml`:
+
+| Was typed | Now |
+|---|---|
+| `instance` | prefilled with the application's own name, and offered as a dropdown |
+| `app` (when an instance is named differently) | baked into the step |
+| `stack` (Rollback) | baked in from the application's defaults |
+| `source_config_path` (Migrate) | defaulted to `/var/lib/<app>` |
+
+**Which actions an application gets is derived from its hosting kind**, read from its own
+defaults file — an explicit `hosting:` wins, otherwise the presence of `stack:` tells a
+Docker app from a native LXC one. Native gets Configure, Restart, Tail Log and Remove;
+Docker adds Rollback; Kubernetes gets Configure, Backup, Restore and Remove. Migrate is
+opt-in through the catalog's `extra:` and belongs to the Servarr family alone.
+
+An action absent from a folder is absent because it is not implemented for that hosting
+kind. There is no Backup for a Docker app — its data is covered by the guest's PBS backup
+and there is no per-application CronJob to start — and no Rollback for a Kubernetes
+workload. A button that fails when pressed is worse than no button.
+
+An application marked `essential:` in the catalog gets no Remove job. The platform does not
+offer a one-click removal of the reverse proxy or the vault every other job depends on.
+
+### Instances are a dropdown, not a memory test
+
+Each generated job's `instance` option defaults to the application's own name — so the
+normal case is still one click — and offers every instance of that application from
+`/var/lib/rundeck/app-instances/<app>.json`. `../ansible/scripts/app-instances.py` rewrites
+those files at the start of every job from the `config/apps/*.yml` that exist right then, so
+a second instance created by a Configure job is offered by every job for that application
+without a reimport.
+
+An instance file is matched to its application by name: `<app>` or `<app>-<suffix>`
+(`radarr`, `radarr-4k`), the convention already documented in every
+`config.example/apps/*.example.yml`. The longest matching slug wins, so `uptime-kuma` is not
+read as an instance of `uptime`. The option is **not** enforced, so an instance named
+outside the convention can still be typed in; `app-instances.py` reports it on stderr.
+
+Copying a job file to get a second instance is not necessary, and the copy is worse: its
+UUID has to be changed by hand and it drifts from the original on every later edit.
+
+### Withdrawing a job
+
+`retired-jobs.yml` lists job UUIDs this repository has withdrawn, and **Reimport Jobs**
+deletes each one after importing the current set. Import is otherwise additive — a job that
+stops being generated survives in Rundeck's database as a clickable orphan in a group
+nothing else occupies. Only ever list a UUID this repository issued: deleting a job takes
+its execution history with it.
+
+The deletion runs from the **new** job definition, so the reorganization that introduced it
+needs two Reimport runs — the first imports the definition that can delete, the second
+deletes. A UUID that is already gone is reported as such, not as a failure.
 
 ### Every step is one `lab-run` call
 

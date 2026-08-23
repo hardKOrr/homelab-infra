@@ -9,7 +9,7 @@
 - id: 2fad81ab-4d7d-5eac-89f2-0a0fa7862e9b
   uuid: 2fad81ab-4d7d-5eac-89f2-0a0fa7862e9b
   name: Deploy SABnzbd
-  group: Applications/Media & Entertainment/Download Clients
+  group: Applications/Media & Entertainment/Download Clients/SABnzbd
   description: |-
     Deploy or update SABnzbd — the media stack's usenet download client (Docker on
     media_stack). Registers the app in the media registry; run Wire Media Stack

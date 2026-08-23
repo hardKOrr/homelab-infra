@@ -9,7 +9,7 @@
 - id: 3c52788e-f659-5c2f-90f9-60ddf6144237
   uuid: 3c52788e-f659-5c2f-90f9-60ddf6144237
   name: Deploy Observability
-  group: Platform/Monitoring and Notifications
+  group: Platform/Monitoring and Notifications/Observability
   description: |-
     Deploy or update Prometheus + Grafana as one app (Docker on monitoring_stack).
   loglevel: INFO

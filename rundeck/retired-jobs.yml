@@ -1,0 +1,31 @@
+schema_version: 1
+
+# Job UUIDs this repository has withdrawn. Reimport Jobs deletes each one from the project
+# after importing the current set.
+#
+# WHY THIS FILE EXISTS. Import is one-way and additive: `dupeOption=update` updates a job
+# whose UUID is still in the repo and leaves every other job in Rundeck's database exactly
+# where it was. A job that stops being generated therefore survives forever as a clickable
+# orphan in a group nothing else occupies — which is how a reorganization that was correct
+# in the repo shows up wrong in the UI. Naming the withdrawn UUIDs is the only way an
+# import can also be a removal.
+#
+# ONLY EVER LIST A UUID THIS REPOSITORY ISSUED. Deleting a UUID takes its execution history
+# with it. A job someone created in the UI is not ours to remove.
+#
+# Entries may be pruned once every runner has reimported past them. A UUID that no longer
+# exists is not an error — the deletion is skipped and reported as already gone.
+
+jobs:
+  # Retired 2026-08-23 by the per-application Maintenance folders: each of these was one
+  # generic job asking for the instance, app and stack that the expanded per-application
+  # jobs now already know. Replaced, not removed — the work they did is still on offer,
+  # under each application's own folder.
+  cd05b253-5012-5911-9713-48bd5e7da85d: Backup App
+  3df2e225-6d36-5dac-bed2-3875eba8ae1d: Configure App
+  086482e8-59a6-57f1-8c4f-f0f3f9d86a39: Migrate Servarr
+  4db0d8b2-58b0-5a9b-adf0-ee9f2db37ce8: Remove App
+  89335213-807e-58f1-abc2-cc66b21acb9d: Restart App
+  167f4948-8faf-5f01-9208-c294f7b416ec: Restore App
+  17be5a66-0344-519d-9b0a-c5b3795c7365: Rollback Container
+  5850deaf-a5be-5a34-8d9c-27c847227af8: Tail App Log

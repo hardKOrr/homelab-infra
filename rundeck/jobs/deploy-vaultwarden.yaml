@@ -9,7 +9,7 @@
 - id: 9cddd873-1100-5656-b827-567cd642f709
   uuid: 9cddd873-1100-5656-b827-567cd642f709
   name: Deploy Vaultwarden
-  group: Platform/Access and Identity
+  group: Platform/Access and Identity/Vaultwarden
   description: |-
     Deploy or update Vaultwarden (native LXC). Re-running is the update path.
   loglevel: INFO

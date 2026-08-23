@@ -50,8 +50,8 @@ ansible/
     maintenance/
       status.yml                   # read-only: what's running, what's down, what's behind on updates
       check-native-updates.yml     # compare installed vs latest GitHub release for native LXC apps, notify via Ntfy
-      restart-app.yml              # restart a native app via lab-restart-app; param: instance
-      tail-applog.yml              # tail app logs via lab-tail-applog; params: instance, lines
+      restart-app.yml              # restart one app instance, native or Docker; params: instance, app
+      tail-applog.yml              # tail one app instance's logs; params: instance, app, lines
       guest-maintenance.yml        # Tier 1: reboot guests inside their maintenance window
       lab-descent.yml              # Tier 2: arm a whole-lab descent the nodes execute themselves
       verify-ascent.yml            # read-only: did everything come back after a descent
@@ -87,6 +87,7 @@ ansible/
       record-app-on-guest.yml      # stamp tag app_<instance> + a notes row on the guest
       attach-host-mounts.yml       # attach storage the node already mounts to a guest
     maintenance/                   # when the lab may be disrupted (slice 205)
+      resolve-app-target.yml       # which host a day-2 action runs on, and how the app is installed
       resolve-schedule.yml         # global -> estate -> stack -> app; intersects shared hosts
       decide-one-guest.yml         # what Tier 1 does to one guest, and why
       cluster-reboot.yml           # the k3s cluster cordoned, drained, rebooted as ONE unit
@@ -147,6 +148,7 @@ ansible/
     redact-config.sh               # strip secrets from a config dump
     vault-runtime.py               # build the in-memory Vaultwarden runtime contract
     maintenance-schedule.py          # resolve a schedule; is disruption allowed right now
+    app-instances.py                 # publish each application's instance list for the job forms
     allocate-ip.py, registry-forget.py, secret-shape.py, semaphore-run.sh,
     resolve-python.sh, with-proxmox-env.sh
   files/
@@ -159,7 +161,12 @@ semaphore/
 
 rundeck/
   jobs/
-    *.yaml                         # importable Rundeck job definitions
+    *.yaml                         # importable Rundeck job definitions, plus the
+                                   # per-application templates the renderer expands
+  app-actions.yml                  # which day-2 actions exist, and for which hosting kinds
+  job-groups.yml                   # classification for the lab-wide operator jobs
+  retired-jobs.yml                 # job UUIDs Reimport Jobs deletes after importing
+  render-job.py                    # projection, expansion and pre-import validation
 
 config/                            # GITIGNORED — never overwritten by git pull
   proxmox.yml                      # Proxmox connection shape; secrets come from Vaultwarden
@@ -307,21 +314,21 @@ values but do not yet have publishers.
 | Concern | Tool | Our responsibility | Notification |
 |---|---|---|---|
 | Container updates | Watchtower | Configure at Docker host creation | Ntfy: "X updated to vY — run Rollback if broken" |
-| Container rollback | `rollback-container.yml` | Semaphore/Rundeck job, takes container name + image tag | Ntfy: "X rolled back to vY" |
+| Container rollback | `rollback-container.yml` | One **Rollback &lt;App&gt;** job per Docker app; the stack tag is baked in, so it takes only the image tag | Ntfy: "X rolled back to vY" |
 | OS updates | unattended-upgrades | Configure in `guest-bootstrap.yml` with systemd drop-in → Ntfy. `Automatic-Reboot` is off by decision — the update is continuous, the reboot is scheduled | Ntfy: "N packages updated on hostname" |
 | Guest reboots | `homelab-maintenance.timer` on each guest | Write the timer from the guest's resolved window at deploy time; the guest reboots itself when the window opens and only if a reboot is pending | Ntfy: "Maintenance reboot on hostname" (from the guest) |
 | Applying a changed window | `guest-maintenance.yml` (operator-triggered, never scheduled) | Re-write every guest's timer from current config, report what is pending, and `force=true` to reboot now | Ntfy only when something was forced |
 | Whole-lab descent | `lab-descent.yml` + `verify-ascent.yml` | Arm a staggered node-by-node descent the nodes execute themselves; verify the ascent afterwards | Ntfy: "Lab descent armed" / "Lab ascent complete" |
 | Native LXC app updates | `check-native-updates.yml` (scheduled weekly) | Calls `lab-update-check` on all managed hosts, aggregates JSON results | Ntfy: "Vaultwarden vX.Z available, you have vX.Y — re-run deploy to update" |
-| App restart | `restart-app.yml` | Calls `lab-restart-app` on named host; param: instance | Ntfy: "X restarted" |
-| App log tail | `tail-applog.yml` | Calls `lab-tail-applog` on named host; output to job console | Job console |
+| App restart | `restart-app.yml` | One **Restart &lt;App&gt;** job per app; `lab-restart-app` on a native guest, `docker compose restart` on a stack host | Ntfy: "X restarted" |
+| App log tail | `tail-applog.yml` | One **Tail &lt;App&gt; Log** job per app; `lab-tail-applog` or `docker compose logs` | Job console |
 | Backups | PBS | Configure schedule + datastore in bootstrap | PBS native notifications |
 | Uptime alerts | Uptime Kuma | Auto-register each app at deploy time | Ntfy: "X is DOWN / recovered" |
-| App removal | `remove.yml` | Semaphore/Rundeck job — stops container, unwires everything | Ntfy: "X removed" |
+| App removal | `remove.yml` | One **Remove &lt;App&gt;** job per removable app — stops the container, unwires everything | Ntfy: "X removed" |
 | Lab status | `status.yml` | Semaphore/Rundeck job — read-only | Console/Semaphore output |
 | App-to-app wiring | `wire-media-stack.yml` | Semaphore/Rundeck job — idempotent, safe to re-run | Ntfy: "Media stack wired: N connections confirmed" |
 | Config validation | `config-doctor.yml` | Semaphore/Rundeck job — read-only, deploys nothing | Console/Semaphore output |
-| Config edit | `configure-app.yml` | Writes one key through `tasks/config/write-config-file.yml` — backs up to `config/.backups/` and diffs into the job log | Job console |
+| Config edit | `configure-app.yml` | One **Configure &lt;App&gt;** job per app, writing through `tasks/config/write-config-file.yml` — backs up to `config/.backups/` and diffs into the job log | Job console |
 | Secret storage | `store-secret.yml` | Puts one secret into its canonical Vaultwarden item | Job console (never prints the value) |
 
 ### Maintenance Windows
@@ -364,7 +371,7 @@ Maintenance** job, which re-applies every timer and reports what is pending.
 contract in `ansible/vars/CONTRACT.md`.
 
 ### Feedback Loop (Container Updates)
-Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs Rollback Container job.
+Watchtower fires "X updated" → Uptime Kuma fires "X is DOWN" → user correlates timestamps → runs that app's Rollback job.
 Watchtower notification includes the rollback instruction so the path is obvious without digging through docs.
 
 ### Native LXC App Update Path
@@ -373,8 +380,8 @@ Re-running the deploy playbook for a native app IS the update mechanism — it c
 ### Lab Maintenance Scripts
 Each native app role ships three scripts to `/usr/local/bin/` (installed by the role, placeholders in `ansible/roles/_template-native/files/`):
 - `lab-update-check` — outputs JSON `{"app":..., "installed":..., "latest":..., "update_available":...}`. Each app owns its own version-check logic.
-- `lab-restart-app` — restarts the app's service. Called by `restart-app.yml`.
-- `lab-tail-applog` — streams recent logs (journalctl or equivalent). Called by `tail-applog.yml`.
+- `lab-restart-app` — restarts the app's service. Called by `restart-app.yml` on a native guest.
+- `lab-tail-applog` — streams recent logs (journalctl or equivalent). Called by `tail-applog.yml` on a native guest.
 
 All three are no-ops (exit 1) in the template — each app role replaces them with real implementations in `ansible/roles/<app>/files/`.
 
@@ -384,30 +391,42 @@ Playbooks are UI-agnostic, and that has not changed — nothing in `ansible/` ma
 particular UI. What has changed is which UI this repository keeps current: **Rundeck**. The
 lab runs on it, and `rundeck/jobs/` is the authoritative set of jobs.
 
+**Every application is one folder.** The leaf of the tree is the application's own name; it
+holds that application's Deploy job and a `Maintenance` folder holding every day-2 action
+for it. An operator goes to Sonarr to do anything to Sonarr.
+
 ```
 Applications
   Content & Publishing
-    Social Publishing         ← Deploy Mixpost
+    Social Publishing
+      Mixpost                 ← Deploy Mixpost
+        Maintenance           ← Backup, Configure, Remove, Restore
   Media & Entertainment
-    Download Clients          ← Deploy qBittorrent, Deploy SABnzbd
-    Indexer Management        ← Deploy Prowlarr
-    Library Automation        ← Deploy Lidarr, Deploy Radarr, Deploy Sonarr
-    Media Servers             ← Deploy Jellyfin
+    Download Clients
+      qBittorrent             ← Deploy qBittorrent
+        Maintenance           ← Configure, Remove, Restart, Rollback, Tail Log
+      SABnzbd                 ← (the same shape)
+    Indexer Management
+      Prowlarr                ← Deploy Prowlarr
+        Maintenance           ← Configure, Migrate, Remove, Restart, Rollback, Tail Log
+    Library Automation
+      Lidarr / Radarr / Sonarr  ← Deploy, and the same six Maintenance jobs each
+    Media Servers
+      Jellyfin                ← Deploy Jellyfin + Maintenance
 
 Platform
-  Access and Identity         ← Deploy Authentik, Deploy Caddy, Deploy Vaultwarden
-  Backup                      ← Deploy PBS
-  Hosting                     ← Deploy k3s Cluster
-  Monitoring and Notifications ← Deploy Ntfy, Deploy Observability, Deploy Uptime Kuma
+  Access and Identity
+    Authentik                 ← Deploy + Configure, Remove, Restart, Rollback, Tail Log
+    Caddy                     ← Deploy + Configure, Restart, Tail Log   (no Remove)
+    Vaultwarden               ← Deploy + Configure, Restart, Tail Log   (no Remove)
+  Backup
+    PBS                       ← Deploy + Configure, Remove, Restart, Tail Log
+  Hosting
+    k3s Cluster               ← Deploy + Configure
+  Monitoring and Notifications
+    Ntfy / Observability / Uptime Kuma  ← Deploy + Maintenance
 
 Manage
-  Applications
-    Backup                    ← Backup App
-    Configuration             ← Configure App
-    Diagnostics               ← Tail App Log
-    Lifecycle                 ← Remove App, Restart App
-    Migration                 ← Migrate Servarr
-    Updates                   ← Check Native App Updates
   Configuration
     Files                     ← Get Config
     Secrets                   ← Store Secret
@@ -416,11 +435,11 @@ Manage
   Lab
     Health                    ← Lab Status, Verify Lab Ascent
     Maintenance               ← Guest Maintenance, Arm Lab Descent
+    Updates                   ← Check Native App Updates
   Storage
     Volumes                   ← Reclaim Volume
 
 Recover
-  Applications                ← Restore App, Rollback Container
   Credentials                 ← Vaultwarden Recovery
 
 Setup
@@ -429,17 +448,49 @@ Setup
   Platform                    ← Bootstrap Platform
 ```
 
-The tree describes operator intent, not implementation. Docker, LXC, VM, Kubernetes, stack
-assignment and dependencies never determine an application's group. `catalog/applications.yml`
-is the canonical purpose/type classification for deployable applications;
-`rundeck/job-groups.yml` classifies platform and operator jobs. `rundeck/render-job.py`
-projects and validates both before every bootstrap or reimport. Adding a playbook that an
-operator runs means adding a job under `rundeck/jobs/` and classifying it in exactly one of
-those files.
+`Manage` holds what is scoped to the lab rather than to one application. Anything scoped to
+one application lives in that application's own folder, which is why `Manage/Applications`
+and `Recover/Applications` no longer exist.
+
+**Per-application jobs are generated, not written.** `rundeck/app-actions.yml` names one
+template per day-2 action, and `rundeck/render-job.py` expands each template into one job
+per application it applies to — 16 applications and 8 actions render as 104 jobs from 39
+source files. The expansion answers from the catalog and from
+`ansible/vars/app-defaults/<app>.yml` what the operator used to type: the instance, the
+application an instance belongs to, and the stack tag a Docker app runs on. Adding an
+application therefore adds its whole Maintenance folder at the same time.
+
+**Which actions exist is derived from the hosting kind, and the absences are deliberate.**
+A Docker app gets Rollback and no Backup; a Kubernetes app gets Backup and Restore and no
+Rollback; a native LXC app gets neither. An action missing from a folder is missing because
+it is not implemented for that hosting kind — offering a button that fails when pressed is
+worse than not offering it. Deriving the ACTION SET from hosting is not the same as
+grouping by hosting, which stays forbidden: Docker, LXC, VM, Kubernetes, stack assignment
+and dependencies never determine an application's group.
+
+**Multiple instances are a dropdown, not a memory test.** Each generated job's `instance`
+option defaults to the application's own name and offers every instance of that application
+from `/var/lib/rundeck/app-instances/<app>.json`, which `ansible/scripts/app-instances.py`
+rewrites at the start of every job. An instance file must be named `<app>` or
+`<app>-<suffix>` to be recognized as that application's — the option is not enforced, so an
+instance named anything else can still be typed.
+
+`catalog/applications.yml` is the canonical purpose/type classification for every deployable
+application; `rundeck/job-groups.yml` classifies the lab-wide operator jobs;
+`rundeck/app-actions.yml` classifies the per-application templates. `rundeck/render-job.py`
+projects and validates all three before every bootstrap or reimport. Adding a playbook that
+an operator runs means adding a job under `rundeck/jobs/` and classifying it in exactly one
+of those files.
+
+`rundeck/retired-jobs.yml` names job UUIDs this repository has withdrawn, and **Reimport
+Jobs** deletes them after importing. Import is otherwise additive, so without it a job that
+stopped being generated would survive as a clickable orphan.
 
 Danger is not a navigation category. Destructive jobs stay under their truthful operator
 intent and enforce risk through exact names, descriptions, confirmation options and ACLs.
-`Recover` contains actual recovery procedures, not every action that can destroy data.
+`Recover` contains actual recovery procedures, not every action that can destroy data — a
+Restore is filed next to the Backup that produced the snapshot, where the operator is
+already looking. Applications marked `essential:` in the catalog get no Remove job at all.
 
 `semaphore/project.json` is **not** kept in parity and must not be treated as a second
 half of that job (operator decision, 2026-08-19: Semaphore was evaluated and Rundeck was
