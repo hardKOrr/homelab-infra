@@ -17,8 +17,9 @@
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
 - name: Gather update status from managed hosts
-  # Verified community.proxmox keyed_groups output for homelab-infra: tag_homelab_infra.
-  hosts: tag_homelab_infra
+  # `lab_managed` is the deliberate group name inventory/proxmox.yml derives from exact
+  # membership of the ownership tag `_+lab` — not a sanitised tag name.
+  hosts: lab_managed
   gather_facts: false
   ignore_unreachable: true
   vars:

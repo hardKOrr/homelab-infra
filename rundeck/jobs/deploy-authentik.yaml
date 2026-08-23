@@ -11,7 +11,7 @@
   name: Deploy Authentik
   group: Platform/Access and Identity/Authentik
   description: |-
-    Deploy or update Authentik, the SSO provider (Docker on its own core_stack host).
+    Deploy or update Authentik, the SSO provider (Docker on its own sso stack host).
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

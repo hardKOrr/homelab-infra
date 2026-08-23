@@ -11,7 +11,7 @@
 # Application entry. A media stack with no Prowlarr wires nothing.
 
 prowlarr_defaults:
-  stack: media_stack
+  stack: media
 
   app:
     media_kind: prowlarr

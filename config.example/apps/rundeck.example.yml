@@ -6,7 +6,7 @@
 #
 # WHY IT EXISTS. The runner is a guest this platform created, so the platform manages it —
 # that is the whole "homelab-infra manages what it creates" rule applied to the host doing
-# the creating. Concretely, bootstrap-rundeck.sh tags the LXC `homelab-infra`, and that one
+# the creating. Concretely, bootstrap-rundeck.sh tags the LXC `_+lab`, and that one
 # tag is what puts it inside the platform's own machinery:
 #
 #   - tasks/bootstrap/configure-pbs.yml builds its vzdump vmid list by filtering guests on

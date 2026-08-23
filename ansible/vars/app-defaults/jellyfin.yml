@@ -5,7 +5,7 @@
 # This file is git-managed — git pull may update these defaults.
 
 jellyfin_defaults:
-  stack: media_stack
+  stack: media
 
   app:
     # NO media_kind, deliberately. That key enrols an app in the media registry,

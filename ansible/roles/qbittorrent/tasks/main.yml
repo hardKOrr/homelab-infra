@@ -1,6 +1,6 @@
 ---
 # qbittorrent role — qBittorrent as a Docker container on a stack host. Called
-# from Play 2 of playbooks/apps/qbittorrent.yml. Target: the media_stack host.
+# from Play 2 of playbooks/apps/qbittorrent.yml. Target: the media host.
 #
 # The media stack's torrent download client. Until this existed, the stack could
 # find releases and could not fetch any of them: tasks/app-wiring/arr-download-client.yml

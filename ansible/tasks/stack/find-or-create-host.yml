@@ -13,7 +13,14 @@
 #      homelabinfra_instance.network.*, writes homelabinfra_instance.lxc.*
 #
 # Inputs (required before calling):
-#   stack_name                          — stack id, matches Proxmox tag (e.g. media_stack)
+#   stack_name                          — the logical stack, a bare concept: media, sso,
+#                                         monitoring. NOT a hostname and NOT a tag; both
+#                                         are derived below, and both add the estate when
+#                                         the lab has more than one
+#   stack_estate                        — optional; the app's routing.estate ('' = the
+#                                         lab's default estate). Placement is resolved from
+#                                         the stack AND the estate, so an estate-scoped app
+#                                         can never silently land on another estate's host
 #   deploy_group                        — optional; inventory group the host is added to.
 #                                         Defaults to 'app_deploy' for back-compat, but every
 #                                         app playbook passes a PER-INSTANCE name
@@ -28,13 +35,16 @@
 #   homelabinfra_config.proxmox.*       — API connection + lxc defaults (create path)
 #   homelabinfra_config.networks.*      — for generate-ip.yml (create path)
 #   homelabinfra_config.infrastructure.stacks.<stack_name>
-#                                       — optional; sizing, plus `pool` and `ip_address` for
-#                                         this stack host's address (create path)
+#                                       — optional; sizing, `shared: true`, plus `pool` and
+#                                         `ip_address` for this stack host's address
+#                                         (create path)
+#   homelabinfra_config.infrastructure.domains
+#                                       — optional; the estates this lab declares
 #   homelabinfra_infra                  — optional; forwarded to the host if defined
 #
 # Mutates (create path only, except .stack):
-#   homelabinfra_config.proxmox.lxc.{hostname,tags,stack_tag,features,ip_address,vmid,
-#                                    vmid_source_ip}
+#   homelabinfra_config.proxmox.lxc.{hostname,tags,stack_tag,stack_id,features,ip_address,
+#                                    vmid,vmid_source_ip}
 #   homelabinfra_instance.{network,lxc}                — via generate-ip / lxc-create
 #   homelabinfra_instance.stack.{hostname,ip_address}  — both paths
 #
@@ -60,12 +70,85 @@
       and uncomment PATH B (native LXC) in Play 1 — PATH A is what calls this
       task file.
 
+# Sizing is a property of the STACK, not of whichever app reaches it first. A stack host is
+# shared, and the first app to deploy creates it — so per-app sizing would make the host's
+# size depend on deploy order, and every app on a stack would have to repeat the same
+# numbers to stop that mattering. vars/stack-defaults.yml keys it by stack name; a lab
+# overrides one stack with a `stacks:` map in config/infrastructure.yml.
+#
+# Resolved BEFORE the existence check rather than inside the create branch, because
+# `shared:` lives here and it decides which host this app is even looking for.
+#
+# The global lxc defaults (1 core / 512M / 8G) size a single native service and are nowhere
+# near a Docker host: Authentik alone runs a server, a worker, Postgres and Redis.
+#
+# Not tolerant of absence, unlike the optional config/ loads elsewhere: this file is
+# git-managed and always present, and silently falling back would create the stack host at
+# the single-service global defaults — a host too small to run what lands on it, which is
+# far worse to debug than a missing-file error here.
+- name: Load stack sizing defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
+    name: _stack_defaults_file
+
+- name: Resolve this stack's host sizing
+  ansible.builtin.set_fact:
+    _stack_sizing: >-
+      {{ (_defaults._default | default({}))
+         | combine(_defaults[stack_name] | default({}), recursive=True)
+         | combine(_overrides[stack_name] | default({}), recursive=True) }}
+  vars:
+    _defaults: "{{ _stack_defaults_file.stack_defaults | default({}) }}"
+    _overrides: "{{ homelabinfra_config.infrastructure.stacks | default({}) }}"
+
+# ── Which host this app is allowed to land on ─────────────────────────────────
+#
+# ESTATE ISOLATION. An ordinary hosting unit hosts applications from exactly ONE estate.
+# `media` is not one host in a two-estate lab — it is `stack-media-personal` and
+# `stack-media-foxglove`, and an app in the foxglove estate resolves only to the second.
+# Naming alone would not enforce that: the resolution below is what does, because the
+# identity the lookup and the create path both use already carries the estate.
+#
+# Two things must stay true and are the reason this is arithmetic rather than a lookup:
+#   - a single-estate lab is byte-identical to a lab with no `domains:` map at all, so
+#     nothing gains a suffix it did not ask for;
+#   - crossing the boundary requires `shared: true` on the STACK. There is no path by
+#     which an app that did not declare it reaches another estate's host, and no path by
+#     which `_.shared` is stamped on a host after the fact because two estates happened to
+#     collide on one.
+#
+# The suffix rule is the repository's existing instance-naming rule, applied to a host:
+# one estate (or none) means no suffix, and two or more means every estate-scoped identity
+# carries its estate. A shared stack is exempt because it IS the lab-wide one.
+- name: Resolve the stack's estate and effective identity
+  ansible.builtin.set_fact:
+    _stack_shared: "{{ _stack_sizing.shared | default(false) | bool }}"
+    _stack_id: >-
+      {{ stack_name
+         if (_stack_sizing.shared | default(false) | bool) or _stack_estates | length < 2
+         else stack_name ~ '-' ~ _stack_estate }}
+  vars:
+    _stack_estates: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
+    _stack_default_estate: >-
+      {{ ((_stack_estates | dict2items
+           | selectattr('value.default', 'defined') | selectattr('value.default')
+           | map(attribute='key') | list) | first)
+         | default(_stack_estates | list | first | default(''), true) }}
+    _stack_estate: "{{ (stack_estate | default('', true)) or _stack_default_estate }}"
+
+# The tag is the identity; the group name is what Ansible sanitised it into. One seam does
+# that conversion for the whole repository — see tasks/proxmox/tag-group.yml.
+- name: Resolve the inventory group for this stack
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_.stack+{{ _stack_id }}"
+
 - name: Refresh inventory to get current Proxmox state
   ansible.builtin.meta: refresh_inventory
 
 - name: Check for existing stack host
   ansible.builtin.set_fact:
-    _stack_hosts: "{{ groups['tag_' + (stack_name | regex_replace('[^A-Za-z0-9_]', '_'))] | default([]) }}"
+    _stack_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
 # ── Use existing host ──────────────────────────────────────────────────────────
 - name: Set facts from existing stack host
@@ -107,35 +190,6 @@
 - name: Provision new stack host
   when: _stack_hosts | length == 0
   block:
-    # Sizing is a property of the STACK, not of whichever app reaches it first. A stack host
-    # is shared, and the first app to deploy creates it — so per-app sizing would make the
-    # host's size depend on deploy order, and every app on a stack would have to repeat the
-    # same numbers to stop that mattering. vars/stack-defaults.yml keys it by stack name;
-    # a lab overrides one stack with a `stacks:` map in config/infrastructure.yml.
-    #
-    # The global lxc defaults (1 core / 512M / 8G) size a single native service and are
-    # nowhere near a Docker host: Authentik alone runs a server, a worker, Postgres and
-    # Redis.
-    #
-    # Not tolerant of absence, unlike the optional config/ loads elsewhere: this file is
-    # git-managed and always present, and silently falling back would create the stack host
-    # at the single-service global defaults — a host too small to run what lands on it,
-    # which is far worse to debug than a missing-file error here.
-    - name: Load stack sizing defaults
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
-        name: _stack_defaults_file
-
-    - name: Resolve this stack's host sizing
-      ansible.builtin.set_fact:
-        _stack_sizing: >-
-          {{ (_defaults._default | default({}))
-             | combine(_defaults[stack_name] | default({}), recursive=True)
-             | combine(_overrides[stack_name] | default({}), recursive=True) }}
-      vars:
-        _defaults: "{{ _stack_defaults_file.stack_defaults | default({}) }}"
-        _overrides: "{{ homelabinfra_config.infrastructure.stacks | default({}) }}"
-
     - name: Set stack hostname and Docker LXC features
       ansible.builtin.set_fact:
         homelabinfra_config: >-
@@ -144,9 +198,10 @@
               {
                 'proxmox': {
                   'lxc': _stack_sizing | combine({
-                    'hostname': stack_name | replace('_', '-'),
+                    'hostname': 'stack-' ~ _stack_id,
                     'tags': _stack_tags,
-                    'stack_tag': stack_name,
+                    'stack_tag': _stack_tag,
+                    'stack_id': _stack_id,
                     'features': _stack_lxc_features
                   }, recursive=True)
                 }
@@ -162,11 +217,21 @@
         # that tag, so from the next run on, both stacks would resolve to whichever host
         # inventory listed first. `stack_tag` records what this task last appended so the
         # next call can drop it; a lab-wide tag in config/proxmox.yml is left alone.
+        #
+        # `_.shared` is dropped from the inherited list for the same reason and re-added
+        # only when THIS stack declares it: a shared stack created earlier in the same run
+        # must not leave that declaration on the next, ordinary stack host. Both are
+        # dropped by exact value, never by prefix — a prefix rule here would eat `_+lab`.
+        _stack_tag: "_.stack+{{ _stack_id }}"
         _stack_prior_tag: "{{ homelabinfra_config.proxmox.lxc.stack_tag | default('') }}"
         _stack_base_tags: >-
-          {{ (homelabinfra_config.proxmox.lxc.tags | default(['homelab-infra']))
-             | reject('eq', _stack_prior_tag) | list }}
-        _stack_tags: "{{ (_stack_base_tags + [stack_name]) | unique }}"
+          {{ (homelabinfra_config.proxmox.lxc.tags | default(['_+lab', '_-debian']))
+             | reject('eq', _stack_prior_tag) | reject('eq', '_.shared') | list }}
+        # `_-docker` is a declared machine fact, not a probe: this task is the one that
+        # decides a guest is a Docker host, so it is the one that says so.
+        _stack_tags: >-
+          {{ (_stack_base_tags + ['_-docker', _stack_tag]
+              + (['_.shared'] if _stack_shared | bool else [])) | unique }}
         _stack_existing_lxc_features: >-
           {{ homelabinfra_config.proxmox.lxc.features | default([]) }}
         _stack_lxc_features: >-
@@ -191,7 +256,7 @@
       vars:
         network_name: "{{ homelabinfra_config.proxmox.lxc.network | default('default') }}"
         pool_name: "{{ _stack_sizing.pool | default('') }}"
-        pool_hint: "{{ stack_name }}"
+        pool_hint: "{{ _stack_id }}"
         requested_ip_address: "{{ _stack_sizing.ip_address | default('') }}"
 
     - name: Set stack host IP in config

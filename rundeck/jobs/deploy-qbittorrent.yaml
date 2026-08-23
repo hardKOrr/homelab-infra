@@ -12,7 +12,7 @@
   group: Applications/Media & Entertainment/Download Clients/qBittorrent
   description: |-
     Deploy or update qBittorrent — the media stack's torrent download client
-    (Docker on media_stack). Registers the app in the media registry; run Wire
+    (Docker on media). Registers the app in the media registry; run Wire
     Media Stack afterwards to register it as a download client in every *arr.
   loglevel: INFO
   executionEnabled: true

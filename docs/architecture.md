@@ -30,7 +30,8 @@ the map; contract detail lives in [specs/](specs/) and [`AGENTS.md`](../AGENTS.m
 1. UI job runs `ansible/playbooks/apps/<app>.yml -e instance=<name>` on `localhost`.
 2. **Play 1 — Provision**: `load-user-vars` merges defaults + user config; app defaults +
    `config/apps/<instance>.yml` merge into `app_config`. Docker apps call
-   `stack/find-or-create-host` (locate `tag_<stack>` host or create one); native apps call
+   `stack/find-or-create-host` (locate the `_.stack+<stack>[-<estate>]` host or create one,
+   so estates never share an ordinary stack host); native apps call
    `generate-ip` → `ip-to-vmid` → `lxc-create`. Target host lands in the `app_deploy` group via
    `add_host`, carrying `app_config` and `homelabinfra_infra` as hostvars.
 3. **Play 2 — Deploy**: on the target guest — `guest-bootstrap` (once, guarded by the
@@ -98,8 +99,8 @@ playbook IS the update. `ansible/playbooks/apps/remove.yml` mirrors deploy: stop
   `homelabinfra_infra.kubernetes.failure_domain_mode` and `storage_class` are what consumers read
   rather than counting nodes.
 - **Proxmox boundary**: `community.proxmox` modules are API clients; `pct`/`qm` shell waits are
-  the only node-local operations. All created guests carry the `homelab-infra` tag; untagged
-  resources are never touched. **Execution model (decided 2026-07-02, applied by
+  the only node-local operations. All created guests carry the exact ownership tag `_+lab`;
+  untagged resources are never touched. **Execution model (decided 2026-07-02, applied by
   `decide-multinode-scoping`)**: provisioning plays run on `localhost` and call the Proxmox API;
   only `pct`/`qm` tasks are `delegate_to` the node named in `homelabinfra_config.proxmox.node`.
   Plays must never target `hosts: proxmox_nodes` with `run_once` facts — that pattern corrupts

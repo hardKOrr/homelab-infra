@@ -285,7 +285,17 @@ for path in app_files:
                    "must be a mapping -- a scalar here clobbers the whole default subtree")
 
     if "stack" in data and isinstance(data["stack"], dict):
-        report("ERROR", where, "stack", "must be a scalar stack name, e.g. media_stack")
+        report("ERROR", where, "stack", "must be a scalar stack name, e.g. media")
+
+    # The platform reserves the leading-underscore tag grammar: `_+` ownership, `_-` machine
+    # facts, `_.` topology, and `_<instance>` for applications. An instance whose name began
+    # with one of those characters would produce a tag in the wrong lane, and its withdrawal
+    # would then either miss it or delete something the guest needs. Refused here, at the
+    # only place a name is authored, rather than mangled later.
+    if not re.match(r"^[A-Za-z0-9]", instance):
+        report("ERROR", where, "filename",
+               "instance names must start with a letter or digit -- the leading characters "
+               "_ + - . are reserved by the Proxmox tag grammar")
 
     if "routing" in data and isinstance(data["routing"], dict):
         routing = data["routing"]

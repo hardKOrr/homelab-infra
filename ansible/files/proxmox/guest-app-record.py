@@ -16,9 +16,9 @@ MANY WRITERS, ONE FIELD
     first one's stack tag, after which both stacks resolved to whichever host inventory
     listed first.
 
-    Deriving the tags from the table is what makes them survive a shared host. `kind_docker`
-    is withdrawn when the last Docker app leaves and kept while a sibling of that kind
-    remains, which no per-instance tag edit could decide on its own.
+    Deriving the tags from the table is what makes them survive a shared host: a removal
+    withdraws exactly the rows that left and nothing else, and the guest's ownership,
+    machine-fact and topology tags are never candidates for removal at all.
 
 IDEMPOTENCY
     Rows are emitted sorted by instance so a re-run never reshuffles the table, and an
@@ -51,6 +51,10 @@ HEADING = "### Apps (managed by homelab-infra)"
 TABLE_HEAD = "| instance | kind | url | deployed |"
 TABLE_RULE = "|---|---|---|---|"
 EMPTY_CELL = "-"
+
+# The exact ownership sentinel. Membership of it is the only test for "this platform created
+# this guest"; see ansible/inventory/proxmox.yml for the whole tag grammar.
+OWNER_TAG = "_+lab"
 
 
 def pvesh(args):
@@ -91,7 +95,9 @@ def find_guest(name, vmid):
     if not matches:
         return None, "no guest named %s" % name
     # A name collision across the cluster is resolved toward the guest this system owns.
-    owned = [r for r in matches if "homelab-infra" in (r.get("tags") or "").split(";")]
+    # EXACT membership of the ownership sentinel, never a prefix test: every platform tag
+    # starts with `_`, and `_` alone means "platform lane", not "ours".
+    owned = [r for r in matches if OWNER_TAG in (r.get("tags") or "").split(";")]
     return (owned or matches)[0], None
 
 
@@ -154,9 +160,14 @@ def merge_rows(description, instance, kind, url, date, withdraw):
 
     The row set is the single source of truth for both writes: the description renders from
     it, and so do the managed tags. One parse, one merge, two renderings that cannot disagree.
+
+    The PREVIOUS row set is returned alongside the new one, because a withdrawal must remove
+    exactly the application tags the rows it deleted produced — never everything that looks
+    like an application tag, and never anything matched on a bare `_` prefix.
     """
     before, body, after = split_region(description)
-    rows = parse_rows(body)
+    previous = parse_rows(body)
+    rows = dict(previous)
 
     if withdraw:
         rows.pop(instance, None)
@@ -169,7 +180,7 @@ def merge_rows(description, instance, kind, url, date, withdraw):
             wanted[3] = current[3]
         rows[instance] = wanted
 
-    return before, rows, after
+    return before, previous, rows, after
 
 
 def render_description(before, rows, after):
@@ -188,36 +199,59 @@ def tag_list(tags):
     return sorted({t.strip() for t in (tags or "").split(";") if t.strip()})
 
 
+# PVE accepts these in a tag on top of the alphanumerics and `_`. The platform grammar uses
+# all three: `_+lab` for ownership, `_-debian` for a machine fact, `_.stack+media` for
+# topology. Stripping them, as this once did, collapsed three lanes into one.
+TAG_ALPHABET = r"[^A-Za-z0-9_+.-]"
+
+# The lanes the platform reserves after the leading underscore. An application tag is
+# `_<instance>`, so an instance whose name began with one of these would be indistinguishable
+# from ownership, a machine fact or a topology tag — and a withdrawal keyed on the
+# application lane would then delete a tag the guest needs. The check refuses such a name
+# outright rather than mangling it into something that looks fine and means something else.
+RESERVED_LANES = ("+", "-", ".")
+
+
 def tag_token(value):
     """PVE tags accept a restricted alphabet; anything else becomes an underscore."""
-    return re.sub(r"[^A-Za-z0-9_]", "_", value)
+    return re.sub(TAG_ALPHABET, "_", value)
 
 
-MANAGED_TAG_PREFIXES = ("app_", "kind_")
+def app_tag(instance):
+    """The tag for one application instance: its canonical name with one leading underscore."""
+    return tag_token("_%s" % instance)
 
 
-def merge_tags(tags, rows):
-    """Render the managed tags from the merged row set, never a blind append.
+def reserved_name(instance):
+    """True when this instance name would collide with a reserved platform lane."""
+    return instance.startswith(RESERVED_LANES) or instance.startswith("_")
 
-    Two families are managed here and nothing else is touched — a lab-wide tag, the guest's
-    identity tag (`ntfy`, `sso_stack`) and any hand-applied tag all survive untouched:
 
-        app_<instance>  tenancy — what runs on this guest
-        kind_<kind>     install type — how it runs, so `docker` vs `native` is a filter in
-                        the UI and a `tag_kind_docker` inventory group, rather than something
-                        an operator infers from a hostname that happens to end in `-stack`
+def merge_tags(tags, previous_rows, rows):
+    """Render the application tags from the merged row set, never a blind append.
 
-    Both are derived from the table rather than edited in place, which is what makes a
-    withdrawal correct on a shared host: removing the last Docker app drops `kind_docker`,
-    while a sibling of the same kind keeps it. A blind append is the bug that once gave a
-    second stack host the first one's stack tag.
+    ONE family is managed here — `_<instance>` — and nothing else is ever a candidate for
+    removal. The guest keeps its ownership tag `_+lab`, its machine facts (`_-debian`,
+    `_-docker`, `_-k3s`), its topology (`_.stack+media`, `_.cluster+k3s`, `_.template`), its
+    `_.shared` declaration and every hand-applied operator tag. Deleting on a bare `_`
+    prefix would take all of those with it, which is why the removal set is computed from
+    the rows that were actually withdrawn:
+
+        removable = application tags of the PREVIOUS row set - application tags of the new one
+
+    That is what keeps a withdrawal correct on a shared host and on a cluster: removing one
+    app from a stack host leaves its siblings' tags byte-identical, and removing the last one
+    leaves the stack's own identity intact. A blind append is the bug that once gave a second
+    stack host the first one's stack tag.
     """
-    managed = {tag_token("app_%s" % instance) for instance in rows}
-    managed |= {
-        tag_token("kind_%s" % row[1]) for row in rows.values() if row[1] not in ("", EMPTY_CELL)
-    }
-    kept = [t for t in tag_list(tags) if not t.startswith(MANAGED_TAG_PREFIXES)]
+    managed = {app_tag(instance) for instance in rows}
+    removable = {app_tag(instance) for instance in previous_rows} - managed
+    kept = [t for t in tag_list(tags) if t not in removable]
     # PVE stores tags sorted; sorting here keeps the comparison stable.
+    # Plain lexicographic order IS the reading order the grammar was designed for: ASCII puts
+    # `+` (43) before `-` (45) before `.` (46) before a letter, so a sorted tag list reads
+    # ownership, machine facts, topology, then applications, with any operator tag that does
+    # not start with `_` after them. No comparator is needed and none should be added.
     return ";".join(sorted(set(kept) | managed))
 
 
@@ -226,7 +260,9 @@ def main():
     parser.add_argument("--instance", required=True)
     parser.add_argument("--guest", default="", help="guest hostname to resolve")
     parser.add_argument("--vmid", default="", help="guest vmid; overrides --guest when set")
-    parser.add_argument("--kind", default="native", choices=["docker", "native"])
+    parser.add_argument(
+        "--kind", default="native", choices=["docker", "native", "kubernetes"]
+    )
     parser.add_argument("--url", default="")
     parser.add_argument("--date", default=datetime.date.today().isoformat())
     parser.add_argument("--withdraw", action="store_true", help="remove the record instead")
@@ -234,6 +270,17 @@ def main():
 
     if not args.guest and not args.vmid:
         print("SKIPPED no guest identity supplied")
+        return 0
+
+    # Refused, not sanitised. An instance called `.media` would produce the tag `_.media`,
+    # which reads as a topology tag and would be invisible to the application lane that has
+    # to withdraw it later. Nothing generates such a name today; this is the guard that keeps
+    # it that way, and it fires before anything is written.
+    if reserved_name(args.instance):
+        print(
+            "SKIPPED instance %r starts with a reserved platform lane (%s or _)"
+            % (args.instance, ", ".join(RESERVED_LANES))
+        )
         return 0
 
     guest, problem = find_guest(args.guest, args.vmid)
@@ -249,11 +296,11 @@ def main():
     description = config.get("description", "") or ""
     tags = config.get("tags", "") or ""
 
-    before, rows, after = merge_rows(
+    before, previous_rows, rows, after = merge_rows(
         description, args.instance, args.kind, args.url, args.date, args.withdraw
     )
     new_description = render_description(before, rows, after)
-    new_tags = merge_tags(tags, rows)
+    new_tags = merge_tags(tags, previous_rows, rows)
 
     if new_description == description.strip() and new_tags == ";".join(tag_list(tags)):
         state = "already absent from" if args.withdraw else "already recorded on"

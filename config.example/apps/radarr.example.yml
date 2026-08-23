@@ -11,7 +11,7 @@
 # ── Stack assignment (Docker app) ──────────────────────────────────────────────
 # Radarr runs on a shared Docker stack host, so its CPU/RAM belong to that host,
 # not to this file. The per-app knob is which stack host to place it on.
-stack: media_stack     # which Docker stack host this app runs on
+stack: media     # which Docker stack host this app runs on
 
 # ── App config ─────────────────────────────────────────────────────────────────
 app:

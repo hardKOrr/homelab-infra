@@ -16,7 +16,7 @@
 # ── Stack placement ────────────────────────────────────────────────────────────
 # Which stack host these containers run on. Authentik gets its own by default
 # because it carries a database and every login in the lab depends on it.
-# stack: sso_stack
+# stack: sso
 
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:

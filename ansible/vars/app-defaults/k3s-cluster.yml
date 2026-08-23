@@ -201,9 +201,24 @@ k3s_cluster_defaults:
       # to come up together, so staggering them only delays quorum.
       boot_order: 45
       boot_up: 0
+      # Ownership, the declared machine facts, the cluster this node belongs to, and the
+      # deliberate cross-estate declaration.
+      #
+      # `_.shared` is EXPLICIT here, not inferred: one cluster hosts workloads from every
+      # estate, and it earns that because an estate's applications are separated inside it
+      # by namespace. What namespaces do NOT separate is the cluster administrators, the
+      # nodes, the storage infrastructure or the failure domain — those stay shared, which
+      # is exactly why the declaration is written down rather than derived.
+      #
+      # Each application assigned to the cluster adds its own `_<instance>` tag to EVERY
+      # node, because assignment is to the cluster and not to whichever node currently runs
+      # the pod. Nothing here chases scheduler placement.
       tags:
-        - homelab-infra
-        - k3s
+        - _+lab
+        - _-debian
+        - _-k3s
+        - _.cluster+k3s
+        - _.shared
     # The cloud-init template every VM clones from. One per Proxmox node — Proxmox
     # refuses to clone across non-shared storage — and each node keeps exactly one:
     # changing image_url below replaces the node's template in place rather than adding

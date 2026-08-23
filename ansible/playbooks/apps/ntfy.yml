@@ -58,15 +58,23 @@
 
   tasks:
     # PATH B: NATIVE LXC APP — dedicated container per instance. Mirrors
-    # find-or-create-host.yml: an existing tag_<instance> host is reused so
+    # find-or-create-host.yml: an existing `_<instance>` host is reused so
     # re-runs are idempotent (a fresh generate-ip would otherwise allocate a
     # second IP/VMID and provision a duplicate guest).
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
+    # The application tag is `_<instance>`; the inventory group it produces is derived by
+    # one seam for the whole repository, because Ansible's group-name sanitiser is what
+    # turns punctuation in a tag into something a `groups[...]` lookup can spell.
+    - name: Resolve the inventory group for this instance
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ instance }}"
+
     - name: Check for existing instance host
       ansible.builtin.set_fact:
-        _existing_hosts: "{{ groups['tag_' + (instance | regex_replace('[^A-Za-z0-9_]', '_'))] | default([]) }}"
+        _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:
@@ -95,15 +103,18 @@
     - name: Provision new LXC
       when: _existing_hosts | length == 0
       block:
-        # Tag with the instance name so the reuse check above (and remove.yml)
-        # can find this guest via the tag_<instance> inventory group.
+        # Stamp the application tag `_<instance>` so the reuse check above (and
+        # remove.yml) find this guest. The app's defaults carry ownership and the
+        # machine facts; only the instance tag is appended here, because only this
+        # play knows what the instance is actually called.
         - name: Set LXC identity from app config
           ansible.builtin.set_fact:
             homelabinfra_config: >-
               {{ homelabinfra_config | combine({'proxmox': {'lxc':
                    app_config.proxmox | combine({
                      'hostname': instance,
-                     'tags': ((app_config.proxmox.tags | default(['homelab-infra'])) + [instance]) | unique
+                     'tags': ((app_config.proxmox.tags | default(['_+lab', '_-debian']))
+                               + ['_' ~ instance]) | unique
                    }, recursive=True)
                  }}, recursive=True) }}
 

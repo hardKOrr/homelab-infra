@@ -1,16 +1,23 @@
 ---
 # Record a deployed app instance on the Proxmox guest it landed on.
 #
-# Writes three things, doing deliberately different jobs:
-#   - the tag `app_<instance>`, which gives the Proxmox guest tree a filter and the dynamic
-#     inventory a `tag_app_<instance>` group
-#   - the tag `kind_<docker|native>`, which says how the app is installed. A guest's identity
-#     tag is written at creation (`ntfy` for a native app's own LXC, `sso_stack` for a shared
-#     Docker host), so before this the only clue to install type was a hostname convention.
-#     The kind tags are rendered from the notes table, so a shared host carries one per kind
-#     present and loses it when the last app of that kind is removed.
+# Writes two things, doing deliberately different jobs:
+#   - the tag `_<instance>`, which gives the Proxmox guest tree a filter and the dynamic
+#     inventory a `lab_app_<instance>` group. Its meaning is exact: the LOGICAL HOSTING
+#     UNIT this guest belongs to hosts that application instance.
 #   - a row in the marker-delimited region of the guest's notes, which says what the guest
-#     actually runs
+#     actually runs, including how it is installed
+#
+# There is no install-kind TAG. The kind is a column in the notes table, where a human
+# reads it; as a tag it duplicated what `_-docker` already says about the guest and what
+# the Proxmox tree already says about VM versus LXC.
+#
+# THE LOGICAL HOSTING UNIT is not always one guest:
+#   native      the app's own LXC
+#   docker      the stack host it shares
+#   kubernetes  EVERY Proxmox VM in the target cluster, because assignment is to the
+#               cluster and a pod moves between nodes without the assignment changing.
+#               Nothing here follows the scheduler.
 #
 # Until this existed nothing after guest creation ever touched a guest's tags or notes, so a
 # stack host running twelve apps and one running a single app were indistinguishable in the
@@ -23,8 +30,12 @@
 #
 # Inputs — all defaulted, so the normal call passes nothing at all:
 #   record_guest_name      — guest to record on (default: the deploy_<instance> group member)
+#   record_guest_names     — the whole hosting unit, when it is more than one guest. A
+#                            Kubernetes app passes every cluster node here. Defaults to
+#                            [record_guest_name].
 #   record_guest_instance  — instance name (default: `instance`)
-#   record_guest_kind      — docker | native (default: derived from app_config.stack)
+#   record_guest_kind      — docker | native | kubernetes (default: derived from
+#                            app_config.stack)
 #   record_guest_url       — public URL (default: the wired domain, or empty when unrouted)
 #
 # Best-effort and never fatal: a guest that has vanished, or a Proxmox that refuses the
@@ -33,18 +44,33 @@
 - name: Resolve the guest to record on
   ansible.builtin.set_fact:
     _rg_instance: "{{ record_guest_instance | default(instance) }}"
+    # `groups[...] | default([])` rather than a subscript on the lookup: a Kubernetes app has
+    # no deploy_<instance> group at all, and an undefined subscript is an error rather than
+    # an empty answer.
     _rg_name: >-
       {{ record_guest_name
-         | default(groups['deploy_' ~ (record_guest_instance | default(instance))][0]
-                   | default('')) }}
+         | default((groups['deploy_' ~ (record_guest_instance | default(instance))] | default([]))
+                   | first | default('', true), true) }}
     _rg_url: "{{ record_guest_url | default('') }}"
+    _rg_names: >-
+      {{ record_guest_names
+         | default([record_guest_name
+                    | default((groups['deploy_' ~ (record_guest_instance | default(instance))]
+                               | default([])) | first | default('', true), true)], true)
+         | reject('eq', '') | list }}
 
+# Unconditional, so an explicitly passed kind always wins. A Kubernetes app has no
+# deploy-group member to infer from, and skipping this task would have left the default
+# `native` on the row for an app that runs on a cluster. The inference is the platform's one
+# rule: the presence of `stack:` tells Docker from native.
 - name: Derive the hosting kind from the deploy target
   ansible.builtin.set_fact:
     _rg_kind: >-
       {{ record_guest_kind
-         | default('docker' if hostvars[_rg_name].app_config.stack is defined else 'native') }}
-  when: _rg_name in hostvars
+         | default('docker'
+                   if (_rg_name in hostvars
+                       and hostvars[_rg_name].app_config.stack is defined)
+                   else 'native', true) }}
 
 # The URL is only meaningful once a reverse proxy has published the app; on a lab with
 # routing disabled the column stays empty rather than advertising an address that answers
@@ -61,7 +87,7 @@
     - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
 - name: Record the app on its Proxmox guest
-  when: _rg_name | length > 0
+  when: _rg_names | length > 0
   block:
     - name: Make Proxmox nodes addressable for delegation
       ansible.builtin.import_tasks: register-nodes.yml
@@ -69,16 +95,20 @@
     # Delegated to the configured node rather than to the guest's own node: pvesh answers
     # cluster-wide from any node, and the script resolves which node actually holds the
     # guest. Runs there because the decoded description is only readable through pvesh.
+    # Looped over the whole hosting unit: one guest for a native or Docker app, every
+    # cluster member for a Kubernetes one. Each write is its own read-modify-write, so a
+    # node that is unreachable costs that node's row and nothing else.
     - name: Merge this instance into the guest's tags and notes
       ansible.builtin.script:
         cmd: >-
           {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
           --instance "{{ _rg_instance }}"
-          --guest "{{ _rg_name }}"
+          --guest "{{ item }}"
           --kind "{{ _rg_kind | default('native') }}"
           --url "{{ _rg_url }}"
         executable: /usr/bin/python3
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      loop: "{{ _rg_names }}"
       register: _rg_result
       changed_when: _rg_result.stdout is defined and _rg_result.stdout.startswith('CHANGED')
       failed_when: false
@@ -92,5 +122,8 @@
     # tasks/report-degradation.yml.
     - name: Report a guest record that could not be written
       ansible.builtin.debug:
-        msg: "Guest record not updated — {{ _rg_result.stdout | default('the node was unreachable') | trim }}"
-      when: not (_rg_result.stdout | default('') is search('^(CHANGED|OK)'))
+        msg: "Guest record not updated — {{ item.stdout | default('the node was unreachable') | trim }}"
+      loop: "{{ _rg_result.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('') }}"
+      when: not (item.stdout | default('') is search('^(CHANGED|OK)'))

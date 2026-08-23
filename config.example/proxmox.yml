@@ -92,7 +92,7 @@ networks:
     # a pool never lands outside it.
     #
     # An app reaches a pool two ways: it inherits the pool named after its stack
-    # (a Docker app on `stack: media_stack` uses a pool called media_stack if one
+    # (a Docker app on `stack: media` uses a pool called media if one
     # is defined here), or it names one outright with `pool:` in its instance file
     # — config/apps/<instance>.yml, so two instances of the same app can sit in
     # different pools. A pool named there must exist; an inherited one that does
@@ -101,7 +101,7 @@ networks:
     # pools:
     #   infra:         {range: "192.168.1.10-192.168.1.39"}
     #   apps:          {range: "192.168.1.40-192.168.1.99"}
-    #   media_stack:   {range: "192.168.1.100-192.168.1.149"}
+    #   media:   {range: "192.168.1.100-192.168.1.149"}
     # default_pool: apps   # what a guest naming no pool uses
 
     # Used only when no pool applies. At a /24 `ip_offset: 10` means .10, which is

@@ -77,24 +77,28 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
       changed_when: false
 
-    # The target is the stack host the app runs on, found the same way a deploy
-    # finds it. A migration onto a stack host that does not exist yet is a
-    # migration onto nothing, so this refuses rather than creating one — run the
-    # app's Deploy job first, then migrate onto it.
-    - name: Locate the media stack host
+    # The target is the guest the app already runs on, resolved by its APPLICATION tag
+    # `_<instance>`. That is what the deploy stamped on the stack host it chose, so this
+    # never has to re-derive which estate's stack host that was. A migration onto a host
+    # that does not exist yet is a migration onto nothing, so this refuses rather than
+    # creating one — run the app's Deploy job first, then migrate onto it.
+    - name: Resolve the application's inventory group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ instance }}"
+
+    - name: Locate the host this instance runs on
       ansible.builtin.set_fact:
-        _ms_stack_hosts: >-
-          {{ groups['tag_' + ((stack | default('media_stack'))
-                              | regex_replace('[^A-Za-z0-9_]', '_'))] | default([]) }}
+        _ms_stack_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
     - name: Assert the stack host exists
       ansible.builtin.assert:
         that: _ms_stack_hosts | length > 0
         fail_msg: >-
-          No {{ stack | default('media_stack') }} host exists yet. Run the app's
-          Deploy job first — it creates the stack host, mounts the lab's storage
-          onto it and stands the app up — then migrate the old configuration onto
-          it and deploy once more.
+          No Proxmox guest is tagged _{{ instance }}. Run the app's Deploy job
+          first — it creates the stack host, mounts the lab's storage onto it and
+          stands the app up — then migrate the old configuration onto it and
+          deploy once more.
 
     - name: Add the stack host to the migration target group
       ansible.builtin.add_host:

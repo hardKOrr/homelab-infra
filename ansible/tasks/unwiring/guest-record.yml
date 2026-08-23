@@ -3,15 +3,20 @@
 # tasks/proxmox/record-app-on-guest.yml, and the reason removal does not leave a stack host
 # claiming to run an app that is gone.
 #
-# Deletes this instance's row and its `app_<instance>` tag, leaving every sibling app's row
-# byte-identical; when the withdrawal empties the region the markers and heading go too,
-# rather than leaving an empty table behind. The merge is the same read-modify-write engine
-# the deploy path uses — files/proxmox/guest-app-record.py, run with --withdraw.
+# Deletes this instance's row and its `_<instance>` tag, leaving every sibling app's row and
+# tag byte-identical; when the withdrawal empties the region the markers and heading go too,
+# rather than leaving an empty table behind. The guest keeps `_+lab`, its machine facts and
+# its topology tags — an emptied stack host is still a stack host, and a native guest that
+# outlives its app is still ours. The merge is the same read-modify-write engine the deploy
+# path uses — files/proxmox/guest-app-record.py, run with --withdraw.
 #
 # Inputs:
-#   record_guest_name      — guest to withdraw from (required; remove.yml passes the host it
-#                            located, which is the only place that knows whether this was a
-#                            shared stack host or the app's own LXC)
+#   record_guest_name      — guest to withdraw from (remove.yml passes the host it located,
+#                            which is the only place that knows whether this was a shared
+#                            stack host or the app's own LXC)
+#   record_guest_names     — the whole hosting unit, when it is more than one guest: a
+#                            Kubernetes app withdraws from EVERY cluster node, because that
+#                            is where the deploy stamped it. Defaults to [record_guest_name].
 #   record_guest_instance  — instance name (default: `instance`)
 #
 # Best-effort and never fatal: by the time removal runs, the guest may already have been
@@ -20,10 +25,12 @@
 - name: Resolve the guest to withdraw from
   ansible.builtin.set_fact:
     _rug_instance: "{{ record_guest_instance | default(instance) }}"
-    _rug_name: "{{ record_guest_name | default('') }}"
+    _rug_names: >-
+      {{ record_guest_names | default([record_guest_name | default('')])
+         | reject('eq', '') | list }}
 
 - name: Withdraw the app from its Proxmox guest
-  when: _rug_name | length > 0
+  when: _rug_names | length > 0
   block:
     - name: Make Proxmox nodes addressable for delegation
       ansible.builtin.import_tasks: ../proxmox/register-nodes.yml
@@ -33,10 +40,11 @@
         cmd: >-
           {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
           --instance "{{ _rug_instance }}"
-          --guest "{{ _rug_name }}"
+          --guest "{{ item }}"
           --withdraw
         executable: /usr/bin/python3
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      loop: "{{ _rug_names }}"
       register: _rug_result
       changed_when: _rug_result.stdout is defined and _rug_result.stdout.startswith('CHANGED')
       failed_when: false
@@ -48,5 +56,8 @@
     # already run by now. Do not convert this to tasks/report-degradation.yml.
     - name: Report a guest record that could not be withdrawn
       ansible.builtin.debug:
-        msg: "Guest record not withdrawn — {{ _rug_result.stdout | default('the node was unreachable') | trim }}"
-      when: not (_rug_result.stdout | default('') is search('^(CHANGED|OK)'))
+        msg: "Guest record not withdrawn — {{ item.stdout | default('the node was unreachable') | trim }}"
+      loop: "{{ _rug_result.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('') }}"
+      when: not (item.stdout | default('') is search('^(CHANGED|OK)'))

@@ -241,6 +241,44 @@ carries its reason.
 | `stacks.<name>.pool` | optional | pool the stack host allocates from. A stack whose name matches a pool name inherits it without this key; a pool named here must exist on the network |
 | `stacks.<name>.ip_address` | optional | pins the stack host to an exact address, honoured or refused with the conflict named |
 | `stacks.<name>.boot_order` | optional | the stack host's Proxmox startup tier. A property of the stack, like its sizing — an app cannot set it, or the tier would depend on deploy order |
+| `stacks.<name>.shared` | optional, default `false` | `true` means this stack host deliberately serves EVERY estate. See *Stack identity and estate isolation* below |
+
+#### Stack identity and estate isolation
+
+A **stack** is a bare concept — `media`, `sso`, `monitoring` — and never a hostname or a
+tag. Both are derived from it, and both add the estate when the lab has more than one:
+
+| | single estate (or no `domains:` map) | two or more estates, app in `foxglove` |
+|---|---|---|
+| effective identity | `media` | `media-foxglove` |
+| Proxmox hostname | `stack-media` | `stack-media-foxglove` |
+| Proxmox tag | `_.stack+media` | `_.stack+media-foxglove` |
+| inventory group | `lab_stack_media` | `lab_stack_media_foxglove` |
+
+The suffix rule is the repository's existing instance-naming rule applied to a host: one
+estate means no suffix; two or more means every estate-scoped identity carries its estate.
+
+**Merge behaviour.** `shared` merges exactly like the rest of the stack block —
+`vars/stack-defaults.yml` supplies the git-managed value and
+`config/infrastructure.yml`'s `stacks:` map is deep-merged over it
+(`combine(recursive=True)`). It is resolved once per placement, before the lookup that
+decides whether a host already exists, because it decides *which* host the app is looking
+for. No app-level key overrides it: a stack host is shared by definition, so one tenant
+must not be able to move it out from under the others.
+
+**What `shared: true` does.** The identity takes no estate suffix, so every estate
+resolves to one host, and that host is tagged `_.shared`. Both halves come from this one
+declaration. Nothing infers the tag after the fact from where applications happened to
+land; an ordinary hosting unit hosts exactly one estate, and there is no path by which an
+app that did not declare sharing reaches another estate's host.
+
+`_.shared` means deliberate cross-estate HOSTING, not lab-wide importance. Caddy declares
+it because one TLS edge answers for every estate, and the k3s cluster declares it because
+estate applications are separated inside it by namespace — while the cluster
+administrators, the nodes, the storage infrastructure and the failure domain stay shared,
+which is exactly why the declaration is written down rather than derived. PBS, Ntfy and
+the metrics stack are `scope: lab` and are **not** `_.shared`: each serves the whole lab
+and hosts nothing but itself.
 
 #### Maintenance schedules (slice 205)
 
@@ -465,7 +503,7 @@ four-layer `homelabinfra_config` merge in Section 4.
 filename — the filename *is* the instance name (`-e instance=<name>`) and becomes the hostname,
 Caddy subdomain, and Authentik app name. Its top-level keys mirror the `<app>_defaults` dict in
 `vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
-as `media_stack`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
+as `media`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
 (`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`,
 `access`, `identity`, plus optional `subdomain` and `estate`). `routing.proxy`
 (`internal | external | none`) selects **which** reverse proxy serves the app in a two-proxy

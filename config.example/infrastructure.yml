@@ -262,9 +262,9 @@ vaultwarden:
 # Proxmox operation; changing a number here does not move a running guest.
 #
 # Omit this block entirely unless a stack needs more than the default:
-#   sso_stack         4 cores / 4096 MB / 32 GB   Authentik, on its own by design
-#   monitoring_stack  4 cores / 4096 MB / 64 GB   Uptime Kuma + Prometheus + Grafana
-#   media_stack       4 cores / 4096 MB / 32 GB   the *arr suite
+#   sso         4 cores / 4096 MB / 32 GB   Authentik, on its own by design
+#   monitoring  4 cores / 4096 MB / 64 GB   Uptime Kuma + Prometheus + Grafana
+#   media       4 cores / 4096 MB / 32 GB   the *arr suite
 #   anything else     2 cores / 2048 MB / 16 GB
 #
 # The same block chooses where the stack host is ADDRESSED, for the same reason it
@@ -276,13 +276,32 @@ vaultwarden:
 #               Naming a pool the network does not define fails the run.
 #   ip_address: pin this host to an exact address. Honoured as written or refused
 #               with the conflict named, never quietly replaced.
+#   shared:     true means this stack host deliberately serves EVERY estate. Default
+#               false, and false is what an ordinary stack should stay.
+#
+# ESTATE ISOLATION. A stack is a concept, not a host. In a lab that declares two or more
+# estates under `domains:` below, an estate-scoped app resolves to its own host — `media`
+# is the guest `stack-media-personal` for one estate and `stack-media-foxglove` for the
+# other, tagged `_.stack+media-personal` and `_.stack+media-foxglove`. An app can never
+# silently reuse another estate's host, because the identity it looks the host up by
+# already carries its estate.
+#
+# `shared: true` is the only way across that boundary. It makes one host serve every
+# estate and stamps `_.shared` on it, which is a DECLARATION and never an inference: no
+# code concludes after the fact that a host became shared because two estates landed on
+# it. Caddy (the single TLS edge) and the k3s cluster are the platform's own deliberate
+# shared substrates; they declare it in their own defaults, not here.
+#
+# Being lab-wide is not the same as being shared. PBS, Ntfy and the metrics stack each
+# serve the whole lab and are none of them `_.shared` — the tag means cross-estate
+# HOSTING, not importance.
 #
 # stacks:
-#   monitoring_stack:
+#   monitoring:
 #     memory: 8192
-#   media_stack:
-#     pool: media_stack
-#   sso_stack:
+#   media:
+#     pool: media
+#   sso:
 #     ip_address: "192.168.1.50"
 #     disk_volume:
 #       size: 64

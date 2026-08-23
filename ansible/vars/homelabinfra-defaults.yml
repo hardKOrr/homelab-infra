@@ -73,15 +73,30 @@ homelabinfra_defaults:
         - nesting=1
       memory: 512
       onboot: true
+      # The platform tag grammar lives in inventory/proxmox.yml; these are the two tags
+      # every LXC this platform creates starts with. `_+lab` is the exact ownership
+      # sentinel — code tests membership of it and never a `_` prefix. `_-debian` is a
+      # DECLARED machine fact, read off the `ostemplate` above rather than polled from a
+      # running guest: change that image family and this list changes with it. The OS
+      # VERSION is deliberately absent — it moves on every dist-upgrade and a tag that
+      # lies is worse than no tag.
+      #
+      # An app's own defaults may add to this; the deploy appends `_<instance>` itself.
       tags:
-        - homelab-infra
+        - _+lab
+        - _-debian
     vm: #TODO: EVerything about VM stuff
       agent: 1
       onboot: true
       autostart: true
       description: VM created by Ansible
+      # `_-debian` for the same declared reason as the LXC block: every VM this platform
+      # creates is a clone of the Debian cloud-init template that
+      # tasks/proxmox/ensure-cloud-template.yml builds. A caller that clones something
+      # else replaces this list rather than adding to it.
       tags:
-        - homelab-infra
+        - _+lab
+        - _-debian
   docker_hosts:
     docker_default_host:
       type: vm

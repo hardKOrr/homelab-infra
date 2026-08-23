@@ -24,7 +24,7 @@
 #   api_key: "uk1_..."
 
 # ── Stack placement ────────────────────────────────────────────────────────────
-# stack: monitoring_stack
+# stack: monitoring
 
 # ── Other app config ───────────────────────────────────────────────────────────
 # app:

@@ -12,7 +12,7 @@
   group: Applications/Media & Entertainment/Media Servers/Jellyfin
   description: |-
     Deploy or update Jellyfin — the media stack's media server (Docker on
-    media_stack). Completes Jellyfin's first-run wizard, creates the admin
+    media). Completes Jellyfin's first-run wizard, creates the admin
     account in Vaultwarden and adds a library for each path the *arr apps
     write into. Nothing to wire afterwards.
   loglevel: INFO

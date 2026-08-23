@@ -159,7 +159,7 @@
     agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
     onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"
     startup: "{{ _proxmox_startup if (_proxmox_startup | length > 0) else omit }}"
-    tags: "{{ homelabinfra_config.proxmox.vm.tags | default(['homelab-infra']) }}"
+    tags: "{{ homelabinfra_config.proxmox.vm.tags | default(['_+lab', '_-debian']) }}"
     description: "{{ homelabinfra_config.proxmox.vm.description | default(omit) }}"
     ciuser: "{{ homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user) }}"
     sshkeys: "{{ homelabinfra_config.ansible.ssh_public_key }}"

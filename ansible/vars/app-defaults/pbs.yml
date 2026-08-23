@@ -21,9 +21,16 @@ pbs_defaults:
       # Boot tier 60 — backups start after the guests they back up, and a backup that
       # begins mid-ascent competes with them for the same disks.
       boot_order: 60
+      # Ownership plus the declared machine fact — the PBS VM is a clone of the Debian
+      # cloud-init template. The deploy appends `_<instance>` itself.
+      #
+      # NOT `_.shared`: one PBS holds every estate's snapshots and is `scope: lab` in the
+      # catalog, but `_.shared` means a hosting substrate deliberately crosses estate
+      # boundaries — it does not mean "important to the whole lab". Nothing else is hosted
+      # on this VM.
       tags:
-        - homelab-infra
-        - pbs
+        - _+lab
+        - _-debian
     network: default
 
     # The cloud-init template every VM clones from. One per Proxmox node — Proxmox

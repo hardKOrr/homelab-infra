@@ -10,7 +10,7 @@
 sonarr_defaults:
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
-  stack: media_stack
+  stack: media
 
   app:
     # media_kind is load-bearing, not a label: it is the key slice 504's

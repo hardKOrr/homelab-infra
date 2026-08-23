@@ -11,7 +11,7 @@
   name: Deploy Lidarr
   group: Applications/Media & Entertainment/Library Automation/Lidarr
   description: |-
-    Deploy or update Lidarr — music management (Docker on media_stack).
+    Deploy or update Lidarr — music management (Docker on media).
     Registers the app in the media registry; run Wire Media Stack afterwards to
     connect it to the rest of the stack.
   loglevel: INFO

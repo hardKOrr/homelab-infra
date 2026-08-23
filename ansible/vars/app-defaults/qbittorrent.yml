@@ -4,7 +4,7 @@
 # This file is git-managed — git pull may update these defaults.
 
 qbittorrent_defaults:
-  stack: media_stack
+  stack: media
 
   app:
     # The key ansible/vars/media-wiring.yml is looked up by. It decides which

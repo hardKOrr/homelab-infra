@@ -19,15 +19,15 @@ validate_certs: false
 want_facts: true
 
 # Templates are not guests. `debian-12-cloud` — the cloud-init template this platform builds
-# and clones — carries the `homelab-infra` tag like everything else we create, so it landed in
-# `tag_homelab_infra` and `proxmox_clients` and every guest-wide job then tried to reach a VM
-# that has no address and never boots: both Tier 1 maintenance probes reported it UNREACHABLE.
+# and clones — carries the ownership tag `_+lab` like everything else we create, so it landed in
+# the managed-guest group and in `proxmox_clients`, and every guest-wide job then tried to reach a
+# VM that has no address and never boots: both Tier 1 maintenance probes reported it UNREACHABLE.
 #
 # The plugin already knows. `_handle_item` publishes `proxmox_template` for every entry, and
 # `filters` is evaluated BEFORE `compose`, `groups` and `keyed_groups` run, so a filtered
 # template joins no group at all rather than being excluded at each of the six consumers.
 # Nothing that clones the template reads it from here — ensure-cloud-template.yml and
-# vm-clone.yml both work through pvesh/qm against the node.
+# vm-clone.yml both work through pvesh/qm against the node, matching on `_.template`.
 #
 # This also drops templates we did not create, which is correct rather than incidental: an
 # addressless entry contributes nothing to the in-use list that network/generate-ip.yml builds
@@ -35,50 +35,95 @@ want_facts: true
 filters:
   - not (proxmox_template | default(false) | bool)
 
-# The plugin namespaces every fact it publishes as `proxmox_*`, and these expressions are
-# evaluated against those hostvars. Bare `type` and `tags` do not exist, so the previous
-# `type == 'node'` / `key: tags` matched nothing and silently produced no groups at all —
-# no `proxmox_clients`, and not one `tag_*`. `proxmox_nodes` still appeared only because the
-# plugin creates a group of that name itself, which is what made the breakage invisible.
+# ── The tag grammar, and the group names it produces ──────────────────────────────────
 #
-# What depended on the groups that were never created:
-#   tag_<instance>   — every app playbook's "reuse the existing guest" check, so re-running
-#                      a deploy would provision a SECOND guest instead of converging
-#   tag_<stack>      — stack/find-or-create-host.yml locating a shared Docker host
-#   tag_homelab_infra— status.yml and check-native-updates.yml's host pattern
+# Every tag this platform writes begins with `_`, which sorts the platform inventory
+# together in the Proxmox UI. The SECOND character selects the lane, and Proxmox orders
+# `+` before `-` before `.` before an alphanumeric, so a guest reads top to bottom as
+# ownership, durable machine facts, topology, then the applications it hosts:
 #
-# Group names are sanitised by Ansible: a hyphen in a Proxmox tag becomes an underscore, so
-# the tag `homelab-infra` yields the group `tag_homelab_infra`. Consumers must look up the
-# sanitised name — `hosts: tag_homelab-infra` silently matches nothing, which is exactly
-# what status.yml and check-native-updates.yml did.
-#   proxmox_clients  — network/generate-ip.yml's in-use address list, so allocation never
-#                      excluded an address already held by a guest
+#   _+lab                ownership. The exact sentinel, tested for membership and never
+#                        by prefix — `_` alone means "platform lane", not "ours".
+#   _-<fact>             a durable machine fact: _-debian, _-ubuntu, _-docker, _-k3s
+#   _.stack+<name>       a shared Docker stack host
+#   _.cluster+<name>     a member of a cluster
+#   _.template           a managed cloud-init template
+#   _.shared             this hosting substrate deliberately crosses estate boundaries
+#   _<instance>          the logical hosting unit hosts that application instance
 #
-# Nodes are distinguished from guests by `proxmox_node`: the plugin sets it on every guest
-# (the node hosting it) and publishes no hostvars at all for node entries.
-# Give every guest an address to connect to. The plugin does NOT set ansible_host for
-# guests from their configured address — it only does so via the QEMU guest agent, which an
-# LXC does not have — so without this a guest reached through the inventory has an EMPTY
-# ansible_host and the connection fails with "Could not resolve hostname :". That is what
-# stopped the first re-run that successfully reused an existing guest.
+# ANSIBLE SANITISES GROUP NAMES, and `+`, `-` and `.` all collapse to `_`. Left to the
+# stock `keyed_groups` treatment, `_+lab`, `_-lab` and `_.lab` would all become one
+# group, and `_-docker` would be indistinguishable from an application called `docker`.
+# So the tags are translated into deliberate, already-safe group names here, once:
 #
-# Shape comes from the plugin's own documented example: net0 (LXC) and ipconfig0 (VM) are
-# parsed into dicts, so .ip is "192.168.0.10/20" and the prefix is stripped here. A DHCP
-# guest yields an empty string rather than the literal "dhcp", so it fails as a missing
-# value instead of as a bogus hostname; DHCP guests are resolved at create time by
-# lxc-create.yml's lease discovery.
+#   _+lab              -> lab_managed        every guest this platform created
+#   _-<fact>           -> lab_fact_<fact>    lab_fact_debian, lab_fact_docker, lab_fact_k3s
+#   _.stack+<name>     -> lab_stack_<name>
+#   _.cluster+<name>   -> lab_cluster_<name>
+#   _.template         -> lab_template       (unreachable: templates are filtered above)
+#   _.shared           -> lab_shared
+#   _<instance>        -> lab_app_<instance>
+#
+# Remaining punctuation becomes `_` afterwards, so `_.stack+media-foxglove` is
+# `lab_stack_media_foxglove` and `_sonarr-foxglove` is `lab_app_sonarr_foxglove`.
+# A tag outside the platform lane — anything an operator applied by hand — is dropped
+# rather than turned into a group, because a group named after somebody's private label
+# is a host pattern nothing in this repository can reason about.
+#
+# THIS EXPRESSION IS THE CONTRACT. tasks/proxmox/tag-group.yml converts ONE tag for a
+# dynamic lookup and carries the same chain, byte for byte after the source term; the
+# focused gate (gate/test-proxmox-tags.sh) evaluates both and fails if they disagree.
+# Do not open-code a variant of it anywhere else.
 compose:
+  # Give every guest an address to connect to. The plugin does NOT set ansible_host for
+  # guests from their configured address — it only does so via the QEMU guest agent, which an
+  # LXC does not have — so without this a guest reached through the inventory has an EMPTY
+  # ansible_host and the connection fails with "Could not resolve hostname :". That is what
+  # stopped the first re-run that successfully reused an existing guest.
+  #
+  # Shape comes from the plugin's own documented example: net0 (LXC) and ipconfig0 (VM) are
+  # parsed into dicts, so .ip is "192.168.0.10/20" and the prefix is stripped here. A DHCP
+  # guest yields an empty string rather than the literal "dhcp", so it fails as a missing
+  # value instead of as a bogus hostname; DHCP guests are resolved at create time by
+  # lxc-create.yml's lease discovery.
   ansible_host: >-
     (proxmox_ipconfig0.ip
       | default(proxmox_net0.ip, true)
       | default('', true)
       | regex_replace('^dhcp.*$', '')
       | regex_replace('/.*$', ''))
+  # Character classes rather than backslash escapes throughout: `\+` is not a valid Python
+  # string escape, so a Jinja literal containing one is a deprecation warning today and a
+  # syntax error eventually. `(?!lab_)` drops every tag no lane above claimed.
+  homelabinfra_groups: >-
+    (proxmox_tags_parsed | default([]))
+      | map('regex_replace', '^_[+]lab$', 'lab_managed')
+      | map('regex_replace', '^_[-](.+)$', 'lab_fact_\\1')
+      | map('regex_replace', '^_[.]stack[+](.+)$', 'lab_stack_\\1')
+      | map('regex_replace', '^_[.]cluster[+](.+)$', 'lab_cluster_\\1')
+      | map('regex_replace', '^_[.]template$', 'lab_template')
+      | map('regex_replace', '^_[.]shared$', 'lab_shared')
+      | map('regex_replace', '^_([0-9A-Za-z].*)$', 'lab_app_\\1')
+      | map('regex_replace', '^(?!lab_).*$', '')
+      | map('regex_replace', '[^A-Za-z0-9_]', '_')
+      | reject('eq', '')
+      | list
 
+# The plugin namespaces every fact it publishes as `proxmox_*`, and these expressions are
+# evaluated against those hostvars. Bare `type` and `tags` do not exist, so a `type == 'node'`
+# or `key: tags` expression matches nothing and silently produces no groups at all.
+# `proxmox_nodes` still appears in that state, because the plugin creates a group of that
+# name itself — which is what once made the breakage invisible.
+#
+# Nodes are distinguished from guests by `proxmox_node`: the plugin sets it on every guest
+# (the node hosting it) and publishes no hostvars at all for node entries.
 groups:
   proxmox_nodes: "proxmox_node is not defined"
   proxmox_clients: "proxmox_node is defined"
+
+# Empty prefix and separator: `homelabinfra_groups` already holds finished, sanitised group
+# names, and a prefix here would bury the meaning the compose step just recovered.
 keyed_groups:
-  - key: proxmox_tags_parsed
-    prefix: tag
-    separator: "_"
+  - key: homelabinfra_groups
+    prefix: ""
+    separator: ""

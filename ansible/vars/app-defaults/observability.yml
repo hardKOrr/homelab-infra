@@ -12,8 +12,8 @@ observability_defaults:
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   # Its own stack: Prometheus retention grows, and metrics collection should not
-  # compete for disk with the login path on sso_stack.
-  stack: monitoring_stack
+  # compete for disk with the login path on sso.
+  stack: monitoring
 
   app:
     # The user-facing piece is Grafana, so app.port is Grafana's — it is what the

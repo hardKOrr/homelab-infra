@@ -1,6 +1,6 @@
 ---
 # sabnzbd role — SABnzbd as a Docker container on a stack host. Called from Play 2
-# of playbooks/apps/sabnzbd.yml. Target: the media_stack host.
+# of playbooks/apps/sabnzbd.yml. Target: the media host.
 #
 # The media stack's USENET download client, the counterpart to roles/qbittorrent.
 # Until this existed the stack could find usenet releases through Prowlarr and had

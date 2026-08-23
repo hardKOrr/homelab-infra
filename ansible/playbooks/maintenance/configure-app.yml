@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ansible-playbook playbooks/maintenance/configure-app.yml \
-#     -e instance=radarr-4k -e stack=media_stack -e identity=forward_auth
+#     -e instance=radarr-4k -e stack=media -e identity=forward_auth
 #
 # Rundeck/Semaphore: Config group. The survey carries the common keys; anything else
 # goes in extra_yaml, which is parsed and deep-merged last. That is the deliberate
@@ -29,7 +29,7 @@
 #   instance    filename and instance name — becomes the hostname and subdomain
 #   app         application slug (generated Rundeck jobs always supply it)
 #   app_scope   lab | estate (generated Rundeck jobs always supply it)
-#   stack       Docker stack host, e.g. media_stack (Docker apps)
+#   stack       Docker stack host, e.g. media (Docker apps)
 #   network     named network from config/proxmox.yml (native LXC apps)
 #   vmid        explicit Proxmox VMID (required on a dhcp network)
 #   cores       proxmox.cores

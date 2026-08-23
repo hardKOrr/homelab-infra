@@ -1,6 +1,6 @@
 ---
 # jellyfin role — Jellyfin as a Docker container on a stack host. Called from
-# Play 2 of playbooks/apps/jellyfin.yml. Target: the media_stack host.
+# Play 2 of playbooks/apps/jellyfin.yml. Target: the media host.
 #
 # The media stack's media server. Until this existed the stack could find,
 # fetch and organise releases, and nothing could play them.

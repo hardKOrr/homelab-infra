@@ -49,9 +49,18 @@
     _k8sn_saved_proxmox: "{{ homelabinfra_config.proxmox }}"
 
 # Everything vm-clone.yml and ensure-cloud-template.yml read, assembled for this node.
-# `name` is the node name so the guest is findable in Proxmox by what the cluster calls
-# it, and the tags carry both the platform tag and a per-node tag so the dynamic
-# inventory yields a tag_k3s group and a tag_<node> group.
+# `name` is the node name so the guest is findable in Proxmox by what the cluster calls it.
+#
+# The tags come from the cluster's own declaration in vars/app-defaults/k3s-cluster.yml and
+# are NOT extended per node: ownership, the machine facts `_-debian` and `_-k3s`, the
+# topology tag `_.cluster+k3s` and the explicit `_.shared` declaration are properties of the
+# cluster, and every member carries the identical set. A per-node tag was here to produce a
+# `tag_<node>` inventory group that nothing ever consumed — the node's Proxmox name is the
+# node name, and resolve-cluster.yml registers delegation targets from the registry rather
+# than from a group.
+#
+# Applications assigned to the cluster add their own `_<instance>` tag to every node, from
+# the deploy's Wire play. Nothing here writes those.
 - name: k3s node | Point the Proxmox config at this node
   ansible.builtin.set_fact:
     homelabinfra_config: >-
@@ -67,8 +76,8 @@
              'disk_size': k8s_node.disk_size | int,
              'storage': k8s_cluster_config.proxmox.storage,
              'ip_address': k8s_node.ip_address,
-             'tags': ((k8s_cluster_config.proxmox.vm.tags | default(['homelab-infra']))
-                      + [k8s_node.name]) | unique
+             'tags': k8s_cluster_config.proxmox.vm.tags
+                     | default(['_+lab', '_-debian', '_-k3s', '_.cluster+k3s', '_.shared'])
            }, recursive=True)
          }}, recursive=True) }}
 

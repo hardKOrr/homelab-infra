@@ -20,12 +20,16 @@ APP_NAME_defaults:
     disk_volume:
       size: 8            # GB — data path is separate, this is just the OS disk
     network: default     # references a network name in config/proxmox.yml
+    # Ownership plus the declared machine fact. Do NOT add the application's own name
+    # here — the deploy appends `_<instance>`. Add `_.shared` only if this substrate is
+    # deliberately meant to host applications from more than one estate, which for an
+    # ordinary application it is not. Grammar: ansible/inventory/proxmox.yml.
     tags:
-      - homelab-infra
-      - APP_NAME
+      - _+lab
+      - _-debian
 
   # ── DOCKER APPS: replace the proxmox block above with this ──────────────────
-  # stack: media_stack   # which stack host to deploy on
+  # stack: media   # which stack host to deploy on
   #                      # stack host is created if it does not exist
 
   # ── App config ──────────────────────────────────────────────────────────────

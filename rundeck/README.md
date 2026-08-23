@@ -23,7 +23,7 @@ personal API-key creation are deliberately human Vaultwarden actions.
 
 | | |
 |---|---|
-| **Container** | Unprivileged Debian 13 LXC, nesting on, **tagged `homelab-infra`** |
+| **Container** | Unprivileged Debian 13 LXC, nesting on, **tagged `_+lab;_-debian;_rundeck`** |
 | **Software** | OpenJDK 21, Rundeck 6, ansible-core 2.18 in a venv at `/opt/homelab-ansible`, the collections pinned in `ansible/requirements.yml` |
 | **Repo** | cloned to `/var/lib/rundeck/homelab-infra`, tracking `origin/master` |
 | **Proxmox credential** | creates the `homelab-infra@pve` user and a scoped `HomelabInfra` role, mints that user's API token, and writes the secret straight to Key Storage |

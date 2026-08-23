@@ -12,7 +12,7 @@
   group: Applications/Media & Entertainment/Download Clients/SABnzbd
   description: |-
     Deploy or update SABnzbd — the media stack's usenet download client (Docker on
-    media_stack). Registers the app in the media registry; run Wire Media Stack
+    media). Registers the app in the media registry; run Wire Media Stack
     afterwards to register it as a download client in every *arr.
   loglevel: INFO
   executionEnabled: true

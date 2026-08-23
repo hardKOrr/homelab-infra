@@ -11,17 +11,22 @@
 # Everything here runs on the Proxmox node itself (delegate_to), because the image
 # import is a local disk operation the API does not expose.
 #
-# Idempotent: a template named cloud_template_name and tagged `homelab-infra` on the
+# Idempotent: a template named cloud_template_name and tagged `_+lab` on the
 # target node is adopted wherever it sits, so this is a no-op on every run after the
 # first even if it was not built at cloud_template_vmid. The one thing that rebuilds a
 # template is a change to the declared image identity — see the replacement rule below.
 # Deleting the template VM also forces a rebuild.
 #
-# Tags: `homelab-infra` marks it as ours and is what adoption matches on. `role_template`
-# is the facet tag, in the same `<facet>_<value>` form as the `app_<instance>` and
-# `kind_<hosting>` tags a guest carries, and it says this object is a template rather than
-# a guest. Ownership and facet are deliberately separate tags: the platform's own tag has
-# to keep meaning exactly one thing, so nothing here matches on a prefix of it.
+# Tags: `_+lab` is the exact ownership sentinel and is what adoption matches on — by
+# MEMBERSHIP, never by prefix, because every platform tag starts with `_`. `_-debian` is the
+# declared machine fact: the image this template is built from is a Debian cloud image, and
+# every VM cloned from it inherits that fact. `_.template` is the topology tag saying this
+# object is a template rather than a guest, which is what keeps it out of guest-wide jobs in
+# the Proxmox UI the same way `filters:` keeps it out of the dynamic inventory.
+#
+# Ownership and topology are deliberately separate tags: the ownership sentinel has to keep
+# meaning exactly one thing, so nothing here matches on a prefix of it. Full grammar in
+# ansible/inventory/proxmox.yml.
 #
 # ONE TEMPLATE PER NODE, AND ONLY ONE. Proxmox refuses `qm clone --target` unless the
 # source VM sits on shared storage (PVE/API2/Qemu.pm: "clone only works if target storage
@@ -88,8 +93,9 @@
          | default(homelabinfra_config.proxmox.storage | default('local-lvm'), true) }}
     _ct_bridge: "{{ cloud_template_bridge | default('vmbr0') }}"
     _ct_cache_dir: /var/lib/vz/template/cache
-    _ct_facet_tag: role_template
-    _ct_owner_tag: homelab-infra
+    _ct_facet_tag: _.template
+    _ct_owner_tag: _+lab
+    _ct_os_tag: _-debian
 
 # Split from the block above because it reads _ct_url, which is not yet defined while that
 # same set_fact is still being evaluated.
@@ -147,7 +153,7 @@
          | selectattr('name', 'defined')
          | selectattr('name', 'eq', _ct_name)
          | selectattr('tags', 'defined')
-         | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
+         | selectattr('tags', 'search', '(^|;)' ~ (_ct_owner_tag | regex_escape) ~ '(;|$)')
          | map(attribute='vmid') | list }}
   when: _ct_discovered | length > 0
 
@@ -294,20 +300,20 @@
   changed_when: true
   when: _ct_replace | bool
 
-- name: Cloud template | Add the facet tag to a template built before it existed
+- name: Cloud template | Add the topology tag to a template built before it existed
   ansible.builtin.command:
     argv:
       - qm
       - set
       - "{{ _ct_vmid }}"
       - --tags
-      - "{{ (_ct_current_tags + [_ct_facet_tag]) | unique | sort | join(';') }}"
+      - "{{ (_ct_current_tags + [_ct_os_tag, _ct_facet_tag]) | unique | sort | join(';') }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   changed_when: true
   when:
     - _ct_existing.rc == 0
     - not (_ct_replace | bool)
-    - _ct_facet_tag not in _ct_current_tags
+    - _ct_facet_tag not in _ct_current_tags or _ct_os_tag not in _ct_current_tags
 
 - name: Cloud template | Build the template
   when: _ct_existing.rc != 0 or (_ct_replace | bool)
@@ -355,10 +361,10 @@
           - serial0
           # Tagged like every other guest this platform creates, so the template is
           # recognisable as ours on a lab full of hand-built ones — which is the same
-          # distinction the vmid assert above enforces. The second tag is the facet —
-          # see the file header.
+          # distinction the vmid assert above enforces. Ownership, the declared machine
+          # fact, then the topology tag — see the file header.
           - --tags
-          - "homelab-infra;{{ _ct_facet_tag }}"
+          - "{{ [_ct_owner_tag, _ct_os_tag, _ct_facet_tag] | sort | join(';') }}"
           # The stamp the replacement rule reads back. `homelab-infra-image=` rather than
           # `image:` so the marker cannot be confused with anything an operator writes, and
           # so a description edited by hand keeps working as long as this token survives.

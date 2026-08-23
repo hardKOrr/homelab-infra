@@ -73,7 +73,7 @@
           {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
 
     # The dynamic inventory is what makes the cluster node delegable — it is a
-    # homelab-infra-tagged guest like any other.
+    # `_+lab`-tagged guest like any other.
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
@@ -134,6 +134,20 @@
       when:
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # Stamped on EVERY node of the target cluster, not on the one that happens to be
+    # running the pod. The tag states an assignment — this cluster hosts this app — and an
+    # assignment does not move when the scheduler reschedules. A tag that followed the pod
+    # would be wrong within minutes of the first eviction and would make the Proxmox tree
+    # a worse answer than `kubectl get pods`.
+    - name: Record the app on every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].mixpost_fqdn }}"
 
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

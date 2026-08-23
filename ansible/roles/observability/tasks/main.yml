@@ -2,7 +2,7 @@
 # observability role — Prometheus + Grafana via Docker Compose. node_exporter is NOT part
 # of this stack: it is a package on every guest, installed by tasks/guest-bootstrap.yml.
 # Called from Play 2 of playbooks/apps/observability.yml. Target: the
-# monitoring_stack host.
+# monitoring host.
 #
 # ONE APP, NOT TWO — Grafana's only datasource is Prometheus and neither is useful
 # alone, so they deploy together under a single instance name and a single job in
@@ -13,7 +13,7 @@
 # the lab to anything on the LAN.
 #
 # SCRAPE TARGETS — generated from the Proxmox dynamic inventory at deploy time
-# (every homelab-infra-tagged guest). It is a snapshot, not live discovery:
+# (every guest tagged `_+lab`). It is a snapshot, not live discovery:
 # re-running this deploy is what picks up newly added guests, which matches the
 # platform's fire-and-forget model. Guests get node_exporter from
 # tasks/guest-bootstrap.yml; this stack host runs it as a container instead.
@@ -54,7 +54,7 @@
   # changed and fired the handler — so every bootstrap pass restarted Prometheus and put a
   # gap in the metrics it exists to collect. Sorting makes the render a pure function of
   # which guests exist, not of how the inventory happened to enumerate them.
-  loop: "{{ groups['tag_homelab_infra'] | default([]) | sort }}"
+  loop: "{{ groups['lab_managed'] | default([]) | sort }}"
   when: >-
     hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address | default(''))
     | length > 0

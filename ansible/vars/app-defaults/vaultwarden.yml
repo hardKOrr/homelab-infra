@@ -15,9 +15,12 @@ vaultwarden_defaults:
     disk_volume:
       size: 8                   # GB
     network: default
+    # Ownership plus the declared machine fact. The application tag is NOT listed here:
+    # the deploy appends `_<instance>`, so a second instance under another name is tagged
+    # with the name it was actually deployed as. See inventory/proxmox.yml for the grammar.
     tags:
-      - homelab-infra
-      - vaultwarden
+      - _+lab
+      - _-debian
 
   app:
     port: 80                    # web vault + API + /admin panel (one port for everything)

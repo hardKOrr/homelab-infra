@@ -77,7 +77,7 @@
              + (ansible_all_ipv6_addresses | default([])) }}
 
     # Instance files are the authored half of an app's schedule. The filename IS the
-    # instance name, which is also what the guest's `app_<instance>` tag records, so the
+    # instance name, which is also what the guest's `_<instance>` tag records, so the
     # two join without any registry lookup.
     #
     # Serialized through JSON deliberately: a statement template hands Ansible a string
@@ -121,7 +121,7 @@
 # Read-only. An unreachable guest records nothing and Play 3 reports it as unknown
 # rather than failing the run: a guest that is already down needs no reboot from us.
 - name: "Guest maintenance | Ask each guest"
-  hosts: tag_homelab_infra
+  hosts: lab_managed
   become: true
   gather_facts: false
   ignore_unreachable: true
@@ -177,13 +177,13 @@
       ansible.builtin.set_fact:
         _gm_candidates_json: >-
           {%- set out = [] -%}
-          {%- set stacks = (homelabinfra_config.infrastructure | default({})).stacks | default({}) -%}
-          {%- for host in groups['tag_homelab_infra'] | default([]) -%}
+          {%- for host in groups['lab_managed'] | default([]) -%}
             {%- set hv = hostvars[host] -%}
             {%- set tags = hv.proxmox_tags_parsed | default([]) -%}
-            {%- set apps = tags | select('match', '^app_') | map('regex_replace', '^app_', '') | list -%}
-            {%- set stack_tags = tags | select('search', '_stack$') | list
-                                 + (tags | select('in', stacks | list) | list) -%}
+            {%- set apps = tags | select('match', '^_[0-9A-Za-z]')
+                                 | map('regex_replace', '^_', '') | list -%}
+            {%- set stack_tags = tags | select('match', '^_[.]stack[+]')
+                                 | map('regex_replace', '^_[.]stack[+]', '') | list -%}
             {%- set _ = out.append({
                   'host': host,
                   'reachable': hv._gm_reachable | default(false),

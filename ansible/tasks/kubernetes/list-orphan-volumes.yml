@@ -23,7 +23,7 @@
 #
 # A dynamically provisioned PersistentVolume carries no namespace and inherits none of its
 # claim's labels, so the ownership marks the rest of this platform relies on — the
-# `app.kubernetes.io/managed-by` label on a namespace, the `app_<instance>` tag on a guest
+# `app.kubernetes.io/managed-by` label on a namespace, the `_<instance>` tag on a guest
 # — do not exist here. The one mark that does is the StorageClass. `homelab-local-path` is
 # a class this platform declared, deliberately named so that it is not k3s's bundled
 # `local-path`, and nothing else on this cluster provisions onto it. A volume on any other

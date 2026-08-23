@@ -21,7 +21,7 @@
 #                     # Leave unset unless something outside the lab points at it
 
 # ── Stack override (Docker apps only) ──────────────────────────────────────────
-# stack: media_stack   # override which stack host this app runs on
+# stack: media   # override which stack host this app runs on
 
 # ── App-specific config ────────────────────────────────────────────────────────
 # app:

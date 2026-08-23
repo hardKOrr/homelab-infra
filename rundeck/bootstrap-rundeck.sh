@@ -24,7 +24,7 @@
 # One command produces the enrollment surface; the explicit cutover establishes Vault mode.
 #
 # What it produces:
-#   - Unprivileged Debian 13 LXC, tagged homelab-infra so the platform manages it like
+#   - Unprivileged Debian 13 LXC, tagged _+lab so the platform manages it like
 #     any other guest it created — PBS backs it up, Lab Status reports it
 #   - OpenJDK 21 + Rundeck 6.x, a random admin password, a non-expiring API token
 #   - ansible-core 2.18 in a venv, with the collections pinned in ansible/requirements.yml
@@ -64,11 +64,19 @@ TEMPLATE="${TEMPLATE:-debian-13-standard_13.6-1_amd64.tar.zst}"
 REPO_URL="${REPO_URL:-https://github.com/hardKOrr/homelab-infra}"
 REPO_BRANCH="${REPO_BRANCH:-master}"
 
-# The tag that makes a guest ours. configure-pbs.yml builds its vzdump vmid list by
-# filtering on it, and status.yml and check-native-updates.yml walk the same tag — so
-# tagging this container is what puts the host holding the platform's own config inside
-# the platform's own backup and reporting.
-MANAGED_TAG="${MANAGED_TAG:-homelab-infra}"
+# The tags this container carries, in the platform's tag grammar (ansible/inventory/
+# proxmox.yml has the whole contract):
+#
+#   _+lab      the exact ownership sentinel. configure-pbs.yml builds its vzdump vmid list
+#              by filtering on it, and status.yml, guest-maintenance.yml and
+#              check-native-updates.yml all reach the runner through the `lab_managed`
+#              inventory group derived from it — so tagging this container is what puts the
+#              host holding the platform's own config inside the platform's own backup and
+#              reporting.
+#   _-debian   the declared machine fact; the container is built from a Debian template.
+#   _rundeck   the application tag: this guest hosts the Rundeck instance.
+#
+MANAGED_TAGS="${MANAGED_TAGS:-_+lab;_-debian;_rundeck}"
 
 # Proxmox credential. The platform gets its own user and its own scoped role rather than
 # borrowing root@pam: a real privilege reduction, and bootstrap is the only moment it is
@@ -275,7 +283,7 @@ if [ "$CT_EXISTS" -eq 0 ]; then
     --cores "$CT_CORES" --memory "$CT_MEMORY" --swap "$CT_SWAP" \
     --rootfs "${CT_STORAGE}:${CT_DISK}" \
     --net0 "name=eth0,bridge=${CT_BRIDGE},firewall=1,gw=${CT_GW},ip=${CT_IP},type=veth" \
-    --tags "$MANAGED_TAG" \
+    --tags "$MANAGED_TAGS" \
     --unprivileged 1 --features nesting=1 --onboot 1 --ostype debian \
     --description "Rundeck — homelab-infra UI layer (bootstrap-rundeck.sh)"
 fi
@@ -284,18 +292,25 @@ fi
 # Applied on every run, not only at creation, so an existing runner built before this
 # change joins the model on the next re-run.
 log "Adopt the runner as a managed guest"
+# Read-modify-write over the whole managed set, and by EXACT membership of each tag: an
+# operator tag on this container survives, and a tag that is already there is not written
+# twice. Nothing here matches on a `_` prefix — that would claim every platform lane at once.
 CURRENT_TAGS="$(pct config "$VMID" | sed -n 's/^tags: //p' || true)"
-case ";${CURRENT_TAGS};" in
-  *";${MANAGED_TAG};"*)
-    info "already tagged $MANAGED_TAG"
-    ;;
-  *)
-    NEW_TAGS="${CURRENT_TAGS:+${CURRENT_TAGS};}${MANAGED_TAG}"
-    pct set "$VMID" --tags "$NEW_TAGS"
-    info "tagged $MANAGED_TAG (tags now: $NEW_TAGS)"
-    info "PBS will now back this container up, and Lab Status will report it"
-    ;;
-esac
+NEW_TAGS="$CURRENT_TAGS"
+ADDED=""
+for want in ${MANAGED_TAGS//;/ }; do
+  case ";${NEW_TAGS};" in
+    *";${want};"*) ;;
+    *) NEW_TAGS="${NEW_TAGS:+${NEW_TAGS};}${want}"; ADDED="${ADDED:+${ADDED} }${want}" ;;
+  esac
+done
+if [ -z "$ADDED" ]; then
+  info "already tagged $MANAGED_TAGS"
+else
+  pct set "$VMID" --tags "$NEW_TAGS"
+  info "tagged $ADDED (tags now: $NEW_TAGS)"
+  info "PBS will now back this container up, and Lab Status will report it"
+fi
 
 if [ "$(pct status "$VMID" | awk '{print $2}')" != "running" ]; then
   log "Start container $VMID"
@@ -369,7 +384,7 @@ say "base packages"
 apt-get update -qq
 apt-get -y -qq upgrade
 # prometheus-node-exporter is here for the same reason tasks/guest-bootstrap.yml installs
-# it on every guest the platform creates: the runner tags ITSELF homelab-infra, so
+# it on every guest the platform creates: the runner tags ITSELF _+lab, so
 # observability's scrape list — built from that tag — includes it. This container is the
 # one managed guest guest-bootstrap.yml never touches, because bootstrap-rundeck.sh builds
 # it before Ansible exists to run against it. Without the package the runner is a
@@ -897,7 +912,7 @@ cat > "$STAGE2/rundeck.yml" <<EOF
 # Rundeck job, because the script has to run before any of that exists.
 #
 # It is here so the platform can name the host it is running on: the guest is tagged
-# $MANAGED_TAG, so PBS backs it up and Lab Status reports it, and this file is
+# $MANAGED_TAGS, so PBS backs it up and Lab Status reports it, and this file is
 # where its vmid, address and paths are recorded.
 
 proxmox:
@@ -1408,7 +1423,7 @@ fi
 log "Done"
 cat <<EOF
     Rundeck    $RD_URL   (project: $RD_PROJECT)
-    Container  VMID $VMID ($CT_HOSTNAME) on $PVE_NODE, tagged $MANAGED_TAG
+    Container  VMID $VMID ($CT_HOSTNAME) on $PVE_NODE, tagged $MANAGED_TAGS
     SSH        ssh root@${RD_HOST}
     Repo       $REPO_DIR   (tracking origin/$REPO_BRANCH, refreshed before every job)
     Ansible    $VENV_DIR/bin/ansible

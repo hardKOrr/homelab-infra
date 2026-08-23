@@ -66,8 +66,8 @@ expect '{"domain":"lab.example.com","media":{"sonarr":{"app":"sonarr"}},"sso":{"
 
 # Scalars and non-mapping values survive untouched — `domain` is a string and the
 # pruner walks the same map it does.
-expect '{"domain":"lab.example.com","stacks":["media_stack"]}' \
-  '{"registry":{"domain":"lab.example.com","stacks":["media_stack"]},"instance":"sonarr"}'
+expect '{"domain":"lab.example.com","stacks":["media"]}' \
+  '{"registry":{"domain":"lab.example.com","stacks":["media"]},"instance":"sonarr"}'
 
 # An empty registry is a valid input: removing an app before any bootstrap ran.
 expect '{}' '{"registry":{},"instance":"sonarr"}'

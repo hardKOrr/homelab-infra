@@ -48,7 +48,7 @@
       ansible.builtin.set_fact:
         _va_down_json: >-
           {%- set out = [] -%}
-          {%- for host in groups['tag_homelab_infra'] | default([]) -%}
+          {%- for host in groups['lab_managed'] | default([]) -%}
             {%- if (hostvars[host].proxmox_status | default('')) != 'running' -%}
               {%- set _ = out.append(host) -%}
             {%- endif -%}
@@ -62,7 +62,7 @@
 
 # ── Play 2: are the running ones actually serving ──────────────────────────────
 - name: "Verify ascent | Reach every running guest"
-  hosts: tag_homelab_infra
+  hosts: lab_managed
   become: false
   gather_facts: false
   ignore_unreachable: true
@@ -110,7 +110,7 @@
       ansible.builtin.set_fact:
         _va_unreachable_json: >-
           {%- set out = [] -%}
-          {%- for host in groups['tag_homelab_infra'] | default([]) -%}
+          {%- for host in groups['lab_managed'] | default([]) -%}
             {%- if host not in _va_down and not (hostvars[host]._va_reachable | default(false)) -%}
               {%- set _ = out.append(host) -%}
             {%- endif -%}
@@ -136,7 +136,7 @@
     - name: Report the ascent
       ansible.builtin.debug:
         msg: >-
-          {{ (groups['tag_homelab_infra'] | default([]) | length) }} tagged guest(s).
+          {{ (groups['lab_managed'] | default([]) | length) }} tagged guest(s).
           Not running: {{ _va_down | join(', ') | default('none', true) }}.
           Running but unreachable:
           {{ _va_unreachable | join(', ') | default('none', true) }}.

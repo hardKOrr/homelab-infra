@@ -44,7 +44,7 @@
 #
 # WHAT IS AND IS NOT SHUT DOWN GRACEFULLY
 #
-# Guests this platform created — tagged `homelab-infra` — are shut down by name, in
+# Guests this platform created — tagged `_+lab` — are shut down by name, in
 # parallel, with a timeout, before the node reboots. Anything else on the node is left to
 # Proxmox's own node-shutdown behaviour, because this platform manages what it creates
 # and does not police guests it did not make. An operator with untagged guests on a node

@@ -27,7 +27,7 @@
 #         2026-08-15: a removal used to leave the registry claiming the app was still
 #         there, and an orphaned media entry is not inert (Wire Media Stack registers
 #         it as a live download client). See tasks/unwiring/registry.yml.
-#   3. Withdraw the instance's row and app_<instance> tag from its Proxmox guest
+#   3. Withdraw the instance's row and `_<instance>` tag from its Proxmox guest
 #   4. Stop and remove the app on its host (compose down, or stop+disable the service)
 #   5. Notify via Ntfy: "<instance> removed"
 #
@@ -160,16 +160,58 @@
     # on a cluster that outlives it, so `_rm_hosts` is deliberately empty: Play 2, which
     # stops a container or a systemd unit on a guest, has nothing to do and is skipped.
     # The cluster-side removal happens in the unwiring step below.
-    - name: Select the host running the app
+    # The stack host an estate-scoped app runs on carries its estate, exactly as the
+    # deploy resolved it: `media` is `stack-media-foxglove` in a lab with two estates and
+    # plain `stack-media` in a lab with one. A stack that declares `shared: true` is the
+    # single lab-wide host for every estate and takes no suffix.
+    - name: Load stack sizing defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
+        name: _rm_stack_defaults_file
+
+    - name: Resolve the stack identity this app was placed on
+      ansible.builtin.set_fact:
+        _rm_stack_id: >-
+          {{ (app_config.stack | default(''))
+             if (_rm_stack_sizing.shared | default(false) | bool) or _rm_estates | length < 2
+             else (app_config.stack | default('')) ~ '-' ~ _rm_estate }}
+      vars:
+        _rm_estates: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
+        _rm_stack_sizing: >-
+          {{ ((_rm_stack_defaults_file.stack_defaults | default({}))[app_config.stack | default('')] | default({}))
+             | combine(((homelabinfra_config.infrastructure | default({})).stacks | default({}))[app_config.stack | default('')]
+                       | default({}), recursive=True) }}
+        _rm_default_estate: >-
+          {{ ((_rm_estates | dict2items
+               | selectattr('value.default', 'defined') | selectattr('value.default')
+               | map(attribute='key') | list) | first)
+             | default(_rm_estates | list | first | default(''), true) }}
+        _rm_estate: >-
+          {{ ((app_config.routing | default({})).estate | default('', true)) or _rm_default_estate }}
+
+    - name: Classify how the app is hosted
       ansible.builtin.set_fact:
         _rm_kind: >-
           {{ 'kubernetes' if (app_config.hosting | default('')) == 'kubernetes'
              else ('docker' if app_config.stack is defined else 'native') }}
+
+    # Removal resolves the stack host through the SAME estate-aware identity the deploy
+    # used, so removing an estate-scoped app cannot reach into another estate's host. The
+    # rule is one line in two places by necessity — this play never calls
+    # find-or-create-host.yml, which would provision the host it is trying to empty.
+    - name: Resolve the stack host's inventory group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_.stack+{{ _rm_stack_id }}"
+      when: _rm_kind == 'docker'
+
+    - name: Select the host running the app
+      ansible.builtin.set_fact:
         _rm_hosts: >-
           {{ []
-             if (app_config.hosting | default('')) == 'kubernetes'
-             else (groups['tag_' ~ (app_config.stack | regex_replace('[^A-Za-z0-9_]', '_'))] | default([])
-                   if app_config.stack is defined
+             if _rm_kind == 'kubernetes'
+             else (groups[tag_group_name] | default([])
+                   if _rm_kind == 'docker'
                    else ([instance] if instance in (groups['all'] | default([])) else [])) }}
 
     # This is the Kubernetes equivalent of Play 2's compose-down, and it sits here because
@@ -190,7 +232,7 @@
     - name: Report a missing host
       ansible.builtin.debug:
         msg: >-
-          No {{ 'stack host tagged ' ~ app_config.stack if _rm_kind == 'docker'
+          No {{ 'stack host tagged _.stack+' ~ _rm_stack_id if _rm_kind == 'docker'
                 else 'Proxmox guest named ' ~ instance }} is in inventory —
           nothing to stop. Unwiring completed; {{ instance }} is fully removed.
       when: _rm_hosts | length == 0
@@ -217,11 +259,18 @@
     # only point in the play that knows WHICH guest ran the app - _rm_hosts resolves the
     # shared stack host and the native app's own LXC through the same lookup, so the
     # withdrawal does not have to re-derive that distinction and get it subtly wrong.
+    # A Kubernetes app has no guest of its own, so `_rm_hosts` is empty — but the deploy
+    # stamped it on every node of the cluster, and the withdrawal has to reach exactly the
+    # same set. Withdrawing from one node would leave the other two claiming to host an app
+    # that no longer exists.
     - name: Withdraw the app's record from its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/unwiring/guest-record.yml
       vars:
-        record_guest_name: "{{ _rm_hosts[0] }}"
-      when: _rm_hosts | length > 0
+        record_guest_names: >-
+          {{ ((homelabinfra_infra.kubernetes | default({})).nodes | default([])
+              | map(attribute='name') | list)
+             if _rm_kind == 'kubernetes' else _rm_hosts[:1] }}
+      when: _rm_hosts | length > 0 or _rm_kind == 'kubernetes'
 
 
 # ── Play 2: Stop and remove the app ────────────────────────────────────────────

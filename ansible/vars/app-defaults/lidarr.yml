@@ -7,7 +7,7 @@
 # vars/app-defaults/sonarr.yml for the annotated copy of these keys.
 
 lidarr_defaults:
-  stack: media_stack
+  stack: media
 
   app:
     media_kind: lidarr

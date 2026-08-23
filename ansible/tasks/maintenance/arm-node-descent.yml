@@ -98,7 +98,7 @@
               if row.get("status") != "running":
                   continue
               tags = (row.get("tags") or "").replace(",", ";").split(";")
-              if "homelab-infra" not in [t.strip() for t in tags]:
+              if "_+lab" not in [t.strip() for t in tags]:
                   continue
               print("%s %s" % (row.get("type"), row.get("vmid")))
           ' "$(hostname)"

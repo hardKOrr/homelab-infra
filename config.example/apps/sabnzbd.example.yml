@@ -13,7 +13,7 @@
 # survives every re-deploy.
 
 # ── Stack assignment (Docker app) ──────────────────────────────────────────────
-stack: media_stack     # which Docker stack host this app runs on
+stack: media     # which Docker stack host this app runs on
 
 # ── App config ─────────────────────────────────────────────────────────────────
 app:

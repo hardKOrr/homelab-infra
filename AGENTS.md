@@ -82,9 +82,10 @@ ansible/
       ensure-cloud-template.yml
       ensure-guest-running.yml
       ip-to-vmid.yml
+      tag-group.yml                # the one tag -> inventory group name conversion
       register-nodes.yml
       resolve-startup.yml          # boot order and delay for a guest
-      record-app-on-guest.yml      # stamp tag app_<instance> + a notes row on the guest
+      record-app-on-guest.yml      # stamp tag _<instance> + a notes row on the guest
       attach-host-mounts.yml       # attach storage the node already mounts to a guest
     maintenance/                   # when the lab may be disrupted (slice 205)
       resolve-app-target.yml       # which host a day-2 action runs on, and how the app is installed
@@ -122,7 +123,7 @@ ansible/
       guest-record.yml             # withdraw the guest tag and notes row
     guest-bootstrap.yml            # post-provisioning: packages, hostname, timezone, unattended-upgrades + Ntfy hook
     stack/
-      find-or-create-host.yml      # find existing tag_<stack> host or provision new one; adds to app_deploy group
+      find-or-create-host.yml      # find or create the stack host for this stack AND estate
     bootstrap/
       write-generated-facts.yml   # writes config/.generated/facts.yml after each baseline service
       configure-pbs.yml
@@ -266,7 +267,18 @@ and the standing decisions and their rationale are in
 
 ## Stack Model
 
-Related Docker apps group onto shared hosts ("stacks"). Stack assignment is declared in `ansible/vars/app-defaults/<app>.yml` and overridable per-instance in `config/apps/<instance>.yml`. Stack host is created on first app deploy targeting it, then reused for subsequent apps on that stack. Proxmox tags identify stacks: `tag_media_stack`, `tag_services_stack`, etc.
+Related Docker apps group onto shared hosts ("stacks"). Stack assignment is declared in
+`ansible/vars/app-defaults/<app>.yml` and overridable per-instance in
+`config/apps/<instance>.yml`. A stack host is created on the first app deploy targeting it,
+then reused by subsequent apps on that stack.
+
+**A stack is a bare concept, not a host.** `media`, `sso`, `monitoring` — the type lives in
+the hostname prefix (`stack-media`) and in the Proxmox tag (`_.stack+media`), never in the
+identifier. **Placement resolves from the stack AND the estate**: in a lab with two or more
+estates, `media` is `stack-media-personal` for one estate and `stack-media-foxglove` for the
+other, so an estate-scoped app can never silently reuse another estate's host. Crossing that
+boundary requires `shared: true` on the stack, which is also what stamps `_.shared`. Full
+contract in `ansible/vars/CONTRACT.md`.
 
 ## Wiring Step
 
@@ -566,8 +578,11 @@ backups:
 
 ## Dynamic Inventory
 
-`community.proxmox` plugin → groups: `proxmox_nodes`, `proxmox_clients`, `tag_<tagname>`.
-All resources created by this system are tagged `homelab-infra`. Existing untagged resources are never touched.
+`community.proxmox` plugin → groups: `proxmox_nodes`, `proxmox_clients`, and the deliberate
+`lab_*` names the inventory derives from the tag grammar above (`lab_managed`,
+`lab_fact_<fact>`, `lab_stack_<name>`, `lab_cluster_<name>`, `lab_shared`,
+`lab_app_<instance>`). All resources created by this system carry the exact ownership tag
+`_+lab`; existing untagged resources are never touched.
 
 **One cloud-init template per Proxmox node, and exactly one.** Proxmox refuses
 `qm clone --target` unless the source VM is on shared storage, and this lab's only
@@ -585,10 +600,51 @@ when there is nothing to adopt.
 **Templates are not in the inventory.** The plugin's `filters` option drops every guest
 whose `proxmox_template` fact is true, and it is evaluated before `compose`, `groups` and
 `keyed_groups`, so a template joins no group at all — not `proxmox_clients`, not
-`tag_homelab_infra`. Our own cloud-init template carries the `homelab-infra` tag like
+the managed-guest group. Our own cloud-init template carries the ownership tag `_+lab` like
 everything else we create, and without this every guest-wide job tried to reach a VM that
 has no address and never boots. A job that needs the template works through `pvesh`/`qm`
 against the node, as `ensure-cloud-template.yml` and `vm-clone.yml` already do.
+
+## Proxmox Tag Grammar
+
+Every tag this platform writes begins with `_`, which sorts the platform's inventory
+together in the Proxmox UI. The second character selects the lane, and Proxmox orders `+`
+before `-` before `.` before an alphanumeric — so a guest reads top to bottom as ownership,
+durable machine facts, topology, then the applications it hosts.
+
+| Lane | Form | Meaning |
+|---|---|---|
+| ownership | `_+lab` | created and managed by this platform. The **exact** sentinel — code tests membership of it, never a `_` prefix |
+| machine facts | `_-debian` `_-ubuntu` `_-docker` `_-k3s` | durable, DECLARED facts read off provisioning data, never polled. OS family without its version; no `_-native`; VM versus LXC is already in the Proxmox tree |
+| topology | `_.stack+<name>` `_.cluster+<name>` `_.template` `_.shared` | shared Docker stack, cluster membership, managed cloud template, deliberate cross-estate hosting |
+| applications | `_<instance>` | this hosting unit hosts that application instance |
+
+Examples:
+
+```
+# native Caddy          # media stack, foxglove estate   # shared k3s node        # cloud template
+_+lab                   _+lab                            _+lab                    _+lab
+_-debian                _-debian                         _-debian                 _-debian
+_.shared                _-docker                         _-k3s                    _.template
+_caddy                  _.stack+media-foxglove           _.cluster+k3s
+                        _jellyfin-foxglove               _.shared
+                        _radarr-foxglove                 _mixpost-foxglove
+                        _sonarr-foxglove
+```
+
+`_.shared` means deliberate cross-estate **hosting**, not lab-wide importance. Caddy and the
+k3s cluster declare it; PBS, Ntfy and the metrics stack are `scope: lab` and do not.
+
+**Ansible sanitises group names**, collapsing `+`, `-` and `.` to `_`, which would make
+`_+lab`, `_-lab` and `_.lab` one group. So `ansible/inventory/proxmox.yml` translates tags
+into deliberate names — `lab_managed`, `lab_fact_docker`, `lab_stack_media_foxglove`,
+`lab_cluster_k3s`, `lab_shared`, `lab_app_sonarr_foxglove` — and that expression is the
+contract. `ansible/tasks/proxmox/tag-group.yml` is the one seam for converting a single tag
+for a dynamic lookup; `gate/test-proxmox-tags.sh` fails if the two disagree. Do not
+open-code a variant anywhere else.
+
+The leading-underscore lanes are **reserved**: an application instance name must start with
+a letter or digit, enforced by `config-doctor.sh` and refused by `guest-app-record.py`.
 
 ## What a Guest Records About Itself
 
@@ -596,10 +652,16 @@ Every app deploy stamps the guest it lands on, and every removal withdraws that 
 (`ansible/tasks/proxmox/record-app-on-guest.yml` and `ansible/tasks/unwiring/guest-record.yml`,
 both driving `ansible/files/proxmox/guest-app-record.py`):
 
-- the tag `app_<instance>` alongside the guest's existing tags, which yields a
-  `tag_app_<instance>` inventory group and a filter in the Proxmox guest tree
+- the tag `_<instance>` alongside the guest's existing tags, which yields a
+  `lab_app_<instance>` inventory group and a filter in the Proxmox guest tree
 - a row in a marker-delimited region of the guest's notes, listing instance, hosting kind,
   published URL and the date the record was written
+
+`_<instance>` means: **the logical hosting unit this guest belongs to hosts that
+application instance.** That unit is the app's own LXC for a native service, the stack host
+for a Docker app, and **every Proxmox VM in the cluster** for a Kubernetes app — assignment
+is to the cluster, so nothing chases the node a pod happens to be scheduled on. A removal
+withdraws the tag from the whole unit.
 
 A shared stack host therefore has many writers on one description field, so both writes are
 read-modify-write keyed by instance: rows and tags belonging to other apps come back
@@ -630,8 +692,8 @@ before retrying. Do not start a second lint gate while the first is still runnin
 
 `lint.sh` runs ansible-lint (profile `min`), the Jinja parser check, and `check-links.py`, which
 validates repository-local Markdown links. `test.sh` runs `--syntax-check` over its
-selected playbooks and focused regressions for Vaultwarden handling, IP allocation, and registry
-removal. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to `localhost,` so the
+selected playbooks and focused regressions for Vaultwarden handling, IP allocation, registry
+removal, maintenance schedules, the Rundeck job tree, and the Proxmox tag contract. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to `localhost,` so the
 dynamic inventory plugin never asks for credentials. See `gate/README.md` for exact scope rules.
 
 **Run both under WSL.** `test.sh` invokes the interpreter at

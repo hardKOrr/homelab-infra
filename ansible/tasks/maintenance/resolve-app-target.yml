@@ -81,9 +81,20 @@
 - name: Resolve app target | Refresh inventory to get current Proxmox state
   ansible.builtin.meta: refresh_inventory
 
+# Resolved by the APPLICATION tag, not by the stack tag. `_<instance>` means "the logical
+# hosting unit this guest belongs to hosts that instance", which is exactly the question a
+# day-2 action is asking — and it answers it without re-deriving which estate's stack host
+# the deploy chose. A stack tag lookup would have to repeat that arithmetic here, in a third
+# place, and get it identical.
+- name: Resolve app target | Resolve the application's inventory group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_{{ instance }}"
+  when: _rat_kind == 'docker'
+
 - name: Resolve app target | Select the stack host for a Docker app
   ansible.builtin.set_fact:
-    _rat_host: "{{ (groups['tag_' ~ _rat_stack] | default([])) | first | default('') }}"
+    _rat_host: "{{ (groups[tag_group_name] | default([])) | first | default('') }}"
   when: _rat_kind == 'docker'
 
 - name: Resolve app target | A native app owns the guest that carries its name
@@ -97,7 +108,8 @@
       - _rat_host | length > 0
       - _rat_host in hostvars
     fail_msg: >-
-      {{ 'No Proxmox guest is tagged ' ~ _rat_stack ~ ' — check the stack name.'
+      {{ 'No Proxmox guest is tagged _' ~ instance ~ ' — deploy the app first, or check
+          the instance name.'
          if _rat_kind == 'docker'
          else 'No Proxmox guest is named ' ~ instance ~ ' — check the instance name.' }}
 

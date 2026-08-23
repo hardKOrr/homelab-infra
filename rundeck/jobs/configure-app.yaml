@@ -35,7 +35,7 @@
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: stack
-    description: Docker apps only — which shared stack host to place this app on (e.g. media_stack). Leave blank for native LXC apps and to keep the current value.
+    description: Docker apps only — which shared stack host to place this app on (e.g. media). Leave blank for native LXC apps and to keep the current value.
     required: false
   - name: network
     description: Native LXC apps only — a named network from config/proxmox.yml. Blank keeps the current value.

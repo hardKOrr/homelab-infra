@@ -43,7 +43,7 @@
 # Runs against every tagged guest. Unreachable guests are recorded as such by
 # Play 3 (their facts below are simply never set) rather than failing the run.
 - name: "Status | Gather guest detail"
-  hosts: tag_homelab_infra
+  hosts: lab_managed
   become: true
   gather_facts: false
   ignore_unreachable: true
@@ -113,7 +113,7 @@
       failed_when: false   # absent pre-bootstrap — both sections report "not configured"
 
   vars:
-    _st_guests: "{{ groups['tag_homelab_infra'] | default([]) | sort }}"
+    _st_guests: "{{ groups['lab_managed'] | default([]) | sort }}"
     # Play 2 sets _st_containers on every guest it reached, so its absence is the
     # reachability signal. The sections below distinguish "read nothing" from "read
     # an empty set" — those rendered identically before, and an unreachable estate
@@ -398,7 +398,7 @@
           LAB STATUS — {{ now().strftime('%Y-%m-%d %H:%M:%S') }}
           ══════════════════════════════════════════════════════════════════
 
-          GUESTS ({{ _st_guests | length }} tagged homelab-infra{{
+          GUESTS ({{ _st_guests | length }} tagged _+lab{{
             ', %d unreachable' | format(_st_unreachable | length) if _st_unreachable | length > 0 else '' }})
           {% if _st_guests | length == 0 %}
             none — has bootstrap run? (or Proxmox credentials are not exported)

@@ -47,7 +47,9 @@
           vars:
             network_name: "{{ homelabinfra_config.proxmox.lxc.network | default('default') }}"
             pool_name: "{{ homelabinfra_config.proxmox.lxc.pool | default('') }}"
-            pool_hint: "{{ homelabinfra_config.proxmox.lxc.stack_tag | default('') }}"
+            # The stack's bare identity, not its tag: a pool is named `media`, and
+            # `_.stack+media` names no pool anywhere.
+            pool_hint: "{{ homelabinfra_config.proxmox.lxc.stack_id | default('') }}"
 
         - name: Set LXC IP Address fact
           ansible.builtin.set_fact:
@@ -71,8 +73,8 @@
             # find-or-create-host records the stack it is building under proxmox.lxc,
             # which is where the stack sizing lands regardless of host type.
             pool_hint: >-
-              {{ homelabinfra_config.proxmox.vm.stack_tag
-                 | default(homelabinfra_config.proxmox.lxc.stack_tag | default(''), true) }}
+              {{ homelabinfra_config.proxmox.vm.stack_id
+                 | default(homelabinfra_config.proxmox.lxc.stack_id | default(''), true) }}
 
         - name: Set VM IP Address fact
           ansible.builtin.set_fact:

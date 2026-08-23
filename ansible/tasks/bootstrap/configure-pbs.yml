@@ -10,10 +10,10 @@
 #     3. Point a webhook notification target + matcher at Ntfy
 #   PVE side (REST API, port 8006):
 #     4. Register PBS as a storage backend (with the PBS cert fingerprint)
-#     5. Create a vzdump backup job covering all homelab-infra-tagged guests
+#     5. Create a vzdump backup job covering every guest tagged `_+lab`
 #
 # PVE backup jobs cannot select guests by tag, so the job is created with the
-# explicit vmid list of homelab-infra-tagged guests at configure time.
+# explicit vmid list of `_+lab`-tagged guests at configure time.
 # Re-running this task refreshes the list (fire-and-forget: bootstrap runs PBS
 # last, after all baseline guests exist).
 #
@@ -250,7 +250,7 @@
     | map(attribute='storage') | list
     is not contains('pbs-homelab')
 
-- name: PBS | Collect vmids of homelab-infra-tagged guests
+- name: PBS | Collect vmids of guests tagged _+lab
   ansible.builtin.uri:
     url: "{{ _pve_url }}/cluster/resources?type=vm"
     headers: "{{ _pve_headers }}"
@@ -259,15 +259,16 @@
 
 - name: PBS | Set backup job facts
   ansible.builtin.set_fact:
-    # Templates are excluded even though they carry the homelab-infra tag. The tag is what
+    # Templates are excluded even though they carry the ownership tag. That tag is what
     # lets tasks/proxmox/ensure-cloud-template.yml recognise its own template rather than
     # adopting a stranger's, so a template is legitimately "ours" — but it is not a guest
     # to back up. It never changes, and it is rebuildable from its image URL by deleting it
     # and re-running, which is exactly what that task documents. Without this the nightly
     # job carried the 3 GB cloud-init template forever.
     #
-    # This PBS instance is excluded from its own job (matched by its instance tag —
-    # every guest this platform creates is tagged with its instance name). A snapshot
+    # This PBS instance is excluded from its own job, matched by its application tag
+    # `_<instance>` — every guest this platform creates carries the tag of each application
+    # its hosting unit hosts, and for a native VM that is its own instance. A snapshot
     # of the PBS VM stored inside that VM's own datastore cannot restore it, and the
     # attempt does not even complete: QEMU's backup stream to the datastore it is
     # snapshotting times out ("http upgrade request timed out"), failing the nightly
@@ -275,9 +276,9 @@
     _backup_vmids: >-
       {{ _pve_guests.json.data
          | selectattr('tags', 'defined')
-         | selectattr('tags', 'search', '(^|;)homelab-infra(;|$)')
+         | selectattr('tags', 'search', '(^|;)' ~ ('_+lab' | regex_escape) ~ '(;|$)')
          | rejectattr('template', 'equalto', 1)
-         | rejectattr('tags', 'search', '(^|;)' ~ (pbs_instance | regex_escape) ~ '(;|$)')
+         | rejectattr('tags', 'search', '(^|;)' ~ (('_' ~ pbs_instance) | regex_escape) ~ '(;|$)')
          | map(attribute='vmid') | sort | join(',') }}
     # infrastructure.yml keywords → PVE calendar events; custom values pass through
     _backup_schedule: >-

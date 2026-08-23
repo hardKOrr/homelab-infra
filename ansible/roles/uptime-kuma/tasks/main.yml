@@ -1,6 +1,6 @@
 ---
 # uptime-kuma role — Docker Compose deployment on a stack host.
-# Called from Play 2 of playbooks/apps/uptime-kuma.yml. Target: the monitoring_stack host.
+# Called from Play 2 of playbooks/apps/uptime-kuma.yml. Target: the monitoring host.
 #
 # VERSION — Uptime Kuma 2.x, locked by slice 404. Full record in that slice's notes.md.
 # The version choice is no longer about a REST API: NEITHER version has one for monitors,

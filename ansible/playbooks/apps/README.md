@@ -96,7 +96,7 @@ its classification, a template no application selects, and any UUID collision.
 
 **`vars/app-defaults/sonarr.yml`**
 - Set `cores`, `memory` to realistic values for this app
-- Set `stack: media_stack` (Docker) or fill in the `proxmox:` block (native LXC)
+- Set `stack: media` (Docker) or fill in the `proxmox:` block (native LXC)
 - Set `app.port` to the app's default port
 - Pick the `routing.identity` mode: `catalog` (default — Authentik launch tile, app
   keeps its own login), `oidc` (app consumes an OAuth2 client), `forward_auth`
@@ -120,7 +120,7 @@ its classification, a template no application selects, and any UUID collision.
 - In Play 2: leave `hosts: "deploy_{{ instance }}"` alone — it is correct for both
   hosting types. Play 1 adds the guest to that per-instance group on every path
   (PATH B's `add_host` directly, PATH A via `find-or-create-host.yml`'s
-  `deploy_group`). Do NOT target a shared group or a `tag_<stack>` pattern:
+  `deploy_group`). Do NOT target a shared group or a `lab_stack_<name>` pattern:
   `add_host` groups persist for a whole run and `bootstrap.yml` chains app
   playbooks with `import_playbook`, so a shared group accumulates every earlier
   app's guest and the role would run on all of them.

@@ -1,7 +1,7 @@
 ---
 # servarr role — one Servarr application (Sonarr, Radarr, Lidarr, Readarr or
 # Prowlarr) as a Docker container on a stack host. Called from Play 2 of
-# playbooks/apps/<app>.yml. Target: the media_stack host.
+# playbooks/apps/<app>.yml. Target: the media host.
 #
 # ONE ROLE, FIVE APPS. These five are the same program with a different media
 # type: same image family, same /config layout, same config.xml, same

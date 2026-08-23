@@ -198,7 +198,7 @@
 
 # ── Step 7: PBS — Proxmox Backup Server (VM) ──────────────────────────────────
 # Last on purpose: its backup job is built from the vmid list of every
-# homelab-infra-tagged guest that exists at configure time. The playbook calls
+# `_+lab`-tagged guest that exists at configure time. The playbook calls
 # tasks/bootstrap/configure-pbs.yml and records `backups` itself.
 - import_playbook: apps/pbs.yml
   vars:

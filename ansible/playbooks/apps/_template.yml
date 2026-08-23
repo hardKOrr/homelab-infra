@@ -65,6 +65,9 @@
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
+        # Placement is resolved from the stack AND the estate, so an estate-scoped app
+        # cannot land on another estate's stack host. See tasks/stack/find-or-create-host.yml.
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         # Per-instance group: add_host groups persist for the whole run, and
         # bootstrap.yml chains app playbooks via import_playbook.
         deploy_group: "deploy_{{ instance }}"
@@ -252,8 +255,8 @@
     # Example (uncomment and adapt for your app's peers):
     # - name: Wire to Prowlarr (if deployed)
     #   ansible.builtin.include_tasks: ../../tasks/app-wiring/prowlarr.yml
-    #   when: "'tag_prowlarr' in groups and groups['tag_prowlarr'] | length > 0"
+    #   when: "'lab_app_prowlarr' in groups and groups['lab_app_prowlarr'] | length > 0"
     #
     # - name: Wire to Plex (if deployed)
     #   ansible.builtin.include_tasks: ../../tasks/app-wiring/plex.yml
-    #   when: "'tag_plex' in groups and groups['tag_plex'] | length > 0"
+    #   when: "'lab_app_plex' in groups and groups['lab_app_plex'] | length > 0"

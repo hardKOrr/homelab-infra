@@ -15,9 +15,17 @@ caddy_defaults:
     disk_volume:
       size: 8                   # GB
     network: default
+    # Caddy is the platform's ONE deliberate shared-hosting exception: a single TLS edge
+    # answers for every estate, so it carries `_.shared`. That tag is a declaration, never
+    # an inference — nothing derives it from where an app happened to land.
+    #
+    # Ownership plus the declared machine fact. The application tag is NOT listed here:
+    # the deploy appends `_<instance>`, so a second instance under another name is tagged
+    # with the name it was actually deployed as. See inventory/proxmox.yml for the grammar.
     tags:
-      - homelab-infra
-      - caddy
+      - _+lab
+      - _-debian
+      - _.shared
 
   app:
     # The admin API port. This is the port recorded as reverse_proxy.port in the

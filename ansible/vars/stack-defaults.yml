@@ -14,11 +14,27 @@
 # add a `stacks:` map to config/infrastructure.yml; it is deep-merged over these:
 #
 #   stacks:
-#     monitoring_stack:
+#     monitoring:
 #       memory: 8192
 #
 # Resizing an existing stack host is a Proxmox operation, not a deploy-time one: these
 # values apply when the host is CREATED. Changing them later does not move a running host.
+#
+# STACK NAMES ARE BARE CONCEPTS. A stack is `media`, never `media` with a `_stack` suffix:
+# the type is carried by the hostname prefix (`stack-media`) and by the Proxmox tag
+# (`_.stack+media`), so repeating it in the identifier only made every tag and every group
+# name say "stack" twice.
+#
+# ESTATE ISOLATION. In a lab that declares two or more estates, an estate-scoped app
+# resolves to its OWN host — `media` in the foxglove estate is the guest tagged
+# `_.stack+media-foxglove`, hostname `stack-media-foxglove`. A stack crosses that boundary
+# only when it says so:
+#
+#   shared: true
+#
+# which makes one host serve every estate and stamps `_.shared` on it. It is a declaration
+# and never an inference: nothing here looks at where apps happened to land and concludes
+# afterwards that a host is shared. No stack below declares it.
 
 stack_defaults:
   # Applied to any stack without an entry of its own, so a new stack works before anyone
@@ -33,7 +49,7 @@ stack_defaults:
   # carries a database and is the greediest thing the platform runs: a co-tenant's restart
   # or a co-tenant's memory spike would land on the lab's login path. The worker is the
   # memory-hungry piece.
-  sso_stack:
+  sso:
     # Boot tier 40 — SSO precedes the apps that authenticate through it.
     boot_order: 40
     cores: 4
@@ -47,7 +63,7 @@ stack_defaults:
   #
   # Disk is the number that matters: Prometheus' TSDB grows with retention and with every
   # node_exporter tasks/guest-bootstrap.yml adds to the lab.
-  monitoring_stack:
+  monitoring:
     # Boot tier 70 — last on purpose. Uptime Kuma must not page about services that are
     # still on their way up, and Prometheus gaps during an ascent are expected.
     boot_order: 70
@@ -58,7 +74,7 @@ stack_defaults:
 
   # The *arr suite, download clients and Bazarr. Many small containers, and the media
   # itself lives on mounted storage rather than the rootfs.
-  media_stack:
+  media:
     cores: 4
     memory: 4096
     disk_volume:
