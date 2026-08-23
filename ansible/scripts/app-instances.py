@@ -84,27 +84,6 @@ def owning_slug(instance: str, slugs: list[str]) -> str | None:
     return max(candidates, key=len) if candidates else None
 
 
-def declared_estate(repo: Path, slug: str) -> str:
-    """The estate an application's own defaults route it to, if it declares one.
-
-    Read so the seeded default matches what rundeck/render-job.py prefills on the job:
-    an application whose defaults say `routing.estate: foxglove` seeds `<app>-foxglove`,
-    not `<app>-<lab default>`.
-    """
-    path = repo / "ansible" / "vars" / "app-defaults" / f"{slug}.yml"
-    if not path.is_file():
-        return ""
-    with path.open(encoding="utf-8") as handle:
-        document = yaml.safe_load(handle) or {}
-    defaults = next(
-        (value for key, value in document.items()
-         if key.endswith("_defaults") and isinstance(value, dict)),
-        {},
-    )
-    routing = defaults.get("routing")
-    return str((routing or {}).get("estate") or "") if isinstance(routing, dict) else ""
-
-
 def collect(repo: Path, applications: dict[str, dict], estates: dict) \
         -> tuple[dict[str, list], list[str], list[str]]:
     slugs = sorted(applications)
@@ -112,12 +91,11 @@ def collect(repo: Path, applications: dict[str, dict], estates: dict) \
     instances: dict[str, list[str]] = {}
     for slug in slugs:
         estate_scoped = applications[slug].get("scope", "lab") == "estate"
-        if estate_scoped and estates["multiple"]:
-            declared = declared_estate(repo, slug)
-            estate = declared if declared in estates["names"] else estates["default"]
-            default = f"{slug}-{estate}"
-        else:
-            default = slug
+        default = (
+            f"{slug}-{estates['default']}"
+            if estate_scoped and estates["multiple"]
+            else slug
+        )
         instances[slug] = [default]
     unmatched: list[str] = []
     noncanonical: list[str] = []

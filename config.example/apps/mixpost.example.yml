@@ -57,8 +57,10 @@ routing:
   # `catalog` suits Mixpost: it owns its user model and its own sessions.
   identity: catalog
 
-  estate: foxglove       # which `domains:` estate publishes it
-  # subdomain: mixpost   # defaults to the instance name
+  # estate: <name>      # which `domains:` estate publishes it. Required once
+                       #   infrastructure.yml declares two or more estates, and the
+                       #   instance file is then named mixpost-<estate>[-<variant>].
+  # subdomain: mixpost  # override the published hostname; the app default is mixpost
 
 backup:
   # A quiesced database dump, pushed into the lab's existing PBS datastore on this

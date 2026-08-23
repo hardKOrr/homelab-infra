@@ -48,13 +48,13 @@ radarr_instance = next(option for option in deploy_radarr["options"] if option["
 assert radarr_instance["value"] == "radarr-personal"
 assert radarr_instance["valuesUrl"].endswith("/radarr.json")
 
-# An application whose own defaults route it to another estate is prefilled for THAT
-# estate, so the offered name never contradicts the application's configuration.
-deploy_mixpost = render_job.render(repo / "rundeck" / "jobs" / "deploy-mixpost.yaml")[0]
-mixpost_instance = next(
-    option for option in deploy_mixpost["options"] if option["name"] == "instance"
-)
-assert mixpost_instance["value"] == "mixpost-foxglove", mixpost_instance["value"]
+# app-defaults/ ships to every lab, so it must never name one lab's estate. A default that
+# did would hand the next clone an estate its own config-doctor rejects.
+for slug in render_job.load_applications():
+    routing = render_job.app_defaults_of(slug).get("routing") or {}
+    assert not routing.get("estate"), (
+        f"app-defaults/{slug}.yml declares routing.estate — estate names belong to one lab"
+    )
 
 # Every routed application declares its published hostname, so an estate-suffixed instance
 # name can never reach a URL. Only unrouted applications may leave it out.

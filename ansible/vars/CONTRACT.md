@@ -501,8 +501,10 @@ instance name, and that fall-back is a trap rather than a feature: it couples th
 URL to the filename, so an estate-scoped instance named `radarr-personal` would publish
 `radarr-personal.<domain>`. Declaring the subdomain per application is what leaves the
 instance name free to carry identity — filename, guest hostname, Proxmox tag — without the
-URL following it around. `routing.estate` names a `domains:` estate (§5); do not set it in
-`app-defaults/`, which ships to every lab and cannot know one lab's estate names.
+URL following it around. `routing.estate` names a `domains:` estate (§5) and is authored per instance.
+`app-defaults/` must not declare one and `rundeck/render-job.py` rejects it: that file is
+git-managed and ships to every lab, so an estate named there is one the next clone has
+never declared, and its config-doctor refuses the instance that inherits it.
 Media-stack instances may add three optional `app:` keys read only by
 `wire-media-stack.yml`: `media_kind` (the app kind — its presence is what enrols
 the instance in media wiring), `host` (an explicit base URL, for an app this lab

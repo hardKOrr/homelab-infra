@@ -17,7 +17,7 @@
     Deploy or update Mixpost — self-hosted social-media scheduling — on the Kubernetes
     hosting backend, with its own MySQL and Redis in the instance's namespace.
 
-    Published on the foxglove estate at mixpost.<estate domain>, LAN-only
+    Published at mixpost.<estate domain> on the instance's estate, LAN-only
     (routing.access: internal). Mixpost owns its own login; Authentik provides a launch
     tile rather than a gate.
 

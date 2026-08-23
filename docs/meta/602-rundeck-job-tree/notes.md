@@ -358,17 +358,32 @@ put an unclassified application on the shared side silently — the exact implic
 decision was meant to remove. It is now rejected at render time, and every `scope: lab`
 entry in the catalog carries the reason it earns the exception.
 
-### An application's own estate beats the lab default
+### Defaults are lab-agnostic, and that is now enforced
 
-`mixpost` declares `routing.estate: foxglove` in its git-managed defaults, so prefilling
-`mixpost-personal` from the lab default offered a one-click deploy that contradicted the
-application's own configuration. `default_instance()` and the instance-list seed now prefer
-a declared estate, falling back to the lab default when the lab has never heard of it —
-`app-defaults/` ships to every lab, and one lab's estate name means nothing in another.
+`ansible/vars/app-defaults/mixpost.yml` declared `routing.estate: foxglove` — one lab's
+estate name in a git-managed file this project intends to be cloned. A fresh clone with
+different estate names inherits a value its own config-doctor rejects, and the renderer was
+prefilling a one-click deploy from it.
 
-**Left alone deliberately, and worth a decision:** `estate: foxglove` in
-`ansible/vars/app-defaults/mixpost.yml` is one lab's estate name in a git-managed file that
-this project intends to be cloned. A fresh clone with different estate names gets a value
-its config-doctor will reject. The template now says not to do this. Removing it from
-mixpost's defaults would move that application to the default estate on the live lab, which
-is not a change to make on someone's behalf.
+The first attempt was to tolerate it: prefer a declared estate, fall back when the lab has
+never heard of it. Rejected on the operator's call — "defaults should be agnostic of my lab
+for sure". Tolerating a value that must never exist keeps the failure mode alive and adds a
+branch that only one file exercises. `routing.estate` in `app-defaults/` is now a hard error
+naming the file, `default_instance()` is back to one line, and the gate asserts no
+application declares one.
+
+Two more instances of the same leak went with it: `deploy-mixpost.yaml` told every clone the
+app is "published on the foxglove estate", and `config.example/apps/mixpost.example.yml`
+handed a copying user `estate: foxglove` as a starting value.
+
+**The live consequence, accepted:** Mixpost's estate is now whatever
+`config/apps/<instance>.yml` says. That is not a new burden — the multi-estate naming rule
+already requires the instance to be named `mixpost-<estate>`, and config-doctor already
+rejects a name whose estate disagrees with its `routing.estate`. Authoring the estate is
+therefore forced by the rename the estate rules already demand.
+
+**Not a leak, checked:** `ansible/vars/app-defaults/k3s-cluster.yml` carries
+`192.168.0.21-23` and a `192.168.0.30` ingress VIP. Those are override-me placeholders on a
+subnet this lab does not use, documented as values every lab must set. The distinction that
+matters: a placeholder is merely wrong until replaced, while a value that must match a
+*named declaration in another config file* fails validation outright.

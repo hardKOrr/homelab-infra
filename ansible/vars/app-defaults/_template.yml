@@ -61,7 +61,7 @@ APP_NAME_defaults:
                          #   catalog      — Authentik Application tile only; the app keeps its own login
                          #   oidc         — OAuth2 provider + Application; the app consumes client_id/secret
                          #   forward_auth — proxy provider; the reverse proxy enforces Authentik login
-    # estate: personal     # which `domains:` estate this app belongs to (default estate if
-                           #   unset). Leave it unset here: an estate name is one lab's, and
-                           #   this file ships to every lab. Authoring it belongs in
-                           #   config/apps/<instance>.yml.
+    # NO `estate:` KEY HERE — the renderer rejects one. An estate name belongs to one
+    # lab, and this file ships to every lab, so a name declared here is one the next
+    # clone has never heard of and its config-doctor refuses. The estate is authored in
+    # config/apps/<instance>.yml, which is that lab's own statement.

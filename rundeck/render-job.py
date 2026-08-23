@@ -171,21 +171,11 @@ def estate_context() -> dict:
 
 
 def default_instance(app: dict, estates: dict) -> str:
-    """The one-click default, with explicit identity in a multi-estate lab.
-
-    An application that declares its own `routing.estate` is prefilled for THAT estate, not
-    for the lab default. Prefilling `mixpost-personal` for an application whose defaults
-    route it to the foxglove estate would offer a one-click deploy that contradicts the
-    application's own configuration. An estate this lab has not declared is ignored rather
-    than fatal: `app-defaults/` ships to every lab, and one lab's estate name means nothing
-    in another.
-    """
+    """The one-click default, with explicit identity in a multi-estate lab."""
     slug = app["slug"]
     if app["scope"] != "estate" or not estates["multiple"]:
         return slug
-    declared = app["estate"]
-    estate = declared if declared in estates["names"] else estates["default"]
-    return f"{slug}-{estate}"
+    return f"{slug}-{estates['default']}"
 
 
 def set_application_options(job: dict, app: dict, estates: dict) -> None:
@@ -217,11 +207,7 @@ def set_application_options(job: dict, app: dict, estates: dict) -> None:
             )
             if estate_option is not None:
                 estate_option["required"] = True
-                # Same rule as the instance default: the application's own declared estate
-                # wins, so the prefilled name and the prefilled estate always agree.
-                estate_option["value"] = (
-                    app["estate"] if app["estate"] in estates["names"] else estates["default"]
-                )
+                estate_option["value"] = estates["default"]
                 estate_option["valuesUrl"] = "file:/var/lib/rundeck/app-instances/estates.json"
                 estate_option["enforced"] = True
 
@@ -271,7 +257,17 @@ def load_applications() -> dict[str, dict]:
                 " lab (one deployment serves every estate) or estate (one deployment"
                 " per estate)"
             )
+        # `app-defaults/` is git-managed and ships to every lab; estate names are one
+        # lab's. A default naming an estate is a name the next clone has never declared,
+        # and its config-doctor rejects the instance that inherits it. The estate belongs
+        # in config/apps/<instance>.yml, which is that lab's own statement.
         routing = defaults.get("routing") or {}
+        if routing.get("estate"):
+            raise ValueError(
+                f"{APP_DEFAULTS / (slug + '.yml')}: routing.estate must not be declared in"
+                " app defaults — an estate name belongs to one lab, and this file ships to"
+                " every lab. Author it in config/apps/<instance>.yml."
+            )
         resolved[slug] = {
             "slug": slug,
             "name": name,
@@ -283,7 +279,6 @@ def load_applications() -> dict[str, dict]:
             "extra": list(entry.get("extra") or []),
             "exclude": list(entry.get("exclude") or []),
             "scope": scope,
-            "estate": str(routing.get("estate") or ""),
             "actions": entry.get("actions"),
         }
     return resolved

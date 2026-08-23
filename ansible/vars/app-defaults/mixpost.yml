@@ -76,7 +76,11 @@ mixpost_defaults:
     # charge, which is correct for an app that owns its user model.
     identity: catalog
 
-    estate: foxglove
+    # No `estate:` here, deliberately. Estate names are one lab's, and this file
+    # ships to every lab — a name declared here is one the next clone has never
+    # heard of, and its config-doctor rejects it. Author the estate in
+    # config/apps/<instance>.yml, where it is that lab's own statement. The
+    # renderer enforces this.
 
   # Application-consistent backup. A PBS snapshot of a cluster node is a crash-consistent
   # disk image and cannot see inside a volume, so it is the cluster rebuild path and not a
