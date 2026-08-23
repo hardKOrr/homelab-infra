@@ -1223,6 +1223,7 @@ else
     RD_API="$RD_API" REPO_DIR="$REPO_DIR" VENV_DIR="$VENV_DIR" bash -s <<'IMPORT'
 set -euo pipefail
 n=0; f=0
+"$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/render-job.py" --check "$REPO_DIR/rundeck/jobs"
 for job in "$REPO_DIR"/rundeck/jobs/*.yaml; do
   [ -f "$job" ] || continue
   resp="$("$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/render-job.py" "$job" | curl -s -m 60 -X POST \

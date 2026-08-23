@@ -9,7 +9,7 @@
 - id: 7218f07d-24d2-547a-96d8-146bbbf2ab8f
   uuid: 7218f07d-24d2-547a-96d8-146bbbf2ab8f
   name: Deploy Radarr
-  group: Apps
+  group: Applications/Media & Entertainment/Library Automation
   description: |-
     Deploy or update Radarr — film management (Docker on media_stack).
     Registers the app in the media registry; run Wire Media Stack afterwards to

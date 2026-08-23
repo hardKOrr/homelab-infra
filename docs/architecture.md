@@ -17,6 +17,7 @@ the map; contract detail lives in [specs/](specs/) and [`AGENTS.md`](../AGENTS.m
 | `ansible/vars/` | Git-managed global defaults, app defaults, media wiring data, and the authoritative variable contract | [config-layering](specs/config-layering.md) |
 | `config/` (gitignored) | User configuration, app overrides, backups, and topology-only generated facts on the runner | [secrets-handling](specs/secrets-handling.md) |
 | `ansible/inventory/proxmox.yml` | `community.proxmox` dynamic inventory. Only `homelab-infra`-tagged guests are managed | [config-layering](specs/config-layering.md) |
+| `catalog/applications.yml` | Human-facing classification of deployable applications by purpose and type; projected into Rundeck, independent of hosting kind | — |
 | `semaphore/`, `rundeck/` | Importable UI job definitions; playbooks stay UI-agnostic | — |
 | `docs/` | Architecture and normative implementation specifications | — |
 | `gate/` | Executable lint, parser, syntax, and focused regression checks | [gate README](../gate/README.md) |

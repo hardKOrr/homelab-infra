@@ -9,7 +9,7 @@
 - id: 2b6794f5-63ed-58ec-95fb-5c45db5ca06a
   uuid: 2b6794f5-63ed-58ec-95fb-5c45db5ca06a
   name: Check Native App Updates
-  group: Maintenance
+  group: Manage/Applications/Updates
   description: |-
     Compare installed vs latest release for every native LXC app and notify via Ntfy. Notifies only — re-run an app's deploy job to update it. Scheduled Mondays at 06:00.
   loglevel: INFO

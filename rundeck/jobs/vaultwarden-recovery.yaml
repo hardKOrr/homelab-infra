@@ -1,7 +1,7 @@
 - id: 54cfeee4-12c4-510e-bd42-1fe069de55f9
   uuid: 54cfeee4-12c4-510e-bd42-1fe069de55f9
   name: Vaultwarden Recovery
-  group: Maintenance
+  group: Recover/Credentials
   description: Explicit break-glass transition. Read rundeck/VAULTWARDEN-RECOVERY.md and restore seed inputs before confirming.
   loglevel: INFO
   executionEnabled: true

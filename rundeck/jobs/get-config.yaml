@@ -9,7 +9,7 @@
 - id: 786ded77-68eb-5b3e-bb11-bca0edaea79c
   uuid: 786ded77-68eb-5b3e-bb11-bca0edaea79c
   name: Get Config
-  group: Config
+  group: Manage/Configuration/Files
   description: |-
     Read the lab definition off the runner without an SSH session. With no instance it returns everything authored — proxmox.yml, infrastructure.yml and every app instance file. With an instance it returns just that one file. The job log is always redacted, so it is safe to copy out of the UI; that redacted YAML is what you paste back into Configure App. It also writes an unredacted tar.gz restore point under artifacts/ on the runner and prints its path — Rundeck OSS has no artifact download, so retrieve that file over scp if you want it off the host, or rely on PBS, which backs up the runner along with it.
   loglevel: INFO

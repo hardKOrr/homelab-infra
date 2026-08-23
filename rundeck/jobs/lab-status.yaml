@@ -9,7 +9,7 @@
 - id: 22ff2c37-1b28-5205-bb38-8361c65e5c78
   uuid: 22ff2c37-1b28-5205-bb38-8361c65e5c78
   name: Lab Status
-  group: Maintenance
+  group: Manage/Lab/Health
   description: |-
     Read-only overview: guests, containers, pending native app updates, uptime monitors and PBS snapshots. Changes nothing and sends no notification.
   loglevel: INFO

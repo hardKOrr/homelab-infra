@@ -155,3 +155,32 @@ How Rundeck 6 surfaces tag filtering in the job list UI has not been checked aga
 live runner. If the filter is buried, the tag axis is theoretical and the three placements
 above go back to being judgment calls. Check this during the *Reimport Jobs* run rather
 than as separate work.
+
+## 2026-08-23 — catalog-first tree supersedes verb-first plus tags
+
+The 2026-08-21 tree was not implemented. A later product check established that the job-tag
+axis it depended on is not available in Rundeck Community, and the repository reached 39 jobs
+after the three maintenance jobs landed.
+
+More importantly, verb-first was the wrong primary navigation for application selection. An
+operator normally arrives with “I want Jellyfin” or “I need a database,” not “I want to deploy
+something.” The useful pattern in the Proxmox Community Scripts and AlternativeTo catalogs is
+broad human purpose, narrower application type, then the named application. Hosting kind and
+stack are execution attributes and do not belong in that path.
+
+The implemented roots are `Applications`, `Platform`, `Manage`, `Recover`, and `Setup`.
+Applications currently project from `catalog/applications.yml`; every other job is classified
+in `rundeck/job-groups.yml`. `render-job.py --check` makes those two files a complete partition
+of `rundeck/jobs/*.yaml` and rejects a stale source group before the import loop starts.
+
+`Recover` also stopped being a proxy for danger. Remove App and Arm Lab Descent now live under
+their actual lifecycle and maintenance intents. Their destructive potential is communicated and
+enforced by their names, descriptions, confirmation options and ACLs rather than by putting them
+in a folder that describes the wrong task.
+
+The boundary between interfaces is now explicit. Rundeck remains the audited engine for
+coordinated changes. Authentik is the launch catalog for installed apps; Uptime Kuma and Grafana
+are the normal observation surfaces; PBS owns backup inventory; Watchtower and
+unattended-upgrades own routine updates. A later Ntfy action may enter Rundeck contextually
+without moving the execution implementation out of Rundeck. `Wire Media Stack` remains under
+the neutral `Manage/Integrations` group; generalizing that implementation is separate work.

@@ -15,7 +15,7 @@
 - id: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
   uuid: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
   name: Reimport Jobs
-  group: Config
+  group: Setup/Automation
   description: |-
     Pull the latest job definitions out of the repo and import them into this project. Run it after a change to rundeck/jobs/*.yaml reaches the tracked branch — a new job, a new option, a changed description. Playbook changes do NOT need this: every job refreshes the checkout before it runs. Updates jobs in place by UUID and never duplicates them; jobs removed from the repo stay until you delete them in the UI.
   loglevel: INFO
@@ -49,6 +49,7 @@
           echo "[reimport] revision $(git -C "$LAB_REPO" log --oneline -1)"
 
           imported=0; failed=0
+          "$LAB_VENV/bin/python3" "$LAB_REPO/rundeck/render-job.py" --check "$LAB_REPO/rundeck/jobs"
           for job in "$LAB_REPO"/rundeck/jobs/*.yaml; do
             [ -f "$job" ] || continue
             resp="$("$LAB_VENV/bin/python3" "$LAB_REPO/rundeck/render-job.py" "$job" | curl -s -m 60 -X POST \

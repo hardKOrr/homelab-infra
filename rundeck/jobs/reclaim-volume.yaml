@@ -12,7 +12,7 @@
 - id: 70da9222-d3df-5714-b67c-3a260083386f
   uuid: 70da9222-d3df-5714-b67c-3a260083386f
   name: Reclaim Volume
-  group: Maintenance
+  group: Manage/Storage/Volumes
   description: |-
     Report on, release or destroy one Kubernetes PersistentVolume that no claim is using. Lab Status lists them under RETAINED VOLUMES. A retained volume is a restore point, not litter — nothing removes one on its own, and this job acts on exactly the volume you name.
   loglevel: INFO

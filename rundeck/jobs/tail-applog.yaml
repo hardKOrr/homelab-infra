@@ -9,7 +9,7 @@
 - id: 5850deaf-a5be-5a34-8d9c-27c847227af8
   uuid: 5850deaf-a5be-5a34-8d9c-27c847227af8
   name: Tail App Log
-  group: Maintenance
+  group: Manage/Applications/Diagnostics
   description: |-
     Stream recent log lines from a native LXC app into this job's console.
   loglevel: INFO

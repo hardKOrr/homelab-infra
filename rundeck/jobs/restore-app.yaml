@@ -12,7 +12,7 @@
 - id: 167f4948-8faf-5f01-9208-c294f7b416ec
   uuid: 167f4948-8faf-5f01-9208-c294f7b416ec
   name: Restore App
-  group: Maintenance
+  group: Recover/Applications
   description: |-
     Restore one application's data from the lab's Proxmox Backup Server: the quiesced
     database dump and storage volume its own backup job pushes there, not a whole-VM

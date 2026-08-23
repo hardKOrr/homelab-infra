@@ -9,7 +9,7 @@
 - id: 56f42991-4bd0-5459-81b3-58310393b225
   uuid: 56f42991-4bd0-5459-81b3-58310393b225
   name: Config Doctor
-  group: Config
+  group: Manage/Configuration/Validation
   description: |-
     Check config/proxmox.yml, config/infrastructure.yml and every config/apps/*.yml against the variable-loading contract. Names every missing or malformed key by file and key path in one pass. Read-only: it changes nothing, contacts no service, and is safe to run at any time. The same check runs in front of every other job, so this is how you see the whole report without starting a deploy.
   loglevel: INFO

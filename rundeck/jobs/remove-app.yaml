@@ -9,7 +9,7 @@
 - id: 4db0d8b2-58b0-5a9b-adf0-ee9f2db37ce8
   uuid: 4db0d8b2-58b0-5a9b-adf0-ee9f2db37ce8
   name: Remove App
-  group: Apps
+  group: Manage/Applications/Lifecycle
   description: |-
     Stop an app and unwire it from the reverse proxy, Authentik, Uptime Kuma and DNS. config/apps/<instance>.yml is kept as the restore point; no guest is destroyed.
   loglevel: INFO

@@ -9,7 +9,7 @@
 - id: 6d0f2353-96d6-59a6-8986-b57b9b06ceb7
   uuid: 6d0f2353-96d6-59a6-8986-b57b9b06ceb7
   name: Deploy qBittorrent
-  group: Apps
+  group: Applications/Media & Entertainment/Download Clients
   description: |-
     Deploy or update qBittorrent — the media stack's torrent download client
     (Docker on media_stack). Registers the app in the media registry; run Wire

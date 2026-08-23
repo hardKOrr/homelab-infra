@@ -9,7 +9,7 @@
 - id: 17be5a66-0344-519d-9b0a-c5b3795c7365
   uuid: 17be5a66-0344-519d-9b0a-c5b3795c7365
   name: Rollback Container
-  group: Maintenance
+  group: Recover/Applications
   description: |-
     Pin a Docker app to an earlier image tag and recreate it. Run this when a Watchtower update breaks something. Notifies via Ntfy.
   loglevel: INFO

@@ -9,7 +9,7 @@
 - id: 8fa8c215-104e-50d2-ab75-6ce219aac208
   uuid: 8fa8c215-104e-50d2-ab75-6ce219aac208
   name: Deploy Prowlarr
-  group: Apps
+  group: Applications/Media & Entertainment/Indexer Management
   description: |-
     Deploy or update Prowlarr — indexer management (Docker on media_stack).
     Registers the app in the media registry; run Wire Media Stack afterwards to

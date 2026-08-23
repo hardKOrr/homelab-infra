@@ -9,7 +9,7 @@
 - id: 970eed1e-229e-5348-8338-5019b9c502a6
   uuid: 970eed1e-229e-5348-8338-5019b9c502a6
   name: Wire Media Stack
-  group: Maintenance
+  group: Manage/Integrations
   description: |-
     Wire the media stack's app-to-app connections: every *arr registered in Prowlarr for indexer sync, every download client registered in the apps that speak its protocol, and Bazarr pointed at Sonarr and Radarr. Idempotent — safe to re-run. Notifies via Ntfy.
   loglevel: INFO

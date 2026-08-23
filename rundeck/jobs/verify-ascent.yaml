@@ -11,7 +11,7 @@
 - id: 4c758158-4124-4104-94e9-453be1ae784e
   uuid: 4c758158-4124-4104-94e9-453be1ae784e
   name: Verify Lab Ascent
-  group: Maintenance
+  group: Manage/Lab/Health
   description: |-
     Read-only: after a lab descent or an unplanned outage, report which tagged guests are not running, which are running but do not answer SSH, and whether every Kubernetes node came back Ready. Changes nothing and starts nothing — deciding what to do about a guest that stayed down is the operator's call. Fails when the ascent is incomplete.
   loglevel: INFO

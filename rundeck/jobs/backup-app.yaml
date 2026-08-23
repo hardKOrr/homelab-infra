@@ -9,7 +9,7 @@
 - id: cd05b253-5012-5911-9713-48bd5e7da85d
   uuid: cd05b253-5012-5911-9713-48bd5e7da85d
   name: Backup App
-  group: Maintenance
+  group: Manage/Applications/Backup
   description: |-
     Run one Kubernetes-hosted application's backup now rather than waiting for its nightly
     schedule: a quiesced database dump plus its storage volume, pushed into the lab's PBS

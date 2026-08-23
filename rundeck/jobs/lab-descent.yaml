@@ -13,7 +13,7 @@
 - id: ca715bcc-f147-4804-aa51-295c71d2d3d1
   uuid: ca715bcc-f147-4804-aa51-295c71d2d3d1
   name: Arm Lab Descent
-  group: Maintenance
+  group: Manage/Lab/Maintenance
   description: |-
     Arm a full lab descent: every tagged guest shut down gracefully, then every Proxmox node rebooted, staggered so the CARP gateway pair and the etcd quorum are never lost at once. Ansible arms it and exits — the nodes execute it from a one-shot systemd timer, and the ascent is automatic via each guest's Proxmox startup order. Set disarm=true to cancel an armed descent. Run "Verify Lab Ascent" afterwards.
   loglevel: INFO

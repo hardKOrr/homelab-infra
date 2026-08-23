@@ -9,7 +9,7 @@
 - id: a4a83926-957f-59c8-a60d-64469151f05d
   uuid: a4a83926-957f-59c8-a60d-64469151f05d
   name: Deploy Ntfy
-  group: Apps
+  group: Platform/Monitoring and Notifications
   description: |-
     Deploy or update Ntfy, the notification hub every other job reports to (native LXC).
   loglevel: INFO

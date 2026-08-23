@@ -169,6 +169,9 @@ config/                            # GITIGNORED — never overwritten by git pul
   apps/
     <instance>.yml                 # one per app instance (persists after removal = restore point)
 
+catalog/
+  applications.yml                # deployable app discovery: purpose + type, projected into Rundeck
+
 config.example/                    # in git — fully documented templates for users to copy
   proxmox.yml
   infrastructure.yml
@@ -382,49 +385,61 @@ particular UI. What has changed is which UI this repository keeps current: **Run
 lab runs on it, and `rundeck/jobs/` is the authoritative set of jobs.
 
 ```
-Bootstrap
-  Bootstrap Platform          ← bootstrap.yml (run once)
+Applications
+  Content & Publishing
+    Social Publishing         ← Deploy Mixpost
+  Media & Entertainment
+    Download Clients          ← Deploy qBittorrent, Deploy SABnzbd
+    Indexer Management        ← Deploy Prowlarr
+    Library Automation        ← Deploy Lidarr, Deploy Radarr, Deploy Sonarr
+    Media Servers             ← Deploy Jellyfin
 
-Per-App
-  Deploy <App>                ← apps/<app>.yml  (one job per app; instance baked in, no params)
-  Remove App                  ← apps/remove.yml (params: instance, app (optional), delete_data)
+Platform
+  Access and Identity         ← Deploy Authentik, Deploy Caddy, Deploy Vaultwarden
+  Backup                      ← Deploy PBS
+  Hosting                     ← Deploy k3s Cluster
+  Monitoring and Notifications ← Deploy Ntfy, Deploy Observability, Deploy Uptime Kuma
 
-Backend
-  Deploy k3s Cluster          ← apps/k3s-cluster.yml (idempotent; re-run converges the cluster)
+Manage
+  Applications
+    Backup                    ← Backup App
+    Configuration             ← Configure App
+    Diagnostics               ← Tail App Log
+    Lifecycle                 ← Remove App, Restart App
+    Migration                 ← Migrate Servarr
+    Updates                   ← Check Native App Updates
+  Configuration
+    Files                     ← Get Config
+    Secrets                   ← Store Secret
+    Validation                ← Config Doctor
+  Integrations                ← Wire Media Stack
+  Lab
+    Health                    ← Lab Status, Verify Lab Ascent
+    Maintenance               ← Guest Maintenance, Arm Lab Descent
+  Storage
+    Volumes                   ← Reclaim Volume
 
-Per-Stack
-  Wire Media Stack            ← stacks/wire-media-stack.yml (no params)
-  Rollback Container          ← stacks/rollback-container.yml (params: stack, container, image_tag)
+Recover
+  Applications                ← Restore App, Rollback Container
+  Credentials                 ← Vaultwarden Recovery
 
-Maintenance
-  Lab Status                  ← maintenance/status.yml
-  Check Native App Updates    ← maintenance/check-native-updates.yml (scheduled weekly)
-  Guest Maintenance           ← maintenance/guest-maintenance.yml (operator-triggered, never
-                                scheduled; params: dry_run, force)
-  Arm Lab Descent             ← maintenance/lab-descent.yml (params: confirm, at, stagger,
-                                drain, disarm — never scheduled)
-  Verify Lab Ascent           ← maintenance/verify-ascent.yml
-  Restart App                 ← maintenance/restart-app.yml (param: instance)
-  Tail App Log                ← maintenance/tail-applog.yml (params: instance, lines)
-  Backup App                  ← maintenance/backup-app.yml (params: instance, app)
-  Restore App                 ← maintenance/restore-app.yml (params: instance, app, target,
-                                snapshot, overwrite — overwrite defaults false)
-  Reclaim Volume              ← maintenance/reclaim-volume.yml (params: volume,
-                                action report|release|delete — defaults report)
-
-Config and Secrets
-  Config Doctor               ← maintenance/config-doctor.yml
-  Get Config                  ← maintenance/get-config.yml (param: instance)
-  Configure App               ← maintenance/configure-app.yml (params: instance, key, value)
-  Store Secret                ← maintenance/store-secret.yml
-  Vaultwarden Enrollment      ← maintenance/vaultwarden-enroll.yml
-  Vaultwarden Cutover         ← maintenance/vaultwarden-cutover.yml
-  Vaultwarden Recovery        ← maintenance/vaultwarden-recovery.yml
+Setup
+  Automation                  ← Reimport Jobs
+  Credentials                 ← Vaultwarden Enrollment, Vaultwarden Cutover
+  Platform                    ← Bootstrap Platform
 ```
 
-`rundeck/jobs/` is the complete set and also carries `reimport-jobs.yaml`, which reloads the
-job definitions from the checkout. Adding a playbook that an operator runs means adding a
-job there.
+The tree describes operator intent, not implementation. Docker, LXC, VM, Kubernetes, stack
+assignment and dependencies never determine an application's group. `catalog/applications.yml`
+is the canonical purpose/type classification for deployable applications;
+`rundeck/job-groups.yml` classifies platform and operator jobs. `rundeck/render-job.py`
+projects and validates both before every bootstrap or reimport. Adding a playbook that an
+operator runs means adding a job under `rundeck/jobs/` and classifying it in exactly one of
+those files.
+
+Danger is not a navigation category. Destructive jobs stay under their truthful operator
+intent and enforce risk through exact names, descriptions, confirmation options and ACLs.
+`Recover` contains actual recovery procedures, not every action that can destroy data.
 
 `semaphore/project.json` is **not** kept in parity and must not be treated as a second
 half of that job (operator decision, 2026-08-19: Semaphore was evaluated and Rundeck was

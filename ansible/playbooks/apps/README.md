@@ -1,6 +1,6 @@
 # Adding a New App
 
-Five steps. Most of the work is step 3.
+Six steps. Most of the work is step 4.
 
 ---
 
@@ -49,7 +49,20 @@ Do a find-and-replace of `APP_NAME` → `sonarr` across all four files.
 
 ---
 
-## Step 3 — Fill in the blanks
+## Step 3 — Classify the application
+
+Add the selectable application to `catalog/applications.yml`. Choose the broad purpose an
+operator recognizes, then the application type. Do not classify it by Docker, LXC, VM,
+Kubernetes, stack, database dependency, or another execution detail.
+
+The Rundeck job group is projected as
+`Applications/<category>/<type>`. Add platform services and non-application actions to
+`rundeck/job-groups.yml` instead. `render-job.py --check` rejects an unclassified job or a
+source `group:` that has drifted from its classification.
+
+---
+
+## Step 4 — Fill in the blanks
 
 **`vars/app-defaults/sonarr.yml`**
 - Set `cores`, `memory` to realistic values for this app
@@ -90,7 +103,7 @@ Do a find-and-replace of `APP_NAME` → `sonarr` across all four files.
 
 ---
 
-## Step 4 — Add to Wire Stack (if Docker app)
+## Step 5 — Add to Wire Stack (if Docker app)
 
 If the app needs to communicate with other apps on its stack (e.g. Sonarr → Prowlarr, Sonarr → qBittorrent), add it to the stack's wire playbook:
 
@@ -103,7 +116,7 @@ Add a task that connects this app to its peers via the app's API. All tasks in t
 
 ---
 
-## Step 5 — Test
+## Step 6 — Test
 
 ```bash
 cd ansible/
@@ -158,6 +171,8 @@ stay estate-agnostic.
 - [ ] `roles/<app>/` — idempotent, health check included, no hardcoded values
 - [ ] `playbooks/apps/<app>.yml` — three-play pattern, correct hosts target
 - [ ] `config.example/apps/<app>.example.yml` — user-facing knobs only
+- [ ] `catalog/applications.yml` — purpose/type classification for the selectable app
+- [ ] `rundeck/jobs/deploy-<app>.yaml` — stable UUID and projected catalog group
 - [ ] App-to-app wiring added to relevant `stacks/wire-<stack>.yml`
 - [ ] Re-run is idempotent (no spurious changes on second run)
 - [ ] `remove.yml` tears down cleanly (test it)

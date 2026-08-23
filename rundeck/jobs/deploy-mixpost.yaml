@@ -12,7 +12,7 @@
 - id: 0816fdee-48a4-5f9a-b0d3-20e8bccfacbc
   uuid: 0816fdee-48a4-5f9a-b0d3-20e8bccfacbc
   name: Deploy Mixpost
-  group: Apps
+  group: Applications/Content & Publishing/Social Publishing
   description: |-
     Deploy or update Mixpost — self-hosted social-media scheduling — on the Kubernetes
     hosting backend, with its own MySQL and Redis in the instance's namespace.

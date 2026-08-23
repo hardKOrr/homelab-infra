@@ -9,7 +9,7 @@
 - id: 89335213-807e-58f1-abc2-cc66b21acb9d
   uuid: 89335213-807e-58f1-abc2-cc66b21acb9d
   name: Restart App
-  group: Maintenance
+  group: Manage/Applications/Lifecycle
   description: |-
     Restart a native LXC app via its lab-restart-app script. Notifies via Ntfy.
   loglevel: INFO

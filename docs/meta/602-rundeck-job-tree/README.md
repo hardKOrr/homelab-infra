@@ -1,62 +1,39 @@
 # 602 — Rundeck job tree
 
-**Status:** open
+**Status:** built
 **Subject:** Rundeck job tree
-**Related:** 601 (the job definitions this reshapes), 600 (Semaphore, no-target — not kept
-in parity), 408 (the app catalog that multiplies the largest group), 204 (whose backup,
-restore and reclaim jobs land in the new groups)
+**Related:** 601 (the job definitions this reshapes), 408 (the application catalog that
+feeds the selectable set), 600 (Semaphore, no-target — not kept in parity)
 
 ## Goal
 
-Give `rundeck/jobs/` a group structure that survives the app catalog. Thirty-six jobs sit
-in four flat groups, and `Apps` holds eighteen of them — over half the project — mixing
-baseline platform services, ordinary applications, a hosting backend that is explicitly not
-an app, and verbs that act on any app. `Maintenance` holds ten and mixes three levels of
-blast radius, so the job that prints a status table and the job that destroys a volume are
-six rows apart in one alphabetical column.
-
-The change is the `group:` and `tags:` values and nothing else. No step, option, schedule
-or script is touched, and no job is renamed. Every job carries a stable `uuid` and
-*Reimport Jobs* posts with `dupeOption=update&uuidOption=preserve`, so this is an in-place
-update: execution history, the weekly schedule on *Check Native App Updates*, and every API
-reference by UUID survive it. Rollback is reverting the commit and re-running the import.
-
-The top level sorts by verb — `Deploy`, `Operate`, `Recover`, `Setup` — because that is the
-question an operator arrives with, and because subject is the axis that grows. Slice 408
-adds application rows in three batches; they land under a named `Deploy/<subject>` without
-the top level moving. `Recover` exists so that the four jobs which can lose data, plus the
-one that can lose the credential path to everything else, are not reachable by mis-clicking
-one row above the job that was wanted.
-
-**No group is a catch-all.** Every group is named by what it holds, and an application
-either fits an existing subject or opens a named one. A group meaning "the rest" is the
-defect this slice removes, not a level to push it down to.
-
-**Tags are the second axis.** A group is one hierarchy, so any job that belongs in two
-places is a zero-sum fight. A small closed tag vocabulary — subject plus a `destructive` /
-`read-only` risk pair — settles those placements instead. Zero jobs carry tags today, so
-this is additive.
+Give the 39-job Rundeck surface a catalog-first hierarchy that remains usable as the
+application set grows. Deployable applications are found by human purpose, application
+type, and name under `Applications/`; platform capabilities, routine management, recovery,
+and setup have truthful separate roots. `catalog/applications.yml` owns application
+classification independently of hosting kind, and `rundeck/job-groups.yml` owns every
+other placement. The renderer projects and validates both classifications before bootstrap
+or reimport. Job names, UUIDs, steps, options, schedules, and playbooks are unchanged.
 
 ## Remaining
 
-- [ ] `group:` rewritten in every file under `rundeck/jobs/`, one line per file, against
-      the tree in notes.md.
-- [ ] `tags:` added per the closed vocabulary in notes.md.
-- [ ] `AGENTS.md` **UI Job Structure (Rundeck)** section rewritten in the same commit. It
-      is the written form of this tree, and it already promises a `Backend` group that does
-      not exist in `rundeck/jobs/`.
-- [ ] *Reimport Jobs* run against the live project, reporting `0 failed`, with the console
-      confirming no job was duplicated and no group was orphaned.
-- [ ] During that same run, confirm Rundeck 6 actually exposes tag filtering in the job
-      list. If it does not, the three placements tags were meant to settle return to being
-      judgment calls.
-
-Deliberately out of scope, recorded in notes.md: installing the `rd` CLI on the runner, and
-deriving `group:`/`tags:` in `render-job.py` from a per-job `category:`.
+- [x] built 2026-08-23 — all 39 source jobs moved from the four flat groups into the
+      nested `Applications`, `Platform`, `Manage`, `Recover`, and `Setup` tree.
+- [x] built 2026-08-23 — application purpose/type has one machine-readable home and the
+      app-author path requires a catalog entry.
+- [x] built 2026-08-23 — bootstrap and **Reimport Jobs** reject incomplete classification
+      or a stale projected `group:` before importing any job.
+- [x] built 2026-08-23 — `AGENTS.md`, `rundeck/README.md`, and the architecture map describe
+      the same tree and ownership boundary.
+- [ ] Run **Reimport Jobs** against the live project and confirm `39 succeeded, 0 failed`,
+      no duplicate UUID, the weekly update schedule preserved, and no old flat group left.
 
 ## Links
-- `rundeck/jobs/*.yaml` — the `group:` and `tags:` values on each job are the whole of the change
-- `rundeck/jobs/reimport-jobs.yaml` — the rollout and rollback path
-- `AGENTS.md` — the UI Job Structure section this slice keeps true
-- notes.md — the target tree, the reasoning, the verified migration mechanics, and what was
-  deliberately left alone
+
+- `catalog/applications.yml` — canonical purpose/type classification for selectable apps
+- `rundeck/job-groups.yml` — complete classification for platform and operator jobs
+- `rundeck/render-job.py` — projection and pre-import validation
+- `rundeck/jobs/*.yaml` — reviewable projected groups on the stable job definitions
+- `gate/test-rundeck-job-tree.sh` — complete-tree and render regression check
+- `AGENTS.md` — authoritative operator-facing tree
+- notes.md — dated design history and superseded alternatives

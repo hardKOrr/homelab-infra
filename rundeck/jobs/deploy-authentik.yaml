@@ -9,7 +9,7 @@
 - id: 8a71d987-b7cc-5b46-969b-4c54033676d4
   uuid: 8a71d987-b7cc-5b46-969b-4c54033676d4
   name: Deploy Authentik
-  group: Apps
+  group: Platform/Access and Identity
   description: |-
     Deploy or update Authentik, the SSO provider (Docker on its own core_stack host).
   loglevel: INFO

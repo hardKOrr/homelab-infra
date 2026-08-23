@@ -3,7 +3,8 @@
 **Status:** open
 **Subject:** which applications this platform deploys, and in what order they get built
 **Related:** 505 (the servarr role, which four of these apps share), 504 (media wiring —
-the registry every media app joins), 500 (bootstrap plays)
+the registry every media app joins), 500 (bootstrap plays), 602 (the selectable catalog
+classification projected into Rundeck)
 
 ## Goal
 
@@ -14,6 +15,10 @@ nothing in this slice is code.
 
 The catalog was entered on 2026-08-17 from the operator's own lab inventory. It is a
 declaration of intent, not a plan that has shipped.
+
+`catalog/applications.yml` is the separate machine-readable catalog of applications that are
+selectable now. This slice remains the future implementation queue; a row moves into that
+runtime catalog only when its playbook and Rundeck job ship.
 
 ### What this catalog is NOT
 

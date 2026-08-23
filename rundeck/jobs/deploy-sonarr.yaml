@@ -9,7 +9,7 @@
 - id: 10893fda-28ad-5771-88ee-f4c3a51f24e7
   uuid: 10893fda-28ad-5771-88ee-f4c3a51f24e7
   name: Deploy Sonarr
-  group: Apps
+  group: Applications/Media & Entertainment/Library Automation
   description: |-
     Deploy or update Sonarr — TV series management (Docker on media_stack).
     Registers the app in the media registry; run Wire Media Stack afterwards to

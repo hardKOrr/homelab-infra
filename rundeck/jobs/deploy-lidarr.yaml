@@ -9,7 +9,7 @@
 - id: 6edfcf84-162a-5368-9a79-e46ec196a0dc
   uuid: 6edfcf84-162a-5368-9a79-e46ec196a0dc
   name: Deploy Lidarr
-  group: Apps
+  group: Applications/Media & Entertainment/Library Automation
   description: |-
     Deploy or update Lidarr — music management (Docker on media_stack).
     Registers the app in the media registry; run Wire Media Stack afterwards to

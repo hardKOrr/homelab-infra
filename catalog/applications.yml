@@ -1,0 +1,53 @@
+schema_version: 1
+
+# Human-facing application classification. This is independent of hosting kind,
+# stack assignment, and Rundeck: those are execution details, not how an operator
+# finds an application. The Rundeck renderer projects category/type into its job tree.
+applications:
+  jellyfin:
+    name: Jellyfin
+    job: deploy-jellyfin.yaml
+    category: Media & Entertainment
+    type: Media Servers
+
+  lidarr:
+    name: Lidarr
+    job: deploy-lidarr.yaml
+    category: Media & Entertainment
+    type: Library Automation
+
+  mixpost:
+    name: Mixpost
+    job: deploy-mixpost.yaml
+    category: Content & Publishing
+    type: Social Publishing
+
+  prowlarr:
+    name: Prowlarr
+    job: deploy-prowlarr.yaml
+    category: Media & Entertainment
+    type: Indexer Management
+
+  qbittorrent:
+    name: qBittorrent
+    job: deploy-qbittorrent.yaml
+    category: Media & Entertainment
+    type: Download Clients
+
+  radarr:
+    name: Radarr
+    job: deploy-radarr.yaml
+    category: Media & Entertainment
+    type: Library Automation
+
+  sabnzbd:
+    name: SABnzbd
+    job: deploy-sabnzbd.yaml
+    category: Media & Entertainment
+    type: Download Clients
+
+  sonarr:
+    name: Sonarr
+    job: deploy-sonarr.yaml
+    category: Media & Entertainment
+    type: Library Automation

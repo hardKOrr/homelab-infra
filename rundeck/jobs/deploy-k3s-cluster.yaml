@@ -13,7 +13,7 @@
 - id: 5dae403a-1c28-522c-a083-41f7b1984c17
   uuid: 5dae403a-1c28-522c-a083-41f7b1984c17
   name: Deploy k3s Cluster
-  group: Apps
+  group: Platform/Hosting
   description: |-
     Build or converge the k3s cluster that Kubernetes-hosted applications run on.
 

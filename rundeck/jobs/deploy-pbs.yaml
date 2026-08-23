@@ -9,7 +9,7 @@
 - id: f5459146-6beb-5881-b673-995d36ad19c6
   uuid: f5459146-6beb-5881-b673-995d36ad19c6
   name: Deploy PBS
-  group: Apps
+  group: Platform/Backup
   description: |-
     Deploy or update Proxmox Backup Server (VM) and configure the backup schedule.
   loglevel: INFO

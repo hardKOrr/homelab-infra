@@ -9,7 +9,7 @@
 - id: f4ff3c34-28da-5509-92fa-6e5c60c70f3d
   uuid: f4ff3c34-28da-5509-92fa-6e5c60c70f3d
   name: Bootstrap Platform
-  group: Bootstrap
+  group: Setup/Platform
   description: |-
     One-time platform setup: Vaultwarden, Ntfy, the reverse proxy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS, in that order. Run it once, then use the per-app jobs.
   loglevel: INFO

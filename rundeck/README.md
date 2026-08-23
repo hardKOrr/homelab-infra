@@ -90,45 +90,37 @@ keep the existing token; `ROTATE_PROXMOX_TOKEN=1` mints a new one.
 
 ## Jobs
 
-`jobs/*.yaml` is the importable job set — one file per job, each a single script step that
-runs one playbook. `bootstrap-rundeck.sh` imports them all over the REST API, so you do not
-normally do this by hand. When you do:
+`jobs/*.yaml` is the complete job set — one file per job, each a single script step that
+runs one playbook. `bootstrap-rundeck.sh` and **Reimport Jobs** validate and render every
+source file before posting it to the REST import endpoint. Job UUIDs are stable and imports
+use `dupeOption=update&uuidOption=preserve`, so a group change updates the existing job and
+keeps its execution history and schedule.
 
-```sh
-for f in rundeck/jobs/*.yaml; do
-  rd jobs load --project homelab-infra --format yaml --file "$f"
-done
-```
+Two files own classification:
 
-`rd` is not required — the REST API accepts the same YAML
-(`POST /api/58/project/<p>/jobs/import?fileformat=yaml&dupeOption=update&uuidOption=preserve`).
-Job UUIDs are stable, so re-loading updates the existing jobs instead of duplicating them.
+- `../catalog/applications.yml` classifies deployable applications by human purpose and
+  application type. The renderer projects each one to
+  `Applications/<category>/<type>`.
+- `job-groups.yml` classifies platform services and operator actions.
 
-| Group | Job | Playbook | Options |
-|---|---|---|---|
-| Bootstrap | Vaultwarden Enrollment | `playbooks/maintenance/vaultwarden-enroll.yml` | none |
-| Bootstrap | Vaultwarden Cutover | `playbooks/maintenance/vaultwarden-cutover.yml` | none |
-| Bootstrap | Bootstrap Platform | `playbooks/bootstrap.yml` | none |
-| Config | Config Doctor | `playbooks/maintenance/config-doctor.yml` | none |
-| Config | Configure App | `playbooks/maintenance/configure-app.yml` | `instance` + a dozen optional overrides + `extra_yaml` |
-| Config | Get Config | `playbooks/maintenance/get-config.yml` | `instance` (optional), `archive` (optional) |
-| Config | Store Secret | `playbooks/maintenance/store-secret.yml` | `vault_item`, `vault_field`, `value` (secure), `merge` |
-| Config | Reimport Jobs | — (calls the Rundeck API directly) | none |
-| Apps | Deploy Vaultwarden | `playbooks/apps/vaultwarden.yml` | `instance` (prefilled `vaultwarden`) |
-| Apps | Deploy Ntfy | `playbooks/apps/ntfy.yml` | `instance` (prefilled `ntfy`) |
-| Apps | Deploy Caddy | `playbooks/apps/caddy.yml` | `instance` (prefilled `caddy`); optional encrypted Cloudflare Seed token and optional Vaultwarden credentials; the runner enforces whichever lifecycle state is active |
-| Apps | Deploy Authentik | `playbooks/apps/authentik.yml` | `instance` (prefilled `authentik`) |
-| Apps | Deploy Uptime Kuma | `playbooks/apps/uptime-kuma.yml` | `instance` (prefilled `uptime-kuma`) |
-| Apps | Deploy Observability | `playbooks/apps/observability.yml` | `instance` (prefilled `observability`) |
-| Apps | Deploy PBS | `playbooks/apps/pbs.yml` | `instance` (prefilled `pbs`) |
-| Apps | Remove App | `playbooks/apps/remove.yml` | `instance`, `app` (optional), `delete_data` |
-| Maintenance | Lab Status | `playbooks/maintenance/status.yml` | none |
-| Maintenance | Check Native App Updates | `playbooks/maintenance/check-native-updates.yml` | none — cron `0 0 6 ? * MON *` |
-| Maintenance | Restart App | `playbooks/maintenance/restart-app.yml` | `instance` |
-| Maintenance | Tail App Log | `playbooks/maintenance/tail-applog.yml` | `instance`, `lines` |
-| Maintenance | Rollback Container | `playbooks/stacks/rollback-container.yml` | `stack`, `container`, `image_tag` (optional) |
-| Maintenance | Wire Media Stack | `playbooks/stacks/wire-media-stack.yml` | none |
-| Maintenance | Vaultwarden Recovery | `playbooks/maintenance/vaultwarden-recovery.yml` | exact break-glass confirmation |
+The source job keeps the projected `group:` for reviewability. Before any import,
+`render-job.py --check` rejects a missing or extra job, duplicate classification, stale
+group, or application name that no longer matches its catalog entry. Hosting kind, stack,
+dependencies, and other execution details do not control navigation.
+
+The top-level tree is:
+
+| Root | Purpose |
+|---|---|
+| `Applications` | Browse optional applications by purpose, type, and name |
+| `Platform` | Deploy access, identity, monitoring, backup, and hosting capabilities |
+| `Manage` | Routine application, configuration, integration, lab, and storage actions |
+| `Recover` | Restore applications or recover credentials |
+| `Setup` | Establish credentials, bootstrap the platform, and reload automation definitions |
+
+Run `python3 rundeck/render-job.py --check rundeck/jobs` to validate the complete tree.
+Normally, use **Reimport Jobs** rather than importing an individual raw source file: the
+renderer also injects the secure Key Storage options required by that job.
 
 **One job per app, still no typing.** Each Deploy job carries a required `instance`
 option whose *value is already the app's own name*, so Rundeck prefills it and the normal
@@ -171,9 +163,9 @@ for: the first live run failed identically in all 15 jobs, and the fix landed in
 shared wrapper (commit `059316a`).
 
 Escape hatches, per job or per shell: `LAB_REFRESH=0` runs the on-disk checkout unchanged
-(for pinning while debugging), `LAB_DOCTOR=0` skips the config check (the three Config
-jobs set this themselves — they exist to diagnose and fix a config the doctor is
-complaining about).
+(for pinning while debugging), `LAB_DOCTOR=0` skips the config check (the diagnostic
+configuration jobs set this themselves — they exist to diagnose and fix a config the
+doctor is complaining about).
 
 **The refresh is off unless a runner turned it on.** It is a `git reset --hard`, so
 `lab-run.sh` defaults `LAB_REFRESH` to 1 only when `/etc/homelab-infra/lab-run.env` exists

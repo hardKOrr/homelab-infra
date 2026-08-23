@@ -14,7 +14,7 @@
 - id: 3df2e225-6d36-5dac-bed2-3875eba8ae1d
   uuid: 3df2e225-6d36-5dac-bed2-3875eba8ae1d
   name: Configure App
-  group: Config
+  group: Manage/Applications/Configuration
   description: |-
     Create or edit config/apps/<instance>.yml without an SSH session. Every field is an OVERRIDE — anything you leave blank keeps its current value, and anything absent from the file falls through to the app's defaults. The previous content is kept under config/apps/.backups/ and the job log shows a unified diff of exactly what changed. Anything not covered by the fields below goes in Extra YAML.
   loglevel: INFO

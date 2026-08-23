@@ -9,7 +9,7 @@
 - id: 086482e8-59a6-57f1-8c4f-f0f3f9d86a39
   uuid: 086482e8-59a6-57f1-8c4f-f0f3f9d86a39
   name: Migrate Servarr
-  group: Apps
+  group: Manage/Applications/Migration
   description: |-
     NOT READY FOR A LIVE CUTOVER — see docs/meta/done/505-app-servarr/notes.md.
     Peer references are not rewritten, wiring would duplicate rather than repair,
