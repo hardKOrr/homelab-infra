@@ -17,6 +17,14 @@ the only link between a config file and the application it configures. The longe
 slug wins, so `uptime-kuma` is not mistaken for an instance of some app called `uptime`. An
 instance file that matches no application is reported on stderr and appears in no list.
 
+THE CONTROL PLANE IS NOT AN APPLICATION. `rundeck/bootstrap-rundeck.sh` writes
+`config/apps/rundeck.yml` to describe the runner it just built — the VMID, address and
+storage of the container that script is standing up. It uses the config/apps/ shape
+because the platform manages the runner like any other guest it created (it is tagged
+`_+lab`, PBS backs it up, Lab Status reports it), but there is no Deploy Rundeck job and
+there cannot be one: nothing deploys the runner from the runner. So it is skipped here
+rather than reported as an instance file matching no application.
+
 MULTI-ESTATE IDENTITY. Applications whose catalog scope is `estate` default to
 `<app>-<default-estate>` once infrastructure.yml declares two or more estates. Every such
 instance is named `<app>-<estate>[-<variant>]`; there is no unnamed primary estate.
@@ -34,6 +42,10 @@ import sys
 from pathlib import Path
 
 import yaml
+
+# Instance files that describe the control plane itself rather than a deployable
+# application. See "THE CONTROL PLANE IS NOT AN APPLICATION" above.
+CONTROL_PLANE_INSTANCES = frozenset({"rundeck"})
 
 
 def load_applications(catalog: Path) -> dict[str, dict]:
@@ -102,6 +114,8 @@ def collect(repo: Path, applications: dict[str, dict], estates: dict) \
     instance_estates: dict[str, str] = {}
     for path in sorted(apps_dir.glob("*.yml")) if apps_dir.is_dir() else []:
         instance = path.stem
+        if instance in CONTROL_PLANE_INSTANCES:
+            continue
         slug = owning_slug(instance, slugs)
         if slug is None:
             unmatched.append(instance)

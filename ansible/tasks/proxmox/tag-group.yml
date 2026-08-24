@@ -18,17 +18,22 @@
 # Callers look the result up as `groups[tag_group_name] | default([])`. An empty result is a
 # tag this platform does not own, not an error: nothing here decides whether a group exists.
 
+# No backslash appears below. Ansible's Jinja does not unescape string literals and stock
+# Jinja does, so a capture-group replacement means different things in the two engines and
+# the gate cannot judge it. Zero-width lookahead plus a literal prefix means the same thing
+# in both. inventory/proxmox.yml carries the identical chain and the same constraint.
+
 - name: Tag group | Translate one platform tag into its inventory group name
   ansible.builtin.set_fact:
     tag_group_name: >-
       {{ (([tag_group_tag | default('', true)])
          | map('regex_replace', '^_[+]lab$', 'lab_managed')
-         | map('regex_replace', '^_[-](.+)$', 'lab_fact_\\1')
-         | map('regex_replace', '^_[.]stack[+](.+)$', 'lab_stack_\\1')
-         | map('regex_replace', '^_[.]cluster[+](.+)$', 'lab_cluster_\\1')
+         | map('regex_replace', '^_[-](?=.)', 'lab_fact_')
+         | map('regex_replace', '^_[.]stack[+](?=.)', 'lab_stack_')
+         | map('regex_replace', '^_[.]cluster[+](?=.)', 'lab_cluster_')
          | map('regex_replace', '^_[.]template$', 'lab_template')
          | map('regex_replace', '^_[.]shared$', 'lab_shared')
-         | map('regex_replace', '^_([0-9A-Za-z].*)$', 'lab_app_\\1')
+         | map('regex_replace', '^_(?=[0-9A-Za-z])', 'lab_app_')
          | map('regex_replace', '^(?!lab_).*$', '')
          | map('regex_replace', '[^A-Za-z0-9_]', '_')
          | reject('eq', '')

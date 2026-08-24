@@ -92,18 +92,27 @@ compose:
       | default('', true)
       | regex_replace('^dhcp.*$', '')
       | regex_replace('/.*$', ''))
-  # Character classes rather than backslash escapes throughout: `\+` is not a valid Python
-  # string escape, so a Jinja literal containing one is a deprecation warning today and a
-  # syntax error eventually. `(?!lab_)` drops every tag no lane above claimed.
+  # NO BACKSLASH APPEARS IN THIS EXPRESSION, and that is load-bearing rather than tidy.
+  # Ansible's Jinja does not process escape sequences inside string literals; stock Jinja
+  # does. So a capture-group replacement is unspellable in a way both engines agree on:
+  # 'lab_app_\1' is a backreference under Ansible and the control character U+0001 under
+  # stock Jinja, and 'lab_app_\\1' is the reverse. The doubled form shipped, the gate
+  # renders with stock Jinja and passed, and in production EVERY application tag became the
+  # one group `lab_app__1` — so the first Caddy deploy of a fresh lab found the runner in
+  # `lab_app_caddy` and tried to install Caddy onto it.
+  #
+  # Each lane is therefore a zero-width lookahead and a literal prefix: nothing is captured,
+  # so nothing has to be spelled back. Character classes for the same family of reason —
+  # `\+` is not a valid Python string escape. `(?!lab_)` drops every tag no lane claimed.
   homelabinfra_groups: >-
     (proxmox_tags_parsed | default([]))
       | map('regex_replace', '^_[+]lab$', 'lab_managed')
-      | map('regex_replace', '^_[-](.+)$', 'lab_fact_\\1')
-      | map('regex_replace', '^_[.]stack[+](.+)$', 'lab_stack_\\1')
-      | map('regex_replace', '^_[.]cluster[+](.+)$', 'lab_cluster_\\1')
+      | map('regex_replace', '^_[-](?=.)', 'lab_fact_')
+      | map('regex_replace', '^_[.]stack[+](?=.)', 'lab_stack_')
+      | map('regex_replace', '^_[.]cluster[+](?=.)', 'lab_cluster_')
       | map('regex_replace', '^_[.]template$', 'lab_template')
       | map('regex_replace', '^_[.]shared$', 'lab_shared')
-      | map('regex_replace', '^_([0-9A-Za-z].*)$', 'lab_app_\\1')
+      | map('regex_replace', '^_(?=[0-9A-Za-z])', 'lab_app_')
       | map('regex_replace', '^(?!lab_).*$', '')
       | map('regex_replace', '[^A-Za-z0-9_]', '_')
       | reject('eq', '')

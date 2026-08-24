@@ -201,6 +201,28 @@ check(
     [name for name in expected.values() if name],
 )
 
+# Neither expression may contain a backslash, and this test is the whole reason the two
+# above can be trusted. Ansible's Jinja does not process escape sequences inside string
+# literals; the stock Jinja rendering them here does. A capture-group replacement therefore
+# means one thing to this gate and the opposite thing in production: 'lab_app_\\1' renders
+# correctly above and yields the literal text `lab_app_\1` inside the inventory plugin,
+# which the group-name sanitiser turns into `lab_app__1` — ONE group holding every
+# application in the lab. That shipped, and a fresh lab's first Caddy deploy found the
+# runner in `lab_app_caddy` and tried to install Caddy onto the control plane.
+#
+# Zero-width lookaheads and literal prefixes capture nothing, so nothing has to be spelled
+# back, and the two engines cannot disagree.
+for label, source in (
+    ("inventory expression", inventory["compose"]["homelabinfra_groups"]),
+    ("lookup seam", lookup_doc[0]["ansible.builtin.set_fact"]["tag_group_name"]),
+):
+    if "\\" in source:
+        failures.append(
+            "%s contains a backslash. Ansible and stock Jinja disagree about escapes in "
+            "string literals, so a backreference cannot be verified here. Use a zero-width "
+            "lookahead and a literal prefix instead." % label
+        )
+
 # Ownership is a group of its own: no machine fact, topology tag or application name may
 # land in it, which is what the sanitiser would otherwise have caused.
 for tag in ("_-lab", "_.lab", "_lab"):
