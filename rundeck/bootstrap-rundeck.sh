@@ -6,7 +6,7 @@
 # ceremony and verified cutover, then click Bootstrap Platform for the baseline.
 #
 #   ./bootstrap-rundeck.sh
-#   VMID=13228 CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh
+#   VMID=13228 CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh  # skip the prompts
 #   LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 ./bootstrap-rundeck.sh
 #   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
 #
@@ -45,10 +45,16 @@
 set -euo pipefail
 
 # ── Tunables ───────────────────────────────────────────────────────────────────
-VMID="${VMID:-13228}"
-CT_HOSTNAME="${CT_HOSTNAME:-pve-rundeck-4}"
-CT_IP="${CT_IP:-192.168.13.228/20}"
-CT_GW="${CT_GW:-192.168.13.1}"
+# The runner's own identity is deliberately EMPTY here. It is asked in Preflight, with
+# defaults read off this node, because it is the one address in the lab the platform
+# cannot allocate for itself: every other guest gets an IP from allocate-ip.py, which does
+# not exist until this container does. A constant here silently claims one lab's address
+# in every lab, and the operator only finds out once the container is built. Setting any
+# of these in the environment still skips its prompt, so the scripted path is unchanged.
+VMID="${VMID:-}"
+CT_HOSTNAME="${CT_HOSTNAME:-}"
+CT_IP="${CT_IP:-}"
+CT_GW="${CT_GW:-}"
 CT_BRIDGE="${CT_BRIDGE:-vmbr0}"
 CT_CORES="${CT_CORES:-4}"
 CT_MEMORY="${CT_MEMORY:-8192}"
@@ -119,9 +125,10 @@ LAB_LEGACY_SEED_ENV="$LAB_ETC/secrets.env"
 # private half into Vaultwarden; lab-run materializes it only for one job session.
 LAB_SSH_KEY=/var/lib/rundeck/.ssh/homelab-infra
 
-RD_HOST="${CT_IP%%/*}"
 RD_PORT="${RD_PORT:-4440}"
-RD_URL="http://${RD_HOST}:${RD_PORT}"
+# Derived in Preflight, once CT_IP has been resolved from the environment or the prompt.
+RD_HOST=""
+RD_URL=""
 RD_PROJECT="${RD_PROJECT:-homelab-infra}"
 RD_API="${RD_API:-58}"
 
@@ -180,6 +187,21 @@ ask() {
   printf -v "$__var" '%s' "$__reply"
 }
 
+# net_addr <a.b.c.d/nn> — the NETWORK address of that CIDR. Masking only the last octet
+# is wrong for every prefix shorter than /24: 192.168.13.228/20 is not 192.168.13.0/20,
+# it is 192.168.0.0/20, and the difference is what config/infrastructure.yml records as
+# the lab's guest network.
+net_addr() {
+  local __ip="${1%%/*}" __pfx="${1##*/}" __o1 __o2 __o3 __o4 __a __m __n
+  IFS=. read -r __o1 __o2 __o3 __o4 <<<"$__ip"
+  __a=$(( (__o1 << 24) + (__o2 << 16) + (__o3 << 8) + __o4 ))
+  if [ "$__pfx" -eq 0 ] 2>/dev/null; then __m=0; else __m=$(( (0xFFFFFFFF << (32 - __pfx)) & 0xFFFFFFFF )); fi
+  __n=$(( __a & __m ))
+  printf '%d.%d.%d.%d/%d\n' \
+    $(( (__n >> 24) & 255 )) $(( (__n >> 16) & 255 )) \
+    $(( (__n >> 8) & 255 )) $(( __n & 255 )) "$__pfx"
+}
+
 # ask_secret <var-name> <prompt> — like ask, but never echoes either an environment
 # value or an interactive reply. Secrets have no useful default: a non-interactive
 # first bootstrap must supply them explicitly in the environment.
@@ -205,24 +227,63 @@ log "Preflight"
 command -v pct >/dev/null    || die "pct not found — run this on a Proxmox node, not inside a container"
 command -v pveam >/dev/null  || die "pveam not found"
 command -v pveum >/dev/null  || die "pveum not found"
-# Resolve the storage that will hold every guest this platform creates. `rootdir` is the
-# content type a container rootfs needs, and a stock Proxmox `local` does NOT carry it — it
-# is vztmpl/iso/backup, which is why a default of "local" fails every create with
-# "storage 'local' does not support container directories". Ask the node instead of guessing.
-if [ -z "$CT_STORAGE" ]; then
-  CT_STORAGE="$(pvesm status --content rootdir 2>/dev/null | awk 'NR>1 && $3 == "active" {print $1; exit}')"
-  [ -n "$CT_STORAGE" ] || die "no active storage on this node supports container rootfs (content type 'rootdir').
-Add one in Proxmox, or set CT_STORAGE=... if you know better."
-  info "storage        $CT_STORAGE (discovered — first active storage supporting rootdir)"
-fi
-pvesm status --storage "$CT_STORAGE" >/dev/null 2>&1 || die "storage '$CT_STORAGE' not available on this node"
-pvesm status --content rootdir 2>/dev/null | awk 'NR>1 {print $1}' | grep -qxF "$CT_STORAGE" \
-  || warn "storage '$CT_STORAGE' does not advertise content type 'rootdir'; container creation may fail"
 case "$DEPLOY_VAULTWARDEN" in
   0|1) : ;;
   *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
 esac
-info "node $(hostname), target VMID $VMID at $RD_URL"
+
+# The runner container's own identity is ASKED, never assumed. Converging an EXISTING
+# runner defaults to what that container already is, so a re-run never proposes moving
+# the control plane; a fresh one defaults to this node's own subnet and next free VMID.
+# Resolve the storage that will hold every guest this platform creates. `rootdir` is the
+# content type a container rootfs needs, and a stock Proxmox `local` does NOT carry it — it
+# is vztmpl/iso/backup, which is why a default of "local" fails every create with
+# "storage 'local' does not support container directories". Ask the node instead of guessing.
+CT_STORAGE_DEFAULT="$(pvesm status --content rootdir 2>/dev/null | awk 'NR>1 && $3 == "active" {print $1; exit}')"
+NODE_ADDR_CIDR="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4; exit}')"
+NODE_PREFIX="${NODE_ADDR_CIDR##*/}"
+NODE_SUBNET="${NODE_ADDR_CIDR%.*}"
+NODE_GW_DEFAULT="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
+VMID_DEFAULT="$(pvesh get /cluster/nextid 2>/dev/null | tr -d '"[:space:]')"
+
+info "the runner's own identity - defaults are read off this node"
+ask VMID "Runner VMID" "$VMID_DEFAULT"
+
+CT_HOSTNAME_DEFAULT="homelab-rundeck"
+CT_IP_DEFAULT=""
+if [ -n "$NODE_SUBNET" ] && [ -n "$NODE_PREFIX" ]; then
+  CT_IP_DEFAULT="${NODE_SUBNET}.228/${NODE_PREFIX}"
+fi
+CT_GW_DEFAULT="$NODE_GW_DEFAULT"
+if pct config "$VMID" >/dev/null 2>&1; then
+  info "VMID $VMID already exists - its current settings become the defaults"
+  CT_CONF="$(pct config "$VMID")"
+  CT_HOSTNAME_DEFAULT="$(sed -n 's/^hostname: //p'            <<<"$CT_CONF")"
+  CT_IP_DEFAULT="$(sed -n 's/^net0: .*,ip=\([^,]*\).*/\1/p'   <<<"$CT_CONF")"
+  CT_GW_DEFAULT="$(sed -n 's/^net0: .*,gw=\([^,]*\).*/\1/p'   <<<"$CT_CONF")"
+  CT_STORAGE_DEFAULT="$(sed -n 's/^rootfs: \([^:]*\):.*/\1/p' <<<"$CT_CONF")"
+fi
+
+ask CT_HOSTNAME "Runner hostname"                            "$CT_HOSTNAME_DEFAULT"
+ask CT_IP       "Runner address, with prefix (a.b.c.d/nn)"   "$CT_IP_DEFAULT"
+ask CT_GW       "Runner gateway"                             "$CT_GW_DEFAULT"
+ask CT_STORAGE  "Storage for the runner rootfs"              "$CT_STORAGE_DEFAULT"
+
+case "$CT_IP" in
+  */*) : ;;
+  *) die "CT_IP must carry a prefix length, as in 192.168.13.228/20 (got '$CT_IP')" ;;
+esac
+[ -n "$CT_GW" ] || die "CT_GW has no value and this node advertises no default route. Set CT_GW=..."
+[ -n "$CT_STORAGE" ] || die "no active storage on this node supports container rootfs (content type 'rootdir').
+Add one in Proxmox, or set CT_STORAGE=... if you know better."
+
+RD_HOST="${CT_IP%%/*}"
+RD_URL="http://${RD_HOST}:${RD_PORT}"
+
+pvesm status --storage "$CT_STORAGE" >/dev/null 2>&1 || die "storage '$CT_STORAGE' not available on this node"
+pvesm status --content rootdir 2>/dev/null | awk 'NR>1 {print $1}' | grep -qxF "$CT_STORAGE" \
+  || warn "storage '$CT_STORAGE' does not advertise content type 'rootdir'; container creation may fail"
+info "node $(hostname), target VMID $VMID at $RD_URL on $CT_STORAGE"
 
 # Resolve the keys now so we fail before building anything, not after.
 if [ -z "$SSH_PUBKEY" ] && [ -r "$SSH_PUBKEY_FILE" ]; then
@@ -245,7 +306,20 @@ else
   if ping -c 2 -W 1 "$RD_HOST" >/dev/null 2>&1; then
     die "$RD_HOST already answers ping but VMID $VMID does not exist — pick a free IP/VMID"
   fi
-  info "container $VMID does not exist — creating it"
+  info "container $VMID does not exist - creating it"
+fi
+
+# A Proxmox token secret is readable exactly once, at creation. If the token already
+# exists and no runner exists to be holding its Seed copy, nothing downstream can ever
+# obtain it, and the Seed phase at the very end of this script will die. Say so HERE,
+# before an hour of container, Rundeck and job import work is done for nothing.
+if [ "$CT_EXISTS" -eq 0 ] && [ "$ROTATE_PROXMOX_TOKEN" != "1" ] \
+   && pveum user token list "$PVE_USER" --output-format json 2>/dev/null \
+        | grep -q "\"tokenid\":\"${PVE_TOKEN_NAME}\""; then
+  die "the Proxmox token ${PVE_USER}!${PVE_TOKEN_NAME} already exists, but VMID $VMID does not.
+A token secret cannot be re-read, and there is no runner holding a copy, so this bootstrap
+could not store one. This is the normal state after a teardown: the guests went, the
+cluster-level user and token stayed. Re-run with ROTATE_PROXMOX_TOKEN=1 to replace it."
 fi
 
 # ── Discover what this node already knows ──────────────────────────────────────
@@ -712,7 +786,7 @@ else
   # Default the lab's guest network to the container's own network. In the overwhelmingly
   # common single-subnet homelab that is simply correct, and where it is not, the prompt
   # is right there.
-  DEFAULT_CIDR="$(printf '%s' "$CT_IP" | awk -F/ '{split($1,o,"."); print o[1]"."o[2]"."o[3]".0/"$2}')"
+  DEFAULT_CIDR="$(net_addr "$CT_IP")"
 
   info "answer the lab and first-owner questions; everything else was discovered"
   ask LAB_DOMAIN      "Lab domain (apps are published as <app>.<domain>)"     ""
