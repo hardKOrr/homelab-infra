@@ -139,6 +139,10 @@ LAB_ETC=/etc/homelab-infra
 # when the job user cannot remove it.
 LAB_SEED_ENV="$LAB_ETC/secrets.d/proxmox.env"
 LAB_LEGACY_SEED_ENV="$LAB_ETC/secrets.env"
+# The DNS provider's record-wiring credential, on the same bounded Seed footing: written
+# here, sourced by lab-run.sh only while the vault-mode marker is absent, and imported
+# into the canonical `homelab-infra/dns` item by the cutover.
+LAB_DNS_ENV="$LAB_ETC/secrets.d/dns.env"
 # The platform's own SSH identity, generated in the container. Its public half goes into
 # config/proxmox.yml (deployed to every guest this platform creates). Cutover moves the
 # private half into Vaultwarden; lab-run materializes it only for one job session.
@@ -221,6 +225,34 @@ net_addr() {
     $(( (__n >> 8) & 255 )) $(( __n & 255 )) "$__pfx"
 }
 
+# addr_int <a.b.c.d[/nn]> — the address as a 32-bit integer, so two addresses can be
+# compared and subtracted. Validates as it goes: a typo here becomes an ip_offset that
+# silently addresses the wrong band, which is the failure this arithmetic exists to catch.
+addr_int() {
+  local __ip="${1%%/*}" __o1 __o2 __o3 __o4 __octet
+  IFS=. read -r __o1 __o2 __o3 __o4 <<<"$__ip"
+  for __octet in "$__o1" "$__o2" "$__o3" "$__o4"; do
+    case "$__octet" in
+      ""|*[!0-9]*) die "'$1' is not an IPv4 address" ;;
+    esac
+    [ "$((10#$__octet))" -le 255 ] || die "'$1' has an octet out of range: $__octet"
+  done
+  printf '%d\n' $(( (10#$__o1 << 24) + (10#$__o2 << 16) + (10#$__o3 << 8) + 10#$__o4 ))
+}
+
+# net_host <a.b.c.d/nn> <offset> — the address `offset` places past the NETWORK ADDRESS
+# of that CIDR. The same arithmetic ansible/scripts/allocate-ip.py performs for a
+# pool-less network, so the prompt can show the address the answer actually produces.
+net_host() {
+  local __net __o1 __o2 __o3 __o4 __a
+  __net="$(net_addr "$1")"
+  IFS=. read -r __o1 __o2 __o3 __o4 <<<"${__net%%/*}"
+  __a=$(( (__o1 << 24) + (__o2 << 16) + (__o3 << 8) + __o4 + $2 ))
+  printf '%d.%d.%d.%d\n' \
+    $(( (__a >> 24) & 255 )) $(( (__a >> 16) & 255 )) \
+    $(( (__a >> 8) & 255 )) $(( __a & 255 ))
+}
+
 # vmid_from_ip <a.b.c.d[/nn]> — the platform's VMID rule, in Bash.
 #
 # THE SAME ARITHMETIC as ansible/tasks/proxmox/ip-to-vmid-guest.yml, which is the authority:
@@ -265,6 +297,36 @@ ask_secret() {
     printf '\n'
   done
   printf -v "$__var" '%s' "$__reply"
+}
+
+# ask_dns_credential — collect the DNS provider's RECORD-WIRING credential.
+#
+# This is NOT the ACME DNS-01 credential. Caddy proves domain ownership with
+# reverse_proxy.dns_challenge (CLOUDFLARE_API_TOKEN above); the wiring step in every app
+# deploy writes the A record itself through the provider's own API, and reads that
+# credential from homelabinfra_infra.dns. The two were one value until 2026-08-15 and
+# separating them was deliberate — see ansible/tasks/load-user-vars.yml.
+#
+# Declaring `dns.provider` without it is not a partially configured lab, it is a lab that
+# fails on its FIRST deploy: tasks/wiring/opnsense.yml and tasks/wiring/pihole.yml assert
+# dns.api_key, and a configured provider that cannot act is a failure by contract, not a
+# no-op. So the credential is asked for at the same moment as the provider.
+#
+# Pi-hole and AdGuard authenticate with one value; OPNsense uses an API key/secret pair
+# as HTTP basic-auth username and password.
+ask_dns_credential() {
+  case "$LAB_DNS" in
+    opnsense)
+      ask_secret LAB_DNS_API_KEY    "OPNsense API key (record wiring — not the ACME credential)"
+      ask_secret LAB_DNS_API_SECRET "OPNsense API secret"
+      ;;
+    pihole)
+      ask_secret LAB_DNS_API_KEY "Pi-hole web/app password"
+      ;;
+    adguard)
+      ask_secret LAB_DNS_API_KEY "AdGuard Home API password"
+      ;;
+  esac
 }
 
 # ── Preflight ──────────────────────────────────────────────────────────────────
@@ -881,7 +943,67 @@ else
   ask LAB_NET_GATEWAY "Guest network gateway"                                 "$CT_GW"
   ask LAB_NET_DNS     "DNS server for guests"                                 "$CT_GW"
   ask LAB_TIMEZONE    "Timezone for guests"                                   "$NODE_TZ"
-  ask LAB_IP_OFFSET   "Start allocating guest IPs at .N"                      "10"
+  # ── Two bands, asked as ADDRESSES ────────────────────────────────────────────
+  # The platform already resolves which named network a guest belongs on from its SCOPE:
+  # `shared` for what catalog/applications.yml marks `scope: lab`, the estate's own
+  # network for everything else (ansible/tasks/network/resolve-network.yml). That
+  # resolution is advisory — it applies only where config/proxmox.yml declares a network
+  # of that name — so a lab that declares neither is flat and behaves as it always did.
+  #
+  # Declaring both bands NOW, inside one flat subnet, is what makes segmenting later a
+  # non-event: the addresses do not move. A guest allocated into the estate band today
+  # keeps its address when that band becomes a VLAN, because the only keys that change are
+  # the band's own cidr/gateway/vlan. Deferring the split means renumbering every guest.
+  #
+  # Asked as ADDRESSES, not as offsets. `ip_offset` is an index into the whole host range
+  # and only coincides with the last octet at a /24: at a /20 an offset of 10 is
+  # <net>.0.10, so a runner at 192.168.11.10/20 produced a first guest at 192.168.0.10 —
+  # correct, documented in config.example/proxmox.yml, and still a surprise. An address is
+  # unambiguous at any prefix length, and the offsets are derived from it below.
+  DEFAULT_ESTATE="$(printf '%s' "$LAB_DOMAIN" | cut -d. -f1 | tr 'A-Z' 'a-z' \
+    | sed 's/[^a-z0-9-]/-/g; s/^-*//; s/-*$//')"
+  [ -n "$DEFAULT_ESTATE" ] || DEFAULT_ESTATE=lab
+  ask LAB_ESTATE      "Estate name for $LAB_DOMAIN (names its apps' network, later its VLAN)" "$DEFAULT_ESTATE"
+  # The same rule config-doctor.sh and rundeck/render-job.py enforce on an estate name.
+  printf '%s' "$LAB_ESTATE" | grep -qE '^[a-z0-9][a-z0-9-]*$' \
+    || die "estate names become instance-name segments: lowercase letters, digits and hyphens only (got '$LAB_ESTATE')"
+  [ "$LAB_ESTATE" != "shared" ] || die "'shared' is the reserved name of the lab-wide band; name the estate after itself"
+
+  # A scripted bootstrap that answered the old offset question still gets what it asked
+  # for: it becomes the shared band's start address rather than being ignored silently.
+  if [ -z "${LAB_SHARED_START:-}" ] && [ -n "${LAB_IP_OFFSET:-}" ]; then
+    LAB_SHARED_START="$(net_host "$LAB_NET_CIDR" "$LAB_IP_OFFSET")"
+    info "LAB_IP_OFFSET=$LAB_IP_OFFSET reads as shared band start $LAB_SHARED_START"
+  fi
+  # The runner is itself a lab-wide service, so its own address is the honest default for
+  # the band it belongs to — the operator already chose it as CT_IP.
+  ask LAB_SHARED_START "First address for lab-wide services (Caddy, vault, PBS, Ntfy, metrics, cluster)" "${CT_IP%%/*}"
+  # Default gap of 32: the shared band is capped at the gap, and the baseline lab-scoped
+  # set is already about ten guests — the runner, Caddy, Vaultwarden, Ntfy, PBS, Uptime
+  # Kuma, the metrics stack and three cluster nodes.
+  ask LAB_ESTATE_START "First address for $LAB_ESTATE's own apps" \
+    "$(net_host "$LAB_NET_CIDR" "$(( $(addr_int "$LAB_SHARED_START") - $(addr_int "$(net_addr "$LAB_NET_CIDR")") + 32 ))")"
+
+  LAB_NET_BASE="$(addr_int "$(net_addr "$LAB_NET_CIDR")")"
+  LAB_NET_SIZE=$(( 1 << (32 - ${LAB_NET_CIDR##*/}) ))
+  LAB_SHARED_OFFSET=$(( $(addr_int "$LAB_SHARED_START") - LAB_NET_BASE ))
+  LAB_ESTATE_OFFSET=$(( $(addr_int "$LAB_ESTATE_START") - LAB_NET_BASE ))
+  for __band in "$LAB_SHARED_START:$LAB_SHARED_OFFSET" "$LAB_ESTATE_START:$LAB_ESTATE_OFFSET"; do
+    [ "${__band##*:}" -ge 0 ] && [ "${__band##*:}" -lt "$LAB_NET_SIZE" ] \
+      || die "${__band%%:*} is not inside $LAB_NET_CIDR"
+  done
+  # Ordered, because the shared band is capped at the gap to the estate band: without an
+  # order there is no gap to cap, and allocation would walk out of one band into the other
+  # the moment the first filled up.
+  [ "$LAB_ESTATE_OFFSET" -gt "$LAB_SHARED_OFFSET" ] \
+    || die "the estate band must start above the shared band ($LAB_ESTATE_START is not above $LAB_SHARED_START)"
+  LAB_SHARED_MAX=$(( LAB_ESTATE_OFFSET - LAB_SHARED_OFFSET ))
+  info "shared band: $LAB_SHARED_START .. $(net_host "$LAB_NET_CIDR" "$(( LAB_ESTATE_OFFSET - 1 ))") ($LAB_SHARED_MAX addresses)"
+  info "$LAB_ESTATE band: $LAB_ESTATE_START .. $(net_host "$LAB_NET_CIDR" "$(( LAB_NET_SIZE - 2 ))")"
+  info "both bands sit in $LAB_NET_CIDR today; giving one its own cidr/gateway/vlan later moves no guest"
+  # The cap is what keeps the bands apart, so a band too small to hold its own services
+  # fails later at allocation, not here. Say so now, while the answer is still cheap.
+  [ "$LAB_SHARED_MAX" -ge 12 ] || warn "the shared band holds only $LAB_SHARED_MAX addresses; the baseline lab-wide set is about ten guests (runner, Caddy, Vaultwarden, Ntfy, PBS, Uptime Kuma, metrics, three cluster nodes) — raise the estate band's start, or raise networks.shared.max_hosts later"
 
   info "provider choices — each may be 'none'"
   ask LAB_REVERSE_PROXY "Reverse proxy (caddy | nginx | none)"                "caddy"
@@ -895,6 +1017,7 @@ else
   ask LAB_DNS           "DNS provider (pihole | adguard | opnsense | none)"   "none"
   if [ "$LAB_DNS" != "none" ]; then
     ask LAB_DNS_HOST    "DNS provider address (it is usually not a guest we created)" "$CT_GW"
+    ask_dns_credential
   fi
   ask LAB_BACKUP_PATH   "PBS datastore path"                                  "/mnt/backup"
 
@@ -965,10 +1088,11 @@ $PVE_NODE_MAP
 #                          declares as its own 'network:' in infrastructure.yml
 #   neither declared    -> 'default', below
 #
-# So the separation is opt-in and arrives one band at a time: this file starts with one
-# flat 'default' and nothing behaves differently from a lab that never heard of estates.
-# Add 'shared', redeploy, and the TLS edge, the vault, PBS, Ntfy, the metrics stack and the
-# cluster move onto it. Add a network per estate and each estate's own apps follow.
+# Both bands are declared from the start, inside ONE flat subnet, at the two addresses you
+# gave. Nothing about the wire changes: same bridge, same VLAN, same gateway, one broadcast
+# domain. What changes is that a lab-wide service and an estate app are addressed out of
+# different bands from the first deploy, so segmenting later is an edit to two blocks below
+# rather than a renumbering of every guest that already exists.
 #
 # ONE NETWORK PER VLAN. The tag, the subnet and the gateway travel together, which is what
 # makes 'which network' and 'which VLAN' the same question. This platform does not create
@@ -983,32 +1107,56 @@ networks:
       - "$LAB_NET_DNS"
     bridge: "$CT_BRIDGE"
     vlan: $CT_VLAN            # 0 = untagged
-    ip_offset: $LAB_IP_OFFSET
+    # The fallback band, for a guest whose scope resolves to neither name below. Set to
+    # the shared band's start so that fallback is the conservative answer.
+    #
+    # ip_offset is an index into this network's whole host range, NOT a last octet. At a
+    # /24 the two read the same; at a /20 an offset of 10 is <net>.0.10. This one is
+    # $LAB_SHARED_START.
+    ip_offset: $LAB_SHARED_OFFSET
+
+  # ── The two bands ────────────────────────────────────────────────────────────
+  # Keys not repeated here are INHERITED from 'default' above (generate-ip.yml merges
+  # default under the selected network), so each band carries only what differs. Today
+  # that is one number each; after segmentation it is a cidr, a gateway and a vlan.
+
+  # Lab-wide services: what catalog/applications.yml marks 'scope: lab' — the TLS edge,
+  # the vault, PBS, Ntfy, the metrics stack, the cluster — plus any stack declaring
+  # 'shared: true'. The runner belongs here too; it drives every estate.
+  #
+  # max_hosts stops allocation at the estate band rather than walking into it. Raise or
+  # remove it when this band gets a subnet of its own.
+  shared:
+    ip_offset: $LAB_SHARED_OFFSET     # $LAB_SHARED_START
+    max_hosts: $LAB_SHARED_MAX
+
+  # This estate's own applications. Named after the estate, which is the convention
+  # resolve-network.yml expects; an estate whose VLAN is not called after it sets
+  # domains.$LAB_ESTATE.network in config/infrastructure.yml to point elsewhere.
+  $LAB_ESTATE:
+    ip_offset: $LAB_ESTATE_OFFSET     # $LAB_ESTATE_START
 
   # ── Segmenting later ─────────────────────────────────────────────────────────
-  # Uncomment when the VLANs actually exist. Keys not repeated are inherited from
-  # 'default' above, so each of these carries only what genuinely differs.
+  # When the VLANs exist on your switch and router, give each band its own three keys and
+  # nothing else moves — a guest already deployed keeps the address it was allocated:
   #
-  # The lab-scoped services every estate depends on. This is also where the runner
-  # belongs - it drives both estates - so move it with CT_VLAN on the next bootstrap.
-  # shared:
-  #   cidr: "10.10.13.0/24"
-  #   gateway: "10.10.13.1"
-  #   dns_servers: ["10.10.13.1"]
-  #   vlan: 13
+  #   shared:
+  #     cidr: "10.10.13.0/24"
+  #     gateway: "10.10.13.1"
+  #     dns_servers: ["10.10.13.1"]
+  #     vlan: 13
+  #     ip_offset: 10
+  #     # max_hosts: drop it — the band now owns its whole subnet
   #
-  # One per estate, named after the estate. An estate whose VLAN is not called after it
-  # sets domains.<estate>.network in config/infrastructure.yml to point here instead.
-  # personal:
-  #   cidr: "10.10.20.0/24"
-  #   gateway: "10.10.20.1"
-  #   dns_servers: ["10.10.20.1"]
-  #   vlan: 20
-  # foxglove:
-  #   cidr: "10.10.21.0/24"
-  #   gateway: "10.10.21.1"
-  #   dns_servers: ["10.10.21.1"]
-  #   vlan: 21
+  # A SECOND estate is two additions: a 'domains.<name>' entry in infrastructure.yml and
+  # a network named after it here.
+  #
+  #   foxglove:
+  #     cidr: "10.10.21.0/24"
+  #     gateway: "10.10.21.1"
+  #     dns_servers: ["10.10.21.1"]
+  #     vlan: 21
+  #     ip_offset: 10
 
 ansible:
   ssh_user: root
@@ -1025,6 +1173,23 @@ EOF
 # Written by rundeck/bootstrap-rundeck.sh on $(date -Is). Safe to edit by hand.
 
 domain: "$LAB_DOMAIN"
+
+# One NAMED estate, so its applications have a network to resolve to. An estate is a
+# separate domain scope: its own domain, its own SSO, its own applications; only what
+# catalog/applications.yml marks 'scope: lab' is shared across estates.
+#
+# Naming it changes nothing else while there is one. Instance names stay '<app>' — the
+# '<app>-<estate>' form starts at TWO estates — and resolve-estate.yml treats the default
+# estate exactly as it treats the plain 'domain:' scalar above. What the name buys today
+# is config/proxmox.yml's '$LAB_ESTATE' network: without it, an estate app resolves to
+# 'default' and both bands collapse into one.
+#
+# A second estate is added here with its own domain and 'default: true' moved or kept
+# deliberately, plus a network named after it in config/proxmox.yml.
+domains:
+  $LAB_ESTATE:
+    domain: "$LAB_DOMAIN"
+    default: true
 
 reverse_proxy:
   provider: $LAB_REVERSE_PROXY
@@ -1096,6 +1261,16 @@ if [ "$DEPLOY_VAULTWARDEN" = "1" ] \
    && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
   ask_secret CLOUDFLARE_API_TOKEN \
     "Cloudflare API token (Zone Read + DNS Edit for the lab zone)"
+fi
+
+# The same for the DNS record-wiring credential: the authored provider choice survives a
+# rerun, the Seed file may not, and the FIRST app deploy asserts the credential.
+LAB_DNS="${LAB_DNS:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("dns") or {}).get("provider", "none"))' "$CONFIG_INFRA")}"
+if [ "$LAB_DNS" != "none" ] \
+   && ! ct_file_exists "$LAB_ETC/state/vault-mode" \
+   && ! ct_file_exists "$LAB_DNS_ENV" \
+   && [ -z "${LAB_DNS_API_KEY:-}" ]; then
+  ask_dns_credential
 fi
 
 # ── Describe the runner as an instance ─────────────────────────────────────────
@@ -1503,6 +1678,27 @@ else
     warn "the Proxmox token exists but its secret is not on the runner"
     warn "re-run with ROTATE_PROXMOX_TOKEN=1 to mint one this script can store"
   fi
+fi
+
+# The DNS provider's record-wiring credential. Written only pre-cutover and only when the
+# operator declared a provider; `dns.provider: none` reaches none of this. lab-run.sh
+# exports it while the vault-mode marker is absent, load-user-vars.yml overlays it onto
+# homelabinfra_infra.dns, and vaultwarden-cutover.yml imports it into homelab-infra/dns —
+# after which this file is dead weight and cutover removes it with the rest of secrets.d.
+if [ -n "${LAB_DNS_API_KEY:-}" ]; then
+  STAGE6B="$(newtmp)"
+  {
+    echo "# Written by rundeck/bootstrap-rundeck.sh. Sourced by ansible/scripts/lab-run.sh."
+    echo "# The DNS provider's own API credential, used to WRITE RECORDS. It is not the"
+    echo "# ACME DNS-01 challenge credential — that one is reverse_proxy.dns_challenge."
+    echo "LAB_DNS_API_KEY=$LAB_DNS_API_KEY"
+    # `|| true` because this is the last command in the group and the script runs under
+    # `set -e`: a provider with no secret half would otherwise abort the bootstrap here.
+    [ -n "${LAB_DNS_API_SECRET:-}" ] && echo "LAB_DNS_API_SECRET=$LAB_DNS_API_SECRET" || true
+  } > "$STAGE6B/dns.env"
+  push_file "$STAGE6B/dns.env" "$LAB_DNS_ENV" 0600
+  in_ct chown rundeck:rundeck "$LAB_DNS_ENV"
+  info "wrote $LAB_DNS_ENV (0600 rundeck:rundeck)"
 fi
 
 # ── Record the runner in the service registry ──────────────────────────────────

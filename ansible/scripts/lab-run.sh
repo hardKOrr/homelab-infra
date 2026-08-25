@@ -73,7 +73,7 @@ _lab_load_secrets() {
   [ -r "$1" ] || return 0
   while IFS='=' read -r _key _value; do
     case "$_key" in
-      PROXMOX_API_TOKEN|PROXMOX_API_TOKEN_ID|PROXMOX_API_USER|VAULTWARDEN_ADMIN_TOKEN)
+      PROXMOX_API_TOKEN|PROXMOX_API_TOKEN_ID|PROXMOX_API_USER|VAULTWARDEN_ADMIN_TOKEN|LAB_DNS_API_KEY|LAB_DNS_API_SECRET)
         [ -n "${!_key:-}" ] || export "$_key=$_value" ;;
     esac
   done < <(grep -E '^[A-Z_]+=' "$1" || true)

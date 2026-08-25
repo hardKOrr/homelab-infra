@@ -157,6 +157,40 @@
   when: ((_config_infrastructure | default({})).dns | default({}, true)) | length > 0
   no_log: true
 
+# The Seed-mode source of the DNS provider's RECORD-WIRING credential, exactly as
+# CLOUDFLARE_API_TOKEN is the Seed-mode source of the ACME DNS-01 credential above.
+#
+# Before cutover there is no vault to read, and `dns.provider` is authored in
+# config/infrastructure.yml while its api_key/api_secret deliberately are NOT — the same
+# shape-without-secret split proxmox.yml makes for the API token. Without this overlay a
+# lab that declared a DNS provider failed on its first app deploy, because
+# tasks/wiring/opnsense.yml asserts a credential nothing pre-cutover could supply; the
+# only answer was hand-writing it into config/infrastructure.yml, which is what the
+# cutover exists to end. rundeck/bootstrap-rundeck.sh asks for it beside the provider and
+# writes /etc/homelab-infra/secrets.d/dns.env; lab-run.sh exports it only while the
+# vault-mode marker is absent; vaultwarden-cutover.yml then reads it off
+# homelabinfra_infra.dns and imports it into the canonical homelab-infra/dns item.
+#
+# After cutover the environment is empty and the vault copy (merged into
+# homelabinfra_infra at the top of this file) is the only source, so this task is inert.
+- name: Overlay the Seed-mode DNS credential onto the registry
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine({'dns': (homelabinfra_infra.dns | default({}, true)) | combine(_env_dns)},
+                   recursive=True) }}
+  vars:
+    _env_dns_key: "{{ lookup('env', 'LAB_DNS_API_KEY') | default('', true) }}"
+    _env_dns_secret: "{{ lookup('env', 'LAB_DNS_API_SECRET') | default('', true) }}"
+    _env_dns: >-
+      {{ {}
+         | combine({'api_key': _env_dns_key} if _env_dns_key | length > 0 else {})
+         | combine({'api_secret': _env_dns_secret} if _env_dns_secret | length > 0 else {}) }}
+  when: >-
+    (lookup('env', 'LAB_DNS_API_KEY') | default('', true) | length > 0)
+    or (lookup('env', 'LAB_DNS_API_SECRET') | default('', true) | length > 0)
+  no_log: true
+
 - name: Overlay canonical DNS secrets into authored provider shape
   ansible.builtin.set_fact:
     homelabinfra_config: >-

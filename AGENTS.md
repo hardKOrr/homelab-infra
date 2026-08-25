@@ -660,8 +660,11 @@ _caddy                  _.stack+media-foxglove           _.cluster+k3s
                         _sonarr-foxglove
 ```
 
-`_.shared` means deliberate cross-estate **hosting**, not lab-wide importance. Caddy and the
-k3s cluster declare it; PBS, Ntfy and the metrics stack are `scope: lab` and do not.
+`_.shared` means deliberate cross-estate **hosting**, not lab-wide importance. Caddy, the
+k3s cluster and the `monitoring` stack declare it; PBS and Ntfy are `scope: lab` and do not
+— they are native guests with no stack host to declare anything about. Monitoring earns it
+because both of its tenants are already `scope: lab`: one Uptime Kuma and one metrics stack
+watch the whole lab, so hosting them out of a single estate's band was a contradiction.
 
 **Ansible sanitises group names**, collapsing `+`, `-` and `.` to `_`, which would make
 `_+lab`, `_-lab` and `_.lab` one group. So `ansible/inventory/proxmox.yml` translates tags

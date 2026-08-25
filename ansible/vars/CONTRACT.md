@@ -184,16 +184,29 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.validate_certs` | optional | default `false` — a stock Proxmox node is self-signed, so guest creation fails with `CERTIFICATE_VERIFY_FAILED` when this verifies. `inventory/proxmox.yml` assumes the same. Set `true` once the node serves a trusted certificate |
 | `proxmox.nodes` | optional | `{node_name: address}` for every cluster node, written by `bootstrap-rundeck.sh` from `pvesh get /cluster/status`. Consumed by `tasks/proxmox/register-nodes.yml`, which makes `delegate_to: <node name>` resolvable — node names have no `ansible_host` from the dynamic inventory. Falls back to `proxmox.api_host` for the targeted node when absent |
 | `proxmox.storage` | required *in practice* | lab-wide storage for every guest; written by `bootstrap-rundeck.sh` from the first active storage advertising content type `rootdir`. Falls back to `local`, which a stock node **cannot** hold a container on. No `vars/app-defaults/*` pins storage — it is a node fact, not an app fact. Per-app override: `proxmox.disk_volume.storage` (LXC), `proxmox.vm.storage` (VM) |
-| `networks.<name>.cidr` | required | per named subnet |
-| `networks.<name>.gateway` | required | per named subnet |
-| `networks.<name>.dns_servers` | required | per named subnet |
-| `networks.<name>.bridge` | required | per named subnet |
+| `networks.<name>.cidr` | required | per named subnet, **after inheritance** — see below |
+| `networks.<name>.gateway` | required | per named subnet, after inheritance |
+| `networks.<name>.dns_servers` | required | per named subnet, after inheritance |
+| `networks.<name>.bridge` | required | per named subnet, after inheritance |
 | `networks.<name>.vlan` | optional | Proxmox VLAN tag; `0` or absent means untagged. One network per VLAN — the tag, subnet and gateway travel together, so an app changes VLAN by changing its `proxmox.network` name |
 | `networks.<name>.reserved` | optional | list of spans never allocated: an address, `"a-b"`, or a CIDR. Independent of Proxmox — this is how a NAS, a switch or a router's DHCP range stays unallocatable |
 | `networks.<name>.pools` | optional | `{<pool>: {range: "a-b"}}` or `{<pool>: {cidr: "..."}}`; each pool must sit inside `cidr`. A guest allocated into a pool never lands outside it, and an exhausted pool fails the run rather than spilling into the wider subnet |
 | `networks.<name>.default_pool` | optional | pool used by a guest that names none and inherits none |
 | `networks.<name>.ip_offset` | optional | fallback walk only (no pool applies). An index into the host range, not a last octet: at a /20, `10` is `x.0.10` and the range runs to `x.15.254` |
 | `networks.<name>.max_hosts` | optional | fallback walk only: how far past `ip_offset` allocation may walk |
+
+**Every named network inherits `networks.default`.** `tasks/network/generate-ip.yml` builds
+the effective config as `networks.default | combine(networks.<selected>, recursive=True)`,
+and `config-doctor.sh` requires the four keys above on that merged result. A band therefore
+declares only what differs from `default` — legitimately one key.
+
+That is what lets the estate split start before the VLANs do. `bootstrap-rundeck.sh` asks
+for two ADDRESSES — where lab-wide services start and where the estate's apps start — and
+writes `shared` and `<estate>` as offsets into one flat subnet, with `max_hosts` on the
+lower band so allocation cannot walk into the upper one. Both sets are addressed apart from
+the first deploy while sharing one bridge and one broadcast domain; segmenting later adds
+`cidr`/`gateway`/`vlan` to a band that already exists, and **no guest already deployed
+changes address**. Deferring the split instead means renumbering the whole lab.
 
 Pool selection, highest first: `proxmox.pool` in the instance file (must exist, or the
 run fails); the pool named after the app's `stack`, used only if the network defines it;
@@ -376,6 +389,20 @@ options or config-file values:
 | `BW_PASSWORD` | automation-account master password | `bw unlock --passwordenv` |
 | `VAULTWARDEN_ADMIN_TOKEN` | server administration, enrollment and recovery | admin API only |
 | `RUNDECK_API_TOKEN` | job import/cutover control-plane calls | selected maintenance jobs only |
+
+Two more environment variables are Seed-mode inputs rather than control-plane material.
+`CLOUDFLARE_API_TOKEN` supplies the ACME DNS-01 challenge credential
+(`reverse_proxy.dns_challenge`), and `LAB_DNS_API_KEY` / `LAB_DNS_API_SECRET` supply the
+DNS provider's own RECORD-WIRING credential, overlaid onto `homelabinfra_infra.dns` by
+`load-user-vars.yml`. They are different credentials for different jobs — one proves
+domain ownership to a CA, the other writes an A record — and conflating them points
+certificate issuance at a module that is not the ACME provider.
+
+`rundeck/bootstrap-rundeck.sh` asks for the record-wiring credential in the same breath as
+`dns.provider` and writes `/etc/homelab-infra/secrets.d/dns.env`; `vaultwarden-cutover.yml`
+imports it into `homelab-infra/dns`, after which the vault is the only source. Declaring
+`dns.provider` without the credential is not a partial configuration — the wiring asserts
+it, so the next app deploy fails.
 
 In Seed mode, the older Proxmox/admin environment variables remain temporary inputs. Once
 `/etc/homelab-infra/state/vault-mode` exists, `lab-run.sh` will not source seed files even

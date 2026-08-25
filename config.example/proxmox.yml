@@ -133,9 +133,24 @@ networks:
     ip_offset: 10
     max_hosts: 200      # optional: cap on how far past ip_offset allocation walks
 
-  # ── Segmenting: one network per VLAN ────────────────────────────────────────
-  # Uncomment when the VLANs exist on your switch and router. Keys you do not repeat
-  # are inherited from `default` above.
+  # ── Bands now, VLANs later ──────────────────────────────────────────────────
+  # Keys you do not repeat are inherited from `default` above — really inherited:
+  # generate-ip.yml merges `default` under the selected network, and config-doctor
+  # judges the merged result, so a band may legitimately carry one key.
+  #
+  # That is what lets the split start before the VLANs do. Declare `shared` and your
+  # estate NOW with nothing but an `ip_offset` each, and the two sets are addressed out
+  # of different bands of one flat subnet from the first deploy — same bridge, same
+  # broadcast domain, no router change. Segmenting later is then adding cidr/gateway/vlan
+  # to a band that already exists, and no guest already deployed changes address.
+  # bootstrap-rundeck.sh writes exactly this shape from two addresses it asks for.
+  #
+  #   shared:   {ip_offset: 2826, max_hosts: 32}   # 192.168.11.10 in a 192.168.0.0/20
+  #   personal: {ip_offset: 2858}                  # 192.168.11.42
+  #
+  # `max_hosts` on the lower band is what stops allocation walking into the upper one.
+  #
+  # Uncomment the fuller forms below when the VLANs exist on your switch and router.
 
   # The lab-scoped services every estate depends on, and the runner itself. Named
   # exactly `shared` — that name is what `scope: lab` and `shared: true` resolve to.

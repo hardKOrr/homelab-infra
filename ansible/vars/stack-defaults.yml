@@ -34,7 +34,8 @@
 #
 # which makes one host serve every estate and stamps `_.shared` on it. It is a declaration
 # and never an inference: nothing here looks at where apps happened to land and concludes
-# afterwards that a host is shared. No stack below declares it.
+# afterwards that a host is shared. `monitoring` is the one stack that declares it, and the
+# reason is at that entry.
 #
 # That declaration also decides the stack host's NETWORK, and therefore its VLAN: a shared
 # stack resolves to the network named `shared`, an estate-scoped one to its estate's. A
@@ -71,6 +72,21 @@ stack_defaults:
   # Disk is the number that matters: Prometheus' TSDB grows with retention and with every
   # node_exporter tasks/guest-bootstrap.yml adds to the lab.
   monitoring:
+    # THE ONE SHARED STACK. Both of its tenants are already `scope: lab` in
+    # catalog/applications.yml — one Uptime Kuma and one metrics stack watch the whole lab
+    # — so an estate-scoped HOST for them was a contradiction: lab-wide applications
+    # addressed out of one estate's band, watching the other estate across a boundary they
+    # are not on. Monitoring is host-centric, like PBS, and the thing being watched is the
+    # lab, not an estate.
+    #
+    # Two monitors for clients of the same host is the failure this avoids: nothing in the
+    # platform would ever create the second one, because the applications are lab-scoped,
+    # so the only question was which band the single host lands in.
+    #
+    # This supersedes the earlier decision that recorded the metrics stack as `scope: lab`
+    # WITHOUT `_.shared` (AGENTS.md, 2026-08-24). Ntfy and PBS keep that shape and are
+    # unaffected: they are native guests with no stack host to declare anything about.
+    shared: true
     # Boot tier 70 — last on purpose. Uptime Kuma must not page about services that are
     # still on their way up, and Prometheus gaps during an ascent are expected.
     boot_order: 70

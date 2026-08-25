@@ -127,7 +127,16 @@ notifications:
 dns:
   provider: opnsense
   host: "192.168.1.1"       # OPNsense/external DNS host IP
-  # api_key is read from homelab-infra/dns after cutover
+  # api_key (and api_secret, for OPNsense) are read from homelab-infra/dns after
+  # cutover, and before it from LAB_DNS_API_KEY / LAB_DNS_API_SECRET, which
+  # rundeck/bootstrap-rundeck.sh asks for beside this provider and writes to
+  # /etc/homelab-infra/secrets.d/dns.env. Declaring a provider WITHOUT the
+  # credential fails the next app deploy: a configured provider that cannot act is
+  # a failure by contract, not a no-op.
+  #
+  # This credential writes DNS RECORDS. It is not the ACME DNS-01 challenge
+  # credential — that one is reverse_proxy.dns_challenge, and conflating them
+  # points certificate issuance at the wrong module.
   # instance: pihole        # for pihole/adguard: Proxmox hostname
 
 # ── Media storage ──────────────────────────────────────────────────────────────

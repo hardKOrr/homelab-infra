@@ -150,15 +150,30 @@ else:
         report("ERROR", "proxmox.yml", "networks",
                "at least one named network is required")
     else:
+        # A named band INHERITS from `default`, exactly as tasks/network/generate-ip.yml
+        # merges `networks.default` under the selected network before allocating. That is
+        # the whole point of the model: two bands in one flat subnet differ by one number
+        # each, and segmenting later means giving a band its own cidr/gateway/vlan. Judging
+        # each network in isolation demanded four keys per band, contradicted the runtime
+        # AND config.example/proxmox.yml's own "keys you do not repeat are inherited"
+        # comment, and rejected the file bootstrap-rundeck.sh writes. So the four keys are
+        # required on the EFFECTIVE config, which is what a guest is actually built from.
+        default_net = networks.get("default")
+        if not isinstance(default_net, dict):
+            default_net = {}
         for name, net in networks.items():
             base = "networks.%s" % name
             if not isinstance(net, dict):
                 report("ERROR", "proxmox.yml", base, "must be a mapping")
                 continue
+            effective = dict(default_net)
+            effective.update(net)
             for key in ("cidr", "gateway", "dns_servers", "bridge"):
-                if net.get(key) in (None, "", []):
-                    report("ERROR", "proxmox.yml", "%s.%s" % (base, key), "required")
-            if net.get("cidr") == "dhcp":
+                if effective.get(key) in (None, "", []):
+                    inherited = "" if name == "default" else " (and networks.default declares none)"
+                    report("ERROR", "proxmox.yml", "%s.%s" % (base, key),
+                           "required" + inherited)
+            if effective.get("cidr") == "dhcp":
                 report("WARN", "proxmox.yml", "%s.cidr" % base,
                        "dhcp -- every app on this network must set an explicit vmid")
 
