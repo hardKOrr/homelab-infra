@@ -32,8 +32,11 @@ the map; contract detail lives in [specs/](specs/) and [`AGENTS.md`](../AGENTS.m
    `config/apps/<instance>.yml` merge into `app_config`. Docker apps call
    `stack/find-or-create-host` (locate the `_.stack+<stack>[-<estate>]` host or create one,
    so estates never share an ordinary stack host); native apps call
-   `generate-ip` → `ip-to-vmid` → `lxc-create`. Target host lands in the `app_deploy` group via
-   `add_host`, carrying `app_config` and `homelabinfra_infra` as hostvars.
+   `network/resolve-network` → `generate-ip` → `ip-to-vmid` → `lxc-create`. Target host lands
+   in the `app_deploy` group via `add_host`, carrying `app_config` and `homelabinfra_infra`
+   as hostvars. `resolve-network` turns the app's SCOPE into the network it is addressed on
+   — `shared` for `scope: lab` and for a `shared: true` stack, the estate's network
+   otherwise — and `ip-to-vmid` derives the guest's VMID from the address it was given.
 3. **Play 2 — Deploy**: on the target guest — `guest-bootstrap` (once, guarded by the
    `homelab_bootstrapped` local fact), then the app role.
 4. **Play 3 — Wire**: on localhost — reverse proxy route, Authentik provider, Uptime Kuma

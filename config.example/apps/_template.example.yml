@@ -12,7 +12,10 @@
 # proxmox:
 #   cores: 2
 #   memory: 2048    # MB
-#   network: default  # which `networks:` entry in config/proxmox.yml — one per VLAN
+#   network: default  # OVERRIDE ONLY. Which `networks:` entry in config/proxmox.yml —
+#                     # one per VLAN. Normally leave it out: the network follows from
+#                     # scope, so a `scope: lab` app goes on `shared` and everything
+#                     # else on its estate's network, if you declared them.
 #   pool: apps        # which pool inside that network to allocate from. Must be
 #                     # declared there; a Docker app otherwise inherits the pool
 #                     # named after its stack, if one exists

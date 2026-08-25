@@ -201,6 +201,30 @@ run fails); the pool named after the app's `stack`, used only if the network def
 instance file pins an exact address — honoured as written or refused with the conflict
 named, never quietly replaced. `ansible/scripts/allocate-ip.py` decides; every refusal
 carries its reason.
+
+**Network selection is by SCOPE, not by a name repeated in every instance file.**
+`ansible/tasks/network/resolve-network.yml` is the one seam, and it answers in this order:
+
+1. `proxmox.network` in the instance file, or `stacks.<name>.network` for a stack host —
+   an explicit choice, which must name a declared network or the run fails.
+2. `shared`, when the application is `scope: lab` in `catalog/applications.yml` or its
+   stack declares `shared: true`.
+3. The app's estate: `domains.<estate>.network` when that estate declares one, otherwise a
+   network named after the estate itself.
+4. `default`.
+
+Steps 2 and 3 are ADVISORY — used only when `config/proxmox.yml` actually declares a
+network of that name, the same asymmetry `pool_hint` uses. A lab with one flat `default`
+network therefore resolves exactly as it did before this seam existed, and a lab segments
+one band at a time by declaring `networks.shared`, then `networks.<estate>`, and
+redeploying. No `vars/app-defaults/*.yml` pins `network:` — a name in git-managed defaults
+would override this resolution in every lab at once.
+
+The estate boundary is a network boundary because one network is one VLAN: the tag, the
+subnet and the gateway travel together. What this platform does NOT do is create that VLAN,
+its bridge, its routes, or the firewall rules that let `shared` reach each estate. Those are
+the operator's, exactly like the gateway and the DHCP range. Declare here only what already
+exists on the wire.
 | `ansible.ssh_user` | required | |
 | `ansible.ssh_public_key` | required | |
 
@@ -228,7 +252,9 @@ carries its reason.
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
 | `maintenance.schedule` | optional | when the lab may be DISRUPTED — `always`, `never`, or a window `{days, start, duration}`. Defaults to nightly 04:00 for 120 minutes. Update cadence is unaffected; only reboots and container restarts wait for it. `never` is notify-only |
+| `domains.<estate>.network` | optional | the network — and therefore the VLAN — this estate's guests are addressed on, keyed into `config/proxmox.yml` `networks:`. Absent, the estate's own name is tried and then `default`; see the network-selection order above |
 | `domains.<estate>.maintenance.schedule` | optional | that estate's own window. Estates are independent clocks — a schedule is never merged or inherited ACROSS estates |
+| `stacks.<name>.network` | optional | the network this stack's host is addressed on. Without it a stack declaring `shared: true` resolves to `shared`, and an estate-scoped stack to its estate's network |
 | `stacks.<name>.maintenance.schedule` | optional | the window for everything on that stack host |
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |

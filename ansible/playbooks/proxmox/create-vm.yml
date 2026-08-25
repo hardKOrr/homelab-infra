@@ -14,7 +14,7 @@
     - name: Generate IP Address for VM
       ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
       vars:
-        network_name: "{{ homelabinfra_config.proxmox.vm.network | default('default') }}"
+        network_name: "{{ homelabinfra_config.proxmox.vm.network | default('', true) }}"
         pool_name: "{{ homelabinfra_config.proxmox.vm.pool | default('') }}"
         pool_hint: "{{ homelabinfra_config.proxmox.vm.stack_tag | default('') }}"
         requested_ip_address: "{{ homelabinfra_config.proxmox.vm.ip_address | default('') }}"

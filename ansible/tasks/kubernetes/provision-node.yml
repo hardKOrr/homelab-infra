@@ -61,6 +61,15 @@
 #
 # Applications assigned to the cluster add their own `_<instance>` tag to every node, from
 # the deploy's Wire play. Nothing here writes those.
+# The cluster is lab-scoped and its nodes are stamped `_.shared`, so it is addressed on
+# the shared network when the lab declares one. A `network:` in the cluster's own config
+# still wins, and a lab with only `networks.default` resolves to default exactly as before.
+- name: k3s node | Resolve the network the cluster is addressed on
+  ansible.builtin.include_tasks: ../network/resolve-network.yml
+  vars:
+    resolve_network_shared: true
+    resolve_network_requested: "{{ k8s_cluster_config.proxmox.network | default('', true) }}"
+
 - name: k3s node | Point the Proxmox config at this node
   ansible.builtin.set_fact:
     homelabinfra_config: >-
@@ -68,7 +77,7 @@
            'node': k8s_node.proxmox_node,
            'type': 'vm',
            'storage': k8s_cluster_config.proxmox.storage,
-           'network': k8s_cluster_config.proxmox.network | default('default'),
+           'network': network_selected,
            'vm': (k8s_cluster_config.proxmox.vm | default({})) | combine({
              'name': k8s_node.name,
              'cores': k8s_node.cores | int,
@@ -88,7 +97,7 @@
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | default({}) | combine({'network':
-           (homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')]
+           (homelabinfra_config.networks[network_selected]
             | default({}))
            | combine({'ip_address': k8s_node.ip_address}, recursive=True)
          }, recursive=True) }}
@@ -116,7 +125,7 @@
     cloud_template_image_url: "{{ k8s_cluster_config.proxmox.cloud_template.image_url }}"
     cloud_template_storage: "{{ k8s_cluster_config.proxmox.storage }}"
     cloud_template_bridge: >-
-      {{ homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')].bridge
+      {{ homelabinfra_config.networks[network_selected].bridge
          | default('vmbr0') }}
 
 # Read BEFORE the clone/update, so the comparison afterwards can tell an actual change

@@ -64,7 +64,29 @@ proxmox:
   # api_token_secret: ""   # still supported, but prefer the env var above
 
 # Network definitions. Add as many as you need.
-# Apps reference a network by name (e.g. network: default).
+#
+# WHICH NETWORK A GUEST LANDS ON FOLLOWS FROM ITS SCOPE. You do not repeat a name in every
+# instance file. ansible/tasks/network/resolve-network.yml answers, in order:
+#
+#   1. `network:` in config/apps/<instance>.yml, or `network:` on the stack — explicit,
+#      and it must name one of the networks below or the run fails
+#   2. `shared`, for an application marked `scope: lab` in catalog/applications.yml (the
+#      TLS edge, the vault, PBS, Ntfy, the metrics stack, the cluster) and for any stack
+#      declaring `shared: true`
+#   3. the app's estate — `domains.<estate>.network` in infrastructure.yml if declared,
+#      otherwise a network named after the estate itself
+#   4. `default`, below
+#
+# Steps 2 and 3 apply ONLY if you have declared a network of that name. A lab with one flat
+# `default` behaves exactly as it always did, and you segment one band at a time: declare
+# `shared`, redeploy, and the lab-wide services move onto it; declare a network per estate
+# and each estate's own apps follow. See the commented examples at the end of this block.
+#
+# ONE NETWORK PER VLAN, and this platform does not create the VLAN. The tag, the subnet and
+# the gateway travel together, so `which network` and `which VLAN` are one question — but
+# the VLAN itself, its bridge, its routes, and the firewall rules that let `shared` reach
+# each estate are yours, exactly like the gateway and your router's DHCP range. Declare
+# here only what already exists on the wire.
 #
 # Addressing is static. Every guest this platform creates is given an address it
 # chose, so it can wire, route and monitor that guest afterwards. DHCP happens only
@@ -111,15 +133,39 @@ networks:
     ip_offset: 10
     max_hosts: 200      # optional: cap on how far past ip_offset allocation walks
 
-  # Example VLAN network. One network per VLAN: the tag, the subnet and the
-  # gateway travel together, and an app moves between VLANs by changing the single
-  # `network:` name in its instance file.
-  # iot:
+  # ── Segmenting: one network per VLAN ────────────────────────────────────────
+  # Uncomment when the VLANs exist on your switch and router. Keys you do not repeat
+  # are inherited from `default` above.
+
+  # The lab-scoped services every estate depends on, and the runner itself. Named
+  # exactly `shared` — that name is what `scope: lab` and `shared: true` resolve to.
+  # shared:
+  #   cidr: "10.10.13.0/24"
+  #   gateway: "10.10.13.1"
+  #   dns_servers: ["10.10.13.1"]
+  #   vlan: 13
+
+  # One per estate, named after the estate in infrastructure.yml's `domains:` map. An
+  # estate whose VLAN is not called after it sets `domains.<estate>.network` to point
+  # at whatever you named it here instead.
+  # personal:
   #   cidr: "10.10.20.0/24"
   #   gateway: "10.10.20.1"
   #   dns_servers: ["10.10.20.1"]
-  #   bridge: "vmbr0"
   #   vlan: 20
+  # foxglove:
+  #   cidr: "10.10.21.0/24"
+  #   gateway: "10.10.21.1"
+  #   dns_servers: ["10.10.21.1"]
+  #   vlan: 21
+
+  # An ordinary extra network, reached by naming it in an instance file. Nothing
+  # resolves to it by scope.
+  # iot:
+  #   cidr: "10.10.30.0/24"
+  #   gateway: "10.10.30.1"
+  #   dns_servers: ["10.10.30.1"]
+  #   vlan: 30
   #   ip_offset: 10
 
 ansible:

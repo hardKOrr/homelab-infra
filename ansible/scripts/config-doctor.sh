@@ -131,6 +131,10 @@ def enum(data, where, path, allowed, required=True):
 # ── config/proxmox.yml ────────────────────────────────────────────────────────
 PROXMOX_FILE = os.path.join(CONFIG_DIR, "proxmox.yml")
 proxmox, found = load(PROXMOX_FILE)
+# Declared network names, read below and used again by the estate checks. Empty means
+# "nothing to check against", never "check against nothing" -- a missing proxmox.yml is
+# already its own error and must not produce a second, misleading one per estate.
+network_names = set()
 if not found:
     report("ERROR", "proxmox.yml", "-",
            "does not exist at %s -- bootstrap-rundeck.sh writes it; "
@@ -141,6 +145,7 @@ else:
     need(proxmox, "proxmox.yml", "proxmox.api_token_secret", env_var="PROXMOX_API_TOKEN")
 
     networks = proxmox.get("networks")
+    network_names = set(networks) if isinstance(networks, dict) else set()
     if not isinstance(networks, dict) or not networks:
         report("ERROR", "proxmox.yml", "networks",
                "at least one named network is required")
@@ -196,6 +201,15 @@ else:
                            "letters, digits and hyphens only (got %r)" % name)
                 if not isinstance(estate, dict) or not estate.get("domain"):
                     report("ERROR", "infrastructure.yml", "domains.%s.domain" % name, "required")
+                # An estate's network is the VLAN its guests land on. A typo here does not
+                # fail loudly at deploy time -- it resolves to nothing, falls through to
+                # `default`, and puts the estate's guests on the shared broadcast domain
+                # the estate exists to leave. So it is checked where it is written.
+                estate_network = estate.get("network") if isinstance(estate, dict) else None
+                if estate_network and network_names and estate_network not in network_names:
+                    report("ERROR", "infrastructure.yml", "domains.%s.network" % name,
+                           "%r is not a network declared in proxmox.yml (declared: %s)"
+                           % (estate_network, ", ".join(sorted(network_names)) or "none"))
                 # Per-estate DNS selection: the non-secret half of a provider the
                 # estate's records are written to. Same enum and same address rule as
                 # the lab-wide dns block below, because it lands in the same place.

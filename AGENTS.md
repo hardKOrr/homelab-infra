@@ -68,7 +68,9 @@ ansible/
     notify.yml                     # the one notification seam; no-op when the provider is none
     report-degradation.yml         # record a failure without aborting the run
     assert-no-degradations.yml     # last task of a play: fail if anything recorded was fatal
-    network/generate-ip.yml
+    network/
+      generate-ip.yml              # choose one address on the resolved network
+      resolve-network.yml          # which network — and so which VLAN — a guest's SCOPE puts it on
     config/
       run-doctor.yml               # run scripts/config-doctor.sh and fail the play on an error
       write-config-file.yml        # the only path that writes into config/; backs up and diffs
@@ -279,6 +281,32 @@ estates, `media` is `stack-media-personal` for one estate and `stack-media-foxgl
 other, so an estate-scoped app can never silently reuse another estate's host. Crossing that
 boundary requires `shared: true` on the stack, which is also what stamps `_.shared`. Full
 contract in `ansible/vars/CONTRACT.md`.
+
+## Networks and VLANs
+
+**The estate boundary is a network boundary.** Which named network a guest is addressed on
+follows from its SCOPE, resolved once in `ansible/tasks/network/resolve-network.yml`: an
+explicit `network:` wins; otherwise `scope: lab` in `catalog/applications.yml` and a stack
+declaring `shared: true` resolve to `shared`, and everything else to its estate's network
+(`domains.<estate>.network`, else a network named after the estate). Nothing falls back to
+`default` until none of those is declared. No `vars/app-defaults/*.yml` pins `network:` —
+that would override the resolution in every lab at once.
+
+The scope steps are **advisory**: they apply only where `config/proxmox.yml` declares a
+network of that name, the same asymmetry `pool_hint` uses. A flat lab is byte-identical to
+one that never heard of estates, and a lab segments one band at a time — declare
+`networks.shared` and redeploy, then a network per estate.
+
+**One network is one VLAN**, because the tag, the subnet and the gateway travel together.
+This platform does not create the VLAN, its bridge, its routes, or the firewall rules that
+let `shared` reach each estate; those belong to the operator's router, exactly like the
+gateway and the DHCP range. Declare only what already exists on the wire.
+
+**Every guest's VMID is derived from its address** — `168<oct3><oct4>` for a 192.168.x.y
+lab, spelled once in `ansible/tasks/proxmox/ip-to-vmid-guest.yml`. The Rundeck runner is
+built before Ansible exists, so `rundeck/bootstrap-rundeck.sh` implements the same
+arithmetic in Bash and derives the runner's id from `CT_IP` rather than asking for it;
+`gate/test-vmid-from-ip.sh` fails if the two implementations disagree.
 
 ## Wiring Step
 
@@ -693,7 +721,9 @@ before retrying. Do not start a second lint gate while the first is still runnin
 `lint.sh` runs ansible-lint (profile `min`), the Jinja parser check, and `check-links.py`, which
 validates repository-local Markdown links. `test.sh` runs `--syntax-check` over its
 selected playbooks and focused regressions for Vaultwarden handling, IP allocation, registry
-removal, maintenance schedules, the Rundeck job tree, and the Proxmox tag contract. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to `localhost,` so the
+removal, maintenance schedules, the Rundeck job tree, the Proxmox tag contract, the
+scope-to-network decision, and the IP-to-VMID rule the bootstrap script and the Ansible
+seam must both implement. Neither contacts Proxmox — both override `ANSIBLE_INVENTORY` to `localhost,` so the
 dynamic inventory plugin never asks for credentials. See `gate/README.md` for exact scope rules.
 
 **Run both under WSL.** `test.sh` invokes the interpreter at

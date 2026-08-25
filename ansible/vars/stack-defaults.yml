@@ -35,6 +35,13 @@
 # which makes one host serve every estate and stamps `_.shared` on it. It is a declaration
 # and never an inference: nothing here looks at where apps happened to land and concludes
 # afterwards that a host is shared. No stack below declares it.
+#
+# That declaration also decides the stack host's NETWORK, and therefore its VLAN: a shared
+# stack resolves to the network named `shared`, an estate-scoped one to its estate's. A
+# stack that belongs somewhere else names it outright with `network: <name>` here or in
+# `stacks:` in config/infrastructure.yml — a property of the STACK, like `pool` and
+# `ip_address`, because the host is shared and the first app to deploy is what creates it.
+# A lab that has declared no such networks keeps landing on `default`, unchanged.
 
 stack_defaults:
   # Applied to any stack without an entry of its own, so a new stack works before anyone

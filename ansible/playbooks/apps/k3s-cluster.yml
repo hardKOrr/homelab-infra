@@ -112,10 +112,20 @@
     # guest that asks for one — and the resulting duplicate address takes out an etcd
     # member or the ingress VIP at a moment unrelated to whatever caused it. Reserving
     # them in config/proxmox.yml is the fix, and this is where it gets noticed.
+    # The cluster is lab-scoped and its nodes carry `_.shared`, so it is addressed on the
+    # shared network when the lab declares one. tasks/kubernetes/provision-node.yml resolves
+    # the same thing per node; reporting against a different network than the nodes are
+    # built on would name the wrong `reserved:` list to edit.
+    - name: Resolve the network the cluster sits on
+      ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+      vars:
+        resolve_network_shared: true
+        resolve_network_requested: "{{ k8s_cluster_config.proxmox.network | default('', true) }}"
+
     - name: Resolve the pool ranges of the network the cluster sits on
       ansible.builtin.set_fact:
         _k8s_pool_ranges: >-
-          {{ (homelabinfra_config.networks[k8s_cluster_config.proxmox.network | default('default')].pools
+          {{ (homelabinfra_config.networks[network_selected].pools
               | default({})).values() | map(attribute='range') | select('search', '-') | list }}
         _k8s_claimed: >-
           {{ (k8s_cluster_config.cluster.nodes | map(attribute='ip_address') | list)
@@ -130,7 +140,7 @@
       ansible.builtin.debug:
         msg: >-
           Reserve these addresses in config/proxmox.yml under
-          networks.{{ k8s_cluster_config.proxmox.network | default('default') }}.reserved,
+          networks.{{ network_selected }}.reserved,
           or move them outside every pool range: {{ _k8s_claimed | join(', ') }}.
           They are declared literally, so generate-ip.yml does not know they are taken and
           will hand one to the next guest that asks. Pool ranges on this network:

@@ -8,7 +8,14 @@
 # address the platform did not choose is a guest it cannot wire, route or monitor.
 #
 # Inputs:
-#   network_name (optional, default 'default') — key into homelabinfra_config.networks
+#   network_name (optional) — key into homelabinfra_config.networks; the EXPLICIT choice,
+#                             `proxmox.network` in an instance file. Empty means none, and
+#                             a name that the lab does not define fails the run.
+#   network_hint (optional) — the network this guest belongs on by SCOPE: its estate's
+#                             name, or 'shared' for a lab-scoped guest and a shared stack.
+#                             Resolved by tasks/network/resolve-network.yml. Used ONLY when
+#                             the lab defines a network of that name, so a flat lab is
+#                             untouched — the same asymmetry as pool_hint below.
 #   pool_name    (optional) — a pool the caller demands; absent from the network is an error
 #   pool_hint    (optional) — usually the app's stack name; used only when the network
 #                             defines a pool of that name, so a pool-less lab is untouched
@@ -26,12 +33,27 @@
 #   homelabinfra_instance.network.{gateway,dns_servers,bridge,vlan,searchdomain}
 #     — only the keys the effective network config defines (never omit placeholders)
 #
-# Scratch facts left behind: network_name, network_config, final_ip_address,
+# Scratch facts left behind: _network_selected, network_config, final_ip_address,
 # proxmox_client_ips, effective_pool_name — a second call in the same play overwrites them.
 
+# The answer is written to `_network_selected`, NOT back into `network_name`. Callers hand
+# `network_name` in through `vars:` on the import/include, and a task var outranks a fact
+# for every task of the imported file — so writing the resolved name into the same variable
+# would leave the caller's ORIGINAL value in force below this task. That was invisible while
+# every caller passed an already-resolved name, and is wrong the moment one passes an empty
+# one and expects the hint to decide.
 - name: Set network selector
   ansible.builtin.set_fact:
-    network_name: "{{ network_name | default('default') }}"
+    _network_selected: >-
+      {{ _network_requested
+         if _network_requested | length > 0
+         else (_network_hint
+               if (_network_hint | length > 0
+                   and _network_hint in (homelabinfra_config.networks | default({})))
+               else 'default') }}
+  vars:
+    _network_requested: "{{ network_name | default('', true) }}"
+    _network_hint: "{{ network_hint | default('', true) }}"
   run_once: true
 
 - name: Assert network config exists
@@ -39,14 +61,16 @@
     that:
       - homelabinfra_config is defined
       - homelabinfra_config.networks is defined
-      - homelabinfra_config.networks[network_name] is defined
-      - homelabinfra_config.networks[network_name].cidr is defined
-    fail_msg: "Required inputs: homelabinfra_config.networks[<name>].cidr"
+      - homelabinfra_config.networks[_network_selected] is defined
+      - homelabinfra_config.networks[_network_selected].cidr is defined
+    fail_msg: >-
+      config/proxmox.yml defines no network named {{ _network_selected }} with a cidr.
+      Declared networks: {{ (homelabinfra_config.networks | default({})).keys() | list }}.
   run_once: true
 
 - name: Build effective network config
   ansible.builtin.set_fact:
-    network_config: "{{ homelabinfra_config.networks.default | default({}) | combine(homelabinfra_config.networks[network_name], recursive=True) }}"
+    network_config: "{{ homelabinfra_config.networks.default | default({}) | combine(homelabinfra_config.networks[_network_selected], recursive=True) }}"
   run_once: true
 
 - name: Use DHCP for IP allocation
@@ -101,7 +125,7 @@
       ansible.builtin.assert:
         that: effective_pool_name in (network_config.pools | default({}))
         fail_msg: >-
-          Network {{ network_name }} defines no pool named
+          Network {{ _network_selected }} defines no pool named
           {{ effective_pool_name }}. Declared pools:
           {{ (network_config.pools | default({})).keys() | list }}.
       when: effective_pool_name | length > 0
@@ -153,7 +177,7 @@
     homelabinfra_instance: >-
       {{ homelabinfra_instance | default({}) | combine({
           'network': {
-              'name': network_name,
+              'name': _network_selected,
               'cidr': network_config.cidr,
               'ip_address': final_ip_address
             }

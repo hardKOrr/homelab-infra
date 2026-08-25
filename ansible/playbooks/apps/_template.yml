@@ -74,10 +74,21 @@
 
     # PATH B: NATIVE LXC APP — app gets its own dedicated LXC container
     # Uncomment this block and delete PATH A above.
+    #
+    # resolve-network answers which network — and so which VLAN — this guest is addressed
+    # on, from the app's SCOPE in catalog/applications.yml: `scope: lab` lands on the
+    # network named `shared`, anything else on its estate's. Advisory, so a lab that has
+    # declared neither is unaffected. Do NOT put `network:` in vars/app-defaults/APP_NAME.yml
+    # to work around it — that pins every lab at once. See ansible/vars/CONTRACT.md.
+    # - name: Resolve the network this guest belongs on
+    #   ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+    #   vars:
+    #     resolve_network_app: "APP_NAME"
+    #     resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
     # - name: Generate IP address
     #   ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
     #   vars:
-    #     network_name: "{{ app_config.proxmox.network | default('default') }}"
+    #     network_name: "{{ app_config.proxmox.network | default('', true) }}"
     #     pool_name: "{{ app_config.proxmox.pool | default('') }}"
     #     pool_hint: "{{ app_config.stack | default('') }}"
     #     requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"

@@ -27,7 +27,8 @@
 #                         # datastore itself if you want backups on separate storage,
 #                         # then point infrastructure.yml backups.datastore_path at it.
 #     storage: local-lvm  # storage the cloned disk lands on
-#   network: default
+#   network: default    # OVERRIDE ONLY. PBS is `scope: lab`, so it resolves to the
+#                       # network named `shared` when your lab declares one.
 
 # ── Cloud-init template ────────────────────────────────────────────────────────
 # Shared by every VM app on the same Proxmox node, and built once per node — Proxmox

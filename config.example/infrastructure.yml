@@ -36,6 +36,14 @@ domain: "homelab.example.com"
 #     default: true                # required when two or more estates exist
 #   foxglove:
 #     domain: "second-domain.example.com"
+#     network: "foxglove"          # optional — which network (and therefore which VLAN)
+#                                  # this estate's guests are addressed on, keyed into
+#                                  # `networks:` in config/proxmox.yml. Omit it and a
+#                                  # network named after the estate is used if you declared
+#                                  # one, otherwise `default`. Name it only when the VLAN
+#                                  # is not called after the estate. The lab-scoped
+#                                  # services — proxy, vault, PBS, Ntfy, metrics, cluster —
+#                                  # go on `shared` instead and belong to no estate.
 #     dns_challenge:               # optional — public certs without opening port 80
 #       provider: cloudflare       # any github.com/caddy-dns/<provider> module
 #       # Provider-specific fields stay flat in this block. For Cloudflare, api_token

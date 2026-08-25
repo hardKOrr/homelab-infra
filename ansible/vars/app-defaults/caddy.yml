@@ -14,7 +14,12 @@ caddy_defaults:
     memory: 512                 # MB — raise only for very high request volume
     disk_volume:
       size: 8                   # GB
-    network: default
+    # No `network:` here on purpose. Which network a guest is addressed on follows from
+    # its SCOPE — tasks/network/resolve-network.yml puts a `scope: lab` application on the
+    # shared network and an estate-scoped one on its estate's — and a name pinned in
+    # git-managed defaults would override that resolution in every lab at once. A lab that
+    # declares only `networks.default` is unaffected either way. Set `network:` in
+    # config/apps/<instance>.yml to override one instance.
     # Caddy is the platform's ONE deliberate shared-hosting exception: a single TLS edge
     # answers for every estate, so it carries `_.shared`. That tag is a declaration, never
     # an inference — nothing derives it from where an app happened to land.

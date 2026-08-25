@@ -19,7 +19,11 @@ APP_NAME_defaults:
     memory: 512          # MB — increase if app logs OOM or slows under load
     disk_volume:
       size: 8            # GB — data path is separate, this is just the OS disk
-    network: default     # references a network name in config/proxmox.yml
+    # network: default   # OPTIONAL, and normally absent. A guest's network follows from
+    #                    # its scope (tasks/network/resolve-network.yml): `scope: lab` in
+    #                    # catalog/applications.yml means the shared network, otherwise the
+    #                    # estate's own. Name one here only to override that for every
+    #                    # instance of this application, in every lab.
     # Ownership plus the declared machine fact. Do NOT add the application's own name
     # here — the deploy appends `_<instance>`. Add `_.shared` only if this substrate is
     # deliberately meant to host applications from more than one estate, which for an

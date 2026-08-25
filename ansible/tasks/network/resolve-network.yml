@@ -1,0 +1,86 @@
+---
+# Decide which named network a guest is addressed on, from its SCOPE rather than from a
+# name written by hand in every instance file. Sets `network_hint`, the advisory input to
+# tasks/network/generate-ip.yml.
+#
+# THE ESTATE BOUNDARY IS A NETWORK BOUNDARY. An estate is already a separate domain scope
+# with its own domain, its own SSO and its own applications; the only reason two estates
+# share one broadcast domain today is that the lab has not been segmented yet. What is
+# SHARED is named and small — the TLS edge, the vault, PBS, Ntfy, the metrics stack, the
+# cluster — which is exactly the set catalog/applications.yml already marks `scope: lab`,
+# plus a stack that declares `shared: true`. Those land on one shared network that reaches
+# every estate; an estate-scoped guest lands on its estate's own.
+#
+# The LAN itself is not ours. This file selects among the networks the operator declared in
+# config/proxmox.yml. It never creates a VLAN, a bridge, a route or a firewall rule, and it
+# is not what makes the shared network reachable from an estate — that is the operator's
+# router, exactly like the gateway and the DHCP range this platform already refuses to own.
+#
+# Inputs:
+#   resolve_network_app     — the application slug, keyed in catalog/applications.yml.
+#                             Omit for a guest that is not itself an application (a stack
+#                             host, a cluster node) and pass resolve_network_shared instead.
+#   resolve_network_estate  — the guest's routing.estate; '' means the lab's default estate
+#   resolve_network_shared  — optional bool that overrides the catalog: true forces the
+#                             shared network. A stack with `shared: true` passes it, because
+#                             a stack host is not an entry in the application catalog.
+#   resolve_network_requested — optional; the EXPLICIT `proxmox.network`, which always wins.
+#                             Only needed by callers that use `network_selected` below.
+#
+# Outputs:
+#   network_hint     — 'shared', the estate's declared `network:`, or the estate's own name.
+#                      Hand this to generate-ip.yml alongside the explicit `network_name`.
+#   network_selected — the same decision already applied: the requested name, else the hint
+#                      when the lab defines it, else 'default'. For the callers that need
+#                      the NAME before an address exists — a cloud-init template's bridge,
+#                      the cluster's pool-overlap report — so they read the same network the
+#                      guest is actually built on rather than re-deriving 'default'.
+#
+# ADVISORY, NOT BINDING. generate-ip.yml uses the hint only when config/proxmox.yml
+# actually defines a network of that name. A lab with one flat `default` network therefore
+# resolves exactly as it did before this file existed, and a lab segments one band at a
+# time by adding `networks.shared`, then `networks.<estate>`, and redeploying. That is the
+# same asymmetry `pool_hint` already uses, and it is what lets the separation start before
+# the VLANs exist.
+
+- name: Resolve network | Load the application catalog
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../catalog/applications.yml"
+    name: _resolve_network_catalog
+  failed_when: false   # a guest that is not an application never consults it
+
+- name: Resolve network | Decide the network this guest belongs on
+  ansible.builtin.set_fact:
+    network_hint: "{{ _hint }}"
+    network_selected: >-
+      {{ _requested
+         if _requested | length > 0
+         else (_hint
+               if (_hint | length > 0
+                   and _hint in (homelabinfra_config.networks | default({})))
+               else 'default') }}
+  vars:
+    _hint: "{{ 'shared' if _shared else (_estate_network or _estate) }}"
+    _requested: "{{ resolve_network_requested | default('', true) }}"
+    _entry: >-
+      {{ (_resolve_network_catalog.applications | default({}))[resolve_network_app | default('', true)]
+         | default({}) }}
+    # The estate names are read from the same declaration the rest of the platform reads,
+    # and the default estate is resolved the same way tasks/resolve-estate.yml and
+    # tasks/stack/find-or-create-host.yml resolve it — declaration order never decides it.
+    _domains: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
+    _default_estate: >-
+      {{ ((_domains | dict2items
+           | selectattr('value.default', 'defined') | selectattr('value.default')
+           | map(attribute='key') | list) | first)
+         | default(_domains | list | first | default(''), true) }}
+    _estate: "{{ (resolve_network_estate | default('', true)) or _default_estate }}"
+    # An estate may name its network outright when the VLAN is not called after the estate.
+    # Without that, the estate's own name is the hint, which is the convention this
+    # repository already uses for stack pools.
+    _estate_network: "{{ (_domains[_estate] | default({})).network | default('', true) }}"
+    _shared: >-
+      {{ (resolve_network_shared | bool)
+         if (resolve_network_shared is defined)
+         else ((_entry.scope | default('')) == 'lab') }}
+  run_once: true

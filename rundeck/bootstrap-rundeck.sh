@@ -6,7 +6,7 @@
 # ceremony and verified cutover, then click Bootstrap Platform for the baseline.
 #
 #   ./bootstrap-rundeck.sh
-#   VMID=13228 CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh  # skip the prompts
+#   CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh  # skip the prompts
 #   LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 ./bootstrap-rundeck.sh
 #   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
 #
@@ -51,11 +51,30 @@ set -euo pipefail
 # not exist until this container does. A constant here silently claims one lab's address
 # in every lab, and the operator only finds out once the container is built. Setting any
 # of these in the environment still skips its prompt, so the scripted path is unchanged.
+#
+# VMID IS NOT ONE OF THEM, and is not asked. Every guest this platform creates takes its
+# VMID from its address — ansible/tasks/proxmox/ip-to-vmid-guest.yml, the `168<oct3><oct4>`
+# rule — so a Proxmox id is a readable statement of where the guest lives, and finding a
+# guest from an address (or the reverse) needs no lookup table. Asking for the runner's
+# VMID separately, defaulted to `pvesh get /cluster/nextid`, held the one guest holding the
+# platform's own control plane to a weaker standard than every guest it goes on to create:
+# a fresh bootstrap landed the runner at 100 while the lab it was about to build addressed
+# everything else by rule. It is derived from CT_IP below, by the same arithmetic, and
+# gate/test-vmid-from-ip.sh fails if the two implementations ever disagree.
+#
+# Setting VMID in the environment still overrides, for a lab that has a reason. The
+# override is reported against the derived value rather than accepted in silence.
 VMID="${VMID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-}"
 CT_IP="${CT_IP:-}"
 CT_GW="${CT_GW:-}"
 CT_BRIDGE="${CT_BRIDGE:-vmbr0}"
+# VLAN tag for the runner's own interface, and the tag written into the authored
+# `networks.default`. 0 means untagged, which is every flat lab. A segmented lab puts the
+# runner on the SHARED network — the one that reaches every estate — because the runner is
+# lab-scoped: it drives Caddy, the vault, PBS and both estates' apps. See the network block
+# this script authors for how the shared and per-estate networks are declared.
+CT_VLAN="${CT_VLAN:-0}"
 CT_CORES="${CT_CORES:-4}"
 CT_MEMORY="${CT_MEMORY:-8192}"
 CT_SWAP="${CT_SWAP:-512}"
@@ -202,6 +221,33 @@ net_addr() {
     $(( (__n >> 8) & 255 )) $(( __n & 255 )) "$__pfx"
 }
 
+# vmid_from_ip <a.b.c.d[/nn]> — the platform's VMID rule, in Bash.
+#
+# THE SAME ARITHMETIC as ansible/tasks/proxmox/ip-to-vmid-guest.yml, which is the authority:
+#
+#     prefix = second octet, or the first when the second is 0
+#     vmid   = prefix, then the third and fourth octets zero-padded to three digits
+#
+# so 192.168.13.228 -> 168013228 and 10.0.4.7 -> 10004007. Two implementations of one rule
+# is a drift risk, which is why gate/test-vmid-from-ip.sh evaluates the Jinja expression out
+# of that task file and this function over the same addresses and fails on any disagreement.
+#
+# 10#$octet forces base 10: an operator who writes 192.168.002.020 would otherwise hand the
+# shell an invalid octal literal and abort the run with an arithmetic error.
+vmid_from_ip() {
+  local __ip="${1%%/*}" __o1 __o2 __o3 __o4 __prefix __octet
+  IFS=. read -r __o1 __o2 __o3 __o4 <<<"$__ip"
+  for __octet in "$__o1" "$__o2" "$__o3" "$__o4"; do
+    case "$__octet" in
+      ""|*[!0-9]*) die "cannot derive a VMID from '$1' — it is not an IPv4 address" ;;
+    esac
+    [ "$((10#$__octet))" -le 255 ] || die "cannot derive a VMID from '$1' — octet $__octet is out of range"
+  done
+  __prefix=$(( 10#$__o2 != 0 ? 10#$__o2 : 10#$__o1 ))
+  [ "$__prefix" -gt 0 ] || die "cannot derive a VMID from '$1' — it has no non-zero network octet"
+  printf '%d%03d%03d\n' "$__prefix" "$((10#$__o3))" "$((10#$__o4))"
+}
+
 # ask_secret <var-name> <prompt> — like ask, but never echoes either an environment
 # value or an interactive reply. Secrets have no useful default: a non-interactive
 # first bootstrap must supply them explicitly in the environment.
@@ -232,9 +278,10 @@ case "$DEPLOY_VAULTWARDEN" in
   *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
 esac
 
-# The runner container's own identity is ASKED, never assumed. Converging an EXISTING
-# runner defaults to what that container already is, so a re-run never proposes moving
-# the control plane; a fresh one defaults to this node's own subnet and next free VMID.
+# The runner container's own ADDRESS is asked, never assumed; its VMID is derived from that
+# address, exactly as every other guest's is. Converging an EXISTING runner defaults to what
+# that container already is - found by its `_rundeck` tag below, so a re-run never proposes
+# moving the control plane. A fresh one defaults to this node's own subnet.
 # Resolve the storage that will hold every guest this platform creates. `rootdir` is the
 # content type a container rootfs needs, and a stock Proxmox `local` does NOT carry it — it
 # is vztmpl/iso/backup, which is why a default of "local" fails every create with
@@ -244,10 +291,20 @@ NODE_ADDR_CIDR="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4; 
 NODE_PREFIX="${NODE_ADDR_CIDR##*/}"
 NODE_SUBNET="${NODE_ADDR_CIDR%.*}"
 NODE_GW_DEFAULT="$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')"
-VMID_DEFAULT="$(pvesh get /cluster/nextid 2>/dev/null | tr -d '"[:space:]')"
-
-info "the runner's own identity - defaults are read off this node"
-ask VMID "Runner VMID" "$VMID_DEFAULT"
+# The runner this script may already have built, found by its own application tag rather
+# than by an id a human has to remember. `pvesh get /cluster/nextid` could never find it —
+# it returns a FREE id by definition — so a re-run that did not have the VMID typed at it
+# proposed building a SECOND control plane beside the first and called that convergence.
+# Only this node is scanned: this script builds the runner on the node it is run from, and
+# a runner elsewhere is caught below by the address guard rather than silently duplicated.
+RUNNER_EXISTING_VMID=""
+for _rd_vmid in $(pct list 2>/dev/null | awk 'NR>1 {print $1}'); do
+  # `|| true` because pipefail is on: a guest that vanishes between `pct list` and here
+  # would otherwise fail the substitution and abort the whole run under `set -e`.
+  case ";$(pct config "$_rd_vmid" 2>/dev/null | sed -n 's/^tags: //p' || true);" in
+    *";_rundeck;"*) RUNNER_EXISTING_VMID="$_rd_vmid"; break ;;
+  esac
+done
 
 CT_HOSTNAME_DEFAULT="homelab-rundeck"
 CT_IP_DEFAULT=""
@@ -255,15 +312,16 @@ if [ -n "$NODE_SUBNET" ] && [ -n "$NODE_PREFIX" ]; then
   CT_IP_DEFAULT="${NODE_SUBNET}.228/${NODE_PREFIX}"
 fi
 CT_GW_DEFAULT="$NODE_GW_DEFAULT"
-if pct config "$VMID" >/dev/null 2>&1; then
-  info "VMID $VMID already exists - its current settings become the defaults"
-  CT_CONF="$(pct config "$VMID")"
+if [ -n "$RUNNER_EXISTING_VMID" ]; then
+  info "this node already holds runner $RUNNER_EXISTING_VMID - its settings become the defaults"
+  CT_CONF="$(pct config "$RUNNER_EXISTING_VMID")"
   CT_HOSTNAME_DEFAULT="$(sed -n 's/^hostname: //p'            <<<"$CT_CONF")"
   CT_IP_DEFAULT="$(sed -n 's/^net0: .*,ip=\([^,]*\).*/\1/p'   <<<"$CT_CONF")"
   CT_GW_DEFAULT="$(sed -n 's/^net0: .*,gw=\([^,]*\).*/\1/p'   <<<"$CT_CONF")"
   CT_STORAGE_DEFAULT="$(sed -n 's/^rootfs: \([^:]*\):.*/\1/p' <<<"$CT_CONF")"
 fi
 
+info "the runner's own identity - defaults are read off this node"
 ask CT_HOSTNAME "Runner hostname"                            "$CT_HOSTNAME_DEFAULT"
 ask CT_IP       "Runner address, with prefix (a.b.c.d/nn)"   "$CT_IP_DEFAULT"
 ask CT_GW       "Runner gateway"                             "$CT_GW_DEFAULT"
@@ -273,6 +331,29 @@ case "$CT_IP" in
   */*) : ;;
   *) die "CT_IP must carry a prefix length, as in 192.168.13.228/20 (got '$CT_IP')" ;;
 esac
+
+# ── The VMID, derived — never asked ───────────────────────────────────────────
+# One address, one id. The VMID tunable at the top of this file carries the whole reason
+# the runner is held to the rule the rest of the lab is held to.
+VMID_DERIVED="$(vmid_from_ip "$CT_IP")"
+if [ -n "$VMID" ]; then
+  if [ "$VMID" != "$VMID_DERIVED" ]; then
+    warn "VMID=$VMID from the environment overrides $VMID_DERIVED, the id ${CT_IP%%/*} derives."
+    info "the runner will not follow the rule every other guest in this lab follows"
+  fi
+elif [ -n "$RUNNER_EXISTING_VMID" ] && [ "$RUNNER_EXISTING_VMID" != "$VMID_DERIVED" ]; then
+  # An existing runner keeps its id. Convergence has to reach the container that IS the
+  # control plane; re-deriving here would build a second one beside it and leave the
+  # operator holding two, which is strictly worse than one guest that predates the rule.
+  VMID="$RUNNER_EXISTING_VMID"
+  warn "runner $RUNNER_EXISTING_VMID predates the VMID rule (${CT_IP%%/*} derives $VMID_DERIVED)."
+  info "converging it where it is. To put it on the rule, destroy it and re-run:"
+  info "  pct stop $RUNNER_EXISTING_VMID && pct destroy $RUNNER_EXISTING_VMID"
+  info "  ROTATE_PROXMOX_TOKEN=1 ./bootstrap-rundeck.sh"
+else
+  VMID="$VMID_DERIVED"
+fi
+info "runner VMID $VMID, derived from ${CT_IP%%/*}"
 [ -n "$CT_GW" ] || die "CT_GW has no value and this node advertises no default route. Set CT_GW=..."
 [ -n "$CT_STORAGE" ] || die "no active storage on this node supports container rootfs (content type 'rootdir').
 Add one in Proxmox, or set CT_STORAGE=... if you know better."
@@ -351,12 +432,16 @@ if [ "$CT_EXISTS" -eq 0 ]; then
   fi
 
   # ── Container ────────────────────────────────────────────────────────────────
+  # An untagged interface carries no `tag=` at all, which is not the same as `tag=0` -
+  # Proxmox rejects 0. A flat lab therefore produces the identical net0 line it always did.
+  CT_VLAN_TAG=""
+  if [ "${CT_VLAN:-0}" -gt 0 ] 2>/dev/null; then CT_VLAN_TAG=",tag=${CT_VLAN}"; fi
   log "Create container $VMID"
   pct create "$VMID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
     --hostname "$CT_HOSTNAME" \
     --cores "$CT_CORES" --memory "$CT_MEMORY" --swap "$CT_SWAP" \
     --rootfs "${CT_STORAGE}:${CT_DISK}" \
-    --net0 "name=eth0,bridge=${CT_BRIDGE},firewall=1,gw=${CT_GW},ip=${CT_IP},type=veth" \
+    --net0 "name=eth0,bridge=${CT_BRIDGE},firewall=1,gw=${CT_GW},ip=${CT_IP},type=veth${CT_VLAN_TAG}" \
     --tags "$MANAGED_TAGS" \
     --unprivileged 1 --features nesting=1 --onboot 1 --ostype debian \
     --description "Rundeck — homelab-infra UI layer (bootstrap-rundeck.sh)"
@@ -871,6 +956,25 @@ proxmox:
   nodes:
 $PVE_NODE_MAP
 
+# Named networks. A guest's network follows from its SCOPE, resolved by
+# ansible/tasks/network/resolve-network.yml:
+#
+#   scope: lab in catalog/applications.yml, or a stack with shared: true
+#                       -> the network named 'shared'
+#   anything else       -> the network named after its estate, or the name that estate
+#                          declares as its own 'network:' in infrastructure.yml
+#   neither declared    -> 'default', below
+#
+# So the separation is opt-in and arrives one band at a time: this file starts with one
+# flat 'default' and nothing behaves differently from a lab that never heard of estates.
+# Add 'shared', redeploy, and the TLS edge, the vault, PBS, Ntfy, the metrics stack and the
+# cluster move onto it. Add a network per estate and each estate's own apps follow.
+#
+# ONE NETWORK PER VLAN. The tag, the subnet and the gateway travel together, which is what
+# makes 'which network' and 'which VLAN' the same question. This platform does not create
+# the VLAN, the bridge, the routes or the firewall rules that let the shared network reach
+# each estate - that is your router's job, exactly like the gateway and the DHCP range this
+# platform already refuses to own. Declare here only what already exists on the wire.
 networks:
   default:
     cidr: "$LAB_NET_CIDR"
@@ -878,8 +982,33 @@ networks:
     dns_servers:
       - "$LAB_NET_DNS"
     bridge: "$CT_BRIDGE"
-    vlan: 0
+    vlan: $CT_VLAN            # 0 = untagged
     ip_offset: $LAB_IP_OFFSET
+
+  # ── Segmenting later ─────────────────────────────────────────────────────────
+  # Uncomment when the VLANs actually exist. Keys not repeated are inherited from
+  # 'default' above, so each of these carries only what genuinely differs.
+  #
+  # The lab-scoped services every estate depends on. This is also where the runner
+  # belongs - it drives both estates - so move it with CT_VLAN on the next bootstrap.
+  # shared:
+  #   cidr: "10.10.13.0/24"
+  #   gateway: "10.10.13.1"
+  #   dns_servers: ["10.10.13.1"]
+  #   vlan: 13
+  #
+  # One per estate, named after the estate. An estate whose VLAN is not called after it
+  # sets domains.<estate>.network in config/infrastructure.yml to point here instead.
+  # personal:
+  #   cidr: "10.10.20.0/24"
+  #   gateway: "10.10.20.1"
+  #   dns_servers: ["10.10.20.1"]
+  #   vlan: 20
+  # foxglove:
+  #   cidr: "10.10.21.0/24"
+  #   gateway: "10.10.21.1"
+  #   dns_servers: ["10.10.21.1"]
+  #   vlan: 21
 
 ansible:
   ssh_user: root
@@ -1000,6 +1129,10 @@ proxmox:
   ip: "$CT_IP"
   gateway: "$CT_GW"
   bridge: "$CT_BRIDGE"
+  vlan: $CT_VLAN
+  # The runner is lab-scoped, so once this lab is segmented it belongs on the SHARED
+  # network - the one that reaches every estate - not on any one estate's. Moving it is
+  # CT_VLAN plus a new address on the next bootstrap; the vmid follows the address.
 
 app:
   port: $RD_PORT
