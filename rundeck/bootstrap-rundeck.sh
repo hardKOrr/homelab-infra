@@ -147,6 +147,11 @@ LAB_DNS_ENV="$LAB_ETC/secrets.d/dns.env"
 # config/proxmox.yml (deployed to every guest this platform creates). Cutover moves the
 # private half into Vaultwarden; lab-run materializes it only for one job session.
 LAB_SSH_KEY=/var/lib/rundeck/.ssh/homelab-infra
+# The comment stamped into that key's public half. It is the IDENTITY of the platform
+# lane in an authorized_keys file: every line carrying it belongs to this platform and to
+# no one else, so a re-run may withdraw the ones that are no longer current. Nothing keyed
+# on the key material alone can do that - a rebuilt runner has different material.
+PLATFORM_KEY_COMMENT='homelab-infra platform key'
 
 RD_PORT="${RD_PORT:-4440}"
 # Derived in Preflight, once CT_IP has been resolved from the environment or the prompt.
@@ -430,7 +435,11 @@ info "node $(hostname), target VMID $VMID at $RD_URL on $CT_STORAGE"
 
 # Resolve the keys now so we fail before building anything, not after.
 if [ -z "$SSH_PUBKEY" ] && [ -r "$SSH_PUBKEY_FILE" ]; then
-  SSH_PUBKEY="$(grep -E '^(ssh-|ecdsa-)' "$SSH_PUBKEY_FILE" 2>/dev/null || true)"
+  # Drop this platform's own lane while harvesting. When SSH_PUBKEY_FILE is the node's
+  # authorized_keys - the default - it already holds the platform key this script put
+  # there, and copying it into the container would republish one dead runner identity per
+  # rebuild into every container built afterwards. Operator keys are what we want here.
+  SSH_PUBKEY="$(grep -E '^(ssh-|ecdsa-)' "$SSH_PUBKEY_FILE" 2>/dev/null | grep -vF " $PLATFORM_KEY_COMMENT" || true)"
 fi
 if [ -z "$SSH_PUBKEY" ]; then
   warn "no SSH public key found (looked in $SSH_PUBKEY_FILE)"
@@ -852,7 +861,7 @@ if [ ! -f "$LAB_SSH_KEY" ]; then
   else
     say "generating the platform SSH identity at $LAB_SSH_KEY"
     install -d -m 0700 -o rundeck -g rundeck "$(dirname "$LAB_SSH_KEY")"
-    ssh-keygen -q -t ed25519 -N '' -C 'homelab-infra platform key' -f "$LAB_SSH_KEY"
+    ssh-keygen -q -t ed25519 -N '' -C "$PLATFORM_KEY_COMMENT" -f "$LAB_SSH_KEY"
     chown rundeck:rundeck "$LAB_SSH_KEY" "${LAB_SSH_KEY}.pub"
     chmod 0600 "$LAB_SSH_KEY"
   fi
@@ -1336,17 +1345,39 @@ info "wrote config/apps/rundeck.yml"
 
 # The provisioning tasks use the Proxmox API for create/update, then delegate
 # node-local `pct`/`qm` readiness checks to the PVE node. Authorize the platform's
-# dedicated runner identity for that existing contract. The exact key is appended
-# idempotently and no password or host key is copied.
+# dedicated runner identity for that existing contract. Only the current key is left
+# authorized, and no password or host key is copied.
 log "Authorize the automation runner on this Proxmox node"
 LAB_SSH_PUBKEY="$(in_ct cat "${LAB_SSH_KEY}.pub" 2>/dev/null || true)"
 [ -n "$LAB_SSH_PUBKEY" ] || die "the platform SSH key was not generated at ${LAB_SSH_KEY}.pub"
 install -d -m 0700 /root/.ssh
 touch /root/.ssh/authorized_keys
 chmod 0600 /root/.ssh/authorized_keys
-grep -qxF "$LAB_SSH_PUBKEY" /root/.ssh/authorized_keys \
-  || printf '%s\n' "$LAB_SSH_PUBKEY" >> /root/.ssh/authorized_keys
-info "platform runner key is authorized for node-local pct/qm waits"
+# Read-modify-write over the platform lane ONLY. A teardown takes the runner's private
+# half with it, so the next bootstrap generates a different identity; appending that one
+# and leaving the previous behind accumulated one dead root-authorized key per rebuild.
+# Every line whose comment is not ours - operator keys, other nodes' root keys - comes
+# back byte-identical, and a re-run that changes nothing rewrites nothing.
+WITHDRAWN="$(grep -cF " $PLATFORM_KEY_COMMENT" /root/.ssh/authorized_keys || true)"
+AUTH_KEYS_TMP="$(mktemp)"
+awk -v want="$PLATFORM_KEY_COMMENT" '
+  {
+    comment = ""
+    if (NF >= 3) { comment = $3; for (i = 4; i <= NF; i++) comment = comment " " $i }
+    if (comment != want) print
+  }
+' /root/.ssh/authorized_keys > "$AUTH_KEYS_TMP"
+printf '%s\n' "$LAB_SSH_PUBKEY" >> "$AUTH_KEYS_TMP"
+if cmp -s "$AUTH_KEYS_TMP" /root/.ssh/authorized_keys; then
+  info "platform runner key is already the only platform key on this node"
+else
+  install -m 0600 -o root -g root "$AUTH_KEYS_TMP" /root/.ssh/authorized_keys
+  if [ "$WITHDRAWN" -gt 1 ]; then
+    info "withdrew $(( WITHDRAWN - 1 )) superseded platform key(s) from this node"
+  fi
+  info "platform runner key is authorized for node-local pct/qm waits"
+fi
+rm -f "$AUTH_KEYS_TMP"
 
 # ── Proxmox credential ─────────────────────────────────────────────────────────
 # Node root can issue the platform's credential, so nothing here asks a human for one.
