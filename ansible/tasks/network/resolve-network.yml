@@ -84,3 +84,20 @@
          if (resolve_network_shared is defined)
          else ((_entry.scope | default('')) == 'lab') }}
   run_once: true
+
+# The selected network AS A GUEST IS BUILT FROM IT: `networks.default` merged under it,
+# the same expression generate-ip.yml uses to allocate the address.
+#
+# A band declares only what differs — `shared: {ip_offset: N}` — so every caller that read
+# `homelabinfra_config.networks[network_selected].<key>` directly got an undefined value
+# and fell through to whatever default it happened to carry: 'vmbr0' for a bridge, an empty
+# dict for pools, and in provision-node.yml a VM seeded with no network config at all.
+# Correct by accident in a lab on vmbr0, wrong everywhere else, and invisible until a lab
+# declared its first band. Callers read this instead.
+- name: Resolve network | Build the effective config for that network
+  ansible.builtin.set_fact:
+    network_effective: >-
+      {{ (homelabinfra_config.networks.default | default({}, true))
+         | combine((homelabinfra_config.networks | default({}))[network_selected]
+                   | default({}, true), recursive=True) }}
+  run_once: true

@@ -56,21 +56,36 @@
     _network_hint: "{{ network_hint | default('', true) }}"
   run_once: true
 
-- name: Assert network config exists
+- name: Assert the selected network is declared
   ansible.builtin.assert:
     that:
       - homelabinfra_config is defined
       - homelabinfra_config.networks is defined
       - homelabinfra_config.networks[_network_selected] is defined
-      - homelabinfra_config.networks[_network_selected].cidr is defined
     fail_msg: >-
-      config/proxmox.yml defines no network named {{ _network_selected }} with a cidr.
+      config/proxmox.yml declares no network named {{ _network_selected }}.
       Declared networks: {{ (homelabinfra_config.networks | default({})).keys() | list }}.
   run_once: true
 
+# A named band INHERITS from `default`, which is what lets `shared` and an estate carry one
+# ip_offset each while the subnet, gateway, bridge and VLAN are declared once.
 - name: Build effective network config
   ansible.builtin.set_fact:
     network_config: "{{ homelabinfra_config.networks.default | default({}) | combine(homelabinfra_config.networks[_network_selected], recursive=True) }}"
+  run_once: true
+
+# Asserted on the MERGED config, and after the merge, deliberately. Demanding `cidr` on the
+# selected network itself contradicted the merge one task below it: a lab that declared
+# `shared: {ip_offset: N}` — the shape config.example/proxmox.yml teaches and
+# bootstrap-rundeck.sh writes — failed here with "defines no network named shared with a
+# cidr" while the very next task would have inherited that cidr from `default`. Live on
+# 2026-08-24, on the first deploy of a two-band lab.
+- name: Assert the effective network has a cidr
+  ansible.builtin.assert:
+    that: network_config.cidr is defined
+    fail_msg: >-
+      Network {{ _network_selected }} has no cidr, and networks.default declares none to
+      inherit. Give it a cidr, or declare one on networks.default.
   run_once: true
 
 - name: Use DHCP for IP allocation

@@ -124,8 +124,7 @@
             cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
             cloud_template_storage: "{{ app_config.proxmox.cloud_template.storage }}"
             cloud_template_bridge: >-
-              {{ homelabinfra_config.networks[network_selected].bridge
-                 | default('vmbr0') }}
+              {{ network_effective.bridge | default('vmbr0') }}
 
         # Stamp the application tag `_<instance>` so the reuse check above (and
         # remove.yml) find this guest. The app's defaults carry ownership and the

@@ -940,6 +940,16 @@ else
   ask VAULTWARDEN_OWNER_EMAIL "First Vaultwarden owner email"                 ""
   ask VAULTWARDEN_AUTOMATION_EMAIL "Dedicated automation account email"       "homelab-infra@$LAB_DOMAIN"
   ask LAB_NET_CIDR    "Guest network CIDR"                                    "$DEFAULT_CIDR"
+  # Masked to its network address, because the answer is a SUBNET and an operator naturally
+  # types the address they are thinking of: '192.168.12.10/20' was answered live on
+  # 2026-08-24 and would have been written verbatim into networks.default.cidr and into
+  # Caddy's internal_cidrs, the matcher that decides who may reach an internal app. The
+  # allocator masks with strict=False and would not have noticed; the file would have been
+  # wrong for every later reader.
+  LAB_NET_CIDR_TYPED="$LAB_NET_CIDR"
+  LAB_NET_CIDR="$(net_addr "$LAB_NET_CIDR")"
+  [ "$LAB_NET_CIDR" = "$LAB_NET_CIDR_TYPED" ] \
+    || info "$LAB_NET_CIDR_TYPED is an address in $LAB_NET_CIDR — recording the network"
   ask LAB_NET_GATEWAY "Guest network gateway"                                 "$CT_GW"
   ask LAB_NET_DNS     "DNS server for guests"                                 "$CT_GW"
   ask LAB_TIMEZONE    "Timezone for guests"                                   "$NODE_TZ"

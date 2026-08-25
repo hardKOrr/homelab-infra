@@ -125,7 +125,7 @@
     - name: Resolve the pool ranges of the network the cluster sits on
       ansible.builtin.set_fact:
         _k8s_pool_ranges: >-
-          {{ (homelabinfra_config.networks[network_selected].pools
+          {{ (network_effective.pools
               | default({})).values() | map(attribute='range') | select('search', '-') | list }}
         _k8s_claimed: >-
           {{ (k8s_cluster_config.cluster.nodes | map(attribute='ip_address') | list)

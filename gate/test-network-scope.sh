@@ -64,6 +64,20 @@ env.filters["bool"] = lambda value: (
     else str(value).strip().lower() in ("true", "yes", "on", "1")
 )
 
+
+def _combine(base, *others, recursive=False, **_ignored):
+    result = dict(base or {})
+    for other in others:
+        for key, value in dict(other or {}).items():
+            if recursive and isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = _combine(result[key], value, recursive=True)
+            else:
+                result[key] = value
+    return result
+
+
+env.filters["combine"] = _combine
+
 # Ansible resolves `vars:` lazily and in dependency order; here that order is written out.
 ORDER = ["_entry", "_domains", "_default_estate", "_estate", "_estate_network",
          "_shared", "_requested", "_hint"]
@@ -179,10 +193,48 @@ check("hint names the estate even in a flat lab",
 check("hint names shared even in a flat lab",
       resolve(catalog, FLAT, app="caddy")["network_hint"], "shared")
 
+# -- A band inherits `default`, and every caller must see the merged view -----
+# The regression this guards: a lab declaring `shared: {ip_offset: N}` — the shape
+# config.example/proxmox.yml teaches and bootstrap-rundeck.sh writes — failed its first
+# deploy with "defines no network named shared with a cidr", because the assert in
+# generate-ip.yml read the band before the merge that would have supplied it. Four other
+# callers read the band directly and silently fell back ('vmbr0' for a bridge, an empty
+# pools map, a VM seeded with no network at all). Live on 2026-08-24.
+effective = next((t for t in tasks if "network_effective" in set_fact_of(t)), None)
+if effective is None:
+    failures.append(
+        "resolve-network.yml publishes no network_effective; callers would have to "
+        "re-merge networks.default themselves, which is the bug this guards"
+    )
+else:
+    BANDS = {
+        "networks": {
+            "default": {"cidr": "192.168.0.0/20", "bridge": "vmbr1", "vlan": 0},
+            "shared": {"ip_offset": 2826, "max_hosts": 32},
+            "personal": {"ip_offset": 2858},
+        },
+        "infrastructure": {"domains": {"personal": {"domain": "a.example", "default": True}}},
+    }
+    def effective_for(config, **kwargs):
+        selected = resolve(catalog, config, **kwargs)["network_selected"]
+        expression = str(set_fact_of(effective)["network_effective"])
+        return env.from_string(expression).render(
+            homelabinfra_config=config, network_selected=selected
+        )
+
+    shared_band = effective_for(BANDS, app="caddy")
+    check("a band inherits the subnet", shared_band.get("cidr"), "192.168.0.0/20")
+    check("a band inherits the bridge", shared_band.get("bridge"), "vmbr1")
+    check("a band keeps its own offset", shared_band.get("ip_offset"), 2826)
+    estate_band = effective_for(BANDS, app="sonarr")
+    check("the estate band inherits the same subnet", estate_band.get("cidr"), "192.168.0.0/20")
+    check("the estate band keeps its own offset", estate_band.get("ip_offset"), 2858)
+    check("a band does not inherit its neighbour's cap", estate_band.get("max_hosts"), None)
+
 if failures:
     print("network-scope: %d failure(s)" % len(failures), file=sys.stderr)
     for f in failures:
         print("  FAIL %s" % f, file=sys.stderr)
     raise SystemExit(1)
-print("network-scope: OK (%d cases)" % 18)
+print("network-scope: OK (%d cases)" % 24)
 PY

@@ -97,8 +97,7 @@
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | default({}) | combine({'network':
-           (homelabinfra_config.networks[network_selected]
-            | default({}))
+           (network_effective | default({}))
            | combine({'ip_address': k8s_node.ip_address}, recursive=True)
          }, recursive=True) }}
 
@@ -125,8 +124,7 @@
     cloud_template_image_url: "{{ k8s_cluster_config.proxmox.cloud_template.image_url }}"
     cloud_template_storage: "{{ k8s_cluster_config.proxmox.storage }}"
     cloud_template_bridge: >-
-      {{ homelabinfra_config.networks[network_selected].bridge
-         | default('vmbr0') }}
+      {{ network_effective.bridge | default('vmbr0') }}
 
 # Read BEFORE the clone/update, so the comparison afterwards can tell an actual change
 # from a value that was already correct.

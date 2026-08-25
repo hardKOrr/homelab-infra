@@ -236,10 +236,15 @@
           instance: "{{ instance }}"
           host: "{{ _caddy_deploy_host.caddy_admin_host }}"
           port: "{{ _caddy_deploy_host.caddy_admin_port | int }}"
+          # The fallback maps over EVERY declared network, and a band declares only what
+          # differs from `default` — so it has to skip the entries that carry no cidr of
+          # their own rather than fail on them. Once the bands are really segmented each
+          # one has its own cidr and all of them appear here, which is the intent.
           internal_cidrs: >-
             {{ _caddy_deploy_host.homelabinfra_config.infrastructure.reverse_proxy.internal_cidrs
                | default(_caddy_deploy_host.homelabinfra_config.networks.values()
-                         | map(attribute='cidr') | list, true) }}
+                         | selectattr('cidr', 'defined')
+                         | map(attribute='cidr') | unique | list, true) }}
 
     # Re-read so the wiring tasks below see the key just written.
     - name: Reload infrastructure facts
