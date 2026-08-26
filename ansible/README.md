@@ -9,6 +9,9 @@ playbooks; they do not define Ansible behavior.
 | Task | Read |
 | --- | --- |
 | Add or change an application | [`playbooks/apps/README.md`](playbooks/apps/README.md) |
+| Change maintenance or disruption behavior | [`playbooks/maintenance/README.md`](playbooks/maintenance/README.md) |
+| Change Proxmox ownership, inventory, or provisioning | [`tasks/proxmox/README.md`](tasks/proxmox/README.md) |
+| Change the Kubernetes backend | [`tasks/kubernetes/README.md`](tasks/kubernetes/README.md) |
 | Change configuration shape or a `homelabinfra_*` variable | [`vars/CONTRACT.md`](vars/CONTRACT.md) |
 | Change module boundaries or execution flow | [`../docs/architecture.md`](../docs/architecture.md) |
 | Change configuration loading or dictionary updates | [`../docs/specs/config-layering.md`](../docs/specs/config-layering.md) and [`../docs/specs/namespace-merge-discipline.md`](../docs/specs/namespace-merge-discipline.md) |
