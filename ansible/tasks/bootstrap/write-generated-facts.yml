@@ -125,3 +125,51 @@
          | to_nice_yaml(indent=2) }}
   become: false
   delegate_to: localhost
+
+# ── Keep the in-memory registry in step with the file ─────────────────────────
+# Callers write a key here and then WIRE against it in the same play. Every one of
+# them followed this import with a "Reload infrastructure facts" include_vars,
+# which cannot work: load-user-vars.yml establishes homelabinfra_infra with
+# set_fact, and set_fact outranks include_vars in Ansible's precedence order, so
+# the reload silently kept the value read before this write. Verified 2026-08-26 by
+# probe — the reload task is a no-op in every playbook that has one.
+#
+# The consequence was not a crash but a SILENT HOLE, and only on a clean lab: on the
+# first bootstrap Uptime Kuma never registered a monitor for itself, Authentik never
+# got its own catalog tile, and Ntfy's own "deployed" notification never went out,
+# because each play's wiring condition tested a registry key its own play had just
+# written to disk and not to memory. The second run found the key already on disk at
+# load time and did the work — which is exactly why re-running looked convergent and
+# a single clean pass was never actually complete.
+#
+# Updating the fact here fixes every caller at once and makes the reload tasks
+# redundant rather than wrong. Same merge shape as the file write above, so the
+# in-memory copy and the file cannot disagree.
+- name: Generated facts | Merge {{ generated_facts_service }} into the live registry
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra | default({}, true)
+         | combine({'estates': {_generated_facts_estate:
+                                {generated_facts_service: generated_facts_data}}}
+                   if _generated_facts_estate | length > 0
+                   else {generated_facts_service: generated_facts_data},
+                   recursive=True) }}
+  no_log: true
+
+# The wiring plays run on localhost, but an app playbook that records facts from a
+# guest play would otherwise leave localhost stale. Mirrors the publish in
+# tasks/bitwarden/upsert-item.yml.
+- name: Generated facts | Publish the live registry on localhost
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ hostvars['localhost'].homelabinfra_infra | default({}, true)
+         | combine({'estates': {_generated_facts_estate:
+                                {generated_facts_service: generated_facts_data}}}
+                   if _generated_facts_estate | length > 0
+                   else {generated_facts_service: generated_facts_data},
+                   recursive=True) }}
+  delegate_to: localhost
+  delegate_facts: true
+  become: false
+  no_log: true
+  when: inventory_hostname != 'localhost'

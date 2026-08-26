@@ -170,7 +170,12 @@
                        if _kuma_deploy_host.kuma_notification_id | string | length > 0
                        else {}) }}
 
-    # Re-read so the wiring tasks below see the key just written.
+    # Belt-and-braces only. The key just written is already in the live
+    # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there
+    # with set_fact — and this include_vars CANNOT override that, because set_fact
+    # outranks include_vars in Ansible's precedence order. It stays for a play that
+    # never loaded the registry at all; it is not what makes the wiring below see
+    # this deploy's own key.
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"

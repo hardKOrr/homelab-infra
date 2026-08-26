@@ -251,12 +251,26 @@
     url: "http://localhost:{{ app_config.app.prometheus_port }}/api/v1/targets?state=active"
     status_code: 200
   register: _prometheus_targets
+  # Both halves of the assert below must be waited for, not just the first. A target
+  # enters activeTargets the moment Prometheus LOADS the config, with health `unknown`
+  # until its first scrape — and the first scrape lands at a jittered offset inside one
+  # scrape_interval (30s by default). Waiting on the target COUNT alone therefore
+  # satisfied `until` within a second or two and then asserted health on a target set
+  # that had not been scraped once. That is the failure seen on 2026-08-26: assertion at
+  # roughly 6 seconds into a 30-second interval, every target `unknown`, deploy red on a
+  # Prometheus that was working correctly.
+  #
+  # The retry budget covers a full scrape_interval plus a slow first scrape.
   until: >-
-    (_prometheus_targets.json.data.activeTargets | default([]))
-    | selectattr('labels.job', 'equalto', 'nodes') | list | length
-    == (_observability_node_targets | length)
-  retries: 10
-  delay: 3
+    ((_prometheus_targets.json.data.activeTargets | default([]))
+     | selectattr('labels.job', 'equalto', 'nodes') | list | length
+     == (_observability_node_targets | length))
+    and ((_observability_node_targets | length) == 0
+         or ((_prometheus_targets.json.data.activeTargets | default([]))
+             | selectattr('labels.job', 'equalto', 'nodes')
+             | selectattr('health', 'equalto', 'up') | list | length > 0))
+  retries: 20
+  delay: 5
   failed_when: false
   changed_when: false
 
@@ -264,12 +278,20 @@
   ansible.builtin.assert:
     that:
       - (_prometheus_scraped | sort) == (_observability_node_targets | map(attribute='name') | list | sort)
-      - _prometheus_active | selectattr('health', 'equalto', 'up') | list | length > 0
+      - >-
+        (_observability_node_targets | length) == 0
+        or (_prometheus_active | selectattr('labels.job', 'equalto', 'nodes')
+            | selectattr('health', 'equalto', 'up') | list | length > 0)
     fail_msg: >-
       Prometheus is scraping {{ _prometheus_scraped | sort }} but this deploy
-      rendered {{ _observability_node_targets | map(attribute='name') | list | sort }}.
+      rendered {{ _observability_node_targets | map(attribute='name') | list | sort }},
+      and the health of those targets is
+      {{ _prometheus_active | selectattr('labels.job', 'equalto', 'nodes')
+         | map(attribute='health') | list | sort }}.
       A Prometheus that never picked up the new config keeps collecting the old
-      target list indefinitely, and every dashboard still looks populated.
+      target list indefinitely, and every dashboard still looks populated. Health
+      that is entirely `down` means the config loaded but node_exporter is not
+      answering on any guest.
   vars:
     _prometheus_active: "{{ _prometheus_targets.json.data.activeTargets | default([]) }}"
     _prometheus_scraped: >-
