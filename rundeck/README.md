@@ -13,9 +13,10 @@ ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
 By default the command returns with the automation runner, Caddy, and HTTPS Vaultwarden
 online. Open the URL it prints. The script already sent the enrollment invitations itself;
 the **Vaultwarden Enrollment** job re-sends them and you click it only if that attempt
-failed for want of DNS. Register both accounts in the web vault — **you choose the master
-passwords there, nothing generates or prints them** — create the personal API key, stage
-the three automation-account credentials in the named encrypted Key Storage entries, run
+failed for want of DNS. Register both accounts in the web vault — **you create a separate
+master password in each registration form; nothing generates or prints either one** —
+create the automation account's personal API key, stage the three automation-account
+credentials in the named encrypted Key Storage entries, run
 **Vaultwarden Cutover**, and only then run **Bootstrap Platform**. Password choice and
 personal API-key creation are deliberately human Vaultwarden actions.
 

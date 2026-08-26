@@ -71,7 +71,7 @@ BW_OPTIONAL = [option | {"required": False} for option in BW_OPTIONS]
 ADMIN_OPTION = secure_option(
     "vaultwarden_admin_token",
     f"{BASE}/vaultwarden-machine/admin-token",
-    "Vaultwarden server-administration token",
+    "Loaded automatically from encrypted Key Storage; do not enter a value",
 )
 RUNDECK_OPTION = secure_option(
     "rundeck_api_token",

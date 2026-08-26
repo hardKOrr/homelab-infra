@@ -95,6 +95,39 @@ python3 "$repo/rundeck/render-job.py" \
 grep -q 'storagePath: keys/project/homelab-infra/bootstrap/cloudflare-api-token' \
   "$work/cutover-job.yml" || fail "cutover cannot migrate the Cloudflare token"
 
+# The operator handoff must identify both configured accounts, use the actual
+# Rundeck Key Storage paths, and leave collection creation to the platform.
+enrollment="$repo/ansible/playbooks/maintenance/vaultwarden-enroll.yml"
+grep -Fq '{{ _vault_owner_email }}' "$enrollment" \
+  || fail "enrollment output does not identify the configured owner account"
+grep -Fq '{{ _vault_automation_email }}' "$enrollment" \
+  || fail "enrollment output does not identify the configured automation account"
+for key in client-id client-secret master-password; do
+  grep -Fq "keys/project/homelab-infra/vaultwarden-machine/$key" "$enrollment" \
+    || fail "enrollment output omits the Rundeck $key path"
+done
+grep -Fq 'Do not create a collection or assign collection permissions' "$enrollment" \
+  || fail "enrollment output does not state the platform-owned collection boundary"
+! grep -Fq "and the collection 'platform-secrets'" \
+  "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap still tells the operator to create platform-secrets"
+
+# Layer 1 deploys Vaultwarden before generated facts necessarily contain `domain`.
+# The role must use authored infrastructure config then, or full bootstrap adds DOMAIN,
+# restarts Vaultwarden, and invalidates the CLI token already issued for that run.
+grep -Fq "homelabinfra_infra.domain | default(homelabinfra_config.infrastructure.domain" \
+  "$repo/ansible/roles/vaultwarden/templates/vaultwarden.env.j2" \
+  || fail "first Vaultwarden deploy can omit DOMAIN and invalidate the bootstrap session later"
+
+# Admin access is organization-wide in Vaultwarden. It intentionally has no explicit
+# collection grant, so cutover must not claim one exists or recommend demotion.
+! grep -Fq 'holds an explicit grant on the platform-secrets collection' \
+  "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  || fail "cutover claims an impossible explicit grant for an Admin"
+! grep -Fq "change the automation account's role from Admin to Manager" \
+  "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  || fail "cutover recommends a role change that removes required full access"
+
 if printf '[]' | python3 "$repo/ansible/scripts/vault-runtime.py" \
      --require homelab-infra/proxmox >/dev/null 2>&1; then
   fail "missing required item did not fail"

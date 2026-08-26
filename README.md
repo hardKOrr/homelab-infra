@@ -101,15 +101,21 @@ generates, stores or prints them, which is why the job output has no password in
 as the owner, create the `homelab-infra` organization and invite the automation account
 into it as an **Admin**.
 
-That is the whole manual step. Do not create any collection: the platform creates its own
-`platform-secrets` collection on first write and grants every confirmed member manage
-rights on it. The web vault's auto-created "Default Collection" is ignored, and Admin
-membership is what lets the automation account read the organization — no per-collection
-grant is required.
+That is the whole manual step. Do not create any collection or assign collection
+permissions: the platform creates `platform-secrets` on first write. The web vault's
+auto-created "Default Collection" is ignored. Admin membership gives the automation
+account organization-wide access, so Vaultwarden stores and displays no explicit
+permission for that account on `platform-secrets`.
 
 Signed in as the automation account, view its personal API key (Settings → Security → Keys).
-Stage that client ID and client secret, plus the master password you chose, in the named
-encrypted Key Storage entries. Run **Vaultwarden Cutover**; it imports and reads back every
+Stage that client ID and client secret, plus the automation master password you chose, in
+these encrypted Password entries:
+
+- `keys/project/homelab-infra/vaultwarden-machine/client-id`
+- `keys/project/homelab-infra/vaultwarden-machine/client-secret`
+- `keys/project/homelab-infra/vaultwarden-machine/master-password`
+
+Run **Vaultwarden Cutover**; it imports and reads back every
 seed secret before writing the marker and deleting seed files. Then run **Bootstrap
 Platform**.
 

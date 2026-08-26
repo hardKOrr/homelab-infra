@@ -1883,25 +1883,38 @@ cat <<EOF
     a separate and deliberate choice (routing.access: public) and does require inbound
     443 forwarded here. An existing internet-facing proxy keeps its own ports either way.
 
-    NEXT: two Rundeck jobs, with one browser session between them. Open $RD_URL.
+    NEXT: complete the two-account Vaultwarden setup, then run two Rundeck jobs.
+    Open $RD_URL.
 
       1. DNS FIRST. Point vaultwarden.$LAB_DOMAIN at ${CADDY_ADDR:-the Caddy LXC} in your
          LAN resolver. Nothing below works until that name resolves.
-      2. Run the "Vaultwarden Enrollment" JOB (Bootstrap group). It sends the two
-         invitations and needs no input from you — its admin token is already staged.
-         Skip it if the invitations above already succeeded.
-      3. In a BROWSER at https://vaultwarden.$LAB_DOMAIN, register the owner address and
-         the automation address. YOU CHOOSE both master passwords here; nothing in this
-         project generates, stores or prints them. Then, as the owner, create the
-         organization 'homelab-infra' and the collection 'platform-secrets', and grant
-         the automation account access to that collection.
-      4. Signed in as the automation account, open Settings > Security > Keys and view
-         its API key. Put that client id and client secret, plus the master password you
-         chose in step 3, into Rundeck Key Storage under
-         keys/project/$RD_PROJECT/vaultwarden-machine/ as client-id, client-secret and
-         master-password.
-      5. Run the "Vaultwarden Cutover" JOB, then the "Bootstrap Platform" JOB. Bootstrap
-         Platform reuses Caddy and Vaultwarden and deploys the remaining services.
+      2. The invitations are for these two separate Vaultwarden accounts:
+           owner:      $VAULTWARDEN_OWNER_EMAIL
+           automation: $VAULTWARDEN_AUTOMATION_EMAIL
+         If this bootstrap did not send them successfully, run
+         Setup > Credentials > Vaultwarden Enrollment. That job loads its admin token
+         from encrypted Key Storage and needs no input.
+      3. Open https://vaultwarden.$LAB_DOMAIN/#/register. Register the owner account
+         $VAULTWARDEN_OWNER_EMAIL. Create its master password in the registration form;
+         the platform never receives or stores it. Sign out, open the same registration
+         URL again, and register the separate automation account
+         $VAULTWARDEN_AUTOMATION_EMAIL with a different master password.
+      4. Sign in as the owner. Create organization 'homelab-infra'. Invite
+         $VAULTWARDEN_AUTOMATION_EMAIL as an Admin, then accept and confirm the membership
+         until the Members page shows it as a confirmed Admin.
+         DO NOT CREATE A COLLECTION OR ASSIGN COLLECTION PERMISSIONS. Vaultwarden Cutover
+         creates 'platform-secrets' on its first write. An Admin reaches it through
+         organization-wide access, so no explicit collection permission appears. The
+         auto-created 'Default Collection' is ignored.
+      5. Sign in as $VAULTWARDEN_AUTOMATION_EMAIL. Open Settings > Security > Keys and
+         select View API key. In Rundeck Key Storage, create these encrypted Password
+         entries with the corresponding values:
+           keys/project/$RD_PROJECT/vaultwarden-machine/client-id       <- client_id
+           keys/project/$RD_PROJECT/vaultwarden-machine/client-secret   <- client_secret
+           keys/project/$RD_PROJECT/vaultwarden-machine/master-password <- automation master password
+      6. Run Setup > Credentials > Vaultwarden Cutover. After it succeeds, run
+         Setup > Platform > Bootstrap Platform. Bootstrap Platform reuses Caddy and
+         Vaultwarden and deploys the remaining services.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

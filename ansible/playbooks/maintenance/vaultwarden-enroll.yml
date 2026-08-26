@@ -1,6 +1,7 @@
 ---
-# Seed-only invitation step. Account registration, master-password choice,
-# organization creation and collection grants remain deliberately human actions.
+# Seed-only invitation step. Account registration, master-password choice and
+# organization membership remain deliberately human actions. The platform owns
+# creation and grants for its canonical collection.
 - name: Vaultwarden | Invite first owner and automation principal
   hosts: localhost
   gather_facts: false
@@ -73,12 +74,13 @@
     - name: Publish the human enrollment ceremony
       ansible.builtin.debug:
         msg:
-          - "Vaultwarden is available at {{ _vault_public_url }}."
-          - "Open {{ _vault_public_url }}/#/register and register the invited owner address."
-          - "Choose the owner master password only in the web vault."
-          - "Register the dedicated automation address separately."
-          - "As the owner, create organization 'homelab-infra' and invite the automation account into it as an Admin."
-          - "Create no collection: the platform creates 'platform-secrets' itself on first write, and grants the automation account explicit access to it."
-          - "Admin is required for that first write. Cutover names the optional tightening available afterwards."
-          - "From the automation account, create a personal API key and stage BW_CLIENTID, BW_CLIENTSECRET and BW_PASSWORD in Rundeck Key Storage."
-          - "Then run the Vaultwarden Cutover job. Ordinary deploys remain disabled until it succeeds."
+          - "Invitations are ready for owner account {{ _vault_owner_email }} and dedicated automation account {{ _vault_automation_email }}."
+          - "1. Open {{ _vault_public_url }}/#/register. Register {{ _vault_owner_email }}. In the registration form, create the owner account's master password. The platform never receives or stores this password."
+          - "2. Sign out. Open {{ _vault_public_url }}/#/register again. Register the separate automation account {{ _vault_automation_email }} and create a different master password for it. Keep that automation master password for step 5."
+          - "3. Sign in as {{ _vault_owner_email }}. Create the organization 'homelab-infra'. Invite {{ _vault_automation_email }} as an Admin. Accept and confirm the membership until the organization's Members page shows the automation account as a confirmed Admin."
+          - "4. Do not create a collection or assign collection permissions. The Vaultwarden Cutover job creates 'platform-secrets' on its first write. An Admin reaches it through organization-wide access, so Vaultwarden shows no explicit collection permission for that account. The platform ignores the auto-created 'Default Collection'."
+          - "5. Sign in as {{ _vault_automation_email }}. Open Settings > Security > Keys, select View API key, and put the three values into Rundeck Key Storage as encrypted Password entries:"
+          - "   client_id -> keys/project/homelab-infra/vaultwarden-machine/client-id"
+          - "   client_secret -> keys/project/homelab-infra/vaultwarden-machine/client-secret"
+          - "   automation master password -> keys/project/homelab-infra/vaultwarden-machine/master-password"
+          - "6. Run Setup > Credentials > Vaultwarden Cutover. After it succeeds, run Setup > Platform > Bootstrap Platform. Ordinary deploys remain disabled until cutover succeeds."

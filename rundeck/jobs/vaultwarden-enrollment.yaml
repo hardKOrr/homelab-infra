@@ -2,7 +2,7 @@
   uuid: 9fa6c03f-72db-5baf-8d8d-3b98774e4f74
   name: Vaultwarden Enrollment
   group: Setup/Credentials
-  description: Invite the exact first-owner and dedicated automation addresses after Caddy HTTPS is reachable. Human registration, master-password choice, organization creation and collection grants remain in the web vault.
+  description: Re-send the configured owner and automation invitations. This job loads its admin token from encrypted Key Storage and needs no operator input. Its output identifies both accounts and gives the remaining web-vault steps.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

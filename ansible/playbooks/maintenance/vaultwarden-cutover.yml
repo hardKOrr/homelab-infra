@@ -310,21 +310,17 @@
           Vault mode is active. Seed files were removed only after every imported
           item passed exact readback. Ordinary jobs now fail closed on Vaultwarden.
 
-    # Vaultwarden serializes allowAdminAccessToAllCollectionItems as a hardcoded
-    # true (src/db/models/organization.rs, verified through 1.37.1 and main) and
-    # ships no endpoint to change it — PUT /api/organizations/<id>/collection-management
-    # is a 404. So the org-wide admin reach cannot be revoked server-side, and the
-    # optional tightening is to remove the role instead of the flag.
-    - name: Publish the optional tightening step
+    # Vaultwarden does not store a per-collection grant for an Owner/Admin member:
+    # its organization-wide access already covers every collection. Demoting this
+    # account after cutover would remove the full access that the collection-list
+    # endpoint requires before a later run could establish a narrower grant. Keep
+    # the shipped Admin role and state the effective permission model exactly.
+    - name: Publish the effective automation-account access
       ansible.builtin.debug:
         msg:
-          - "The automation account holds an explicit grant on the platform-secrets collection, verified on this run."
-          - "Vaultwarden pins allowAdminAccessToAllCollectionItems to true and offers no toggle for it, so an organization Admin can always reach every collection here."
-          - "Optional, and only on a lab whose collection already exists: as the human owner, open Members in the web vault and change the automation account's role from Admin to Manager."
-          - "Manager plus the grant is least privilege that still works — a Manager reaches only collections it manages, and the grant is what makes it manage this one."
-          - "Not User: org collection and member listing require Manager, Admin or Owner, so a User is refused at the first vault write."
-          - "Not before a first bootstrap either: creating the canonical collection needs Admin."
-          - "Run a Deploy job afterwards. If it fails, set the role back to Admin — nothing else changes."
+          - "The automation account is an Admin of organization homelab-infra and reaches platform-secrets through organization-wide access."
+          - "Vaultwarden intentionally stores no explicit collection permission for an Admin; its absence in the collection UI is expected."
+          - "Keep the automation account as Admin. Do not create another collection, add a manual collection grant, or demote the account after cutover."
 
     - name: Fail if the cutover left anything undone
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
