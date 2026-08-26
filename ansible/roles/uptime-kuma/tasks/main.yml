@@ -128,7 +128,9 @@
     url: "{{ _kuma_base }}/api/entry-page"
     return_content: true
   register: _kuma_stage_after
-  until: _kuma_stage_after.json.type | default('') != 'setup-database'
+  until:
+    - _kuma_stage_after.status | default(0) == 200
+    - _kuma_stage_after.json.type | default('') != 'setup-database'
   retries: 30
   delay: 5
   changed_when: false
