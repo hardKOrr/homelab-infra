@@ -4,26 +4,37 @@ Six steps. Most of the work is step 4.
 
 ---
 
-## Step 1 — Decide the hosting type
+## Step 1 — Choose the hosting backend
 
-| Type | Use when | Examples |
-|---|---|---|
-| **Docker on LXC** | App distributes a Docker image; multi-container stacks | Sonarr, Radarr, Jellyfin |
-| **Native LXC** | Single binary or apt-installable; no Docker needed | Vaultwarden, Caddy, Ntfy |
-| **Docker on VM** | Needs full kernel (rare) | Home Assistant (USB passthrough) |
-| **VM** | Has its own installer (rare) | PBS |
-| **Kubernetes** | The app is an ordinary OCI workload and wants orchestration | Mixpost — see below |
+Use the first condition that matches the application. Explicit configuration syntax does
+not determine preference: `hosting: kubernetes` is explicit because Kubernetes was added
+after the native and Docker inference rules, not because it is discouraged.
 
-When in doubt, Docker on LXC is the safe default for anything with a Docker image.
+1. Keep a platform dependency outside Kubernetes when the cluster needs it to deploy,
+   publish, unlock, recover, or back up the cluster. The current external boundary includes
+   the runner, Caddy, Vaultwarden, Authentik, Proxmox, and PBS. This avoids a cluster
+   failure taking down a service required to repair that cluster.
+2. Use **Kubernetes** for a stateless OCI workload, or when scheduling, controlled rollout,
+   or replica behavior provides a real benefit. A stateful workload fits when its data is
+   easily restored or its StorageClass remains accessible after a node failure.
+3. Use **Docker on LXC** for a single-replica stateful OCI application while its data is
+   host-local, or for a Compose application that does not benefit from cluster scheduling.
+   Related Docker applications may share an estate-resolved stack host.
+4. Use **Native LXC** when the application ships as a package or single binary and direct
+   OS or service integration is simpler than an OCI runtime.
+5. Use **Docker on VM** only when an OCI workload needs a full kernel or device behavior
+   that the LXC path cannot provide.
+6. Use a **VM** when the application owns its installer, operating system, or kernel.
 
-**The Kubernetes row is not a promotion.** `playbooks/apps/k3s-cluster.yml` builds a k3s
-cluster as a hosting backend, and an app deployed onto it gains scheduling and restart
-behavior it does not get from a compose file — but it also inherits the cluster's storage
-contract, and the default StorageClass is node-pinned: a pod whose volume lives on an
-unavailable node stays Pending rather than moving. Prefer it for stateless or
-easily-restored workloads. A working Docker app has no reason to migrate. Caddy,
-Vaultwarden, either Authentik estate, the runner and Proxmox/PBS stay outside the cluster
-by decision, not by omission — see `docs/meta/done/204-kubernetes-hosting-backend/`.
+The current Kubernetes StorageClass is node-local. A volume pins its pod to one cluster
+node, so the scheduler cannot fail that workload over while the node is unavailable.
+Shared resilient storage can remove that limit, but it needs a supported provisioner and
+volume migration, and it does not make a single-replica application highly available by
+itself. Read [`../../tasks/kubernetes/README.md`](../../tasks/kubernetes/README.md) before
+selecting Kubernetes for persistent data.
+
+Proxmox OCI guests are not implemented as a hosting backend. OCI images currently run
+through Docker or Kubernetes.
 
 ---
 
@@ -64,10 +75,17 @@ Add the application to `catalog/applications.yml`:
 ```
 
 `scope` says which side of the estate boundary the application sits on. Estates are
-separate, so `estate` is the ordinary answer: one deployment per estate, instances named
-`<app>-<estate>[-<variant>]`. `lab` means one deployment serves every estate, and it is the
-deliberate exception — comment the entry with why it earns it. There is no default; an
-application with no `scope` is rejected at render time.
+independent application, routing, identity, DNS, and network scopes. `estate` creates one
+deployment per estate, with instances named `<app>-<estate>[-<variant>]`. `lab` creates one
+deployment that serves every estate and is the deliberate exception; document why the
+application crosses that boundary. There is no default. The renderer rejects an
+application with no `scope`.
+
+Application scope and hosting placement are related but not interchangeable. `scope: lab`
+classifies one application deployment. `_.shared` marks hosting substrate that crosses
+estate boundaries. Read [`../../tasks/proxmox/README.md`](../../tasks/proxmox/README.md) for
+the tag grammar and [`../../vars/CONTRACT.md`](../../vars/CONTRACT.md) for estate and network
+resolution.
 
 Do not classify it by Docker, LXC, VM, Kubernetes, stack, database dependency, or another
 execution detail. Add jobs that act on the lab rather than on one application to
