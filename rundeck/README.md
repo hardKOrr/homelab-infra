@@ -91,11 +91,12 @@ keep the existing token; `ROTATE_PROXMOX_TOKEN=1` mints a new one.
 
 ## Jobs
 
-`jobs/*.yaml` is the complete job set — one file per job, each a single script step that
-runs one playbook. `bootstrap-rundeck.sh` and **Reimport Jobs** validate and render every
-source file before posting it to the REST import endpoint. Job UUIDs are stable and imports
-use `dupeOption=update&uuidOption=preserve`, so a group change updates the existing job and
-keeps its execution history and schedule.
+`jobs/*.yaml` is the source job set. An ordinary source file defines one job; an action
+template expands into one job per applicable application. Each rendered job has a single
+script step that runs one playbook. `bootstrap-rundeck.sh` and **Reimport Jobs** validate
+and render every source before posting it to the REST import endpoint. Job UUIDs are stable
+and imports use `dupeOption=update&uuidOption=preserve`, so a group change updates the
+existing job and keeps its execution history and schedule.
 
 Three files own classification:
 
@@ -146,12 +147,9 @@ the source useful at a glance:
 ### One folder per application
 
 Everything an operator does to one application is in that application's own folder: its
-Deploy job, and a `Maintenance` folder with its day-2 jobs. 16 applications and 8 action
-templates render as 102 jobs from 39 source files.
+Deploy job and a `Maintenance` folder with its implemented day-2 jobs.
 
-**What the expansion answers, so the operator does not have to.** The generic day-2 jobs
-each asked for an instance name, an app name and — for a rollback — a stack tag, all of
-which the platform already knew. Generating one job per application answers them from
+The renderer resolves values the platform already knows from
 `../catalog/applications.yml` and `../ansible/vars/app-defaults/<app>.yml`:
 
 | Was typed | Now |
@@ -161,11 +159,10 @@ which the platform already knew. Generating one job per application answers them
 | `stack` (Rollback) | resolved from the instance override over application defaults |
 | `source_config_path` (Migrate) | defaulted to `/var/lib/<app>` |
 
-**Which actions an application gets is derived from its hosting kind**, read from its own
-defaults file — an explicit `hosting:` wins, otherwise the presence of `stack:` tells a
-Docker app from a native LXC one. Native gets Configure, Restart, Tail Log and Remove;
-Docker adds Rollback; Kubernetes gets Configure, Backup, Restore and Remove. Migrate is
-opt-in through the catalog's `extra:` and belongs to the Servarr family alone.
+`app-actions.yml` declares which actions apply to each hosting kind and any application
+exceptions. The renderer reads an explicit `hosting:` first; otherwise the presence of
+`stack:` distinguishes Docker from native LXC. Catalog `extra:` entries opt an application
+into an action that hosting kind alone does not select.
 
 An action absent from a folder is absent because it is not implemented safely. There is no
 Backup for a Docker app — its data is covered by the guest's PBS backup and there is no
@@ -189,19 +186,16 @@ without a reimport.
 In a single-estate lab, the instance form is `<app>[-<variant>]` (`radarr`, `radarr-4k`).
 When `domains:` declares two or more estates, exactly one estate must be the explicit
 default and every estate-scoped instance is `<app>-<estate>[-<variant>]`
-(`radarr-personal`, `radarr-foxglove-4k`). The dropdown labels include the estate. The
+(`app-estate`, `app-estate-variant`). The dropdown labels include the estate. The
 longest matching application slug wins, so `uptime-kuma` is not read as an instance of
-`uptime`. An application whose own defaults declare `routing.estate` is prefilled for that
-estate rather than for the lab default, so the offered name never contradicts the
-application's configuration.
+`uptime`.
 
-Only applications the catalog marks `scope: estate` are suffixed. A `scope: lab` service —
-the TLS edge, the vault, PBS, Ntfy, the metrics stack, the status view, the cluster — keeps
-its ordinary name because one deployment serves every estate.
+Only applications the catalog marks `scope: estate` are suffixed. A `scope: lab` service
+keeps its ordinary name because one deployment serves every estate.
 
 **The suffix never reaches a URL.** Every routed application declares `routing.subdomain`
-in `../ansible/vars/app-defaults/<app>.yml`, so `radarr-personal` publishes
-`radarr.personal.example.com`. Without that declaration the hostname falls back to the
+in `../ansible/vars/app-defaults/<app>.yml`, so `<app>-<estate>` can publish
+`<subdomain>.<estate-domain>`. Without that declaration the hostname falls back to the
 instance name and the estate suffix would show up in the address; the gate rejects a routed
 application that omits it.
 
@@ -245,10 +239,8 @@ clone; only the symlink and `/etc/homelab-infra/lab-run.env` live on the host. I
 6. runs `ansible-playbook` through `with-proxmox-env.sh`, then locks/logs out and removes
    all temporary CLI/session state while preserving the playbook exit status
 
-This is why a fix pushed to the repo is executed by the next click with no human action,
-and why a change to *how* jobs run is one edit rather than eighteen. That lesson was paid
-for: the first live run failed identically in all 15 jobs, and the fix landed in the one
-shared wrapper (commit `059316a`).
+This makes execution behavior a shared implementation and lets the next job run use a fix
+that has reached the tracked branch.
 
 Escape hatches, per job or per shell: `LAB_REFRESH=0` runs the on-disk checkout unchanged
 (for pinning while debugging), `LAB_DOCTOR=0` skips the config check (the diagnostic
@@ -328,14 +320,10 @@ replacement is proven:
 6. Delete the old token by ID, then confirm it is rejected while the replacement still
    authenticates.
 
-This sequence ran live on 2026-08-14. Reimport Jobs execution 141 succeeded using the
-replacement; the old token then returned HTTP 403 and the replacement remained valid.
-
 ## Reading and changing config from the UI
 
-No SSH session appears anywhere in this document's happy path, and that is the point.
-`config/` lives on one host; before the **Config** job group existed, the only way to see
-or change it was a text editor over SSH on a machine whose contents existed nowhere else.
+`config/` lives on the runner. The supported UI operations read and change it without an
+interactive SSH session:
 
 - **Configure App** writes `config/apps/<instance>.yml` from a form. Fields are overrides;
   blank keeps the current value. `extra_yaml` covers anything the form does not name.
@@ -348,12 +336,9 @@ or change it was a text editor over SSH on a machine whose contents existed nowh
   through the environment rather than argv, and stored as a hidden field. It is the only
   post-cutover route into the vault: **Vaultwarden Cutover** exports `LAB_SEED_MODE=1` and
   `lab-run.sh` refuses Seed mode once the vault-mode marker exists, so a credential
-  authored later cannot go through the importer. Without this job the answer was a secret
-  hand-written into `config/infrastructure.yml` on the runner, which is what cutover exists
-  to end.
+  authored later cannot go through the importer.
 - **Config Doctor** validates everything and names each problem by file and key path.
 
-History is point-in-time: every write is copied to `<dir>/.backups/<file>.<timestamp>`
-first, pruned to the newest 20, and the diff goes into the job log. That answers "what did
-this look like before" and "get it back". It does not answer "who changed this and why" —
-an accepted trade for a homelab lab definition.
+Every write first copies the current file to `<dir>/.backups/<file>.<timestamp>`, prunes
+that file's backups to the newest 20, and writes the diff to the job log. This is
+point-in-time recovery, not a commit history.

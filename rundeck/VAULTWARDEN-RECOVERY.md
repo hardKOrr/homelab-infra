@@ -64,9 +64,7 @@ The repository gate exercises the marker transition, fail-closed runtime, recrea
 rejection, private CLI state cleanup, both Rundeck converter namespaces, and child failure
 propagation with fake credentials.
 
-Live acceptance completed 2026-08-17 without changing the production guest. A fresh runner
-at VMID `168000203` restored credential-free config plus the external recovery inputs from
-PBS archive `backup/ct/168000003/2026-08-17T16:49:21Z`. Config Doctor execution 243 passed
-Vaultwarden preflight, retained the production SSH public identity, and removed the
-execution-private key afterward. A full isolated restore passed the same check as execution
-242. Both scratch guests were then destroyed. See slice 014 notes for the defects found.
+Recovery changes require acceptance on a disposable runner and disposable guests before
+use on the live control plane. Verify restored configuration, fail-closed Vaultwarden
+unlock, private CLI-state cleanup, rejected ordinary Seed re-entry, explicit recovery, and
+a successful ordinary job after Vault mode is restored.
