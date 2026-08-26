@@ -12,7 +12,7 @@ Vaultwarden, and prove the vault before returning to normal jobs.
   namespace leaves jobs visible but unable to start.
 - A current PBS backup containing the Vaultwarden guest and its data directory/database.
 - The automation account client ID, client secret, and master password in a separate
-  recovery record. They are normally encrypted in Rundeck/Semaphore, but the only copy
+  recovery record. They are normally encrypted in Rundeck Key Storage, but the only copy
   must not depend on the runner being recoverable.
 - The Vaultwarden server-administration token. This is an external control-plane
   credential, not an item-vault unlock credential.

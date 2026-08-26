@@ -19,7 +19,7 @@ the rest of the documentation obvious.
 | | Layer 1 — the runner | Layer 2 — the lab |
 |---|---|---|
 | **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
-| **Where** | as root on a Proxmox node | in the Rundeck/Semaphore UI |
+| **Where** | as root on a Proxmox node | in Rundeck |
 | **Builds** | the runner, Caddy, and Vaultwarden in temporary Seed mode | the remaining services in mandatory Vault mode |
 | **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, and explicit enrollment/cutover jobs | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
 | **Run it** | once, by hand | once, by clicking |
@@ -136,10 +136,11 @@ resolvable in DNS.
 | You want to… | Read |
 |---|---|
 | Understand the jobs and how to import them | [`rundeck/README.md`](rundeck/README.md) |
-| Use Semaphore instead of Rundeck | [`semaphore/README.md`](semaphore/README.md) |
-| Change an app's configuration | that app's **Configure** job, or [`config.example/`](config.example/) |
+| Understand or change the Ansible implementation | [`ansible/README.md`](ansible/README.md) |
+| Change an app's configuration | that app's **Configure** job, or [`config.example/README.md`](config.example/README.md) |
 | Know exactly what a config key does | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
+| Inspect the legacy Semaphore reference | [`semaphore/README.md`](semaphore/README.md) |
 | See what is built and what is planned | [`docs/meta/INDEX.md`](docs/meta/INDEX.md) |
 
 ---
@@ -181,7 +182,7 @@ one per application, and three under **Manage > Configuration**:
 
 | Secret | Home |
 |---|---|
-| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage, or Semaphore encrypted secret variables |
+| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage |
 | Vaultwarden admin token | AES-GCM-encrypted external runner storage; it administers the server but cannot decrypt vault items |
 | Cloudflare DNS-01 token | temporary AES-GCM runner storage during Seed mode, then `homelab-infra/reverse_proxy` in Vaultwarden |
 | Proxmox, runner SSH, and generated service credentials | canonical organization-owned Vaultwarden items after verified cutover |

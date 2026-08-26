@@ -31,8 +31,9 @@ when the task reaches their subject.
 | Area | Read |
 | --- | --- |
 | Repository use and operator entry points | `README.md` |
-| Application playbooks and hosting decisions | `ansible/playbooks/apps/README.md` |
+| Ansible implementation | `ansible/README.md`, then the nearest subsystem `README.md` |
 | Configuration schema and `homelabinfra_*` variables | `ansible/vars/CONTRACT.md` |
+| User configuration examples | `config.example/README.md` |
 | Application catalog | `catalog/README.md` |
 | Architecture and documentation map | `docs/README.md`, then `docs/architecture.md` when needed |
 | Reviewable implementation contracts | `docs/specs/README.md`, then the applicable specification |

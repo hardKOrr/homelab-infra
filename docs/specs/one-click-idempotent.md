@@ -1,6 +1,6 @@
 # Spec: one click, idempotent, notified
 
-The product is one click per app in Rundeck or Semaphore — not grouped stack deploys or multi-job
+The supported operator path is one click per app in Rundeck — not grouped stack deploys or multi-job
 chains. Re-running any playbook is always safe.
 
 ## Rule
@@ -15,12 +15,11 @@ chains. Re-running any playbook is always safe.
   no-op. Gotify and Discord are reserved provider values until publishers exist. Failure paths
   must not send success notifications — a notify play that runs after a failed work play must
   check the result.
-- Playbooks are UI-agnostic: nothing in `ansible/` may depend on Semaphore or Rundeck specifics;
-  job definitions live in `semaphore/` and `rundeck/`.
+- Playbooks are UI-independent: nothing in `ansible/` may depend on Rundeck specifics.
+  Supported job definitions live in `rundeck/`; `semaphore/` is an unverified reference.
 - We configure tools, we do not replicate them: container updates belong to Watchtower, OS
   updates to unattended-upgrades, backups to PBS, uptime to Uptime Kuma.
 
 ## Enforced by
 
-- inspection — cite this spec in findings (source: `AGENTS.md` "Philosophy" and
-  "Day-2 Operations")
+- inspection — cite this specification in findings

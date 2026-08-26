@@ -1,6 +1,6 @@
 # Architecture
 
-Ansible-based homelab automation platform: one click in Rundeck or Semaphore deploys a fully
+Ansible-based homelab automation platform: one click in Rundeck deploys a fully
 configured, cross-wired application on Proxmox. The repository is designed for others to clone:
 fill in the user configuration, run bootstrap, and deploy a working lab. Provisioning is
 fire-and-forget: create the correct state, but do not continuously police drift. This file is
@@ -18,7 +18,8 @@ the map; contract detail lives in [specs/](specs/) and [`AGENTS.md`](../AGENTS.m
 | `config/` (gitignored) | User configuration, app overrides, backups, and topology-only generated facts on the runner | [secrets-handling](specs/secrets-handling.md) |
 | `ansible/inventory/proxmox.yml` | `community.proxmox` dynamic inventory. Only `homelab-infra`-tagged guests are managed | [config-layering](specs/config-layering.md) |
 | `catalog/applications.yml` | Human-facing classification of deployable applications by purpose and type; projected into Rundeck as one folder per application, independent of hosting kind | — |
-| `semaphore/`, `rundeck/` | Importable UI job definitions; playbooks stay UI-agnostic. `rundeck/render-job.py` projects the catalog into one folder per application and expands `rundeck/app-actions.yml` into that application's Maintenance jobs | [rundeck README](../rundeck/README.md) |
+| `rundeck/` | Supported operator jobs and runner bootstrap. Playbooks stay UI-independent; `rundeck/render-job.py` projects the catalog and expands application maintenance jobs | [rundeck README](../rundeck/README.md) |
+| `semaphore/` | Legacy, unverified reference files; not maintained at Rundeck feature parity | [semaphore README](../semaphore/README.md) |
 | `docs/` | Architecture and normative implementation specifications | — |
 | `gate/` | Executable lint, parser, syntax, and focused regression checks | [gate README](../gate/README.md) |
 | `docs/meta/` | Current work queue, numbered slices, lessons, and archived implementation history | — |

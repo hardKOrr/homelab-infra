@@ -16,7 +16,7 @@ Rundeck stores those four external values under project Key Storage protected by
 AES-256-GCM converter for `/keys`. The same converter protects encrypted project
 configuration. Both namespaces read one separately backed-up value from the root-owned
 systemd EnvironmentFile `/etc/rundeck/.storage-password`; that value is never a Key Storage
-or Vaultwarden item. Semaphore uses encrypted secret variables for the equivalent inputs.
+or Vaultwarden item.
 
 ## Rule
 
@@ -39,4 +39,4 @@ or Vaultwarden item. Semaphore uses encrypted secret variables for the equivalen
 - `ansible/scripts/lab-run.sh` — mode guard, preflight, private CLI state, cleanup
 - `ansible/scripts/secret-shape.py` and `ansible/tasks/bootstrap/write-generated-facts.yml`
 - `gate/test-vaultwarden.sh` — redaction, mapping, fail-closed and cleanup tests
-- inspection — cite this spec in findings (source: `AGENTS.md` "Secrets" section)
+- inspection — cite this specification in findings
