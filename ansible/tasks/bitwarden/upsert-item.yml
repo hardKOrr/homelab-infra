@@ -561,3 +561,54 @@
               | zip((_vault_readback.stdout | from_json).fields | default([])
                     | map(attribute='value'))) }}
   no_log: true
+
+# lab-run constructs HOMELABINFRA_VAULT_JSON before Ansible starts, but bootstrap writes
+# new canonical items while that same Ansible process is still running. Publish the exact
+# verified field set into the process-local contract now; load-user-vars.yml overlays this
+# localhost fact on the original environment snapshot for every later play and host. This
+# is an in-memory handoff only: generated facts remain topology-only, and the next job still
+# rebuilds its contract from Vaultwarden during the normal preflight.
+- name: Vault | Map the verified item into the live runtime contract
+  ansible.builtin.set_fact:
+    _vault_runtime_fragment: "{{ _vault_runtime_fragment_json | from_json }}"
+  vars:
+    _vault_item_suffix: "{{ vault_item_name | regex_replace('^homelab-infra/', '') }}"
+    _vault_item_parts: "{{ _vault_item_suffix.split('/') }}"
+    _vault_runtime_fragment_json: >-
+      {%- if _vault_item_parts | length == 1 -%}
+      {{ {_vault_item_parts[0]: _vault_effective_values} | to_json }}
+      {%- elif _vault_item_parts | length == 2
+                and _vault_item_parts[0] in ['apps', 'media'] -%}
+      {{ {_vault_item_parts[0]: {_vault_item_parts[1]: _vault_effective_values}} | to_json }}
+      {%- elif _vault_item_parts | length == 3
+                and _vault_item_parts[0] == 'estates' -%}
+      {{ {'estates': {_vault_item_parts[1]:
+                      {_vault_item_parts[2]: _vault_effective_values}}} | to_json }}
+      {%- else -%}
+      {}
+      {%- endif -%}
+  no_log: true
+
+- name: Vault | Update this host's live runtime contract
+  ansible.builtin.set_fact:
+    homelabinfra_vault: >-
+      {{ homelabinfra_vault | default({})
+         | combine(_vault_runtime_fragment, recursive=True) }}
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra | default({})
+         | combine(_vault_runtime_fragment, recursive=True) }}
+  no_log: true
+
+- name: Vault | Publish the live runtime contract on localhost
+  ansible.builtin.set_fact:
+    homelabinfra_vault: >-
+      {{ hostvars['localhost'].homelabinfra_vault | default({})
+         | combine(_vault_runtime_fragment, recursive=True) }}
+    homelabinfra_infra: >-
+      {{ hostvars['localhost'].homelabinfra_infra | default({})
+         | combine(_vault_runtime_fragment, recursive=True) }}
+  delegate_to: localhost
+  delegate_facts: true
+  become: false
+  no_log: true
+  when: inventory_hostname != 'localhost'

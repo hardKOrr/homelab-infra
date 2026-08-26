@@ -53,13 +53,23 @@
 
 - name: Resolve the in-memory Vaultwarden contract
   ansible.builtin.set_fact:
-    homelabinfra_vault: >-
-      {{ (lookup('ansible.builtin.env', 'HOMELABINFRA_VAULT_JSON')
-          | default('{}', true) | from_json) }}
+    homelabinfra_vault: "{{ _luv_vault_runtime }}"
     homelabinfra_infra: >-
       {{ (_luv_generated_facts | default({}))
-         | combine((lookup('ansible.builtin.env', 'HOMELABINFRA_VAULT_JSON')
-                    | default('{}', true) | from_json), recursive=True) }}
+         | combine(_luv_vault_runtime, recursive=True) }}
+  vars:
+    # lab-run builds the environment snapshot once, before Ansible starts. Roles can
+    # create or update canonical items later in that same process (Ntfy is the first
+    # bootstrap example), so upsert-item.yml also publishes each verified write as a
+    # localhost fact. That live copy wins here and makes the new credential available
+    # to every later play and host without putting it in generated facts or waiting for
+    # another job to rebuild HOMELABINFRA_VAULT_JSON.
+    _luv_vault_snapshot: >-
+      {{ lookup('ansible.builtin.env', 'HOMELABINFRA_VAULT_JSON')
+         | default('{}', true) | from_json }}
+    _luv_vault_live: "{{ hostvars['localhost'].homelabinfra_vault | default({}) }}"
+    _luv_vault_runtime: >-
+      {{ _luv_vault_snapshot | combine(_luv_vault_live, recursive=True) }}
   no_log: true
 
 - name: Load homelabinfra defaults

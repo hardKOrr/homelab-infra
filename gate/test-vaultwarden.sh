@@ -27,6 +27,21 @@ assert d["estates"]["home"]["dns"]["api_key"] == "dns-value"
 assert d["reverse_proxy"]["dns_api_token"] == "dns-edit-value"
 PY
 
+# A canonical item written during bootstrap must enter the live Ansible contract in
+# that same process. Otherwise the next imported app sees only lab-run's startup
+# snapshot: Ntfy can create a valid publish token and Authentik immediately receives
+# HTTP 403 because its notification is sent without that new token.
+upsert="$repo/ansible/tasks/bitwarden/upsert-item.yml"
+loader="$repo/ansible/tasks/load-user-vars.yml"
+grep -Fq 'Vault | Map the verified item into the live runtime contract' "$upsert" \
+  || fail "canonical writes do not update the same-run Vaultwarden contract"
+grep -Fq 'delegate_facts: true' "$upsert" \
+  || fail "canonical writes do not publish their live contract on localhost"
+grep -Fq '_luv_vault_snapshot | combine(_luv_vault_live, recursive=True)' "$loader" \
+  || fail "later plays do not overlay same-run Vaultwarden writes"
+grep -Fq "hostvars['localhost'].homelabinfra_vault | default({})" "$loader" \
+  || fail "non-local plays cannot inherit same-run Vaultwarden writes"
+
 # The existing Caddy deploy job accepts optional Seed credentials before enrollment
 # and the same job accepts Vaultwarden credentials after cutover.
 python3 "$repo/rundeck/render-job.py" \
