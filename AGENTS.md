@@ -145,6 +145,8 @@ ansible/
     stack-defaults.yml             # sizing per stack host, so it does not depend on deploy order
     media-wiring.yml               # media app kinds: API versions, implementations, categories
     app-defaults/<app>.yml         # per-app sensible defaults (git-managed)
+  callback_plugins/
+    homelab.py                     # the stdout callback every job runs under
   scripts/                         # committed helpers the playbooks and the runner shell out to
     lab-run.sh                     # runner entrypoint: refresh the checkout, then run one job
     config-doctor.sh               # validate the config/ tree
@@ -555,6 +557,32 @@ it is accurate for the jobs it does define, and it is missing everything added s
 `Deploy k3s Cluster`, `Deploy Mixpost` and the three Vaultwarden jobs among them. Bringing
 it back to parity is only worth doing if someone actually adopts it. Do not spend a slice's
 time updating it, and do not report a Semaphore gap as an outstanding defect.
+
+## Job Output
+
+Every job's whole story is one Log Output pane, so all of them share one layout,
+produced by `ansible/callback_plugins/homelab.py` — the `stdout_callback` set in
+`ansible/ansible.cfg`. It derives from `default`, so failure rendering, the YAML result
+format and diffs stay ansible's.
+
+A run opens with a `HOMELAB RUN` header (playbook, revision, branch, options, start) and
+closes with a fixed-shape `HOMELAB RESULT` block: verdict, duration, changed count, what
+failed, what is degraded, and the slowest tasks. The degraded list is read straight off
+the `homelabinfra_degradations` fact as `tasks/report-degradation.yml` sets it, so no
+playbook knows the callback exists.
+
+Kept in the stream: every TASK banner, so a long run shows progress and a hang names its
+task; every `changed`, `failed` and `unreachable` line; every `debug` and `assert`
+message. Dropped: the silent `ok:` and `skipping:` result lines, via `display_ok_hosts`
+and `display_skipped_hosts` in `ansible.cfg`. Restore them for one run with
+`ANSIBLE_DISPLAY_OK_HOSTS=1`.
+
+`lab-run.sh` exports `LAB_REVISION` for the header and forces `ANSIBLE_FORCE_COLOR`, which
+is what colours the block in Rundeck — ansible sees a pipe under any runner and would drop
+colour on its own. `NO_COLOR` and `ANSIBLE_NOCOLOR` still win.
+
+The callback is UI-agnostic like everything else under `ansible/`: a terminal run, a
+Semaphore run and a Rundeck run all get the same output.
 
 ## Secrets
 

@@ -104,7 +104,7 @@ LAB_VENV="${LAB_VENV:-/opt/homelab-ansible}"
 LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
 BW_SERVER="${BW_SERVER:-}"
-export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR
+export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR LAB_BRANCH
 # THE REFRESH DEFAULTS TO OFF, AND ONLY A BOOTSTRAPPED RUNNER TURNS IT ON.
 #
 # The refresh is a `git reset --hard`, which destroys uncommitted work in whatever
@@ -160,7 +160,20 @@ elif [ "$LAB_REFRESH" != "1" ]; then
 fi
 
 if [ -d "$LAB_REPO/.git" ]; then
-  log "revision $(git -C "$LAB_REPO" log --oneline -1 2>/dev/null || echo unknown)"
+  # Exported as well as logged: ansible/callback_plugins/homelab.py prints it in the
+  # run header, so the revision sits next to the result rather than scrolled off the
+  # top of the pane. A checkout without git simply omits the row.
+  LAB_REVISION="$(git -C "$LAB_REPO" log --oneline -1 2>/dev/null || echo unknown)"
+  export LAB_REVISION
+  log "revision $LAB_REVISION"
+fi
+
+# Rundeck's log viewer renders ANSI sequences, but ansible sees a pipe rather than a
+# terminal under any job runner and drops colour on its own. Forcing it is what makes
+# the callback's red FAILED red in the browser. NO_COLOR still wins, and an operator
+# capturing a log to a file can set ANSIBLE_NOCOLOR=1 for one run.
+if [ -z "${ANSIBLE_FORCE_COLOR:-}" ] && [ -z "${NO_COLOR:-}" ] && [ -z "${ANSIBLE_NOCOLOR:-}" ]; then
+  export ANSIBLE_FORCE_COLOR=1
 fi
 
 # EVERY FATAL CHECK BELONGS BELOW THE REFRESH, NEVER ABOVE IT.
