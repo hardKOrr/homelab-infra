@@ -9,7 +9,8 @@
 #     after a commit, which is the one that gates the commit's own correctness, is the
 #     complete sweep. There is no state in which an empty change set reports a green.
 #   * anything a playbook consumes (roles/, tasks/, vars/, inventory/, ansible.cfg) fans
-#     out into every playbook, so touching one promotes the run back to FULL.
+#     out into every playbook, so touching one promotes the run back to FULL. Markdown is
+#     documentation, even when it is colocated with those files, and does not fan out.
 #   * a changed playbook drags in any playbook that names it, because bootstrap.yml
 #     chains the app playbooks with import_playbook.
 #   * git being unavailable or unhappy (WSL reading a Windows checkout can refuse on
@@ -55,6 +56,9 @@ gate_resolve_scope() {
 
     local path
     for path in "${gate_changed[@]}"; do
+        case "$path" in
+            *.md) continue ;;
+        esac
         if [[ "$path" =~ $gate_fanout_re ]]; then
             gate_scope_reason="$path fans out into every playbook; full sweep"
             return 0

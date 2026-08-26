@@ -44,12 +44,18 @@ running too much:
 | Clean working tree | full |
 | `git` unreadable (WSL can refuse a Windows checkout on dubious ownership) | full |
 | `roles/ tasks/ vars/ inventory/ files/ ansible.cfg requirements.yml gate/` touched | full |
+| Only Markdown touched, including Markdown inside an Ansible or gate directory | changed; skip Ansible lint and syntax checks |
 | Only playbooks/docs touched | changed |
 
 A clean tree resolving to *full* is the load-bearing rule: the run that gates a commit happens
 after the commit, so there is no state in which "nothing changed" reports a green. A changed
 playbook also drags in any playbook whose text names it, because `bootstrap.yml` chains the app
 playbooks with `import_playbook`.
+
+Markdown never promotes a changed run to full scope. `lint.sh` still compiles every Jinja
+expression and runs `check-links.py`, and `test.sh` still runs every focused regression test.
+The optimization skips only Ansible lint and playbook syntax checks that cannot consume a
+Markdown file.
 
 `test.sh` runs the checks under `xargs -P $(nproc)` — they are independent, and the wall clock is
 interpreter-startup-bound rather than work-bound. Override with `GATE_JOBS=n`. Each check's output
