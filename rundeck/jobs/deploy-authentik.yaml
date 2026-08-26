@@ -11,7 +11,10 @@
   name: Deploy Authentik
   group: Platform/Access and Identity/Authentik
   description: |-
-    Deploy or update Authentik, the SSO provider (Docker on its own sso stack host).
+    Deploy or converge **Authentik**, the lab's single sign-on provider.
+
+    - **Hosting:** Docker on the dedicated `sso` stack host
+    - **Re-run:** Applies configuration and image updates without creating another instance
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,10 +22,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Authentik instance. The value identifies its config file, guest, and
+      route.'
     required: true
     value: authentik
   sequence:

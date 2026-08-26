@@ -13,13 +13,13 @@
   name: Migrate %NAME%
   group: '%GROUP%'
   description: |-
-    NOT READY FOR A LIVE CUTOVER — see docs/meta/done/505-app-servarr/notes.md.
-    Peer references are not rewritten, wiring would duplicate rather than repair,
-    and the source keeps running. Exercise it against a throwaway instance.
+    > **Experimental — do not use for a live cutover.** Peer references are not rewritten,
+    > wiring can duplicate instead of repair, and the source remains active. Test only with
+    > a disposable target instance.
 
-    Copy an existing %NAME% installation's configuration — history, library, profiles,
-    indexers and its API key — onto a lab instance. Run Deploy %NAME% afterwards. The
-    source app is left running and unchanged.
+    Copies an existing %NAME% configuration—including history, libraries, profiles,
+    indexers, and its API key—to a lab instance. The source is left unchanged. Run
+    **Deploy %NAME%** after the copy.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -27,17 +27,17 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Target lab %NAME% instance. Leave it as it is unless the migration lands
-      on a second instance, e.g. %SLUG%-1080p.
+    description: Target lab instance. **Default:** Keep the selected %NAME% instance. Enter
+      another name, such as `%SLUG%-1080p`, only for a separate migration target.
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: source_host
-    description: "Address of the existing %NAME%, e.g. 192.168.1.15"
+    description: Address of the existing %NAME% host, for example `192.168.1.15`.
     required: true
   - name: source_config_path
-    description: "Its configuration directory on that host"
+    description: Configuration directory on the source host.
     required: true
     value: /var/lib/%SLUG%
   sequence:

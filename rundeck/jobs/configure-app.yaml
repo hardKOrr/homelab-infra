@@ -21,7 +21,17 @@
   name: Configure %NAME%
   group: '%GROUP%'
   description: |-
-    Create or edit this %NAME% instance's config/apps/<instance>.yml without an SSH session. Every field is an OVERRIDE — anything you leave blank keeps its current value, and anything absent from the file falls through to %NAME%'s defaults. The previous content is kept under config/apps/.backups/ and the job log shows a unified diff of exactly what changed. Anything not covered by the fields below goes in Extra YAML.
+    Create or edit this %NAME% instance's `config/apps/<instance>.yml` from Rundeck.
+
+    ### How values are applied
+
+    - Every supplied field is an **override**.
+    - A blank field keeps the current value.
+    - A key absent from the file inherits the %NAME% default.
+    - **Extra YAML** is deep-merged last and can set keys not shown in this form.
+
+    The job saves the previous file under `config/apps/.backups/` and prints a unified diff of
+    the change. No SSH session is required.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -29,58 +39,77 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: 'Which %NAME% instance. This IS the filename, the guest hostname and the subdomain. Type a new name to create a second instance: lowercase letters, digits and hyphens (e.g. %SLUG%-4k).'
+    description: '**Identity:** This value is the config filename and guest hostname. Enter
+      a new lowercase, hyphenated name such as `%SLUG%-4k` to create another instance.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: stack
-    description: Docker apps only — which shared stack host to place this app on (e.g. media). Leave blank for native LXC apps and to keep the current value.
+    description: '**Docker only.** Shared stack name, such as `media`. Leave blank to keep
+      the current value. Native LXC apps ignore this field.'
     required: false
   - name: network
-    description: Native LXC apps only — a named network from config/proxmox.yml. Blank keeps the current value.
+    description: '**Native LXC only.** Network name from `config/proxmox.yml`. Leave blank
+      to keep the current value.'
     required: false
   - name: vmid
-    description: Explicit Proxmox VMID. Required only on a dhcp network; otherwise leave blank and one is allocated.
+    description: Explicit Proxmox VMID. Required only on a `dhcp` network; otherwise leave
+      blank so the platform allocates one.
     required: false
   - name: cores
-    description: vCPUs. Blank keeps the current value (or the app default).
+    description: 'vCPU count. **Blank:** Keep the current value or inherit the app default.'
     required: false
   - name: memory
-    description: RAM in MB. Blank keeps the current value (or the app default).
+    description: 'RAM in MB. **Blank:** Keep the current value or inherit the app default.'
     required: false
   - name: disk
-    description: Root disk in GB. Blank keeps the current value (or the app default).
+    description: 'Root disk in GB. **Blank:** Keep the current value or inherit the app default.'
     required: false
   - name: port
-    description: Port the app listens on. Set this only when running two instances of the same app on one stack host.
+    description: Listening port. Set this only when multiple instances of this app share
+      one stack host.
     required: false
   - name: subdomain
-    description: 'Hostname on the lab domain. Blank means: use the instance name.'
+    description: 'Hostname on the lab domain. **Blank:** Use the instance name.'
     required: false
   - name: identity
-    description: 'How Authentik treats this app. none = no Authentik object; catalog = a launch tile, the app keeps its own login; oidc = the app signs in through Authentik; forward_auth = Authentik login enforced at the reverse proxy. Blank keeps the current value.'
+    description: '**Authentik mode:** `none` skips registration; `catalog` adds a launch
+      tile; `oidc` delegates sign-in; `forward_auth` enforces Authentik at the proxy.
+      **Blank:** Keep the current value.'
     required: false
     values: ['', 'none', 'catalog', 'oidc', 'forward_auth']
     enforced: true
   - name: proxy
-    description: Which reverse proxy publishes this app. Blank keeps the current value.
+    description: 'Reverse proxy that publishes this app. **Blank:** Keep the current value.'
     required: false
     values: ['', 'internal', 'external']
     enforced: true
   - name: access
-    description: 'Who may reach this app. internal restricts the route to reverse_proxy.internal_cidrs; public opens it to every source address — on a WAN-facing reverse proxy that means the internet. Blank keeps the current value.'
+    description: '**Route access:** `internal` permits only `reverse_proxy.internal_cidrs`;
+      `public` permits every source address. On a WAN-facing proxy, `public` means the
+      internet. **Blank:** Keep the current value.'
     required: false
     values: ['', 'internal', 'public']
     enforced: true
   - name: estate
-    description: Multi-domain labs only — the named estate from infrastructure.yml this app belongs to. Blank uses the default estate.
+    description: '**Multi-estate labs only.** Estate name from `infrastructure.yml`.
+      **Blank:** Use the default estate.'
     required: false
   - name: extra_yaml
-    description: "Any other instance keys, as YAML. Deep-merged last, so it wins over the fields above. Example:  app:\\n    root_folder: /media/movies"
+    description: |-
+      Additional instance keys as YAML. **Deep-merged last**, so they win over the fields
+      above. Example:
+
+      ```yaml
+      app:
+        root_folder: /media/movies
+      ```
     required: false
   - name: reset
-    description: false merges over the existing file (the normal case). true discards it and writes only what this survey specifies — the old content is still kept under .backups/.
+    description: '**`false` (normal):** Merge into the current file. **`true`:** Replace it
+      with only the values in this form. The previous file remains in
+      `config/apps/.backups/`.'
     required: true
     value: 'false'
     values: ['false', 'true']

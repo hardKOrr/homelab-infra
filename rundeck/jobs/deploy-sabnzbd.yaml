@@ -11,9 +11,12 @@
   name: Deploy SABnzbd
   group: Applications/Media & Entertainment/Download Clients/SABnzbd
   description: |-
-    Deploy or update SABnzbd — the media stack's usenet download client (Docker on
-    media). Registers the app in the media registry; run Wire Media Stack
-    afterwards to register it as a download client in every *arr.
+    Deploy or converge **SABnzbd**, the media stack's Usenet download client.
+
+    - **Hosting:** Docker on the `media` stack
+    - Registers the instance in the media application registry
+
+    Run **Wire Media Stack** afterward to add it to each compatible *arr application.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -21,10 +24,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional SABnzbd instance. The value identifies its config file, Compose project,
+      and route.'
     required: true
     value: sabnzbd
   sequence:

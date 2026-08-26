@@ -15,18 +15,20 @@
   name: Deploy k3s Cluster
   group: Platform/Hosting/k3s Cluster
   description: |-
-    Build or converge the k3s cluster that Kubernetes-hosted applications run on.
+    Build or converge the **k3s cluster** used by Kubernetes-hosted applications.
 
-    Three servers with embedded etcd, one per Proxmox node, so the control plane
-    tolerates one node failure. Traefik behind a single MetalLB VIP is the internal
-    ingress; the platform Caddy stays the sole public TLS edge.
+    ### Topology
 
-    Application data on the default storage class is NODE-PINNED: a pod whose volume
-    lives on an unavailable node stays Pending rather than moving. The control plane is
-    highly available; application data is not. The job prints this in its output.
+    - Three servers with embedded etcd, one per Proxmox node
+    - Traefik behind one MetalLB VIP for internal ingress
+    - Platform Caddy remains the sole public TLS edge
 
-    Re-run to converge, to replace a lost node, or to roll every server to a new k3s
-    version after raising cluster.version.
+    > **Storage boundary:** The default StorageClass is node-pinned. The control plane
+    > tolerates one node failure, but a pod whose volume is on an unavailable node remains
+    > `Pending`; its application data does not fail over.
+
+    Re-run to converge, replace a lost node, or roll all servers after changing
+    `cluster.version`.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -36,10 +38,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to build a
-      SECOND cluster alongside the first. The value is the config/apps/<instance>.yml
-      filename and the name of the Vaultwarden item holding the cluster's join token and
-      administrative kubeconfig.
+    description: '**Default:** Keep the selected cluster. Enter another name only to build
+      an additional cluster. The value identifies its config file and Vaultwarden item for
+      the join token and administrative kubeconfig.'
     required: true
     value: k3s-cluster
   sequence:

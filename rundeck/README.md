@@ -129,6 +129,20 @@ Run `python3 rundeck/render-job.py --check rundeck/jobs` to validate the complet
 Normally, use **Reimport Jobs** rather than importing an individual raw source file: the
 renderer also injects the secure Key Storage options required by that job.
 
+### Description style
+
+Rundeck renders both job descriptions and workflow option descriptions as Markdown. Keep
+the source useful at a glance:
+
+- Lead with the outcome. Use short headings or bullets only when they separate real choices,
+  phases or effects.
+- Put exact values, paths and option names in backticks. Use bold labels for defaults,
+  boundaries and destructive effects.
+- Keep option help beside the decision it explains. State what blank or each enumerated value
+  does; do not repeat the job description.
+- Use a YAML block scalar for multiline Markdown. Stay within ordinary Markdown syntax that
+  renders consistently; MarkDeep-specific features are not required.
+
 ### One folder per application
 
 Everything an operator does to one application is in that application's own folder: its

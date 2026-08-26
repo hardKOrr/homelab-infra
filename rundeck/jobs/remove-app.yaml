@@ -15,9 +15,13 @@
   name: Remove %NAME%
   group: '%GROUP%'
   description: |-
-    Stop this %NAME% instance and unwire it from the reverse proxy, Authentik, Uptime Kuma
-    and DNS. config/apps/<instance>.yml is kept as the restore point; no guest is
-    destroyed. Re-running Deploy %NAME% brings it back.
+    Stop this %NAME% instance and remove its platform integrations.
+
+    - Unwires the reverse proxy, Authentik, Uptime Kuma, and DNS
+    - Keeps `config/apps/<instance>.yml` as the restore point
+    - Does **not** destroy the guest
+
+    Run **Deploy %NAME%** to bring the instance back.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -25,15 +29,16 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Which %NAME% instance to remove. Leave it as it is unless this lab runs
-      more than one — the list is every config/apps/<instance>.yml file that belongs to
-      %SLUG%.
+    description: '**Default:** Keep the selected %NAME% instance. Choose another only when
+      this lab runs more than one; the list comes from matching `config/apps/<instance>.yml`
+      files.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: delete_data
-    description: false keeps volumes and data paths so a re-deploy restores the app; true wipes them
+    description: '**`false` (recommended):** Keep volumes and data paths for redeployment.
+      **`true`:** Permanently delete them.'
     required: true
     value: 'false'
     values: ['false', 'true']

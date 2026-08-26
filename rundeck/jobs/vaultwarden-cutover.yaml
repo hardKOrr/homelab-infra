@@ -2,7 +2,16 @@
   uuid: e04bfd76-e7c9-5bec-979e-7335b76b460d
   name: Vaultwarden Cutover
   group: Setup/Credentials
-  description: Import and verify every seed credential, sanitize generated facts, write the durable Vault-mode marker and remove temporary seed files. Run only after the human enrollment ceremony is complete.
+  description: |-
+    Complete the one-time transition from bootstrap seed credentials to Vaultwarden.
+
+    - Imports and verifies every seed credential
+    - Removes secrets from generated facts
+    - Writes the durable Vault-mode marker
+    - Deletes temporary seed files
+
+    > Run only after both human and automation accounts are enrolled and the automation API
+    > key is staged in Rundeck Key Storage.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

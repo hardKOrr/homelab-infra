@@ -15,7 +15,16 @@
   name: Arm Lab Descent
   group: Manage/Lab/Maintenance
   description: |-
-    Arm a full lab descent: every tagged guest shut down gracefully, then every Proxmox node rebooted, staggered so the CARP gateway pair and the etcd quorum are never lost at once. Ansible arms it and exits — the nodes execute it from a one-shot systemd timer, and the ascent is automatic via each guest's Proxmox startup order. Set disarm=true to cancel an armed descent. Run "Verify Lab Ascent" afterwards.
+    Arm a coordinated whole-lab reboot.
+
+    1. Tagged guests shut down gracefully.
+    2. Proxmox nodes reboot on staggered one-shot systemd timers.
+    3. Guests return through their Proxmox startup order.
+
+    The stagger protects the CARP gateway pair and etcd quorum from simultaneous loss.
+    Ansible only arms the descent; the nodes execute it independently.
+
+    > Set **Disarm** to `true` to cancel. Run **Verify Lab Ascent** after the lab returns.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -23,21 +32,25 @@
   multipleExecutions: false
   options:
   - name: confirm
-    description: Type DESCEND to arm. Anything else refuses. Not needed to disarm.
+    description: Type **`DESCEND`** to arm the reboot. Any other value refuses. Not needed
+      when disarming.
     required: false
   - name: at
-    description: 'Wall-clock time on the lab''s own clock, "YYYY-MM-DD HH:MM". Leave empty to arm for the next opening of the lab maintenance window.'
+    description: 'Lab-local wall-clock time in `YYYY-MM-DD HH:MM` format. **Blank:** Use the
+      next opening of the lab maintenance window.'
     required: false
   - name: stagger
-    description: Minutes between one node's reboot and the next. Must exceed a node's full down-and-up time, or the nodes reboot together.
+    description: Minutes between node reboots. This **must exceed** one node's complete
+      down-and-up time to preserve the stagger.
     value: '15'
     required: true
   - name: drain
-    description: Seconds each guest is given to shut down gracefully before the node reboots anyway.
+    description: Seconds allowed for graceful guest shutdown before the node reboots.
     value: '180'
     required: true
   - name: disarm
-    description: Remove the armed descent from every node and change nothing else.
+    description: '**`true`:** Remove the armed descent from every node and make no other
+      change.'
     value: 'false'
     values:
     - 'false'

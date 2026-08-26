@@ -11,7 +11,14 @@
   name: Lab Status
   group: Manage/Lab/Health
   description: |-
-    Read-only overview: guests, containers, pending native app updates, uptime monitors and PBS snapshots. Changes nothing and sends no notification.
+    Show a **read-only** health summary of the lab:
+
+    - Proxmox guests and application containers
+    - Pending native application updates
+    - Uptime Kuma monitors
+    - PBS snapshots
+
+    This job changes nothing and sends no notification.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

@@ -11,7 +11,10 @@
   name: Deploy Observability
   group: Platform/Monitoring and Notifications/Observability
   description: |-
-    Deploy or update Prometheus + Grafana as one app (Docker on monitoring).
+    Deploy or converge the **Observability** stack.
+
+    - **Services:** Prometheus and Grafana
+    - **Hosting:** One Docker Compose project on the `monitoring` stack
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,10 +22,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Observability stack. The value identifies its config file, Compose
+      project, and route.'
     required: true
     value: observability
   sequence:

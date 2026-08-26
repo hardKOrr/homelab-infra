@@ -11,7 +11,10 @@
   name: Deploy Vaultwarden
   group: Platform/Access and Identity/Vaultwarden
   description: |-
-    Deploy or update Vaultwarden (native LXC). Re-running is the update path.
+    Deploy or converge **Vaultwarden**, the platform secret store.
+
+    - **Hosting:** Native LXC
+    - Re-running this job is the supported Vaultwarden update path
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,10 +22,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Vaultwarden instance. The value identifies its config file, guest, and
+      route.'
     required: true
     value: vaultwarden
   sequence:

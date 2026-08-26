@@ -11,9 +11,11 @@
   name: Deploy Caddy
   group: Platform/Access and Identity/Caddy
   description: |-
-    Deploy or update Caddy, including Cloudflare DNS-01 TLS. Before Vaultwarden
-    cutover it uses the temporary encrypted Cloudflare input; afterwards it reads
-    the canonical reverse-proxy credential from Vaultwarden.
+    Deploy or converge **Caddy**, the platform's public TLS edge.
+
+    - Configures Cloudflare DNS-01 certificate issuance
+    - Uses the temporary encrypted Cloudflare input before Vaultwarden Cutover
+    - Reads the canonical reverse-proxy credential from Vaultwarden after cutover
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -21,10 +23,8 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Caddy instance. The value identifies its config file, guest, and route.'
     required: true
     value: caddy
   sequence:

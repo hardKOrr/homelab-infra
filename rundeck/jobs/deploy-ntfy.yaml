@@ -11,7 +11,10 @@
   name: Deploy Ntfy
   group: Platform/Monitoring and Notifications/Ntfy
   description: |-
-    Deploy or update Ntfy, the notification hub every other job reports to (native LXC).
+    Deploy or converge **Ntfy**, the platform notification hub.
+
+    - **Hosting:** Native LXC
+    - Receives deployment, update, maintenance, and health notifications from the lab
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,10 +22,8 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Ntfy instance. The value identifies its config file, guest, and route.'
     required: true
     value: ntfy
   sequence:

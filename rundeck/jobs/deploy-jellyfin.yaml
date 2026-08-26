@@ -11,10 +11,13 @@
   name: Deploy Jellyfin
   group: Applications/Media & Entertainment/Media Servers/Jellyfin
   description: |-
-    Deploy or update Jellyfin — the media stack's media server (Docker on
-    media). Completes Jellyfin's first-run wizard, creates the admin
-    account in Vaultwarden and adds a library for each path the *arr apps
-    write into. Nothing to wire afterwards.
+    Deploy or converge **Jellyfin**, the media stack's media server.
+
+    - **Hosting:** Docker on the `media` stack
+    - Completes the first-run setup and stores the admin account in Vaultwarden
+    - Creates a library for each path written by the *arr applications
+
+    No separate media wiring step is required for Jellyfin.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -22,10 +25,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Jellyfin instance. The value identifies its config file, Compose
+      project, and route.'
     required: true
     value: jellyfin
   sequence:

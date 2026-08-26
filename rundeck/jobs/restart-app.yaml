@@ -16,9 +16,11 @@
   name: Restart %NAME%
   group: '%GROUP%'
   description: |-
-    Restart %NAME%. A native LXC app is restarted through its lab-restart-app script; a
-    Docker app has its Compose service restarted on the stack host it runs on. Notifies
-    via Ntfy.
+    Restart the selected **%NAME%** instance.
+
+    - **Native LXC:** Runs the app's `lab-restart-app` script.
+    - **Docker:** Restarts its Compose service on the resolved stack host.
+    - **Notification:** Publishes the result through Ntfy.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -26,8 +28,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Which %NAME% instance. Leave it as it is unless this lab runs more than
-      one — the list is every config/apps/<instance>.yml file that belongs to %SLUG%.
+    description: '**Default:** Keep the selected %NAME% instance. Choose another only when
+      this lab runs more than one; the list comes from matching `config/apps/<instance>.yml`
+      files.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json

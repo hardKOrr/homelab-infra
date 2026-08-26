@@ -11,7 +11,13 @@
   name: Wire Media Stack
   group: Manage/Integrations
   description: |-
-    Wire the media stack's app-to-app connections: every *arr registered in Prowlarr for indexer sync, every download client registered in the apps that speak its protocol, and Bazarr pointed at Sonarr and Radarr. Idempotent — safe to re-run. Notifies via Ntfy.
+    Connect the deployed media applications to each other.
+
+    - Registers each *arr application in Prowlarr for indexer sync
+    - Registers each download client with compatible *arr applications
+    - Connects Bazarr to Sonarr and Radarr
+
+    This job is idempotent and safe to re-run. It publishes the result through Ntfy.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

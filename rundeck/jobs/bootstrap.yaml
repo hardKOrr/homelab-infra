@@ -11,7 +11,16 @@
   name: Bootstrap Platform
   group: Setup/Platform
   description: |-
-    One-time platform setup: Vaultwarden, Ntfy, the reverse proxy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS, in that order. Run it once, then use the per-app jobs.
+    Build the lab's baseline platform in dependency order.
+
+    1. Vaultwarden
+    2. Ntfy and the reverse proxy
+    3. Authentik and Uptime Kuma
+    4. Prometheus + Grafana
+    5. Proxmox Backup Server (PBS)
+
+    Run this after **Vaultwarden Cutover**. After the first successful bootstrap, use each
+    application's own Deploy and Maintenance jobs for day-2 work.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

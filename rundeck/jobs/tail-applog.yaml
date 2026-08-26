@@ -15,9 +15,11 @@
   name: Tail %NAME% Log
   group: '%GROUP%'
   description: |-
-    Stream recent %NAME% log lines into this job's console. A native LXC app is read
-    through its lab-tail-applog script; a Docker app's Compose service logs are read on
-    the stack host it runs on. Read-only.
+    Show recent **%NAME%** log lines in the Rundeck console.
+
+    - **Native LXC:** Reads through `lab-tail-applog`.
+    - **Docker:** Reads Compose service logs on the resolved stack host.
+    - **Safety:** Read-only; no service is restarted or changed.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -25,14 +27,15 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Which %NAME% instance. Leave it as it is unless this lab runs more than
-      one — the list is every config/apps/<instance>.yml file that belongs to %SLUG%.
+    description: '**Default:** Keep the selected %NAME% instance. Choose another only when
+      this lab runs more than one; the list comes from matching `config/apps/<instance>.yml`
+      files.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: lines
-    description: How many log lines to show
+    description: 'Number of recent log lines to show. **Default:** `50`.'
     required: true
     value: '50'
   sequence:

@@ -2,7 +2,11 @@
   uuid: 54cfeee4-12c4-510e-bd42-1fe069de55f9
   name: Vaultwarden Recovery
   group: Recover/Credentials
-  description: Explicit break-glass transition. Read rundeck/VAULTWARDEN-RECOVERY.md and restore seed inputs before confirming.
+  description: |-
+    > **Break glass only.** Re-establish automation access to Vaultwarden from restored seed
+    > inputs.
+
+    Complete `rundeck/VAULTWARDEN-RECOVERY.md` before running this job.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -10,7 +14,8 @@
   multipleExecutions: false
   options:
   - name: confirm
-    description: Type ENTER-SEED-RECOVERY after completing the recovery runbook prerequisites.
+    description: Type **`ENTER-SEED-RECOVERY`** only after completing every recovery runbook
+      prerequisite.
     required: true
   sequence:
     keepgoing: false

@@ -63,25 +63,37 @@ def secure_option(name: str, path: str, description: str, *, required: bool = Tr
 
 
 BW_OPTIONS = [
-    secure_option("bw_clientid", f"{BASE}/vaultwarden-machine/client-id", "Vault automation API client ID"),
-    secure_option("bw_clientsecret", f"{BASE}/vaultwarden-machine/client-secret", "Vault automation API client secret"),
-    secure_option("bw_password", f"{BASE}/vaultwarden-machine/master-password", "Vault automation master password"),
+    secure_option(
+        "bw_clientid",
+        f"{BASE}/vaultwarden-machine/client-id",
+        "**Automatic:** Vaultwarden automation API client ID loaded from encrypted Key Storage.",
+    ),
+    secure_option(
+        "bw_clientsecret",
+        f"{BASE}/vaultwarden-machine/client-secret",
+        "**Automatic:** Vaultwarden automation API secret loaded from encrypted Key Storage.",
+    ),
+    secure_option(
+        "bw_password",
+        f"{BASE}/vaultwarden-machine/master-password",
+        "**Automatic:** Vaultwarden automation master password loaded from encrypted Key Storage.",
+    ),
 ]
 BW_OPTIONAL = [option | {"required": False} for option in BW_OPTIONS]
 ADMIN_OPTION = secure_option(
     "vaultwarden_admin_token",
     f"{BASE}/vaultwarden-machine/admin-token",
-    "Loaded automatically from encrypted Key Storage; do not enter a value",
+    "**Automatic:** Vaultwarden server admin token loaded from encrypted Key Storage.",
 )
 RUNDECK_OPTION = secure_option(
     "rundeck_api_token",
     f"{BASE}/rundeck/api-token",
-    "Rundeck control-plane API token",
+    "**Automatic:** Rundeck control-plane API token loaded from encrypted Key Storage.",
 )
 CLOUDFLARE_OPTION = secure_option(
     "cloudflare_api_token",
     f"{BASE}/bootstrap/cloudflare-api-token",
-    "Cloudflare token scoped to Zone Read and DNS Edit for the lab zone",
+    "**Automatic when present:** Cloudflare token with Zone Read and DNS Edit for the lab zone.",
     required=False,
 )
 
@@ -191,8 +203,8 @@ def set_application_options(job: dict, app: dict, estates: dict) -> None:
         if app["scope"] == "estate" and estates["multiple"]:
             instance_option["description"] = (
                 str(instance_option.get("description") or "").rstrip()
-                + f" Multi-estate names use {app['slug']}-<estate>[-<variant>];"
-                  " the dropdown label also names the estate."
+                + f"\n\n**Multi-estate naming:** `{app['slug']}-<estate>[-<variant>]`."
+                  " The dropdown label also identifies the estate."
             )
 
     # Configure is the audited path that creates the instance file. In a multi-estate

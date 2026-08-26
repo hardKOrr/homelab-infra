@@ -13,7 +13,14 @@
   name: Verify Lab Ascent
   group: Manage/Lab/Health
   description: |-
-    Read-only: after a lab descent or an unplanned outage, report which tagged guests are not running, which are running but do not answer SSH, and whether every Kubernetes node came back Ready. Changes nothing and starts nothing — deciding what to do about a guest that stayed down is the operator's call. Fails when the ascent is incomplete.
+    Verify recovery after a planned lab descent or an unplanned outage.
+
+    - Reports tagged guests that are not running
+    - Reports running guests that do not answer SSH
+    - Confirms every Kubernetes node is `Ready`
+
+    This job is **read-only**: it starts nothing and changes nothing. It fails when the
+    ascent is incomplete so the execution remains visible for investigation.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

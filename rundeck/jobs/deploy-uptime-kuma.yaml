@@ -11,7 +11,9 @@
   name: Deploy Uptime Kuma
   group: Platform/Monitoring and Notifications/Uptime Kuma
   description: |-
-    Deploy or update Uptime Kuma. Every later app deploy registers its own monitor here.
+    Deploy or converge **Uptime Kuma**, the platform uptime monitor.
+
+    Each later application deployment registers its own monitor automatically.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,10 +21,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Leave this as it is for the normal deployment. Change it only to run a
-      SECOND instance of this app alongside the first — a second estate's SSO, for example.
-      The value is the config/apps/<instance>.yml filename, the guest hostname and the
-      subdomain.
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Uptime Kuma instance. The value identifies its config file, guest, and
+      route.'
     required: true
     value: uptime-kuma
   sequence:

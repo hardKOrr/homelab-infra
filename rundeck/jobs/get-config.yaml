@@ -11,7 +11,15 @@
   name: Get Config
   group: Manage/Configuration/Files
   description: |-
-    Read the lab definition off the runner without an SSH session. With no instance it returns everything authored — proxmox.yml, infrastructure.yml and every app instance file. With an instance it returns just that one file. The job log is always redacted, so it is safe to copy out of the UI; that redacted YAML is what you paste back into Configure App. It also writes an unredacted tar.gz restore point under artifacts/ on the runner and prints its path — Rundeck OSS has no artifact download, so retrieve that file over scp if you want it off the host, or rely on PBS, which backs up the runner along with it.
+    Read the lab configuration from the runner without an SSH session.
+
+    - **One instance:** Prints that instance file.
+    - **No instance:** Prints `proxmox.yml`, `infrastructure.yml`, and every app instance.
+    - **Job log:** Always redacted and safe to copy into a Configure job.
+    - **Archive:** Can write an unredacted `tar.gz` restore point under `artifacts/`.
+
+    Rundeck OSS does not provide artifact download. Use `scp` to retrieve the archive, or
+    rely on PBS protection of the runner.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -19,10 +27,12 @@
   multipleExecutions: true
   options:
   - name: instance
-    description: One app instance to return (e.g. radarr-4k). Leave blank for the whole authored set plus the downloadable archive.
+    description: App instance to print, such as `radarr-4k`. **Blank:** Return the complete
+      authored configuration.
     required: false
   - name: archive
-    description: Write the tar.gz restore point under artifacts/. Defaults to true when no instance is given.
+    description: Write an unredacted `tar.gz` restore point under `artifacts/`. Defaults to
+      `true` when no instance is selected.
     required: false
     values: ['', 'true', 'false']
     enforced: true

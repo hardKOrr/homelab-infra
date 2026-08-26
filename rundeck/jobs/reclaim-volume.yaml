@@ -14,7 +14,11 @@
   name: Reclaim Volume
   group: Manage/Storage/Volumes
   description: |-
-    Report on, release or destroy one Kubernetes PersistentVolume that no claim is using. Lab Status lists them under RETAINED VOLUMES. A retained volume is a restore point, not litter — nothing removes one on its own, and this job acts on exactly the volume you name.
+    Inspect or reclaim one Kubernetes PersistentVolume that no claim currently uses.
+
+    **Lab Status** lists candidates under **RETAINED VOLUMES**. A retained volume is a
+    restore point, so the platform never removes one automatically. This job acts only on
+    the exact volume name supplied below.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -22,10 +26,13 @@
   multipleExecutions: false
   options:
   - name: volume
-    description: PersistentVolume name, exactly as Lab Status prints it under RETAINED VOLUMES — the full pvc-<uuid> form, not the claim or directory name.
+    description: Exact PersistentVolume name from **Lab Status**, in full `pvc-<uuid>` form.
+      Do not enter the claim or directory name.
     required: true
   - name: action
-    description: 'report changes nothing and prints what the other two would do. release clears a stale claim reference so a Released volume becomes Available and reusable — the data is untouched. delete destroys the directory on the node and then the PersistentVolume object — the data is gone and there is no copy.'
+    description: '**`report` (safe):** Preview only. **`release`:** Clear a stale claim so
+      the volume becomes reusable; data stays intact. **`delete` (destructive):** Remove the
+      node directory and PersistentVolume object; no copy remains.'
     required: true
     value: report
     values: ['report', 'release', 'delete']

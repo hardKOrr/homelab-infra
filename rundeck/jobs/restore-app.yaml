@@ -13,21 +13,21 @@
   name: Restore %NAME%
   group: '%GROUP%'
   description: |-
-    Restore this %NAME% instance's data from the lab's Proxmox Backup Server: the quiesced
-    database dump and storage volume its own backup job pushes there, not a whole-VM
-    snapshot.
+    Restore %NAME% application data from PBS: its quiesced database dump and persistent
+    volume, not a whole-VM snapshot.
 
-    Run it with overwrite=false first. With no snapshot named it lists what PBS holds for
-    the instance; with one named it proves that snapshot is readable and prints exactly
-    what the target holds today. Neither writes anything.
+    ### Safe first run
 
-    overwrite=true then replaces the target's database and storage volume with the
-    snapshot's contents. That is destructive and deliberate: the target application is
-    stopped first, and if the restore fails it is left stopped rather than started in front
-    of half-replaced data.
+    Keep **Overwrite** set to `false`. With no snapshot, the job lists available backups.
+    With a snapshot, it verifies readability and reports the target's current data. Neither
+    operation writes anything.
 
-    To rehearse without touching the live application, deploy a second instance under a new
-    name and restore into it with target=<that name>.
+    ### Restore
+
+    Setting **Overwrite** to `true` stops the target and replaces its database and volume.
+    If restoration fails, the target stays stopped to avoid serving partial data.
+
+    > To rehearse safely, deploy a second instance and select it as the **Target**.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -35,26 +35,25 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: The %NAME% instance that OWNS the backup — its snapshots are filed in PBS
-      under host/<instance>. Leave it as it is unless this lab runs more than one.
+    description: '%NAME% instance that owns the backup. PBS files its snapshots under
+      `host/<instance>`. **Default:** Keep the selected instance.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: target
-    description: The instance whose namespace receives the data. Leave blank to restore the
-      application over itself. Set it to a second, already-deployed instance to rehearse a
-      clean restore without touching the live one.
+    description: 'Instance whose namespace receives the data. **Blank:** Restore over the
+      source instance. Select a second deployed instance for a rehearsal.'
     required: false
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: snapshot
-    description: PBS snapshot identifier, e.g. host/%SLUG%/2026-08-19T03:00:00Z. Leave
-      blank to list what PBS holds and change nothing.
+    description: 'PBS snapshot ID, such as `host/%SLUG%/2026-08-19T03:00:00Z`. **Blank:**
+      List available snapshots and change nothing.'
     required: false
   - name: overwrite
-    description: false plans and writes nothing; true replaces the target's database and
-      storage volume
+    description: '**`false` (safe):** Plan only. **`true` (destructive):** Replace the
+      target database and storage volume.'
     required: true
     value: 'false'
     values: ['false', 'true']

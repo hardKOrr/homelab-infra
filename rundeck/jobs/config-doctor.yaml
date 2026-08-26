@@ -11,7 +11,17 @@
   name: Config Doctor
   group: Manage/Configuration/Validation
   description: |-
-    Check config/proxmox.yml, config/infrastructure.yml and every config/apps/*.yml against the variable-loading contract. Names every missing or malformed key by file and key path in one pass. Read-only: it changes nothing, contacts no service, and is safe to run at any time. The same check runs in front of every other job, so this is how you see the whole report without starting a deploy.
+    Validate the complete authored configuration without starting a deployment.
+
+    ### Checked files
+
+    - `config/proxmox.yml`
+    - `config/infrastructure.yml`
+    - Every `config/apps/*.yml` instance file
+
+    The report identifies each missing or malformed value by file and key path. This job is
+    **read-only**, contacts no service, and is safe to run at any time. The same validation
+    runs before every operational job.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

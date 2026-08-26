@@ -15,10 +15,11 @@
   name: Rollback %NAME%
   group: '%GROUP%'
   description: |-
-    Pin %NAME% to an earlier image tag and recreate its container. Run this when a
-    Watchtower update breaks it — the Watchtower notification names the version it came
-    from. Pinning stops Watchtower auto-updating this container until Deploy %NAME% is
-    re-run. Notifies via Ntfy.
+    Pin %NAME% to an earlier image tag and recreate its container.
+
+    Use the prior version named in the Watchtower notification. The pin prevents Watchtower
+    from updating this container again until **Deploy %NAME%** is re-run. The result is
+    published through Ntfy.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -26,16 +27,15 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Which %NAME% instance to roll back — its Compose project is
-      /opt/<instance> on its resolved stack host. Leave it as it is unless this lab runs more
-      than one.
+    description: '%NAME% instance to roll back. Its Compose project is
+      `/opt/<instance>` on the resolved stack host. **Default:** Keep the selected instance.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: image_tag
-    description: Tag to roll back to, e.g. 5.1.3. Leave blank to re-pin the tag already in
-      the Compose file — which freezes nothing if that tag is `latest`.
+    description: 'Image tag to restore, such as `5.1.3`. **Blank:** Re-pin the current
+      Compose tag. If that tag is `latest`, the container is not effectively frozen.'
     required: false
   sequence:
     keepgoing: false

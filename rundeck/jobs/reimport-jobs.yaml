@@ -18,7 +18,16 @@
   name: Reimport Jobs
   group: Setup/Automation
   description: |-
-    Pull the latest job definitions out of the repo and import them into this project. Run it after a change to rundeck/jobs/*.yaml reaches the tracked branch — a new job, a new option, a changed description. Playbook changes do NOT need this: every job refreshes the checkout before it runs. Updates jobs in place by UUID and never duplicates them; jobs listed in rundeck/retired-jobs.yml are removed, and any failed removal makes this job fail.
+    Refresh Rundeck from the repository-owned job definitions.
+
+    ### Run this after
+
+    - Adding or removing a job
+    - Changing a job name, option, group, or description
+
+    Playbook-only changes do **not** need reimporting; every execution refreshes the checkout.
+    Jobs update in place by UUID. Definitions in `rundeck/retired-jobs.yml` are removed, and
+    a failed removal fails this job.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

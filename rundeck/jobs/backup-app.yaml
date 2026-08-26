@@ -15,15 +15,17 @@
   name: Backup %NAME%
   group: '%GROUP%'
   description: |-
-    Run this %NAME% instance's backup now rather than waiting for its nightly schedule: a
-    quiesced database dump plus its storage volume, pushed into the lab's PBS datastore.
+    Run an **on-demand backup** of this %NAME% instance.
 
-    It starts the CronJob the deploy already installed, so this and the scheduled run are
-    the same definition — there is no second copy to drift. The job waits for the result
-    and prints everything the pod said.
+    ### What it captures
 
-    Use it before a risky change, after fixing a failed overnight backup, or to produce a
-    snapshot to rehearse a restore against.
+    - A quiesced database dump
+    - The instance's persistent storage volume
+    - One snapshot in the lab's PBS datastore
+
+    This starts the same Kubernetes CronJob used by the nightly schedule, waits for it to
+    finish, and prints the pod output. Use it before a risky change, after repairing a
+    failed scheduled backup, or before a restore rehearsal.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -31,9 +33,9 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: Which %NAME% instance to back up. Leave it as it is unless this lab runs
-      more than one — the list is every config/apps/<instance>.yml file that belongs to
-      %SLUG%.
+    description: '**Default:** Keep the selected %NAME% instance. Choose another only when
+      this lab runs more than one; the list comes from matching `config/apps/<instance>.yml`
+      files.'
     required: true
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json

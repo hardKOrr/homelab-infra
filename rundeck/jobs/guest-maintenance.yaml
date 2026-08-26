@@ -18,7 +18,14 @@
   name: Guest Maintenance
   group: Manage/Lab/Maintenance
   description: |-
-    Operator-triggered. Re-applies every guest's maintenance timer from the current config, and reports which guests are waiting on a reboot and when their window next opens. Routine reboots need no job at all — each guest owns a systemd timer for its own window. Use force=true to reboot everything pending right now. Never reboots a Proxmox node or the runner; the Kubernetes cluster is cordoned, drained and rebooted as one unit.
+    Re-apply guest maintenance timers from the current configuration and report pending
+    reboots.
+
+    Routine reboots need no Rundeck job: each guest owns its maintenance timer. Use this job
+    after changing a window, to inspect pending work, or to force pending reboots now.
+
+    > **Boundary:** This job never reboots a Proxmox node or the Rundeck runner. It treats
+    > the Kubernetes cluster as one cordoned, drained, and rebooted unit.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -26,14 +33,15 @@
   multipleExecutions: false
   options:
   - name: dry_run
-    description: Report what would happen and change nothing.
+    description: '**`true`:** Report the plan and change nothing.'
     value: 'false'
     values:
     - 'false'
     - 'true'
     required: true
   - name: force
-    description: Reboot everything that is waiting, ignoring the window. Still never reboots a Proxmox node or the runner.
+    description: '**`true`:** Reboot every pending guest now, outside its window if needed.
+      Proxmox nodes and the runner remain excluded.'
     value: 'false'
     values:
     - 'false'

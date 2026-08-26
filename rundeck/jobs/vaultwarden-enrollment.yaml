@@ -2,7 +2,12 @@
   uuid: 9fa6c03f-72db-5baf-8d8d-3b98774e4f74
   name: Vaultwarden Enrollment
   group: Setup/Credentials
-  description: Re-send the configured owner and automation invitations. This job loads its admin token from encrypted Key Storage and needs no operator input. Its output identifies both accounts and gives the remaining web-vault steps.
+  description: |-
+    Re-send the configured Vaultwarden invitations for the owner and automation accounts.
+
+    The job reads the server admin token from encrypted Rundeck Key Storage and needs no
+    operator input. Its output identifies both accounts and lists the remaining web-vault
+    enrollment steps.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
