@@ -1,15 +1,15 @@
 # Variable loading contract
 
 This is the authoritative variable-loading contract for the `homelabinfra_*` namespaces and config
-files — the single data-shape reference downstream slices cite. Inspection rules that protect these
-shapes: `docs/specs/config-layering.md` and `docs/specs/namespace-merge-discipline.md`.
+files. Inspection rules that protect these shapes are in `docs/specs/config-layering.md` and
+`docs/specs/namespace-merge-discipline.md`.
 
 ## 1. The three namespaces
 
 - `homelabinfra_config.*` — merged user + defaults, the **input** layer (available at provision time).
 - `homelabinfra_instance.*` — facts **computed at runtime** (IP allocation, vmid, etc.).
-- `homelabinfra_infra.*` — the **service registry**: provider choices + endpoints + tokens, loaded
-  from `config/.generated/facts.yml` (read at wiring time).
+- `homelabinfra_infra.*` — the **service registry**: generated provider topology recursively
+  overlaid in memory with Vaultwarden runtime fields.
 
 `homelabinfra_config.infrastructure` and `homelabinfra_infra` are **not the same dict**:
 `infrastructure.yml` feeds both — its provider *choices* merge into `homelabinfra_config.infrastructure`
@@ -21,16 +21,16 @@ shapes: `docs/specs/config-layering.md` and `docs/specs/namespace-merge-discipli
 | File | Wrapper in file | Loaded into | Notes |
 |---|---|---|---|
 | `vars/homelabinfra-defaults.yml` | `homelabinfra_defaults:` | `homelabinfra_config` (seed, lowest precedence) | unwrapped before merge |
-| `config/proxmox.yml` | none (top-level `proxmox:`, `networks:`, `ansible:`) | `homelabinfra_config` (loader injects those three keys) | **not yet wired in loader → slice 001** |
-| `config/infrastructure.yml` | none (top-level `domain:`, `reverse_proxy:`, `sso:`, `notifications:`, `dns:`, `backups:`, `vaultwarden:`) | `homelabinfra_config.infrastructure` | **not yet wired in loader → slice 001** |
+| `config/proxmox.yml` | none (top-level `proxmox:`, `networks:`, `ansible:`) | `homelabinfra_config` (loader injects those three keys) | optional at load time; callers validate required keys |
+| `config/infrastructure.yml` | none; the whole file is the infrastructure shape | `homelabinfra_config.infrastructure` | optional at load time; callers validate required keys |
 | `vars/app-defaults/<app>.yml` | none | `app_config` (per-play app merge — see app-layering note) | separate merge, not part of `homelabinfra_config` |
 | `config/apps/<instance>.yml` | none | `app_config` (per-play app merge) | whole file merges over `<app>_defaults` via `combine(recursive=True)` — see app-layering note |
-| `config/.generated/facts.yml` | none | `homelabinfra_infra` (whole file, via `include_vars … name: homelabinfra_infra`) | written incrementally by `write-generated-facts.yml` (slice 200) |
+| `config/.generated/facts.yml` | none | generated base of `homelabinfra_infra`; Vaultwarden runtime fields overlay it recursively | written incrementally by `write-generated-facts.yml` |
 | `user_vars_file` (back-compat) | `homelabinfra_config:` | `homelabinfra_config` | legacy single-file path; already self-wrapping |
 
 ## 3. Canonical `homelabinfra_infra` shape
 
-There is exactly one shape — role-keyed, provider-agnostic (Shape B). Consumers build derived values
+The registry is role-keyed and provider-agnostic. Consumers build derived values
 (e.g. a notification URL) from `host` + `topic`; the registry never stores pre-built URLs.
 Every `host` value is a full base URL **including scheme** (e.g. `http://192.168.1.20`) —
 consumers concatenate paths onto it directly; consumers needing a bare hostname (e.g. a
@@ -60,10 +60,10 @@ estates:                             # optional — only when infrastructure.yml
     dns: { provider, host }                    # optional — global dns serves the estate if absent
 ```
 
-**`runner` — the host the platform runs from (slice 010).** Written by
+**`runner` — the host the platform runs from.** Written by
 `rundeck/bootstrap-rundeck.sh`, not by any playbook, because the runner is created before
 any playbook can run. It exists so playbooks and `status.yml` can name the host they are
-executing on. `provider` is `rundeck` or `semaphore`; `host` is the UI's base URL including
+executing on. `provider` is `rundeck`; `host` is the UI's base URL including
 scheme; `checkout_path` and `venv_path` are the paths `lab-run.sh` resolves from
 `/etc/homelab-infra/lab-run.env`; `branch` is the branch the checkout tracks and refreshes
 to before every job. Nothing wires against this key — it is descriptive.
@@ -79,8 +79,8 @@ monitoring, metrics, backups, vaultwarden) are global: one instance serves every
 estate. The default estate (and every lab without a `domains:` map) reads and
 writes only the top-level keys — unchanged behavior.
 
-Provider-specific optional fields, written by the app slice that deploys the provider and
-read only by that provider's wiring tasks (slices 301–305):
+Provider-specific optional fields are written by the application that deploys the provider
+and read only by that provider's wiring tasks:
 
 | Role key | Field | Provider | Purpose |
 |---|---|---|---|
@@ -100,10 +100,10 @@ read only by that provider's wiring tasks (slices 301–305):
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
 
-`monitoring` is the Shape B role key for uptime monitoring; the provider-named
-`uptime_kuma` key that app playbooks briefly gated on is superseded — do not use it.
+`monitoring` is the role key for uptime monitoring. Do not use a provider-named
+`uptime_kuma` key.
 
-**`kubernetes` — the cluster hosting backend (slice 204).** Written by
+**`kubernetes` — the cluster hosting backend.** Written by
 `playbooks/apps/k3s-cluster.yml`. Topology only: the cluster's credentials — the etcd join
 token and the administrative kubeconfig — are canonical in the organization-owned
 Vaultwarden item `homelab-infra/<instance>` and never appear here.
@@ -113,13 +113,13 @@ Vaultwarden item `homelab-infra/<instance>` and never appear here.
 | `host` | Kubernetes API base URL including scheme, addressed at the founding node |
 | `ingress_vip` | the one stable internal ingress address; what the platform Caddy proxies to |
 | `ingress_controller` | in-cluster controller terminating plain HTTP on the VIP (`traefik`) |
-| `storage_class` | default StorageClass. `local-path` is **node-pinned**: a pod whose volume lives on an unavailable node stays Pending rather than rescheduling |
+| `storage_class` | default StorageClass. The current `homelab-local-path` class is node-pinned: a pod whose volume lives on an unavailable node stays Pending rather than rescheduling |
 | `storage_reclaim_policy` | `Retain` — only the removal job's explicit `delete_data` removes a volume |
 | `storage_path` | the directory on each node that every volume lives under. Topology, not a secret. `maintenance/reclaim-volume.yml` refuses to delete a directory that is not under it, so the guard is inert while this is absent |
 | `failure_domain_mode` | `distinct-nodes` when every server sits on a different Proxmox node, `single` otherwise. Consumers describing availability read this rather than counting nodes |
 | `nodes` | the node declarations verbatim: name, Proxmox placement, address, sizing, taints |
 
-**`media` — the app-to-app wiring registry (slice 504).** Unlike every other role
+**`media` — the app-to-app wiring registry.** Unlike every other role
 key, `media` is instance-keyed rather than role-keyed: one entry per media app,
 because a lab runs several Sonarrs and several download clients at once. It is
 read by `playbooks/stacks/wire-media-stack.yml` and by nothing else.
@@ -145,20 +145,15 @@ of `<app.config_path>/config.xml` at wire time. Registry entries win over
 discovered ones. This is what lets a lab wire media apps it did not deploy itself,
 before per-app media roles exist.
 
-Ntfy ships closed (`auth-default-access: deny-all`, slice 401), so every notification
-consumer must authenticate. Consumers treat the credential fields as **optional**: an
-absent `token` means an Ntfy that predates slice 401 and still accepts anonymous
-publishes, so they fall back to an unauthenticated POST rather than failing.
+Ntfy ships with `auth-default-access: deny-all`, so notification consumers authenticate
+when credentials are present. Credential fields remain optional for compatibility with an
+existing Ntfy instance that permits anonymous publishing.
 `dns.host` is the one `host` that may be a bare IP (`config.example/infrastructure.yml`
 documents it that way for external, non-inventory hosts); the DNS wiring tasks prepend a
 scheme when it is missing.
 
-Superseded — do not use: (a) Shape-A flat pre-built URL `notifications.ntfy_url` +
-`.notifications.topic` — all former readers (`check-native-updates.yml`, `restart-app.yml`,
-`configure-unattended-upgrades.yml`) were reconciled to `host` + `topic` by slice 200;
-(b) the service/function-keyed sketch that used to live in `write-generated-facts.yml`'s
-header comment (`vaultwarden:{url,admin_token}`, `caddy:{admin_api_url}`, …) — replaced by
-the Shape B implementation (slice 200).
+Do not use the superseded pre-built `notifications.ntfy_url` shape. The registry stores
+`notifications.host` and `notifications.topic`; consumers build the URL.
 
 ## 4. Merge order (low → high precedence)
 
@@ -180,7 +175,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.node` | required | |
 | `proxmox.api_user` | required | |
 | `proxmox.api_token_id` | required | |
-| `proxmox.api_token_secret` | required *in file or env* | secret — **preferred shape is to omit it here** and supply `PROXMOX_API_TOKEN` in the environment (slice 010) |
+| `proxmox.api_token_secret` | required *in file or runtime environment* | secret — omit it from the file after Vaultwarden cutover |
 | `proxmox.validate_certs` | optional | default `false` — a stock Proxmox node is self-signed, so guest creation fails with `CERTIFICATE_VERIFY_FAILED` when this verifies. `inventory/proxmox.yml` assumes the same. Set `true` once the node serves a trusted certificate |
 | `proxmox.nodes` | optional | `{node_name: address}` for every cluster node, written by `bootstrap-rundeck.sh` from `pvesh get /cluster/status`. Consumed by `tasks/proxmox/register-nodes.yml`, which makes `delegate_to: <node name>` resolvable — node names have no `ansible_host` from the dynamic inventory. Falls back to `proxmox.api_host` for the targeted node when absent |
 | `proxmox.storage` | required *in practice* | lab-wide storage for every guest; written by `bootstrap-rundeck.sh` from the first active storage advertising content type `rootdir`. Falls back to `local`, which a stock node **cannot** hold a container on. No `vars/app-defaults/*` pins storage — it is a node fact, not an app fact. Per-app override: `proxmox.disk_volume.storage` (LXC), `proxmox.vm.storage` (VM) |
@@ -228,8 +223,8 @@ carries its reason.
 
 Steps 2 and 3 are ADVISORY — used only when `config/proxmox.yml` actually declares a
 network of that name, the same asymmetry `pool_hint` uses. A lab with one flat `default`
-network therefore resolves exactly as it did before this seam existed, and a lab segments
-one band at a time by declaring `networks.shared`, then `networks.<estate>`, and
+network resolves to `default`. A lab segments one band at a time by declaring
+`networks.shared`, then `networks.<estate>`, and
 redeploying. No `vars/app-defaults/*.yml` pins `network:` — a name in git-managed defaults
 would override this resolution in every lab at once.
 
@@ -287,12 +282,12 @@ exists on the wire.
 A **stack** is a bare concept — `media`, `sso`, `monitoring` — and never a hostname or a
 tag. Both are derived from it, and both add the estate when the lab has more than one:
 
-| | single estate (or no `domains:` map) | two or more estates, app in `foxglove` |
+| | single estate (or no `domains:` map) | two or more estates |
 |---|---|---|
-| effective identity | `media` | `media-foxglove` |
-| Proxmox hostname | `stack-media` | `stack-media-foxglove` |
-| Proxmox tag | `_.stack+media` | `_.stack+media-foxglove` |
-| inventory group | `lab_stack_media` | `lab_stack_media_foxglove` |
+| effective identity | `media` | `media-<estate>` |
+| Proxmox hostname | `stack-media` | `stack-media-<estate>` |
+| Proxmox tag | `_.stack+media` | `_.stack+media-<estate>` |
+| inventory group | `lab_stack_media` | `lab_stack_media_<estate>` |
 
 The suffix rule is the repository's existing instance-naming rule applied to a host: one
 estate means no suffix; two or more means every estate-scoped identity carries its estate.
@@ -311,15 +306,12 @@ declaration. Nothing infers the tag after the fact from where applications happe
 land; an ordinary hosting unit hosts exactly one estate, and there is no path by which an
 app that did not declare sharing reaches another estate's host.
 
-`_.shared` means deliberate cross-estate HOSTING, not lab-wide importance. Caddy declares
-it because one TLS edge answers for every estate, and the k3s cluster declares it because
-estate applications are separated inside it by namespace — while the cluster
-administrators, the nodes, the storage infrastructure and the failure domain stay shared,
-which is exactly why the declaration is written down rather than derived. PBS, Ntfy and
-the metrics stack are `scope: lab` and are **not** `_.shared`: each serves the whole lab
-and hosts nothing but itself.
+`_.shared` means deliberate cross-estate hosting, not lab-wide application scope.
+`scope: lab` does not imply the tag. A hosting substrate that accepts estate-scoped
+applications from more than one estate must declare `shared: true`; a native guest that
+hosts only its lab-scoped application does not.
 
-#### Maintenance schedules (slice 205)
+#### Maintenance schedules
 
 `maintenance.schedule` is one primitive, resolved through the same chain as everything
 else: **global → estate → stack → app**. `always` means "disrupt whenever it is needed",
@@ -356,7 +348,7 @@ top of itself and would miss any window that opened while the control plane was 
 the resolved answer (`mode`, `due`, `text`, `cron`, `oncalendar`, `monitor_only`,
 `next_open`, `conflict`) and never re-derive it.
 
-### Runtime secrets and external unlock material (slice 014)
+### Runtime secrets and external unlock material
 
 `lab-run.sh` constructs `homelabinfra_vault` in memory from canonical organization-owned
 Vaultwarden items, then recursively overlays it on topology as `homelabinfra_infra`.
@@ -376,7 +368,7 @@ The canonical top-level items are:
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | instance-specific secret fields |
-| `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields — e.g. `.../sso` (`token`, `admin_password`, `postgres_password`, `secret_key`) and `.../dns` (`api_token`). A role that writes a top-level item unconditionally clobbers the default estate's copy the first time an estate deploys, and hands the new instance the default estate's credential through its own continuity read; both happened live on 2026-08-15 |
+| `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields — e.g. `.../sso` (`token`, `admin_password`, `postgres_password`, `secret_key`) and `.../dns` (`api_token`). A non-default estate must not write a top-level role item or read the default estate's credential |
 
 The following process variables are external control-plane inputs. Rundeck injects them
 through per-job secure options backed by AES-GCM Key Storage; they are not ordinary job
@@ -404,7 +396,7 @@ imports it into `homelab-infra/dns`, after which the vault is the only source. D
 `dns.provider` without the credential is not a partial configuration — the wiring asserts
 it, so the next app deploy fails.
 
-In Seed mode, the older Proxmox/admin environment variables remain temporary inputs. Once
+In Seed mode, the Proxmox and administration environment variables remain temporary inputs. Once
 `/etc/homelab-infra/state/vault-mode` exists, `lab-run.sh` will not source seed files even
 if they are recreated. It obtains Proxmox and SSH material from Vaultwarden and cleans the
 vault session and temporary key after the child playbook exits.
@@ -433,7 +425,7 @@ normal runtime source after the marker.
 Resolution order for the token's **value** is the same everywhere it is read
 (`roles/vaultwarden`, the bootstrap gate): env var, then
 `infrastructure.vaultwarden.admin_token`, then the sink. The config key remains an accepted
-override so a lab that pasted a token before this slice is unaffected by a `git pull`.
+override for Seed and recovery compatibility.
 
 The plaintext token is never printed. If the sink is unwritable, the role stops before
 installing the generated token on Vaultwarden so the next run can safely generate another.
@@ -463,20 +455,17 @@ requires a `scope` on every application, and it has exactly two values:
 | `estate` | one deployment per estate | `<app>-<estate>[-<variant>]` |
 | `lab` | one deployment serves every estate | `<app>[-<variant>]` |
 
-`lab` is the deliberate exception, and each entry in the catalog records why it earns it —
-the single TLS edge, the vault that is the platform's root of trust, one backup server, one
-notification hub, one metrics stack, one status view, one cluster. There is no default
-value: an application nobody classified is rejected at render time rather than landing
-silently on the shared side. Adding to the shared set is a decision somebody makes and
-writes down.
+`lab` is the deliberate exception, and each catalog entry must record why the application
+crosses the estate boundary. There is no default value: an unclassified application is
+rejected at render time rather than landing silently on the shared side.
 
 ```yaml
 domains:
-  personal:
-    domain: homelab.example.com
+  <default-estate>:
+    domain: home.example.com
     default: true                  # required when two or more estates exist
-  foxglove:
-    domain: foxglove.example.com
+  <another-estate>:
+    domain: another.example.com
     dns_challenge:                 # optional — per-estate ACME DNS-01 (caddy role)
       provider: cloudflare         # any github.com/caddy-dns/<provider> module
       api_token: "..."             # provider-specific fields retain native names;
@@ -490,9 +479,8 @@ domains:
 
 A `domains:` map with two or more entries must declare exactly one `default: true`.
 Declaration order never decides identity. Estate-scoped instances use
-`<app>-<estate>[-<variant>]` for every estate, including the default estate; for example,
-`radarr-personal`, `radarr-foxglove`, and `radarr-foxglove-4k`. A single-estate lab keeps
-the short `<app>[-<variant>]` form.
+`<app>-<estate>[-<variant>]` for every estate, including the default estate. A
+single-estate lab keeps the short `<app>[-<variant>]` form.
 
 **`domains.<name>.dns` — DNS is selected per estate, and the credential is not
 duplicated.** `infrastructure.dns.provider` is global, so without this block a lab
@@ -513,10 +501,8 @@ estate's records are managed.
 | `homelab-infra/estates/<name>/reverse_proxy` | `dns_api_token` | `domains.<name>.dns_challenge.api_token` — ACME DNS-01 for that estate's certificates |
 | `homelab-infra/estates/<name>/dns` | `api_key`, `api_secret`, `token` | `homelabinfra_infra.estates.<name>.dns` — the DNS-record wiring credential |
 
-Until 2026-08-15 both mapped from one `estates/<name>/dns` item, which meant an
-OPNsense key stored for record wiring arrived in the estate's `dns_challenge` block and
-the caddy role would have issued that estate's certificates against `provider:
-opnsense`.
+The reverse-proxy and DNS items are separate because ACME DNS-01 and DNS record wiring can
+use different providers and credential shapes. Do not merge them.
 
 A secret authored after the one-time Vaultwarden Cutover reaches either item through
 the **Store Secret** job (`playbooks/maintenance/store-secret.yml`) — the cutover
@@ -528,22 +514,12 @@ non-default estate's Authentik is just another app deploy with
 `routing.estate: <name>` — its `sso` facts land under `estates.<name>` (§3).
 
 The required/optional split for `config/.generated/facts.yml` follows the canonical shape in
-Section 3. Slice 200 settled the write mechanics: bootstrap writes one role key per
-`write-generated-facts.yml` call (deep-merge, so partial files are normal mid-bootstrap), and
+Section 3. Bootstrap writes one role key per `write-generated-facts.yml` call (deep-merge, so
+partial files are normal mid-bootstrap), and
 each role key carries exactly the fields listed in Section 3 for that role. Consumers guard
 with `is defined` on the keys they read — a role absent from the file means that baseline
 service has not been bootstrapped yet. The `config/apps/<instance>.yml`
 schema is settled in the App-level layering note below.
-
-## 6. Known conflicts and owning slices
-
-| Conflict | Contract's canonical decision | Resolving slice |
-|---|---|---|
-| `config.example/*.yml` unwrapped top-level keys vs namespaces the code reads | loader injects namespaces (001); examples reconciled to match (002) | **001 + 002** |
-| `notifications.ntfy_url` (Shape-A leak) vs `notifications.host` + `.topic` | registry stores `host` + `topic`; consumers build the URL; all three consumers aligned | **200 (resolved)** |
-| `write-generated-facts.yml` stub service-keyed sketch vs canonical Shape B | Shape B supersedes the stub sketch; implemented | **200 (resolved)** |
-| `config/apps/<instance>.yml` schema across the repo | settled: filename = instance name; top-level keys mirror `<app>_defaults`; whole file merges via `combine(recursive=True)` — see App-level layering note | **005 (settled)** |
-| `networks:` null subtree in `homelabinfra-defaults.yml` (config-layering violation) | remove null subtree (use `{}` or omit) | **002** |
 
 ## App-level layering note
 
@@ -552,9 +528,10 @@ The per-app merge (`vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml
 described here for completeness but governed by its own precedence; do not conflate it with the
 four-layer `homelabinfra_config` merge in Section 4.
 
-**Instance-file schema (settled by slice 005).** `config/apps/<instance>.yml` is loaded whole by
-filename — the filename *is* the instance name (`-e instance=<name>`) and becomes the hostname,
-Caddy subdomain, and Authentik app name. Its top-level keys mirror the `<app>_defaults` dict in
+**Instance-file schema.** `config/apps/<instance>.yml` is loaded whole by
+filename. The filename is the instance name (`-e instance=<name>`) and identifies the
+guest, application record, and provider objects. Routing uses `routing.subdomain` as
+described below. Top-level keys mirror the `<app>_defaults` dict in
 `vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
 as `media`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
 (`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`,
@@ -565,17 +542,17 @@ avoids routing itself. `routing.access` (`internal | public | authenticated`, de
 is a separate axis: it decides **who** may reach the app through that proxy. `internal` makes
 `tasks/wiring/caddy.yml` add a `remote_ip` matcher restricting the route to
 `reverse_proxy.internal_cidrs`; `public` emits the route with no source matcher, which on a
-WAN-facing Caddy publishes the app to the internet. `authenticated` (added 2026-08-18 by the
-Kubernetes hosting backend) emits the same open route as `public` and additionally **asserts that
+WAN-facing Caddy publishes the app to the internet. `authenticated` emits the same open route as
+`public` and additionally **asserts that
 the app is really gated**: `routing.identity` must be `forward_auth` or `oidc` and `sso.provider`
 must not be `none`. An `authenticated` route whose identity mode is `catalog` (a launch tile) or
 `none` (no object at all) is an app the operator believes is protected and which is in fact open
 to the internet. Access and identity stay separate fields — access is the network path, identity
 is where authentication happens — and this is the one point at which the two must agree.
 Enforcement of all three classes is Caddy's: `tasks/wiring/nginx.yml` does not read the access
-class at all, so an Nginx lab publishes every route with no source matcher. The proxy/access split
-dates from 2026-08-02, and `routing.proxy: external` no longer widens access — exposure is only
-ever `routing.access`. `routing.identity` is the identity-mode
+class at all, so an Nginx lab publishes every route with no source matcher.
+`routing.proxy: external` does not widen access — exposure is only ever
+`routing.access`. `routing.identity` is the identity-mode
 enum `none | catalog | oidc | forward_auth` (default `catalog`): `none` skips Authentik
 entirely, `catalog` creates an Application tile only, `oidc` creates an OAuth2 provider +
 Application (client_id/secret handed back to the deploy as `authentik_oidc_client_id/_secret`
@@ -589,8 +566,8 @@ had. The boolean `routing.auth` is **superseded** by `routing.identity`
 declares it in `vars/app-defaults/<app>.yml`**, and an instance file overrides it only to
 publish that instance somewhere else. The fall-back when nothing declares it is the
 instance name, and that fall-back is a trap rather than a feature: it couples the published
-URL to the filename, so an estate-scoped instance named `radarr-personal` would publish
-`radarr-personal.<domain>`. Declaring the subdomain per application is what leaves the
+URL to the filename, so an estate-scoped instance would publish
+`<app>-<estate>.<domain>`. Declaring the subdomain per application is what leaves the
 instance name free to carry identity — filename, guest hostname, Proxmox tag — without the
 URL following it around. `routing.estate` names a `domains:` estate (§5) and is authored per instance.
 `app-defaults/` must not declare one and `rundeck/render-job.py` rejects it: that file is
