@@ -21,15 +21,17 @@
 #              line, and every `debug`/`assert` message, which is where this platform
 #              deliberately reports its findings
 #   dropped  - the silent `ok: [host]` and `skipping: [host]` result lines, which are
-#              the bulk of the log and carry nothing the recap does not
-# The drop is two options in ansible.cfg, not code here. To get the old firehose back
-# for one run:  ANSIBLE_DISPLAY_OK_HOSTS=1 lab-run playbooks/apps/sonarr.yml ...
+#              the bulk of the log and carry nothing the recap does not, plus the
+#              blank separator Ansible normally prepends to every task banner
+# ansible.cfg owns the result-line filtering. To get the old firehose back for one
+# run: ANSIBLE_DISPLAY_OK_HOSTS=1 lab-run playbooks/apps/sonarr.yml ... . This
+# callback owns only the empty separator because Ansible hard-codes it in each banner.
 #
 # The class derives from `default` rather than replacing it. Failure rendering, the
 # yaml result format, diff output, loop handling and colour are ansible's, stay
 # ansible's, and keep working across upgrades; this file adds a header, a result
-# block, task timing and a degradation summary, and overrides exactly one display
-# decision.
+# block, task timing and a degradation summary, and overrides only the display
+# decisions needed to retain useful results and remove empty task separators.
 
 from __future__ import annotations
 
@@ -56,6 +58,7 @@ import time
 from ansible import constants as C
 from ansible import context
 from ansible.plugins.callback.default import CallbackModule as DefaultCallback
+from ansible.utils.display import get_text_width
 
 # Defence in depth only. This repository's contract is that no secret travels in argv
 # (see rundeck/jobs/store-secret.yaml, which passes the value through the environment),
@@ -154,6 +157,31 @@ class CallbackModule(DefaultCallback):
         self._last_task_name = task.get_name().strip()
         self._task_started.setdefault(task._uuid, time.time())
         self._print_task_banner(task)
+
+    def _print_task_banner(self, task):
+        # Display.banner() deliberately prefixes every banner with "\n". Once the
+        # silent ok result below each task is hidden, that separator becomes roughly
+        # half of the visible job log. Preserve the stock task banner content and
+        # width, but emit it without the empty line.
+        args = ''
+        if not task.no_log and C.DISPLAY_ARGS_TO_STDOUT:
+            args = ', '.join('%s=%s' % item for item in task.args.items())
+            args = ' %s' % args
+
+        prefix = self._task_type_cache.get(task._uuid, 'TASK')
+        task_name = self._last_task_name
+        if task_name is None:
+            task_name = task.get_name().strip()
+        checkmsg = (' [CHECK MODE]'
+                    if task.check_mode and self.get_option('check_mode_markers')
+                    else '')
+        message = '%s [%s%s]%s' % (prefix, task_name, args, checkmsg)
+        stars = '*' * max(3, self._display.columns - get_text_width(message))
+        self._display.display('%s %s' % (message, stars))
+
+        if self._display.verbosity >= 2:
+            self._print_task_path(task)
+        self._last_task_banner = task._uuid
 
     def _note_elapsed(self, result):
         started = self._task_started.pop(result._task._uuid, None)
