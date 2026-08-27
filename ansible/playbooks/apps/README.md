@@ -40,6 +40,8 @@ through Docker or Kubernetes.
 
 ## Step 2 — Copy the templates
 
+The committed templates cover Docker on LXC and native LXC:
+
 ```bash
 # App defaults (resource sizes, stack, port)
 cp ansible/vars/app-defaults/_template.yml ansible/vars/app-defaults/sonarr.yml
@@ -56,7 +58,13 @@ cp ansible/playbooks/apps/_template.yml ansible/playbooks/apps/sonarr.yml
 cp config.example/apps/_template.example.yml config.example/apps/sonarr.example.yml
 ```
 
-Do a find-and-replace of `APP_NAME` → `sonarr` across all four files.
+Replace `APP_NAME` with the application slug throughout the copied files.
+
+Kubernetes has a different play shape; read
+[`../../tasks/kubernetes/README.md`](../../tasks/kubernetes/README.md) and use the existing
+Kubernetes application as the current implementation reference. Docker on VM and standalone
+VM do not yet have application scaffolds. Adding either path includes defining its reusable
+seam rather than forcing it through the LXC template.
 
 ---
 
@@ -112,6 +120,8 @@ its classification, a template no application selects, and any UUID collision.
 
 ## Step 4 — Fill in the blanks
 
+For the template-backed Docker-on-LXC and native-LXC paths:
+
 **`vars/app-defaults/sonarr.yml`**
 - Set `cores`, `memory` to realistic values for this app
 - Set `stack: media` (Docker) or fill in the `proxmox:` block (native LXC)
@@ -151,42 +161,40 @@ its classification, a template no application selects, and any UUID collision.
 
 ---
 
-## Step 5 — Add to Wire Stack (if Docker app)
+## Step 5 — Add app-to-app integration when required
 
-If the app needs to communicate with other apps on its stack (e.g. Sonarr → Prowlarr, Sonarr → qBittorrent), add it to the stack's wire playbook:
+If the application needs API-level connections to peers, add that behavior to the relevant
+stack integration playbook. Hosting on the same Docker stack is not, by itself, a reason to
+couple applications.
 
 ```bash
 # Edit the relevant stack wire playbook:
 ansible/playbooks/stacks/wire-media-stack.yml
 ```
 
-Add a task that connects this app to its peers via the app's API. All tasks in the wire playbook must be idempotent (check-before-create).
+Make each integration idempotent by reading current state before creating or changing it.
 
 ---
 
 ## Step 6 — Test
 
 ```bash
-cd ansible/
-
-# Dry run (check mode — no changes made)
-ansible-playbook -i inventory/ playbooks/apps/sonarr.yml -e instance=sonarr --check
-
-# Real deploy
-ansible-playbook -i inventory/ playbooks/apps/sonarr.yml -e instance=sonarr
-
-# Verify wiring
-ansible-playbook -i inventory/ playbooks/stacks/wire-media-stack.yml
+wsl bash -lc 'bash gate/lint.sh'
+wsl bash -lc 'bash gate/test.sh'
+python rundeck/render-job.py --check rundeck/jobs
 ```
 
-Check:
-- [ ] App is accessible at `https://sonarr.yourdomain.com`
+Then reimport the jobs and run the application's Rundeck Deploy job against a disposable or
+deliberately targeted lab. Check:
+
+- [ ] App is accessible at its configured `routing.subdomain` and estate domain
 - [ ] Caddy/Nginx route exists
 - [ ] Authentik shape matches the identity mode (tile for `catalog`, OAuth2
       provider for `oidc`, proxy provider + outpost for `forward_auth`)
 - [ ] Uptime Kuma monitor is registered
 - [ ] Re-running the deploy playbook makes no unwanted changes (idempotency)
-- [ ] Running remove.yml tears everything down cleanly
+- [ ] The generated Maintenance actions match the hosting kind
+- [ ] The Remove job unwires and removes a non-essential test instance cleanly
 
 ---
 
@@ -198,7 +206,7 @@ Play 3 of every app playbook sets these variables before calling wiring tasks.
 | Variable | Value | Used by |
 |---|---|---|
 | `wiring_app_name` | `{{ instance }}` | All wiring tasks — used as slug/ID |
-| `wiring_upstream_host` | App container IP | Caddy, Nginx |
+| `wiring_upstream_host` | Address reached by the reverse proxy | Caddy, Nginx |
 | `wiring_upstream_port` | App listen port | Caddy, Nginx |
 | `wiring_subdomain` | `routing.subdomain`, default `{{ instance }}` | builds `wiring_domain` / monitor URL |
 | `wiring_domain` | `subdomain.estate-domain` | Caddy, Nginx, Authentik, DNS |
@@ -206,6 +214,7 @@ Play 3 of every app playbook sets these variables before calling wiring tasks.
 | `wiring_monitor_url` | Public HTTPS URL | Uptime Kuma |
 | `wiring_auth_group` | Authentik group name | Authentik |
 | `wiring_identity_mode` | `routing.identity`, default `catalog` | Authentik mode dispatch and reverse-proxy `forward_auth` enforcement |
+| `wiring_access` | `routing.access`, default `internal` | reverse-proxy access policy |
 
 Play 3 also runs `tasks/resolve-estate.yml` before wiring: it overlays the app's
 `routing.estate` domain/sso/dns facts onto `homelabinfra_infra`, so wiring tasks
@@ -217,7 +226,7 @@ stay estate-agnostic.
 
 - [ ] `vars/app-defaults/<app>.yml` — sensible defaults, all keys documented
 - [ ] `roles/<app>/` — idempotent, health check included, no hardcoded values
-- [ ] `playbooks/apps/<app>.yml` — three-play pattern, correct hosts target
+- [ ] `playbooks/apps/<app>.yml` — backend-appropriate play structure and stable wiring handoff
 - [ ] `config.example/apps/<app>.example.yml` — user-facing knobs only
 - [ ] `catalog/applications.yml` — purpose/type classification; it also generates the app's Maintenance folder
 - [ ] `rundeck/jobs/deploy-<app>.yaml` — stable UUID and projected catalog group
