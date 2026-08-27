@@ -1,6 +1,6 @@
 # 205 — Maintenance schedules
 
-**Status:** built — Tier 1 executed against the live lab 2026-08-22; Tier 2 not armed
+**Status:** built — timers applied, but no scheduled firing observed; Tier 2 not armed
 **Subject:** Maintenance schedules
 **Related:** 008 (estate contract), 100/201/202 (unattended-upgrades, Watchtower, PBS
 schedules this slice unifies), 203 (guest app record), 204 (Kubernetes backend), 503 (lab status)

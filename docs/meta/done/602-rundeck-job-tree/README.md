@@ -1,6 +1,6 @@
 # 602 — Rundeck job tree
 
-**Status:** open — phase 2 built 2026-08-23, awaiting the live import
+**Status:** done — live organization accepted by the operator 2026-08-26
 **Subject:** Rundeck job tree
 **Related:** 601 (the job definitions this reshapes), 408 (the application catalog that
 feeds the selectable set), 600 (Semaphore, no-target — not kept in parity)
@@ -46,10 +46,9 @@ or reimport. Job names, UUIDs, steps, options, schedules, and playbooks are unch
       that estates are separate and the shared set is explicitly named.
 - [x] built — an application that declares its own `routing.estate` is prefilled for that
       estate rather than for the lab default.
-- [ ] observed — run **Reimport Jobs** TWICE (the deletion ships inside the new definition),
-      then confirm: 102 jobs imported, the eight retired UUIDs gone, the instance dropdown
-      populated on a Deploy job, one Restart against a Docker app and one against a native
-      app, and one Rollback that no longer asks for a stack tag.
+- [x] accepted 2026-08-26 — the operator confirmed the live job tree received its
+      organization update. This accepts the slice goal without asserting that each generated
+      maintenance action was separately exercised.
 
 ### Phase 1 — the catalog-first tree (2026-08-23)
 

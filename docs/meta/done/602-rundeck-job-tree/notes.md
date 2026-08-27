@@ -387,3 +387,9 @@ therefore forced by the rename the estate rules already demand.
 subnet this lab does not use, documented as values every lab must set. The distinction that
 matters: a placeholder is merely wrong until replaced, while a value that must match a
 *named declaration in another config file* fails validation outright.
+
+## 2026-08-26 — accepted
+
+The operator confirmed that the live Rundeck job tree received the organization update and
+accepted the slice for closure. Individual generated maintenance actions were not represented as
+separately exercised by this acceptance.

@@ -39,9 +39,8 @@ These slices have no remaining repository implementation unless an observation e
 
 | Slice | Remaining evidence |
 | --- | --- |
-| [205 — Maintenance schedules](205-maintenance-schedules/README.md) | Tier 2 live-lab acceptance |
+| [205 — Maintenance schedules](205-maintenance-schedules/README.md) | Observe a real scheduled window and complete Tier 2 live-lab acceptance |
 | [504 — Wire media stack](504-wire-media-stack/README.md) | The adoption path during a deliberately requested migration |
-| [602 — Rundeck job tree](602-rundeck-job-tree/README.md) | Import the generated tree on the live runner |
 
 Completed and unreachable slices are retained under [`done/`](done/) and
 [`no-target/`](no-target/). The slice format and lifecycle are defined in
