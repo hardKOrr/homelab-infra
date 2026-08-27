@@ -66,7 +66,7 @@ one Authentik per estate, each at its own estate's `auth.<domain>`.
 Apps register per `routing.identity` (see `ansible/vars/CONTRACT.md`): `catalog`
 (Application tile only), `oidc` (OAuth2 provider + Application; client credentials
 handed back to the app deploy), `forward_auth` (proxy provider + embedded outpost;
-proxy-side enforcement lands with slice 306), `none` (no Authentik object).
+the selected reverse proxy enforces it), `none` (no Authentik object).
 
 The group named by `wiring_auth_group` (default `homelab-users`) is bound to each
 wired Application, and the wiring **creates the group** when it is absent — empty and
@@ -80,12 +80,9 @@ declaration. The wiring's own group creation above stays as the safety net for a
 that declared no directory at all, or that renamed `wiring_auth_group` without
 declaring the new name.
 
-[403/notes.md](../../../docs/meta/done/403-app-authentik/notes.md) ends with a wider
-boundary than this — "account names, group membership, social login sources and MFA
-enforcement are operator policy". That note is superseded for groups and accounts.
-What it was really rejecting was one lab's choices hardcoded as product defaults with
-no way to override them; the answer to that is a config surface, which `directory:`,
-`flows:`, `authenticators:`, `sources:` and `brands:` now are. The boundary that
-remains is the one the note should have drawn in the first place: the platform ships
-no lab's content as a default, and every object it creates is one the operator
-declared.
+## Policy boundary
+
+The role ships no lab-specific accounts, groups, sources, flows, authenticators, or brands
+as defaults. It creates and manages only objects declared by the operator. Undeclared
+objects remain outside role authority except when an explicitly destructive option such as
+`stages_exact: true` says otherwise.

@@ -205,7 +205,7 @@ Play 3 of every app playbook sets these variables before calling wiring tasks.
 | `wiring_app_display` | Human label | Authentik, Uptime Kuma |
 | `wiring_monitor_url` | Public HTTPS URL | Uptime Kuma |
 | `wiring_auth_group` | Authentik group name | Authentik |
-| `wiring_identity_mode` | `routing.identity`, default `catalog` | Authentik (mode dispatch), proxy forward_auth (slice 306) |
+| `wiring_identity_mode` | `routing.identity`, default `catalog` | Authentik mode dispatch and reverse-proxy `forward_auth` enforcement |
 
 Play 3 also runs `tasks/resolve-estate.yml` before wiring: it overlays the app's
 `routing.estate` domain/sso/dns facts onto `homelabinfra_infra`, so wiring tasks

@@ -1,9 +1,14 @@
 # Spec: config layering
 
-Three layers merge via `combine(recursive=True)` at playbook runtime:
-`ansible/vars/homelabinfra-defaults.yml` → `ansible/vars/app-defaults/<app>.yml` →
-`config/apps/<instance>.yml`.
-Users only write what differs; everything else falls through.
+Configuration uses two separate recursive merges:
+
+- Platform input: `ansible/vars/homelabinfra-defaults.yml` → `config/proxmox.yml` →
+  `config/infrastructure.yml` → the optional legacy `user_vars_file`.
+- Application input: `ansible/vars/app-defaults/<app>.yml` →
+  `config/apps/<instance>.yml`.
+
+Users write only what differs. Application defaults never merge into
+`homelabinfra_config`; an application playbook builds `app_config` separately.
 
 The authoritative data-shape contract these rules protect — namespaces, load map, the canonical
 `homelabinfra_infra` shape, merge order, and per-file required keys — lives at
@@ -16,13 +21,12 @@ The authoritative data-shape contract these rules protect — namespaces, load m
   in `combine`. Optional keys appear commented out, never as empty values.
 - Selector/bookkeeping keys that live in the config namespace (e.g. `proxmox.lxc.network`,
   `ip_address`, `stack`) never reach a module call as arguments — module args are built from an
-  explicit allowlist (meta slice 003).
+  explicit allowlist.
 - Git-managed defaults files contain no null subtrees (`networks:` with no value); use `{}` or
   omit the key, and assert required subtrees with a friendly `fail_msg` at the point of use.
-- One key name per concept across the whole repo (canonical: `api_host`/`api_port` — meta
-  slice 004).
+- Use one key name per concept across the repository. The canonical Proxmox keys are
+  `api_host` and `api_port`.
 
 ## Enforced by
 
-- inspection — cite this spec in findings (source: `AGENTS.md` "Config Hierarchy";
-  archived meta slices 000–005 record the original migration)
+- inspection — cite this specification and `ansible/vars/CONTRACT.md` in findings
