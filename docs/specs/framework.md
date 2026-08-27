@@ -5,10 +5,8 @@ findings. Contract-level rules live in the sibling specs this file links to.
 
 ## Language & toolchain
 
-- Ansible (YAML) throughout. `gate/requirements-dev.txt` pins the gate's Python toolchain.
-  `ansible/requirements.yml` is the single source of truth for the four Galaxy collection pins:
-  `community.proxmox` 2.0.0, `ansible.utils` 6.0.3, `community.docker` 5.2.1, and
-  `community.general` 13.1.0.
+- Ansible (YAML) throughout. `gate/requirements-dev.txt` pins the gate's Python toolchain;
+  `ansible/requirements.yml` is the single source of truth for Galaxy collection pins.
 - Gates run inside a WSL venv (`~/.venvs/homelab-ansible`) via the committed wrappers
   `gate/lint.sh` / `gate/test.sh`.
   Never replace the wrappers with an inline one-liner through the Windows→WSL relay — quoting
@@ -22,19 +20,16 @@ findings. Contract-level rules live in the sibling specs this file links to.
 
 ## Tests
 
-- No Molecule suite exists yet. `gate/test.sh` runs `ansible-playbook --syntax-check` over the
-  selected playbooks, with the Proxmox dynamic inventory neutralized through
-  `ANSIBLE_INVENTORY=localhost,`. It then runs focused shell regressions for Vaultwarden secret
-  handling, IP allocation, and service-registry removal.
-- Verification beyond the gate uses hand-computed worked examples plus optional ad-hoc
-  localhost plays. Record the evidence with the work item that requires it.
+- `gate/test.sh` syntax-checks the selected playbooks without contacting Proxmox, then runs
+  focused regression checks. `gate/README.md` owns the current scope and invocation details.
+- Verification beyond the gate is proportional to the changed behavior. Record evidence with
+  the work item that requires it.
 
 ## Lint
 
-- `gate/lint.sh` runs `ansible-lint` profile `min` (`ansible/.ansible-lint`) and the repository's
-  Jinja parser check. Only parse/load/critical lint rules fail; style findings are warnings.
-  Never add a `skip_list` entry unless a specific work item owns the fix and is cited on the
-  line. `**/todo/` staging directories are excluded and are not deliverable code.
+- `gate/lint.sh` owns the lint pipeline; `gate/README.md` documents its scope. The Ansible
+  ruleset lives in `ansible/.ansible-lint`. Never add a `skip_list` entry without documenting
+  the concrete reason on that line. `**/todo/` staging directories are not deliverable code.
 
 ## Errors
 

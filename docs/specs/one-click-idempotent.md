@@ -17,8 +17,9 @@ chains. Re-running any playbook is always safe.
   check the result.
 - Playbooks are UI-independent: nothing in `ansible/` may depend on Rundeck specifics.
   Supported job definitions live in `rundeck/`; `semaphore/` is an unverified reference.
-- We configure tools, we do not replicate them: container updates belong to Watchtower, OS
-  updates to unattended-upgrades, backups to PBS, uptime to Uptime Kuma.
+- Prefer the component that already owns a concern: configure and integrate its behavior rather
+  than duplicating it in Ansible. Project-owned automation is appropriate when orchestration or
+  a repository contract has no existing owner.
 
 ## Enforced by
 

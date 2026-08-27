@@ -147,13 +147,16 @@ resolvable in DNS.
 
 ## How configuration works
 
-Three layers, merged per key. You write only what differs from the defaults.
+Configuration has two independent streams, and both merge recursively so you write only
+what differs from the defaults:
 
-```
-ansible/vars/homelabinfra-defaults.yml   global defaults        (in git)
-ansible/vars/app-defaults/<app>.yml      per-app defaults       (in git)
-config/apps/<instance>.yml               your overrides         (gitignored, on the runner)
-```
+- Platform configuration starts with `ansible/vars/homelabinfra-defaults.yml`, then applies
+  `config/proxmox.yml` and `config/infrastructure.yml`.
+- Application configuration starts with `ansible/vars/app-defaults/<app>.yml`, then applies
+  `config/apps/<instance>.yml` for that instance.
+
+The exact schemas and precedence rules live in
+[`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md).
 
 `config/` is **gitignored and lives on the runner**. That is deliberate and it is what
 makes the runner's self-refresh safe: before every job, the checkout resets hard to the
@@ -201,9 +204,9 @@ topology only; secret-shaped fields are rejected.
   hand-built machines and it will ignore every one of them and build its own beside them.
 - **It provisions; it does not police.** Deploying creates the thing correctly. It does
   not run forever reconciling drift.
-- **It configures tools rather than replacing them.** Watchtower updates containers,
-  unattended-upgrades updates the OS, PBS handles backups, Uptime Kuma watches uptime,
-  Ntfy delivers every notification. This project sets them up and gets out of the way.
+- **It uses the system that owns the concern.** Where an established tool already provides
+  the needed behavior, the project configures and integrates it. Project-owned automation
+  remains appropriate for orchestration and behavior no component owns.
 - **Defaults cover the ordinary case.** You configure what differs, not what is normal.
 
 ## Requirements
