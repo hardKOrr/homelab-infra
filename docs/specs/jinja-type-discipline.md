@@ -1,8 +1,8 @@
 # Spec: Jinja type discipline
 
-The repository runs ansible-core 2.18. Pure Jinja expressions can preserve native values, but
-inventory, environment, command output, concatenation, and serialized data can still supply
-strings. A task must not rely on the type inferred by an earlier `set_fact` or template step.
+Pure Jinja expressions can preserve native values, but inventory, environment, command output,
+concatenation, and serialized data can still supply strings. A task must not rely on the type
+inferred by an earlier `set_fact` or template step.
 
 ## Rule
 

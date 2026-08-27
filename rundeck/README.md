@@ -10,22 +10,16 @@ scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
 ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
 ```
 
-By default the command returns with the automation runner, Caddy, and HTTPS Vaultwarden
-online. Open the URL it prints. The script already sent the enrollment invitations itself;
-the **Vaultwarden Enrollment** job re-sends them and you click it only if that attempt
-failed for want of DNS. Register both accounts in the web vault — **you create a separate
-master password in each registration form; nothing generates or prints either one** —
-create the automation account's personal API key, stage the three automation-account
-credentials in the named encrypted Key Storage entries, run
-**Vaultwarden Cutover**, and only then run **Bootstrap Platform**. Password choice and
-personal API-key creation are deliberately human Vaultwarden actions.
+For the first-time operator path, including Vaultwarden enrollment and cutover, follow the
+[root README](../README.md). This document owns the Rundeck implementation and maintenance
+contracts.
 
 ### What it does
 
 | | |
 |---|---|
 | **Container** | Unprivileged Debian 13 LXC, nesting on, **tagged `_+lab;_-debian;_rundeck`** |
-| **Software** | OpenJDK 21, Rundeck 6, ansible-core 2.18 in a venv at `/opt/homelab-ansible`, the collections pinned in `ansible/requirements.yml` |
+| **Software** | OpenJDK, Rundeck, and the pinned Ansible toolchain in `/opt/homelab-ansible` |
 | **Repo** | cloned to `/var/lib/rundeck/homelab-infra`, tracking `origin/master` |
 | **Proxmox credential** | creates the `homelab-infra@pve` user and a scoped `HomelabInfra` role, mints that user's API token, and writes the secret straight to Key Storage |
 | **SSH identity** | generates an ed25519 keypair the platform reaches its guests with; public half into `config/proxmox.yml`, private half into Key Storage |
@@ -46,22 +40,15 @@ refreshes find `tag_vaultwarden` and reuse that guest.
 
 ### What it asks
 
-The network/provider questions plus owner and automation email addresses, all defaulted except the domain and owner, and every one
-also readable from an environment variable — so `NONINTERACTIVE=1` scripts the lot:
-
-`LAB_DOMAIN`, `LAB_NET_CIDR`, `LAB_NET_GATEWAY`, `LAB_NET_DNS`, `LAB_TIMEZONE`,
-`LAB_IP_OFFSET`, `LAB_REVERSE_PROXY`, `LAB_SSO`, `LAB_NOTIFICATIONS`, `LAB_DNS`,
-`LAB_BACKUP_PATH`, `VAULTWARDEN_OWNER_EMAIL`, `VAULTWARDEN_AUTOMATION_EMAIL`.
+The script asks for the lab network, provider choices, and owner and automation identities.
+Each prompt also has an environment-variable form, so `NONINTERACTIVE=1` supports scripted
+bootstrap. The script header owns the current input list and defaults.
 
 Everything else is discovered from the node it runs on: the node name, the API address,
 storages, bridges, template storage, the timezone.
 
 Recovery handover values land in `/root/.rundeck-bootstrap` (0600) inside the container:
 `pct exec <vmid> -- cat /root/.rundeck-bootstrap`.
-
-**Debian 13 is not incidental.** `community.proxmox` 2.0.0 requires ansible-core >= 2.17,
-which requires a Python 3.11+ controller. Debian 11 (Python 3.9) cannot run this codebase
-at all.
 
 ### The Proxmox role
 

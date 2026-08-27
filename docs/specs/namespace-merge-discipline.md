@@ -17,6 +17,5 @@ downstream consumer.
 
 ## Enforced by
 
-- inspection — cite this spec in findings (source: `AGENTS.md` "Variable Namespaces";
-  the omit-placeholder violation in `tasks/network/generate-ip.yml` was fixed by meta 006;
-  its inputs/outputs header was added by meta 103)
+- inspection — cite this specification in findings
+- focused regression coverage where a namespace mutation has downstream behavior

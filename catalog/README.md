@@ -15,4 +15,4 @@ missing job, duplicate classification, mismatched name, or stale projected group
 services and operator actions are classified separately in `rundeck/job-groups.yml`.
 
 Add an entry when the application's playbook and Rundeck job become selectable. Future intent
-continues to live in `docs/meta/408-app-catalog/`; it is not runtime catalog state.
+belongs in `docs/meta/`; it is not runtime catalog state.

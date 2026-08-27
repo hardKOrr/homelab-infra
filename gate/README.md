@@ -1,9 +1,8 @@
 # Gate toolchain
 
-Lint and test gates for the Ansible repo. Both are thin wrappers around committed scripts
-(`lint.sh`, `test.sh`) so the Windows→WSL relay never mangles quoting: a bare `$(...)`/`"$var"`
-one-liner can mis-expand on the Windows side and silently run zero iterations while still exiting
-0. `.gitattributes` forces `*.sh` here to LF so `bash` in WSL never chokes on a CRLF shebang.
+Run repository lint and test checks through the committed wrappers. They establish the WSL
+environment, close stdin, select the correct change scope, and prevent shell-relay quoting from
+silently turning a check into a no-op.
 
 Invoked as:
 
@@ -14,16 +13,6 @@ test: wsl bash -lc 'bash gate/test.sh'
 
 Append `--all` to either to force the full sweep (see *Scope* below).
 
-Those two exact strings are the only WSL commands in `.claude/settings.json` `allow:`, and that
-is deliberate. **`wsl bash -lc` must never become an allow *prefix*.** The permission check reads
-the single-quoted inner string as one literal argument, so a prefix rule would auto-approve any
-chained inner command — `wsl bash -lc 'bash gate/lint.sh && anything'` — making the relay
-a bare interpreter in disguise. If ad-hoc iteration (lint one file, syntax-check one playbook)
-ever prompts often enough to hurt, add argv-form wrappers here instead: `wsl bash
-gate/lint-file.sh <path>` with no inner shell string, so chaining characters stay
-unquoted on the Windows side and fail the check rather than smuggle through. Any such wrapper
-must replicate the env exports below and be forced to LF in `.gitattributes`.
-
 - `lint.sh` — `ansible-lint` profile `min` over `playbooks roles tasks vars`.
 - `check-links.py` — validates repository-local Markdown links and repo-root `docs/*.md`
   references in tracked and untracked text files.
@@ -33,10 +22,9 @@ must replicate the env exports below and be forced to LF in `.gitattributes`.
 
 ## Scope
 
-A full sweep is 33 cold `ansible-playbook` interpreters plus a whole-tree lint, and on `/mnt/c`
-that is minutes of 9p syscalls re-proving files nobody touched. Both gates therefore narrow by
-default to what the working tree actually changed. The narrowing is deliberately biased toward
-running too much:
+A full sweep starts a separate `ansible-playbook` process for every playbook and lints the whole
+Ansible tree. Both gates therefore narrow by default to what the working tree changed. Ambiguous
+scope falls back to the full sweep:
 
 | Situation | Scope |
 | --- | --- |
@@ -57,16 +45,7 @@ expression and runs `check-links.py`, and `test.sh` still runs every focused reg
 The optimization skips only Ansible lint and playbook syntax checks that cannot consume a
 Markdown file.
 
-`test.sh` runs the checks under `xargs -P $(nproc)` — they are independent, and the wall clock is
-interpreter-startup-bound rather than work-bound. Override with `GATE_JOBS=n`. Each check's output
-goes to its own file and is replayed in playbook order afterwards, because interleaved writes from
-parallel children would destroy the one thing a failing check exists to produce. Set
-`GATE_ANSIBLE_PLAYBOOK` to a stub to exercise the runner itself without paying for real
-interpreters.
-
-Unrelated to the gates but on the same bottleneck: Microsoft Defender inspects every file WSL
-reads over 9p. Excluding the checkout and the WSL VHDX is usually a larger win than anything in
-these scripts.
+`test.sh` checks playbooks in parallel. Override its concurrency with `GATE_JOBS=n`.
 
 Both export `ANSIBLE_CONFIG` to the checkout's absolute path derived from `$PWD`: the repo lives
 on NTFS under `/mnt/c`, and Ansible's world-writable-cwd check silently ignores a cwd-relative
@@ -81,9 +60,5 @@ sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
 python3 -m venv ~/.venvs/homelab-ansible
 ~/.venvs/homelab-ansible/bin/pip install --upgrade pip
 ~/.venvs/homelab-ansible/bin/pip install -r gate/requirements-dev.txt
-~/.venvs/homelab-ansible/bin/ansible-galaxy collection install \
-    community.proxmox:==2.0.0 ansible.utils:==6.0.3 community.general:==13.1.0 community.docker:==5.2.1
+~/.venvs/homelab-ansible/bin/ansible-galaxy collection install -r ansible/requirements.yml
 ```
-
-When `ansible/requirements.yml` is reconciled to carry the pins, switch the galaxy line to
-`-r ansible/requirements.yml`.
