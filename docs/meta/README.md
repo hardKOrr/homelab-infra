@@ -7,6 +7,7 @@ the code; this directory records intent, scope, ordering, and what remains unver
 
 ```
 INDEX.md              # the work queue — a table, always. Start here.
+INDEX-ARCHIVE.md      # superseded long-form index; historical evidence only
 LESSONS.md            # durable knowledge that outlived its slice. Prose lives here.
 README.md             # this file: slice shape and workflow
 NNN-short-slug/       # one live slice
