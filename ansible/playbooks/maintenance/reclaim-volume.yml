@@ -10,7 +10,7 @@
 #   ansible-playbook -i inventory/ playbooks/maintenance/reclaim-volume.yml \
 #     -e volume=pvc-9b1f... -e action=delete
 #
-# Semaphore/Rundeck: job parameters
+# Rundeck: job parameters
 #   volume  — the PersistentVolume's name, exactly as Lab Status prints it (required)
 #   action  — report (default) | release | delete
 #

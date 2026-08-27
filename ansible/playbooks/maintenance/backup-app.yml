@@ -4,7 +4,7 @@
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/backup-app.yml -e instance=mixpost
 #
-# Semaphore/Rundeck: job parameters
+# Rundeck: job parameters
 #   instance — the app instance to back up (required)
 #   app      — only when the instance was deployed under a different name from the app.
 #              Defaults to `instance`.

@@ -6,7 +6,7 @@
 #   ansible-playbook -i inventory/ playbooks/maintenance/restore-app.yml -e instance=mixpost \
 #       -e snapshot=host/mixpost/2026-08-19T03:00:00Z -e target=mixpost-restore -e overwrite=true
 #
-# Semaphore/Rundeck: job parameters
+# Rundeck: job parameters
 #   instance   — the instance that OWNS the backup. Required.
 #   app        — only when the instance was deployed under a different name from the app
 #                (instance mixpost-restore of app mixpost). Defaults to `instance`.

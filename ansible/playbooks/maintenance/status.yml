@@ -4,7 +4,7 @@
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/status.yml
 #
-# Semaphore/Rundeck: no parameters. Output goes to the job console.
+# Rundeck: no parameters. Output goes to the job console.
 #
 # Reports:
 #   - Every homelab-infra tagged Proxmox guest (running / stopped, vmid, node, IP)
@@ -387,8 +387,8 @@
           ansible.builtin.include_tasks: ../../tasks/kubernetes/list-orphan-volumes.yml
 
     # ── Render ─────────────────────────────────────────────────────────────────
-    # One debug of a pre-split line list: Semaphore and Rundeck both render a
-    # msg list one line per entry, which a single embedded-newline string does not.
+    # One debug of a pre-split line list: Rundeck renders a msg list one line per
+    # entry, which a single embedded-newline string does not.
     - name: Render the status report
       ansible.builtin.debug:
         msg: "{{ _st_report.splitlines() }}"

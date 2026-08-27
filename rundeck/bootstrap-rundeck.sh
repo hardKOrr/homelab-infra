@@ -1864,6 +1864,9 @@ else
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
+# The NETWORK paragraph restates output-source:network-prerequisite and the NEXT list
+# restates output-source:vault-enrollment-ceremony, both canonical in README.md. Change
+# the passage there first, then this text; gate/check-output-anchors.py links the two.
 log "Done"
 cat <<EOF
     Rundeck    $RD_URL   (project: $RD_PROJECT)

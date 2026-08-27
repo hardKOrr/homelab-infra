@@ -5,7 +5,7 @@
 #   ansible-playbook playbooks/maintenance/get-config.yml
 #   ansible-playbook playbooks/maintenance/get-config.yml -e instance=radarr-4k
 #
-# Rundeck/Semaphore: Config group. Parameters: instance (optional), archive (optional).
+# Rundeck: Config group. Parameters: instance (optional), archive (optional).
 #
 # This is the reading half of the config transport pair. Configure App writes the lab
 # definition from the UI; this reads it back from the UI. Between them, no SSH session
@@ -117,12 +117,14 @@
             format: gz
             mode: "0600"
 
+        # Restates output-source:config-archive-handling, canonical in
+        # rundeck/README.md. Change that passage first.
         - name: Report the archive
           ansible.builtin.debug:
             msg:
               - "Archive: {{ _cfg_archive }}  (on the runner)"
               - "This file contains REAL secrets — the log above is redacted, it is not."
               - >-
-                Neither Rundeck OSS nor Semaphore serves it as a download, so fetch it
+                Rundeck OSS serves no artifact as a download, so fetch it
                 over scp if you want it off the host. The runner is a homelab-infra
                 tagged guest, so PBS backs this file up with the rest of it.

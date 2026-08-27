@@ -11,7 +11,7 @@
 # learns one layout once instead of re-reading a wall of YAML per job.
 #
 # IT IS UI-AGNOSTIC ON PURPOSE. Nothing here knows about Rundeck. The same output is
-# what a terminal run, a Semaphore run and a gate run produce, which is the standing
+# what a terminal run, a Rundeck run and a gate run produce, which is the standing
 # rule for everything under ansible/. Rundeck's contribution is colour rendering,
 # which it gets for free from the ANSI sequences ansible already emits.
 #

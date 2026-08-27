@@ -245,6 +245,7 @@ Job options reach the script as `RD_OPTION_*` environment variables rather than
 
 ### Playbooks refresh themselves; job definitions do not
 
+<!-- output-source:job-import-contract sha=c097a1b5 -->
 The checkout refresh keeps the **playbooks** current. **Job definitions** live in
 Rundeck's database and only change when something imports them. Run **Reimport Jobs**
 after a change to `rundeck/jobs/*.yaml` reaches the tracked branch — a new job, a new
@@ -255,6 +256,7 @@ else — it was never going to refresh the working tree the steps execute, which
 problem people reach for it to solve. It also makes UI edits and repo imports fight each
 other. One-way import from the repo is the only path here, and jobs are not expected to be
 edited in the UI; if you edit one there, the next Reimport Jobs overwrites it.
+<!-- /output-source:job-import-contract -->
 
 ## Credentials
 
@@ -314,10 +316,12 @@ interactive SSH session:
 
 - **Configure App** writes `config/apps/<instance>.yml` from a form. Fields are overrides;
   blank keeps the current value. `extra_yaml` covers anything the form does not name.
+<!-- output-source:config-archive-handling sha=b47d911b -->
 - **Get Config** reads the set back out, redacted, and writes an unredacted `tar.gz`
   restore point under `artifacts/` on the runner. Rundeck OSS serves no artifacts, so fetch
   that file over scp if you want it off the host — or rely on PBS, which backs up the runner
   along with it.
+<!-- /output-source:config-archive-handling -->
 - **Store Secret** writes one field of one canonical Vaultwarden item from a form, with
   the value as a secure option — masked in the form, masked in the log, passed to Ansible
   through the environment rather than argv, and stored as a hidden field. It is the only

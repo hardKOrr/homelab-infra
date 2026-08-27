@@ -103,7 +103,7 @@
 
 # Secrets from the environment (slice 010). The recommended shape is a config/proxmox.yml
 # with api_token_secret absent and PROXMOX_API_TOKEN supplied by Rundeck Key Storage or the
-# Semaphore environment, so the platform's most privileged credential never lands in a file.
+# environment, so the platform's most privileged credential never lands in a file.
 # The same applies to the Vaultwarden admin token. These overlay LAST — an operator who
 # exports one for a single run means it, and the file value is the fallback, not the winner.
 # Absent env vars change nothing, so a lab that keeps its secrets in files is untouched.

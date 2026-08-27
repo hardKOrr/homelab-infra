@@ -3,7 +3,7 @@
 # not receive `-e` extra vars in its connection options; this was verified against the plugin,
 # so these options read PROXMOX_API_* from the process environment via lookup('env', ...), which the
 # same Templar DOES evaluate (no host/extra vars needed). Populate them with
-# scripts/with-proxmox-env.sh (bare CLI / fresh clone) or export them in the Rundeck/Semaphore job
+# scripts/with-proxmox-env.sh (bare CLI / fresh clone) or export them in the Rundeck job
 # step. Playbooks still receive homelabinfra_config via -e @user-vars.yml for task-time vars; only
 # this inventory file is env-driven.
 plugin: community.proxmox.proxmox

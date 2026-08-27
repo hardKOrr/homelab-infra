@@ -39,6 +39,7 @@ and the enrollment ceremony is performed in a browser at `https://vaultwarden.<y
 domain>`. That URL has to resolve — from the runner and from your workstation — to the new
 Caddy LXC, and the path to it on ports 80/443 has to be open. So:
 
+<!-- output-source:network-prerequisite sha=7cfe6710 -->
 - **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy
   LXC in whatever resolver your LAN uses. Once `dns.provider` is configured and Vaultwarden
   holds its API key, later app deploys create their own records automatically — this first
@@ -55,6 +56,7 @@ None of this involves the public internet. Certificates are obtained over **DNS-
 API — the CA never connects to your lab, so no public A record and no inbound WAN port is
 required. If you already run a reverse proxy on your WAN's 80/443, it keeps those ports and
 is untouched: the lab Caddy listens on its own address.
+<!-- /output-source:network-prerequisite -->
 
 ### 1. Stand up the runner
 
@@ -89,6 +91,7 @@ gave.
 
 ### 2. Stand up the lab
 
+<!-- output-source:vault-enrollment-ceremony sha=ff0d76d0 -->
 Open the Rundeck URL it printed. Two jobs, with one browser session between them.
 
 Layer 1 already sent the owner and automation invitations itself. The **Vaultwarden
@@ -122,6 +125,7 @@ Platform**.
 That reconciles the already-tagged Caddy and Vaultwarden LXCs, then deploys Ntfy, Authentik, Uptime Kuma,
 Prometheus + Grafana and PBS. Each step records its own connection details before the next
 one needs them, so the run is resumable: if something fails, fix it and run the job again.
+<!-- /output-source:vault-enrollment-ceremony -->
 
 ### 3. Deploy things
 
@@ -212,7 +216,8 @@ topology only; secret-shaped fields are rejected.
 ## Requirements
 
 - Proxmox VE 8 or 9, with root on a node
-- One free IP and VMID for the runner
+- One free IP for the runner; its VMID is derived from that address by the platform's
+  `168<third octet><fourth octet>` rule, so no VMID is asked for
 - A domain you control (it does not need to be public; internal-only labs work)
 - A Cloudflare API token scoped to Zone Read plus DNS Edit for that domain when using the default Caddy DNS-01 setup; no public app records or inbound WAN ports are required
 - A LAN resolver entry pointing the domain tree at the Caddy LXC, and router rules allowing your clients to reach it on 80/443 — see [step 0](#0-make-the-lab-domain-reach-the-lab-caddy)

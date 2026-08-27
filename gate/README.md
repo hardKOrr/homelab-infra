@@ -16,9 +16,47 @@ Append `--all` to either to force the full sweep (see *Scope* below).
 - `lint.sh` — `ansible-lint` profile `min` over `playbooks roles tasks vars`.
 - `check-links.py` — validates repository-local Markdown links and repo-root `docs/*.md`
   references in tracked and untracked text files.
+- `check-output-anchors.py` — links operator-facing output to the Markdown passage it
+  restates. See *Output anchors* below.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
+
+## Output anchors
+
+Some text the platform prints to an operator restates a passage a `README.md` owns — the
+bootstrap script's NETWORK and NEXT sections, the Get Config archive warning, the Reimport
+Jobs description. A documentation pass can correct the contract and leave the printed text
+stating the superseded thing, which `check-links.py` cannot see.
+
+Declare the canonical passage in Markdown:
+
+```
+<!-- output-source:network-prerequisite sha=7cfe6710 -->
+...the passage...
+<!-- /output-source:network-prerequisite -->
+```
+
+Name the same id in a comment beside every place that restates it:
+
+```
+# Restates output-source:network-prerequisite, canonical in README.md.
+```
+
+`check-output-anchors.py` enforces the link, not textual equality — printed text
+interpolates live values and wraps to a console. It fails when an anchor names no declared
+passage, a passage has no consumer left, an id is declared twice, or a passage's content no
+longer hashes to its declared `sha`.
+
+The hash is the update chain. Change the canonical passage and the gate fails, naming every
+output that restates it. Re-read each one, correct it, then record the new hash:
+
+```
+python3 gate/check-output-anchors.py --update
+```
+
+Use a new id when new output starts restating a documented passage. Do not run `--update`
+to clear a failure you have not read.
 
 ## Scope
 

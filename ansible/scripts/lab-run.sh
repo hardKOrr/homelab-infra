@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab-run.sh — the one entry point every Rundeck and Semaphore job step calls.
+# lab-run.sh — the one entry point every Rundeck job step calls.
 #
 #   lab-run playbooks/bootstrap.yml
 #   lab-run playbooks/apps/remove.yml -e instance=radarr -e delete_data=false

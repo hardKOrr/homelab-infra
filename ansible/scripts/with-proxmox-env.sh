@@ -13,7 +13,7 @@
 #
 # The token secret is read from the environment first, the file second. The recommended
 # shape (slice 010) is a config/proxmox.yml with `api_token_secret` absent entirely and
-# PROXMOX_API_TOKEN supplied by Rundeck Key Storage or the Semaphore environment, so the
+# PROXMOX_API_TOKEN supplied by Rundeck Key Storage, so the
 # platform's most privileged credential never lands in a file. These env vars override
 # the file when both are present:
 #

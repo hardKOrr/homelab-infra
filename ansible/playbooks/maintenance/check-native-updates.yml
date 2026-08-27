@@ -4,7 +4,7 @@
 # Sends a single Ntfy notification listing all apps that are behind.
 # Does NOT update — re-run the app's deploy playbook to update.
 #
-# Schedule: weekly via Semaphore/Rundeck.
+# Schedule: weekly via Rundeck.
 
 # Load config before the guest play so its connection user is available: the Proxmox
 # dynamic inventory carries no ansible_user, and connecting as the account running

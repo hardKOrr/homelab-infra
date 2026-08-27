@@ -6,7 +6,7 @@
 #   ansible-playbook -i inventory/ playbooks/stacks/rollback-container.yml \
 #     -e container=radarr-personal-4k -e app=radarr -e image_tag=5.1.3
 #
-# Semaphore/Rundeck parameters:
+# Rundeck parameters:
 #   container:   app instance name — also the Compose project dir /opt/<container>
 #   app:         application slug whose defaults resolve the instance's hosting
 #   image_tag:   image tag to roll back to (e.g. 5.1.3)

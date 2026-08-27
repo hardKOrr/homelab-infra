@@ -1,5 +1,6 @@
-# Wire Media Stack — generated companion to the Semaphore template of the same name.
-# Load with:  rd jobs load --project homelab-infra --format yaml --file rundeck/jobs/wire-media-stack.yaml
+# Wire Media Stack — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).

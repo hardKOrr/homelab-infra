@@ -4,7 +4,7 @@
 # Usage:
 #   ansible-playbook playbooks/maintenance/config-doctor.yml
 #
-# Rundeck/Semaphore: Config group, no parameters. Output goes to the job console.
+# Rundeck: Config group, no parameters. Output goes to the job console.
 #
 # Read-only: mutates nothing, contacts no service, needs no Proxmox connection. It wraps
 # ansible/scripts/config-doctor.sh — the same check lab-run.sh performs before every job

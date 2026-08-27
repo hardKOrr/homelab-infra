@@ -4,7 +4,7 @@
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/stacks/wire-media-stack.yml
 #
-# No parameters — the playbook is the media stack's wiring job. Semaphore/Rundeck
+# No parameters — the playbook is the media stack's wiring job. Rundeck
 # run it as "Wire Media Stack".
 #
 # Scope: app-to-app only. Reverse proxy, SSO, uptime and DNS wiring belong to each

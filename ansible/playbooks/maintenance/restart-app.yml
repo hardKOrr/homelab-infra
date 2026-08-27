@@ -8,7 +8,7 @@
 #   ansible-playbook -i inventory/ playbooks/maintenance/restart-app.yml \
 #       -e instance=radarr-4k -e app=radarr
 #
-# Semaphore/Rundeck: job parameters
+# Rundeck: job parameters
 #   instance — the app instance name (required)
 #   app      — the application it is an instance of. Defaults to `instance`; the generated
 #              per-application jobs always pass it.

@@ -1,13 +1,13 @@
 ---
 # Tail recent log output for one app instance, whichever way it is installed.
-# Output is printed to the Semaphore/Rundeck job console. Read-only.
+# Output is printed to the Rundeck job console. Read-only.
 #
 # Usage:
 #   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml -e instance=vaultwarden
 #   ansible-playbook -i inventory/ playbooks/maintenance/tail-applog.yml \
 #       -e instance=radarr-4k -e app=radarr -e lines=100
 #
-# Semaphore/Rundeck: job parameters
+# Rundeck: job parameters
 #   instance — the app instance name (required)
 #   app      — the application it is an instance of. Defaults to `instance`.
 #   lines    — how many lines to show (default 50)

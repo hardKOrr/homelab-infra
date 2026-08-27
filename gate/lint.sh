@@ -72,3 +72,8 @@ cd ..
 # records link to the contracts and evidence used to maintain the playbooks. Validate both
 # relative Markdown links and repo-root docs/*.md references after moves or renames.
 "$HOME/.venvs/homelab-ansible/bin/python" gate/check-links.py
+
+# Operator-facing output restates passages the READMEs own. check-output-anchors.py keeps
+# the two linked: it fails when a canonical passage changes without its printed
+# counterpart being re-read, and when an anchor or a passage loses its other half.
+"$HOME/.venvs/homelab-ansible/bin/python" gate/check-output-anchors.py

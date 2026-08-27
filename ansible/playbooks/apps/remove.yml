@@ -8,7 +8,7 @@
 #   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k -e app=radarr
 #   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k -e delete_data=true
 #
-# Semaphore/Rundeck: job parameters
+# Rundeck: job parameters
 #   instance     — the app instance name (required)
 #   app          — the app whose vars/app-defaults/<app>.yml describes this instance.
 #                  Defaults to `instance`, which is correct whenever the instance was

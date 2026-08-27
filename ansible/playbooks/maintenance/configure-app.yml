@@ -6,7 +6,7 @@
 #   ansible-playbook playbooks/maintenance/configure-app.yml \
 #     -e instance=radarr-4k -e stack=media -e identity=forward_auth
 #
-# Rundeck/Semaphore: Config group. The survey carries the common keys; anything else
+# Rundeck: Config group. The survey carries the common keys; anything else
 # goes in extra_yaml, which is parsed and deep-merged last. That is the deliberate
 # trade — a survey is a flat parameter list and instance files nest, so rather than
 # grow a parameter per key (or a separate job per app), the common dozen are named and
