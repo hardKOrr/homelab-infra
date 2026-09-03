@@ -271,4 +271,3 @@
     # - name: Wire to Plex (if deployed)
     #   ansible.builtin.include_tasks: ../../tasks/app-wiring/plex.yml
     #   when: "'lab_app_plex' in groups and groups['lab_app_plex'] | length > 0"
-  bad_yaml_test: [unterminated
