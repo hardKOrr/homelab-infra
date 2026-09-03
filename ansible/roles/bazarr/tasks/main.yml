@@ -1,0 +1,111 @@
+---
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve Bazarr deployment values
+  ansible.builtin.set_fact:
+    _bazarr_kind: "{{ app_config.app.media_kind }}"
+    _bazarr_base: "http://localhost:{{ app_config.app.port }}"
+    _bazarr_config_file: "{{ app_config.app.config_path }}/config/config.yaml"
+    _bazarr_mounts: "{{ app_config.app.mounts | default([], true) }}"
+
+- name: Assert the app kind is a known subtitles service
+  ansible.builtin.assert:
+    that:
+      - _bazarr_kind in media_wiring.kinds
+      - media_wiring.kinds[_bazarr_kind].role == 'subtitles'
+
+- name: Create Bazarr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "/opt/{{ instance }}"
+    - "{{ app_config.app.config_path }}"
+
+- name: Verify media paths are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ _bazarr_mounts }}"
+  register: _bazarr_mount_checks
+
+- name: Assert declared media paths are usable
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: "{{ item.item.path }} is not present on the media stack host."
+  loop: "{{ _bazarr_mount_checks.results }}"
+
+- name: Write the Bazarr Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "/opt/{{ instance }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart bazarr
+
+- name: Pull the Bazarr image
+  community.docker.docker_compose_v2_pull:
+    project_src: "/opt/{{ instance }}"
+    policy: missing
+  changed_when: false
+
+- name: Start Bazarr
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending Bazarr restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the generated Bazarr configuration
+  ansible.builtin.slurp:
+    src: "{{ _bazarr_config_file }}"
+  register: _bazarr_config
+  until: _bazarr_config.content is defined
+  retries: 30
+  delay: 2
+  changed_when: false
+  no_log: true
+
+- name: Extract the Bazarr API key
+  ansible.builtin.set_fact:
+    _bazarr_api_key: >-
+      {{ (_bazarr_config.content | b64decode
+          | regex_search('(?m)^apikey:[ \\t]*([^\\s#]+)', '\\1')
+          | default([], true) | join('')) }}
+  no_log: true
+
+- name: Assert Bazarr generated an API key
+  ansible.builtin.assert:
+    that: _bazarr_api_key | length > 0
+  no_log: true
+
+- name: Verify the authenticated Bazarr settings API
+  ansible.builtin.uri:
+    url: "{{ _bazarr_base }}/api/system/settings"
+    headers:
+      X-API-KEY: "{{ _bazarr_api_key }}"
+      Accept: application/json
+    status_code: 200
+  register: _bazarr_settings
+  until: _bazarr_settings.status | default(0) == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+  no_log: true
+
+- name: Store and verify the Bazarr API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _bazarr_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true
+
+- name: Export the Bazarr media registry entry
+  ansible.builtin.set_fact:
+    bazarr_media_kind: "{{ _bazarr_kind }}"
+    bazarr_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

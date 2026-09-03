@@ -1,0 +1,18 @@
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1313) }}
+      - PGID={{ app_config.app.pgid | default(1313) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+{% for mount in _bazarr_mounts %}
+      - "{{ mount.path }}:{{ mount.path }}"
+{% endfor %}
+    ports:
+      - "{{ app_config.app.port }}:6767"

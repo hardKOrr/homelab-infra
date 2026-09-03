@@ -1,0 +1,18 @@
+---
+bazarr_defaults:
+  stack: media
+  app:
+    media_kind: bazarr
+    image: "lscr.io/linuxserver/bazarr:latest"
+    port: 6767
+    config_path: "/opt/{{ instance }}/config"
+    puid: 1313
+    pgid: 1313
+    mounts: >-
+      {{ (homelabinfra_config.infrastructure.media_storage | default({})).mounts
+         | default([], true) }}
+  routing:
+    subdomain: bazarr
+    proxy: internal
+    access: internal
+    identity: forward_auth

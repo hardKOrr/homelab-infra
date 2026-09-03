@@ -1,0 +1,29 @@
+- id: c5f2d7db-e1e6-5cb0-ae75-2d3f8741a28f
+  uuid: c5f2d7db-e1e6-5cb0-ae75-2d3f8741a28f
+  name: Deploy Bazarr
+  group: Applications/Media & Entertainment/Library Automation/Bazarr
+  description: |-
+    Deploy or converge **Bazarr** on the media stack.
+
+    - Stores the generated API key in Vaultwarden
+    - Registers the instance for Wire Media Stack
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name for an additional Bazarr instance.'
+    required: true
+    value: bazarr
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/bazarr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/bazarr.yml -e "instance=$RD_OPTION_INSTANCE"
