@@ -99,6 +99,7 @@ bash gate/test-rundeck-job-tree.sh || rc=1
 bash gate/test-allocate-ip.sh || rc=1
 bash gate/test-registry-forget.sh || rc=1
 bash gate/test-maintenance-schedule.sh || rc=1
+bash gate/test-stale-service-detection.sh || rc=1
 bash gate/test-proxmox-tags.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1
 bash gate/test-network-scope.sh || rc=1

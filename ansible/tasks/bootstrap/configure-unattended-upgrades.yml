@@ -28,6 +28,46 @@
 # waits. `/var/run/reboot-required` is what this file leaves behind and what the
 # maintenance job acts on.
 
+# needrestart knows which systemd services still have deleted binaries or libraries
+# mapped after apt replaced them. Its default interactive policy is unsuitable for an
+# unattended guest: list (`l`) is both non-interactive and guarantees that installing
+# updates never restarts a service outside the maintenance window.
+- name: Install stale-service detector
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+
+- name: Configure needrestart to report without restarting
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/homelab-infra.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by homelab-infra. Restarts are scheduled by homelab-maintenance.
+      $nrconf{restart} = 'l';
+
+# Keep the parser in one root-owned helper. `needrestart -b` emits one
+# NEEDRESTART-SVC record per stale host systemd unit; it does not enumerate the
+# processes inside containers. Those remain Watchtower's update domain, while a stale
+# docker.service or containerd.service is deliberately a host service and is returned.
+- name: Write stale-service list helper
+  ansible.builtin.copy:
+    dest: /usr/local/bin/lab-stale-services
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Print one stale host systemd unit per line. Read-only: `-r l` forbids
+      # needrestart from acting even if a local package default changes.
+      set -uo pipefail
+      NEEDRESTART=/usr/sbin/needrestart
+      [ -x "$NEEDRESTART" ] || exit 0
+      # needrestart diagnostics and service records share stdout. Keep only the
+      # documented machine records, and make the result stable for messages/status.
+      "$NEEDRESTART" -b -r l 2>/dev/null | sed -n 's/^NEEDRESTART-SVC: //p' | sort -u || true
+
 - name: Enable automatic apt upgrades
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/20auto-upgrades
@@ -105,12 +145,20 @@
       [[ -z "$LINE" ]] && exit 0
       COUNT=$(echo "${LINE#*Packages that will be upgraded:}" | wc -w)
       [[ "$COUNT" -eq 0 ]] && exit 0
+      STALE_SERVICES=$(/usr/local/bin/lab-stale-services | paste -sd, -)
+      BODY="$COUNT package(s) updated on {{ inventory_hostname }}"
+      if [[ -n "$STALE_SERVICES" ]]; then
+        BODY+=$'\nStale services (running replaced code): '
+        BODY+="$STALE_SERVICES"
+      else
+        BODY+=$'\nNo stale host services detected.'
+      fi
       AUTH=()
       [[ -n "${NTFY_TOKEN:-}" ]] && AUTH=(-H "Authorization: Bearer $NTFY_TOKEN")
       curl -sf -X POST "$NTFY_URL" \
         "${AUTH[@]}" \
         -H "Title: OS updates installed on {{ inventory_hostname }}" \
-        -d "$COUNT package(s) updated on {{ inventory_hostname }}" \
+        -d "$BODY" \
         > /dev/null
   when:
     - homelabinfra_infra is defined
