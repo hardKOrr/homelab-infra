@@ -1,0 +1,75 @@
+name: Live-lab observation
+description: Record what actually happened on the running lab — a scheduled window firing, an acceptance criterion being watched, a defect surfaced only by live behavior.
+title: "[Observation] "
+labels: ["observation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle.
+        Gate-green repository work and live-lab acceptance are different things — this
+        template is for the second one. If the observation reveals a defect that needs a
+        code change, open a separate Defect issue and link it here rather than expanding
+        this one into implementation work.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What did you observe, and against which slice or acceptance criterion?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: >-
+        Which `docs/meta/<NNN-slug>/README.md` **Remaining** item this evidences, or which
+        live component this concerns if no slice exists yet.
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Exclusions
+      description: What this observation does not confirm.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: >-
+        The exact Remaining checkbox(es) this observation is meant to satisfy, quoted
+        from the slice README.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: The slice, maintenance window, or prior issue this observation depends on.
+    validations:
+      required: false
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: How the observation was captured — logs, timestamps, job output, screenshot.
+    validations:
+      required: true
+  - type: textarea
+    id: live-system-authority
+    attributes:
+      label: Live-system authority
+      description: The exact live guest, container, or Proxmox resource observed.
+    validations:
+      required: true
+  - type: textarea
+    id: recovery-needs
+    attributes:
+      label: Recovery needs
+      description: >-
+        If the observation revealed a problem, what recovery was performed or is still
+        needed? Write "None" if the observation confirmed expected behavior.
+    validations:
+      required: true

@@ -1,0 +1,77 @@
+name: Defect
+description: Something the platform does today that is wrong — a bug, a broken idempotency guarantee, a defect found by testing or live observation.
+title: "[Defect] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What is broken, and what should happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: >-
+        Where the defect lives — playbooks, roles, tasks, vars, docs, jobs. Link the
+        `docs/meta/<NNN-slug>/README.md` spec if the affected behavior has one.
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Exclusions
+      description: Related-but-separate defects or behavior this issue does not cover.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: How to confirm the defect is fixed, as a checklist.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Other issues, slices, or infrastructure this depends on or blocks.
+    validations:
+      required: false
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: >-
+        Exact commands that reproduce the defect and confirm the fix. Default to
+        `bash gate/lint.sh` and `bash gate/test.sh` (see `gate/README.md`); name any
+        additional manual check or reproduction steps.
+    validations:
+      required: true
+  - type: textarea
+    id: live-system-authority
+    attributes:
+      label: Live-system authority
+      description: >-
+        Does fixing this require changing a live, running guest, container, or Proxmox
+        resource? Name the exact target, or write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: recovery-needs
+    attributes:
+      label: Recovery needs
+      description: >-
+        If a live or stateful target is involved, what is the rollback or recovery
+        path if the fix fails partway? Write "N/A" if live-system authority is None.
+    validations:
+      required: true

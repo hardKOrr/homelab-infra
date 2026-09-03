@@ -1,15 +1,17 @@
 # Work index
 
-This is the repository work queue. Each linked slice owns its goal, current state, and evidence.
-Historical narrative belongs in slice `notes.md` files or
+[GitHub Issues](https://github.com/hardKOrr/homelab-infra/issues) is the live work queue and
+owns priority and status — see [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md). This table
+maps each open issue to the slice that specifies it. Each linked slice owns its goal, current
+state, and evidence. Historical narrative belongs in slice `notes.md` files or
 [`INDEX-ARCHIVE.md`](INDEX-ARCHIVE.md); durable cross-cutting lessons belong in
 [`LESSONS.md`](LESSONS.md).
 
 ## Start here
 
-Take the first actionable row. A `built` slice awaiting live observation is not repository work
-and does not displace an open implementation row. Run both gates before marking repository work
-built:
+Open the linked issue, then read its slice. A `built` slice awaiting live observation is
+tracked by an observation issue and does not displace an open implementation issue. Run both
+gates before marking repository work built:
 
 ```text
 bash gate/lint.sh
@@ -18,14 +20,15 @@ bash gate/test.sh
 
 ## Repository work
 
-| Order | Slice | Next outcome |
-| ---: | --- | --- |
-| 1 | [507 — Stale service detection](507-stale-service-detection/README.md) | Detect and report services still running replaced code; restart them only through the maintenance schedule |
-| 2 | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Add read-only, evidence-ranked triage for Plex client log bundles |
-| 3 | [408 — Application catalog](408-app-catalog/README.md) | Implement its application batches in the order defined by that slice |
+| Issue | Slice | Next outcome |
+| --- | --- | --- |
+| [#10](https://github.com/hardKOrr/homelab-infra/issues/10) | [507 — Stale service detection](507-stale-service-detection/README.md) | Detect and report services still running replaced code; restart them only through the maintenance schedule |
+| [#11](https://github.com/hardKOrr/homelab-infra/issues/11) | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Add read-only, evidence-ranked triage for Plex client log bundles |
+| [#12](https://github.com/hardKOrr/homelab-infra/issues/12) | [408 — Application catalog](408-app-catalog/README.md) | Implement its application batches in the order defined by that slice |
 
-The following option slices refine application-catalog rows. Their own dependencies and
-acceptance criteria decide when each is actionable:
+The following option slices refine application-catalog rows and have no issue of their own
+yet. Their own dependencies and acceptance criteria decide when each is actionable; file an
+issue against one when it is ready to work:
 
 | Subject | Slices |
 | --- | --- |
@@ -35,12 +38,13 @@ acceptance criteria decide when each is actionable:
 
 ## Built; awaiting observation
 
-These slices have no remaining repository implementation unless an observation exposes a defect:
+These slices have no remaining repository implementation unless an observation exposes a
+defect. Each has an open live-lab observation issue tracking the remaining evidence:
 
-| Slice | Remaining evidence |
-| --- | --- |
-| [205 — Maintenance schedules](205-maintenance-schedules/README.md) | Observe a real scheduled window and complete Tier 2 live-lab acceptance |
-| [504 — Wire media stack](504-wire-media-stack/README.md) | The adoption path during a deliberately requested migration |
+| Issue | Slice | Remaining evidence |
+| --- | --- | --- |
+| [#13](https://github.com/hardKOrr/homelab-infra/issues/13) | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | Observe a real scheduled window and complete Tier 2 live-lab acceptance |
+| [#14](https://github.com/hardKOrr/homelab-infra/issues/14) | [504 — Wire media stack](504-wire-media-stack/README.md) | The adoption path during a deliberately requested migration |
 
 Completed and unreachable slices are retained under [`done/`](done/) and
 [`no-target/`](no-target/). The slice format and lifecycle are defined in

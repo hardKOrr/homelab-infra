@@ -1,0 +1,72 @@
+name: Documentation
+description: A README, spec, contract, or other Markdown document is missing, wrong, or out of date.
+title: "[Docs] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle,
+        and `docs/meta/README.md` for the one-fact-one-home rule this repository's
+        documentation follows.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should a reader find, and where, that they cannot today?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which document(s) this touches.
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Exclusions
+      description: Related documentation this issue does not cover.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable outcomes, as a checklist.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Other issues or documents this depends on or blocks.
+    validations:
+      required: false
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: >-
+        Default to `bash gate/lint.sh` (runs `check-links.py` and
+        `check-output-anchors.py`; see `gate/README.md`). Name any additional check.
+    validations:
+      required: true
+  - type: textarea
+    id: live-system-authority
+    attributes:
+      label: Live-system authority
+      description: Documentation issues do not change a live target. Write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: recovery-needs
+    attributes:
+      label: Recovery needs
+      description: Write "N/A".
+    validations:
+      required: true

@@ -146,6 +146,7 @@ resolvable in DNS.
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
 | Inspect the legacy Semaphore reference | [`semaphore/README.md`](semaphore/README.md) |
 | See what is built and what is planned | [`docs/meta/INDEX.md`](docs/meta/INDEX.md) |
+| File an issue or open a pull request | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 ---
 
