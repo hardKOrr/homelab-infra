@@ -1,0 +1,78 @@
+name: Gate
+
+# Runs the same lint and syntax-check gates documented in gate/README.md, with the
+# Proxmox dynamic inventory neutralized (ANSIBLE_INVENTORY=localhost, set by the gate
+# scripts themselves). No live-lab access, no config/ contents, no secrets required.
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  # Matches the venv path the gate scripts hard-code (see gate/README.md's one-time
+  # bootstrap) so `bash gate/lint.sh`/`test.sh` find the toolchain without modification.
+  GATE_VENV: /home/runner/.venvs/homelab-ansible
+
+jobs:
+  lint:
+    name: gate / lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache gate toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GATE_VENV }}
+            ~/.ansible/collections
+          key: gate-toolchain-${{ runner.os }}-py3.12-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
+
+      - name: Install gate toolchain
+        run: |
+          python3 -m venv "$GATE_VENV"
+          "$GATE_VENV/bin/pip" install --upgrade pip
+          "$GATE_VENV/bin/pip" install -r gate/requirements-dev.txt
+          "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml
+
+      - name: Put gate venv on PATH
+        run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
+
+      - run: bash gate/lint.sh --all
+
+  test:
+    name: gate / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache gate toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GATE_VENV }}
+            ~/.ansible/collections
+          key: gate-toolchain-${{ runner.os }}-py3.12-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
+
+      - name: Install gate toolchain
+        run: |
+          python3 -m venv "$GATE_VENV"
+          "$GATE_VENV/bin/pip" install --upgrade pip
+          "$GATE_VENV/bin/pip" install -r gate/requirements-dev.txt
+          "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml
+
+      - name: Put gate venv on PATH
+        run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
+
+      - run: bash gate/test.sh --all
