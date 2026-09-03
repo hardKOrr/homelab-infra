@@ -40,7 +40,13 @@ jobs:
           python3 -m venv "$GATE_VENV"
           "$GATE_VENV/bin/pip" install --upgrade pip
           "$GATE_VENV/bin/pip" install -r gate/requirements-dev.txt
-          "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml
+          for attempt in 1 2 3; do
+            "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml && break
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
 
       - name: Put gate venv on PATH
         run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
@@ -70,7 +76,13 @@ jobs:
           python3 -m venv "$GATE_VENV"
           "$GATE_VENV/bin/pip" install --upgrade pip
           "$GATE_VENV/bin/pip" install -r gate/requirements-dev.txt
-          "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml
+          for attempt in 1 2 3; do
+            "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml && break
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
 
       - name: Put gate venv on PATH
         run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
