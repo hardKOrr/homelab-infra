@@ -104,3 +104,20 @@ python3 -m venv ~/.venvs/homelab-ansible
 ~/.venvs/homelab-ansible/bin/pip install -r gate/requirements-dev.txt
 ~/.venvs/homelab-ansible/bin/ansible-galaxy collection install -r ansible/requirements.yml
 ```
+
+Add the venv's `bin/` to `PATH` (shell profile, or per-run) so bare `python3` calls inside
+the gate's own scripts — the ones that parse YAML or render Jinja outside the venv's own
+binaries, e.g. `ansible/scripts/secret-shape.py`, `rundeck/render-job.py` — resolve to an
+interpreter that has `pyyaml`/`jinja2` installed, instead of falling through to a system
+Python that does not.
+
+## Continuous integration
+
+`.github/workflows/gate.yml` runs `bash gate/lint.sh --all` and `bash gate/test.sh --all`
+as separate checks (`gate / lint`, `gate / test`) on every pull request targeting `master`.
+It repeats the bootstrap above on a clean `ubuntu-latest` runner — same venv path
+(`~/.venvs/homelab-ansible`), same requirements files, `PATH`-prepended the same way — so a
+green run there means the bootstrap above still works from scratch. The workflow needs no
+secrets and never touches `config/`: both gates already neutralize the Proxmox inventory
+(`ANSIBLE_INVENTORY=localhost,`), and `--all` forces the full sweep regardless of the
+runner's (always clean) working tree.
