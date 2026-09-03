@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Repository workflow
+    url: https://github.com/hardKOrr/homelab-infra/blob/master/CONTRIBUTING.md
+    about: Read the issue-to-PR lifecycle before filing, especially for AO worker sessions.
+  - name: Work state and specifications
+    url: https://github.com/hardKOrr/homelab-infra/blob/master/docs/meta/README.md
+    about: Existing slices — detailed specs, decision records, and acceptance evidence.

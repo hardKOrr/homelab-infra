@@ -1,12 +1,15 @@
-# Meta — the backlog
+# Meta — specifications and acceptance evidence
 
-This directory tracks current work, acceptance evidence, and implementation history. Git tracks
-the code; this directory records intent, scope, ordering, and what remains unverified.
+GitHub Issues is the live work queue: priority, assignment, and status live there — see
+[`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) for the issue-to-PR lifecycle. This
+directory holds what an issue is too short-lived to carry: detailed specifications,
+decision records, and acceptance evidence. Git tracks the code; this directory records
+intent, scope, and what remains unverified for the slices that back an open issue.
 
 ## Layout
 
 ```
-INDEX.md              # the work queue — a table, always. Start here.
+INDEX.md              # maps open issues to the slices that implement them
 INDEX-ARCHIVE.md      # superseded long-form index; historical evidence only
 LESSONS.md            # durable knowledge that outlived its slice. Prose lives here.
 README.md             # this file: slice shape and workflow
@@ -27,11 +30,13 @@ two of them go stale silently.
 
 | Fact | Home |
 |---|---|
-| What remains to build next | `INDEX.md` work queue |
+| What to work on next, and its priority | GitHub Issues |
+| The detailed spec an issue implements | that slice's `README.md` **Goal** and **Links** |
 | What remains to accept on a slice | that slice's `README.md` **Remaining** section |
 | A lesson that applies beyond its slice | `LESSONS.md` |
 | Registry key shapes, merge order, config schema | `ansible/vars/CONTRACT.md` |
 | What happened in a work session | that slice's `notes.md` |
+| The issue-to-PR lifecycle | `../../CONTRIBUTING.md` |
 
 Anywhere else, link — do not restate.
 
@@ -66,17 +71,18 @@ leave it unticked forever.
 
 ## Workflow
 
-`INDEX.md` owns current priority. The work queue and slice acceptance are different: queue rows
-describe repository work; slice **Remaining** boxes can require live lab or third-party evidence.
-Do not turn an acceptance observation into an unplanned hardening sidequest.
+GitHub Issues owns current priority — see [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md).
+The issue and slice acceptance are different: the issue describes repository work; a slice's
+**Remaining** boxes can require live lab or third-party evidence. Do not turn an acceptance
+observation into an unplanned hardening sidequest.
 
-1. Implement the top unchecked work-queue row in `INDEX.md`. If the queue is empty, do not treat
-   an observation-only item as repository work.
+1. Implement the linked GitHub issue. If it references no `docs/meta/` slice and the work is
+   more than trivial, create one and link it from the issue.
 2. Append discoveries to the `notes.md` of each affected slice.
-3. When code is complete and both gates are green, mark the slice `built` and update its
-   **Remaining** evidence and the INDEX row in the same change.
+3. When code is complete and both gates are green, mark the slice `built`, update its
+   **Remaining** evidence, and update the `INDEX.md` row for the issue in the same change.
 4. When all required acceptance is observed, mark the slice `done`, move it into `done/`, remove
-   its live INDEX row, and update the INDEX counts.
+   its `INDEX.md` row, and close the issue per `CONTRIBUTING.md`.
 5. Add a lesson to `LESSONS.md` only when it changes how another slice should be worked.
 
 `built` is the honest resting state for anything touching Proxmox: gate-green code whose

@@ -1,0 +1,80 @@
+name: Implementation work
+description: New behavior, a new application, or a change to existing provisioning/operating logic.
+title: "[Implementation] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle.
+        If this work already has a spec under `docs/meta/`, link it below instead of
+        restating its content here — this issue tracks priority and status; the spec
+        remains the detailed source.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What outcome does this deliver, in one or two sentences?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: >-
+        What this touches — playbooks, roles, tasks, vars, docs, jobs. Link the
+        `docs/meta/<NNN-slug>/README.md` spec if one exists instead of repeating it.
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Exclusions
+      description: What is explicitly out of scope for this issue, even if related.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable outcomes, as a checklist.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Other issues, slices, or infrastructure this depends on or blocks.
+    validations:
+      required: false
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: >-
+        Exact commands that confirm this is done. Default to
+        `bash gate/lint.sh` and `bash gate/test.sh` (see `gate/README.md`); name any
+        additional manual check.
+    validations:
+      required: true
+  - type: textarea
+    id: live-system-authority
+    attributes:
+      label: Live-system authority
+      description: >-
+        Does finishing this require changing a live, running guest, container, or
+        Proxmox resource? Name the exact target, or write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: recovery-needs
+    attributes:
+      label: Recovery needs
+      description: >-
+        If a live or stateful target is involved, what is the rollback or recovery
+        path if the change fails partway? Write "N/A" if live-system authority is None.
+    validations:
+      required: true

@@ -30,6 +30,7 @@ when the task reaches their subject.
 
 | Area | Read |
 | --- | --- |
+| Issue intake, verification, commits, and PR workflow | `CONTRIBUTING.md` |
 | Repository use and operator entry points | `README.md` |
 | Ansible implementation | `ansible/README.md`, then the nearest subsystem `README.md` |
 | Configuration schema and `homelabinfra_*` variables | `ansible/vars/CONTRACT.md` |
@@ -44,8 +45,10 @@ when the task reaches their subject.
 Some subdirectories have a more specific `README.md`. Read it before changing that
 subsystem.
 
-`docs/meta/` records work state and historical context. It is not an implementation
-contract. Verify historical statements against the current code and normative documents.
+`docs/meta/` records specifications, decision records, and acceptance evidence for slices
+that back an open GitHub issue. GitHub Issues owns priority and status — see
+`CONTRIBUTING.md`. `docs/meta/` is not an implementation contract; verify historical
+statements against the current code and normative documents.
 
 ## Repository Areas
 

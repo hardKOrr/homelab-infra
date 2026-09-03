@@ -11,6 +11,10 @@ This directory contains durable project design and implementation contracts.
 - [`../AGENTS.md`](../AGENTS.md) contains the concise project operating instructions used by
   agent tools.
 - [`../gate/README.md`](../gate/README.md) documents the executable lint and test gate.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) defines the issue-to-PR lifecycle: GitHub
+  Issues as the live work queue, issue and PR templates, and the AO worker lifecycle from
+  intake to handoff.
 
-Current work state and historical implementation notes live in [`meta/`](meta/).
-They are project history, not normative architecture or specification sources.
+Specifications, decision records, and acceptance evidence for issues that need more detail
+than fits an issue body live in [`meta/`](meta/). They are not normative architecture or
+specification sources on their own — the specs under [`specs/`](specs/) remain that.
