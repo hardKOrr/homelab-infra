@@ -113,6 +113,13 @@
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
+    # The update task owns both the optional Ntfy hook and the always-on needrestart
+    # detector. Docker hosts may be created before notifications exist, so run it on
+    # every deploy: package/helper installation converges now and the Ntfy drop-in
+    # appears on a later run once the provider facts are available.
+    - name: Configure OS update notifications and stale-service detection
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
 - name: Apply Docker role to host
   hosts: provisioning
   become: true
