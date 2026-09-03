@@ -1,8 +1,8 @@
 #!/bin/bash
 # Syntax-check gate: --syntax-check over the playbooks under ansible/playbooks/, without
 # contacting Proxmox. Run from the repo root:
-#   wsl bash -lc 'bash gate/test.sh'          # narrow to the working tree's changes
-#   wsl bash -lc 'bash gate/test.sh --all'    # full sweep
+#   bash gate/test.sh          # narrow to the working tree's changes
+#   bash gate/test.sh --all    # full sweep
 #
 # A clean tree, an unreadable git, or a change to anything a playbook consumes all resolve
 # to the full sweep — see gate/lib-scope.sh for why the narrowing only ever errs
@@ -38,8 +38,8 @@ if [ "$gate_scope" = "changed" ]; then
 else
     mapfile -t playbooks < <(find playbooks -name "*.yml")
 
-    # Refuse to report success on an empty check set: an unexpanded find (e.g. a shell-relay
-    # quoting hazard that mangles the command before it reaches WSL) must fail loudly, not
+    # Refuse to report success on an empty check set: an unexpanded find (e.g. a shell
+    # quoting hazard that mangles the command before it runs) must fail loudly, not
     # silently run zero iterations and exit 0.
     if [ "${#playbooks[@]}" -eq 0 ]; then
         echo "ERROR: find playbooks -name *.yml matched zero files; refusing to report a false pass." >&2

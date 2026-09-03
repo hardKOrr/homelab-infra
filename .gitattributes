@@ -1,6 +1,7 @@
-# Gate scripts run inside WSL bash — force LF endings so a CRLF shebang line never breaks them.
+# Gate scripts run inside Linux bash (native or WSL) — force LF endings so a CRLF shebang
+# line never breaks them.
 gate/*.sh text eol=lf
-# Runtime wrapper runs inside WSL/Linux bash — force LF so the shebang never breaks.
+# Runtime wrapper runs inside Linux bash — force LF so the shebang never breaks.
 ansible/scripts/*.sh text eol=lf
 # Role files/ ship verbatim to Linux guests (lab-* scripts etc.) — force LF.
 ansible/roles/*/files/* text eol=lf

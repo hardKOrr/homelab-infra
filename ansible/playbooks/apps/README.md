@@ -179,8 +179,8 @@ Make each integration idempotent by reading current state before creating or cha
 ## Step 6 — Test
 
 ```bash
-wsl bash -lc 'bash gate/lint.sh'
-wsl bash -lc 'bash gate/test.sh'
+bash gate/lint.sh
+bash gate/test.sh
 python rundeck/render-job.py --check rundeck/jobs
 ```
 

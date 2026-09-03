@@ -1,9 +1,9 @@
 # Shared scope resolution for the lint and test gates. Sourced, never executed.
 #
 # A full sweep is 33 cold `ansible-playbook --syntax-check` interpreters plus an
-# ansible-lint pass over the whole tree, and on /mnt/c that is minutes of 9p syscalls to
-# re-prove files nobody touched. This narrows the default run to the working tree's own
-# changes, and is deliberately biased toward running MORE than strictly necessary:
+# ansible-lint pass over the whole tree — minutes even on a native checkout. This narrows
+# the default run to the working tree's own changes, and is deliberately biased toward
+# running MORE than strictly necessary:
 #
 #   * a clean tree resolves to FULL, not to "nothing changed, pass" — so the run right
 #     after a commit, which is the one that gates the commit's own correctness, is the
@@ -13,9 +13,9 @@
 #     documentation, even when it is colocated with those files, and does not fan out.
 #   * a changed playbook drags in any playbook that names it, because bootstrap.yml
 #     chains the app playbooks with import_playbook.
-#   * git being unavailable or unhappy (WSL reading a Windows checkout can refuse on
-#     dubious ownership) resolves to FULL. The narrow run is an optimisation and must
-#     never be the failure mode.
+#   * git being unavailable or unhappy (e.g. a checkout git refuses on dubious ownership)
+#     resolves to FULL. The narrow run is an optimisation and must never be the failure
+#     mode.
 #
 # Force a full sweep with `--all` as the first argument, or GATE_SCOPE=all.
 

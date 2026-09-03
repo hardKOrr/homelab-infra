@@ -12,8 +12,8 @@ and does not displace an open implementation row. Run both gates before marking 
 built:
 
 ```text
-wsl bash -lc 'bash gate/lint.sh'
-wsl bash -lc 'bash gate/test.sh'
+bash gate/lint.sh
+bash gate/test.sh
 ```
 
 ## Repository work

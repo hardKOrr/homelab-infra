@@ -7,16 +7,17 @@ findings. Contract-level rules live in the sibling specs this file links to.
 
 - Ansible (YAML) throughout. `gate/requirements-dev.txt` pins the gate's Python toolchain;
   `ansible/requirements.yml` is the single source of truth for Galaxy collection pins.
-- Gates run inside a WSL venv (`~/.venvs/homelab-ansible`) via the committed wrappers
+- Gates run inside a venv (`~/.venvs/homelab-ansible`) via the committed wrappers
   `gate/lint.sh` / `gate/test.sh`.
-  Never replace the wrappers with an inline one-liner through the Windows→WSL relay — quoting
-  hazards can silently run zero iterations and exit 0 (rationale in `gate/README.md` and
-  the scripts).
-- The repo lives on NTFS under `/mnt/c`: Ansible's world-writable-cwd check silently ignores a
-  cwd-relative `ansible.cfg`, so anything running Ansible from WSL must export `ANSIBLE_CONFIG`
-  to the absolute path (the gate scripts do; copy the pattern).
+  Never replace the wrappers with an inline one-liner through a shell relay (e.g. the
+  Windows→WSL hop on a Windows checkout) — quoting hazards can silently run zero
+  iterations and exit 0 (rationale in `gate/README.md` and the scripts).
+- On a checkout where Ansible's world-writable-cwd check flags the directory (e.g. NTFS
+  under `/mnt/c` on a WSL checkout), it silently ignores a cwd-relative `ansible.cfg`, so
+  anything running Ansible there must export `ANSIBLE_CONFIG` to the absolute path (the
+  gate scripts do; copy the pattern).
 - Any new script under `gate/` must be forced to LF in `.gitattributes` — a CRLF shebang
-  breaks `bash` in WSL.
+  breaks `bash` on a Windows/WSL checkout.
 
 ## Tests
 

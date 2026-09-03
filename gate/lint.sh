@@ -1,7 +1,7 @@
 #!/bin/bash
 # Ansible-lint gate. Run from the repo root:
-#   wsl bash -lc 'bash gate/lint.sh'          # narrow to the working tree's changes
-#   wsl bash -lc 'bash gate/lint.sh --all'    # full sweep
+#   bash gate/lint.sh          # narrow to the working tree's changes
+#   bash gate/lint.sh --all    # full sweep
 #
 # A clean tree, an unreadable git, or a change to anything a playbook consumes all resolve
 # to the full sweep — see gate/lib-scope.sh.
@@ -37,9 +37,10 @@ fi
 
 cd ansible
 
-# The repo lives on /mnt/c (NTFS via WSL9P), which Ansible's own safety check treats as
-# "world writable" and silently ignores a cwd-relative ansible.cfg as an ansible.cfg source.
-# Without this, ansible/ansible.cfg's roles_path never loads and role-using playbooks (e.g.
+# Ansible's own safety check treats a world-writable checkout directory (permissions or
+# filesystem-dependent — e.g. an NTFS checkout mounted via WSL9P) as untrustworthy and
+# silently ignores a cwd-relative ansible.cfg as an ansible.cfg source. Without this,
+# ansible/ansible.cfg's roles_path never loads and role-using playbooks (e.g.
 # docker/create-docker-host.yml) falsely fail with "role not found". Setting ANSIBLE_CONFIG
 # explicitly to an absolute path bypasses the cwd-discovery safety check (Ansible's own
 # documented workaround). Derived from $PWD so it works on any machine/checkout location.

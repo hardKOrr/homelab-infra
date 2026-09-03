@@ -24,7 +24,7 @@ fail() { echo "registry handoff test failed: $*" >&2; exit 1; }
 playbook="${ANSIBLE_PLAYBOOK_BIN:-$HOME/.venvs/homelab-ansible/bin/ansible-playbook}"
 [ -x "$playbook" ] || playbook="$(command -v ansible-playbook || true)"
 [ -n "$playbook" ] && [ -x "$playbook" ] \
-  || fail "no ansible-playbook interpreter (run this gate under WSL)"
+  || fail "no ansible-playbook interpreter (see gate/README.md bootstrap)"
 
 # write-generated-facts.yml derives the repo root from generated_facts_file
 # (dirname x3), so the fixture mirrors <root>/config/.generated + <root>/ansible.

@@ -68,9 +68,10 @@ Run the checks selected by `gate/README.md` from the repository root. The standa
 commands are:
 
 ```text
-wsl bash -lc 'bash gate/lint.sh'
-wsl bash -lc 'bash gate/test.sh'
+bash gate/lint.sh
+bash gate/test.sh
 ```
 
-Use WSL for these commands. Do not start a second gate while an earlier gate process is
-still running.
+On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`
+(see `gate/README.md`). Do not start a second gate while an earlier gate process is still
+running.

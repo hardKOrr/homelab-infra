@@ -1,17 +1,20 @@
 # Gate toolchain
 
-Run repository lint and test checks through the committed wrappers. They establish the WSL
-environment, close stdin, select the correct change scope, and prevent shell-relay quoting from
-silently turning a check into a no-op.
+Run repository lint and test checks through the committed wrappers. They close stdin, select
+the correct change scope, and prevent shell-relay quoting from silently turning a check into a
+no-op.
 
 Invoked as:
 
 ```
-lint: wsl bash -lc 'bash gate/lint.sh'
-test: wsl bash -lc 'bash gate/test.sh'
+lint: bash gate/lint.sh
+test: bash gate/test.sh
 ```
 
 Append `--all` to either to force the full sweep (see *Scope* below).
+
+On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`, e.g.
+`wsl bash -lc 'bash gate/lint.sh'`. A native Linux checkout needs no such prefix.
 
 - `lint.sh` — `ansible-lint` profile `min` over `playbooks roles tasks vars`.
 - `check-links.py` — validates repository-local Markdown links and repo-root `docs/*.md`
@@ -68,7 +71,7 @@ scope falls back to the full sweep:
 | --- | --- |
 | `--all` argument, or `GATE_SCOPE=all` | full |
 | Clean working tree | full |
-| `git` unreadable (WSL can refuse a Windows checkout on dubious ownership) | full |
+| `git` unreadable (e.g. a checkout git refuses on dubious ownership) | full |
 | `roles/ tasks/ vars/ inventory/ files/ ansible.cfg requirements.yml gate/` touched | full |
 | Only Markdown touched, including Markdown inside an Ansible or gate directory | changed; skip Ansible lint and syntax checks |
 | Only playbooks/docs touched | changed |
@@ -85,13 +88,14 @@ Markdown file.
 
 `test.sh` checks playbooks in parallel. Override its concurrency with `GATE_JOBS=n`.
 
-Both export `ANSIBLE_CONFIG` to the checkout's absolute path derived from `$PWD`: the repo lives
-on NTFS under `/mnt/c`, and Ansible's world-writable-cwd check silently ignores a cwd-relative
-`ansible.cfg`.
+Both export `ANSIBLE_CONFIG` to the checkout's absolute path derived from `$PWD`: on a checkout
+Ansible's world-writable-cwd check flags (e.g. NTFS under `/mnt/c` on a WSL checkout), it
+silently ignores a cwd-relative `ansible.cfg` otherwise.
 
-## One-time bootstrap (fresh WSL distro)
+## One-time bootstrap (fresh machine)
 
-Interactive sudo, run once:
+Interactive sudo, run once (Debian/Ubuntu; adjust the package manager for another
+distro):
 
 ```bash
 sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
