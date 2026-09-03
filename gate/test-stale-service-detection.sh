@@ -10,7 +10,7 @@ status="$repo/ansible/playbooks/maintenance/status.yml"
 docker_host="$repo/ansible/playbooks/docker/create-docker-host.yml"
 
 fail() { echo "stale-service-detection test failed: $*" >&2; exit 1; }
-expect() { rg -q -- "$2" "$1" || fail "missing $2 in ${1#$repo/}"; }
+expect() { grep -Eq -- "$2" "$1" || fail "missing $2 in ${1#$repo/}"; }
 
 expect "$updates" 'name: needrestart'
 expect "$updates" '\$nrconf\{restart\} = '\''l'\'';'
