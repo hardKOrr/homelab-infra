@@ -16,8 +16,10 @@
 # configure the tool and get out of the way. A guest whose window opens while the runner
 # is down still reboots. Nothing has to be watching.
 #
-# The service is a no-op unless `/var/run/reboot-required` exists, so the timer firing is
-# cheap and the common case costs one stat.
+# The service is a no-op unless a reboot is pending or needrestart reports a stale host
+# service, so the timer firing is cheap and the common case costs one stat plus a local
+# read-only detector. A pending reboot subsumes service restarts: booting reloads all
+# host services, so restarting them first would create a needless second disruption.
 #
 # Inputs:
 #   maintenance_schedule — the resolved answer from resolve-schedule.yml. `.oncalendar`
@@ -84,7 +86,20 @@
           # the reboot waits for the window.
           set -uo pipefail
 
-          [ -f /var/run/reboot-required ] || exit 0
+          if [ ! -f /var/run/reboot-required ]; then
+            STALE_SERVICES=$(/usr/local/bin/lab-stale-services | paste -sd, -)
+            [ -n "$STALE_SERVICES" ] || exit 0
+
+            logger -t homelab-maintenance -- "window open, restarting stale services: $STALE_SERVICES"
+            while IFS= read -r service; do
+              [ -n "$service" ] || continue
+              # needrestart emits host systemd unit names only. In particular, it does
+              # not restart containers: Watchtower owns those. docker/containerd itself
+              # is a host unit and is intentionally restarted when it is stale.
+              systemctl restart -- "$service" || logger -t homelab-maintenance -- "failed to restart stale service: $service"
+            done < <(/usr/local/bin/lab-stale-services)
+            exit 0
+          fi
 
           PKGS=""
           if [ -r /var/run/reboot-required.pkgs ]; then

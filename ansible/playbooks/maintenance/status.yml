@@ -99,6 +99,23 @@
         - _st_check_stat.stat.exists | default(false)
         - _st_check_raw.rc | default(1) == 0
 
+    - name: Check whether this guest ships the stale-service detector
+      ansible.builtin.stat:
+        path: /usr/local/bin/lab-stale-services
+      register: _st_stale_stat
+      failed_when: false
+
+    - name: Read stale host services
+      ansible.builtin.command: /usr/local/bin/lab-stale-services
+      register: _st_stale_raw
+      changed_when: false
+      failed_when: false
+      when: _st_stale_stat.stat.exists | default(false)
+
+    - name: Record stale host services
+      ansible.builtin.set_fact:
+        _st_stale_services: "{{ _st_stale_raw.stdout_lines | default([]) }}"
+
 
 # ── Play 3: Platform services and rendering ────────────────────────────────────
 - name: "Status | Report"
@@ -404,7 +421,7 @@
             none — has bootstrap run? (or Proxmox credentials are not exported)
           {% endif %}
           {% for h in _st_guests %}
-            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined else '' }}
+            {{ '%-22s' | format(h) }} {{ '%-8s' | format(hostvars[h].proxmox_status | default('?')) }} vmid {{ hostvars[h].proxmox_vmid | default('?') }}  node {{ hostvars[h].proxmox_node | default('?') }}  {{ hostvars[h].ansible_host | default('no ip') }}  stale services {{ hostvars[h]._st_stale_services | default([]) | length }}{{ '  UNREACHABLE' if hostvars[h]._st_containers is not defined else '' }}
           {% endfor %}
 
           CONTAINERS

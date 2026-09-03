@@ -46,18 +46,26 @@ the guest has a credential, and the guest already has a timer.
 of state a guest already computed, not a second detector.
 
 ## Remaining
-- [ ] `needrestart` installed and configured non-interactively on every managed guest
+- [x] `needrestart` installed and configured non-interactively on every managed guest
       (`$nrconf{restart} = 'l'`) so it reports and never restarts anything on its own
-- [ ] one Ntfy message after an update names the packages upgraded and the services now
+- [x] one Ntfy message after an update names the packages upgraded and the services now
       running replaced code
-- [ ] a guest with a stale service and no pending reboot restarts only that service, and
+- [x] a guest with a stale service and no pending reboot restarts only that service, and
       only inside its window
-- [ ] a guest whose `maintenance.schedule` is `never` reports the stale service and
+- [x] a guest whose `maintenance.schedule` is `never` reports the stale service and
       restarts nothing
-- [ ] the Docker case decided and recorded: a stale container runtime is Watchtower's
+- [x] the Docker case decided and recorded: a stale container runtime is Watchtower's
       domain, a stale `dockerd` is this slice's
-- [ ] `status.yml` reports stale services per guest
-- [ ] both gates green
+- [x] `status.yml` reports stale services per guest
+- [x] both gates green
+
+## Docker boundary
+
+`needrestart` is used only for its `NEEDRESTART-SVC` records: stale host systemd units.
+It does not enumerate or restart processes inside containers; Watchtower owns those image
+updates and their container restarts. `docker.service` and `containerd.service` are host
+units, however, so they remain in this slice's list and are restarted by the guest timer
+when stale and only when that guest's maintenance window opens.
 
 ## Links
 - `ansible/tasks/bootstrap/configure-unattended-upgrades.yml` — the notify script and
