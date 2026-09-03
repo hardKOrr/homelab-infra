@@ -1,0 +1,5 @@
+---
+# Copy to config/apps/bazarr.yml (or bazarr-<estate>.yml).
+# The filename is the deployment instance; the published URL stays bazarr.<domain>.
+# app.mounts overrides media_storage.mounts only when Bazarr needs different paths.
+# routing.identity defaults to forward_auth for the browser UI.

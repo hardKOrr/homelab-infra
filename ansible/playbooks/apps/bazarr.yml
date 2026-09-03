@@ -1,0 +1,146 @@
+---
+# Deploy Bazarr on the estate-resolved media stack. Wire Media Stack connects its
+# Sonarr and Radarr peers after this play records the media registry entry.
+
+- name: "Bazarr | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=bazarr"
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/bazarr.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Merge Bazarr config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.bazarr_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+  tasks:
+    - name: Find or create the media stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+    - name: Attach Bazarr media paths to the stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_list: "{{ app_config.app.mounts | default([], true) }}"
+        attach_mounts_owner: >-
+          {{ (homelabinfra_config.infrastructure.media_storage | default({})).owner | default({}) }}
+      when: app_config.app.mounts | default([], true) | length > 0
+
+- name: "Bazarr | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap the stack host
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+    - name: Deploy Bazarr
+      ansible.builtin.include_role:
+        name: bazarr
+
+- name: "Bazarr | Record facts and wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Record the Bazarr media registry entry
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: media
+        generated_facts_data: >-
+          {{ {instance: {'app': _bazarr_deploy_host.bazarr_media_kind,
+                         'host': _bazarr_deploy_host.bazarr_media_host}} }}
+    - name: Reload infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _bazarr_deploy_host.app_config.routing.estate | default('') }}"
+  vars:
+    _bazarr_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _bazarr_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _bazarr_deploy_host.app_config.app.port }}"
+    wiring_subdomain: "{{ _bazarr_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Bazarr ({{ instance }})"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _bazarr_deploy_host.app_config.routing.identity | default('forward_auth') }}"
+    wiring_access: "{{ _bazarr_deploy_host.app_config.routing.access | default('internal') }}"
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+    - name: Report the media-stack follow-up
+      ansible.builtin.debug:
+        msg: >-
+          {{ instance }} is registered in the media registry. Run Wire Media Stack
+          to connect it to the selected Sonarr and Radarr instances.
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

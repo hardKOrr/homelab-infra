@@ -112,7 +112,7 @@ Built already: `sonarr`, `radarr`, `lidarr`, `prowlarr` (all via `servarr`), `sa
 | maintainerr | Kubernetes candidate | — | jorenn92/Maintainerr | Consumes Plex + the *arrs through APIs; verify its own persistent state and restore path. Same registry-driven config as unpackerr |
 | deemix | Docker | media_stack | deemix (web UI fork) | `deemix` kind already declared in `media-wiring.yml`. ARL is a per-lab secret → Vaultwarden |
 | slskd | Docker | media_stack | slskd/slskd | The operator's "soulseekd". `slskd` kind already declared. Soulseek credentials → Vaultwarden |
-| readarr | Docker | media_stack | (servarr role) | Not requested, but its kind is already in `media-wiring.yml` and the role already handles v1 root folders. Cheapest row in this file: an `app-defaults` file and a playbook |
+| readarr | — | — | retired upstream | **Void (2026-09-03).** The operator chose not to restore Readarr after its last compatible image ignored the platform authentication contract and exposed an unauthenticated setup UI. The `media-wiring.yml` kind remains only for an externally managed instance a lab deliberately declares. |
 
 ## Batch B — shared backends and infrastructure guests
 

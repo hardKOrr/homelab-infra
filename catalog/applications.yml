@@ -57,6 +57,14 @@ applications:
     scope: lab                          # the platform's single TLS edge fronts every estate
     essential: true
 
+  bazarr:
+    name: Bazarr
+    job: deploy-bazarr.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Library Automation
+    scope: estate
+
   jellyfin:
     name: Jellyfin
     job: deploy-jellyfin.yaml
