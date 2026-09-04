@@ -16,6 +16,7 @@ jobs:
   reclaim-volume.yaml: Manage/Storage/Volumes
   reimport-jobs.yaml: Setup/Automation
   store-secret.yaml: Manage/Configuration/Secrets
+  troubleshoot-plex-client.yaml: Operate/Troubleshooting
   vaultwarden-cutover.yaml: Setup/Credentials
   vaultwarden-enrollment.yaml: Setup/Credentials
   vaultwarden-recovery.yaml: Recover/Credentials

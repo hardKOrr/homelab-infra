@@ -1,0 +1,27 @@
+---
+# Plex log triage signatures. `rank` is evidence priority, not occurrence count.
+plex_log_signatures:
+  - id: oversized-hls-request
+    subject: Plex client
+    severity: high
+    rank: 10
+    matcher: oversized_hls_request
+    pattern: 'Error parsing HTTP request: (?:ET|GET) /video/.*/transcode/universal/session/.*/base/index\.m3u8'
+    max_referer_bytes: 4096
+    title: Client exceeds Plex HTTP line budget during HLS playback
+  - id: credits-webvtt-release-group
+    subject: Plex credits detection
+    severity: high
+    rank: 20
+    matcher: credits_webvtt_release_group
+    pattern: 'Failed to transcode file \(234\)'
+    supporting_pattern: 'Unknown/unsupported AVCodecID S_TEXT/WEBVTT|Could not find codec parameters for stream .*Subtitle: none'
+    release_group_pattern: '-([A-Za-z0-9][A-Za-z0-9._-]+)\.mkv'
+    title: Credits detection cannot decode muxed WebVTT subtitles
+  - id: rejected-fs-probe
+    subject: Public HTTP parser
+    severity: info
+    rank: 90
+    matcher: rejected_fs_probe
+    pattern: 'Error parsing HTTP request: (?:ET|GET) /@fs/'
+    title: Rejected /@fs/ probe traffic

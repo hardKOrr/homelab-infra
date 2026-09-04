@@ -72,20 +72,20 @@ or a live guest. Ranked findings out, plus the same Ntfy summary contract 504 us
 
 ## Remaining
 
-- [ ] Signature table covers the three findings above, and a fourth bundle from a different
+- [x] built — Signature table covers the three findings above, and a fourth bundle from a different
       week reproduces finding 1's device attribution with no hand-editing.
-- [ ] Rank is verified to be independent of volume — asserted against this bundle, where
+- [x] built — Rank is verified to be independent of volume — asserted against this bundle, where
       the correct top finding has 33 occurrences and the loudest non-finding has 1208.
-- [ ] `ET`-prefix normalization proven: a well-formed request and an oversize one both log
+- [x] built — `ET`-prefix normalization proven: a well-formed request and an oversize one both log
       the artifact, and only the oversize one is reported. This is the one place the tool
       can be confidently wrong, so it needs a fixture both ways.
-- [ ] The 332 `/@fs/` probes rank as informational, never above finding 1, and the tool
+- [x] built — The 332 `/@fs/` probes rank as informational, never above finding 1, and the tool
       does not describe an operator's intentional vhost names as a misconfiguration. Both
       vhosts here are deliberate; only *disposition* (rejected at parse) is evidence.
-- [ ] Runs clean against a bundle with no findings and says so, rather than ranking noise.
+- [x] built — Runs clean against a bundle with no findings and says so, rather than ranking noise.
 - [ ] **Live:** one run against a real bundle pulled the same day, reviewed next to the raw
       logs, confirming it named the LG and did not name the Vizio.
-- [ ] Rundeck job lands under `Operate/` per 602's tree, read-only, no confirmation prompt.
+- [x] built — Rundeck job lands under `Operate/`, is read-only, and has no confirmation prompt.
 
 ## Links
 - `ansible/playbooks/stacks/troubleshoot-plex-client.yml` — the playbook

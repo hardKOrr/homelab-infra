@@ -1,0 +1,62 @@
+---
+# Evidence-ranked, read-only Plex log triage. The target can be a bundle mounted on the
+# runner (the default) or a reachable inventory host containing the live Plex log directory.
+# No Plex configuration, service, media, or release-profile resource is changed.
+- name: "Troubleshoot Plex client | Read logs"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    plex_log_host: localhost
+    plex_log_path: ""
+
+  pre_tasks:
+    - name: Require the Plex log bundle or log directory path
+      ansible.builtin.assert:
+        that:
+          - plex_log_path | length > 0
+        fail_msg: >-
+          Provide plex_log_path: a mounted Plex log bundle on the runner or the log directory
+          on plex_log_host. This play only reads that path.
+
+    - name: Load platform vars for the optional Ntfy summary
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load Plex triage signatures
+      ansible.builtin.include_vars:
+        file: ../../vars/plex-log-signatures.yml
+
+  tasks:
+    - name: Analyze Plex logs without changing the target
+      ansible.builtin.script: >-
+        {{ playbook_dir }}/../../scripts/plex-log-troubleshooter.py
+        --bundle {{ plex_log_path | quote }}
+        --signatures-json {{ plex_log_signatures | to_json | quote }}
+      delegate_to: "{{ plex_log_host }}"
+      changed_when: false
+      register: _plex_triage
+
+    - name: Parse ranked Plex findings
+      ansible.builtin.set_fact:
+        plex_triage: "{{ _plex_triage.stdout | from_json }}"
+
+    - name: Report ranked Plex findings
+      ansible.builtin.debug:
+        msg: "{{ plex_triage | to_nice_json }}"
+
+    - name: Notify the Plex triage summary
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Plex client triage"
+        notify_priority: >-
+          {{ 'high' if plex_triage.findings | selectattr('severity', 'equalto', 'high') | list | length > 0
+             else 'default' }}
+        notify_message: >-
+          {{ plex_triage.summary }} {{ 'Top: ' ~ plex_triage.findings[0].title ~ '.'
+             if plex_triage.findings | length > 0 else 'No actionable evidence found.' }}
+
+    - name: Fail if the triage summary could not be published
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "Plex client triage"
