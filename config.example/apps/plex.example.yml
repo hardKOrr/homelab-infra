@@ -1,0 +1,14 @@
+---
+# Copy to config/apps/plex.yml (or plex-<estate>.yml). The filename is the
+# deployment instance. Store a fresh Plex claim token before first deploy with
+# Store Secret: item homelab-infra/apps/<instance>, field claim_token. Do not put
+# that short-lived secret in this file.
+
+# app:
+#   # Plex tells clients this route in bridge-network mode. Keep the explicit
+#   # port: Plex rejects an incomplete custom access URL.
+#   advertise_url: https://plex.example.test:443
+#   # devices: ["/dev/dri"]  # optional hardware-transcoding device
+
+# routing:
+#   identity: catalog  # Plex owns client authentication; do not use forward_auth.

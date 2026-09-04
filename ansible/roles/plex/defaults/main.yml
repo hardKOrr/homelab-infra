@@ -1,0 +1,5 @@
+---
+# Role-internal timings. App-facing settings are in vars/app-defaults/plex.yml.
+plex_project_dir: "/opt/{{ instance }}"
+plex_http_retries: 30
+plex_http_delay: 2

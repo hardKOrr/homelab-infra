@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: plex
+  description: "Deploys Plex Media Server as a Docker container on a homelab-infra media stack host"
+  min_ansible_version: "2.15"
+
+dependencies:
+  - role: docker

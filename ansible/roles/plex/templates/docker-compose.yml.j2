@@ -1,0 +1,27 @@
+# docker-compose.yml for Plex ({{ instance }})
+# Managed by homelab-infra — edit config/apps/{{ instance }}.yml, not this file.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - PLEX_UID={{ app_config.app.puid | default(1313) }}
+      - PLEX_GID={{ app_config.app.pgid | default(1313) }}
+      - ADVERTISE_IP={{ _plex_advertise_url }}
+{% if not _plex_claimed and _plex_claim_token | length > 0 %}
+      # First startup only. The role rewrites this file after proving the claim,
+      # so the short-lived token is never retained in the Compose project.
+      - PLEX_CLAIM={{ _plex_claim_token }}
+{% endif %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+      - "{{ app_config.app.transcode_path }}:/transcode"
+{% for mount in _plex_mounts %}
+      - "{{ mount.path }}:{{ mount.path }}:ro"
+{% endfor %}
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(32400) }}"
