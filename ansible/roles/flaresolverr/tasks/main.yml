@@ -1,0 +1,40 @@
+---
+# Deploy FlareSolverr onto the Kubernetes hosting backend.
+#
+# Runs on localhost, like every Kubernetes app role in this repo: there is no guest to run
+# on, so the adapter tasks delegate kubectl to a cluster node resolved by
+# tasks/kubernetes/resolve-cluster.yml.
+#
+# Inputs:
+#   instance     — the app instance name
+#   app_config   — merged defaults + user config
+#
+# Idempotent: a converged manifest applies with no change, and this role generates no
+# credential and stores no secret — FlareSolverr has none.
+#
+# WHAT THIS ROLE DELIBERATELY DOES NOT DO
+#
+# It does not connect itself to Prowlarr. See vars/app-defaults/flaresolverr.yml for why
+# that is a manual Prowlarr-side setting rather than automation this repo runs, and its
+# templates/manifest.yaml.j2 for why the Service is a NodePort rather than the Ingress
+# every routed Kubernetes app in this repo uses. It also installs no backup CronJob —
+# FlareSolverr keeps no state between requests, so vars/app-defaults/flaresolverr.yml
+# declares no `backup:` block and catalog/applications.yml excludes the Backup and
+# Restore actions rather than offer a job that would always report nothing to do.
+
+- name: FlareSolverr | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: FlareSolverr | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: FlareSolverr | Render the workload manifest
+  ansible.builtin.set_fact:
+    _fs_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: FlareSolverr | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _fs_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"

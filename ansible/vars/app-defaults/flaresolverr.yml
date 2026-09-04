@@ -1,0 +1,59 @@
+---
+# Default configuration for FlareSolverr — the Cloudflare-solving proxy Prowlarr calls out
+# to for indexers it cannot reach directly, on the Kubernetes hosting backend.
+# Users override specific values in config/apps/flaresolverr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# WHAT MAKES THIS ROW DIFFERENT FROM JELLYSEERR AND MIXPOST
+#
+# See docs/meta/408-app-catalog/README.md's flaresolverr row: "No UI, no route,
+# routing.identity: none. Consumed by Prowlarr as an indexer proxy — the wiring is a
+# Prowlarr setting, not a reverse-proxy route." Two things follow from that:
+#
+#   1. `routing.proxy: none` — the same field Caddy's own app-defaults uses to keep from
+#      routing itself, generalised here to its other documented meaning (CONTRACT.md §4):
+#      the app is not routed at all. Nothing publishes a subdomain, a DNS record or a
+#      Caddy site block for FlareSolverr, because there is no UI for an operator to reach
+#      and Prowlarr's HTTP client has no use for TLS, Authentik or a domain name.
+#   2. Prowlarr still has to reach it from outside the cluster (Prowlarr's own hosting is
+#      Docker, not Kubernetes), so this role exposes the Service on a fixed NodePort
+#      instead — see roles/flaresolverr/templates/manifest.yaml.j2 for why NodePort was
+#      chosen over the Ingress+MetalLB-VIP path every routed Kubernetes app uses. The
+#      operator points Prowlarr's FlareSolverr indexer-proxy setting at
+#      `http://<any cluster node's address>:{{ app.node_port }}` by hand — that manual step
+#      is the "Prowlarr setting" the catalog row names, and it is not automated here for
+#      the same reason Jellyseerr's own first-run wizard is not: this repo has no live
+#      Prowlarr instance to verify the API contract against.
+#
+# STATELESS, SO NO BACKUP CONTRACT
+#
+# FlareSolverr holds no configuration and no database — everything it has is the
+# in-memory browser session for whichever request it is currently serving. There is
+# nothing to back up and nothing a restore would recover that a redeploy does not already
+# give back. catalog/applications.yml excludes `backup` and `restore` for this reason.
+
+flaresolverr_defaults:
+
+  hosting: kubernetes
+
+  # NO `cluster:` HERE, DELIBERATELY. See the identical comment in
+  # vars/app-defaults/jellyseerr.yml — the resolver has no per-app selector yet.
+
+  app:
+    image: "flaresolverr/flaresolverr:latest"
+    port: 8191
+
+    # Fixed rather than left to Kubernetes' own ephemeral NodePort allocation: the
+    # operator has to type this number into Prowlarr, so it must not change on every
+    # redeploy. Inside the platform's NodePort band (30000-32767) and distinct from the
+    # apps this platform already assigns ports to.
+    node_port: 30191
+
+  routing:
+    proxy: none
+    identity: none
+
+    # No `subdomain`, `access` or `estate` here, deliberately — there is no route for any
+    # of those fields to describe. gate/test-rundeck-job-tree.sh enforces the pairing:
+    # routing.proxy: none is the one case a routed application's required subdomain check
+    # does not apply to.

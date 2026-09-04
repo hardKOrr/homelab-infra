@@ -1,0 +1,22 @@
+---
+# FlareSolverr — the Cloudflare-solving proxy Prowlarr calls out to for indexers it
+# cannot reach directly, on the Kubernetes hosting backend.
+#
+# Copy to config/apps/flaresolverr.yml and change what differs for your lab. Anything you
+# leave out falls through to ansible/vars/app-defaults/flaresolverr.yml, which is
+# git-managed and improves on `git pull`.
+#
+# Requires a cluster: run the `Deploy k3s Cluster` job first. FlareSolverr has no guest of
+# its own, and — unlike every other application in this catalog — no published route
+# either: `routing.proxy: none` in its defaults means no Caddy site, no DNS record and no
+# Authentik object are created for it. Its Service is a NodePort instead, reachable
+# directly on any cluster node's own address. Point Prowlarr's FlareSolverr indexer-proxy
+# setting there by hand; that connection is not automated by this platform.
+
+# No `cluster:` setting: this platform resolves a single registered Kubernetes cluster
+# (tasks/kubernetes/resolve-cluster.yml) and has no per-app selector to point at another
+# one yet. See the same comment in ansible/vars/app-defaults/flaresolverr.yml.
+
+# app:
+#   image: "flaresolverr/flaresolverr:latest"
+#   node_port: 30191        # what Prowlarr connects to on port 8191 of any cluster node

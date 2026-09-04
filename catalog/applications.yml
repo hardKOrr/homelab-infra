@@ -97,6 +97,17 @@ applications:
     type: Request Management
     scope: estate
 
+  flaresolverr:
+    name: FlareSolverr
+    job: deploy-flaresolverr.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Indexer Management
+    scope: estate
+    # Stateless — no config, no database, nothing a backup would recover that a redeploy
+    # does not already give back. See vars/app-defaults/flaresolverr.yml.
+    exclude: [backup, restore]
+
   k3s-cluster:
     name: k3s Cluster
     job: deploy-k3s-cluster.yaml

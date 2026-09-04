@@ -1,0 +1,56 @@
+# Deploy FlareSolverr — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# Requires the `Deploy k3s Cluster` job to have run: FlareSolverr has no guest of its own
+# and deploys into a namespace on that cluster.
+
+- id: 35b7188f-ae43-47f1-a943-a6b109a7ea9f
+  uuid: 35b7188f-ae43-47f1-a943-a6b109a7ea9f
+  name: Deploy FlareSolverr
+  group: Applications/Media & Entertainment/Indexer Management/FlareSolverr
+  description: |-
+    Deploy or converge **FlareSolverr**, the Cloudflare-solving proxy Prowlarr calls out
+    to for indexers it cannot reach directly.
+
+    - **Hosting:** Kubernetes, stateless — no config volume and no database
+    - **Route:** none. Reachable on a fixed NodePort on any cluster node's own address —
+      see `ansible/vars/app-defaults/flaresolverr.yml` for why this app has no Caddy
+      site, no DNS record and no Authentik object
+    - **Wiring:** point Prowlarr's own FlareSolverr indexer-proxy setting at the NodePort
+      address; that connection is not automated (see
+      `ansible/roles/flaresolverr/tasks/main.yml` for why)
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional FlareSolverr instance. The value identifies its config file and its
+      `app-<instance>` namespace.'
+    required: true
+    value: flaresolverr
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/flaresolverr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/flaresolverr.yml "${ARGS[@]}"
