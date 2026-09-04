@@ -25,5 +25,5 @@
 
 - name: MariaDB | Verify local server readiness
   ansible.builtin.command:
-    argv: [mariadb-admin, ping, --host=127.0.0.1, "--port={{ app_config.app.port | string }}"]
+    argv: [mariadb-admin, "--socket=/run/mysqld/mysqld.sock", ping]
   changed_when: false
