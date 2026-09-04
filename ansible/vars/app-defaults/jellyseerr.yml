@@ -29,9 +29,16 @@ jellyseerr_defaults:
 
   hosting: kubernetes
 
-  # Which cluster deployment to land on. Matches the `instance` of the k3s cluster job,
-  # so a lab running two clusters points each app at the one it belongs to.
-  cluster: k3s-cluster
+  # NO `cluster:` HERE, DELIBERATELY.
+  #
+  # tasks/kubernetes/resolve-cluster.yml — the adapter every Kubernetes app role,
+  # including this one, delegates kubectl through — always resolves the single
+  # `homelabinfra_infra.kubernetes` registry entry. It has no per-app selector input, so a
+  # `cluster:` key here would name a value nothing reads: a lab running two clusters would
+  # see this deploy land on whichever cluster the registry currently holds regardless of
+  # what was configured, silently. That is worse than not offering the option. Multi-cluster
+  # targeting is unimplemented platform-wide (see the same resolver Mixpost's role uses);
+  # this file will not claim otherwise until the resolver actually reads a selector.
 
   app:
     image: "fallenbagel/jellyseerr:latest"

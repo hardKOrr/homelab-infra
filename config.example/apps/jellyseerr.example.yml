@@ -13,7 +13,9 @@
 # in its own UI to connect it to a Jellyfin or Plex server and to Sonarr/Radarr. Nothing in
 # this file or in Vaultwarden drives that step.
 
-# cluster: k3s-cluster     # which cluster deployment to land on
+# No `cluster:` setting: this platform resolves a single registered Kubernetes cluster
+# (tasks/kubernetes/resolve-cluster.yml) and has no per-app selector to point at another
+# one yet. See the same comment in ansible/vars/app-defaults/jellyseerr.yml.
 
 # app:
 #   image: "fallenbagel/jellyseerr:latest"

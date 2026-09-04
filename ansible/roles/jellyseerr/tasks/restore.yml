@@ -137,6 +137,11 @@
              real run empties it before writing the snapshot's contents."
           - "To do it: re-run this job with the same snapshot and overwrite=true."
 
+  # `always`, not the last task of `block`: a plan job commonly fails here — an unreadable
+  # or unnamed snapshot is exactly what plan mode exists to surface — and run-job.yml
+  # raises on that failure, which would otherwise skip straight past cleanup and leave the
+  # PBS API token Secret sitting in the namespace indefinitely.
+  always:
     - name: Restore | Remove the plan's credentials from the namespace
       ansible.builtin.command:
         argv:
