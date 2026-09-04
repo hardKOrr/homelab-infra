@@ -25,6 +25,20 @@
 #      the same reason Jellyseerr's own first-run wizard is not: this repo has no live
 #      Prowlarr instance to verify the API contract against.
 #
+# WHY NODE_PORT IS ONE FIXED NUMBER, NOT ONE PER ESTATE
+#
+# A NodePort claims that port on every node of the cluster, cluster-wide — unlike an
+# estate-routed app, which tells two instances apart by subdomain and needs no shared
+# resource to coordinate. catalog/applications.yml classifies FlareSolverr `scope: lab`
+# for exactly this reason: it has no per-estate identity to justify a second instance by
+# default, so there is normally only ever one Service claiming this port. A deliberate
+# second instance (a second cluster, a manual experiment) MUST override `app.node_port` in
+# its own config/apps/<instance>.yml — the role asserts the port is not already claimed
+# elsewhere in the cluster before applying, rather than let a silent collision surface as
+# Kubernetes' own "provided port is already allocated".
+
+
+#
 # STATELESS, SO NO BACKUP CONTRACT
 #
 # FlareSolverr holds no configuration and no database — everything it has is the

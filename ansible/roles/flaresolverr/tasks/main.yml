@@ -28,6 +28,45 @@
 - name: FlareSolverr | Ensure the instance namespace exists
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
 
+# NodePorts are cluster-wide, unlike everything else this platform coordinates by
+# namespace. `scope: lab` in catalog/applications.yml means there is normally only ever
+# one instance, but a second one is still one `-e instance=` away — see the "WHY
+# NODE_PORT IS ONE FIXED NUMBER" comment in vars/app-defaults/flaresolverr.yml. Checked
+# before every apply, not only on create, because a converged re-run must keep confirming
+# nothing else grabbed the port between runs.
+- name: FlareSolverr | Read every Service in the cluster
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - svc
+      - --all-namespaces
+      - -o
+      - json
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _fs_all_services
+  changed_when: false
+
+- name: FlareSolverr | Assert the NodePort is not claimed outside this instance's namespace
+  vars:
+    _fs_other_node_ports: >-
+      {{ (_fs_all_services.stdout | from_json)['items'] | default([])
+         | rejectattr('metadata.namespace', 'equalto', k8s_namespace)
+         | selectattr('spec.ports', 'defined')
+         | map(attribute='spec.ports') | list | flatten
+         | selectattr('nodePort', 'defined')
+         | map(attribute='nodePort') | list }}
+  ansible.builtin.assert:
+    that: (app_config.app.node_port | int) not in _fs_other_node_ports
+    fail_msg: >-
+      NodePort {{ app_config.app.node_port }} is already claimed by a Service outside
+      namespace {{ k8s_namespace }}. NodePorts are cluster-wide, so a second FlareSolverr
+      instance cannot reuse this port. Override app.node_port in
+      config/apps/{{ instance }}.yml with an unused port in the 30000-32767 range and
+      re-run this deploy.
+
 - name: FlareSolverr | Render the workload manifest
   ansible.builtin.set_fact:
     _fs_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"

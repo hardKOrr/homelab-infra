@@ -32,9 +32,11 @@
   multipleExecutions: false
   options:
   - name: instance
-    description: '**Default:** Keep the selected instance. Enter another name only to deploy
-      an additional FlareSolverr instance. The value identifies its config file and its
-      `app-<instance>` namespace.'
+    description: '**Default:** Keep the selected instance — one FlareSolverr normally
+      serves every estate. Enter another name only to deploy a second instance, and set
+      `app.node_port` in its config file to an unused port first: NodePorts are
+      cluster-wide, and the deploy refuses to reuse one still claimed elsewhere. The value
+      identifies its config file and its `app-<instance>` namespace.'
     required: true
     value: flaresolverr
   sequence:

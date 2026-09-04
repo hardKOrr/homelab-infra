@@ -103,7 +103,12 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Indexer Management
-    scope: estate
+    # lab, not estate: FlareSolverr holds no domain, no identity and no per-estate
+    # secret — nothing about it differs between estates, so every estate's Prowlarr
+    # shares the one instance. This also keeps its NodePort (cluster-wide, unlike an
+    # estate-routed app's per-instance subdomain) from needing one allocation per
+    # estate — see ansible/vars/app-defaults/flaresolverr.yml.
+    scope: lab
     # Stateless — no config, no database, nothing a backup would recover that a redeploy
     # does not already give back. See vars/app-defaults/flaresolverr.yml.
     exclude: [backup, restore]

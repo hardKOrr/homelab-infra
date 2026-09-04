@@ -19,4 +19,8 @@
 
 # app:
 #   image: "flaresolverr/flaresolverr:latest"
-#   node_port: 30191        # what Prowlarr connects to on port 8191 of any cluster node
+#   node_port: 30191
+#   # What Prowlarr connects to on port 8191 of any cluster node. NodePorts are
+#   # cluster-wide: a second FlareSolverr instance MUST set this to a different, unused
+#   # 30000-32767 port, or its deploy fails the collision check rather than let
+#   # Kubernetes reject the Service silently.
