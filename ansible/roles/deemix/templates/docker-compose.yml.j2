@@ -1,0 +1,36 @@
+# docker-compose.yml for Deemix ({{ instance }})
+# Managed by homelab-infra — changes made here are overwritten on the next deploy.
+# To make permanent changes, edit config/apps/{{ instance }}.yml.
+#
+# DEEMIX_SINGLE_USER is always on: it is what makes the seeded .arl file
+# (roles/deemix/tasks/main.yml) apply server-wide instead of asking every
+# visitor to log in, and it is also why routing.identity is forward_auth in
+# vars/app-defaults/deemix.yml — see that file for the reasoning.
+#
+# /downloads is this image's own fixed mount point, not a configurable path
+# the way SABnzbd's and qBittorrent's are: app.download_path (a directory
+# inside a declared media_storage mount) is bound there directly, rather than
+# the whole media_storage mount set at matching paths. Lidarr's own container
+# is what needs a consistent path namespace to hardlink an import; this
+# container only ever writes here.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1000) }}
+      - PGID={{ app_config.app.pgid | default(1000) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - UMASK_SET=022
+      - DEEMIX_SINGLE_USER=true
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+      - "{{ app_config.app.download_path }}:/downloads"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"

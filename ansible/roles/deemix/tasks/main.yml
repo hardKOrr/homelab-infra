@@ -1,0 +1,258 @@
+---
+# deemix role — Deemix as a Docker container on a stack host. Called from
+# Play 2 of playbooks/apps/deemix.yml. Target: the media host.
+#
+# Lidarr's Deezer download client (ansible/vars/media-wiring.yml, `deemix`
+# kind — the plugins branch only; a mainline Lidarr rejects it and the wiring
+# reports the failed probe). Until this existed, `deemix` had a kind declared
+# in media-wiring.yml and nothing to wire.
+#
+# Variables available:
+#   app_config           — merged defaults + user config (from Play 1)
+#   instance              — the instance name (e.g. deemix)
+#   homelabinfra_config   — merged input config, including infrastructure.*
+#   homelabinfra_vault    — the in-memory Vaultwarden contract
+#
+# Exports (read by Play 3 to write the `media` registry key):
+#   deemix_media_kind, deemix_media_host
+#
+# WHY THIS IS NOT roles/sabnzbd OR roles/qbittorrent. Deemix's credential is
+# neither an API key this platform mints (SABnzbd) nor a password this
+# platform generates (qBittorrent): the ARL is a Deezer login session cookie
+# the OPERATOR owns, the same shape as Plex's claim_token
+# (roles/plex/tasks/main.yml) — captured from the operator's own Deezer
+# account, stored in Vaultwarden, and carried through unchanged to both this
+# app and to Lidarr's own download-client entry
+# (ansible/tasks/app-wiring/arr-download-client.yml, `arl` field). There is
+# nothing for this role to generate or mint, and — unlike sabnzbd.ini or
+# qBittorrent.conf — nothing in this image is documented to rewrite the
+# seeded credential file from memory, so there is no drift to repair either.
+# Vaultwarden is this credential's source of truth: the role re-seeds it on
+# every run, and rotating an expired ARL is "update Vaultwarden, redeploy".
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind and ARL
+  ansible.builtin.set_fact:
+    _dmx_kind: "{{ app_config.app.media_kind }}"
+    _dmx_base: "http://localhost:{{ app_config.app.port }}"
+    _dmx_arl: "{{ app_config.app.arl | default('', true) }}"
+  no_log: true
+
+# The kind is not decoration: wire-media-stack.yml refuses to wire an app
+# whose kind is not in the table, so a typo here would deploy a download
+# client that silently never joins the stack. Failing at deploy time names
+# the problem where it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that:
+      - _dmx_kind in media_wiring.kinds
+      - media_wiring.kinds[_dmx_kind].role == 'download_client'
+    fail_msg: >-
+      app.media_kind is "{{ _dmx_kind }}", which ansible/vars/media-wiring.yml
+      does not define as a download client. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+- name: Require a Vaultwarden ARL for this instance
+  ansible.builtin.assert:
+    that: _dmx_arl | length > 0
+    fail_msg: >-
+      {{ instance }} has no Deezer ARL. Store a current one as hidden field
+      arl in Vaultwarden item homelab-infra/apps/{{ instance }}, then rerun.
+      ARLs are login session cookies from the operator's own Deezer account
+      and expire every 3-6 months — this platform never generates one.
+  no_log: true
+
+# A download client sees the whole of the lab's media storage by default,
+# which is more than an *arr gets: it writes the downloads directory AND the
+# library has to be on the same mount namespace, or every completed import
+# Lidarr makes afterwards is a copy instead of a hardlink.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _dmx_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ deemix_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: Deemix writes its settings and the seeded
+# .arl file below here, and both have to be readable and rewritable by the
+# same account.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/sabnzbd and roles/qbittorrent: the mounts are the lab's,
+# attached to the stack host by Play 1, and only ever asserted here.
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _dmx_mount_check
+  loop: "{{ _dmx_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared
+      in media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint,
+      so either the attach did not happen or the guest has not restarted
+      since. This platform attaches storage the lab already provides; it
+      never creates it.
+  loop: "{{ _dmx_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# The download directory is this app's own, the way an *arr's library_subpath
+# is: the platform declares it, so creating it and owning it is this deploy
+# finishing its own job. It must live under one of the mounts above — a path
+# outside them is the stack host's root disk, which is what this check is
+# really for.
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _dmx_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _dmx_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not
+      inside any media_storage mount
+      ({{ _dmx_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Completed downloads would land on the stack host's own disk and never
+      hardlink into the library. Point app.download_path at a directory under
+      one of the mounts, or declare the mount that holds it in
+      config/infrastructure.yml.
+  vars:
+    _dmx_download_root: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
+    # The download path's own ancestors, so the comparison lands on a path
+    # component rather than a string prefix — /mnt/data2 is not inside
+    # /mnt/data. Serialized through JSON because a template carrying {% %}
+    # statement blocks renders to a STRING; see the same construction in
+    # tasks/load-user-vars.yml.
+    _dmx_download_ancestors_json: >-
+      {%- set parts = _dmx_download_root.split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _dmx_download_ancestors: "{{ _dmx_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.download_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _dmx_download_dir
+  failed_when: false
+
+- name: Assert the download directory is usable
+  ansible.builtin.assert:
+    that: not (_dmx_download_dir.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ app_config.app.download_path }}
+      ({{ _dmx_download_dir.msg | default('') }}). On an unprivileged stack
+      host this is what an unmapped owner looks like: a directory whose host
+      uid falls outside the guest's id range appears as nobody:nogroup and
+      not even root inside the guest can chown it. Check that the mount and
+      everything under it belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.
+
+# ── Credential ─────────────────────────────────────────────────────────────────
+# Plain text, no trailing newline: the format the deemix-py backend this
+# image wraps reads its Deezer session cookie from. Written unconditionally,
+# never force:false — see the role header for why Vaultwarden, not the
+# running container, is this credential's source of truth.
+- name: Seed the Deezer ARL
+  ansible.builtin.copy:
+    content: "{{ _dmx_arl }}"
+    dest: "{{ app_config.app.config_path }}/.arl"
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0640"
+  no_log: true
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ deemix_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart deemix
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/servarr, roles/sabnzbd and roles/qbittorrent
+# — a deploy ensures the image is present, Watchtower is what moves it
+# forward and reports it.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ deemix_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ deemix_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the web interface to answer
+  ansible.builtin.uri:
+    url: "{{ _dmx_base }}/"
+    status_code: [200, 301, 302]
+  register: _dmx_up
+  until: _dmx_up.status | default(0) in [200, 301, 302]
+  retries: "{{ deemix_webui_retries }}"
+  delay: "{{ deemix_webui_delay }}"
+  changed_when: false
+
+# No further identity proof is attempted here, unlike SABnzbd's api_key or
+# qBittorrent's WebUI password. This image documents no REST endpoint to
+# submit or validate an ARL outside its own web UI's login flow, and there is
+# no live instance in this session to confirm one against — the same scope
+# decision this repo already made for Jellyseerr's media-server connection
+# (ansible/roles/jellyseerr/tasks/main.yml): ship a deployed, wired,
+# monitored app rather than guess at an unverified REST contract. The
+# operator confirms a working Deezer login in the Deemix web interface after
+# this deploy; a bad or expired ARL fails there, visibly.
+
+# ── Store the credential ──────────────────────────────────────────────────────
+# Written under the same canonical item name wire-media-stack.yml reads, and
+# with the field name tasks/app-wiring/arr-download-client.yml expects for an
+# `arl` client (ansible/vars/media-wiring.yml, ansible/vars/CONTRACT.md §3).
+- name: Store and verify the ARL
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      arl: "{{ _dmx_arl }}"
+    vault_item_secret_fields: [arl]
+
+# ── Hand the endpoint back to the playbook ────────────────────────────────────
+- name: Export the media registry entry to the playbook
+  ansible.builtin.set_fact:
+    deemix_media_kind: "{{ _dmx_kind }}"
+    deemix_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

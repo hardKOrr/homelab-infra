@@ -1,0 +1,11 @@
+---
+# Role-internal defaults for the deemix role. Everything a user would tune
+# lives in vars/app-defaults/deemix.yml instead — these are paths and timings
+# the role needs and nobody overrides.
+
+deemix_project_dir: "/opt/{{ instance }}"
+
+# How long to wait for the web interface to answer after the container
+# starts. A first run also has to read the seeded .arl file.
+deemix_webui_retries: 30
+deemix_webui_delay: 5

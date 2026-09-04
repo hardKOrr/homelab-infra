@@ -1,0 +1,41 @@
+---
+# Deemix instance config.
+# Copy to config/apps/deemix.yml (or deemix-4k.yml, etc.).
+# The filename you choose IS the instance name: it becomes the hostname,
+# Caddy subdomain (deemix.yourdomain.com), and Authentik app name.
+#
+# Only set values that differ from the defaults in vars/app-defaults/deemix.yml.
+# This file persists after removal — it is your restore point.
+#
+# The Deezer ARL is NOT configured here and never will be: it is a login
+# session cookie from your own Deezer account, and it expires every 3-6
+# months. Store a current one with Store Secret: item
+# homelab-infra/apps/<instance>, hidden field arl, before the first deploy —
+# and again whenever it expires.
+
+# ── Stack assignment (Docker app) ────────────────────────────────────────────
+stack: media     # which Docker stack host this app runs on
+
+# ── App config ───────────────────────────────────────────────────────────────
+app:
+  # Where downloads land, as the container sees it. It must be inside a
+  # media_storage mount declared in config/infrastructure.yml: Lidarr imports
+  # from here into the library, and that import is a hardlink rather than a
+  # copy only when both are on one filesystem. The deploy refuses a path
+  # outside them.
+  download_path: /mnt/downloads
+
+  # port: 6595                 # the web port the stack host publishes.
+
+# ── Routing ──────────────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal            # internal | external (WHICH reverse proxy handles this app)
+#   access: internal           # internal | public (WHO may reach it — public means the
+#                              # internet on a WAN-facing proxy)
+#   identity: forward_auth     # none | catalog | oidc | forward_auth.
+#                              # forward_auth is the default and the right one: the
+#                              # DEEMIX_SINGLE_USER mode this deploy always sets removes
+#                              # Deemix's own login screen, so Authentik is what gates
+#                              # this app's browser route. Lidarr is unaffected — it is
+#                              # wired with this stack host's bare address, not through
+#                              # the reverse proxy.
