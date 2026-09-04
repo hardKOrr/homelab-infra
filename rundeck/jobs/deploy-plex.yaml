@@ -1,0 +1,33 @@
+---
+- id: 7bc5b63a-4e2b-44ac-b29f-60313cc06b1b
+  uuid: 7bc5b63a-4e2b-44ac-b29f-60313cc06b1b
+  name: Deploy Plex
+  group: Applications/Media & Entertainment/Media Servers/Plex
+  description: |-
+    Deploy or converge **Plex Media Server** on the `media` stack.
+
+    - **Hosting:** Docker on the estate-resolved media stack
+    - Requires a fresh Plex claim token in Vaultwarden before its first deploy
+    - Advertises its proxy URL with an explicit port for Plex clients
+
+    Plex owns client authentication and is published through the Authentik catalog.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Plex instance. Enter another name for an additional server.'
+    required: true
+    value: plex
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/plex.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/plex.yml -e "instance=$RD_OPTION_INSTANCE"

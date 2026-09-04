@@ -1,0 +1,133 @@
+---
+- name: Resolve Plex paths and claim state
+  ansible.builtin.set_fact:
+    _plex_base: "http://localhost:{{ app_config.app.port }}"
+    _plex_preferences: "{{ app_config.app.config_path }}/Library/Application Support/Plex Media Server/Preferences.xml"
+    _plex_mounts: "{{ app_config.app.mounts | default([], true) }}"
+    _plex_claim_token: "{{ app_config.app.claim_token | default('', true) }}"
+    _plex_advertise_url: >-
+      {{ app_config.app.advertise_url | default('', true)
+         or ('https://' ~ (app_config.routing.subdomain | default(instance, true))
+             ~ '.' ~ (homelabinfra_infra.domain | default('')) ~ ':443') }}
+  no_log: true
+
+- name: Assert the advertised Plex URL includes a port
+  ansible.builtin.assert:
+    that: _plex_advertise_url is match('^https?://[^/]+:[0-9]+/?$')
+    fail_msg: "app.advertise_url must be a complete HTTP(S) URL with an explicit port."
+
+- name: Check whether Plex has already been claimed
+  ansible.builtin.stat:
+    path: "{{ _plex_preferences }}"
+  register: _plex_preferences_stat
+
+- name: Read existing Plex preferences
+  ansible.builtin.slurp:
+    src: "{{ _plex_preferences }}"
+  register: _plex_preferences_contents
+  when: _plex_preferences_stat.stat.exists
+  no_log: true
+
+- name: Resolve whether Plex has a server token
+  ansible.builtin.set_fact:
+    _plex_claimed: >-
+      {{ _plex_preferences_stat.stat.exists and
+         ((_plex_preferences_contents.content | default('') | b64decode)
+          is search('PlexOnlineToken="[^"]+"')) }}
+  no_log: true
+
+- name: Require a Vaultwarden claim token for an unclaimed Plex server
+  ansible.builtin.assert:
+    that: _plex_claim_token | length > 0
+    fail_msg: >-
+      {{ instance }} is not claimed. Store a fresh Plex claim token as hidden field
+      claim_token in Vaultwarden item homelab-infra/apps/{{ instance }}, then rerun.
+  when: not _plex_claimed
+  no_log: true
+
+- name: Create Plex project and persistent directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ app_config.app.pgid | default(1313) }}"
+    mode: "0750"
+  loop: ["{{ plex_project_dir }}", "{{ app_config.app.config_path }}", "{{ app_config.app.transcode_path }}"]
+
+- name: Verify media paths are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ _plex_mounts }}"
+  register: _plex_mount_checks
+
+- name: Assert declared media paths are usable
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: "{{ item.item.path }} is not present on the media stack host."
+  loop: "{{ _plex_mount_checks.results }}"
+
+- name: Write the Plex Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ plex_project_dir }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart plex
+  no_log: true
+
+- name: Pull the Plex image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ plex_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start Plex
+  community.docker.docker_compose_v2:
+    project_src: "{{ plex_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending Plex restarts before checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Plex to answer its identity endpoint
+  ansible.builtin.uri:
+    url: "{{ _plex_base }}/identity"
+    return_content: true
+    status_code: 200
+  register: _plex_identity
+  until: _plex_identity.status | default(0) == 200
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  changed_when: false
+
+- name: Assert the service identifies itself as Plex
+  ansible.builtin.assert:
+    that: _plex_identity.content is search('MediaContainer')
+    fail_msg: "{{ app_config.app.port }} did not return a Plex identity document."
+
+- name: Read Plex preferences after startup
+  ansible.builtin.slurp:
+    src: "{{ _plex_preferences }}"
+  register: _plex_preferences_after
+  until: _plex_preferences_after.content is defined
+  retries: "{{ plex_http_retries }}"
+  delay: "{{ plex_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Assert Plex exchanged the claim token for a server token
+  ansible.builtin.assert:
+    that: (_plex_preferences_after.content | b64decode) is search('PlexOnlineToken="[^"]+"')
+    fail_msg: >-
+      Plex started but did not record a server token. Obtain a fresh claim token,
+      update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
+  no_log: true
+
+- name: Remove the consumed claim token from the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ plex_project_dir }}/docker-compose.yml"
+    mode: "0640"
+  vars:
+    _plex_claimed: true
+  no_log: true

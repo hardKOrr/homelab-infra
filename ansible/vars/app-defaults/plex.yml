@@ -1,0 +1,32 @@
+---
+# Default configuration for Plex Media Server on the estate-resolved media stack.
+# The claim token is intentionally absent: store it as the hidden `claim_token`
+# field of Vaultwarden item homelab-infra/apps/<instance> before the first deploy.
+plex_defaults:
+  stack: media
+  app:
+    image: "plexinc/pms-docker:latest"
+    port: 32400
+    container_port: 32400
+    config_path: "/opt/{{ instance }}/config"
+    transcode_path: "/opt/{{ instance }}/transcode"
+    puid: 1313
+    pgid: 1313
+    # Optional hardware-transcoding devices. The empty default is deliberate:
+    # Docker refuses to start when a configured device is absent on the media
+    # stack host. Passing a device does not enable transcoding by itself; enable
+    # the applicable codecs in Plex after deployment.
+    devices: []
+    mounts: >-
+      {{ (homelabinfra_config.infrastructure.media_storage | default({})).mounts
+         | default([], true) }}
+    # This is the URL Plex gives its clients in bridge-network mode. The port is
+    # deliberate: Plex's custom access URL is not complete without it, even for
+    # HTTPS's conventional port.
+    advertise_url: ""
+  routing:
+    subdomain: plex
+    proxy: internal
+    access: internal
+    # Plex clients authenticate against Plex itself; an interactive proxy gate
+    # would prevent televisions and mobile clients from completing their API flow.
