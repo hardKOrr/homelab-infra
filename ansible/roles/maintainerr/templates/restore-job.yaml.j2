@@ -1,0 +1,135 @@
+{#
+  The restore side of the backup contract, as one Kubernetes Job in the TARGET instance's
+  namespace. Rendered by roles/maintainerr/tasks/restore.yml and run through
+  tasks/kubernetes/run-job.yml.
+
+  Two modes, and the mode is the safety mechanism:
+
+    plan     — reads only. Lists what PBS holds for this application, proves the named
+               snapshot is readable, and reports what the target currently contains.
+               Writes nothing.
+    restore  — replaces the target's data volume with the snapshot's.
+
+  Simpler than roles/mixpost/templates/restore-job.yaml.j2: there is no database to drop
+  and reload, so this is one container, not two.
+#}
+{% set client = app_config.backup.client %}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ _js_r_job_name }}
+  labels:
+    app.kubernetes.io/instance: {{ _js_r_target }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: restore
+spec:
+  # One attempt. A restore that failed half way has already changed the target, and
+  # silently starting again from the top is the last thing anybody wants: the operator
+  # should read what happened and decide.
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ _js_r_timeout | int }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ _js_r_target }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: restore
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: {{ client.image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              export DEBIAN_FRONTEND=noninteractive
+              # Never `set -x`: PBS_PASSWORD is in this process's environment.
+
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+              install -d -m 0755 /etc/apt/keyrings
+              curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                > /etc/apt/sources.list.d/pbs-client.list
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+{% if _js_r_mode == 'plan' %}
+
+              echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
+              proxmox-backup-client snapshot list "host/${BACKUP_ID}" \
+                || proxmox-backup-client snapshot list
+
+              if [ -n "${SNAPSHOT:-}" ]; then
+                echo
+                echo "=== files in ${SNAPSHOT} ==="
+                proxmox-backup-client snapshot files "${SNAPSHOT}"
+              else
+                echo
+                echo "No snapshot named. Re-run with one of the identifiers above to check"
+                echo "that it is readable and to see what a restore would replace."
+              fi
+
+              echo
+              echo "=== what the target namespace holds NOW ==="
+              echo "data volume: $(du -sh /app-data 2>/dev/null | cut -f1) in $(find /app-data -type f | wc -l) file(s)"
+{% else %}
+
+              echo "=== restoring ${SNAPSHOT} ==="
+
+              # The destructive half: what is in the volume now is removed, and what the
+              # snapshot holds takes its place. A restore that only added files would
+              # leave the target holding a mixture of two different points in time.
+              echo "replacing data volume: was $(du -sh /app-data 2>/dev/null | cut -f1) in $(find /app-data -type f | wc -l) file(s)"
+              find /app-data -mindepth 1 -delete
+              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /app-data
+              echo "restored data volume: now $(du -sh /app-data 2>/dev/null | cut -f1) in $(find /app-data -type f | wc -l) file(s)"
+{% endif %}
+          env:
+            - name: PBS_REPOSITORY
+              value: "{{ k8s_pbs_repository }}"
+            - name: PBS_FINGERPRINT
+              value: "{{ k8s_pbs_fingerprint }}"
+            - name: PBS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ _js_r_secret }}, key: pbs-password }
+            - name: BACKUP_ID
+              value: "{{ _js_r_backup_id }}"
+            - name: SNAPSHOT
+              value: "{{ _js_r_snapshot }}"
+            - name: PBS_KEY_URL
+              value: "{{ client.key_url }}"
+            - name: PBS_APT_REPO
+              value: "{{ client.repository }} {{ client.suite }} {{ client.component }}"
+          volumeMounts:
+            # proxmox-backup-client opens an unnamed temporary file with O_TMPFILE while
+            # restoring. The image's overlay-backed /tmp rejects that operation with
+            # EOPNOTSUPP; a dedicated tmpfs supplies the filesystem contract the client
+            # requires without making temporary client state persistent.
+            - name: pbs-tmp
+              mountPath: /tmp
+            - name: app-data
+              mountPath: /app-data
+{% if _js_r_mode == 'plan' %}
+              # Read-only in plan mode, enforced by the kubelet rather than by the script
+              # being careful. A plan that could write is not a plan.
+              readOnly: true
+{% endif %}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: pbs-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: {{ _js_r_target }}-data
+{% if _js_r_mode == 'plan' %}
+            readOnly: true
+{% endif %}

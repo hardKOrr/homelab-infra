@@ -106,6 +106,14 @@ applications:
     scope: estate
     exclude: [backup, restore]
 
+  maintainerr:
+    name: Maintainerr
+    job: deploy-maintainerr.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Library Management
+    scope: estate
+
   flaresolverr:
     name: FlareSolverr
     job: deploy-flaresolverr.yaml

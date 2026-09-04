@@ -1,0 +1,38 @@
+---
+# Maintainerr — the media stack's request front end, on the Kubernetes hosting backend.
+#
+# Copy to config/apps/maintainerr.yml and change what differs for your lab. Anything you
+# leave out falls through to ansible/vars/app-defaults/maintainerr.yml, which is
+# git-managed and improves on `git pull`.
+#
+# Requires a cluster: run the `Deploy k3s Cluster` job first. Maintainerr has no guest of
+# its own — its config, its own SQLite database and its web front end all live in one
+# namespace, `app-<instance>`, on that cluster.
+#
+# FIRST RUN IS NOT CONFIGURED HERE. The deploy brings up an empty Maintainerr; sign in once
+# in its own UI to connect it to a Jellyfin or Plex server and to Sonarr/Radarr. Nothing in
+# this file or in Vaultwarden drives that step.
+
+# No `cluster:` setting: this platform resolves a single registered Kubernetes cluster
+# (tasks/kubernetes/resolve-cluster.yml) and has no per-app selector to point at another
+# one yet. See the same comment in ansible/vars/app-defaults/maintainerr.yml.
+
+# app:
+#   image: "ghcr.io/maintainerr/maintainerr:latest"
+#   storage: 2             # GB — settings, cache and Maintainerr's own database
+
+# routing:
+#   THE ACCESS CLASS — one field, three values. See config.example/apps/mixpost.example.yml
+#   for the full explanation; the values and defaults are the same platform-wide contract.
+#   access: internal
+#   identity: forward_auth
+#   estate: <name>         # required once infrastructure.yml declares two or more estates
+#   subdomain: maintainerr  # override the published hostname; the app default is maintainerr
+
+# backup:
+#   A filesystem archive of the data volume, pushed into the lab's existing PBS
+#   datastore on this schedule — not a quiesced database dump, because Maintainerr keeps
+#   its SQLite database inside the same volume. See the comment on this block in
+#   ansible/vars/app-defaults/maintainerr.yml for what that trade-off costs.
+#   enabled: true
+#   schedule: "0 3 * * *"
