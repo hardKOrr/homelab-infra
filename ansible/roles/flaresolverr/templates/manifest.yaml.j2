@@ -1,0 +1,80 @@
+{#
+  FlareSolverr — a Deployment and a NodePort Service in the namespace the instance owns.
+  Rendered by roles/flaresolverr/tasks/main.yml and applied through
+  tasks/kubernetes/apply-manifest.yml.
+
+  No PersistentVolumeClaim: FlareSolverr keeps no state between requests, so there is
+  nothing for a Recreate strategy or a ReadWriteOnce volume to coordinate — a
+  RollingUpdate is safe here in a way it is not for Jellyseerr or Mixpost.
+
+  No Ingress: vars/app-defaults/flaresolverr.yml's header explains why this app carries
+  `routing.proxy: none` — it is not published through Caddy, DNS or the cluster's
+  MetalLB-backed Ingress at all. NodePort is the one Service type that stays reachable
+  from Prowlarr's Docker host without any of those, at the cost of publishing this
+  Service's port on every cluster node's own address rather than the shared ingress VIP.
+  That is a deliberate, narrow exception to "the cluster does not create a second public
+  edge" (tasks/kubernetes/README.md): this Service is not public, it is reachable only on
+  the lab's own LAN, the same reach every other `routing.access: internal` app already
+  has through Caddy.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: flaresolverr
+          image: {{ app_config.app.image }}
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+            - name: PORT
+              value: "{{ app_config.app.port }}"
+            - name: LOG_LEVEL
+              value: "info"
+          ports:
+            - containerPort: {{ app_config.app.port }}
+          # FlareSolverr answers 200 on GET / with a version banner as soon as its
+          # embedded browser has started — there is no first-run state to wait past.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ app_config.app.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ app_config.app.port }}
+      nodePort: {{ app_config.app.node_port }}

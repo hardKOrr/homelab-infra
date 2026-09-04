@@ -1,0 +1,106 @@
+---
+# Deploy FlareSolverr — the Cloudflare-solving proxy Prowlarr calls out to for indexers it
+# cannot reach directly — on the Kubernetes hosting backend.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/flaresolverr.yml -e instance=flaresolverr
+#
+# STRUCTURALLY LIGHTER THAN JELLYSEERR AND MIXPOST, AND DELIBERATELY SO
+#
+# Every other Kubernetes app in this repo has a Wire play that publishes a route through
+# Caddy, Authentik, Uptime Kuma and DNS. FlareSolverr has none of that:
+# vars/app-defaults/flaresolverr.yml declares `routing.proxy: none` because there is no UI
+# for an operator to reach and no domain for Prowlarr's HTTP client to want — see that
+# file's header, and docs/meta/408-app-catalog/README.md's flaresolverr row. What remains
+# is asset bookkeeping (so the Proxmox guest tree still shows the cluster runs this
+# instance) and the notification every automated state change sends.
+#
+# WHAT THIS PLAYBOOK DOES NOT DO
+#
+# It does not register FlareSolverr with Prowlarr. Connecting the two is a Prowlarr
+# indexer-proxy setting, entered once in Prowlarr's own UI — see the role's header for why
+# that is not automated here.
+
+# ── Play 1: Resolve and deploy ─────────────────────────────────────────────────
+- name: "FlareSolverr | Deploy"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=flaresolverr"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/flaresolverr.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.flaresolverr_defaults
+             | combine(_instance_config | default({}), recursive=True) }}
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Deploy FlareSolverr onto the cluster
+      ansible.builtin.include_role:
+        name: flaresolverr
+
+
+# ── Play 2: Record and notify ────────────────────────────────────────────────
+# No reverse proxy, SSO, uptime monitor or DNS step — there is no route for any of them to
+# publish. See this file's own header and vars/app-defaults/flaresolverr.yml.
+- name: "FlareSolverr | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    # Stamped on every node of the target cluster, not on the one that happens to be
+    # running the pod — the assignment does not move when the scheduler reschedules. No
+    # `record_guest_url`: record-app-on-guest.yml leaves that column empty for an app a
+    # reverse proxy never published, which is exactly this app's shape.
+    - name: Record the app on every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "FlareSolverr deployed"
+        notify_message: >-
+          {{ instance }} is running on the Kubernetes backend, reachable on port
+          {{ hostvars['localhost'].app_config.app.node_port }} of any cluster node's own
+          address — see config/.generated/facts.yml's kubernetes.nodes. Point Prowlarr's
+          FlareSolverr indexer-proxy setting at it; that connection is not automated (see
+          roles/flaresolverr/tasks/main.yml for why).
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"
