@@ -64,8 +64,8 @@
   community.docker.docker_container_exec:
     container: "{{ instance }}"
     command: >-
-      wget -qO- --header=X-Plex-Token:{{ _tautulli_plex_token }}
-      {{ _tautulli_plex_url }}/identity
+      curl --fail --silent --show-error
+      --header=X-Plex-Token:{{ _tautulli_plex_token }} {{ _tautulli_plex_url }}/identity
   register: _tautulli_plex_identity
   until:
     - _tautulli_plex_identity.rc | default(1) == 0
