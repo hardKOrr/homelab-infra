@@ -182,6 +182,14 @@
 # image wraps reads its Deezer session cookie from. Written unconditionally,
 # never force:false — see the role header for why Vaultwarden, not the
 # running container, is this credential's source of truth.
+#
+# notify, deliberately: Deemix reads .arl once, at process start — a rotation
+# that only rewrites the file leaves the running container answering to the
+# session it already loaded, so the deploy would report success while still
+# using the expired ARL. The restart handler is what makes "update
+# Vaultwarden, redeploy" (the role header, and every operator-facing doc this
+# role ships) actually true. Idempotent on an unchanged ARL: copy reports no
+# change, so no restart fires, matching the Compose template's own notify.
 - name: Seed the Deezer ARL
   ansible.builtin.copy:
     content: "{{ _dmx_arl }}"
@@ -189,6 +197,7 @@
     owner: "{{ app_config.app.puid | default(1000) }}"
     group: "{{ app_config.app.pgid | default(1000) }}"
     mode: "0640"
+  notify: Restart deemix
   no_log: true
 
 - name: Write docker-compose.yml
