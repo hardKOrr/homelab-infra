@@ -54,7 +54,7 @@ kubernetes:    { instance, provider, version, host, ingress_vip, ingress_control
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
 databases:                           # optional — independently deployed database backends
-  <instance>: { provider, host, port } # host is a bare SSH/database address
+  <instance>: { provider, host, port, client_hosts } # host is a bare SSH/database address
 runner:                              # the host this platform runs FROM — see below
   { provider, instance, host, vmid, node, checkout_path, venv_path, branch }
 estates:                             # optional — only when infrastructure.yml declares domains:
@@ -155,9 +155,10 @@ their `database` configuration; generated facts contain topology only.
 
 | Field | Notes |
 |---|---|
-| `provider` | backend implementation, initially `postgresql` |
+| `provider` | backend implementation, initially `postgresql` or `mariadb` |
 | `host` | bare SSH and database address, not an HTTP URL; database consumers pair it with `port` |
 | `port` | database listener port, initially `5432` |
+| `client_hosts` | MariaDB only: account-host patterns allowed for provisioned application roles; never use `%` |
 
 Ntfy ships with `auth-default-access: deny-all`, so notification consumers authenticate
 when credentials are present. Credential fields remain optional for compatibility with an

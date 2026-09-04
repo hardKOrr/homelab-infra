@@ -1,0 +1,22 @@
+---
+# MariaDB is an instanced, shared backend. Applications select it through the
+# backend-independent `database` configuration; it is never a Compose sidecar.
+mariadb_defaults:
+  proxmox:
+    type: lxc
+    boot_order: 40
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 32
+    tags: [_+lab, _-debian]
+  app:
+    port: 3306
+    service_name: mariadb
+    # MariaDB account-host patterns allowed to connect to this backend. Keep
+    # these within lab networks; `%` would permit any source address.
+    client_hosts: ["10.%"]
+  routing:
+    proxy: none
+    identity: none

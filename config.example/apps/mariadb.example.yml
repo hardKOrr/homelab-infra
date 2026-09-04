@@ -1,0 +1,18 @@
+---
+# MariaDB backend instance configuration. Filename is the backend instance;
+# for example, mariadb.yml creates the `mariadb` backend.
+#
+# Applications refer to it with:
+#   database:
+#     provider: mariadb
+#     instance: mariadb
+#     name: application_database
+#     role: application_role
+
+# proxmox:
+#   cores: 4
+#   memory: 4096
+#
+# app:
+#   # MariaDB account-host patterns for application guests. Never use `%`.
+#   client_hosts: ["10.%"]

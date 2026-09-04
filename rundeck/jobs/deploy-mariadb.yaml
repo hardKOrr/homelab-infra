@@ -1,0 +1,25 @@
+- id: 04d4447f-e4b3-4d73-a493-96298ff5029d
+  uuid: 04d4447f-e4b3-4d73-a493-96298ff5029d
+  name: Deploy MariaDB
+  group: Platform/Data Services/MariaDB
+  description: Deploy or converge an independently managed MariaDB backend.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Backend instance name; identifies its LXC, registry entry, and config file.
+    required: true
+    value: mariadb
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/mariadb.yml
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        : "${RD_OPTION_INSTANCE:?instance is required}"
+        exec lab-run playbooks/apps/mariadb.yml -e "instance=$RD_OPTION_INSTANCE"

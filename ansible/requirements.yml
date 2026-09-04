@@ -14,3 +14,5 @@ collections:
     version: "5.2.1"
   - name: community.general
     version: "13.1.0"
+  - name: community.mysql
+    version: "3.16.0"
