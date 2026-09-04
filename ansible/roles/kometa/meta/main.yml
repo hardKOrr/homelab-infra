@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: kometa
+  description: Deploys Kometa as a Kubernetes CronJob with its config sourced from Vaultwarden
+  min_ansible_version: "2.16"
+dependencies: []

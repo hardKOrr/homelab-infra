@@ -1,0 +1,9 @@
+---
+# Kometa's complete secret-bearing config.yml belongs in Vaultwarden field config_yml of
+# homelab-infra/apps/kometa. Store it before deployment; it is mounted as a Kubernetes
+# Secret, never written to config/ or job output. This file controls the scheduled runtime.
+# app:
+#   image: "kometateam/kometa:latest"
+#   storage: 1
+#   schedule: "0 5 * * *"
+#   timeout_seconds: 7200

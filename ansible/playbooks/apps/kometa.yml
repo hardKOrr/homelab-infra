@@ -1,0 +1,56 @@
+---
+- name: "Kometa | Deploy"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=kometa"
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/kometa.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Merge Kometa config and Vaultwarden values
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.kometa_defaults | combine(_instance_config | default({}), recursive=True) | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+    - name: Deploy Kometa onto the cluster
+      ansible.builtin.include_role:
+        name: kometa
+
+- name: "Kometa | Record and notify"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Record the app on every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: "{{ (homelabinfra_infra.kubernetes | default({})).nodes | default([]) | map(attribute='name') | list }}"
+        record_guest_kind: kubernetes
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Kometa deployed"
+        notify_message: "{{ instance }} is scheduled on Kubernetes as {{ hostvars['localhost'].app_config.app.schedule }} in {{ homelabinfra_config.timezone | default('UTC') }}."
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

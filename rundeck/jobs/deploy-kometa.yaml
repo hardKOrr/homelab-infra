@@ -1,0 +1,26 @@
+---
+- id: 0cbefb9c-0632-4d22-8af8-79ee34b3d9d5
+  uuid: 0cbefb9c-0632-4d22-8af8-79ee34b3d9d5
+  name: Deploy Kometa
+  group: Applications/Media & Entertainment/Library Management/Kometa
+  description: "Deploy Kometa as a Kubernetes CronJob. Store config.yml as Vaultwarden field homelab-infra/apps/<instance>.config_yml before deployment. It has no UI or public route."
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: "The Kometa instance and app-<instance> namespace."
+    required: true
+    value: kometa
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/kometa.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/kometa.yml -e "instance=$RD_OPTION_INSTANCE"
