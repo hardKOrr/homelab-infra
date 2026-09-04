@@ -1,0 +1,4 @@
+---
+tautulli_project_dir: "/opt/{{ instance }}"
+tautulli_http_retries: 30
+tautulli_http_delay: 2

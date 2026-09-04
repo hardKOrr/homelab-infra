@@ -1,0 +1,11 @@
+---
+# Copy to config/apps/tautulli.yml (or tautulli-<estate>.yml). The selected
+# Plex instance must already be deployed: its server token is stored in
+# Vaultwarden by the Plex role and is never written here.
+
+# app:
+#   plex_instance: plex  # a different deployed Plex instance to observe
+#   plex_port: 32400     # its published port when that instance is not on 32400
+
+# routing:
+#   identity: catalog    # Tautulli signs users in with Plex; do not use forward_auth.

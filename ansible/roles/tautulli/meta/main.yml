@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: tautulli
+  description: "Deploys Tautulli as a Docker container on a homelab-infra media stack host"
+  min_ansible_version: "2.15"
+
+dependencies:
+  - role: docker

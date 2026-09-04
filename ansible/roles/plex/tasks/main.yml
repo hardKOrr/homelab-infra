@@ -123,6 +123,23 @@
       update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
   no_log: true
 
+- name: Extract the Plex server token for media consumers
+  ansible.builtin.set_fact:
+    _plex_server_token: >-
+      {{ (_plex_preferences_after.content | b64decode
+          | regex_search('PlexOnlineToken="([^"]+)"', '\\1')
+          | default([], true) | join('')) }}
+  no_log: true
+
+- name: Store and verify the Plex server token
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      token: "{{ _plex_server_token }}"
+    vault_item_secret_fields: [token]
+  no_log: true
+
 - name: Remove the consumed claim token from the Compose project
   ansible.builtin.template:
     src: docker-compose.yml.j2

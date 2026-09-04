@@ -1,0 +1,24 @@
+# docker-compose.yml for Tautulli ({{ instance }})
+# Managed by homelab-infra — edit config/apps/{{ instance }}.yml, not this file.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1313) }}
+      - PGID={{ app_config.app.pgid | default(1313) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      # Tautulli reads TAUTULLI_<setting> as runtime config. The token and API
+      # key are sourced from Vaultwarden and task output stays no_log.
+      - TAUTULLI_PMS_URL={{ _tautulli_plex_url }}
+      - TAUTULLI_PMS_TOKEN={{ _tautulli_plex_token }}
+      - TAUTULLI_PMS_URL_MANUAL=1
+      - TAUTULLI_FIRST_RUN_COMPLETE=1
+      - TAUTULLI_API_KEY={{ _tautulli_api_key }}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(8181) }}"

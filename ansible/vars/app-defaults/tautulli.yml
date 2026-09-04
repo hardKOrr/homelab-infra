@@ -1,0 +1,24 @@
+---
+# Tautulli observes one Plex server. Its server token is published by the Plex
+# role to Vaultwarden, never authored in this file or an instance config.
+tautulli_defaults:
+  stack: media
+  app:
+    image: "ghcr.io/tautulli/tautulli:latest"
+    port: 8181
+    container_port: 8181
+    config_path: "/opt/{{ instance }}/config"
+    puid: 1313
+    pgid: 1313
+    # Name of the Plex instance whose token the role reads from Vaultwarden.
+    # Deploy that Plex instance first; its role records the server token after
+    # proving that its claim completed.
+    plex_instance: plex
+    # The selected Plex instance's published host port on this shared stack.
+    plex_port: 32400
+  routing:
+    subdomain: tautulli
+    proxy: internal
+    access: internal
+    # Tautulli uses Plex authentication itself. A forward-auth proxy would
+    # interfere with its Plex sign-in flow.

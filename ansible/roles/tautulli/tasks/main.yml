@@ -1,0 +1,96 @@
+---
+# Tautulli's official image accepts settings as TAUTULLI_<setting> environment variables. The Plex token comes from the Plex role's verified Vaultwarden item; this role deliberately never reads another app's on-disk configuration.
+- name: Resolve Tautulli paths and Plex credentials
+  ansible.builtin.set_fact:
+    _tautulli_base: "http://localhost:{{ app_config.app.port }}"
+    _tautulli_plex_instance: "{{ app_config.app.plex_instance | default('plex', true) }}"
+    _tautulli_plex_url: "http://localhost:{{ app_config.app.plex_port | default(32400) }}"
+    _tautulli_plex_token: >-
+      {{ ((homelabinfra_vault.media | default({}))[app_config.app.plex_instance | default('plex', true)] | default({})).token | default('', true) }}
+    _tautulli_api_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Require the selected Plex server token
+  ansible.builtin.assert:
+    that: _tautulli_plex_token | length > 0
+    fail_msg: >-
+      Plex instance {{ _tautulli_plex_instance }} has no server token in Vaultwarden. Deploy or converge that Plex instance first, then rerun {{ instance }}.
+  no_log: true
+
+- name: Create Tautulli project and persistent directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1313) }}"
+    group: "{{ app_config.app.pgid | default(1313) }}"
+    mode: "0750"
+  loop:
+    - "{{ tautulli_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+
+- name: Verify the selected Plex server accepts its token
+  ansible.builtin.uri:
+    url: "{{ _tautulli_plex_url }}/identity"
+    headers:
+      X-Plex-Token: "{{ _tautulli_plex_token }}"
+    return_content: true
+    status_code: 200
+  register: _tautulli_plex_identity
+  until: _tautulli_plex_identity.status | default(0) == 200
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Assert the selected server identifies itself as Plex
+  ansible.builtin.assert:
+    that: _tautulli_plex_identity.content is search('MediaContainer')
+    fail_msg: "The selected Plex instance did not return a Plex identity document."
+  no_log: true
+
+- name: Write the Tautulli Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ tautulli_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart tautulli
+  no_log: true
+
+- name: Pull the Tautulli image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ tautulli_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start Tautulli
+  community.docker.docker_compose_v2:
+    project_src: "{{ tautulli_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending Tautulli restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify Tautulli can answer through its API
+  ansible.builtin.uri:
+    url: "{{ _tautulli_base }}/api/v2?cmd=get_server_identity&apikey={{ _tautulli_api_key }}"
+    return_content: true
+    status_code: 200
+  register: _tautulli_server_identity
+  until: _tautulli_server_identity.status | default(0) == 200
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Store and verify the Tautulli API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _tautulli_api_key }}"
+    vault_item_secret_fields: [api_key]
+  no_log: true
