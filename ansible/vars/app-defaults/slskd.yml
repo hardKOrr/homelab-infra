@@ -1,0 +1,81 @@
+---
+# Default configuration for slskd — the media stack's Soulseek download
+# client for Lidarr's plugins-branch integration (ansible/vars/media-wiring.yml,
+# `slskd` kind: role download_client, implementation Slskd, auth api_key).
+# The Soulseek login is intentionally absent here: it is the operator's own
+# soulseek.net account, not a platform-generated credential, so it is stored
+# as the hidden slsk_username/slsk_password fields of Vaultwarden item
+# homelab-infra/apps/<instance> before the first deploy — the same shape as
+# Deemix's ARL (ansible/roles/deemix/tasks/main.yml,
+# vars/app-defaults/deemix.yml).
+slskd_defaults:
+  stack: media
+
+  app:
+    # The key ansible/vars/media-wiring.yml is looked up by. It is already
+    # declared there as a download client that speaks the `slskd` protocol.
+    media_kind: slskd
+
+    image: "slskd/slskd:latest"
+    port: 5030
+    container_port: 5030
+
+    # Published for incoming Soulseek peer connections. Forward it at the
+    # router for full download speed; the client works without that, more
+    # slowly — the same tradeoff as qBittorrent's torrenting_port.
+    listen_port: 50300
+
+    config_path: "/opt/{{ instance }}/config"
+
+    # Where completed downloads land, as the container sees it. It MUST be
+    # inside a media_storage mount (config/infrastructure.yml): Lidarr imports
+    # from here into the library, and that import is a hardlink rather than a
+    # copy only when both are on one filesystem. The role refuses a path
+    # outside the declared mounts — see roles/sabnzbd for the same rule.
+    download_path: >-
+      {{ ((homelabinfra_config.infrastructure.media_storage | default({})).mounts
+          | default([], true) | map(attribute='path') | list
+          | first | default('/mnt', true)) | regex_replace('/+$', '') }}/downloads
+
+    # Optional: host paths to share back to the Soulseek network. A lab that
+    # shares nothing still works — sharing is what other Soulseek users judge
+    # this account by, and etiquette, not a platform requirement. Point it at
+    # a read-only copy of the library, e.g. the same music mount navidrome
+    # reads:
+    # shared_dirs:
+    #   - /mnt/data/media/music
+
+    # The Soulseek network login is never authored here and never generated
+    # by this platform: it is the operator's own soulseek.net account,
+    # stored as the hidden slsk_username/slsk_password fields of Vaultwarden
+    # item homelab-infra/apps/<instance>. roles/slskd/tasks/main.yml fails
+    # loudly, naming that item, when either is absent.
+    # slsk_username: ""
+    # slsk_password: ""
+
+    # The web UI's own login. Only the username is set here — the password
+    # is never authored: the role generates it, proves the app accepts it,
+    # and stores it in Vaultwarden under homelab-infra/media/<instance>. The
+    # documented image default (slskd/slskd) is never left in place.
+    web_username: admin
+
+    # Matches media_storage.owner in infrastructure.yml, and must: this is
+    # the id the downloads are written as, and the *arr apps have to be able
+    # to hardlink them into the library afterwards. Unlike the LinuxServer
+    # images this stack otherwise uses, slskd does not read PUID/PGID — the
+    # role sets the container's `user:` field from these instead.
+    puid: 1313
+    pgid: 1313
+
+  routing:
+    subdomain: slskd
+    proxy: internal
+    access: internal
+    # catalog, NOT forward_auth — the same reasoning as SABnzbd and
+    # qBittorrent (vars/app-defaults/sabnzbd.yml), and the opposite of
+    # Deemix. slskd's REST API authenticates every *arr with the primary API
+    # key above, and a forward_auth proxy in front of it would intercept
+    # that traffic and break every download client entry in the lab.
+    # catalog publishes it and leaves the app to authenticate its own
+    # callers — both the API key and the generated web UI password above.
+    identity: catalog

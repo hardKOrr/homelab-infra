@@ -1,0 +1,11 @@
+---
+# Role-internal defaults for the slskd role. Everything a user would tune
+# lives in vars/app-defaults/slskd.yml instead — these are paths and timings
+# the role needs and nobody overrides.
+
+slskd_project_dir: "/opt/{{ instance }}"
+
+# How long to wait for the web interface to answer after the container
+# starts, and again after a key repair (mirrors roles/sabnzbd).
+slskd_webui_retries: 30
+slskd_webui_delay: 5

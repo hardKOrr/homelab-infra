@@ -236,6 +236,14 @@ applications:
     type: Download Clients
     scope: estate
 
+  slskd:
+    name: slskd
+    job: deploy-slskd.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Download Clients
+    scope: estate
+
   sonarr:
     name: Sonarr
     job: deploy-sonarr.yaml
