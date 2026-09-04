@@ -1,0 +1,31 @@
+---
+- id: a0b6b4f9-519d-500c-8820-76f2ea3d3e9f
+  uuid: a0b6b4f9-519d-500c-8820-76f2ea3d3e9f
+  name: Deploy Unpackerr
+  group: Applications/Media & Entertainment/Download Clients/Unpackerr
+  description: |-
+    Deploy or converge **Unpackerr** on the media stack.
+
+    - Uses every registered Arr endpoint and Vaultwarden API key
+    - Extracts completed archives on the shared media storage
+    - Has no browser UI, route, or monitor
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Use an estate-specific name for an additional media stack.'
+    required: true
+    value: unpackerr
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/unpackerr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/unpackerr.yml -e "instance=$RD_OPTION_INSTANCE"

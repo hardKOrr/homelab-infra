@@ -1,0 +1,9 @@
+# Copy to config/apps/unpackerr.yml (or unpackerr-<estate>.yml).
+# Unpackerr configures itself from every Arr entry already registered in the media registry. Deploy Sonarr, Radarr, or Lidarr first; their endpoint and Vaultwarden API key are the only Arr-specific inputs Unpackerr uses.
+stack: media
+app:
+  # Must be inside media_storage.mounts. The default is a downloads directory below the first mount, and is passed to every registered Arr as Unpackerr's fallback extraction path.
+  download_path: /mnt/downloads
+  # protocols: "usenet,UsenetDownloadProtocol,torrent,TorrentDownloadProtocol"
+  # puid: 1313
+  # pgid: 1313
