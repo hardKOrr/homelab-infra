@@ -1,0 +1,119 @@
+---
+# Deploy PostgreSQL as an independently managed, instanced backend.
+- name: PostgreSQL | Provision
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe backend instance name: -e instance=postgresql"
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/postgresql.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Merge app config
+      ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.postgresql_defaults | combine(_instance_config | default({}), recursive=True) }}"
+  tasks:
+    - name: Refresh inventory
+      ansible.builtin.meta: refresh_inventory
+    - name: Resolve instance inventory group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ instance }}"
+    - name: Collect existing instance hosts
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    - name: Reuse existing PostgreSQL guest
+      ansible.builtin.add_host:
+        name: "{{ _existing_hosts[0] }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ hostvars[_existing_hosts[0]].ansible_host | default(hostvars[_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+      changed_when: false
+      when: _existing_hosts | length > 0
+    - name: Ensure existing PostgreSQL guest is running
+      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
+      vars:
+        ensure_guest_host: "{{ _existing_hosts[0] }}"
+      when: _existing_hosts | length > 0
+    - name: Provision PostgreSQL LXC
+      when: _existing_hosts | length == 0
+      block:
+        - name: Set LXC identity
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({'proxmox': {'lxc': app_config.proxmox | combine({
+                'hostname': instance, 'tags': (app_config.proxmox.tags + ['_' ~ instance]) | unique
+              }, recursive=True)}}, recursive=True) }}
+        - name: Resolve backend network
+          ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+          vars:
+            resolve_network_app: postgresql
+            resolve_network_estate: ''
+        - name: Generate backend IP address
+          ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+          vars:
+            network_name: "{{ app_config.proxmox.network | default('', true) }}"
+            pool_name: "{{ app_config.proxmox.pool | default('') }}"
+            requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+        - name: Set LXC IP
+          ansible.builtin.set_fact:
+            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
+        - name: Derive VMID
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+        - name: Create LXC
+          ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
+        - name: Add PostgreSQL guest to deploy group
+          ansible.builtin.add_host:
+            name: "{{ homelabinfra_instance.lxc.hostname }}"
+            groups: "deploy_{{ instance }}"
+            ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+            app_config: "{{ app_config }}"
+
+- name: PostgreSQL | Deploy
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Bootstrap guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+  tasks:
+    - name: Deploy PostgreSQL
+      ansible.builtin.include_role:
+        name: postgresql
+
+- name: PostgreSQL | Register backend
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _postgresql_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+  tasks:
+    - name: Record PostgreSQL backend facts
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: databases
+        generated_facts_data:
+          "{{ instance }}":
+            provider: postgresql
+            host: "{{ _postgresql_host.ansible_host }}"
+            port: "{{ _postgresql_host.app_config.app.port }}"
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

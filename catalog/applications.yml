@@ -57,6 +57,14 @@ applications:
     scope: lab                          # the platform's single TLS edge fronts every estate
     essential: true
 
+  postgresql:
+    name: PostgreSQL
+    job: deploy-postgresql.yaml
+    root: Platform
+    category: Data Services
+    # Backends are deliberately instanced but serve applications across estates.
+    scope: lab
+
   bazarr:
     name: Bazarr
     job: deploy-bazarr.yaml

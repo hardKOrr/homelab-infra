@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  author: homelab-infra
+  description: Deploy a standalone PostgreSQL backend on a native LXC
+  license: MIT
+  min_ansible_version: "2.15"
+dependencies: []

@@ -1,0 +1,23 @@
+---
+# PostgreSQL is an instanced, shared backend. An application names an instance in
+# its `database.instance` configuration; this role does not silently create one as
+# a Compose sidecar.
+postgresql_defaults:
+  proxmox:
+    type: lxc
+    boot_order: 40
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 32
+    tags: [_+lab, _-debian]
+  app:
+    port: 5432
+    data_path: /var/lib/postgresql
+    service_name: postgresql
+    # CIDRs allowed to connect to this backend. Keep this a lab-local range.
+    client_cidrs: ["10.0.0.0/8"]
+  routing:
+    proxy: none
+    identity: none

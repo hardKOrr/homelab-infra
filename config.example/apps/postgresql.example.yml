@@ -1,0 +1,19 @@
+---
+# PostgreSQL backend instance configuration. Filename is the backend instance;
+# for example, postgresql.yml creates the `postgresql` backend.
+#
+# This backend has no route. Applications refer to it with:
+#   database:
+#     provider: postgresql
+#     instance: postgresql
+#     name: application_database
+#     role: application_role
+
+# proxmox:
+#   cores: 4
+#   memory: 4096
+#
+# app:
+#   # Restrict this to the CIDRs that contain application guests. Do not expose
+#   # PostgreSQL directly to the internet.
+#   client_cidrs: ["10.0.0.0/8"]

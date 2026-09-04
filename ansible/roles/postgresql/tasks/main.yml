@@ -1,0 +1,61 @@
+---
+# PostgreSQL backend. Package-managed PostgreSQL is intentionally kept outside
+# application Compose files so its lifecycle, backup coverage and credentials are
+# explicit and independently recoverable.
+- name: PostgreSQL | Install server and client dependencies
+  ansible.builtin.apt:
+    name: [postgresql, postgresql-client, python3-psycopg2]
+    state: present
+    update_cache: true
+
+- name: PostgreSQL | Find the package-created configuration directory
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    patterns: postgresql.conf
+    recurse: true
+    file_type: file
+  register: _postgresql_conf_files
+  changed_when: false
+
+- name: PostgreSQL | Assert one server configuration was found
+  ansible.builtin.assert:
+    that: _postgresql_conf_files.files | length == 1
+    fail_msg: >-
+      Expected exactly one package-managed PostgreSQL configuration beneath
+      /etc/postgresql, found {{ _postgresql_conf_files.files | length }}.
+
+- name: PostgreSQL | Set configuration paths
+  ansible.builtin.set_fact:
+    _postgresql_conf: "{{ _postgresql_conf_files.files[0].path }}"
+    _postgresql_hba: "{{ _postgresql_conf_files.files[0].path | dirname }}/pg_hba.conf"
+
+- name: PostgreSQL | Listen on the guest address
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: "^#?listen_addresses\\s*="
+    line: "listen_addresses = '*'"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Permit only declared application networks
+  ansible.builtin.blockinfile:
+    path: "{{ _postgresql_hba }}"
+    marker: "# {mark} homelab-infra application clients"
+    block: |
+      {% for cidr in app_config.app.client_cidrs %}
+      host    all             all             {{ cidr }}               scram-sha-256
+      {% endfor %}
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Enable and start service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+
+- name: PostgreSQL | Apply configuration changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: PostgreSQL | Verify local server readiness
+  ansible.builtin.command:
+    argv: [pg_isready, -h, 127.0.0.1, -p, "{{ app_config.app.port | string }}", -U, postgres]
+  changed_when: false
