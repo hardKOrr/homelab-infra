@@ -1,0 +1,118 @@
+{#
+  Jellyseerr — everything the instance owns, in the namespace the instance owns. Rendered
+  by roles/jellyseerr/tasks/main.yml and applied through tasks/kubernetes/apply-manifest.yml.
+
+  Simpler than roles/mixpost/templates/manifest.yaml.j2: Jellyseerr keeps its settings and
+  its own SQLite database in one directory and needs no external database or cache, so
+  there is one PVC and one Deployment rather than a StatefulSet-plus-Deployment pair.
+
+  Every object carries the instance labels, and every object is namespaced. Ownership is
+  therefore the namespace boundary rather than a label selector somebody has to remember to
+  write correctly in the removal job.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. The config volume is ReadWriteOnce on a node-pinned
+  # StorageClass, so a second pod cannot mount it while the first still holds it — a
+  # rolling update would deadlock waiting for a volume that will not be released.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: jellyseerr
+          image: {{ app_config.app.image }}
+          env:
+            - name: TZ
+              value: "{{ homelabinfra_config.timezone | default('UTC') }}"
+            - name: PORT
+              value: "{{ app_config.app.port }}"
+          ports:
+            - containerPort: {{ app_config.app.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          # Jellyseerr answers 200 on `/api/v1/status` before the first-run wizard has
+          # been completed, so this proves the process is up and serving, not that it is
+          # fully configured — the same liveness/usability split the platform draws
+          # everywhere else, and configuring it is the operator's first-login step this
+          # role does not perform.
+          readinessProbe:
+            httpGet:
+              path: /api/v1/status
+              port: {{ app_config.app.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ instance }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ app_config.app.port }}
+---
+# ── Ingress ───────────────────────────────────────────────────────────────────
+# Plain HTTP to the in-cluster controller, which answers on the MetalLB VIP. TLS is not
+# terminated here: the platform Caddy is the sole public TLS edge and proxies to that VIP.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ jellyseerr_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

@@ -1,0 +1,265 @@
+---
+# Restore one Jellyseerr instance's config volume from a PBS snapshot, into the namespace
+# of a Jellyseerr instance that is already deployed.
+#
+# Called by playbooks/maintenance/restore-app.yml, whose header carries the operator-facing
+# procedure. This file is the mechanism; that header is the documentation. Simpler than
+# roles/mixpost/tasks/restore.yml: there is no database to drop and reload and no
+# application key to carry across, because Jellyseerr keeps everything — settings, its own
+# API key, its Sonarr/Radarr/Jellyfin connections — inside the one volume being restored.
+#
+# THE SHAPE OF A RESTORE, AND WHY IT IS THIS SHAPE
+#
+# A backup is only a backup if a restore has been done. The target is a parameter rather
+# than an assumption: the source instance owns the snapshot, the target instance owns the
+# namespace it lands in. When they are the same instance this is a real recovery; when they
+# differ it is the drill, over the same code path.
+#
+# WHAT IS DELIBERATELY NOT AUTOMATED
+#
+# Nothing restores on a schedule and nothing restores on a failure. A restore replaces live
+# data with older data; that is always a decision a person makes, with a snapshot they
+# chose, and the plan mode below exists so they can make it with evidence.
+#
+# Inputs:
+#   instance               — the instance that OWNS the backup (the PBS backup-id)
+#   app_config             — the source instance's merged config
+#   restore_target         — the instance whose namespace receives the restore
+#   restore_target_config  — the target instance's merged config
+#   restore_snapshot       — a PBS snapshot identifier, or '' to just list what exists
+#   restore_overwrite      — false: plan only, write nothing. true: perform the restore.
+
+- name: Restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - restore_target is defined and restore_target | length > 0
+      - restore_target_config is defined
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+    fail_msg: >-
+      A restore needs a target instance and, to actually run, a snapshot to restore from.
+      Run it once without `snapshot` to list what PBS holds for this application, then
+      again naming one of the identifiers it printed.
+
+- name: Restore | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Restore | Derive the target namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/derive-namespace.yml
+  vars:
+    k8s_namespace_for: "{{ restore_target }}"
+
+- name: Restore | Read the target namespace's ownership label
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespace
+      - "{{ k8s_namespace }}"
+      - -o
+      - jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _js_r_owner
+  failed_when: false
+  changed_when: false
+
+- name: Restore | Require a deployed target
+  ansible.builtin.assert:
+    that:
+      - _js_r_owner.rc == 0
+      - (_js_r_owner.stdout | trim) == 'homelab-infra'
+    fail_msg: >-
+      Namespace {{ k8s_namespace }} does not exist, or is not labelled
+      `app.kubernetes.io/managed-by: homelab-infra`. Deploy the target instance first —
+      `Deploy Jellyseerr` with instance={{ restore_target }} — and run the restore against
+      the namespace it creates. For the clean-restore drill that is the whole point: deploy
+      a second instance under a new name, restore into it, and verify there without
+      touching the live one.
+
+- name: Restore | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Restore | Require a PBS to restore from
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No Proxmox Backup Server is recorded in config/.generated/facts.yml, so there is
+      nothing to restore from. This platform's application backups live in the lab's PBS
+      datastore and nowhere else.
+
+- name: Restore | Resolve the restore's identity
+  ansible.builtin.set_fact:
+    _js_r_mode: "{{ 'restore' if restore_overwrite | bool else 'plan' }}"
+    _js_r_target: "{{ restore_target }}"
+    _js_r_snapshot: "{{ restore_snapshot | default('') }}"
+    _js_r_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _js_r_secret: "{{ restore_target }}-restore"
+    _js_r_job_name: "{{ restore_target }}-restore-{{ 'plan' if not (restore_overwrite | bool) else 'run' }}"
+    _js_r_timeout: >-
+      {{ 900 if not (restore_overwrite | bool)
+         else (app_config.backup.timeout_seconds | default(3600) | int) }}
+
+- name: Restore | Sync the restore credentials into the target namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ _js_r_secret }}"
+    k8s_secret_data: >-
+      {{ {'pbs-password': k8s_pbs_password} }}
+
+- name: Restore | Render the restore job
+  ansible.builtin.set_fact:
+    _js_r_manifest: "{{ lookup('ansible.builtin.template', 'restore-job.yaml.j2') }}"
+
+# ── Plan: read-only, and the default ──────────────────────────────────────────
+- name: Restore | Show what a restore would do
+  when: not (restore_overwrite | bool)
+  block:
+    - name: Restore | Run the plan job
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+      vars:
+        k8s_job_name: "{{ _js_r_job_name }}"
+        k8s_job_manifest: "{{ _js_r_manifest }}"
+        k8s_job_timeout: "{{ _js_r_timeout }}"
+
+    - name: Restore | State what a real run would replace
+      ansible.builtin.debug:
+        msg:
+          - "PLAN ONLY — nothing was changed."
+          - "Source: PBS group host/{{ _js_r_backup_id }} in datastore
+             {{ k8s_pbs_datastore }}{{ ', snapshot ' ~ _js_r_snapshot
+                if _js_r_snapshot | length > 0 else ' (no snapshot named)' }}."
+          - "Target: namespace {{ k8s_namespace }} — the
+             {{ restore_target }}-config volume. It is listed above as it stands now; a
+             real run empties it before writing the snapshot's contents."
+          - "To do it: re-run this job with the same snapshot and overwrite=true."
+
+    - name: Restore | Remove the plan's credentials from the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - "secret/{{ _js_r_secret }}"
+          - --ignore-not-found=true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+# ── Restore: the destructive path ─────────────────────────────────────────────
+- name: Restore | Restore the snapshot into the target
+  when: restore_overwrite | bool
+  block:
+    # Stopped, not left running. The application would otherwise be reading and writing a
+    # SQLite database being emptied underneath it, which is a worse outcome than a job
+    # that took the app offline for the length of the restore.
+    - name: Restore | Stop the target application
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ restore_target }}"
+          - --replicas=0
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    - name: Restore | Wait for the application pod to go away
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - wait
+          - --for=delete
+          - pod
+          - "--selector=app.kubernetes.io/instance={{ restore_target }},app.kubernetes.io/component=web"
+          - --timeout=300s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+    - name: Restore | Run the restore job
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/run-job.yml
+      vars:
+        k8s_job_name: "{{ _js_r_job_name }}"
+        k8s_job_manifest: "{{ _js_r_manifest }}"
+        k8s_job_timeout: "{{ _js_r_timeout }}"
+
+    - name: Restore | Start the target application again
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - scale
+          - "deployment/{{ restore_target }}"
+          # The manifest declares exactly one replica. Do not read the value at the start
+          # of this run: a failed prior attempt deliberately left it at zero.
+          - --replicas=1
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    - name: Restore | Wait for the target application to come back
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - status
+          - "deployment/{{ restore_target }}"
+          - --timeout=600s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
+    - name: Restore | State how to verify the restored application
+      ansible.builtin.debug:
+        msg:
+          - "Restored {{ _js_r_snapshot }} into namespace {{ k8s_namespace }}."
+          - "The file count above is the config volume's own account of what arrived."
+          - "Now verify the application, not the artifact: open
+             https://{{ restore_target }}.<estate domain>/, sign in with the credentials
+             that worked on {{ instance }} — the accounts came from the same restored
+             database — and check that requests, users and the Sonarr/Radarr/media-server
+             connections are all present."
+
+  rescue:
+    - name: Restore | Report a failed restore and leave the target stopped
+      ansible.builtin.fail:
+        msg: >-
+          The restore of {{ _js_r_snapshot }} into {{ k8s_namespace }} did not complete,
+          and {{ restore_target }} has been LEFT SCALED TO 0 rather than started again —
+          its config volume may be partially replaced. The Job's own output is above. When
+          you have decided what to do, either re-run this restore, or start the application
+          as it stands with:
+          k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ restore_target }}
+          --replicas=1
+
+  always:
+    - name: Restore | Remove the restore credentials from the namespace
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - delete
+          - "secret/{{ _js_r_secret }}"
+          - --ignore-not-found=true
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true

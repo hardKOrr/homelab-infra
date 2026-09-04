@@ -88,8 +88,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Only apps whose role ships a `restore.yml` can be restored this way — today that is the
-# Kubernetes-hosted `mixpost`. The playbook says so plainly rather than failing on a
-# missing file.
+# Kubernetes-hosted `mixpost` and `jellyseerr`. The playbook says so plainly rather than
+# failing on a missing file.
 
 - name: "Restore App | Restore application data from PBS"
   hosts: localhost

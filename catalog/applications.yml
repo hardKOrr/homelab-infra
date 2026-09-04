@@ -89,6 +89,14 @@ applications:
     type: Media Analytics
     scope: estate
 
+  jellyseerr:
+    name: Jellyseerr
+    job: deploy-jellyseerr.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Request Management
+    scope: estate
+
   k3s-cluster:
     name: k3s Cluster
     job: deploy-k3s-cluster.yaml

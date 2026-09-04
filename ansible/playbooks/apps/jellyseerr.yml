@@ -1,0 +1,156 @@
+---
+# Deploy Jellyseerr — the media stack's request front end, the second application on the
+# Kubernetes hosting backend (slice 204's pilot was mixpost).
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/jellyseerr.yml -e instance=jellyseerr
+#
+# STRUCTURALLY IDENTICAL TO playbooks/apps/mixpost.yml, AND DELIBERATELY SO
+#
+# No guest to provision and no guest to run a role on: its resources live in a namespace on
+# a cluster that outlives any deployment of it, so the whole thing runs on localhost and
+# reaches the cluster through tasks/kubernetes/, which delegates kubectl to a cluster node.
+#
+# What is NOT different: the config merge, the one-job-per-app UI, the wiring contract, and
+# the idempotent re-run. A converged deploy reports no change, and the app is published
+# through the same Caddy, Authentik, Uptime Kuma and DNS steps as any other.
+#
+# WHAT THIS PLAYBOOK DOES NOT DO
+#
+# It does not complete Jellyseerr's own first-run wizard. See roles/jellyseerr/tasks/main.yml
+# and docs/meta/408-app-catalog/README.md's jellyseerr row for why that step — connecting
+# it to a Jellyfin or Plex server and to Sonarr/Radarr — is left to the operator's first
+# sign-in rather than automated against an API contract this repo cannot verify against a
+# live instance.
+
+# ── Play 1: Resolve and deploy ─────────────────────────────────────────────────
+- name: "Jellyseerr | Deploy"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=jellyseerr"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/jellyseerr.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.jellyseerr_defaults
+             | combine(_instance_config | default({}), recursive=True) }}
+
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        jellyseerr_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        jellyseerr_fqdn: >-
+          {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
+
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Deploy Jellyseerr onto the cluster
+      ansible.builtin.include_role:
+        name: jellyseerr
+
+
+# ── Play 2: Wire ───────────────────────────────────────────────────────────────
+# Identical in shape to every other Kubernetes app's wiring play — the upstream points at
+# the cluster's ingress VIP rather than a guest IP, because that address is stable across
+# rescheduling, node loss and a full cluster rebuild.
+- name: "Jellyseerr | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    wiring_upstream_port: 80
+    wiring_subdomain: "{{ hostvars['localhost'].jellyseerr_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].jellyseerr_fqdn }}"
+    wiring_app_display: "Jellyseerr ({{ instance }})"
+    wiring_monitor_url: "https://{{ hostvars['localhost'].jellyseerr_fqdn }}/"
+    wiring_auth_group: "homelab-users"
+    wiring_identity_mode: "{{ hostvars['localhost'].app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ hostvars['localhost'].app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra.monitoring is defined
+        - homelabinfra_infra.monitoring.provider | default('none') != 'none'
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    # Stamped on every node of the target cluster, not on the one that happens to be
+    # running the pod — the assignment does not move when the scheduler reschedules.
+    - name: Record the app on every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].jellyseerr_fqdn }}"
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Jellyseerr deployed"
+        notify_message: >-
+          {{ instance }} is running on the Kubernetes backend at
+          https://{{ hostvars['localhost'].jellyseerr_fqdn }}. Sign in once to connect it
+          to a Jellyfin or Plex server and to Sonarr/Radarr — that first-run step is not
+          automated (see the role's header for why).
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"
