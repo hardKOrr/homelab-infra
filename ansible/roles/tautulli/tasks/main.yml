@@ -4,7 +4,8 @@
   ansible.builtin.set_fact:
     _tautulli_base: "http://localhost:{{ app_config.app.port }}"
     _tautulli_plex_instance: "{{ app_config.app.plex_instance | default('plex', true) }}"
-    _tautulli_plex_url: "http://localhost:{{ app_config.app.plex_port | default(32400) }}"
+    _tautulli_plex_url: "http://{{ app_config.app.plex_instance | default('plex', true) }}:32400"
+    _tautulli_media_network: "homelabinfra-{{ app_config.stack }}"
     _tautulli_plex_token: >-
       {{ ((homelabinfra_vault.media | default({}))[app_config.app.plex_instance | default('plex', true)] | default({})).token | default('', true) }}
     _tautulli_api_key: >-
@@ -29,25 +30,10 @@
     - "{{ tautulli_project_dir }}"
     - "{{ app_config.app.config_path }}"
 
-- name: Verify the selected Plex server accepts its token
-  ansible.builtin.uri:
-    url: "{{ _tautulli_plex_url }}/identity"
-    headers:
-      X-Plex-Token: "{{ _tautulli_plex_token }}"
-    return_content: true
-    status_code: 200
-  register: _tautulli_plex_identity
-  until: _tautulli_plex_identity.status | default(0) == 200
-  retries: "{{ tautulli_http_retries }}"
-  delay: "{{ tautulli_http_delay }}"
-  changed_when: false
-  no_log: true
-
-- name: Assert the selected server identifies itself as Plex
-  ansible.builtin.assert:
-    that: _tautulli_plex_identity.content is search('MediaContainer')
-    fail_msg: "The selected Plex instance did not return a Plex identity document."
-  no_log: true
+- name: Ensure media applications share a Docker network
+  community.docker.docker_network:
+    name: "{{ _tautulli_media_network }}"
+    state: present
 
 - name: Write the Tautulli Compose project
   ansible.builtin.template:
@@ -73,6 +59,21 @@
 
 - name: Apply pending Tautulli restarts
   ansible.builtin.meta: flush_handlers
+
+- name: Verify Tautulli can reach the selected Plex container
+  community.docker.docker_container_exec:
+    container: "{{ instance }}"
+    command: >-
+      wget -qO- --header=X-Plex-Token:{{ _tautulli_plex_token }}
+      {{ _tautulli_plex_url }}/identity
+  register: _tautulli_plex_identity
+  until:
+    - _tautulli_plex_identity.rc | default(1) == 0
+    - _tautulli_plex_identity.stdout is search('MediaContainer')
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
 
 - name: Verify Tautulli can answer through its API
   ansible.builtin.uri:

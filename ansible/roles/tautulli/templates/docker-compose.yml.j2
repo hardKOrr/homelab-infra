@@ -22,3 +22,9 @@ services:
       - "{{ app_config.app.config_path }}:/config"
     ports:
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(8181) }}"
+    networks:
+      - media
+networks:
+  media:
+    external: true
+    name: "{{ _tautulli_media_network }}"

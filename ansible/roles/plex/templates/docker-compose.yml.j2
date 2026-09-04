@@ -25,6 +25,8 @@ services:
 {% endfor %}
     ports:
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(32400) }}"
+    networks:
+      - media
 {% if (app_config.app.devices | default([])) | length > 0 %}
     devices:
 {% for device in app_config.app.devices %}
@@ -32,3 +34,7 @@ services:
       - "{{ device }}:{{ device }}"
 {% endfor %}
 {% endif %}
+networks:
+  media:
+    external: true
+    name: "{{ _plex_media_network }}"

@@ -14,8 +14,6 @@ tautulli_defaults:
     # Deploy that Plex instance first; its role records the server token after
     # proving that its claim completed.
     plex_instance: plex
-    # The selected Plex instance's published host port on this shared stack.
-    plex_port: 32400
   routing:
     subdomain: tautulli
     proxy: internal
