@@ -1,0 +1,18 @@
+---
+# Default configuration for Unpackerr — the media stack daemon that extracts completed archives after Sonarr, Radarr, Lidarr, or an externally managed Readarr reports them. Users override specific values in config/apps/unpackerr.yml.
+# Unpackerr has no browser UI. Its Arr connections are assembled at deploy time from the media registry's endpoint records and their Vaultwarden API keys, so this file deliberately has no route, credential, or per-Arr configuration.
+unpackerr_defaults:
+  stack: media
+  app:
+    image: "golift/unpackerr:latest"
+    download_path: >-
+      {{ ((homelabinfra_config.infrastructure.media_storage | default({})).mounts | default([], true) | map(attribute='path') | list | first | default('/mnt', true)) | regex_replace('/+$', '') }}/downloads
+    mounts: >-
+      {{ (homelabinfra_config.infrastructure.media_storage | default({})).mounts | default([], true) }}
+    protocols: "usenet,UsenetDownloadProtocol,torrent,TorrentDownloadProtocol"
+    puid: 1313
+    pgid: 1313
+  routing:
+    # Metrics are disabled and Unpackerr has no operator UI. Arr connections are outbound from this container, so publishing a reverse-proxy route, DNS record, identity object, or monitor would describe a service that does not exist.
+    proxy: none
+    identity: none

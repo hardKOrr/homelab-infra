@@ -1,0 +1,73 @@
+---
+# Deploy Unpackerr on the estate-resolved media stack. It has no browser UI: the role reads every registered Arr endpoint and API key from the media registry, then configures Unpackerr to extract completed downloads on their shared mounts.
+- name: "Unpackerr | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=unpackerr"
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/unpackerr.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Merge Unpackerr config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.unpackerr_defaults | combine({'media_storage': homelabinfra_config.infrastructure.media_storage | default({})}, recursive=True) | combine(_instance_config | default({}), recursive=True) }}
+  tasks:
+    - name: Find or create the media stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+    - name: Attach Unpackerr media paths to the stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_list: "{{ app_config.app.mounts | default([], true) }}"
+        attach_mounts_owner: "{{ (app_config.media_storage | default({})).owner | default({}) }}"
+      when: app_config.app.mounts | default([], true) | length > 0
+- name: "Unpackerr | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap the stack host
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+    - name: Deploy Unpackerr
+      ansible.builtin.include_role:
+        name: unpackerr
+- name: "Unpackerr | Record app"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  vars:
+    _unpackerr_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+  tasks:
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

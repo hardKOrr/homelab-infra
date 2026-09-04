@@ -1,0 +1,22 @@
+# docker-compose.yml for Unpackerr ({{ instance }})
+# Managed by homelab-infra. The Arr API keys come from Vaultwarden through the media registry; do not copy this file or its environment values elsewhere.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    user: "{{ app_config.app.puid | default(1313) }}:{{ app_config.app.pgid | default(1313) }}"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+{% for arr in _unpackerr_arrs %}
+      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_URL={{ arr.value.host }}
+      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_API_KEY={{ arr.value.api_key }}
+      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_PATHS_0={{ app_config.app.download_path }}
+      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_PROTOCOLS={{ app_config.app.protocols }}
+{% endfor %}
+    volumes:
+{% for mount in _unpackerr_mounts %}
+      - "{{ mount.path }}:{{ mount.path }}"
+{% endfor %}

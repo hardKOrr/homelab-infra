@@ -122,6 +122,18 @@ applications:
     # does not already give back. See vars/app-defaults/flaresolverr.yml.
     exclude: [backup, restore]
 
+  unpackerr:
+    name: Unpackerr
+    job: deploy-unpackerr.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Download Clients
+    scope: estate
+    # Unpackerr is a stateless daemon. Its Arr settings are reconstructed from
+    # the media registry and Vaultwarden at every deploy, so backup/restore
+    # would not recover application state.
+    exclude: [backup, restore]
+
   k3s-cluster:
     name: k3s Cluster
     job: deploy-k3s-cluster.yaml
