@@ -1,0 +1,53 @@
+# Deploy slskd — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 7c1e4a3f-6b9d-4f2a-8e7c-3d5a9b0c1f6e
+  uuid: 7c1e4a3f-6b9d-4f2a-8e7c-3d5a9b0c1f6e
+  name: Deploy slskd
+  group: Applications/Media & Entertainment/Download Clients/slskd
+  description: |-
+    Deploy or converge **slskd**, Lidarr's Soulseek download client. Docker on the
+    `media` stack.
+
+    - Requires the operator's own Soulseek network login in Vaultwarden item
+      `homelab-infra/apps/<instance>` (hidden fields `slsk_username` and
+      `slsk_password`) — store a current one there before the first run
+    - Registers the instance in the media application registry
+
+    Run **Wire Media Stack** afterward to add it to each Lidarr running the
+    plugins branch.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional slskd instance. The value identifies its config file, Compose project,
+      and route.'
+    required: true
+    value: slskd
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/slskd.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/slskd.yml "${ARGS[@]}"

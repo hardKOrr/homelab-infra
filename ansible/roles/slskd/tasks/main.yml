@@ -1,0 +1,366 @@
+---
+# slskd role — slskd as a Docker container on a stack host. Called from
+# Play 2 of playbooks/apps/slskd.yml. Target: the media host.
+#
+# Lidarr's plugins-branch Soulseek download client (ansible/vars/media-wiring.yml,
+# `slskd` kind — the plugins branch only; a mainline Lidarr rejects it and the
+# wiring reports the failed probe, same caveat as `deemix`).
+#
+# Variables available:
+#   app_config           — merged defaults + user config (from Play 1)
+#   instance              — the instance name (e.g. slskd)
+#   homelabinfra_config   — merged input config, including infrastructure.*
+#   homelabinfra_vault    — the in-memory Vaultwarden contract
+#
+# Exports (read by Play 3 to write the `media` registry key):
+#   slskd_media_kind, slskd_media_host
+#
+# WHY THIS IS NEITHER roles/deemix NOR roles/sabnzbd, but borrows from both.
+# slskd carries two separate credentials with two separate owners:
+#
+#   - soulseek.username/password are the operator's own login to the Soulseek
+#     network — a real account this platform cannot create, exactly like
+#     Deemix's ARL. Required, asserted, never generated here.
+#   - the primary API key is what every *arr in the lab authenticates to
+#     THIS app's REST API with (media-wiring.yml records `auth: api_key`,
+#     the same shape as SABnzbd) — a platform-managed credential this role
+#     generates once and remembers.
+#
+# UNLIKE SABnzbd, there is no continuity hazard to guard against: this image
+# has no config file of its own to seed and no UI path that can mint a
+# competing key (SLSKD_REMOTE_CONFIGURATION defaults off — see the Compose
+# template header), so the value in Vaultwarden IS the value in force once
+# the container is (re)started. That also means a credential rotation is
+# nothing more than "the templated environment changed", which the existing
+# `notify: Restart slskd` on the Compose write already covers — there is no
+# second file with its own notify path to forget, the way Deemix's ARL had.
+
+- name: Load the media wiring table
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Resolve the app kind
+  ansible.builtin.set_fact:
+    _slskd_kind: "{{ app_config.app.media_kind }}"
+    _slskd_base: "http://localhost:{{ app_config.app.port }}"
+
+# The kind is not decoration: wire-media-stack.yml refuses to wire an app
+# whose kind is not in the table, so a typo here would deploy a download
+# client that silently never joins the stack. Failing at deploy time names
+# the problem where it was made.
+- name: Assert the app kind is known to the media wiring table
+  ansible.builtin.assert:
+    that:
+      - _slskd_kind in media_wiring.kinds
+      - media_wiring.kinds[_slskd_kind].role == 'download_client'
+    fail_msg: >-
+      app.media_kind is "{{ _slskd_kind }}", which ansible/vars/media-wiring.yml
+      does not define as a download client. Known kinds:
+      {{ media_wiring.kinds.keys() | list | join(', ') }}.
+      wire-media-stack.yml would skip this instance.
+
+- name: Resolve the Soulseek network credentials
+  ansible.builtin.set_fact:
+    _slskd_soulseek_username: "{{ app_config.app.slsk_username | default('', true) }}"
+    _slskd_soulseek_password: "{{ app_config.app.slsk_password | default('', true) }}"
+  no_log: true
+
+- name: Require Soulseek network credentials for this instance
+  ansible.builtin.assert:
+    that:
+      - _slskd_soulseek_username | length > 0
+      - _slskd_soulseek_password | length > 0
+    fail_msg: >-
+      {{ instance }} has no Soulseek login. Store the operator's own
+      soulseek.net username and password as hidden fields slsk_username and
+      slsk_password in Vaultwarden item homelab-infra/apps/{{ instance }},
+      then rerun. This platform never creates a Soulseek account — the same
+      stance roles/deemix takes on the Deezer ARL.
+  no_log: true
+
+# ── API key continuity ──────────────────────────────────────────────────────
+# There is no file to read this back from (see the role header): Vaultwarden
+# alone is the record of the key this platform already issued, so a redeploy
+# that finds nothing there would otherwise mint a fresh key on every run and
+# stale every *arr's download-client entry, the same hazard sabnzbd guards
+# against with sabnzbd.ini.
+- name: Resolve the API key
+  ansible.builtin.set_fact:
+    _slskd_api_key: >-
+      {{ _slskd_vault_key
+         | default(lookup('password', '/dev/null length=32 chars=ascii_lowercase,digits'), true) }}
+  vars:
+    _slskd_vault_key: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).api_key
+         | default('', true) }}
+  no_log: true
+
+# The web UI's own login is a second, human-facing credential the *arr
+# wiring never touches — but this image's documented default (slskd/slskd)
+# is a real credential, not a placeholder, so a deploy that left it in place
+# would ship a known password. Generated and remembered the same way as the
+# API key, for the same reason: nothing else in this image can mint a
+# competing one.
+- name: Resolve the web UI password
+  ansible.builtin.set_fact:
+    _slskd_web_password: >-
+      {{ _slskd_vault_web_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  vars:
+    _slskd_vault_web_password: >-
+      {{ ((homelabinfra_vault.media | default({}))[instance] | default({})).web_password
+         | default('', true) }}
+  no_log: true
+
+# ── Directories ───────────────────────────────────────────────────────────────
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ slskd_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# Owned by the container's uid: unlike the LinuxServer images this stack
+# otherwise uses, slskd's whole persistent state — settings, shares
+# database, logs — lives under this one bind mount at /app.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.config_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0750"
+
+# ── Storage the lab already provides ──────────────────────────────────────────
+# Same stance as roles/sabnzbd and roles/deemix: the mounts are the lab's,
+# attached to the stack host by Play 1, and only ever asserted here.
+- name: Resolve the storage this app uses
+  ansible.builtin.set_fact:
+    _slskd_mounts: >-
+      {{ app_config.app.mounts
+         | default((app_config.media_storage | default({})).mounts | default([]), true) }}
+
+- name: Verify the declared mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _slskd_mount_check
+  loop: "{{ _slskd_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared mount is present on the stack host
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. It is declared
+      in media_storage.mounts and Play 1 attaches it as a Proxmox mountpoint,
+      so either the attach did not happen or the guest has not restarted
+      since. This platform attaches storage the lab already provides; it
+      never creates it.
+  loop: "{{ _slskd_mount_check.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# slskd keeps incomplete and completed downloads in two directories, and both
+# are derived from the one path the platform declares — the same sibling
+# shape as roles/sabnzbd, for the same reason: a completed download that has
+# to cross a filesystem to reach the *arr import is copied twice instead of
+# moved once.
+- name: Resolve the download directories
+  ansible.builtin.set_fact:
+    _slskd_download_root: "{{ app_config.app.download_path | regex_replace('/+$', '') }}"
+    _slskd_incomplete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/incomplete"
+    _slskd_complete_dir: "{{ app_config.app.download_path | regex_replace('/+$', '') }}/complete"
+
+- name: Assert the download directory is inside the lab's storage
+  ansible.builtin.assert:
+    that: >-
+      _slskd_mounts | map(attribute='path') | map('regex_replace', '/+$', '')
+      | select('in', _slskd_download_ancestors) | list | length > 0
+    fail_msg: >-
+      app.download_path is {{ app_config.app.download_path }}, which is not
+      inside any media_storage mount
+      ({{ _slskd_mounts | map(attribute='path') | join(', ') | default('none declared', true) }}).
+      Completed downloads would land on the stack host's own disk and never
+      hardlink into the library. Point app.download_path at a directory under
+      one of the mounts, or declare the mount that holds it in
+      config/infrastructure.yml.
+  vars:
+    # Serialized through JSON because a template carrying {% %} statement
+    # blocks renders to a STRING; see the same construction in
+    # tasks/load-user-vars.yml and roles/deemix/tasks/main.yml.
+    _slskd_download_ancestors_json: >-
+      {%- set parts = _slskd_download_root.split('/') -%}
+      {%- set out = [] -%}
+      {%- for i in range(1, parts | length + 1) -%}
+      {%- set _ = out.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _slskd_download_ancestors: "{{ _slskd_download_ancestors_json | from_json }}"
+
+- name: Ensure this app owns its download directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0775"
+  register: _slskd_download_dirs
+  loop:
+    - "{{ _slskd_download_root }}"
+    - "{{ _slskd_incomplete_dir }}"
+    - "{{ _slskd_complete_dir }}"
+  failed_when: false
+
+- name: Assert the download directories are usable
+  ansible.builtin.assert:
+    that: not (item.failed | default(false))
+    fail_msg: >-
+      {{ instance }} cannot own {{ item.item }} ({{ item.msg | default('') }}). On
+      an unprivileged stack host this is what an unmapped owner looks like: a
+      directory whose host uid falls outside the guest's id range appears as
+      nobody:nogroup and not even root inside the guest can chown it. Check that
+      the mount and everything under it belongs to media_storage.owner
+      ({{ (app_config.media_storage | default({})).owner.user | default('unset') }})
+      on the Proxmox node.
+  loop: "{{ _slskd_download_dirs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ slskd_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart slskd
+  no_log: true   # the rendered file carries the Soulseek password and the API key
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+# policy: missing, matching roles/deemix and roles/sabnzbd — a deploy ensures
+# the image is present, Watchtower is what moves it forward and reports it.
+- name: Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ slskd_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ slskd_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the web interface to answer
+  ansible.builtin.uri:
+    url: "{{ _slskd_base }}/api/v0/application"
+    headers:
+      X-Api-Key: "{{ _slskd_api_key }}"
+    status_code: [200, 401, 403]
+  register: _slskd_up
+  until: _slskd_up.status | default(0) in [200, 401, 403]
+  retries: "{{ slskd_webui_retries }}"
+  delay: "{{ slskd_webui_delay }}"
+  changed_when: false
+  no_log: true
+
+# ── Prove the key works ─────────────────────────────────────────────────────
+# The app is asked, not its configuration file — the lesson roles/servarr
+# paid for. A container that answers its port is not the same thing as an
+# app that answers to the credential this deploy holds, and the credential is
+# the only part the media wiring depends on. Unlike SABnzbd there is nothing
+# to repair here (see the role header): the key just templated into the
+# environment is authoritative, so a failure here means the container has not
+# picked it up yet rather than a competing key to reconcile.
+- name: Ask the app what it is
+  ansible.builtin.uri:
+    url: "{{ _slskd_base }}/api/v0/application"
+    headers:
+      X-Api-Key: "{{ _slskd_api_key }}"
+    status_code: 200
+  register: _slskd_state
+  changed_when: false
+  no_log: true
+
+- name: Assert the API answers to the key this deploy holds
+  ansible.builtin.assert:
+    that: (_slskd_state.json.version.current | default('')) is match('^[0-9]')
+    fail_msg: >-
+      {{ instance }} refused the API key this deploy holds
+      ({{ _slskd_state.status | default('no response') }}). Check
+      `docker logs {{ instance }}` — SLSKD_API_KEY is set unconditionally by
+      this role's Compose template, so a mismatch means the container has
+      not restarted onto the current environment yet.
+
+# Soulseek login is a separate, slower handshake than the container starting
+# — a bad or expired password answers the API just fine and never logs in,
+# so this is checked as its own condition rather than folded into the assert
+# above, and given a longer window to settle.
+- name: Wait for the Soulseek network login to complete
+  ansible.builtin.uri:
+    url: "{{ _slskd_base }}/api/v0/application"
+    headers:
+      X-Api-Key: "{{ _slskd_api_key }}"
+    status_code: 200
+  register: _slskd_login
+  until: (_slskd_login.json.server.isLoggedIn | default(false)) | bool
+  retries: "{{ slskd_webui_retries }}"
+  delay: "{{ slskd_webui_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Assert the Soulseek network login succeeded
+  ansible.builtin.assert:
+    that: (_slskd_login.json.server.isLoggedIn | default(false)) | bool
+    fail_msg: >-
+      {{ instance }} is up and answers its API key, but never logged into the
+      Soulseek network. Check that the slsk_username and slsk_password
+      fields in Vaultwarden item homelab-infra/apps/{{ instance }} are a
+      current, working Soulseek account — `docker logs {{ instance }}` shows
+      the server's own rejection.
+
+# The mirror of the servarr, qbittorrent and sabnzbd unauthenticated-API
+# checks, and the same reason: without it, an instance that has stopped
+# requiring a key looks identical to a secured one from here, and the lab
+# ships an open Soulseek client on the LAN.
+- name: Call the API with no key
+  ansible.builtin.uri:
+    url: "{{ _slskd_base }}/api/v0/application"
+    status_code: [200, 401, 403]
+  register: _slskd_unauthenticated
+  changed_when: false
+
+- name: Assert the API refuses a caller with no key
+  ansible.builtin.assert:
+    that: _slskd_unauthenticated.status != 200
+    fail_msg: >-
+      {{ instance }} served /api/v0/application to a caller with no API key.
+      Its authentication is what decides that, and this deploy always sets
+      SLSKD_API_KEY — so the running container is not the one this role's
+      Compose template describes. Anything on the LAN could reach this API
+      unauthenticated.
+
+# ── Store the credential ──────────────────────────────────────────────────────
+# Written under the same canonical item name wire-media-stack.yml reads, and
+# with the field name tasks/app-wiring/arr-download-client.yml expects for an
+# `api_key` client (ansible/vars/media-wiring.yml, ansible/vars/CONTRACT.md
+# §3). Stored after the app has proven the key works, never before.
+- name: Store and verify the API key
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      api_key: "{{ _slskd_api_key }}"
+      web_password: "{{ _slskd_web_password }}"
+    vault_item_secret_fields: [api_key, web_password]
+
+# ── Hand the endpoint back to the playbook ────────────────────────────────────
+- name: Export the media registry entry to the playbook
+  ansible.builtin.set_fact:
+    slskd_media_kind: "{{ _slskd_kind }}"
+    slskd_media_host: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

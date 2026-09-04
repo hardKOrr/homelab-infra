@@ -1,0 +1,44 @@
+---
+# slskd instance config.
+# Copy to config/apps/slskd.yml (or slskd-4k.yml, etc.).
+# The filename you choose IS the instance name: it becomes the hostname,
+# Caddy subdomain (slskd.yourdomain.com), and Authentik app name.
+#
+# Only set values that differ from the defaults in vars/app-defaults/slskd.yml.
+# This file persists after removal — it is your restore point.
+#
+# The Soulseek network login is NOT configured here and never will be: it is
+# the operator's own soulseek.net account. Store it with Store Secret: item
+# homelab-infra/apps/<instance>, hidden fields slsk_username and
+# slsk_password, before the first deploy.
+
+# ── Stack assignment (Docker app) ────────────────────────────────────────────
+stack: media     # which Docker stack host this app runs on
+
+# ── App config ───────────────────────────────────────────────────────────────
+app:
+  # Where downloads land, as the container sees it. It must be inside a
+  # media_storage mount declared in config/infrastructure.yml: Lidarr imports
+  # from here into the library, and that import is a hardlink rather than a
+  # copy only when both are on one filesystem. The deploy refuses a path
+  # outside them.
+  download_path: /mnt/downloads
+
+  # port: 5030                 # the web port the stack host publishes.
+  # listen_port: 50300         # forward this at the router for full download speed.
+
+  # Optional: host paths to share back to the Soulseek network. Sharing
+  # nothing still works; it is what other users judge this account by.
+  # shared_dirs:
+  #   - /mnt/data/media/music
+
+# ── Routing ──────────────────────────────────────────────────────────────────
+# routing:
+#   proxy: internal            # internal | external (WHICH reverse proxy handles this app)
+#   access: internal           # internal | public (WHO may reach it — public means the
+#                              # internet on a WAN-facing proxy)
+#   identity: catalog          # none | catalog | oidc | forward_auth.
+#                              # catalog is the default and the right one: slskd's REST
+#                              # API authenticates every *arr with its own API key, and a
+#                              # forward_auth proxy in front of it would intercept that
+#                              # traffic and break every download client entry in the lab.
