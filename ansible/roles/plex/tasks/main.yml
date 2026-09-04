@@ -4,6 +4,7 @@
     _plex_base: "http://localhost:{{ app_config.app.port }}"
     _plex_preferences: "{{ app_config.app.config_path }}/Library/Application Support/Plex Media Server/Preferences.xml"
     _plex_mounts: "{{ app_config.app.mounts | default([], true) }}"
+    _plex_media_network: "homelabinfra-{{ app_config.stack }}"
     _plex_claim_token: "{{ app_config.app.claim_token | default('', true) }}"
     _plex_advertise_url: >-
       {{ app_config.app.advertise_url | default('', true)
@@ -53,6 +54,11 @@
     group: "{{ app_config.app.pgid | default(1313) }}"
     mode: "0750"
   loop: ["{{ plex_project_dir }}", "{{ app_config.app.config_path }}", "{{ app_config.app.transcode_path }}"]
+
+- name: Ensure media applications share a Docker network
+  community.docker.docker_network:
+    name: "{{ _plex_media_network }}"
+    state: present
 
 - name: Verify media paths are present on the stack host
   ansible.builtin.stat:
@@ -121,6 +127,23 @@
     fail_msg: >-
       Plex started but did not record a server token. Obtain a fresh claim token,
       update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
+  no_log: true
+
+- name: Extract the Plex server token for media consumers
+  ansible.builtin.set_fact:
+    _plex_server_token: >-
+      {{ (_plex_preferences_after.content | b64decode
+          | regex_search('PlexOnlineToken="([^"]+)"', '\\1')
+          | default([], true) | join('')) }}
+  no_log: true
+
+- name: Store and verify the Plex server token
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      token: "{{ _plex_server_token }}"
+    vault_item_secret_fields: [token]
   no_log: true
 
 - name: Remove the consumed claim token from the Compose project

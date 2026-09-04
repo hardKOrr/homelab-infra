@@ -81,6 +81,14 @@ applications:
     type: Media Servers
     scope: estate
 
+  tautulli:
+    name: Tautulli
+    job: deploy-tautulli.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Media Analytics
+    scope: estate
+
   k3s-cluster:
     name: k3s Cluster
     job: deploy-k3s-cluster.yaml

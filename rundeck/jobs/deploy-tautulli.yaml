@@ -1,0 +1,30 @@
+- id: 1b67d2e4-908d-44c4-9f05-d828d09d497c
+  uuid: 1b67d2e4-908d-44c4-9f05-d828d09d497c
+  name: Deploy Tautulli
+  group: Applications/Media & Entertainment/Media Analytics/Tautulli
+  description: |-
+    Deploy or converge **Tautulli** on the `media` stack.
+
+    - **Hosting:** Docker on the estate-resolved media stack
+    - Observes the selected Plex instance with its Vaultwarden-held server token
+    - Plex must be deployed or converged first
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Tautulli instance. Enter another name for an additional dashboard.'
+    required: true
+    value: tautulli
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/tautulli.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/tautulli.yml -e "instance=$RD_OPTION_INSTANCE"
