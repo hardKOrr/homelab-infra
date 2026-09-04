@@ -1,0 +1,147 @@
+---
+# Backend-independent application database contract.
+#
+# Inputs from an application playbook:
+#   database_provision_app_instance  application instance (Vaultwarden item owner)
+#   database_provision_config        {provider, instance, name, role}
+#
+# A backend is resolved from generated facts, creates the database and login role,
+# and returns only the application connection fields through the canonical app item.
+# No application Compose file creates a private database sidecar.
+- name: Database | Assert provisioning request
+  ansible.builtin.assert:
+    that:
+      - database_provision_app_instance is match('^[A-Za-z0-9_.-]+$')
+      - database_provision_config is mapping
+      - database_provision_config.provider | default('') == 'postgresql'
+      - database_provision_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
+      - database_provision_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+    fail_msg: >-
+      Database provisioning needs provider postgresql plus safe instance, name and role values.
+
+- name: Database | Resolve PostgreSQL backend from generated facts
+  ansible.builtin.set_fact:
+    _database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(database_provision_config.instance, {}) }}
+
+- name: Database | Assert PostgreSQL backend is registered
+  ansible.builtin.assert:
+    that:
+      - _database_backend.provider | default('') == 'postgresql'
+      - _database_backend.host | default('') | length > 0
+      - _database_backend.port | default(0) | int > 0
+    fail_msg: >-
+      PostgreSQL backend {{ database_provision_config.instance }} is not registered.
+      Deploy that backend before deploying {{ database_provision_app_instance }}.
+
+- name: Database | Generate application password when Vaultwarden has none
+  ansible.builtin.set_fact:
+    _database_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(database_provision_app_instance, {}).database_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Database | Register PostgreSQL as a delegation target
+  ansible.builtin.add_host:
+    name: database_backend_target
+    ansible_host: "{{ _database_backend.host }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+    groups: database_delegates
+  changed_when: false
+
+- name: Database | Check whether the PostgreSQL role exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_backend.port }}"
+      - --command=SELECT 1 FROM pg_roles WHERE rolname = '{{ database_provision_config.role }}'
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: false
+  register: _database_role_exists
+
+- name: Database | Create PostgreSQL application role
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - "--set=database_password={{ _database_password }}"
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_backend.port }}"
+      - "--command=CREATE ROLE {{ database_provision_config.role }} LOGIN PASSWORD :'database_password'"
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  when: _database_role_exists.stdout | trim != '1'
+
+- name: Database | Rotate PostgreSQL application role password
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - "--set=database_password={{ _database_password }}"
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_backend.port }}"
+      - "--command=ALTER ROLE {{ database_provision_config.role }} PASSWORD :'database_password'"
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  when: _database_role_exists.stdout | trim == '1'
+
+- name: Database | Check whether the PostgreSQL database exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_backend.port }}"
+      - --command=SELECT 1 FROM pg_database WHERE datname = '{{ database_provision_config.name }}'
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: false
+  register: _database_exists
+
+- name: Database | Create PostgreSQL application database
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_backend.port }}"
+      - "--command=CREATE DATABASE {{ database_provision_config.name }} OWNER {{ database_provision_config.role }}"
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  when: _database_exists.stdout | trim != '1'
+
+- name: Database | Store application connection fields in Vaultwarden
+  ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ database_provision_app_instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      database_provider: postgresql
+      database_host: "{{ _database_backend.host }}"
+      database_port: "{{ _database_backend.port }}"
+      database_name: "{{ database_provision_config.name }}"
+      database_user: "{{ database_provision_config.role }}"
+      database_password: "{{ _database_password }}"
+    vault_item_secret_fields: [database_password]
+  no_log: true

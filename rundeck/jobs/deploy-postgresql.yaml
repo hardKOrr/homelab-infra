@@ -1,0 +1,29 @@
+- id: 8ab3d955-3cb1-45cb-92bd-4f752ef43078
+  uuid: 8ab3d955-3cb1-45cb-92bd-4f752ef43078
+  name: Deploy PostgreSQL
+  group: Platform/Data Services/PostgreSQL
+  description: |-
+    Deploy or converge an independently managed PostgreSQL backend.
+
+    Applications request a database and role through the backend-independent
+    provisioning contract; this job does not create a private application sidecar.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Backend instance name; identifies its LXC, generated-facts registry entry, and config file.
+    required: true
+    value: postgresql
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/postgresql.yml
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        : "${RD_OPTION_INSTANCE:?instance is required}"
+        exec lab-run playbooks/apps/postgresql.yml -e "instance=$RD_OPTION_INSTANCE"
