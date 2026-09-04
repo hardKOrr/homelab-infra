@@ -97,6 +97,15 @@ applications:
     type: Request Management
     scope: estate
 
+  kometa:
+    name: Kometa
+    job: deploy-kometa.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Library Management
+    scope: estate
+    exclude: [backup, restore]
+
   flaresolverr:
     name: FlareSolverr
     job: deploy-flaresolverr.yaml

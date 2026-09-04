@@ -1,0 +1,29 @@
+---
+# Default configuration for Kometa — a scheduled media metadata and collection worker on
+# the Kubernetes hosting backend. Users override scheduling and storage in
+# config/apps/kometa.yml; the operator-owned Kometa config.yml itself belongs in the
+# canonical Vaultwarden item, not in a tracked or runner-local config file.
+#
+# Kometa's config normally contains Plex, TMDb, Trakt, and often *arr credentials. It is
+# therefore one opaque, secret-bearing document instead of a set of partial platform
+# guesses. Store it as `config_yml` in `homelab-infra/apps/<instance>` with Store Secret;
+# the role mounts that field at /config/config.yml for each CronJob run.
+
+kometa_defaults:
+  hosting: kubernetes
+
+  app:
+    image: "kometateam/kometa:latest"
+    # Kometa persists its cache and run logs here. The config itself is a Secret mounted
+    # over config.yml, so this volume never becomes a second canonical copy of credentials.
+    storage: 1
+    # Kubernetes owns the wake-up schedule; Kometa is invoked with --run rather than its
+    # own background scheduler. 05:00 follows Kometa's upstream default run time.
+    schedule: "0 5 * * *"
+    timeout_seconds: 7200
+
+  routing:
+    # A scheduled worker has no UI or inbound service. It neither receives a Caddy route
+    # nor creates DNS, Authentik, or uptime-monitor objects.
+    proxy: none
+    identity: none

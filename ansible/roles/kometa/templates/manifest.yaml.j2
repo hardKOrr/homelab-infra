@@ -1,0 +1,64 @@
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: metadata
+{% endset %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ app_config.app.schedule }}"
+  timeZone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ app_config.app.timeout_seconds }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - name: kometa
+              image: {{ app_config.app.image }}
+              imagePullPolicy: IfNotPresent
+              args: ["--run", "--read-only-config"]
+              volumeMounts:
+                - name: state
+                  mountPath: /config
+                - name: config
+                  mountPath: /config/config.yml
+                  subPath: config.yml
+                  readOnly: true
+          volumes:
+            - name: state
+              persistentVolumeClaim:
+                claimName: {{ instance }}-config
+            - name: config
+              secret:
+                secretName: {{ instance }}-config
