@@ -1,0 +1,121 @@
+---
+# Default configuration for Maintainerr — the media stack's request front end, on the
+# Kubernetes hosting backend (slice 204's second workload after Mixpost).
+# Users override specific values in config/apps/maintainerr.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# WHAT MAKES THIS A KUBERNETES APP
+#
+# `hosting: kubernetes` is the only hosting kind that must be declared rather than
+# inferred. Native LXC and Docker are told apart by the presence of `stack:`; this one
+# has neither a stack nor a guest of its own — its data volume and web front end live in
+# a namespace on a cluster that outlives any single deployment of it.
+#
+# SIMPLER THAN MIXPOST, DELIBERATELY
+#
+# Maintainerr keeps its settings and its own SQLite database in one directory
+# (`/opt/data`) and needs no external database or cache: there is one PersistentVolume,
+# one Deployment, no StatefulSet, no second Secret for component credentials.
+#
+# WHAT THIS ROW DOES NOT DO YET
+#
+# Maintainerr's own first-run wizard is how it is pointed at a Jellyfin or Plex server and
+# at Sonarr/Radarr — see docs/meta/408-app-catalog/README.md's maintainerr row and this
+# app's own role for why that step is not automated here. The deploy brings up a
+# persisted, backed-up, reverse-proxied, monitored, empty Maintainerr; the operator signs
+# in once to connect it to the rest of the media stack.
+
+maintainerr_defaults:
+
+  hosting: kubernetes
+
+  # NO `cluster:` HERE, DELIBERATELY.
+  #
+  # tasks/kubernetes/resolve-cluster.yml — the adapter every Kubernetes app role,
+  # including this one, delegates kubectl through — always resolves the single
+  # `homelabinfra_infra.kubernetes` registry entry. It has no per-app selector input, so a
+  # `cluster:` key here would name a value nothing reads: a lab running two clusters would
+  # see this deploy land on whichever cluster the registry currently holds regardless of
+  # what was configured, silently. That is worse than not offering the option. Multi-cluster
+  # targeting is unimplemented platform-wide (see the same resolver Mixpost's role uses);
+  # this file will not claim otherwise until the resolver actually reads a selector.
+
+  app:
+    image: "ghcr.io/maintainerr/maintainerr:latest"
+    port: 6246
+
+    # Settings, cached images and the application's own SQLite database. Small — this is
+    # not a media library — but not disposable: it is the only copy of every request,
+    # every user account and every Sonarr/Radarr connection this app holds.
+    storage: 2   # GB
+
+  routing:
+    subdomain: maintainerr                  # hostname on the estate domain, independent of the instance name
+    proxy: internal
+    access: internal
+
+    # `catalog`, not `forward_auth`. Maintainerr signs its own users in against the media
+    # server it is connected to (Jellyfin or Plex) — the same reasoning as Jellyfin's own
+    # `identity: forward_auth` and Tautulli's. A forward-auth gate in front of it would demand
+    # an Authentik session before Maintainerr's own sign-in page is ever reached.
+    identity: forward_auth
+
+    # No `estate:` here, deliberately. Estate names are one lab's, and this file ships to
+    # every lab — a name declared here is one the next clone has never heard of, and its
+    # config-doctor rejects it. Author the estate in config/apps/<instance>.yml, where it
+    # is that lab's own statement. The renderer enforces this.
+
+  # Application-consistent backup, on the same contract Mixpost proved: a snapshot pushed
+  # into the lab's existing PBS datastore, not the crash-consistent image a PBS snapshot of
+  # a cluster node would produce.
+  #
+  # UNLIKE MIXPOST, THIS IS A FILESYSTEM ARCHIVE, NOT A DATABASE DUMP.
+  #
+  # Maintainerr's SQLite database lives inside the same volume this archives. A plain
+  # filesystem copy of a SQLite file that the application may be writing to at the same
+  # moment can capture a torn write — SQLite's own online-backup mechanism exists
+  # specifically to avoid that, and nothing here invokes it. Stated plainly rather than
+  # silently assumed safe: this backup is better than no backup and is what the PVC-only
+  # shape of this application allows without adding an exec hook into the running
+  # container; it is not proven application-consistent the way Mixpost's
+  # --single-transaction dump is. Restoring into a fresh instance and verifying is the way
+  # to find out whether a given nightly snapshot came out clean.
+  backup:
+    enabled: true
+
+    # Cron in the CronJob's own timezone (see `timezone` below), not in UTC-by-default.
+    schedule: "0 3 * * *"
+
+    # Applied as `proxmox-backup-client prune --keep-daily`, which is exactly this many
+    # days for the daily schedule above.
+    retention_days: 14
+
+    # Blank means "the datastore this lab's PBS already serves", read from
+    # homelabinfra_infra.backups at deploy time.
+    datastore: ""
+
+    # The PBS backup-id this instance's snapshots are filed under, as `host/<id>`. Blank
+    # means the instance name.
+    backup_id: ""
+
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+
+    # Hard stop for one run. See vars/app-defaults/mixpost.yml's comment on the same field
+    # for why this fails loudly rather than wedging the schedule.
+    timeout_seconds: 3600
+
+    # GB. Scratch headroom is generous relative to the 2 GB data volume this archives.
+    scratch_size: 2
+
+    # Declared, and deliberately off — the same reasoning as vars/app-defaults/mixpost.yml.
+    encryption: none
+
+    # HOW proxmox-backup-client GETS INTO A POD. Same image and same signed-apt-repository
+    # install path as Mixpost's backup job; see that file's `client` comment for the three
+    # options considered and the outbound-network cost this one carries.
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

@@ -1,0 +1,55 @@
+# Deploy Maintainerr — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# Requires the `Deploy k3s Cluster` job to have run: Maintainerr has no guest of its own and
+# deploys into a namespace on that cluster.
+
+- id: aa5a9d81-e109-486a-9e14-87a28aaf646f
+  uuid: aa5a9d81-e109-486a-9e14-87a28aaf646f
+  name: Deploy Maintainerr
+  group: Applications/Media & Entertainment/Library Management/Maintainerr
+  description: |-
+    Deploy or converge **Maintainerr**, the media stack's request front end.
+
+    - **Hosting:** Kubernetes, with its data and database in the instance namespace
+    - **Route:** `maintainerr.<estate domain>`, restricted to internal sources
+    - **Identity:** Maintainerr keeps its own login; Authentik supplies a launch tile
+
+    **First run:** the deploy brings up an empty Maintainerr. Sign in once, in its own UI,
+    to connect it to a Jellyfin or Plex server and to Sonarr/Radarr — that step is not
+    automated (see `ansible/roles/maintainerr/tasks/main.yml` for why).
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Maintainerr instance. The value identifies its config file, `app-<instance>`
+      namespace, route, and Vaultwarden item.'
+    required: true
+    value: maintainerr
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/maintainerr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/maintainerr.yml "${ARGS[@]}"
