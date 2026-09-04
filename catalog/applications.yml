@@ -65,6 +65,14 @@ applications:
     type: Library Automation
     scope: estate
 
+  deemix:
+    name: Deemix
+    job: deploy-deemix.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Download Clients
+    scope: estate
+
   jellyfin:
     name: Jellyfin
     job: deploy-jellyfin.yaml

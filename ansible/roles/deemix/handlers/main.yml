@@ -1,0 +1,6 @@
+---
+- name: Restart deemix
+  community.docker.docker_compose_v2:
+    project_src: "{{ deemix_project_dir }}"
+    state: present
+    recreate: always

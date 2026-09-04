@@ -1,0 +1,52 @@
+# Deploy Deemix — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 6e73af16-adcc-4bb5-9418-c2bc549cbf87
+  uuid: 6e73af16-adcc-4bb5-9418-c2bc549cbf87
+  name: Deploy Deemix
+  group: Applications/Media & Entertainment/Download Clients/Deemix
+  description: |-
+    Deploy or converge **Deemix**, Lidarr's Deezer download client. Docker on the
+    `media` stack.
+
+    - Seeds the Deezer ARL from Vaultwarden item `homelab-infra/apps/<instance>`
+      (hidden field `arl`) — store a current one there before the first run
+    - Registers the instance in the media application registry
+
+    Run **Wire Media Stack** afterward to add it to each Lidarr running the
+    plugins branch.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Deemix instance. The value identifies its config file, Compose project,
+      and route.'
+    required: true
+    value: deemix
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/deemix.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/deemix.yml "${ARGS[@]}"
