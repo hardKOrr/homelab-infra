@@ -129,7 +129,7 @@ spec:
             sizeLimit: 64Mi
         - name: app-config
           persistentVolumeClaim:
-            claimName: {{ _js_r_target }}-config
+            claimName: {{ _js_r_target }}-data
 {% if _js_r_mode == 'plan' %}
             readOnly: true
 {% endif %}

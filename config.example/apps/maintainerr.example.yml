@@ -18,7 +18,7 @@
 # one yet. See the same comment in ansible/vars/app-defaults/maintainerr.yml.
 
 # app:
-#   image: "fallenbagel/maintainerr:latest"
+#   image: "ghcr.io/maintainerr/maintainerr:latest"
 #   storage: 2             # GB — settings, cache and Maintainerr's own database
 
 # routing:
