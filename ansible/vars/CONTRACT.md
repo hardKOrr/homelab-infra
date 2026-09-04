@@ -32,9 +32,10 @@ files. Inspection rules that protect these shapes are in `docs/specs/config-laye
 
 The registry is role-keyed and provider-agnostic. Consumers build derived values
 (e.g. a notification URL) from `host` + `topic`; the registry never stores pre-built URLs.
-Every `host` value is a full base URL **including scheme** (e.g. `http://192.168.1.20`) —
-consumers concatenate paths onto it directly; consumers needing a bare hostname (e.g. a
-shoutrrr URL) strip the scheme themselves.
+Every HTTP-service `host` value is a full base URL **including scheme** (e.g.
+`http://192.168.1.20`) — consumers concatenate paths onto it directly; consumers needing a
+bare hostname (e.g. a shoutrrr URL) strip the scheme themselves. `databases.<instance>.host`
+is the non-HTTP exception: it is a bare SSH and database address paired with `port`.
 
 ```yaml
 # config/.generated/facts.yml topology, overlaid in memory with Vaultwarden fields
@@ -52,6 +53,8 @@ kubernetes:    { instance, provider, version, host, ingress_vip, ingress_control
                  failure_domain_mode, nodes }
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
+databases:                           # optional — independently deployed database backends
+  <instance>: { provider, host, port } # host is a bare SSH/database address
 runner:                              # the host this platform runs FROM — see below
   { provider, instance, host, vmid, node, checkout_path, venv_path, branch }
 estates:                             # optional — only when infrastructure.yml declares domains:
@@ -144,6 +147,17 @@ inventory entry plus `app.port`), and an *arr's self-generated API key is read o
 of `<app.config_path>/config.xml` at wire time. Registry entries win over
 discovered ones. This is what lets a lab wire media apps it did not deploy itself,
 before per-app media roles exist.
+
+**`databases` — independently deployed data backends.** This registry is keyed by
+backend instance, because a lab can deploy `postgresql`, `postgresql-immich`, and
+`postgresql-forgejo` as separate recovery units. Applications select an instance in
+their `database` configuration; generated facts contain topology only.
+
+| Field | Notes |
+|---|---|
+| `provider` | backend implementation, initially `postgresql` |
+| `host` | bare SSH and database address, not an HTTP URL; database consumers pair it with `port` |
+| `port` | database listener port, initially `5432` |
 
 Ntfy ships with `auth-default-access: deny-all`, so notification consumers authenticate
 when credentials are present. Credential fields remain optional for compatibility with an
