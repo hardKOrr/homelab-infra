@@ -1,0 +1,160 @@
+---
+# Deploy Jellyseerr onto the Kubernetes hosting backend.
+#
+# Runs on localhost, like every Kubernetes app role in this repo: there is no guest to run
+# on, so the adapter tasks delegate kubectl to a cluster node resolved by
+# tasks/kubernetes/resolve-cluster.yml.
+#
+# Inputs:
+#   instance          — the app instance name
+#   app_config        — merged defaults + user config
+#   jellyseerr_fqdn   — the hostname the Ingress answers on
+#
+# Idempotent: a converged manifest applies with no change, and this role generates no
+# credential of its own — Jellyseerr has none to hand back to Vaultwarden.
+#
+# WHAT THIS ROLE DELIBERATELY DOES NOT DO
+#
+# It does not complete Jellyseerr's own first-run wizard — connecting it to a Jellyfin or
+# Plex server and to Sonarr/Radarr. That step signs an admin user in against a real media
+# server and mints Jellyseerr's own API key, and doing it unattended here would mean this
+# role guessing at an unverified API contract with no way to prove it against a live
+# instance before it ships. See docs/meta/408-app-catalog/README.md's jellyseerr row. The
+# deploy below brings up a persisted, backed-up, reverse-proxied, monitored, empty
+# Jellyseerr; the operator finishes the connection once, in its own UI, the same as any
+# first-time Jellyseerr install.
+
+- name: Jellyseerr | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Jellyseerr | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Jellyseerr | Render the workload manifest
+  ansible.builtin.set_fact:
+    _js_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Jellyseerr | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _js_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+#
+# Last, and after the workload is up, for the same reason as Mixpost: the CronJob mounts
+# the config volume, which has to exist before there is anything to schedule against.
+#
+# The contract — what is archived, on what schedule, where it goes, how long it is kept,
+# and the encryption decision — is declared in the `backup:` block of
+# vars/app-defaults/jellyseerr.yml and implemented by templates/backup-cronjob.yaml.j2. The
+# restore side is playbooks/maintenance/restore-app.yml, whose header is the procedure.
+
+- name: Jellyseerr | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+# A lab that has not deployed PBS has no backup provider, and a provider that is not there
+# is a silent no-op rather than an error — the same rule the wiring tasks follow.
+- name: Jellyseerr | Note that this lab has no backup target
+  ansible.builtin.debug:
+    msg: >-
+      {{ instance }} declares backup.enabled, but no Proxmox Backup Server is recorded in
+      config/.generated/facts.yml, so no backup was scheduled. Deploy PBS and re-run this
+      job. Until then the application's data exists in exactly one place: the volume on
+      the cluster node that holds it.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (k8s_pbs_available | default(false) | bool)
+
+- name: Jellyseerr | Configure the nightly application backup
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - k8s_pbs_available | default(false) | bool
+  block:
+    - name: Jellyseerr | Resolve the backup's identity and destination
+      ansible.builtin.set_fact:
+        _js_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        _js_backup_timezone: >-
+          {{ app_config.backup.timezone | default('', true)
+             or homelabinfra_config.timezone | default('UTC') }}
+        _js_backup_repository: "{{ k8s_pbs_repository }}"
+        _js_backup_fingerprint: "{{ k8s_pbs_fingerprint }}"
+        _js_backup_datastore: "{{ k8s_pbs_datastore }}"
+        _js_ntfy_url: >-
+          {{ (homelabinfra_infra.notifications.host ~ '/'
+              ~ (homelabinfra_infra.notifications.topic | default('homelab')))
+             if (((homelabinfra_infra | default({})).notifications | default({})).provider
+                 | default('none') == 'ntfy'
+                 and (homelabinfra_infra.notifications.host | default('') | length > 0))
+             else '' }}
+
+    - name: Jellyseerr | Read the notification publish token
+      ansible.builtin.set_fact:
+        _js_ntfy_token: >-
+          {{ ((homelabinfra_infra | default({})).notifications | default({})).token
+             | default('') }}
+      no_log: true
+
+    # The one place the backup's credential becomes a runtime object: the PBS API token
+    # secret, canonical in the Vaultwarden item `homelab-infra/backups`, copied here never
+    # generated here. Being a Secret in this namespace, it is deleted when the namespace
+    # is, which is what makes `Remove App` take it with it.
+    - name: Jellyseerr | Sync the backup credentials into the namespace
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+      vars:
+        k8s_secret_name: "{{ instance }}-backup"
+        k8s_secret_data: >-
+          {{ {'pbs-password': k8s_pbs_password}
+             | combine({'ntfy-token': _js_ntfy_token}
+                       if _js_ntfy_token | length > 0 else {}) }}
+
+    - name: Jellyseerr | Render the backup CronJob
+      ansible.builtin.set_fact:
+        _js_backup_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
+
+    - name: Jellyseerr | Apply the backup CronJob
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ _js_backup_manifest }}"
+
+    - name: Jellyseerr | State the backup contract
+      ansible.builtin.debug:
+        msg:
+          - "Backup: a filesystem archive of the config volume (settings, and Jellyseerr's
+             own SQLite database — see the app-defaults comment on why this is not a
+             quiesced dump), pushed to PBS datastore {{ _js_backup_datastore }} as
+             host/{{ _js_backup_id }}."
+          - "Schedule: {{ app_config.backup.schedule }} ({{ _js_backup_timezone }}).
+             Retention: {{ app_config.backup.retention_days }} daily snapshots.
+             Encryption: {{ app_config.backup.encryption }}."
+          - "Run one now: the `Backup App` job, or
+             playbooks/maintenance/backup-app.yml -e instance={{ instance }}."
+          - "Restore: the `Restore App` job, or
+             playbooks/maintenance/restore-app.yml -e instance={{ instance }} —
+             read that playbook's header for the procedure."
+
+# Two ways to stop having a backup — `backup.enabled: false`, or a lab that still declares
+# it but has no PBS to push to — and both have to remove the schedule. See the identical
+# comment in roles/mixpost/tasks/main.yml for why the condition is "no backup was
+# configured this run", not "the backup was switched off".
+- name: Jellyseerr | Remove the backup CronJob when no backup was configured
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - cronjob
+      - "{{ instance }}-backup"
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _js_backup_removed
+  when: not ((app_config.backup.enabled | default(false) | bool)
+             and (k8s_pbs_available | default(false) | bool))
+  changed_when: "'deleted' in (_js_backup_removed.stdout | default(''))"

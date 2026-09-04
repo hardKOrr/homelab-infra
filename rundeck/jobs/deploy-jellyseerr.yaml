@@ -1,0 +1,55 @@
+# Deploy Jellyseerr — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# Requires the `Deploy k3s Cluster` job to have run: Jellyseerr has no guest of its own and
+# deploys into a namespace on that cluster.
+
+- id: 3f1a9c7e-6b52-4d18-9e0a-8c4f2d6a1b73
+  uuid: 3f1a9c7e-6b52-4d18-9e0a-8c4f2d6a1b73
+  name: Deploy Jellyseerr
+  group: Applications/Media & Entertainment/Request Management/Jellyseerr
+  description: |-
+    Deploy or converge **Jellyseerr**, the media stack's request front end.
+
+    - **Hosting:** Kubernetes, with its config and database in the instance namespace
+    - **Route:** `jellyseerr.<estate domain>`, restricted to internal sources
+    - **Identity:** Jellyseerr keeps its own login; Authentik supplies a launch tile
+
+    **First run:** the deploy brings up an empty Jellyseerr. Sign in once, in its own UI,
+    to connect it to a Jellyfin or Plex server and to Sonarr/Radarr — that step is not
+    automated (see `ansible/roles/jellyseerr/tasks/main.yml` for why).
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Jellyseerr instance. The value identifies its config file, `app-<instance>`
+      namespace, route, and Vaultwarden item.'
+    required: true
+    value: jellyseerr
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/jellyseerr.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/jellyseerr.yml "${ARGS[@]}"

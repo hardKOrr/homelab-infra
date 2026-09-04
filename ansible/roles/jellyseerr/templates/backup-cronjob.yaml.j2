@@ -1,0 +1,167 @@
+{#
+  The backup for one Jellyseerr instance: a CronJob in the instance's own namespace that
+  archives its config volume and pushes it into the lab's existing PBS datastore with
+  proxmox-backup-client.
+
+  Rendered by roles/jellyseerr/tasks/main.yml and applied through
+  tasks/kubernetes/apply-manifest.yml. Owned by the namespace like everything else the
+  instance owns, so removal deletes it and nothing has to remember it exists.
+
+  SIMPLER THAN roles/mixpost/templates/backup-cronjob.yaml.j2: there is no separate
+  database pod to quiesce with mysqldump, so there is no dump initContainer — the push
+  container mounts the config PVC directly. See the `backup` comment in
+  vars/app-defaults/jellyseerr.yml for what that trade-off costs: a live SQLite file inside
+  the archived directory is not guaranteed transactionally consistent the way a database
+  dump is.
+
+  WHY THIS EXISTS WHEN PBS ALREADY SNAPSHOTS THE CLUSTER NODES
+
+  PBS backs up the k3s VMs on the lab's normal nightly schedule. That is the node rebuild
+  path and nothing more: a whole-VM image is crash-consistent and cannot address a single
+  application's volume for a restore. The artifact that actually restores this application
+  is produced here, in the application's own namespace.
+
+  NO CREDENTIAL APPEARS IN THIS FILE, AND NONE APPEARS IN ANY COMMAND LINE
+
+  The PBS token secret lives in the Secret that tasks/kubernetes/sync-secret.yml wrote from
+  the canonical Vaultwarden item `homelab-infra/backups`. It reaches the client as
+  PBS_PASSWORD, the documented environment input the client reads instead of prompting. It
+  is deleted with the namespace.
+#}
+{% set b = app_config.backup %}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: backup
+{% endset %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ b.schedule }}"
+  timeZone: "{{ _js_backup_timezone }}"
+  # Forbid, not Allow. A second concurrent run would mount the config volume the running
+  # application pod already holds and push a second, overlapping snapshot.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ b.timeout_seconds | int }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: push
+              image: {{ b.client.image }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  export DEBIAN_FRONTEND=noninteractive
+
+                  # Never `set -x` in this script. The client reads its credential from
+                  # PBS_PASSWORD, and a trace would print the environment into the job log.
+
+                  command -v curl >/dev/null 2>&1 || \
+                    echo "WARNING: no curl in this image — a failure of this job cannot be notified"
+
+                  notify() {
+                    [ -n "${NTFY_URL:-}" ] || return 0
+                    command -v curl >/dev/null 2>&1 || return 0
+                    if [ -n "${NTFY_TOKEN:-}" ]; then
+                      curl -fsS -m 15 -X POST \
+                        -H "Title: $1" -H "Priority: high" \
+                        -H "Authorization: Bearer ${NTFY_TOKEN}" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    else
+                      curl -fsS -m 15 -X POST \
+                        -H "Title: $1" -H "Priority: high" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    fi
+                  }
+                  on_exit() {
+                    if [ "$1" -eq 0 ]; then
+                      return 0
+                    fi
+                    notify "Backup FAILED: {{ instance }}" \
+                      "The nightly application backup for {{ instance }} exited $1. It pushes to PBS datastore {{ _js_backup_datastore }} as host/{{ _js_backup_id }}. Read the failed job's output with: kubectl -n {{ k8s_namespace }} logs -l app.kubernetes.io/component=backup --all-containers --prefix"
+                    return 0
+                  }
+                  trap 'on_exit $?' EXIT
+
+                  apt-get update -qq
+                  install -d -m 0755 /etc/apt/keyrings
+                  curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+                  echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                    > /etc/apt/sources.list.d/pbs-client.list
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+
+                  # Pushed uncompressed for the same reason as Mixpost's storage archive:
+                  # PBS chunks, compresses and deduplicates server-side, and a raw byte
+                  # stream shares the most chunks night to night.
+                  proxmox-backup-client backup \
+                    config.pxar:/app-config \
+                    --backup-id "${BACKUP_ID}"
+
+                  proxmox-backup-client prune "host/${BACKUP_ID}" \
+                    --keep-daily "${RETENTION_DAYS}"
+
+                  echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
+              env:
+                - name: PBS_REPOSITORY
+                  value: "{{ _js_backup_repository }}"
+                - name: PBS_FINGERPRINT
+                  value: "{{ _js_backup_fingerprint }}"
+                - name: PBS_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: pbs-password }
+                - name: BACKUP_ID
+                  value: "{{ _js_backup_id }}"
+                - name: RETENTION_DAYS
+                  value: "{{ b.retention_days | int }}"
+                - name: PBS_KEY_URL
+                  value: "{{ b.client.key_url }}"
+                - name: PBS_APT_REPO
+                  value: "{{ b.client.repository }} {{ b.client.suite }} {{ b.client.component }}"
+{% if _js_ntfy_url | length > 0 %}
+                - name: NTFY_URL
+                  value: "{{ _js_ntfy_url }}"
+{% endif %}
+{% if _js_ntfy_token | length > 0 %}
+                - name: NTFY_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: ntfy-token }
+{% endif %}
+              volumeMounts:
+                # READ-ONLY, and not negotiable. This pod exists to copy the application's
+                # config out; nothing it does should be able to change it. RWO is a
+                # per-NODE constraint, and the node-pinned StorageClass guarantees this pod
+                # lands on the same node as the application pod already using it.
+                - name: app-config
+                  mountPath: /app-config
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+          volumes:
+            - name: app-config
+              persistentVolumeClaim:
+                claimName: {{ instance }}-config
+                readOnly: true
