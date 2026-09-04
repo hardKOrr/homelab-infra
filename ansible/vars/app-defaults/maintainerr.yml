@@ -54,10 +54,9 @@ maintainerr_defaults:
     proxy: internal
     access: internal
 
-    # `catalog`, not `forward_auth`. Maintainerr signs its own users in against the media
-    # server it is connected to (Jellyfin or Plex) — the same reasoning as Jellyfin's own
-    # `identity: forward_auth` and Tautulli's. A forward-auth gate in front of it would demand
-    # an Authentik session before Maintainerr's own sign-in page is ever reached.
+    # `forward_auth` is deliberate. Maintainerr stores media-service credentials and exposes
+    # them through an unauthenticated settings API, so Authentik must gate the route before
+    # its own login page and API become reachable.
     identity: forward_auth
 
     # No `estate:` here, deliberately. Estate names are one lab's, and this file ships to

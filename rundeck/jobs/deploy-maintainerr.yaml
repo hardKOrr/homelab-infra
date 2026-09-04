@@ -19,7 +19,7 @@
 
     - **Hosting:** Kubernetes, with its data and database in the instance namespace
     - **Route:** `maintainerr.<estate domain>`, restricted to internal sources
-    - **Identity:** Maintainerr keeps its own login; Authentik supplies a launch tile
+    - **Identity:** Authentik forward authentication gates Maintainerr before its own login and settings API are reachable
 
     **First run:** the deploy brings up an empty Maintainerr. Sign in once, in its own UI,
     to connect it to a Jellyfin or Plex server and to Sonarr/Radarr — that step is not

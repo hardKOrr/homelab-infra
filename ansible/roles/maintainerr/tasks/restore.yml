@@ -1,11 +1,11 @@
 ---
-# Restore one Jellyseerr instance's data volume from a PBS snapshot, into the namespace
-# of a Jellyseerr instance that is already deployed.
+# Restore one Maintainerr instance's data volume from a PBS snapshot, into the namespace
+# of a Maintainerr instance that is already deployed.
 #
 # Called by playbooks/maintenance/restore-app.yml, whose header carries the operator-facing
 # procedure. This file is the mechanism; that header is the documentation. Simpler than
 # roles/mixpost/tasks/restore.yml: there is no database to drop and reload and no
-# application key to carry across, because Jellyseerr keeps everything — settings, its own
+# application key to carry across, because Maintainerr keeps everything — settings, its own
 # API key, its Sonarr/Radarr/Jellyfin connections — inside the one volume being restored.
 #
 # THE SHAPE OF A RESTORE, AND WHY IT IS THIS SHAPE
@@ -73,7 +73,7 @@
     fail_msg: >-
       Namespace {{ k8s_namespace }} does not exist, or is not labelled
       `app.kubernetes.io/managed-by: homelab-infra`. Deploy the target instance first —
-      `Deploy Jellyseerr` with instance={{ restore_target }} — and run the restore against
+      `Deploy Maintainerr` with instance={{ restore_target }} — and run the restore against
       the namespace it creates. For the clean-restore drill that is the whole point: deploy
       a second instance under a new name, restore into it, and verify there without
       touching the live one.
