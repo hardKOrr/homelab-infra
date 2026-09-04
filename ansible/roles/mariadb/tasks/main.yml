@@ -1,0 +1,29 @@
+---
+# MariaDB is a standalone backend, deliberately independent of application
+# Compose files so its data, recovery path, and credentials remain explicit.
+- name: MariaDB | Install server and Python client
+  ansible.builtin.apt:
+    name: [mariadb-server, python3-pymysql]
+    state: present
+    update_cache: true
+
+- name: MariaDB | Permit application-network listeners
+  ansible.builtin.template:
+    src: homelab-infra.cnf.j2
+    dest: /etc/mysql/mariadb.conf.d/z-homelab-infra.cnf
+    mode: "0644"
+  notify: Restart MariaDB
+
+- name: MariaDB | Enable and start service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+
+- name: MariaDB | Apply listener changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: MariaDB | Verify local server readiness
+  ansible.builtin.command:
+    argv: [mariadb-admin, ping, --host=127.0.0.1, "--port={{ app_config.app.port | string }}"]
+  changed_when: false

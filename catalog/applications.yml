@@ -275,3 +275,10 @@ applications:
     category: Access and Identity
     scope: lab                          # one vault is the platform's root of trust
     essential: true
+
+  mariadb:
+    name: MariaDB
+    job: deploy-mariadb.yaml
+    root: Platform
+    category: Data Services
+    scope: lab

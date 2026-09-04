@@ -13,26 +13,26 @@
     that:
       - database_provision_app_instance is match('^[A-Za-z0-9_.-]+$')
       - database_provision_config is mapping
-      - database_provision_config.provider | default('') == 'postgresql'
+      - database_provision_config.provider | default('') in ['postgresql', 'mariadb']
       - database_provision_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
       - database_provision_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
       - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
     fail_msg: >-
-      Database provisioning needs provider postgresql plus safe instance, name and role values.
+      Database provisioning needs a supported provider plus safe instance, name and role values.
 
-- name: Database | Resolve PostgreSQL backend from generated facts
+- name: Database | Resolve backend from generated facts
   ansible.builtin.set_fact:
     _database_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(database_provision_config.instance, {}) }}
 
-- name: Database | Assert PostgreSQL backend is registered
+- name: Database | Assert requested backend is registered
   ansible.builtin.assert:
     that:
-      - _database_backend.provider | default('') == 'postgresql'
+      - _database_backend.provider | default('') == database_provision_config.provider
       - _database_backend.host | default('') | length > 0
       - _database_backend.port | default(0) | int > 0
     fail_msg: >-
-      PostgreSQL backend {{ database_provision_config.instance }} is not registered.
+      {{ database_provision_config.provider }} backend {{ database_provision_config.instance }} is not registered.
       Deploy that backend before deploying {{ database_provision_app_instance }}.
 
 - name: Database | Generate application password when Vaultwarden has none
@@ -42,7 +42,7 @@
          | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
   no_log: true
 
-- name: Database | Register PostgreSQL as a delegation target
+- name: Database | Register backend as a delegation target
   ansible.builtin.add_host:
     name: database_backend_target
     ansible_host: "{{ _database_backend.host }}"
@@ -66,6 +66,7 @@
   no_log: true
   changed_when: false
   register: _database_role_exists
+  when: database_provision_config.provider == 'postgresql'
 
 - name: Database | Create PostgreSQL application role
   ansible.builtin.command:
@@ -81,7 +82,9 @@
   become: true
   become_user: postgres
   no_log: true
-  when: _database_role_exists.stdout | trim != '1'
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - _database_role_exists.stdout | trim != '1'
 
 - name: Database | Rotate PostgreSQL application role password
   ansible.builtin.command:
@@ -97,7 +100,9 @@
   become: true
   become_user: postgres
   no_log: true
-  when: _database_role_exists.stdout | trim == '1'
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - _database_role_exists.stdout | trim == '1'
 
 - name: Database | Check whether the PostgreSQL database exists
   ansible.builtin.command:
@@ -115,6 +120,7 @@
   no_log: true
   changed_when: false
   register: _database_exists
+  when: database_provision_config.provider == 'postgresql'
 
 - name: Database | Create PostgreSQL application database
   ansible.builtin.command:
@@ -129,15 +135,48 @@
   become: true
   become_user: postgres
   no_log: true
-  when: _database_exists.stdout | trim != '1'
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - _database_exists.stdout | trim != '1'
 
+- name: Database | Assert MariaDB client hosts are declared
+  ansible.builtin.assert:
+    that: _database_backend.client_hosts | default([]) | length > 0
+    fail_msg: >-
+      MariaDB backend {{ database_provision_config.instance }} has no permitted client host patterns.
+  when: database_provision_config.provider == 'mariadb'
+
+- name: Database | Create MariaDB application database
+  community.mysql.mysql_db:
+    name: "{{ database_provision_config.name }}"
+    state: present
+    login_unix_socket: /run/mysqld/mysqld.sock
+  delegate_to: database_backend_target
+  become: true
+  no_log: true
+  when: database_provision_config.provider == 'mariadb'
+
+- name: Database | Create MariaDB application role for allowed client networks
+  community.mysql.mysql_user:
+    name: "{{ database_provision_config.role }}"
+    host: "{{ item }}"
+    password: "{{ _database_password }}"
+    priv: "{{ database_provision_config.name }}.*:ALL"
+    state: present
+    update_password: always
+    login_unix_socket: /run/mysqld/mysqld.sock
+  loop: "{{ _database_backend.client_hosts | default([]) }}"
+  delegate_to: database_backend_target
+  become: true
+  no_log: true
+  when: database_provision_config.provider == 'mariadb'
 - name: Database | Store application connection fields in Vaultwarden
   ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
   vars:
     vault_item_name: "homelab-infra/apps/{{ database_provision_app_instance }}"
     vault_item_merge: true
     vault_item_fields:
-      database_provider: postgresql
+      database_provider: "{{ database_provision_config.provider }}"
       database_host: "{{ _database_backend.host }}"
       database_port: "{{ _database_backend.port }}"
       database_name: "{{ database_provision_config.name }}"
