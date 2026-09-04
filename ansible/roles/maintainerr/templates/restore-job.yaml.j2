@@ -8,7 +8,7 @@
     plan     — reads only. Lists what PBS holds for this application, proves the named
                snapshot is readable, and reports what the target currently contains.
                Writes nothing.
-    restore  — replaces the target's config volume with the snapshot's.
+    restore  — replaces the target's data volume with the snapshot's.
 
   Simpler than roles/mixpost/templates/restore-job.yaml.j2: there is no database to drop
   and reload, so this is one container, not two.
@@ -75,7 +75,7 @@ spec:
 
               echo
               echo "=== what the target namespace holds NOW ==="
-              echo "config volume: $(du -sh /app-config 2>/dev/null | cut -f1) in $(find /app-config -type f | wc -l) file(s)"
+              echo "data volume: $(du -sh /app-data 2>/dev/null | cut -f1) in $(find /app-data -type f | wc -l) file(s)"
 {% else %}
 
               echo "=== restoring ${SNAPSHOT} ==="
@@ -83,10 +83,10 @@ spec:
               # The destructive half: what is in the volume now is removed, and what the
               # snapshot holds takes its place. A restore that only added files would
               # leave the target holding a mixture of two different points in time.
-              echo "replacing config volume: was $(du -sh /app-config 2>/dev/null | cut -f1) in $(find /app-config -type f | wc -l) file(s)"
-              find /app-config -mindepth 1 -delete
-              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /app-config
-              echo "restored config volume: now $(du -sh /app-config 2>/dev/null | cut -f1) in $(find /app-config -type f | wc -l) file(s)"
+              echo "replacing data volume: was $(du -sh /app-data 2>/dev/null | cut -f1) in $(find /app-data -type f | wc -l) file(s)"
+              find /app-data -mindepth 1 -delete
+              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /app-data
+              echo "restored data volume: now $(du -sh /app-data 2>/dev/null | cut -f1) in $(find /app-data -type f | wc -l) file(s)"
 {% endif %}
           env:
             - name: PBS_REPOSITORY
@@ -111,8 +111,8 @@ spec:
             # requires without making temporary client state persistent.
             - name: pbs-tmp
               mountPath: /tmp
-            - name: app-config
-              mountPath: /app-config
+            - name: app-data
+              mountPath: /app-data
 {% if _js_r_mode == 'plan' %}
               # Read-only in plan mode, enforced by the kubelet rather than by the script
               # being careful. A plan that could write is not a plan.
@@ -127,7 +127,7 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 64Mi
-        - name: app-config
+        - name: app-data
           persistentVolumeClaim:
             claimName: {{ _js_r_target }}-data
 {% if _js_r_mode == 'plan' %}

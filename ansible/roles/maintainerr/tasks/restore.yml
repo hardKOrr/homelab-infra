@@ -1,5 +1,5 @@
 ---
-# Restore one Jellyseerr instance's config volume from a PBS snapshot, into the namespace
+# Restore one Jellyseerr instance's data volume from a PBS snapshot, into the namespace
 # of a Jellyseerr instance that is already deployed.
 #
 # Called by playbooks/maintenance/restore-app.yml, whose header carries the operator-facing
@@ -133,7 +133,7 @@
              {{ k8s_pbs_datastore }}{{ ', snapshot ' ~ _js_r_snapshot
                 if _js_r_snapshot | length > 0 else ' (no snapshot named)' }}."
           - "Target: namespace {{ k8s_namespace }} — the
-             {{ restore_target }}-config volume. It is listed above as it stands now; a
+             {{ restore_target }}-data volume. It is listed above as it stands now; a
              real run empties it before writing the snapshot's contents."
           - "To do it: re-run this job with the same snapshot and overwrite=true."
 
@@ -235,7 +235,7 @@
       ansible.builtin.debug:
         msg:
           - "Restored {{ _js_r_snapshot }} into namespace {{ k8s_namespace }}."
-          - "The file count above is the config volume's own account of what arrived."
+          - "The file count above is the data volume's own account of what arrived."
           - "Now verify the application, not the artifact: open
              https://{{ restore_target }}.<estate domain>/, sign in with the credentials
              that worked on {{ instance }} — the accounts came from the same restored
@@ -248,7 +248,7 @@
         msg: >-
           The restore of {{ _js_r_snapshot }} into {{ k8s_namespace }} did not complete,
           and {{ restore_target }} has been LEFT SCALED TO 0 rather than started again —
-          its config volume may be partially replaced. The Job's own output is above. When
+          its data volume may be partially replaced. The Job's own output is above. When
           you have decided what to do, either re-run this restore, or start the application
           as it stands with:
           k3s kubectl -n {{ k8s_namespace }} scale deployment/{{ restore_target }}
