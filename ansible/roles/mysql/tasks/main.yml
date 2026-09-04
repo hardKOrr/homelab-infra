@@ -1,0 +1,49 @@
+---
+# Debian default-mysql-server is MariaDB; Ghost requires Oracle MySQL 8.
+- name: MySQL | Create APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: MySQL | Install Oracle repository signing key
+  ansible.builtin.get_url:
+    url: https://repo.mysql.com/RPM-GPG-KEY-mysql-2025
+    dest: /etc/apt/keyrings/mysql.asc
+    mode: "0644"
+
+- name: MySQL | Configure Oracle MySQL 8.4 LTS APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/mysql.asc] https://repo.mysql.com/apt/debian/ bookworm mysql-8.4-lts"
+    filename: mysql
+    state: present
+    update_cache: true
+
+# MySQL is a standalone backend, deliberately independent of application
+# Compose files so its data, recovery path, and credentials remain explicit.
+- name: MySQL | Install server and Python client
+  ansible.builtin.apt:
+    name: [mysql-server, python3-pymysql]
+    state: present
+    update_cache: true
+
+- name: MySQL | Permit application-network listeners
+  ansible.builtin.template:
+    src: homelab-infra.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/z-homelab-infra.cnf
+    mode: "0644"
+  notify: Restart MySQL
+
+- name: MySQL | Enable and start service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+
+- name: MySQL | Apply listener changes before health check
+  ansible.builtin.meta: flush_handlers
+
+- name: MySQL | Verify local server readiness
+  ansible.builtin.command:
+    argv: [mysql-admin, "--socket=/var/run/mysqld/mysqld.sock", ping]
+  changed_when: false
