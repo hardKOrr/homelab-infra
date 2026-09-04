@@ -25,3 +25,10 @@ services:
 {% endfor %}
     ports:
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(32400) }}"
+{% if (app_config.app.devices | default([])) | length > 0 %}
+    devices:
+{% for device in app_config.app.devices %}
+      # Docker requires each configured device to exist on the stack host.
+      - "{{ device }}:{{ device }}"
+{% endfor %}
+{% endif %}

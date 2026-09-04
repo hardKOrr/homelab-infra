@@ -12,6 +12,11 @@ plex_defaults:
     transcode_path: "/opt/{{ instance }}/transcode"
     puid: 1313
     pgid: 1313
+    # Optional hardware-transcoding devices. The empty default is deliberate:
+    # Docker refuses to start when a configured device is absent on the media
+    # stack host. Passing a device does not enable transcoding by itself; enable
+    # the applicable codecs in Plex after deployment.
+    devices: []
     mounts: >-
       {{ (homelabinfra_config.infrastructure.media_storage | default({})).mounts
          | default([], true) }}
