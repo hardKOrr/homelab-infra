@@ -110,6 +110,7 @@ The top-level tree is:
 | `Applications` | Browse optional applications by purpose, type, and name |
 | `Platform` | Deploy access, identity, monitoring, backup, and hosting capabilities |
 | `Manage` | Lab-wide configuration, integration, health, and storage actions |
+| `Operate` | Read-only diagnosis and operator troubleshooting actions |
 | `Recover` | Recover credentials |
 | `Setup` | Establish credentials, bootstrap the platform, and reload automation definitions |
 

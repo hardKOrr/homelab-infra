@@ -1,0 +1,38 @@
+# Plex Client Troubleshooter — source job definition; one job, one read-only playbook.
+- id: 837ac3de-6e22-5f54-a6d1-cdc8da29e90d
+  uuid: 837ac3de-6e22-5f54-a6d1-cdc8da29e90d
+  name: Troubleshoot Plex Client
+  group: Operate/Troubleshooting
+  description: |-
+    Turn a Plex log bundle into evidence-ranked findings, naming the affected client and
+    cause where the logs support it.
+
+    The default source is a bundle mounted on the Rundeck runner. Set **Plex log host** to
+    a reachable inventory host to read its live log directory instead. This job only reads
+    logs; it does not restart Plex, edit its configuration, or change media.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: log_path
+    description: Plex log-bundle directory on the runner, or the live log directory on Plex log host.
+    required: true
+  - name: plex_log_host
+    description: Inventory host containing log path. **Default:** `localhost` for a mounted bundle.
+    required: true
+    value: localhost
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/stacks/troubleshoot-plex-client.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_LOG_PATH:?log_path is required}"
+          : "${RD_OPTION_PLEX_LOG_HOST:?plex_log_host is required}"
+          exec lab-run playbooks/stacks/troubleshoot-plex-client.yml \
+            -e "plex_log_path=$RD_OPTION_LOG_PATH" \
+            -e "plex_log_host=$RD_OPTION_PLEX_LOG_HOST"
