@@ -1,0 +1,31 @@
+---
+# Same shape as ../valid/proxmox.yml plus a second network for the foxglove estate.
+proxmox:
+  api_host: "203.0.113.10"
+  api_port: 8006
+  node: "fixture-node"
+  api_user: "homelab-infra@pve"
+  api_token_id: "automation"
+  api_token_secret: "fixture-not-a-real-secret"
+  storage: "local-lvm"
+
+networks:
+  default:
+    cidr: "198.51.100.0/24"
+    gateway: "198.51.100.1"
+    dns_servers:
+      - "198.51.100.1"
+    bridge: "vmbr0"
+    vlan: 0
+    ip_offset: 10
+    max_hosts: 200
+  shared:
+    ip_offset: 200
+    max_hosts: 32
+  foxglove:
+    ip_offset: 300
+    max_hosts: 32
+
+ansible:
+  ssh_user: root
+  ssh_public_key: "ssh-ed25519 AAAAFixtureNotARealKey fixture@example.invalid"

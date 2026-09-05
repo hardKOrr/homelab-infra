@@ -1,0 +1,29 @@
+---
+# Synthetic, non-secret fixture. Single (default) estate. See proxmox.yml in this
+# directory for the sibling fixture and gate/test-config-loading.sh for how it is used.
+domain: "fixture.example.invalid"
+
+reverse_proxy:
+  provider: caddy
+  instance: caddy
+  internal_cidrs:
+    - "198.51.100.0/24"
+
+sso:
+  provider: authentik
+  instance: authentik
+
+notifications:
+  provider: ntfy
+  instance: ntfy
+
+dns:
+  provider: opnsense
+  host: "198.51.100.1"
+
+backups:
+  datastore_path: "/mnt/backup"
+  schedule: "daily"
+
+vaultwarden:
+  instance: vaultwarden

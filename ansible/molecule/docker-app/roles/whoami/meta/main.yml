@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: whoami
+  description: >-
+    Molecule fixture: instantiates the roles/_template-docker contract with a
+    lightweight, credential-free image, standing in for a catalog application role
+    in the container integration harness. Not part of the application catalog.
+  min_ansible_version: "2.15"
+dependencies: []

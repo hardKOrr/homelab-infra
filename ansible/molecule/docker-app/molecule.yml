@@ -1,0 +1,52 @@
+---
+# Scenario: proves the shared community.docker Compose pattern (roles/docker plus the
+# roles/_template-docker contract) converges, is idempotent, validates its rendered
+# Compose input, reaches an inspectable healthy state, and tears down cleanly.
+# See README.md in this directory for scope, the fixture role, and the pattern to
+# follow for a later application role.
+dependency:
+  name: galaxy
+  options:
+    requirements-file: "${MOLECULE_PROJECT_DIRECTORY}/requirements.yml"
+
+driver:
+  name: docker
+
+platforms:
+  # Debian-based, not Ubuntu: roles/docker/tasks/install.yml adds Docker's *Debian*
+  # APT repository unconditionally, keyed on ansible_distribution_release. This image
+  # ships systemd as PID 1 already wired for a privileged container, which is what
+  # lets roles/docker start and manage the real docker.service inside it (Docker
+  # engine tested with Docker itself, i.e. Docker-in-Docker).
+  - name: docker-app-target
+    image: "geerlingguy/docker-debian12-ansible:latest"
+    command: ""
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    pre_build_image: true
+
+provisioner:
+  name: ansible
+  env:
+    # ansible/roles for the shared `docker` role; this scenario's own roles/ for the
+    # disposable `whoami` fixture that stands in for a catalog application role.
+    ANSIBLE_ROLES_PATH: "${MOLECULE_PROJECT_DIRECTORY}/roles:${MOLECULE_SCENARIO_DIRECTORY}/roles"
+    ANSIBLE_CONFIG: "${MOLECULE_PROJECT_DIRECTORY}/ansible.cfg"
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy

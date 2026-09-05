@@ -102,10 +102,13 @@ bash gate/test-maintenance-schedule.sh || rc=1
 bash gate/test-stale-service-detection.sh || rc=1
 bash gate/test-plex-client-troubleshooter.sh || rc=1
 bash gate/test-proxmox-tags.sh || rc=1
+bash gate/test-proxmox-api-contract.sh || rc=1
 bash gate/test-maintainerr-restore.sh || rc=1
 bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1
 bash gate/test-network-scope.sh || rc=1
 bash gate/test-homepage-dashboard.sh || rc=1
 bash gate/test-config-fixtures.sh || rc=1
+bash gate/test-config-loading.sh || rc=1
+bash gate/test-container-teardown.sh || rc=1
 exit $rc

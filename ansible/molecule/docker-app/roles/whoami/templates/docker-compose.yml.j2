@@ -1,0 +1,12 @@
+# docker-compose.yml for whoami ({{ instance }}) — molecule fixture, not a catalog app.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    environment:
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+    volumes:
+      - "{{ app_config.app.data_path }}:/data"
+    ports:
+      - "{{ app_config.app.port }}:80"
