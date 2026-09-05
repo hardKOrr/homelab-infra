@@ -102,9 +102,14 @@ def _uses_upload_artifact(job: dict) -> bool:
             continue
         uses = step.get("uses")
         # GitHub resolves action repository references case-insensitively, so
-        # Actions/Upload-Artifact@v4 runs the exact same uploader.
-        if isinstance(uses, str) and uses.split("@", 1)[0].lower() == "actions/upload-artifact":
-            return True
+        # Actions/Upload-Artifact@v4 runs the exact same uploader. The action also ships
+        # subpath variants — actions/upload-artifact/merge downloads existing artifacts
+        # and re-uploads them as a new one — so a subpath is an uploader too, not just an
+        # exact match on the action root.
+        if isinstance(uses, str):
+            ref = uses.split("@", 1)[0].lower()
+            if ref == "actions/upload-artifact" or ref.startswith("actions/upload-artifact/"):
+                return True
     return False
 
 

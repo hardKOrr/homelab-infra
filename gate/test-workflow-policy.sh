@@ -219,7 +219,27 @@ set -e
 [ "$rc" -ne 0 ] || fail "a mixed-case actions/upload-artifact reference must fail"
 grep -q "uses actions/upload-artifact" <<<"$out" || fail "mixed-case upload-artifact failure message not found"
 
-# ── 13. a job with no upload-artifact step is accepted ────────────────────────
+# ── 13. actions/upload-artifact/merge sub-action is rejected too ──────────────
+set +e
+out="$(run_case upload-artifact-merge-subaction '
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+      - uses: actions/upload-artifact/merge@v4
+        with:
+          name: merged-logs
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "actions/upload-artifact/merge must fail — it downloads and re-uploads artifacts"
+grep -q "uses actions/upload-artifact" <<<"$out" || fail "merge-subaction upload-artifact failure message not found"
+
+# ── 14. a job with no upload-artifact step is accepted ────────────────────────
 run_case no-upload-artifact '
 on: push
 permissions:
