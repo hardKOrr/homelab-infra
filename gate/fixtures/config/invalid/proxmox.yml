@@ -1,0 +1,15 @@
+---
+# Synthetic, gate-only fixture. See gate/fixtures/README.md. Not a real lab.
+# Deliberately incomplete: no node, no api_user, no api_token_id, and the `default`
+# network is missing `gateway` and `dns_servers`, to exercise config-doctor.sh's
+# required-key and network-inheritance checks.
+proxmox:
+  api_host: "198.51.100.10"
+
+networks:
+  default:
+    cidr: "198.51.100.0/24"
+    bridge: "vmbr0"
+
+ansible:
+  ssh_user: root

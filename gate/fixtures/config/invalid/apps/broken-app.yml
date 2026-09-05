@@ -1,0 +1,7 @@
+---
+# Synthetic, gate-only fixture. See gate/fixtures/README.md. Not a real lab.
+# `routing` is a scalar here instead of a mapping — the shape config-doctor.sh rejects
+# because a recursive combine() would clobber the whole app-defaults subtree.
+routing: internal
+stack:
+  name: media
