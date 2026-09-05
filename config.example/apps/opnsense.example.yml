@@ -14,3 +14,5 @@ proxmox:
     # iso_url: "https://pkg.opnsense.org/releases/<version>/OPNsense-<version>-dvd-amd64.iso.bz2"
     # iso_sha256: "<64-hex checksum from the matching official checksums file>"
     # iso_name: "OPNsense-<version>-dvd-amd64.iso"
+    # The installer ISO always uses node-local `local` storage. The appliance
+    # system disk may use a separate proxmox.vm.storage value.

@@ -17,6 +17,5 @@ opnsense_defaults:
       iso_url: "https://pkg.opnsense.org/releases/26.7/OPNsense-26.7.r1-dvd-amd64.iso.bz2"
       iso_sha256: "6b8430921316bd1d912a7bf71d02f2e354cd82b644c3fbf2646ab55382b9a758"
       iso_name: "OPNsense-26.7.r1-dvd-amd64.iso"
-      iso_storage: local
   routing:
     identity: none
