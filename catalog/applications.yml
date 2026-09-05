@@ -238,7 +238,7 @@ applications:
     job: deploy-proxmox-datacenter-manager.yaml
     root: Platform
     category: Management
-    scope: lab
+    scope: lab                          # one PDM inventory spans explicitly authorized lab remotes
     # Installer VM lifecycle is intentionally not projected through guest-agent actions.
     actions: []
 
