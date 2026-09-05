@@ -1,0 +1,37 @@
+- id: 45616049-cbb9-4a16-aad6-56618b57fe6e
+  uuid: 45616049-cbb9-4a16-aad6-56618b57fe6e
+  name: Audit Backups
+  group: Manage/Lab/Health
+  description: |-
+    Report guest backup schedules, recent snapshot candidates, and external or excluded data.
+
+    **Read-only.** A fresh snapshot does not prove application consistency or a successful
+    restore. Unverified recovery requirements remain visible in the report.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+    - name: include_legacy
+      value: 'false'
+      values: ['false', 'true']
+      enforced: true
+      required: true
+      description: Include guests without the project ownership tag in the read-only audit.
+    - name: max_age_hours
+      value: '36'
+      required: true
+      regex: '^[1-9][0-9]*$'
+      description: Maximum snapshot age in hours before the report marks it stale.
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+      - description: Read backup evidence
+        script: |-
+          #!/bin/bash
+          set -euo pipefail
+          exec lab-run playbooks/maintenance/audit-backups.yml \
+            -e "include_legacy=$RD_OPTION_INCLUDE_LEGACY" \
+            -e "max_age_hours=$RD_OPTION_MAX_AGE_HOURS"

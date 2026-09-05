@@ -6,6 +6,7 @@ schema_version: 1
 # in its Maintenance folder — is classified in catalog/applications.yml and expanded from
 # the templates named in rundeck/app-actions.yml. Do not add a per-application job here.
 jobs:
+  audit-backups.yaml: Manage/Lab/Health
   bootstrap.yaml: Setup/Platform
   check-native-updates.yaml: Manage/Lab/Updates
   config-doctor.yaml: Manage/Configuration/Validation
