@@ -103,4 +103,42 @@ jobs:
       - run: echo "${{ secrets.TOKEN }}"
 ' >/dev/null || fail "a secrets reference outside pull_request must pass"
 
+# ── 7. workflow-level env inherits secrets into a pull_request job ────────────
+set +e
+out="$(run_case pr-workflow-env-secrets '
+on: pull_request
+permissions:
+  contents: read
+env:
+  TOKEN: "${{ secrets.TOKEN }}"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "a workflow-level env secrets reference on a pull_request workflow must fail"
+grep -q "workflow-level env references the secrets context" <<<"$out" \
+    || fail "workflow-level-env-secrets failure message not found"
+
+# ── 8. self-hosted runner selected via a runs-on mapping, no environment gate ─
+set +e
+out="$(run_case self-hosted-mapping-no-gate '
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: {group: pve-runners, labels: self-hosted}
+    steps:
+      - run: echo hi
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "a mapping-form self-hosted runs-on without an environment gate must fail"
+grep -q "self-hosted runner without an environment" <<<"$out" \
+    || fail "mapping-form self-hosted failure message not found"
+
 echo "workflow-policy focused tests passed."

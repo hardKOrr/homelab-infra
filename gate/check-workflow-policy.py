@@ -46,6 +46,20 @@ def _runs_on_self_hosted(runs_on: object) -> bool:
         return "self-hosted" in runs_on
     if isinstance(runs_on, list):
         return any("self-hosted" in str(item) for item in runs_on)
+    if isinstance(runs_on, dict):
+        # `runs-on: {group: ..., labels: [...]}` selects a runner group/label set rather
+        # than GitHub-hosted infrastructure. A `group` key alone, with no explicit
+        # "GitHub Actions" default label, is treated conservatively as self-hosted: this
+        # policy exists to gate access to a runner this repository does not control, and
+        # an unrecognised selector must fail closed, not pass silently.
+        if "group" in runs_on:
+            return True
+        labels = runs_on.get("labels")
+        if isinstance(labels, str):
+            return "self-hosted" in labels
+        if isinstance(labels, list):
+            return any("self-hosted" in str(item) for item in labels)
+        return False
     return False
 
 
@@ -65,8 +79,18 @@ def check_workflow(path: Path) -> list[str]:
     # PyYAML parses the bare `on:` key as boolean True under YAML 1.1.
     on = data.get("on", data.get(True))
     top_permissions = data.get("permissions")
+    top_env = data.get("env")
     is_pr_triggered = _pull_request_triggers(on)
     jobs = data.get("jobs") or {}
+
+    # Workflow-level `env` is inherited by every job and step (GitHub Actions context
+    # availability), so a secrets reference placed there reaches pull_request-triggered
+    # code exactly as if it were written inside the job.
+    if is_pr_triggered and _contains_secrets_ref(top_env):
+        findings.append(
+            f"{path.name}: workflow-level env references the secrets context, "
+            "inherited by every pull_request-triggered job"
+        )
 
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
