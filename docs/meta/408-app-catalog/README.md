@@ -220,8 +220,12 @@ single row's implementer re-decides it.
 
 ## Remaining
 
-- [ ] Batch A implemented — each row has a role (or reuses `servarr`), a playbook, an
-      `app-defaults` file, and passes both gates
+- [x] Batch A implemented — each deployable row has a role, playbook, `app-defaults`
+      file, catalog entry and Rundeck job. The implementation landed in PRs #18
+      (Bazarr), #20 (Plex), #21 (Tautulli), #22 (Jellyseerr), #23 (FlareSolverr),
+      #24 (Unpackerr), #25 (Kometa), #26 (Maintainerr), #27 (Deemix), and #28
+      (slskd); each recorded passing `gate/lint.sh` and `gate/test.sh`. Readarr is
+      void, as recorded in its Batch A row.
 - [ ] Batch A accepted — a live media-stack wiring run places every new registry entry
 - [ ] Batch B implemented, including the database-provisioning contract postgresql needs
 - [ ] Shared Kubernetes storage scoped and implemented before storage-heavy applications
