@@ -1,0 +1,32 @@
+# Deploy Homepage — source job definition. The dashboard's entries come from generated
+# topology facts at deploy time; this job never asks an operator to hand-maintain URLs.
+- id: 7ca0f8e4-d8dd-5a85-8ed4-8449777fdfe8
+  uuid: 7ca0f8e4-d8dd-5a85-8ed4-8449777fdfe8
+  name: Deploy Homepage
+  group: Applications/Management/Dashboards/Homepage
+  description: |-
+    Deploy or converge **Homepage**, the lab dashboard.
+
+    - **Hosting:** Kubernetes, in its own project-owned namespace
+    - **Entries:** generated from approved topology facts; credentials are never rendered
+    - **State:** stateless; deploy regenerates ConfigMap configuration on every run
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: 'Dashboard instance name. **Default:** homepage.'
+    required: true
+    value: homepage
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/homepage.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/homepage.yml -e "instance=$RD_OPTION_INSTANCE"

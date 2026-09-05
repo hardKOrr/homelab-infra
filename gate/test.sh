@@ -106,4 +106,5 @@ bash gate/test-maintainerr-restore.sh || rc=1
 bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1
 bash gate/test-network-scope.sh || rc=1
+bash gate/test-homepage-dashboard.sh || rc=1
 exit $rc

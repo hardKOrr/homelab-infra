@@ -1,0 +1,51 @@
+---
+# Generate presentation only from approved topology fields. The registry is never passed
+# wholesale because runtime provider credentials can coexist with topology in memory.
+- name: Homepage | Define approved platform facts
+  ansible.builtin.set_fact:
+    _homepage_fact_catalog:
+      vaultwarden: { name: Vaultwarden, description: Secret store }
+      sso: { name: Authentik, description: Access and identity }
+      reverse_proxy: { name: Reverse proxy, description: Public edge }
+      monitoring: { name: Uptime Kuma, description: Uptime monitoring }
+      metrics: { name: Observability, description: Metrics and dashboards }
+      notifications: { name: Ntfy, description: Notifications }
+      backups: { name: Proxmox Backup Server, description: Backups }
+      kubernetes: { name: Kubernetes, description: Application hosting }
+
+- name: Homepage | Start generated platform entries
+  ansible.builtin.set_fact:
+    _homepage_platform_entries: []
+
+- name: Homepage | Add platform entries with an approved endpoint
+  ansible.builtin.set_fact:
+    _homepage_platform_entries: >-
+      {{ _homepage_platform_entries + [{'name': item.value.name,
+          'href': (homelabinfra_infra | default({})).get(item.key, {}).get('host'),
+          'description': item.value.description}] }}
+  loop: "{{ _homepage_fact_catalog | dict2items }}"
+  when: >-
+    ((homelabinfra_infra | default({})).get(item.key, {}).get('host', '') | string | length) > 0
+
+- name: Homepage | Start generated media entries
+  ansible.builtin.set_fact:
+    _homepage_media_entries: []
+
+- name: Homepage | Add deployed media application entries
+  ansible.builtin.set_fact:
+    _homepage_media_entries: >-
+      {{ _homepage_media_entries + [{'name': item.key, 'href': item.value.host,
+          'description': (item.value.app | default('application')) ~ ' application'}] }}
+  loop: "{{ ((homelabinfra_infra | default({})).media | default({})) | dict2items }}"
+  when: (item.value.host | default('') | string | length) > 0
+
+- name: Homepage | Assemble generated service groups
+  ansible.builtin.set_fact:
+    homepage_service_groups: >-
+      {{ ([dict([(app_config.presentation.platform_group | default('Platform'), _homepage_platform_entries)])]
+          if _homepage_platform_entries | length > 0 else [])
+         + ([dict([(app_config.presentation.media_group | default('Media'), _homepage_media_entries)])]
+            if _homepage_media_entries | length > 0 else []) }}
+    homepage_settings:
+      title: "{{ app_config.presentation.title | default('Homelab') }}"
+      theme: "{{ app_config.presentation.theme | default('dark') }}"

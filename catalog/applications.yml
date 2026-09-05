@@ -215,6 +215,18 @@ applications:
     type: Social Publishing
     scope: estate
 
+  homepage:
+    name: Homepage
+    job: deploy-homepage.yaml
+    root: Applications
+    category: Management
+    type: Dashboards
+    # One topology registry serves every estate, so the generated dashboard is lab-wide.
+    scope: lab
+    # Homepage has only generated ConfigMap data. A backup or restore action would be a
+    # misleading no-op; redeploy regenerates its complete state from topology facts.
+    exclude: [backup, restore]
+
   ntfy:
     name: Ntfy
     job: deploy-ntfy.yaml

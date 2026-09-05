@@ -1,0 +1,32 @@
+---
+# Homepage is a stateless, lab-wide dashboard. Its service entries are generated from the
+# topology facts that deployments already write; this file deliberately contains no URLs.
+homepage_defaults:
+  hosting: kubernetes
+  cluster: k3s-cluster
+
+  app:
+    image: "ghcr.io/gethomepage/homepage:v1.8.0"
+    port: 3000
+
+  routing:
+    subdomain: homepage
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  # This is the complete operator override boundary. These fields affect only how entries
+  # look; endpoints, names, and membership always come from generated topology facts.
+  presentation:
+    title: Homelab
+    theme: dark
+    color: slate
+    platform_group: Platform
+    media_group: Media
+    layout: {}
+
+  # Homepage owns no user data. ConfigMaps are regenerated on every deploy from facts, so
+  # a backup would contain only reconstructible configuration and a restore would add no
+  # recovery capability. The catalog excludes the corresponding day-2 actions.
+  backup:
+    enabled: false
