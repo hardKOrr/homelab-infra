@@ -1,0 +1,19 @@
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Backup %NAME%
+  group: '%GROUP%'
+  description: Create a PBS-backed VM backup of this PDM appliance, including its remote definitions.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options: [{name: instance, required: true, value: '%SLUG%', valuesUrl: 'file:/var/lib/rundeck/app-instances/%SLUG%.json', enforced: false}]
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - script: |-
+        #!/bin/bash
+        set -euo pipefail
+        exec lab-run playbooks/maintenance/backup-pdm.yml -e "instance=${RD_OPTION_INSTANCE:?instance is required}"

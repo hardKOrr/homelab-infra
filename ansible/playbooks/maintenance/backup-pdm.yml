@@ -1,0 +1,41 @@
+---
+# Capture the PDM appliance VM. Its VM disk includes PDM configuration and remotes.cfg;
+# remote credentials are never exported because Vaultwarden remains their canonical home.
+- name: PDM | Backup appliance VM
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that:
+          - instance is defined
+          - instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: Provide the PDM instance name.
+    - ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/proxmox-datacenter-manager.yml
+        name: _pdm_defaults
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _pdm_instance
+    - ansible.builtin.set_fact:
+        pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance, recursive=True) }}"
+    - ansible.builtin.assert:
+        that: [pdm_config.backup.storage | length > 0, pdm_config.proxmox.vmid is defined]
+        fail_msg: Define backup.storage and proxmox.vmid in the PDM instance config.
+  tasks:
+    - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+    - name: PDM | Confirm VM ownership before backup
+      ansible.builtin.command:
+        argv: [qm, config, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      register: _pdm_vm
+      changed_when: false
+    - ansible.builtin.assert:
+        that: ["'_+lab' in _pdm_vm.stdout", "'_' ~ instance in _pdm_vm.stdout"]
+        fail_msg: Refusing to back up a VM that is not the managed PDM instance.
+    - name: PDM | Create PBS-backed appliance backup
+      ansible.builtin.command:
+        argv: [vzdump, "{{ pdm_config.proxmox.vmid | string }}", --storage, "{{ pdm_config.backup.storage }}", --mode, snapshot]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      changed_when: true

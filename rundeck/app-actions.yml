@@ -24,6 +24,11 @@ actions:
     template: backup-app.yaml
     hosting: [kubernetes]
 
+  pdm_backup:
+    template: backup-pdm.yaml
+    hosting: [appliance]
+    opt_in: true
+
   configure:
     template: configure-app.yaml
     hosting: [native, docker, kubernetes]
@@ -45,6 +50,16 @@ actions:
   restore:
     template: restore-app.yaml
     hosting: [kubernetes]
+
+  pdm_restore:
+    template: restore-pdm.yaml
+    hosting: [appliance]
+    opt_in: true
+
+  pdm_remove:
+    template: remove-pdm.yaml
+    hosting: [appliance]
+    opt_in: true
 
   rollback:
     template: rollback-container.yaml

@@ -1,0 +1,22 @@
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Restore %NAME%
+  group: '%GROUP%'
+  description: Restore only this managed PDM VM from a PBS backup. Requires an exact backup volume and confirmation.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - {name: instance, required: true, value: '%SLUG%', valuesUrl: 'file:/var/lib/rundeck/app-instances/%SLUG%.json', enforced: false}
+  - {name: backup_volume, required: true, description: 'PBS volume, e.g. backup/vm/420/vzdump-qemu-420-...'}
+  - {name: confirm, required: true, value: '', description: 'Type RESTORE-PDM.'}
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - script: |-
+        #!/bin/bash
+        set -euo pipefail
+        exec lab-run playbooks/maintenance/restore-pdm.yml -e "instance=${RD_OPTION_INSTANCE:?instance is required}" -e "backup_volume=${RD_OPTION_BACKUP_VOLUME:?backup_volume is required}" -e "confirm=${RD_OPTION_CONFIRM:?confirm is required}"

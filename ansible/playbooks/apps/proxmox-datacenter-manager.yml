@@ -14,7 +14,12 @@
         pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance | default({}), recursive=True) }}"
     - ansible.builtin.include_role: {name: pdm}
     - ansible.builtin.assert:
-        that: [pdm_config.proxmox.node | default('') | length > 0, pdm_config.proxmox.storage | default('') | length > 0, pdm_config.proxmox.vmid is defined, pdm_config.proxmox.ip_address | default('') | length > 0, pdm_config.proxmox.fqdn | default('') | length > 0]
+        that:
+          - pdm_config.proxmox.node | default('') | length > 0
+          - pdm_config.proxmox.storage | default('') | length > 0
+          - pdm_config.proxmox.vmid is defined
+          - pdm_config.proxmox.ip_address | default('') | length > 0
+          - pdm_config.proxmox.fqdn | default('') | length > 0
         fail_msg: "PDM requires explicit node, storage, VMID, management IP, and FQDN before touching Proxmox."
   tasks:
     - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
@@ -32,3 +37,8 @@
           disk_size: "{{ pdm_config.proxmox.vm.disk_size }}"
           net0: "virtio,bridge={{ pdm_config.proxmox.bridge | default('vmbr0') }}"
           tags: "{{ (pdm_config.proxmox.vm.tags + ['_' ~ instance]) | unique }}"
+    - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_name: "{{ instance }}"
+        record_guest_kind: appliance
+        record_guest_url: "https://{{ pdm_config.proxmox.fqdn }}:8443"

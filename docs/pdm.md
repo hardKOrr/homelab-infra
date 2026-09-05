@@ -5,10 +5,12 @@ never uses cloud-init, SSH, or QEMU guest-agent access. It refuses an occupied V
 the VM carries both `_+lab` and `_<instance>` tags; it never adopts an existing system.
 
 Before Deploy, upload a checksum-verified official ISO and name the exact Proxmox node,
-storage, VMID, management IP, DNS/FQDN, bridge, CPU, memory, and disk in the instance config.
-Complete the installer in the Proxmox console. PDM listens on HTTPS port 8443. Use an internal
-Caddy route for `https://pdm.<lab-domain>` only after installation and certificate validation;
-do not publish it externally by default.
+storage, VMID, management IP, DNS/FQDN, bridge, CPU, memory, disk, and PBS storage in the
+instance config. Complete the installer in the Proxmox console. The explicit endpoint is
+`https://<fqdn>:8443`; PDM terminates TLS itself. Configure a certificate in PDM (ACME with the
+lab's DNS challenge or a locally trusted certificate) and validate it before allowing clients to
+connect. Do not publish it externally by default and do not add a Caddy route: the installer VM
+has no project-owned reverse-proxy wiring.
 
 `remotes` is the complete allow-list. Every remote declares type, nodes, authority, and
 Vaultwarden item/hidden authid/token fields. Authority defaults to `read-only`; use an Auditor
@@ -17,8 +19,14 @@ Vaultwarden after installation and add only declared remotes through PDM. This r
 not create tokens, update remotes, operate remote VMs, change clusters, or install remotes.
 
 PDM configuration, including `remotes.cfg`, is under `/etc/proxmox-datacenter-manager/`.
-Protect the complete PDM VM under the normal PBS VM backup schedule; take an extra VM backup
-or snapshot before risky changes. Restore the VM from PBS, validate HTTPS and remote inventory,
-then retrieve/rotate tokens from Vaultwarden. To remove, first remove PDM wiring and then stop
-and destroy only the doubly tagged PDM VM; retain its instance config and Vaultwarden items.
-Never alter or unregister remote PVE, PBS, OPNsense, or other guests during removal.
+**Backup PDM** creates a PBS-backed VM backup using the configured `backup.storage`; that image
+contains the complete PDM configuration and remote definitions. **Restore PDM** requires the
+exact VM backup volume and the literal confirmation `RESTORE-PDM`; it accepts only a backup named
+for this VMID and replaces only the doubly tagged PDM VM. After restore, validate HTTPS and
+read-only inventory, then retrieve or rotate remote tokens from Vaultwarden.
+
+**Remove PDM** requires the literal confirmation `REMOVE-PDM`. It stops and destroys only the
+doubly tagged PDM VM and withdraws its project guest record. It retains
+`config/apps/<instance>.yml` and all Vaultwarden items as the restore point. It never alters,
+unregisters, adopts, reconfigures, or otherwise contacts remote PVE, PBS, OPNsense, or other
+guests.

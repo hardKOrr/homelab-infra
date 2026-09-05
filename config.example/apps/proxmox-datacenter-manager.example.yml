@@ -14,3 +14,6 @@ remotes:
     nodes: [pve1.example.internal]
     authority: read-only
     vaultwarden: {item: homelab-infra/pdm/lab-pve, authid_field: authid, token_field: token}
+# The configured Proxmox PBS storage that stores this VM's backups. The PDM VM backup
+# includes /etc/proxmox-datacenter-manager/remotes.cfg; credentials remain in Vaultwarden.
+backup: {storage: REPLACE_WITH_PBS_STORAGE_ID}
