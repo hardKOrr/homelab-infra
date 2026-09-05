@@ -33,10 +33,40 @@ or Vaultwarden item.
 - No hardcoded credential defaults that could survive to production (e.g. `password: changeme`
   in git-managed defaults). Generate, prompt, or fail.
 - Example/template files contain empty or placeholder values only.
+- A test fixture or CI artifact follows the same rule as an example/template file: a
+  secret-shaped key may appear (the schema requires it), but its value must be an obvious,
+  reviewable placeholder, never something that could pass for a real credential.
+
+## Hosted CI lane policy
+
+CI test infrastructure (see issue #29 and its children) is a second risk surface: a
+fixture, workflow, or cleanup routine could leak a credential or target an unmanaged
+resource even though it never touches production config.
+
+- Every hosted `.github/workflows/*.yml` job declares explicit `permissions` — the
+  repository does not rely on the default token's implicit scopes.
+- A `pull_request`-triggered job never references the `secrets` context. That trigger runs
+  PR-branch code with the base repository's token; injecting a secret there hands it to
+  untrusted code. `push`, `workflow_dispatch`, and other trusted triggers may use secrets.
+- A self-hosted runner (needed only for a future real-Proxmox acceptance lane, #35) is
+  never targeted without the job also declaring `environment:`, so a required-reviewer
+  approval gate stands between the trigger and the runner. GitHub's environment approval
+  controls *access* to the job; it does not isolate the runner process itself, so a
+  self-hosted PVE runner must additionally run on a dedicated, test-only machine, use an
+  immutable reviewed SHA (never a mutable ref), and hold only test-lab credentials that
+  cannot reach production.
+- Cleanup in every CI lane (Docker, Kind, mock, or a future PVE lane) selects only
+  resources it created itself. For Proxmox specifically that means the exact `_+lab`
+  ownership tag `ansible/tasks/proxmox/README.md` documents — the same sentinel production
+  removal paths already gate on — never a name prefix or heuristic guess.
 
 ## Enforced by
 
 - `ansible/scripts/lab-run.sh` — mode guard, preflight, private CLI state, cleanup
 - `ansible/scripts/secret-shape.py` and `ansible/tasks/bootstrap/write-generated-facts.yml`
 - `gate/test-vaultwarden.sh` — redaction, mapping, fail-closed and cleanup tests
+- `gate/check-fixture-secrets.py` and `gate/test-fixture-secrets.sh` — fixture/artifact
+  secret-shape and tracked `config/` boundary
+- `gate/check-workflow-policy.py` and `gate/test-workflow-policy.sh` — hosted workflow
+  permissions, secrets-in-pull_request, and self-hosted-without-environment boundary
 - inspection — cite this specification in findings

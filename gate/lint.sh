@@ -78,3 +78,14 @@ cd ..
 # the two linked: it fails when a canonical passage changes without its printed
 # counterpart being re-read, and when an anchor or a passage loses its other half.
 "$HOME/.venvs/homelab-ansible/bin/python" gate/check-output-anchors.py
+
+# Fixture/artifact secrets boundary (#34): a tracked config/ path, or a fixture under
+# gate/fixtures/ or ansible/molecule/ carrying a secret-shaped key with a real-looking
+# (non-placeholder) value, fails here before it ever reaches a hosted PR run.
+"$HOME/.venvs/homelab-ansible/bin/python" gate/check-fixture-secrets.py
+
+# GitHub Actions workflow policy (#34): hosted PR workflows keep minimal permissions,
+# never reference repository/environment secrets in a pull_request-triggered job, and
+# never target a self-hosted runner without the environment-approval gate that policy
+# requires — see docs/specs/secrets-handling.md.
+"$HOME/.venvs/homelab-ansible/bin/python" gate/check-workflow-policy.py

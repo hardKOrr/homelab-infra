@@ -23,6 +23,15 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   references in tracked and untracked text files.
 - `check-output-anchors.py` — links operator-facing output to the Markdown passage it
   restates. See *Output anchors* below.
+- `check-fixture-secrets.py` — rejects a tracked path under `config/` and a secret-shaped
+  key under `gate/fixtures/` or `ansible/molecule/` whose value does not look like a
+  reviewable placeholder. Reuses the exact key-shape regex
+  `ansible/scripts/secret-shape.py` enforces on generated facts. See
+  `docs/specs/secrets-handling.md`.
+- `check-workflow-policy.py` — rejects a `.github/workflows/*.yml` job with no explicit
+  `permissions`, a `secrets` reference in a `pull_request`-triggered job, or a
+  self-hosted runner target with no `environment` approval gate. See
+  `docs/specs/secrets-handling.md`.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
