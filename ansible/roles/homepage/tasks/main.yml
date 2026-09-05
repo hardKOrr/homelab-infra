@@ -20,3 +20,4 @@
   vars:
     k8s_manifest: "{{ _homepage_manifest }}"
     k8s_wait_for:
+      - "deployment/{{ instance }}"
