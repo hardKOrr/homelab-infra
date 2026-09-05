@@ -45,5 +45,5 @@
 
 - name: MySQL | Verify local server readiness
   ansible.builtin.command:
-    argv: [mysql-admin, "--socket=/var/run/mysqld/mysqld.sock", ping]
+    argv: [mysqladmin, "--socket=/var/run/mysqld/mysqld.sock", ping]
   changed_when: false
