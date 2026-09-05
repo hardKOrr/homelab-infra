@@ -79,7 +79,53 @@ check("bare 'app-' is refused as illegal", is_legal(empty_reduction), False)
 # -- unwiring/kubernetes.yml: the ownership refusal that gates namespace deletion --------
 unwire = yaml.safe_load((repo / "ansible/tasks/unwiring/kubernetes.yml").read_text())
 block_task = next(t for t in unwire if "block" in t)
-owner_condition = block_task["block"][0]["ansible.builtin.assert"]["that"]
+block = block_task["block"]
+
+# Structural guard, not just an expression check: rendering the assert's own condition in
+# isolation would still pass a review that moved a destructive task ahead of it, or made
+# the assert conditional so a future edit could skip it. The assert is found by scanning
+# the task list — not assumed to be block[0] — so that check itself fails loudly if the
+# assert is no longer the first task, rather than grabbing whatever task happens to sit
+# there and silently evaluating the wrong condition.
+#
+# A task "mutates" here if its argv names one of kubectl's own mutating verbs (delete,
+# patch) — the same vocabulary unwiring/kubernetes.yml's tasks use, rather than a
+# heuristic keyword search over task names, which a rename could silently defeat.
+MUTATING_VERBS = {"delete", "patch"}
+
+
+def task_argv(task):
+    cmd = task.get("ansible.builtin.command")
+    if isinstance(cmd, dict):
+        return cmd.get("argv") or []
+    return []
+
+
+def is_mutating(task):
+    return any(verb in task_argv(task) for verb in MUTATING_VERBS)
+
+
+assert_index = next(
+    i for i, t in enumerate(block) if "ansible.builtin.assert" in t
+)
+check("the ownership assert is the block's first task", assert_index, 0)
+check(
+    "the ownership assert task itself carries no `when` that could skip it",
+    "when" in block[assert_index],
+    False,
+)
+
+mutating_indices = [i for i, t in enumerate(block) if is_mutating(t)]
+check("the unwiring block still has mutating (delete/patch) task(s) to guard", bool(mutating_indices), True)
+for i in mutating_indices:
+    if i <= assert_index:
+        failures.append(
+            "mutating task %r (index %d) does not come after the ownership assert (index %d)"
+            % (block[i].get("name"), i, assert_index)
+        )
+
+
+owner_condition = block[assert_index]["ansible.builtin.assert"]["that"]
 
 
 def owned_by_platform(label):
