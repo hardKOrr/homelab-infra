@@ -1,0 +1,38 @@
+---
+# Synthetic, gate-only fixture. See gate/fixtures/README.md. Not a real lab.
+domain: "lab.example.test"
+
+reverse_proxy:
+  provider: caddy
+  instance: caddy
+  internal_cidrs:
+    - "198.51.100.0/24"
+
+sso:
+  provider: authentik
+  instance: authentik
+
+notifications:
+  provider: ntfy
+  instance: ntfy
+  topic: homelab
+
+dns:
+  provider: none
+
+maintenance:
+  boot:
+    order: 30   # overrides the git-managed default (50) -- see gate/test-config-fixtures.sh,
+                # which asserts the sibling `up` key still inherits from the default,
+                # proving the merge is combine(recursive=True) and not a whole-key replace.
+
+backups:
+  datastore_path: "/mnt/backup-test"
+  schedule: "daily"
+  retention:
+    keep_last: 3
+    keep_daily: 7
+    keep_weekly: 4
+
+vaultwarden:
+  instance: vaultwarden

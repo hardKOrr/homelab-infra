@@ -1,0 +1,8 @@
+---
+# Synthetic, gate-only fixture. See gate/fixtures/README.md. Not a real lab.
+proxmox:
+  ip_address: "198.51.100.50"
+
+routing:
+  identity: catalog
+  access: internal
