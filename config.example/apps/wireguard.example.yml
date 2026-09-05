@@ -1,0 +1,25 @@
+---
+# Managed inbound WireGuard server. This is UDP, not an HTTP application: do not
+# add routing.proxy/Caddy settings. The router owner must create and maintain the
+# UDP forward; homelab-infra never adopts or changes an existing router/firewall.
+inbound:
+  public_endpoint: vpn.example.net
+  forwarding:
+    owner: network-team
+    responsibility: manual # UDP 51820 -> this managed LXC's LAN address
+
+app:
+  port: 51820
+  vpn_cidr: 10.66.66.0/24
+  vpn_address: 10.66.66.1/24
+  # dns: 192.168.1.1
+  # client_allowed_ips: 0.0.0.0/0, ::/0
+  # LAN prefixes clients should be able to reach through this tunnel. Empty means
+  # only the configured client AllowedIPs are installed; forwarding/NAT still cover
+  # full-tunnel clients.
+  # routing_lan_cidrs: [192.168.1.0/24]
+  peers:
+    - name: laptop
+      vpn_address: 10.66.66.2/32
+      # allowed_ips is installed in the client tunnel. Do not put a private key here.
+      # allowed_ips: 0.0.0.0/0, ::/0

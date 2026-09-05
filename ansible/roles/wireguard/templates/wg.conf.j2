@@ -1,0 +1,12 @@
+[Interface]
+Address = {{ app_config.app.vpn_address }}
+ListenPort = {{ app_config.app.port }}
+PrivateKey = {{ _wg_server_private_key }}
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -s {{ app_config.app.vpn_cidr }} -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -s {{ app_config.app.vpn_cidr }} -o eth0 -j MASQUERADE
+{% for peer in _wg_peers %}
+
+[Peer]
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.vpn_address }}
+{% endfor %}

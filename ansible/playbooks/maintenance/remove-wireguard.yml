@@ -1,0 +1,56 @@
+---
+- name: WireGuard | Remove managed inbound server
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that:
+          - instance is defined
+          - confirm | default('') == 'REMOVE-WIREGUARD'
+        fail_msg: Provide instance and confirm=REMOVE-WIREGUARD.
+  tasks:
+    - ansible.builtin.meta: refresh_inventory
+    - ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars: {tag_group_tag: "_{{ instance }}"}
+    - ansible.builtin.set_fact:
+        _wg_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    - ansible.builtin.assert:
+        that: _wg_hosts | length <= 1
+        fail_msg: More than one guest carries the instance tag; refusing destructive removal.
+    - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+      when: _wg_hosts | length == 1
+    - ansible.builtin.command:
+        argv: [pct, config, "{{ hostvars[_wg_hosts[0]].proxmox_vmid | string }}"]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _wg_config
+      changed_when: false
+      when: _wg_hosts | length == 1
+    - ansible.builtin.assert:
+        that:
+          - "'_+lab' in _wg_config.stdout"
+          - "('_' ~ instance) in _wg_config.stdout"
+        fail_msg: Refusing to remove an LXC without exact project ownership tags.
+      when: _wg_hosts | length == 1
+    - ansible.builtin.command:
+        argv: [pct, stop, "{{ hostvars[_wg_hosts[0]].proxmox_vmid | string }}"]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      failed_when: false
+      changed_when: _wg_hosts | length == 1
+      when: _wg_hosts | length == 1
+    - ansible.builtin.command:
+        argv: [pct, destroy, "{{ hostvars[_wg_hosts[0]].proxmox_vmid | string }}", --purge, '1']
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _wg_hosts | length == 1
+    - ansible.builtin.import_tasks: ../../tasks/bitwarden/authenticate.yml
+    - ansible.builtin.command:
+        argv: [bw, list, items, --search, "homelab-infra/apps/{{ instance }}"]
+      register: _wg_items
+      changed_when: false
+      no_log: true
+    - ansible.builtin.command:
+        argv: [bw, delete, item, "{{ (_wg_items.stdout | from_json | selectattr('name', 'equalto', 'homelab-infra/apps/' ~ instance) | map(attribute='id') | list | first) }}"]
+      when: (_wg_items.stdout | from_json | selectattr('name', 'equalto', 'homelab-infra/apps/' ~ instance) | list | length) == 1
+      no_log: true
+    - ansible.builtin.debug:
+        msg: Router UDP forwarding is external and remains unchanged; remove it only with router-owner authority.
