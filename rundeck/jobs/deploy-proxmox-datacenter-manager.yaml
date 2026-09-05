@@ -1,0 +1,19 @@
+- id: 45bf3d93-5e72-5c8d-96db-673cd7019644
+  uuid: 45bf3d93-5e72-5c8d-96db-673cd7019644
+  name: Deploy Proxmox Datacenter Manager
+  group: Platform/Management/Proxmox Datacenter Manager
+  description: Create the tagged PDM ISO appliance VM; complete installation in the Proxmox console.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options: [{name: instance, required: true, value: proxmox-datacenter-manager}]
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - script: |-
+        #!/bin/bash
+        set -euo pipefail
+        exec lab-run playbooks/apps/proxmox-datacenter-manager.yml -e "instance=${RD_OPTION_INSTANCE:?instance is required}"

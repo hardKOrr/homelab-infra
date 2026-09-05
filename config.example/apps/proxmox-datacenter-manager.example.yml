@@ -1,0 +1,16 @@
+---
+# Replace all example values. Deploy only creates this tagged VM and attaches the ISO.
+install: {method: official-iso, iso: local:iso/proxmox-datacenter-manager_<version>.iso}
+proxmox:
+  node: REPLACE_WITH_EXACT_PROXMOX_NODE
+  storage: local-lvm
+  vmid: 420
+  ip_address: 192.0.2.42
+  fqdn: pdm.example.internal
+  bridge: vmbr0
+remotes:
+  - id: lab-pve
+    type: pve
+    nodes: [pve1.example.internal]
+    authority: read-only
+    vaultwarden: {item: homelab-infra/pdm/lab-pve, authid_field: authid, token_field: token}
