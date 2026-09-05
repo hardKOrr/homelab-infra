@@ -62,6 +62,18 @@ resource even though it never touches production config.
   lane that means the `app.kubernetes.io/managed-by: homelab-infra` namespace label
   `ansible/tasks/unwiring/kubernetes.yml` asserts before deleting anything — an unlabelled
   or foreign-owned namespace is refused, not deleted.
+- No hosted job uploads a diagnostic artifact (`actions/upload-artifact`). No lane
+  redacts or minimizes its own log/verify output today, so an uploaded artifact could
+  carry a fixture value, a stack trace with a local path, or another diagnostic this
+  repository has not reviewed for that purpose; adding a redaction/minimization step is a
+  prerequisite for uploading anything, not a follow-up. `check-workflow-policy.py`
+  enforces this. Job console output stays subject to GitHub's own secret-value log
+  masking, which is not itself a security boundary (see Non-goals above) but is the only
+  redaction hosted logs get until a lane needs more.
+- A checker's own failure output follows the same rule as a fixture: it may name the
+  offending key path so a reviewer can find it, but it must never echo the disallowed
+  value itself. `check-fixture-secrets.py`'s findings are path-only; `test-fixture-secrets.sh`
+  asserts the rejected value never appears in the checker's own output.
 
 ## Enforced by
 
