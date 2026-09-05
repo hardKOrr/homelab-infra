@@ -20,7 +20,9 @@ cat > "$work/play.yml" <<'YAML'
         color: slate
         platform_group: Platform
         media_group: Media
-        layout: {}
+        layout:
+          Platform:
+            style: row
     homelabinfra_infra:
       vaultwarden: {host: "https://vault.example.test", admin_token: "must-not-render"}
       monitoring: {host: "https://status.example.test", password: "must-not-render"}
@@ -31,7 +33,9 @@ cat > "$work/play.yml" <<'YAML'
         name: homepage
         tasks_from: dashboard
     - ansible.builtin.copy:
-        content: "{{ homepage_service_groups | to_nice_yaml(indent=2, width=120) }}"
+        content: >-
+          {{ {'services': homepage_service_groups, 'settings': homepage_settings}
+             | to_nice_yaml(indent=2, width=120) }}
         dest: "{{ lookup('env', 'HOMEPAGE_TEST_OUTPUT') }}"
         mode: '0600'
 YAML
@@ -44,9 +48,9 @@ from pathlib import Path
 import sys
 import yaml
 
-services = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-assert "must-not-render" not in str(services), services
-assert services == [
+dashboard = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert "must-not-render" not in str(dashboard), dashboard
+assert dashboard["services"] == [
     {"Platform": [
         {"name": "Vaultwarden", "href": "https://vault.example.test", "description": "Secret store"},
         {"name": "Uptime Kuma", "href": "https://status.example.test", "description": "Uptime monitoring"},
@@ -54,7 +58,13 @@ assert services == [
     {"Media": [
         {"name": "sonarr", "href": "http://sonarr.example.test:8989", "description": "sonarr application"},
     ]},
-], services
+], dashboard["services"]
+assert dashboard["settings"] == {
+    "title": "Test Lab",
+    "theme": "dark",
+    "color": "slate",
+    "layout": {"Platform": {"style": "row"}},
+}, dashboard["settings"]
 repo = Path(sys.argv[2])
 manifest = (repo / "ansible/roles/homepage/templates/manifest.yaml.j2").read_text(encoding="utf-8")
 assert "PersistentVolumeClaim" not in manifest

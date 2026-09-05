@@ -49,3 +49,5 @@
     homepage_settings:
       title: "{{ app_config.presentation.title | default('Homelab') }}"
       theme: "{{ app_config.presentation.theme | default('dark') }}"
+      color: "{{ app_config.presentation.color | default('slate') }}"
+      layout: "{{ app_config.presentation.layout | default({}) }}"
