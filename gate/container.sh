@@ -48,24 +48,12 @@ cd ansible
 # Teardown always runs, including after a failed converge: molecule destroy removes
 # only the one platform container this scenario created (named docker-app-target),
 # so cleanup cannot reach an unrelated runner container. See "Recovery needs" in the
-# tracker issue this harness answers.
-#
-# The trap must not swallow a destroy failure with `|| true`: an otherwise green run
-# whose cleanup then fails has to fail the gate too, or CI reports success while the
-# privileged target (and whatever it started inside itself) is left on the runner's
-# Docker host. rc captures whatever exit status the script was already carrying —
-# an earlier converge/verify failure — so a passing destroy never hides it, and a
-# failing destroy is recorded even when everything before it passed.
-rc=0
-cleanup() {
-    rc=$?
-    if ! molecule destroy -s docker-app; then
-        echo "gate/container.sh: molecule destroy failed; the platform container may still be present." >&2
-        [ "$rc" -eq 0 ] && rc=1
-    fi
-    exit "$rc"
-}
-trap cleanup EXIT
+# tracker issue this harness answers, and gate/lib-container-cleanup.sh (tested by
+# gate/test-container-teardown.sh) for why the trap must not swallow a destroy
+# failure with `|| true`.
+# shellcheck source=lib-container-cleanup.sh
+. "$repo/gate/lib-container-cleanup.sh"
+install_container_cleanup_trap docker-app
 
 molecule create -s docker-app
 molecule converge -s docker-app

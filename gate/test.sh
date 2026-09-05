@@ -108,4 +108,5 @@ bash gate/test-vmid-from-ip.sh || rc=1
 bash gate/test-network-scope.sh || rc=1
 bash gate/test-homepage-dashboard.sh || rc=1
 bash gate/test-config-loading.sh || rc=1
+bash gate/test-container-teardown.sh || rc=1
 exit $rc
