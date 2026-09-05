@@ -31,4 +31,4 @@
           memory: "{{ pdm_config.proxmox.vm.memory }}"
           disk_size: "{{ pdm_config.proxmox.vm.disk_size }}"
           net0: "virtio,bridge={{ pdm_config.proxmox.bridge | default('vmbr0') }}"
-          tags: "{{ (pdm_config.proxmox.vm.tags + ['_' ~ instance]) | unique | join(';') }}"
+          tags: "{{ (pdm_config.proxmox.vm.tags + ['_' ~ instance]) | unique }}"
