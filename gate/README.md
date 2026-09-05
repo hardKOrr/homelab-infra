@@ -7,11 +7,13 @@ no-op.
 Invoked as:
 
 ```
-lint: bash gate/lint.sh
-test: bash gate/test.sh
+lint:      bash gate/lint.sh
+test:      bash gate/test.sh
+container: bash gate/container.sh
 ```
 
-Append `--all` to either to force the full sweep (see *Scope* below).
+Append `--all` to `lint.sh` or `test.sh` to force the full sweep (see *Scope* below).
+`container.sh` has no scope narrowing — it always runs its one scenario.
 
 On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`, e.g.
 `wsl bash -lc 'bash gate/lint.sh'`. A native Linux checkout needs no such prefix.
@@ -24,6 +26,11 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
+- `container.sh` — runs the Molecule container role integration harness at
+  `ansible/molecule/docker-app` (converge, idempotence, verify, teardown) against a
+  disposable Docker target. Syntax checking cannot show that rendered Compose
+  configuration is valid or that a Docker-hosted role actually converges; this lane
+  does. See `ansible/molecule/docker-app/README.md` for scope and rationale.
 
 ## Output anchors
 

@@ -88,3 +88,28 @@ jobs:
         run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
 
       - run: bash gate/test.sh --all
+
+  container:
+    name: gate / container
+    runs-on: ubuntu-latest
+    env:
+      CONTAINER_VENV: /home/runner/.venvs/homelab-molecule
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache container harness toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.CONTAINER_VENV }}
+            ~/.ansible/collections
+          key: gate-container-${{ runner.os }}-py3.12-${{ hashFiles('gate/requirements-container.txt', 'ansible/requirements.yml') }}
+
+      # The runner's Docker daemon (already present on GitHub-hosted Ubuntu runners)
+      # hosts the scenario's one platform container; nothing here installs Docker or
+      # changes its global configuration.
+      - run: bash gate/container.sh
