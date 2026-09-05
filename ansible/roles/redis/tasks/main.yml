@@ -36,6 +36,9 @@
   ansible.builtin.systemd: {name: "{{ app_config.app.service_name }}", state: started, enabled: true}
 - ansible.builtin.meta: flush_handlers
 - name: Redis | Verify authenticated local server readiness
-  ansible.builtin.command: {argv: [redis-cli, --no-auth-warning, -a, "{{ _redis_password }}", ping]}
+  ansible.builtin.command:
+    argv: [redis-cli, --no-auth-warning, ping]
+  environment:
+    REDISCLI_AUTH: "{{ _redis_password }}"
   changed_when: false
   no_log: true
