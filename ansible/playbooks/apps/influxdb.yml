@@ -73,8 +73,18 @@
   tasks:
     - ansible.builtin.include_role: {name: influxdb}
 
-- name: InfluxDB | Record backend
+- name: InfluxDB | Register backend
   hosts: localhost
   gather_facts: false
+  vars: {_influxdb_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"}
   tasks:
+    - ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: databases
+        generated_facts_data:
+          "{{ instance }}":
+            provider: influxdb
+            host: "{{ _influxdb_host.ansible_host }}"
+            port: "{{ _influxdb_host.app_config.app.port }}"
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
