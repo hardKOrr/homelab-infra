@@ -10,6 +10,9 @@
 #   4. Negative: a secret-shaped key with an obvious placeholder value (the same convention
 #      the real fixtures already use) is accepted — the checker must not force every
 #      documented credential field out of a fixture, only a value that could pass for real.
+#   5. The failure output for case 2 names the offending key path but never echoes the
+#      value itself — issue #34's fourth acceptance criterion (test failure output must
+#      not print a secret-shaped value).
 #
 # Everything here runs against a throwaway git worktree so "tracked" reflects the fixture
 # under test, not this repository's own history.
@@ -54,6 +57,8 @@ rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "a real-looking secret value must fail the checker"
 grep -q "proxmox.api_token_secret" <<<"$out" || fail "failure did not name the offending key path"
+grep -q "8f3a1c9e7b2d4560f9a13c7e2b8d4f61" <<<"$out" \
+    && fail "failure output must name the offending key path, never echo the value itself"
 rm -rf gate
 git add -A
 

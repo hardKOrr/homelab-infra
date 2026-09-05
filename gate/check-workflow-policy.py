@@ -17,6 +17,12 @@ Every `.github/workflows/*.yml` file must:
     built from PR-controlled `github` context values) without that job also declaring
     `environment:`, so GitHub's required-reviewer approval gate stands between an
     untrusted trigger and the runner.
+  - Never use `actions/upload-artifact` (issue #34's fourth acceptance criterion: logs and
+    uploaded diagnostics must be redacted/minimized). No hosted job today redacts test
+    output before uploading it, so an uploaded artifact could carry a fixture value, a
+    stack trace with a local path, or other diagnostic this repository has not reviewed
+    for that purpose. Adding a redaction/minimization step is a prerequisite for
+    uploading anything, not a follow-up.
 """
 
 from __future__ import annotations
@@ -87,6 +93,19 @@ def _runs_on_self_hosted(runs_on: object) -> bool:
     return False
 
 
+def _uses_upload_artifact(job: dict) -> bool:
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        uses = step.get("uses")
+        if isinstance(uses, str) and uses.split("@", 1)[0] == "actions/upload-artifact":
+            return True
+    return False
+
+
 def _pull_request_triggers(on: object) -> bool:
     if isinstance(on, str):
         return on == "pull_request"
@@ -136,6 +155,12 @@ def check_workflow(path: Path) -> list[str]:
             findings.append(
                 f"{path.name}: job '{job_name}' targets a self-hosted runner without "
                 "an environment approval gate"
+            )
+
+        if _uses_upload_artifact(job):
+            findings.append(
+                f"{path.name}: job '{job_name}' uses actions/upload-artifact — no "
+                "redaction/minimization step exists yet, see docs/specs/secrets-handling.md"
             )
 
     return findings

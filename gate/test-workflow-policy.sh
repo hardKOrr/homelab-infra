@@ -177,4 +177,37 @@ set -e
 grep -q "self-hosted runner without an environment" <<<"$out" \
     || fail "dynamic-runs-on failure message not found"
 
+# ── 11. actions/upload-artifact without a redaction step is rejected ──────────
+set +e
+out="$(run_case upload-artifact-no-redaction '
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: /tmp/logs
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "actions/upload-artifact without a redaction step must fail"
+grep -q "uses actions/upload-artifact" <<<"$out" || fail "upload-artifact failure message not found"
+
+# ── 12. a job with no upload-artifact step is accepted ────────────────────────
+run_case no-upload-artifact '
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+' >/dev/null || fail "a job with no artifact upload must pass"
+
 echo "workflow-policy focused tests passed."
