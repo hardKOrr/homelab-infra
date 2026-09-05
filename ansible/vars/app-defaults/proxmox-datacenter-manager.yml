@@ -1,11 +1,15 @@
 ---
 # Official-ISO appliance: no cloud-init image, guest agent, or unattended install.
 proxmox_datacenter_manager_defaults:
-  # Renderer compatibility only; actions: [] suppresses native lifecycle jobs.
+  # `appliance` means an ISO-installed VM: no cloud-init, SSH, or guest-agent contract.
+  hosting: appliance
   install: {method: official-iso, iso: ''}
   proxmox:
     vm: {cores: 2, memory: 4096, disk_size: 40, tags: [_+lab]}
   app: {port: 8443}
   routing: {subdomain: pdm, proxy: internal, access: internal, identity: catalog}
+  # The VM backup contains /etc/proxmox-datacenter-manager/remotes.cfg. This names an
+  # existing PBS-backed Proxmox storage; PDM does not configure backup storage.
+  backup: {storage: ''}
   # Complete remote allow-list; authority defaults to read-only when omitted.
   remotes: []

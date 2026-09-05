@@ -1,0 +1,21 @@
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Remove %NAME%
+  group: '%GROUP%'
+  description: Destroy only this project-owned PDM appliance VM while retaining its config and Vaultwarden restore points.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - {name: instance, required: true, value: '%SLUG%', valuesUrl: 'file:/var/lib/rundeck/app-instances/%SLUG%.json', enforced: false}
+  - {name: confirm, required: true, value: '', description: 'Type REMOVE-PDM.'}
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - script: |-
+        #!/bin/bash
+        set -euo pipefail
+        exec lab-run playbooks/maintenance/remove-pdm.yml -e "instance=${RD_OPTION_INSTANCE:?instance is required}" -e "confirm=${RD_OPTION_CONFIRM:?confirm is required}"

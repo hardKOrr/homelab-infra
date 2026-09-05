@@ -1,0 +1,52 @@
+---
+# Destructive PDM-only restore. It never contacts any configured remote.
+- name: PDM | Restore appliance VM
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that: [instance is defined, backup_volume is defined, confirm | default('') == 'RESTORE-PDM']
+        fail_msg: Provide instance, backup_volume, and confirm=RESTORE-PDM.
+    - ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/proxmox-datacenter-manager.yml
+        name: _pdm_defaults
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _pdm_instance
+    - ansible.builtin.set_fact:
+        pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance, recursive=True) }}"
+    - ansible.builtin.assert:
+        that:
+          - pdm_config.backup.storage | length > 0
+          - backup_volume is match('^backup/vm/' ~ (pdm_config.proxmox.vmid | string) ~ '/vzdump-qemu-' ~ (pdm_config.proxmox.vmid | string) ~ '-.+')
+        fail_msg: Restore accepts only a PBS backup volume for the declared PDM VMID.
+  tasks:
+    - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+    - name: PDM | Inspect existing target VM
+      ansible.builtin.command:
+        argv: [qm, config, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      register: _pdm_existing
+      failed_when: false
+      changed_when: false
+    - ansible.builtin.assert:
+        that: ["_pdm_existing.rc != 0 or (('_+lab' in _pdm_existing.stdout) and (('_' ~ instance) in _pdm_existing.stdout))"]
+        fail_msg: Refusing to replace an unmanaged VM.
+    - name: PDM | Stop existing managed VM
+      ansible.builtin.command:
+        argv: [qm, stop, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      when: _pdm_existing.rc == 0
+      failed_when: false
+      changed_when: _pdm_existing.rc == 0
+    - name: PDM | Remove existing managed VM before restore
+      ansible.builtin.command:
+        argv: [qm, destroy, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      when: _pdm_existing.rc == 0
+    - name: PDM | Restore managed VM from PBS
+      ansible.builtin.command:
+        argv: [qmrestore, "{{ pdm_config.backup.storage }}:{{ backup_volume }}", "{{ pdm_config.proxmox.vmid | string }}", --unique, '0']
+      delegate_to: "{{ pdm_config.proxmox.node }}"

@@ -5,9 +5,26 @@
     fail_msg: "PDM requires an uploaded official ISO."
 - name: PDM | Validate explicit Vaultwarden-backed remote allow-list
   ansible.builtin.assert:
-    that: [item.id is defined, "item.type in ['pve', 'pbs']", item.nodes is defined and item.nodes | length > 0, "item.authority | default('read-only') in ['read-only', 'mutating']", item.vaultwarden.item | length > 0, item.vaultwarden.authid_field | length > 0, item.vaultwarden.token_field | length > 0]
+    that:
+      - item.id is defined
+      - item.id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - item.type in ['pve', 'pbs']
+      - item.nodes is sequence and item.nodes is not string and item.nodes | length > 0
+      - item.authority | default('read-only') in ['read-only', 'mutating']
+      - item.vaultwarden is mapping
+      - item.vaultwarden.item | default('') | length > 0
+      - item.vaultwarden.authid_field | default('') | length > 0
+      - item.vaultwarden.token_field | default('') | length > 0
+      - item.authid is not defined
+      - item.token is not defined
     fail_msg: "PDM remotes must be declared and Vaultwarden-backed; no credential values in Git."
   loop: "{{ pdm_config.remotes | default([]) }}"
+- name: PDM | Reject duplicate remote declarations
+  ansible.builtin.assert:
+    that: >-
+      (pdm_config.remotes | default([]) | map(attribute='id') | list | unique | length)
+      == (pdm_config.remotes | default([]) | length)
+    fail_msg: "Each PDM remote id must be declared exactly once."
 - name: PDM | Report fail-closed registration boundary
   ansible.builtin.debug:
     msg: "Complete the official installer, then follow docs/pdm.md to add only declared remotes. This play never accesses a remote."
