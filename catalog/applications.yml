@@ -81,6 +81,13 @@ applications:
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
 
+  redis:
+    name: Redis
+    job: deploy-redis.yaml
+    root: Platform
+    category: Data Services
+    scope: lab
+
   bazarr:
     name: Bazarr
     job: deploy-bazarr.yaml

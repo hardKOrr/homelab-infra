@@ -1,0 +1,5 @@
+---
+# Redis backend instance configuration. Its generated password is stored in
+# Vaultwarden item homelab-infra/apps/<instance>; do not put it in this file.
+# app:
+#   port: 6379

@@ -1,0 +1,5 @@
+---
+redis_defaults:
+  proxmox: {type: lxc, boot_order: 40, ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst", cores: 2, memory: 1024, disk_volume: {size: 16}, tags: [_+lab, _-debian]}
+  app: {port: 6379, service_name: redis-server, data_path: /var/lib/redis}
+  routing: {proxy: none, identity: none}
