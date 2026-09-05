@@ -1,0 +1,49 @@
+---
+# OPNsense uses an interactive ISO installer; this play owns only its Proxmox VM.
+- name: "OPNsense | Provision installer VM"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe appliance instance name: -e instance=opnsense"
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/opnsense.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Merge appliance config
+      ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.opnsense_defaults | combine(_instance_config | default({}), recursive=True) }}"
+  tasks:
+    - name: Assert appliance VMID and bridges are configured
+      ansible.builtin.assert:
+        that:
+          - app_config.proxmox.vm.vmid is defined
+          - app_config.proxmox.installer.wan_bridge is defined
+          - app_config.proxmox.installer.lan_bridge is defined
+        fail_msg: >-
+          Define proxmox.vm.vmid plus proxmox.installer.wan_bridge and lan_bridge
+          in config/apps/{{ instance }}.yml; see config.example/apps/opnsense.example.yml.
+    - name: Build ISO appliance identity
+      ansible.builtin.set_fact:
+        appliance_vm: >-
+          {{ app_config.proxmox.vm | combine(app_config.proxmox.installer, recursive=True)
+             | combine({'name': instance,
+                        'storage': (app_config.proxmox.vm.storage | default(homelabinfra_config.proxmox.storage | default('local'))),
+                        'tags': ((app_config.proxmox.vm.tags | default([])) + ['_' ~ instance]) | unique}, recursive=True) }}
+    - name: Create or start OPNsense installer VM
+      ansible.builtin.include_tasks: ../../tasks/proxmox/iso-appliance-create.yml
+    - name: Record OPNsense on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_name: "{{ instance }}"
+        record_guest_kind: appliance

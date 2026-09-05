@@ -1,0 +1,109 @@
+---
+# Create or start an appliance VM installed from an ISO. It deliberately does
+# not wait for a QEMU guest agent or SSH: appliance first boot is console-driven.
+- name: ISO appliance | Register Proxmox nodes for delegation
+  ansible.builtin.import_tasks: register-nodes.yml
+
+- name: ISO appliance | Assert installer and VM inputs
+  ansible.builtin.assert:
+    that:
+      - appliance_vm.vmid | int > 0
+      - appliance_vm.name is match('^[A-Za-z0-9_.-]+$')
+      - appliance_vm.iso_url is match('^https://')
+      - appliance_vm.iso_sha256 is match('^[a-fA-F0-9]{64}$')
+      - appliance_vm.iso_name is match('^[A-Za-z0-9_.-]+[.]iso$')
+      - appliance_vm.wan_bridge is match('^[A-Za-z0-9_.-]+$')
+      - appliance_vm.lan_bridge is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      ISO appliance creation needs a safe VM identity, checksum-pinned HTTPS ISO,
+      ISO name, and distinct Proxmox WAN/LAN bridge names.
+
+- name: ISO appliance | Assert WAN and LAN are separate bridges
+  ansible.builtin.assert:
+    that: appliance_vm.wan_bridge != appliance_vm.lan_bridge
+    fail_msg: "An appliance firewall needs separate WAN and LAN bridges."
+
+- name: ISO appliance | Fetch checksum-pinned installer archive
+  ansible.builtin.get_url:
+    url: "{{ appliance_vm.iso_url }}"
+    dest: "/var/lib/vz/template/iso/{{ appliance_vm.iso_name }}.bz2"
+    checksum: "sha256:{{ appliance_vm.iso_sha256 }}"
+    mode: '0644'
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+
+- name: ISO appliance | Unpack installer ISO
+  ansible.builtin.command:
+    argv: [bunzip2, --keep, "/var/lib/vz/template/iso/{{ appliance_vm.iso_name }}.bz2"]
+    creates: "/var/lib/vz/template/iso/{{ appliance_vm.iso_name }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+
+- name: ISO appliance | List existing Proxmox VMs
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _iso_appliance_vm_resources
+  changed_when: false
+
+- name: ISO appliance | Resolve whether the requested VM already exists
+  ansible.builtin.set_fact:
+    _iso_appliance_vm_exists: >-
+      {{ (_iso_appliance_vm_resources.stdout | from_json
+          | selectattr('vmid', 'equalto', appliance_vm.vmid | int) | list | length) > 0 }}
+
+- name: ISO appliance | Create VM with installer ISO and serial console
+  ansible.builtin.command:
+    argv:
+      - qm
+      - create
+      - "{{ appliance_vm.vmid }}"
+      - --name
+      - "{{ appliance_vm.name }}"
+      - --cores
+      - "{{ appliance_vm.cores | string }}"
+      - --memory
+      - "{{ appliance_vm.memory | string }}"
+      - --scsihw
+      - virtio-scsi-pci
+      - --scsi0
+      - "{{ appliance_vm.storage }}:{{ appliance_vm.disk_size }}"
+      - --ide2
+      - "local:iso/{{ appliance_vm.iso_name }},media=cdrom"
+      - --boot
+      - "order=ide2;scsi0"
+      - --net0
+      - "virtio,bridge={{ appliance_vm.wan_bridge }}"
+      - --net1
+      - "virtio,bridge={{ appliance_vm.lan_bridge }}"
+      - --agent
+      - '0'
+      - --serial0
+      - socket
+      - --vga
+      - serial0
+      - --onboot
+      - '1'
+      - --tags
+      - "{{ appliance_vm.tags | join(';') }}"
+      - --description
+      - "{{ appliance_vm.description }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: not _iso_appliance_vm_exists | bool
+
+- name: ISO appliance | Start VM for console installation
+  ansible.builtin.command:
+    argv: [qm, start, "{{ appliance_vm.vmid }}"]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _iso_appliance_start
+  changed_when: _iso_appliance_start.rc == 0
+  failed_when:
+    - _iso_appliance_start.rc != 0
+    - "'already running' not in (_iso_appliance_start.stderr | lower)"
+
+- name: ISO appliance | Report manual console boundary
+  ansible.builtin.debug:
+    msg: >-
+      {{ appliance_vm.name }} (VM {{ appliance_vm.vmid }}) is running from
+      {{ appliance_vm.iso_name }} on {{ homelabinfra_config.proxmox.node }}.
+      Complete the OPNsense installer and interface assignment through the Proxmox
+      console. Re-running this play verifies the ISO and starts the existing VM;
+      it never reformats the installed disk or assumes guest-agent/SSH access.

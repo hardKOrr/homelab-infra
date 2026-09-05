@@ -1,0 +1,21 @@
+---
+# OPNsense is an ISO-installed appliance, not a Debian guest.
+opnsense_defaults:
+  # `appliance` is an ISO-installed VM with no guest-agent or SSH contract.
+  hosting: appliance
+  proxmox:
+    vm:
+      cores: 2
+      memory: 4096
+      disk_size: 120
+      agent: 0
+      onboot: true
+      description: "OPNsense firewall appliance, created by homelab-infra"
+      tags: [_+lab, _-opnsense]
+    installer:
+      # Update URL, ISO name and checksum together from OPNsense's official release.
+      iso_url: "https://pkg.opnsense.org/releases/26.7/OPNsense-26.7.r1-dvd-amd64.iso.bz2"
+      iso_sha256: "6b8430921316bd1d912a7bf71d02f2e354cd82b644c3fbf2646ab55382b9a758"
+      iso_name: "OPNsense-26.7.r1-dvd-amd64.iso"
+  routing:
+    identity: none

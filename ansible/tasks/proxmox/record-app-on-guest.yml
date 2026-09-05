@@ -34,7 +34,7 @@
 #                            Kubernetes app passes every cluster node here. Defaults to
 #                            [record_guest_name].
 #   record_guest_instance  — instance name (default: `instance`)
-#   record_guest_kind      — docker | native | kubernetes (default: derived from
+#   record_guest_kind      — docker | native | kubernetes | appliance (default: derived from
 #                            app_config.stack)
 #   record_guest_url       — public URL (default: the wired domain, or empty when unrouted)
 #
