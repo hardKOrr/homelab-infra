@@ -48,7 +48,7 @@ UUID_TOKEN = "%UUID%"
 UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/hardKOrr/homelab-infra")
 
 ROOTS = ("Applications", "Platform")
-HOSTING_KINDS = ("native", "docker", "kubernetes")
+HOSTING_KINDS = ("native", "docker", "kubernetes", "appliance")
 
 
 def secure_option(name: str, path: str, description: str, *, required: bool = True) -> dict:

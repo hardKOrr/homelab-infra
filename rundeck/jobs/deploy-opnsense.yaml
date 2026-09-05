@@ -1,0 +1,31 @@
+---
+- id: 1a6e263e-3393-5e79-8a08-a62f4fcd46cf
+  uuid: 1a6e263e-3393-5e79-8a08-a62f4fcd46cf
+  name: Deploy OPNsense
+  group: Platform/Network/OPNsense
+  description: |-
+    Create or start a new **OPNsense** ISO-installer VM.
+
+    - Separate from an existing `infrastructure.dns.provider: opnsense` host.
+    - Downloads a checksum-pinned installer ISO on the selected Proxmox node.
+    - First boot is completed through the Proxmox console; no SSH or guest agent is assumed.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Enter the appliance instance configured in config/apps/<instance>.yml.
+    required: true
+    value: opnsense
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/opnsense.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/opnsense.yml -e "instance=$RD_OPTION_INSTANCE"

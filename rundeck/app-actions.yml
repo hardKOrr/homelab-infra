@@ -12,7 +12,8 @@ schema_version: 1
 # application cannot implement the generic action truthfully. An action absent from an
 # application's folder is absent deliberately: offering a Rollback for a Kubernetes
 # workload, or for a multi-image Compose project when the seam pins one image, would put a
-# misleading button in front of the operator.
+# misleading button in front of the operator. `appliance` is an ISO-installed VM without
+# an SSH/guest-agent contract; its Remove action stops the VM through Proxmox.
 #
 #   hosting             hosting kinds this action is implemented for
 #   essential_excluded  true withholds the action from applications marked essential
@@ -34,7 +35,7 @@ actions:
 
   remove:
     template: remove-app.yaml
-    hosting: [native, docker, kubernetes]
+    hosting: [native, docker, kubernetes, appliance]
     essential_excluded: true
 
   restart:

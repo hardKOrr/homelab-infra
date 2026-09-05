@@ -87,6 +87,12 @@ applications:
     root: Platform
     category: Data Services
     scope: lab
+  opnsense:
+    name: OPNsense
+    job: deploy-opnsense.yaml
+    root: Platform
+    category: Network
+    scope: lab
 
   bazarr:
     name: Bazarr

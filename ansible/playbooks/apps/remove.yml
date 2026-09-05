@@ -152,9 +152,9 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
-    # `hosting: kubernetes` is checked before the stack key, and is the only hosting kind
-    # that has to be declared rather than inferred. Docker and native are still told apart
-    # by the presence of `stack:`, exactly as the deploy playbooks do it.
+    # Explicit hosting wins. Docker and native are still told apart by the presence of
+    # `stack:`. An ISO appliance has no SSH service contract, so it is stopped through
+    # Proxmox rather than being treated as a native LXC.
     #
     # A Kubernetes app has NO Proxmox guest of its own. Its resources live in a namespace
     # on a cluster that outlives it, so `_rm_hosts` is deliberately empty: Play 2, which
@@ -192,7 +192,7 @@
     - name: Classify how the app is hosted
       ansible.builtin.set_fact:
         _rm_kind: >-
-          {{ 'kubernetes' if (app_config.hosting | default('')) == 'kubernetes'
+          {{ app_config.hosting if (app_config.hosting | default('')) in ['kubernetes', 'appliance']
              else ('docker' if app_config.stack is defined else 'native') }}
 
     # Removal resolves the stack host through the SAME estate-aware identity the deploy
@@ -209,7 +209,7 @@
       ansible.builtin.set_fact:
         _rm_hosts: >-
           {{ []
-             if _rm_kind == 'kubernetes'
+             if _rm_kind in ['kubernetes', 'appliance']
              else (groups[tag_group_name] | default([])
                    if _rm_kind == 'docker'
                    else ([instance] if instance in (groups['all'] | default([])) else [])) }}
@@ -269,8 +269,20 @@
         record_guest_names: >-
           {{ ((homelabinfra_infra.kubernetes | default({})).nodes | default([])
               | map(attribute='name') | list)
-             if _rm_kind == 'kubernetes' else _rm_hosts[:1] }}
-      when: _rm_hosts | length > 0 or _rm_kind == 'kubernetes'
+             if _rm_kind == 'kubernetes'
+             else ([instance] if _rm_kind == 'appliance' else _rm_hosts[:1]) }}
+      when: _rm_hosts | length > 0 or _rm_kind in ['kubernetes', 'appliance']
+
+    - name: Stop an ISO appliance through Proxmox
+      ansible.builtin.command:
+        argv: [qm, shutdown, "{{ app_config.proxmox.vm.vmid }}"]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _rm_appliance_shutdown
+      changed_when: _rm_appliance_shutdown.rc == 0
+      failed_when:
+        - _rm_appliance_shutdown.rc != 0
+        - "'not running' not in (_rm_appliance_shutdown.stderr | lower)"
+      when: _rm_kind == 'appliance'
 
 
 # ── Play 2: Stop and remove the app ────────────────────────────────────────────

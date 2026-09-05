@@ -1,0 +1,16 @@
+---
+# OPNsense appliance instance. Copy to config/apps/opnsense.yml before deploying.
+# This creates a NEW firewall VM; it never adopts infrastructure.dns.provider: opnsense.
+proxmox:
+  vm:
+    # Pick an unused Proxmox VMID. No guest agent means it cannot be derived from IP.
+    vmid: 500
+    # storage: local-lvm
+  installer:
+    # Attach these to distinct Proxmox bridges. WAN and LAN must never be the same.
+    wan_bridge: vmbr0
+    lan_bridge: vmbr1
+    # Update all three values together when selecting another official OPNsense ISO.
+    # iso_url: "https://pkg.opnsense.org/releases/<version>/OPNsense-<version>-dvd-amd64.iso.bz2"
+    # iso_sha256: "<64-hex checksum from the matching official checksums file>"
+    # iso_name: "OPNsense-<version>-dvd-amd64.iso"
