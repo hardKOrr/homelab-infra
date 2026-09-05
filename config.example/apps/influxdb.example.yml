@@ -1,0 +1,18 @@
+---
+# InfluxDB OSS v2 backend instance configuration. Filename is the backend
+# instance; for example, influxdb.yml creates the `influxdb` backend.
+#
+# The initial operator token and admin password are generated on first deploy
+# and stored in Vaultwarden as homelab-infra/apps/<instance>. Do not put either
+# secret in this file.
+
+# proxmox:
+#   cores: 4
+#   memory: 4096
+#
+# app:
+#   # These are setup-time identities. Change them only before the first deploy;
+#   # InfluxDB does not rename an existing organization, bucket, or admin user.
+#   organization: homelab
+#   bucket: default
+#   admin_user: homelab

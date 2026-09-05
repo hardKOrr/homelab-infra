@@ -1,0 +1,25 @@
+---
+# InfluxDB OSS v2 is an independently managed, instanced time-series backend.
+# It runs outside application Compose files so its data and credentials remain
+# explicit recovery units. Version 2 is selected because its stable HTTP API,
+# setup endpoint, and package-managed service are supported by upstream.
+influxdb_defaults:
+  proxmox:
+    type: lxc
+    boot_order: 40
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 2
+    memory: 2048
+    disk_volume:
+      size: 32
+    tags: [_+lab, _-debian]
+  app:
+    port: 8086
+    service_name: influxdb
+    data_path: /var/lib/influxdb2
+    admin_user: homelab
+    organization: homelab
+    bucket: default
+  routing:
+    proxy: none
+    identity: none
