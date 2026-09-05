@@ -58,7 +58,10 @@ resource even though it never touches production config.
 - Cleanup in every CI lane (Docker, Kind, mock, or a future PVE lane) selects only
   resources it created itself. For Proxmox specifically that means the exact `_+lab`
   ownership tag `ansible/tasks/proxmox/README.md` documents — the same sentinel production
-  removal paths already gate on — never a name prefix or heuristic guess.
+  removal paths already gate on — never a name prefix or heuristic guess. For the Kind
+  lane that means the `app.kubernetes.io/managed-by: homelab-infra` namespace label
+  `ansible/tasks/unwiring/kubernetes.yml` asserts before deleting anything — an unlabelled
+  or foreign-owned namespace is refused, not deleted.
 
 ## Enforced by
 
@@ -69,4 +72,8 @@ resource even though it never touches production config.
   secret-shape and tracked `config/` boundary
 - `gate/check-workflow-policy.py` and `gate/test-workflow-policy.sh` — hosted workflow
   permissions, secrets-in-pull_request, and self-hosted-without-environment boundary
+- `gate/test-kubernetes-namespace-ownership.sh` — Kind-lane namespace-ownership refusal,
+  positive and negative fixtures
+- `gate/test-container-teardown.sh` and `gate/test-kind-teardown.sh` — cleanup
+  never swallows a teardown failure
 - inspection — cite this specification in findings
