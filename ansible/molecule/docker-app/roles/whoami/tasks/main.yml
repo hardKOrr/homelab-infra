@@ -1,0 +1,75 @@
+---
+# whoami — molecule fixture role. Mirrors the roles/_template-docker contract
+# (create dirs, render Compose, pull, start, wait, prove usability) with a
+# lightweight, credential-free upstream image so the harness can exercise the
+# shared pattern without a live Vaultwarden session or catalog fixtures.
+#
+# Variables available: app_config, instance, homelabinfra_config (set in converge.yml).
+
+- name: Create app directory
+  ansible.builtin.file:
+    path: "{{ whoami_project_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Create data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    mode: "0750"
+
+- name: Write docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ whoami_project_dir }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart whoami
+
+- name: Pull the whoami image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ whoami_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start whoami
+  community.docker.docker_compose_v2:
+    project_src: "{{ whoami_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for whoami to answer
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _whoami_up
+  until: _whoami_up.status | default(0) == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+
+# whoami is a catch-all echo server: every path answers 200, so a bare status-code
+# check cannot tell a genuinely initialized instance from a broken one that still
+# happens to accept connections. The probe instead reads the response BODY for the
+# fields the image only ever emits once it has read its own container identity —
+# the same "assert content, not just liveness" discipline every catalog role in
+# this repo follows (see roles/_template-docker/tasks/main.yml).
+- name: Verify whoami reports its own container identity
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    return_content: true
+    status_code: 200
+  register: _whoami_body
+  changed_when: false
+
+- name: Assert the response is whoami's identity payload, not an empty or foreign page
+  ansible.builtin.assert:
+    that:
+      - "'Hostname:' in _whoami_body.content"
+      - "'IP:' in _whoami_body.content"
+    fail_msg: >-
+      {{ instance }} answered http://localhost:{{ app_config.app.port }}/ with 200
+      but its body did not carry whoami's identity fields. app.image may not be
+      the expected upstream image, or another container already holds this port.

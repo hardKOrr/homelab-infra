@@ -1,0 +1,37 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    instance: whoami-molecule
+  tasks:
+    # docker inspect via the CLI, not community.docker.docker_container_info: that
+    # module needs the Docker Python SDK on the TARGET, which this disposable guest
+    # has no reason to carry — the role under test never needed it either.
+    - name: Read the fixture container's state
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} {{ instance }}"
+      register: _verify_container
+      changed_when: false
+
+    - name: Assert the container exists and is running
+      ansible.builtin.assert:
+        that:
+          - _verify_container.stdout | trim == 'true'
+        fail_msg: >-
+          {{ instance }} is not running after converge and idempotence. Teardown
+          still runs; check `docker logs {{ instance }}` from the failed job log.
+
+    - name: Read the rendered Compose project
+      ansible.builtin.slurp:
+        src: "/opt/{{ instance }}/docker-compose.yml"
+      register: _verify_compose
+
+    - name: Assert the rendered Compose project pins the fixture image
+      ansible.builtin.assert:
+        that:
+          - "'traefik/whoami' in (_verify_compose.content | b64decode)"
+        fail_msg: >-
+          The rendered docker-compose.yml for {{ instance }} does not reference the
+          expected fixture image; the template rendered something unexpected.
