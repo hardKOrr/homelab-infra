@@ -108,6 +108,7 @@ bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1
 bash gate/test-network-scope.sh || rc=1
 bash gate/test-homepage-dashboard.sh || rc=1
+python3 gate/test-backup-audit.py || rc=1
 bash gate/test-config-fixtures.sh || rc=1
 bash gate/test-config-loading.sh || rc=1
 bash gate/test-container-teardown.sh || rc=1

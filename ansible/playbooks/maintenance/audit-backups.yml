@@ -1,0 +1,44 @@
+---
+# Read guest snapshot evidence without changing Proxmox resources or backups.
+# Inputs: audit_node (defaults to configured node), include_legacy (false),
+# max_age_hours (36). This reports evidence, not application restore readiness.
+- name: Backup Audit | Inspect guest backup coverage
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform configuration
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Register Proxmox delegation targets
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+
+    - name: Resolve the audit node
+      ansible.builtin.set_fact:
+        _audit_node: "{{ audit_node | default(homelabinfra_config.proxmox.node, true) }}"
+
+    - name: Validate the read-only audit target
+      ansible.builtin.assert:
+        that:
+          - _audit_node in groups['proxmox_delegates']
+          - _audit_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - max_age_hours | default(36) | float > 0
+        fail_msg: Select a configured Proxmox node and a positive max_age_hours.
+
+  tasks:
+    - name: Read guest configurations and backup evidence
+      ansible.builtin.script:
+        cmd: >-
+          ../../files/recovery/audit.py
+          --node {{ _audit_node | quote }}
+          --max-age-hours {{ max_age_hours | default(36) | string | quote }}
+          {{ '--include-legacy' if include_legacy | default(false) | bool else '' }}
+        executable: python3
+      delegate_to: "{{ _audit_node }}"
+      register: _audit_result
+      changed_when: false
+      check_mode: false
+
+    - name: Report backup evidence and unresolved recovery requirements
+      ansible.builtin.debug:
+        msg: "{{ _audit_result.stdout | from_json }}"

@@ -47,3 +47,26 @@ return, unreachable guests, and Kubernetes nodes that are not ready.
 
 Do not replace this flow with an Ansible reboot loop. The control plane cannot supervise a
 reboot that shuts down its own runner.
+
+## Backup evidence audit
+
+`audit-backups.yml` powers **Audit Backups** under **Manage / Lab / Health**. It reads
+Proxmox guest configurations, backup jobs and backup storage visible to the configured
+node. Set `include_legacy=true` to include untagged source guests without adopting or
+changing them. `max_age_hours` defaults to 36; `audit_node` optionally selects another
+configured delegation node.
+
+The report distinguishes missing, stale, future-dated and fresh snapshot candidates;
+unreadable evidence remains unknown. It flags LXC bind/device mounts, omitted volume
+mounts, excluded VM disks and external devices. A snapshot candidate does not prove the
+application's identity, database consistency, artifact integrity or successful restore.
+Those fields remain explicitly unverified. The audit does not discover guest-mounted
+remote filesystems or application-specific backup jobs, and pool-based schedules require
+a separate membership check. Its exit status reports whether inventory collection ran,
+not whether the applications are recoverable.
+
+For recovery when the runner is unavailable, the same collector can run on a Proxmox
+node with Python 3 and read permission: `python3 audit.py --node <node> --include-legacy`.
+The source is [`../../files/recovery/audit.py`](../../files/recovery/audit.py). Only
+`pvesh get` requests run; no credentials, full guest configurations or raw command errors
+appear in the report.
