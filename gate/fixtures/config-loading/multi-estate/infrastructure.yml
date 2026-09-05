@@ -1,0 +1,34 @@
+---
+# Synthetic two-estate fixture, one declared default. Exercises resolve-estate.yml's
+# multi-estate branch (whole-key overlay, not a recursive merge).
+domains:
+  personal:
+    domain: "personal.fixture.invalid"
+    default: true
+  foxglove:
+    domain: "foxglove.fixture.invalid"
+    network: "foxglove"
+
+reverse_proxy:
+  provider: caddy
+  instance: caddy
+  internal_cidrs:
+    - "198.51.100.0/24"
+
+sso:
+  provider: authentik
+  instance: authentik
+
+notifications:
+  provider: ntfy
+  instance: ntfy
+
+dns:
+  provider: none
+
+backups:
+  datastore_path: "/mnt/backup"
+  schedule: "daily"
+
+vaultwarden:
+  instance: vaultwarden
