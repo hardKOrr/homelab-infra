@@ -198,7 +198,28 @@ set -e
 [ "$rc" -ne 0 ] || fail "actions/upload-artifact without a redaction step must fail"
 grep -q "uses actions/upload-artifact" <<<"$out" || fail "upload-artifact failure message not found"
 
-# ── 12. a job with no upload-artifact step is accepted ────────────────────────
+# ── 12. mixed-case actions/upload-artifact reference is still rejected ────────
+set +e
+out="$(run_case upload-artifact-mixed-case '
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+      - uses: Actions/Upload-Artifact@v4
+        with:
+          name: logs
+          path: /tmp/logs
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "a mixed-case actions/upload-artifact reference must fail"
+grep -q "uses actions/upload-artifact" <<<"$out" || fail "mixed-case upload-artifact failure message not found"
+
+# ── 13. a job with no upload-artifact step is accepted ────────────────────────
 run_case no-upload-artifact '
 on: push
 permissions:

@@ -101,7 +101,9 @@ def _uses_upload_artifact(job: dict) -> bool:
         if not isinstance(step, dict):
             continue
         uses = step.get("uses")
-        if isinstance(uses, str) and uses.split("@", 1)[0] == "actions/upload-artifact":
+        # GitHub resolves action repository references case-insensitively, so
+        # Actions/Upload-Artifact@v4 runs the exact same uploader.
+        if isinstance(uses, str) and uses.split("@", 1)[0].lower() == "actions/upload-artifact":
             return True
     return False
 
