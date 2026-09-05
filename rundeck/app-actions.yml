@@ -27,6 +27,7 @@ actions:
   pdm_backup:
     template: backup-pdm.yaml
     hosting: [appliance]
+    opt_in: true
 
   configure:
     template: configure-app.yaml
@@ -53,10 +54,12 @@ actions:
   pdm_restore:
     template: restore-pdm.yaml
     hosting: [appliance]
+    opt_in: true
 
   pdm_remove:
     template: remove-pdm.yaml
     hosting: [appliance]
+    opt_in: true
 
   rollback:
     template: rollback-container.yaml
