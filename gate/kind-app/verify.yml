@@ -1,0 +1,25 @@
+---
+# Meaningful local readiness check: the manifest's own readinessProbe already gated
+# apply-manifest.yml's rollout wait, so this asserts on the application's real HTTP
+# response body — not just that Kubernetes considers the pod ready — the same discipline
+# ansible/molecule/docker-app/README.md documents for the whoami fixture.
+- name: Verify the FlareSolverr Kind smoke case
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Confirm the NodePort Service answers on the host-mapped port
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:30191/"
+        return_content: true
+      register: _fs_verify
+      retries: 5
+      delay: 3
+      until: _fs_verify.status | default(0) == 200
+
+    - name: Assert the response is FlareSolverr's own banner, not an arbitrary 200
+      ansible.builtin.assert:
+        that: "'FlareSolverr' in (_fs_verify.content | default(''))"
+        fail_msg: >-
+          Expected FlareSolverr's own JSON banner (a "FlareSolverr is ready!"-shaped
+          body) from http://127.0.0.1:30191/, got: {{ _fs_verify.content | default('') }}

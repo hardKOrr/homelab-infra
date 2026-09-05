@@ -1,0 +1,12 @@
+# Single-node Kind cluster for gate/kind.sh. One extraPortMappings entry publishes the
+# FlareSolverr fixture's fixed NodePort (see ansible/vars/app-defaults/flaresolverr.yml)
+# onto the runner's own loopback, so the verify step can curl a real NodePort Service
+# instead of trusting `kubectl get` output alone.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30191
+        hostPort: 30191
+        protocol: TCP

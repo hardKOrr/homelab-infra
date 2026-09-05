@@ -1,0 +1,66 @@
+---
+# Kubernetes smoke case: proves the shared tasks/kubernetes/*.yml contract (namespace
+# ownership, server-side apply, rollout wait, removal) against a real API server, using
+# FlareSolverr as the representative stateless Kubernetes application. See
+# gate/kind-app/README.md for scope and why FlareSolverr was picked. Tracks
+# https://github.com/hardKOrr/homelab-infra/issues/33.
+#
+# Runs the flaresolverr role directly, the same pattern
+# ansible/molecule/docker-app/converge.yml uses for the container harness: real role code
+# from ansible/roles/, fed synthetic facts instead of a real playbook's config-loading
+# preamble.
+- name: Converge FlareSolverr onto the Kind cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    instance: flaresolverr-kind-smoke
+    homelabinfra_config:
+      timezone: UTC
+    # Mirrors what playbooks/apps/k3s-cluster.yml would have written to
+    # config/.generated/facts.yml for a real cluster — resolve-cluster.yml only reads this
+    # shape, so a Kind control-plane node reached over `become: true` on localhost
+    # satisfies the same contract a real k3s node does.
+    homelabinfra_infra:
+      kubernetes:
+        nodes:
+          - name: localhost
+            ip_address: 127.0.0.1
+    app_config:
+      app:
+        image: "flaresolverr/flaresolverr:latest"
+        port: 8191
+        node_port: 30191
+  roles:
+    - role: flaresolverr
+
+- name: Re-converge FlareSolverr to prove idempotence
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    instance: flaresolverr-kind-smoke
+    homelabinfra_config:
+      timezone: UTC
+    homelabinfra_infra:
+      kubernetes:
+        nodes:
+          - name: localhost
+            ip_address: 127.0.0.1
+    app_config:
+      app:
+        image: "flaresolverr/flaresolverr:latest"
+        port: 8191
+        node_port: 30191
+  tasks:
+    - name: Re-run the role
+      ansible.builtin.include_role:
+        name: flaresolverr
+
+    - name: Assert the re-run applied no change
+      ansible.builtin.assert:
+        that: not (k8s_apply_changed | bool)
+        fail_msg: >-
+          A second, unchanged converge re-applied the manifest and reported a change
+          (k8s_apply_changed={{ k8s_apply_changed }}). apply-manifest.yml's server-side
+          diff should have reported nothing to do.

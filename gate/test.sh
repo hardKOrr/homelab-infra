@@ -112,6 +112,7 @@ python3 gate/test-backup-audit.py || rc=1
 bash gate/test-config-fixtures.sh || rc=1
 bash gate/test-config-loading.sh || rc=1
 bash gate/test-container-teardown.sh || rc=1
+bash gate/test-kind-teardown.sh || rc=1
 bash gate/test-fixture-secrets.sh || rc=1
 bash gate/test-workflow-policy.sh || rc=1
 exit $rc

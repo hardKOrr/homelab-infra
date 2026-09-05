@@ -10,10 +10,11 @@ Invoked as:
 lint:      bash gate/lint.sh
 test:      bash gate/test.sh
 container: bash gate/container.sh
+kind:      bash gate/kind.sh
 ```
 
 Append `--all` to `lint.sh` or `test.sh` to force the full sweep (see *Scope* below).
-`container.sh` has no scope narrowing — it always runs its one scenario.
+`container.sh` and `kind.sh` have no scope narrowing — each always runs its one scenario.
 
 On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`, e.g.
 `wsl bash -lc 'bash gate/lint.sh'`. A native Linux checkout needs no such prefix.
@@ -40,6 +41,11 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   disposable Docker target. Syntax checking cannot show that rendered Compose
   configuration is valid or that a Docker-hosted role actually converges; this lane
   does. See `ansible/molecule/docker-app/README.md` for scope and rationale.
+- `kind.sh` — runs the Kubernetes smoke-test lane at `gate/kind-app` (converge,
+  idempotence, verify, teardown) against a disposable Kind cluster, proving the shared
+  `tasks/kubernetes/*.yml` hosting-backend contract with FlareSolverr as the
+  representative stateless application. See `gate/kind-app/README.md` for the full
+  smoke matrix, scope, and rationale.
 
 ## Output anchors
 
@@ -137,3 +143,9 @@ green run there means the bootstrap above still works from scratch. The workflow
 secrets and never touches `config/`: both gates already neutralize the Proxmox inventory
 (`ANSIBLE_INVENTORY=localhost,`), and `--all` forces the full sweep regardless of the
 runner's (always clean) working tree.
+
+The same workflow also runs `gate / container` (`bash gate/container.sh`) and
+`gate / kind` (`bash gate/kind.sh`) on every pull request. Both are fixture/cluster
+evidence, not production live-lab acceptance: `container` converges a disposable Docker
+target, `kind` converges a disposable single-node Kind cluster, and neither reaches a real
+Proxmox endpoint, a real Kubernetes cluster, or any repository secret.
