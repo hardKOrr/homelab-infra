@@ -34,5 +34,7 @@
 - name: Installer VM | Start installer
   ansible.builtin.command: {argv: [qm, start, "{{ installer_vm.vmid | string }}"]}
   delegate_to: "{{ installer_vm_node }}"
-  failed_when: false
-  changed_when: false
+  register: _installer_vm_start
+  changed_when: _installer_vm_start.rc == 0
+  failed_when:
+    - _installer_vm_start.rc != 0
