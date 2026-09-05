@@ -25,6 +25,7 @@ bash gate/test.sh
 | [#10](https://github.com/hardKOrr/homelab-infra/issues/10) | [507 — Stale service detection](507-stale-service-detection/README.md) | Detect and report services still running replaced code; restart them only through the maintenance schedule |
 | [#11](https://github.com/hardKOrr/homelab-infra/issues/11) | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Add read-only, evidence-ranked triage for Plex client log bundles |
 | [#12](https://github.com/hardKOrr/homelab-infra/issues/12) | [408 — Application catalog](408-app-catalog/README.md) | Implement its application batches in the order defined by that slice |
+| [#29](https://github.com/hardKOrr/homelab-infra/issues/29) | [104 — Layered verification lab](104-layered-verification-lab/README.md) | Land child issues #30–#35 in the dependency order that slice records |
 
 The following option slices refine application-catalog rows and have no issue of their own
 yet. Their own dependencies and acceptance criteria decide when each is actionable; file an
