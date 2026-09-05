@@ -113,3 +113,50 @@ jobs:
       # hosts the scenario's one platform container; nothing here installs Docker or
       # changes its global configuration.
       - run: bash gate/container.sh
+
+  kind:
+    name: gate / kind
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache gate toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GATE_VENV }}
+            ~/.ansible/collections
+          key: gate-toolchain-${{ runner.os }}-py3.12-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
+
+      - name: Install gate toolchain
+        run: |
+          python3 -m venv "$GATE_VENV"
+          "$GATE_VENV/bin/pip" install --upgrade pip
+          "$GATE_VENV/bin/pip" install -r gate/requirements-dev.txt
+          for attempt in 1 2 3; do
+            "$GATE_VENV/bin/ansible-galaxy" collection install -r ansible/requirements.yml && break
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
+
+      - name: Put gate venv on PATH
+        run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
+
+      - name: Cache kind/kubectl binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin
+          key: gate-kind-${{ runner.os }}-v0.26.0-v1.31.4
+
+      # The runner's Docker daemon (already present on GitHub-hosted Ubuntu runners)
+      # hosts the Kind cluster's one node container; nothing here installs Docker or
+      # changes its global configuration. See gate/kind-app/README.md for scope.
+      - run: bash gate/kind.sh

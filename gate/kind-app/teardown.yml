@@ -1,0 +1,33 @@
+---
+# Exercises removal through the platform's own contract (tasks/unwiring/kubernetes.yml),
+# not `kind delete cluster` alone — that would tear down the whole cluster without ever
+# proving the namespace-scoped removal path a real operator job runs. gate/kind.sh deletes
+# the Kind cluster itself afterward regardless of this play's outcome.
+- name: Remove the FlareSolverr Kind smoke case
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    instance: flaresolverr-kind-smoke
+    unwire_delete_data: true
+    homelabinfra_infra:
+      kubernetes:
+        nodes:
+          - name: localhost
+            ip_address: 127.0.0.1
+  tasks:
+    - name: Remove the instance's cluster resources
+      ansible.builtin.include_tasks: ../../ansible/tasks/unwiring/kubernetes.yml
+
+    - name: Confirm the namespace is gone
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - namespace
+          - app-flaresolverr-kind-smoke
+      become: true
+      register: _fs_ns_after
+      failed_when: _fs_ns_after.rc == 0
+      changed_when: false
