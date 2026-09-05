@@ -1,0 +1,41 @@
+---
+- name: Redis | Install server
+  ansible.builtin.apt: {name: redis-server, state: present, update_cache: true}
+- name: Redis | Resolve backend password
+  ansible.builtin.set_fact:
+    _redis_password: "{{ app_config.app.password | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}"
+    _redis_credentials_known: "{{ app_config.app.password | default('') | length > 0 }}"
+  no_log: true
+- name: Redis | Read existing managed configuration
+  ansible.builtin.slurp: {src: /etc/redis/redis.conf}
+  register: _redis_config
+  changed_when: false
+- name: Redis | Refuse to replace an unavailable existing password
+  ansible.builtin.assert:
+    that: _redis_credentials_known | bool
+    fail_msg: "Redis instance {{ instance }} has a managed password but its Vaultwarden credential is unavailable."
+  when: "'Managed by homelab-infra' in (_redis_config.content | b64decode) and not (_redis_credentials_known | bool)"
+  no_log: true
+- name: Redis | Store initial backend password before configuration
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields: {password: "{{ _redis_password }}"}
+    vault_item_secret_fields: [password]
+  when: not (_redis_credentials_known | bool)
+  no_log: true
+- name: Redis | Make backend password available to the template
+  ansible.builtin.set_fact:
+    app_config: "{{ app_config | combine({'app': {'password': _redis_password}}, recursive=True) }}"
+  no_log: true
+- name: Redis | Configure protected application listener
+  ansible.builtin.template: {src: redis.conf.j2, dest: /etc/redis/redis.conf, mode: "0640", owner: redis, group: redis}
+  notify: Restart Redis
+- name: Redis | Enable and start service
+  ansible.builtin.systemd: {name: "{{ app_config.app.service_name }}", state: started, enabled: true}
+- ansible.builtin.meta: flush_handlers
+- name: Redis | Verify authenticated local server readiness
+  ansible.builtin.command: {argv: [redis-cli, --no-auth-warning, -a, "{{ _redis_password }}", ping]}
+  changed_when: false
+  no_log: true

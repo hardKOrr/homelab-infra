@@ -1,0 +1,6 @@
++# Managed by homelab-infra. Application clients must authenticate.
++bind 127.0.0.1 {{ ansible_default_ipv4.address }}
++protected-mode yes
++port {{ app_config.app.port }}
++dir {{ app_config.app.data_path }}
++requirepass {{ app_config.app.password }}

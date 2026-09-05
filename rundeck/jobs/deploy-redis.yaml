@@ -1,0 +1,25 @@
+- id: 567d0a1e-a473-4ab8-9433-46ecd1b481f3
+  uuid: 567d0a1e-a473-4ab8-9433-46ecd1b481f3
+  name: Deploy Redis
+  group: Platform/Data Services/Redis
+  description: Deploy or converge an independently managed Redis cache backend.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Backend instance name; identifies its LXC, registry entry, and config file.
+    required: true
+    value: redis
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/redis.yml
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        : "${RD_OPTION_INSTANCE:?instance is required}"
+        exec lab-run playbooks/apps/redis.yml -e "instance=$RD_OPTION_INSTANCE"
