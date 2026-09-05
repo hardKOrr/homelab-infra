@@ -1,0 +1,25 @@
+- id: 8510fac0-c18f-4fe7-9e17-a8f235e1208a
+  uuid: 8510fac0-c18f-4fe7-9e17-a8f235e1208a
+  name: Deploy MySQL
+  group: Platform/Data Services/MySQL
+  description: Deploy or converge an independently managed MySQL backend.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Backend instance name; identifies its LXC, registry entry, and config file.
+    required: true
+    value: mysql
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/mysql.yml
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        : "${RD_OPTION_INSTANCE:?instance is required}"
+        exec lab-run playbooks/apps/mysql.yml -e "instance=$RD_OPTION_INSTANCE"

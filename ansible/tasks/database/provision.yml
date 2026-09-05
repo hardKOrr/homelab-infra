@@ -13,7 +13,7 @@
     that:
       - database_provision_app_instance is match('^[A-Za-z0-9_.-]+$')
       - database_provision_config is mapping
-      - database_provision_config.provider | default('') in ['postgresql', 'mariadb']
+      - database_provision_config.provider | default('') in ['postgresql', 'mariadb', 'mysql']
       - database_provision_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
       - database_provision_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
       - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
@@ -139,14 +139,14 @@
     - database_provision_config.provider == 'postgresql'
     - _database_exists.stdout | trim != '1'
 
-- name: Database | Assert MariaDB client hosts are declared
+- name: Database | Assert MySQL-compatible client hosts are declared
   ansible.builtin.assert:
     that: _database_backend.client_hosts | default([]) | length > 0
     fail_msg: >-
-      MariaDB backend {{ database_provision_config.instance }} has no permitted client host patterns.
-  when: database_provision_config.provider == 'mariadb'
+      Database backend {{ database_provision_config.instance }} has no permitted client host patterns.
+  when: database_provision_config.provider in ['mariadb', 'mysql']
 
-- name: Database | Create MariaDB application database
+- name: Database | Create MySQL-compatible application database
   community.mysql.mysql_db:
     name: "{{ database_provision_config.name }}"
     state: present
@@ -154,9 +154,9 @@
   delegate_to: database_backend_target
   become: true
   no_log: true
-  when: database_provision_config.provider == 'mariadb'
+  when: database_provision_config.provider in ['mariadb', 'mysql']
 
-- name: Database | Create MariaDB application role for allowed client networks
+- name: Database | Create MySQL-compatible application role for allowed client networks
   community.mysql.mysql_user:
     name: "{{ database_provision_config.role }}"
     host: "{{ item }}"
@@ -169,7 +169,7 @@
   delegate_to: database_backend_target
   become: true
   no_log: true
-  when: database_provision_config.provider == 'mariadb'
+  when: database_provision_config.provider in ['mariadb', 'mysql']
 - name: Database | Store application connection fields in Vaultwarden
   ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
   vars:

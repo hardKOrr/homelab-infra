@@ -1,0 +1,4 @@
+# Managed by homelab-infra. Debian's packaged MySQL otherwise binds only to
+# loopback; the guest remains protected by its application-user grants.
+[mysqld]
+bind-address = 0.0.0.0
