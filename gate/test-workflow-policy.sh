@@ -159,4 +159,22 @@ set -e
 grep -q "self-hosted runner without an environment" <<<"$out" \
     || fail "uppercase-label self-hosted failure message not found"
 
+# ── 10. dynamic runs-on expression on a pull_request trigger, no environment gate
+set +e
+out="$(run_case dynamic-runs-on-no-gate '
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: "${{ github.event.pull_request.head.ref }}"
+    steps:
+      - run: echo hi
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "a dynamic runs-on expression on a pull_request trigger must fail closed"
+grep -q "self-hosted runner without an environment" <<<"$out" \
+    || fail "dynamic-runs-on failure message not found"
+
 echo "workflow-policy focused tests passed."

@@ -12,9 +12,11 @@ Every `.github/workflows/*.yml` file must:
     secret-injection risk #34 exists to close off. `pull_request_target` and other
     triggers are unaffected — see docs/specs/secrets-handling.md for the self-hosted/
     approval policy that governs those.
-  - Never target a self-hosted runner (`runs-on: self-hosted` or a label list containing
-    it) without that job also declaring `environment:`, so GitHub's required-reviewer
-    approval gate stands between an untrusted trigger and the runner.
+  - Never target a self-hosted runner (`runs-on: self-hosted`, a label list or mapping
+    containing it, or a dynamic `${{ ... }}` selector that could resolve to it — e.g. one
+    built from PR-controlled `github` context values) without that job also declaring
+    `environment:`, so GitHub's required-reviewer approval gate stands between an
+    untrusted trigger and the runner.
 """
 
 from __future__ import annotations
@@ -41,9 +43,29 @@ def _contains_secrets_ref(node: object) -> bool:
     return False
 
 
+def _is_dynamic(value: object) -> bool:
+    """True if a runs-on value contains an unresolved `${{ ... }}` expression.
+
+    `jobs.<job_id>.runs-on` accepts an expression built from the `github` context — e.g.
+    `${{ github.event.pull_request.head.ref }}`. On a pull_request workflow a PR author
+    controls that context (a branch literally named `self-hosted`, for one), so a
+    dynamic selector must be treated as potentially self-hosted rather than matched
+    against static text that will never appear in the source.
+    """
+    if isinstance(value, str):
+        return "${{" in value
+    if isinstance(value, list):
+        return any(_is_dynamic(item) for item in value)
+    if isinstance(value, dict):
+        return any(_is_dynamic(v) for v in value.values())
+    return False
+
+
 def _runs_on_self_hosted(runs_on: object) -> bool:
     # GitHub Actions runner labels are matched case-insensitively, so "SELF-HOSTED" and
     # "Self-Hosted" select the same runners "self-hosted" does.
+    if _is_dynamic(runs_on):
+        return True
     if isinstance(runs_on, str):
         return "self-hosted" in runs_on.lower()
     if isinstance(runs_on, list):
