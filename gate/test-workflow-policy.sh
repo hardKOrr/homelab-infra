@@ -141,4 +141,22 @@ set -e
 grep -q "self-hosted runner without an environment" <<<"$out" \
     || fail "mapping-form self-hosted failure message not found"
 
+# ── 9. uppercase SELF-HOSTED label without an environment gate ────────────────
+set +e
+out="$(run_case self-hosted-uppercase-no-gate '
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: [SELF-HOSTED, pve]
+    steps:
+      - run: echo hi
+')"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "an uppercase SELF-HOSTED label without an environment gate must fail"
+grep -q "self-hosted runner without an environment" <<<"$out" \
+    || fail "uppercase-label self-hosted failure message not found"
+
 echo "workflow-policy focused tests passed."

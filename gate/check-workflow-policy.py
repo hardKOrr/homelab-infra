@@ -42,10 +42,12 @@ def _contains_secrets_ref(node: object) -> bool:
 
 
 def _runs_on_self_hosted(runs_on: object) -> bool:
+    # GitHub Actions runner labels are matched case-insensitively, so "SELF-HOSTED" and
+    # "Self-Hosted" select the same runners "self-hosted" does.
     if isinstance(runs_on, str):
-        return "self-hosted" in runs_on
+        return "self-hosted" in runs_on.lower()
     if isinstance(runs_on, list):
-        return any("self-hosted" in str(item) for item in runs_on)
+        return any("self-hosted" in str(item).lower() for item in runs_on)
     if isinstance(runs_on, dict):
         # `runs-on: {group: ..., labels: [...]}` selects a runner group/label set rather
         # than GitHub-hosted infrastructure. A `group` key alone, with no explicit
@@ -56,9 +58,9 @@ def _runs_on_self_hosted(runs_on: object) -> bool:
             return True
         labels = runs_on.get("labels")
         if isinstance(labels, str):
-            return "self-hosted" in labels
+            return "self-hosted" in labels.lower()
         if isinstance(labels, list):
-            return any("self-hosted" in str(item) for item in labels)
+            return any("self-hosted" in str(item).lower() for item in labels)
         return False
     return False
 
