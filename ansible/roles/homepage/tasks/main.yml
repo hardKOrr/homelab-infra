@@ -1,0 +1,23 @@
+---
+# Deploy Homepage in its own project-owned namespace. It has no persistent state: both
+# configuration files are ConfigMap data generated from topology facts on every rerun.
+
+- name: Homepage | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Homepage | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Homepage | Generate the dashboard configuration
+  ansible.builtin.include_tasks: dashboard.yml
+
+- name: Homepage | Render the workload manifest
+  ansible.builtin.set_fact:
+    _homepage_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Homepage | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _homepage_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"

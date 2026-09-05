@@ -1,0 +1,21 @@
+# Homepage — a stateless, lab-wide dashboard on Kubernetes.
+#
+# Copy to config/apps/homepage.yml. Entries are generated on every deploy from the approved
+# topology fields in config/.generated/facts.yml. Do not add service URLs or credentials here:
+# this file controls presentation only, and generated facts are not a secret store.
+
+cluster: k3s-cluster
+
+routing:
+  access: internal
+  identity: catalog
+  # subdomain: homepage
+  # estate: <name>  # required in a multi-estate lab; Homepage remains one lab-wide instance
+
+presentation:
+  title: Homelab
+  theme: dark
+  color: slate
+  # platform_group: Platform
+  # media_group: Media
+  # layout: {}      # Homepage layout settings only; it cannot define service entries
