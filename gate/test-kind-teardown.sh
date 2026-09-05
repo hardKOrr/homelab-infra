@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Focused tests for gate/lib-kind-cleanup.sh's EXIT trap: gate/kind.sh's teardown must
-# fail the run whenever either cleanup step (namespace removal, cluster delete) fails,
-# and must never let a clean cleanup mask an earlier converge/verify failure. Neither
-# case runs a real Kind cluster or Ansible — `kind`, `ansible-playbook`, and `sudo` are
-# stubbed per case.
+# fail the run whenever any cleanup step (namespace removal, cluster delete, k3s shim
+# removal) fails, and must never let a clean cleanup mask an earlier converge/verify
+# failure. No case runs a real Kind cluster or Ansible — `kind`, `ansible-playbook`, and
+# `sudo` are stubbed per case.
 set -uo pipefail
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -11,18 +11,19 @@ lib="$repo/gate/lib-kind-cleanup.sh"
 
 fail() { echo "kind-teardown test failed: $*" >&2; exit 1; }
 
-# Runs a tiny script that sources the library, stubs `kind` and `ansible-playbook` per
-# the case, installs the trap, then exits $step_rc — the status a real run would already
-# be carrying by the time its last command (converge/verify) finished. Echoes the
-# script's actual exit code.
+# Runs a tiny script that sources the library, stubs `kind`, `ansible-playbook`, and
+# `sudo` per the case, installs the trap, then exits $step_rc — the status a real run
+# would already be carrying by the time its last command (converge/verify) finished.
+# Echoes the script's actual exit code.
 run_case() {
-    local step_rc="$1" cluster_present="$2" teardown_rc="$3" delete_rc="$4"
+    local step_rc="$1" cluster_present="$2" teardown_rc="$3" delete_rc="$4" shim_path="$5" shim_rm_rc="$6"
     bash -c '
         set -uo pipefail
         . "$1"
         cluster_present="$3"
         teardown_rc="$4"
         delete_rc="$5"
+        shim_rm_rc="$7"
         kind() {
             if [ "$1" = "get" ]; then
                 [ "$cluster_present" = "yes" ] && echo "test-cluster"
@@ -31,28 +32,48 @@ run_case() {
             [ "$1" = "delete" ] && return "$delete_rc" || return 0
         }
         ansible-playbook() { return "$teardown_rc"; }
-        install_kind_cleanup_trap test-cluster /dev/null
+        sudo() { [ "$1" = "rm" ] && { rm -f "$3" 2>/dev/null; return "$shim_rm_rc"; }; "$@"; }
+        install_kind_cleanup_trap test-cluster /dev/null "$6"
         exit "$2"
-    ' _ "$lib" "$step_rc" "$cluster_present" "$teardown_rc" "$delete_rc" >/dev/null 2>&1
+    ' _ "$lib" "$step_rc" "$cluster_present" "$teardown_rc" "$delete_rc" "$shim_path" "$shim_rm_rc" >/dev/null 2>&1
     echo "$?"
 }
 
-got="$(run_case 0 yes 0 0)"
+got="$(run_case 0 yes 0 0 "" 0)"
 [ "$got" -eq 0 ] || fail "clean run + clean namespace teardown + clean cluster delete should exit 0, got $got"
 
-got="$(run_case 0 no 0 0)"
+got="$(run_case 0 no 0 0 "" 0)"
 [ "$got" -eq 0 ] || fail "clean run with the cluster already gone should still exit 0, got $got"
 
-got="$(run_case 0 yes 1 0)"
+got="$(run_case 0 yes 1 0 "" 0)"
 [ "$got" -ne 0 ] || fail "clean run + FAILED namespace teardown must not exit 0, got $got"
 
-got="$(run_case 0 yes 0 1)"
+got="$(run_case 0 yes 0 1 "" 0)"
 [ "$got" -ne 0 ] || fail "clean run + FAILED cluster delete must not exit 0, got $got"
 
-got="$(run_case 3 yes 0 0)"
+got="$(run_case 3 yes 0 0 "" 0)"
 [ "$got" -eq 3 ] || fail "a run that already failed (rc=3) must keep that code through clean cleanup, got $got"
 
-got="$(run_case 5 yes 1 1)"
+got="$(run_case 5 yes 1 1 "" 0)"
 [ "$got" -eq 5 ] || fail "a run that already failed (rc=5) must keep that code even when cleanup also fails, got $got"
+
+# The k3s shim path: a shim file left behind by an earlier step must be removed on a
+# clean run, and its removal failure must fail the run — the shim installs into
+# /usr/local/bin (gate/kind.sh) and left in place is exactly the leftover PR #84's
+# review flagged.
+shim="$(mktemp)"
+got="$(run_case 0 yes 0 0 "$shim" 0)"
+[ "$got" -eq 0 ] || fail "clean run must exit 0 after removing its own k3s shim, got $got"
+[ -e "$shim" ] && fail "the k3s shim should have been removed by a clean cleanup"
+
+shim="$(mktemp)"
+got="$(run_case 0 yes 0 0 "$shim" 1)"
+[ "$got" -ne 0 ] || fail "a FAILED k3s shim removal must not exit 0, got $got"
+rm -f "$shim"
+
+# No shim path (unset/empty, as gate/kind.sh omits it before installing one) must not
+# attempt a removal at all.
+got="$(run_case 0 yes 0 0 "/nonexistent/never-created" 1)"
+[ "$got" -eq 0 ] || fail "a shim path that was never created must not be treated as a removal failure, got $got"
 
 echo "kind teardown trap tests passed."

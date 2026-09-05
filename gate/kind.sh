@@ -43,21 +43,36 @@ fi
 
 ansible-galaxy collection install ansible.posix >/dev/null
 
+K3S_PATH="/usr/local/bin/k3s"
+
+# A real k3s install (this platform's own k3s_cluster role, or a developer's own lab
+# node) puts its binary at this exact path. Overwriting it with the shim would silently
+# replace a real, working `k3s kubectl` with one bound to a throwaway Kind kubeconfig —
+# and there would be nothing to restore it from afterward. Refuse rather than guess
+# whether an existing binary here is safe to disturb.
+if [ -e "$K3S_PATH" ]; then
+    echo "gate/kind.sh: $K3S_PATH already exists; refusing to overwrite what may be a real k3s install." >&2
+    echo "Run this gate on a machine with no k3s installed at $K3S_PATH, or remove/relocate it first." >&2
+    exit 1
+fi
+
 # Installed to /usr/local/bin, not $KIND_BIN_DIR: every tasks/kubernetes/*.yml caller
 # runs with `become: true`, and sudo's secure_path on a stock Ubuntu runner does not
 # include a per-user PATH directory.
 sed "s#__KIND_APP_KUBECONFIG__#${KUBECONFIG_PATH}#" gate/kind-app/k3s-shim.sh \
-    | sudo tee /usr/local/bin/k3s >/dev/null
-sudo chmod +x /usr/local/bin/k3s
+    | sudo tee "$K3S_PATH" >/dev/null
+sudo chmod +x "$K3S_PATH"
 
 # Teardown always runs, including after a failed converge: the trap removes the
 # instance's namespace through the platform's own removal contract when the cluster is
-# still reachable, then always deletes the whole cluster. See "Recovery needs" in
-# tracker issue #33 and gate/lib-kind-cleanup.sh for why the trap must not swallow a
-# cleanup failure with `|| true`.
+# still reachable, then deletes the whole cluster, then removes the shim this script
+# installed at $K3S_PATH — never leaving it in place for a later, unrelated `k3s`
+# invocation to pick up. See "Recovery needs" in tracker issue #33 and
+# gate/lib-kind-cleanup.sh for why the trap must not swallow a cleanup failure with
+# `|| true`.
 # shellcheck source=lib-kind-cleanup.sh
 . "$repo/gate/lib-kind-cleanup.sh"
-install_kind_cleanup_trap "$CLUSTER_NAME" "$repo/gate/kind-app/teardown.yml"
+install_kind_cleanup_trap "$CLUSTER_NAME" "$repo/gate/kind-app/teardown.yml" "$K3S_PATH"
 
 kind create cluster --name "$CLUSTER_NAME" --config gate/kind-app/kind-config.yaml \
     --kubeconfig "$KUBECONFIG_PATH" --wait 120s

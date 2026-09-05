@@ -15,11 +15,18 @@ bash gate/kind.sh
 
 The wrapper installs `kind` and `kubectl` if not already on `PATH`, creates a disposable
 single-node Kind cluster, installs a `k3s` shim (see below) so the shared tasks run
-unmodified, converges, verifies, and always tears down — cluster deletion and namespace
-removal both run from an EXIT trap, including after a failed converge — via
-`gate/lib-kind-cleanup.sh`. GitHub Actions runs the same command (see
+unmodified, converges, verifies, and always tears down — cluster deletion, namespace
+removal, and the shim's own removal all run from an EXIT trap, including after a failed
+converge — via `gate/lib-kind-cleanup.sh`. GitHub Actions runs the same command (see
 `.github/workflows/gate.yml`'s `kind` job); the runner's own already-present Docker daemon
 hosts the Kind node container, so nothing installs Docker on the runner itself.
+
+`gate/kind.sh` refuses to run at all if `/usr/local/bin/k3s` already exists — that is
+exactly where a real k3s install (this platform's own `k3s_cluster` role, or a
+developer's own lab node) puts its binary, and overwriting it with the shim would
+silently replace a real, working `k3s kubectl` with one bound to a throwaway Kind
+kubeconfig, with nothing to restore it from afterward. Run this lane on a machine with no
+k3s installed at that path (as GitHub-hosted runners always are).
 
 ## The smoke matrix
 
