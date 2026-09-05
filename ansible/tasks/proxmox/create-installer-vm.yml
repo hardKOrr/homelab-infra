@@ -38,3 +38,4 @@
   changed_when: _installer_vm_start.rc == 0
   failed_when:
     - _installer_vm_start.rc != 0
+    - "'already running' not in (_installer_vm_start.stderr | default('') | lower)"
