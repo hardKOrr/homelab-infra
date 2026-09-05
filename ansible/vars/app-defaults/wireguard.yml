@@ -28,4 +28,3 @@ wireguard_defaults:
   routing:
     proxy: none
     identity: none
-    lan_cidrs: []

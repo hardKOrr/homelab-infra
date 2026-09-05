@@ -14,10 +14,6 @@ app:
   vpn_address: 10.66.66.1/24
   # dns: 192.168.1.1
   # client_allowed_ips: 0.0.0.0/0, ::/0
-  # LAN prefixes clients should be able to reach through this tunnel. Empty means
-  # only the configured client AllowedIPs are installed; forwarding/NAT still cover
-  # full-tunnel clients.
-  # routing_lan_cidrs: [192.168.1.0/24]
   peers:
     - name: laptop
       vpn_address: 10.66.66.2/32

@@ -53,11 +53,19 @@
     _wg_server_private_key: >-
       {{ app_config.app.server_private_key
          | default(_wg_server_generated.stdout | default('') | trim, true) }}
-    _wg_secret_fields:
-      server_private_key: >-
-        {{ app_config.app.server_private_key
-           | default(_wg_server_generated.stdout | default('') | trim, true) }}
     _wg_peers: []
+  no_log: true
+
+- name: WireGuard | Preserve existing peer keys
+  ansible.builtin.set_fact:
+    _wg_secret_fields: >-
+      {%- set preserved = {} -%}
+      {%- for field in app_config.app | dict2items -%}
+      {%- if field.key is match("^peer_[a-z0-9-]+_private_key$") -%}
+      {%- set _ = preserved.update({field.key: field.value}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ preserved | combine({"server_private_key": _wg_server_private_key}) | to_json | from_json }}
   no_log: true
 
 - name: WireGuard | Derive server public key
