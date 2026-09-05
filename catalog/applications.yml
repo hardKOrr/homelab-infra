@@ -73,6 +73,14 @@ applications:
     # Backends are deliberately instanced but serve applications across estates.
     scope: lab
 
+  influxdb:
+    name: InfluxDB
+    job: deploy-influxdb.yaml
+    root: Platform
+    category: Data Services
+    # Backends are deliberately instanced but serve applications across estates.
+    scope: lab
+
   bazarr:
     name: Bazarr
     job: deploy-bazarr.yaml

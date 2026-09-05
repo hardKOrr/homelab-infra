@@ -155,9 +155,9 @@ their `database` configuration; generated facts contain topology only.
 
 | Field | Notes |
 |---|---|
-| `provider` | backend implementation, initially `postgresql`, `mariadb`, or `mysql` |
+| `provider` | backend implementation, initially `postgresql`, `mariadb`, `mysql`, or `influxdb` |
 | `host` | bare SSH and database address, not an HTTP URL; database consumers pair it with `port` |
-| `port` | database listener port, initially `5432` |
+| `port` | backend listener port; provider-specific, for example PostgreSQL `5432` or InfluxDB `8086` |
 | `client_hosts` | MySQL/MariaDB only: account-host patterns allowed for provisioned application roles; never use `%` |
 
 Ntfy ships with `auth-default-access: deny-all`, so notification consumers authenticate

@@ -1,0 +1,25 @@
+- id: 4ce2f0a9-b6d3-4eb2-9ed7-08d818ae8bac
+  uuid: 4ce2f0a9-b6d3-4eb2-9ed7-08d818ae8bac
+  name: Deploy InfluxDB
+  group: Platform/Data Services/InfluxDB
+  description: Deploy or converge an independently managed InfluxDB OSS v2 backend.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Backend instance name; identifies its LXC, registry entry, and config file.
+    required: true
+    value: influxdb
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/influxdb.yml
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        : "${RD_OPTION_INSTANCE:?instance is required}"
+        exec lab-run playbooks/apps/influxdb.yml -e "instance=$RD_OPTION_INSTANCE"

@@ -1,0 +1,144 @@
+---
+# InfluxDB OSS v2 is deliberately a standalone LXC backend. Its initial setup
+# creates an operator token, so the token and password are recorded in
+# Vaultwarden before the API call that puts them into service.
+- name: InfluxDB | Install repository prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, gpg]
+    state: present
+    update_cache: true
+
+- name: InfluxDB | Create APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: InfluxDB | Download the official repository signing key
+  ansible.builtin.get_url:
+    url: https://repos.influxdata.com/influxdata-archive.key
+    dest: /etc/apt/keyrings/influxdata-archive.key
+    mode: "0644"
+
+- name: InfluxDB | Verify the repository signing-key fingerprint
+  ansible.builtin.command:
+    argv: [gpg, --show-keys, --with-colons, /etc/apt/keyrings/influxdata-archive.key]
+  register: _influxdb_signing_key
+  changed_when: false
+
+- name: InfluxDB | Assert the official repository signing key
+  ansible.builtin.assert:
+    that: >-
+      _influxdb_signing_key.stdout is search("^fpr:::::::::24C975CBA61A024EE1B631787C3D57159FC2F927:", multiline=True)
+    fail_msg: "InfluxData repository key fingerprint did not match the upstream-published key."
+
+- name: InfluxDB | Install the official repository signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --yes
+      - --output
+      - /etc/apt/keyrings/influxdata-archive.gpg
+      - /etc/apt/keyrings/influxdata-archive.key
+    creates: /etc/apt/keyrings/influxdata-archive.gpg
+
+- name: InfluxDB | Configure the official APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main"
+    filename: influxdata
+    state: present
+    update_cache: true
+
+- name: InfluxDB | Install OSS v2 server
+  ansible.builtin.apt:
+    name: influxdb2
+    state: present
+    update_cache: true
+
+- name: InfluxDB | Enable and start service
+  ansible.builtin.systemd:
+    name: "{{ app_config.app.service_name }}"
+    state: started
+    enabled: true
+
+- name: InfluxDB | Wait for the local health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/health"
+    status_code: 200
+  register: _influxdb_health
+  until: _influxdb_health.status == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: InfluxDB | Read initial setup state
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/api/v2/setup"
+    status_code: 200
+  register: _influxdb_setup_state
+  changed_when: false
+
+- name: InfluxDB | Resolve initial administrator credentials
+  ansible.builtin.set_fact:
+    _influxdb_admin_password: >-
+      {{ app_config.app.admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _influxdb_operator_token: >-
+      {{ app_config.app.operator_token
+         | default(lookup('password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _influxdb_credentials_known: >-
+      {{ app_config.app.admin_password | default('') | length > 0
+         and app_config.app.operator_token | default('') | length > 0 }}
+  no_log: true
+
+- name: InfluxDB | Refuse to replace unavailable existing credentials
+  ansible.builtin.assert:
+    that: _influxdb_credentials_known | bool
+    fail_msg: >-
+      InfluxDB instance {{ instance }} has already been initialized, but its
+      Vaultwarden credentials are unavailable. Restore
+      homelab-infra/apps/{{ instance }} before re-running; do not rotate an
+      unknown operator token through deployment.
+  when: not (_influxdb_setup_state.json.allowed | bool)
+  no_log: true
+
+- name: InfluxDB | Store initial administrator credentials before setup
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _influxdb_admin_password }}"
+      operator_token: "{{ _influxdb_operator_token }}"
+      organization: "{{ app_config.app.organization }}"
+      bucket: "{{ app_config.app.bucket }}"
+    vault_item_secret_fields: [admin_password, operator_token]
+  when: _influxdb_setup_state.json.allowed | bool
+  no_log: true
+
+- name: InfluxDB | Initialize the OSS v2 instance
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/api/v2/setup"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ app_config.app.admin_user }}"
+      password: "{{ _influxdb_admin_password }}"
+      token: "{{ _influxdb_operator_token }}"
+      org: "{{ app_config.app.organization }}"
+      bucket: "{{ app_config.app.bucket }}"
+      retentionPeriodSeconds: 0
+    status_code: 201
+  when: _influxdb_setup_state.json.allowed | bool
+  no_log: true
+
+- name: InfluxDB | Verify the stored operator token
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ app_config.app.port }}/api/v2/authorizations"
+    headers:
+      Authorization: "Token {{ _influxdb_operator_token }}"
+    status_code: 200
+  changed_when: false
+  no_log: true
