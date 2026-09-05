@@ -56,5 +56,10 @@ whether deployment succeeded.
 ## Verification
 
 Run the checks selected by [`../../../gate/README.md`](../../../gate/README.md).
-`gate/test-proxmox-tags.sh` verifies the shared tag translation, and
-`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams.
+`gate/test-proxmox-tags.sh` verifies the shared tag translation,
+`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams, and
+`gate/test-proxmox-api-contract.sh` drives the real `community.proxmox.proxmox` module
+and this repository's real dynamic inventory against a job-local HTTPS mock of the
+Proxmox REST endpoints they call, to prove ownership-tag filtering, idempotent
+create/no-change, and a controlled failure at the API-transport boundary — without a lab
+or real credentials.

@@ -1,0 +1,8 @@
+# Python toolchain for the container role integration harness (gate/container.sh),
+# installed into its own venv so it never perturbs gate/requirements-dev.txt's pins.
+# ansible-core matches gate/requirements-dev.txt's pin so both gates exercise the
+# same Ansible version against the same ansible/requirements.yml collection set.
+ansible-core==2.18.1
+molecule>=25.2,<26
+molecule-plugins[docker]>=23.7,<24
+docker>=7.1,<8

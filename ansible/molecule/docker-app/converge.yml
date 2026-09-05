@@ -1,0 +1,50 @@
+---
+# Two plays, matching the shape every playbooks/apps/*.yml already uses (Play 1:
+# host/Docker prerequisites, Play 2: the app role) — deliberately, not cosmetically:
+# a single play defers every role's notified handler to one flush at the very end,
+# so a `docker` role daemon.json change would not take effect until AFTER the
+# `whoami` role's own compose-up already ran against the OLD daemon.
+- name: Prepare the Docker host
+  hosts: all
+  become: true
+  vars:
+    # vfs avoids overlay-on-overlay, which fails when the Molecule platform
+    # container itself sits on an overlay filesystem (e.g. this harness run from
+    # inside another container). Slower, but deterministic across host storage
+    # drivers, and this fixture pulls one small image.
+    docker_daemon_config:
+      log-driver: json-file
+      log-opts:
+        max-size: "10m"
+        max-file: "3"
+      storage-driver: vfs
+      # Docker >=25 stores images through containerd's own overlayfs snapshotter by
+      # default, which ignores storage-driver and re-introduces the same
+      # overlay-on-overlay failure vfs is here to avoid. Disabling it restores the
+      # classic graphdriver path, where storage-driver is actually honored.
+      features:
+        containerd-snapshotter: false
+  roles:
+    # The shared Docker role template's own dependency (see
+    # ansible/roles/_template-docker/meta/main.yml) — installs and configures Docker
+    # Engine so the fixture role below has something to converge against.
+    - role: docker
+
+- name: Converge the fixture application
+  hosts: all
+  become: true
+  vars:
+    instance: whoami-molecule
+    homelabinfra_config:
+      timezone: UTC
+    # Synthetic host paths and a test-only port — never a real catalog value.
+    app_config:
+      app:
+        image: "docker.io/traefik/whoami:v1.10"
+        port: 8199
+        config_path: /tmp/molecule-whoami/config
+        data_path: /tmp/molecule-whoami/data
+  roles:
+    # Stands in for a catalog application role. See README.md for why a fixture
+    # rather than a real catalog role.
+    - role: whoami
