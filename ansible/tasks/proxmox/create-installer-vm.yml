@@ -1,0 +1,41 @@
+---
+# Vendor-appliance VM seam: no cloud-init, SSH, or QEMU guest agent.
+- name: Installer VM | Check requested VMID
+  ansible.builtin.command: {argv: [qm, config, "{{ installer_vm.vmid | string }}"]}
+  delegate_to: "{{ installer_vm_node }}"
+  register: _installer_vm_config
+  failed_when: false
+  changed_when: false
+- name: Installer VM | Refuse unmanaged VMID adoption
+  ansible.builtin.assert:
+    that: ["_installer_vm_config.rc != 0 or (('_+lab' in (_installer_vm_config.stdout | default(''))) and (('_' ~ installer_vm.name) in (_installer_vm_config.stdout | default(''))))"]
+    fail_msg: "VMID {{ installer_vm.vmid }} is occupied by an unmanaged VM; refusing adoption."
+- name: Installer VM | Create project-owned appliance VM
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ installer_vm_api.host }}"
+    api_user: "{{ installer_vm_api.user }}"
+    api_token_id: "{{ installer_vm_api.token_id }}"
+    api_token_secret: "{{ installer_vm_api.token_secret }}"
+    validate_certs: "{{ installer_vm_api.validate_certs | default(false) }}"
+    node: "{{ installer_vm_node }}"
+    vmid: "{{ installer_vm.vmid | int }}"
+    name: "{{ installer_vm.name }}"
+    state: present
+    update: true
+    cores: "{{ installer_vm.cores | int }}"
+    memory: "{{ installer_vm.memory | int }}"
+    scsi: {scsi0: "{{ installer_vm_storage }}:{{ installer_vm.disk_size }}"}
+    ide: {ide2: "{{ installer_vm.iso }},media=cdrom"}
+    boot: "order=ide2;scsi0"
+    net: {net0: "{{ installer_vm.net0 }}"}
+    agent: 0
+    onboot: true
+    tags: "{{ installer_vm.tags }}"
+- name: Installer VM | Start installer
+  ansible.builtin.command: {argv: [qm, start, "{{ installer_vm.vmid | string }}"]}
+  delegate_to: "{{ installer_vm_node }}"
+  register: _installer_vm_start
+  changed_when: _installer_vm_start.rc == 0
+  failed_when:
+    - _installer_vm_start.rc != 0
+    - "'already running' not in (_installer_vm_start.stderr | default('') | lower)"

@@ -239,6 +239,15 @@ applications:
     category: Backup
     scope: lab                          # one backup server holds every estate's snapshots
 
+  proxmox-datacenter-manager:
+    name: Proxmox Datacenter Manager
+    job: deploy-proxmox-datacenter-manager.yaml
+    root: Platform
+    category: Management
+    scope: lab                          # one PDM inventory spans explicitly authorized lab remotes
+    # Installer VM lifecycle is intentionally not projected through guest-agent actions.
+    actions: []
+
   prowlarr:
     name: Prowlarr
     job: deploy-prowlarr.yaml

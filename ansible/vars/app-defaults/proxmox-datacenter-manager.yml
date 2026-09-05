@@ -1,0 +1,11 @@
+---
+# Official-ISO appliance: no cloud-init image, guest agent, or unattended install.
+proxmox_datacenter_manager_defaults:
+  # Renderer compatibility only; actions: [] suppresses native lifecycle jobs.
+  install: {method: official-iso, iso: ''}
+  proxmox:
+    vm: {cores: 2, memory: 4096, disk_size: 40, tags: [_+lab]}
+  app: {port: 8443}
+  routing: {subdomain: pdm, proxy: internal, access: internal, identity: catalog}
+  # Complete remote allow-list; authority defaults to read-only when omitted.
+  remotes: []

@@ -1,0 +1,34 @@
+---
+# Official-ISO appliance provisioner: never assumes cloud-init, SSH, or QEMU guest agent.
+- name: PDM | Provision appliance VM
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that: [instance is defined and instance | length > 0]
+        fail_msg: Provide instance=proxmox-datacenter-manager
+    - ansible.builtin.include_vars: {file: ../../vars/app-defaults/proxmox-datacenter-manager.yml, name: _pdm_defaults}
+    - ansible.builtin.include_vars: {file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml", name: _pdm_instance}
+    - ansible.builtin.set_fact:
+        pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance | default({}), recursive=True) }}"
+    - ansible.builtin.include_role: {name: pdm}
+    - ansible.builtin.assert:
+        that: [pdm_config.proxmox.node | default('') | length > 0, pdm_config.proxmox.storage | default('') | length > 0, pdm_config.proxmox.vmid is defined, pdm_config.proxmox.ip_address | default('') | length > 0, pdm_config.proxmox.fqdn | default('') | length > 0]
+        fail_msg: "PDM requires explicit node, storage, VMID, management IP, and FQDN before touching Proxmox."
+  tasks:
+    - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+    - ansible.builtin.include_tasks: ../../tasks/proxmox/create-installer-vm.yml
+      vars:
+        installer_vm_node: "{{ pdm_config.proxmox.node }}"
+        installer_vm_storage: "{{ pdm_config.proxmox.storage }}"
+        installer_vm_api: {host: "{{ homelabinfra_config.proxmox.api_host }}", user: "{{ homelabinfra_config.proxmox.api_user }}", token_id: "{{ homelabinfra_config.proxmox.api_token_id }}", token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}", validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"}
+        installer_vm:
+          name: "{{ instance }}"
+          vmid: "{{ pdm_config.proxmox.vmid }}"
+          iso: "{{ pdm_config.install.iso }}"
+          cores: "{{ pdm_config.proxmox.vm.cores }}"
+          memory: "{{ pdm_config.proxmox.vm.memory }}"
+          disk_size: "{{ pdm_config.proxmox.vm.disk_size }}"
+          net0: "virtio,bridge={{ pdm_config.proxmox.bridge | default('vmbr0') }}"
+          tags: "{{ (pdm_config.proxmox.vm.tags + ['_' ~ instance]) | unique }}"

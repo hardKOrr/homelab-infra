@@ -1,0 +1,13 @@
+---
+- name: PDM | Assert official ISO path
+  ansible.builtin.assert:
+    that: [pdm_config.install.method == 'official-iso', pdm_config.install.iso | length > 0]
+    fail_msg: "PDM requires an uploaded official ISO."
+- name: PDM | Validate explicit Vaultwarden-backed remote allow-list
+  ansible.builtin.assert:
+    that: [item.id is defined, "item.type in ['pve', 'pbs']", item.nodes is defined and item.nodes | length > 0, "item.authority | default('read-only') in ['read-only', 'mutating']", item.vaultwarden.item | length > 0, item.vaultwarden.authid_field | length > 0, item.vaultwarden.token_field | length > 0]
+    fail_msg: "PDM remotes must be declared and Vaultwarden-backed; no credential values in Git."
+  loop: "{{ pdm_config.remotes | default([]) }}"
+- name: PDM | Report fail-closed registration boundary
+  ansible.builtin.debug:
+    msg: "Complete the official installer, then follow docs/pdm.md to add only declared remotes. This play never accesses a remote."
