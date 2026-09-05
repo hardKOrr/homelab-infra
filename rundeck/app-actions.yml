@@ -61,6 +61,11 @@ actions:
     hosting: [appliance]
     opt_in: true
 
+  wireguard_remove:
+    template: remove-wireguard.yaml
+    hosting: []
+    opt_in: true
+
   rollback:
     template: rollback-container.yaml
     hosting: [docker]

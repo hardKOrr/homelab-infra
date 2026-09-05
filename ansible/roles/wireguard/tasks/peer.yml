@@ -1,0 +1,46 @@
+---
+- name: WireGuard | Validate peer declaration
+  ansible.builtin.assert:
+    that:
+      - _wg_peer.name is defined
+      - _wg_peer.name is match('^[a-z0-9][a-z0-9-]*$')
+      - _wg_peer.vpn_address is defined
+      - _wg_peer.vpn_address is ansible.utils.ipaddr
+    fail_msg: Each WireGuard peer needs a lowercase name and a valid vpn_address.
+  no_log: true
+
+- name: WireGuard | Generate peer private key once
+  ansible.builtin.command:
+    argv: [wg, genkey]
+  register: _wg_peer_generated
+  changed_when: true
+  no_log: true
+  when: (_wg_secret_fields['peer_' ~ _wg_peer.name ~ '_private_key'] | default('')) | length == 0
+
+- name: WireGuard | Resolve peer private key
+  ansible.builtin.set_fact:
+    _wg_peer_private_key: >-
+      {{ _wg_secret_fields['peer_' ~ _wg_peer.name ~ '_private_key']
+         | default(_wg_peer_generated.stdout | default('') | trim, true) }}
+  no_log: true
+
+- name: WireGuard | Derive peer public key
+  ansible.builtin.command:
+    argv: [wg, pubkey]
+    stdin: "{{ _wg_peer_private_key }}"
+  register: _wg_peer_public
+  changed_when: false
+  no_log: true
+
+- name: WireGuard | Record peer material for Vaultwarden and server config
+  ansible.builtin.set_fact:
+    _wg_secret_fields: >-
+      {{ _wg_secret_fields | combine({'peer_' ~ _wg_peer.name ~ '_private_key': _wg_peer_private_key}, recursive=True) }}
+    _wg_peers: >-
+      {{ _wg_peers + [{
+          'name': _wg_peer.name,
+          'vpn_address': _wg_peer.vpn_address,
+          'public_key': _wg_peer_public.stdout | trim,
+          'allowed_ips': _wg_peer.allowed_ips | default(app_config.app.client_allowed_ips)
+        }] }}
+  no_log: true

@@ -1,0 +1,24 @@
+- id: 65e21baf-5014-5a8e-a6ed-60cc4a7ad731
+  uuid: 65e21baf-5014-5a8e-a6ed-60cc4a7ad731
+  name: Deploy WireGuard
+  group: Platform/Network/WireGuard
+  description: |-
+    Deploy or converge a dedicated inbound UDP WireGuard LXC. The external router owner must create the configured UDP forward; Caddy is never used.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: Managed WireGuard LXC instance name.
+    required: true
+    value: wireguard
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - script: |-
+        #!/bin/bash
+        set -euo pipefail
+        exec lab-run playbooks/apps/wireguard.yml -e "instance=${RD_OPTION_INSTANCE:?instance is required}"

@@ -1,0 +1,146 @@
+---
+- name: WireGuard | Validate inbound endpoint and forwarding ownership
+  ansible.builtin.assert:
+    that:
+      - app_config.inbound.public_endpoint | default('') | length > 0
+      - app_config.inbound.forwarding.owner | default('') | length > 0
+      - app_config.inbound.forwarding.responsibility | default('') == 'manual'
+      - app_config.routing.proxy | default('none') == 'none'
+      - app_config.app.peers is iterable
+    fail_msg: >-
+      WireGuard requires inbound.public_endpoint and inbound.forwarding.owner, with
+      forwarding.responsibility=manual. It is an unmanaged-router UDP forward, never a proxy route.
+  no_log: true
+
+- name: WireGuard | Install upstream package
+  ansible.builtin.apt:
+    name: [wireguard-tools, iptables]
+    state: present
+    update_cache: true
+
+- name: WireGuard | Enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: true
+
+- name: WireGuard | Inspect existing interface configuration
+  ansible.builtin.stat:
+    path: "/etc/wireguard/{{ app_config.app.interface }}.conf"
+  register: _wg_config
+  no_log: true
+
+- name: WireGuard | Refuse to replace an existing server without its Vaultwarden key
+  ansible.builtin.assert:
+    that: app_config.app.server_private_key | default('') | length > 0
+    fail_msg: >-
+      WireGuard configuration exists but its Vaultwarden server key is unavailable.
+      Restore homelab-infra/apps/{{ instance }} before re-running; deployment never rotates an unknown tunnel key.
+  when: _wg_config.stat.exists
+  no_log: true
+
+- name: WireGuard | Generate server private key once
+  ansible.builtin.command:
+    argv: [wg, genkey]
+  register: _wg_server_generated
+  changed_when: true
+  no_log: true
+  when: not _wg_config.stat.exists
+
+- name: WireGuard | Resolve server private key
+  ansible.builtin.set_fact:
+    _wg_server_private_key: >-
+      {{ app_config.app.server_private_key
+         | default(_wg_server_generated.stdout | default('') | trim, true) }}
+    _wg_peers: []
+  no_log: true
+
+- name: WireGuard | Preserve existing peer keys
+  ansible.builtin.set_fact:
+    _wg_secret_fields: >-
+      {%- set preserved = {} -%}
+      {%- for field in app_config.app | dict2items -%}
+      {%- if field.key is match("^peer_[a-z0-9-]+_private_key$") -%}
+      {%- set _ = preserved.update({field.key: field.value}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ preserved | combine({"server_private_key": _wg_server_private_key}) | to_json | from_json }}
+  no_log: true
+
+- name: WireGuard | Derive server public key
+  ansible.builtin.command:
+    argv: [wg, pubkey]
+    stdin: "{{ _wg_server_private_key }}"
+  register: _wg_server_public
+  changed_when: false
+  no_log: true
+
+- name: WireGuard | Resolve every managed peer
+  ansible.builtin.include_tasks: peer.yml
+  loop: "{{ app_config.app.peers }}"
+  loop_control:
+    loop_var: _wg_peer
+    label: hidden
+  no_log: true
+
+- name: WireGuard | Store canonical server and peer credentials
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields: "{{ _wg_secret_fields }}"
+    vault_item_secret_fields: "{{ _wg_secret_fields.keys() | list }}"
+  no_log: true
+
+- name: WireGuard | Render peer tunnel material for Vaultwarden
+  ansible.builtin.set_fact:
+    _wg_peer_configs: |-
+      {%- set out = {} -%}
+      {%- for peer in _wg_peers -%}
+      {%- set body -%}[Interface]
+      PrivateKey = {{ _wg_secret_fields['peer_' ~ peer.name ~ '_private_key'] }}
+      Address = {{ peer.vpn_address }}
+      {% if app_config.app.dns | default('') | length > 0 %}DNS = {{ app_config.app.dns }}
+      {% endif %}[Peer]
+      PublicKey = {{ _wg_server_public.stdout | trim }}
+      Endpoint = {{ app_config.inbound.public_endpoint }}:{{ app_config.app.port }}
+      AllowedIPs = {{ peer.allowed_ips }}
+      PersistentKeepalive = 25
+      {%- endset -%}
+      {%- set _ = out.update({'peer_' ~ peer.name ~ '_config': body}) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+  no_log: true
+
+- name: WireGuard | Store peer client tunnel configs
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields: "{{ _wg_peer_configs | from_json }}"
+    vault_item_secret_fields: "{{ (_wg_peer_configs | from_json).keys() | list }}"
+  when: _wg_peers | length > 0
+  no_log: true
+
+- name: WireGuard | Write wg-quick configuration
+  ansible.builtin.template:
+    src: wg.conf.j2
+    dest: "/etc/wireguard/{{ app_config.app.interface }}.conf"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+  notify: Restart WireGuard
+
+- name: WireGuard | Enable and start wg-quick
+  ansible.builtin.systemd_service:
+    name: "wg-quick@{{ app_config.app.interface }}"
+    state: started
+    enabled: true
+
+- name: WireGuard | Verify the managed interface is active
+  ansible.builtin.command:
+    argv: [wg, show, "{{ app_config.app.interface }}"]
+  changed_when: false
+  no_log: true

@@ -93,6 +93,13 @@ applications:
     root: Platform
     category: Network
     scope: lab
+  wireguard:
+    name: WireGuard
+    job: deploy-wireguard.yaml
+    root: Platform
+    category: Network
+    scope: lab
+    actions: [configure, restart, tail, wireguard_remove]
 
   bazarr:
     name: Bazarr

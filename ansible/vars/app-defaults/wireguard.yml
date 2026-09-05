@@ -1,0 +1,30 @@
+---
+# Inbound WireGuard uses upstream's package-supported wg-quick service.  It is a
+# UDP endpoint, deliberately outside routing.proxy and Caddy.
+wireguard_defaults:
+  proxmox:
+    type: lxc
+    boot_order: 30
+    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    cores: 1
+    memory: 512
+    disk_volume: {size: 8}
+    tags: [_+lab, _-debian]
+  app:
+    interface: wg0
+    port: 51820
+    vpn_cidr: 10.66.66.0/24
+    vpn_address: 10.66.66.1/24
+    client_allowed_ips: 0.0.0.0/0, ::/0
+    dns: ''
+    peers: []
+  inbound:
+    # A public DNS name or address is intentionally required in the instance config.
+    public_endpoint: ''
+    forwarding:
+      # This project documents the forward but never configures a router or firewall.
+      owner: ''
+      responsibility: manual
+  routing:
+    proxy: none
+    identity: none
