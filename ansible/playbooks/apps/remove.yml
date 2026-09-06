@@ -317,20 +317,34 @@
         - remove_kind == 'native'
         - _rm_is_postgresql | bool
 
-    - name: Resolve the PostgreSQL removal unit
+    - name: Resolve every PostgreSQL cluster removal unit
       ansible.builtin.set_fact:
-        _rm_service_name: >-
-          {{ 'postgresql@' ~ _rm_postgresql_cluster[0] ~ '-' ~ _rm_postgresql_cluster[1]
-             if _rm_postgresql_cluster | length >= 2
-             else 'postgresql@' ~ (app_config.app.version | default('16') | string) ~ '-main' }}
+        _rm_service_names: "{{ _rm_service_names | default([]) + ['postgresql@' ~ _rm_postgresql_cluster[0] ~ '-' ~ _rm_postgresql_cluster[1]] }}"
       vars:
-        _rm_postgresql_cluster: >-
-          {{ ((_rm_postgresql_clusters.stdout_lines | default([])
-               | select('match', '^[0-9]+\s+') | list | first | default(''))
-             | split()) }}
+        _rm_postgresql_cluster: "{{ item | split() }}"
+      loop: >-
+        {{ _rm_postgresql_clusters.stdout_lines | default([])
+           | select('match', '^[0-9]+\\s+') | list }}
       when:
         - remove_kind == 'native'
         - _rm_is_postgresql | bool
+
+    - name: Fall back to the configured PostgreSQL removal unit
+      ansible.builtin.set_fact:
+        _rm_service_names:
+          - "postgresql@{{ app_config.app.version | default('16') }}-main"
+      when:
+        - remove_kind == 'native'
+        - _rm_is_postgresql | bool
+        - _rm_service_names | default([]) | length == 0
+
+    - name: Resolve the ordinary native removal unit
+      ansible.builtin.set_fact:
+        _rm_service_names:
+          - "{{ app_config.app.service_name | default(instance) }}"
+      when:
+        - remove_kind == 'native'
+        - not (_rm_is_postgresql | bool)
 
   tasks:
     # ── Docker app on a shared stack host ──────────────────────────────────────
@@ -388,12 +402,13 @@
         # app.service_name is declared in vars/app-defaults/<app>.yml for every
         # native baseline app, because a unit name does not always match the app
         # (PBS runs proxmox-backup-proxy). The instance name is the fallback.
-        - name: Stop and disable the service
+        - name: Stop and disable every service unit
           ansible.builtin.systemd_service:
-            name: "{{ _rm_service_name | default(app_config.app.service_name | default(instance)) }}"
+            name: "{{ item }}"
             state: stopped
             enabled: false
           register: _rm_service_stop
+          loop: "{{ _rm_service_names | default([]) }}"
           failed_when:
             - _rm_service_stop is failed
             - "'could not be found' not in (_rm_service_stop.msg | default(''))"
@@ -402,9 +417,10 @@
           ansible.builtin.debug:
             msg: >-
               No systemd unit named
-              {{ _rm_service_name | default(app_config.app.service_name | default(instance)) }} on
+              {{ item.item }} on
               {{ inventory_hostname }} — nothing to stop.
-          when: "'could not be found' in (_rm_service_stop.msg | default(''))"
+          loop: "{{ _rm_service_stop.results | default([]) }}"
+          when: "'could not be found' in (item.msg | default(''))"
 
         - name: Delete the data path
           ansible.builtin.file:

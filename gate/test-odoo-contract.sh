@@ -15,9 +15,6 @@ need "$repo/ansible/roles/odoo/tasks/main.yml" 'include_tasks: ../../../tasks/ma
 need "$repo/ansible/playbooks/apps/odoo.yml" 'tasks/database/provision.yml'
 need "$repo/ansible/playbooks/apps/remove.yml" 'Discover PostgreSQL clusters'
 need "$repo/ansible/playbooks/apps/remove.yml" 'pg_lsclusters'
-need "$repo/ansible/playbooks/apps/remove.yml" 'Resolve the PostgreSQL removal unit'
-need "$repo/ansible/playbooks/apps/remove.yml" "postgresql@' ~ _rm_postgresql_cluster[0]"
-need "$repo/ansible/playbooks/apps/remove.yml" '_rm_service_name | default(app_config.app.service_name | default(instance))'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'postgresql-{{ app_config.app.version }}'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Inspect existing clusters before changing the guest'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'stat:'
