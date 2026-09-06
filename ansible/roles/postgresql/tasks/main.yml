@@ -4,8 +4,31 @@
 # explicit and independently recoverable.
 - name: PostgreSQL | Assert the supported major version
   ansible.builtin.assert:
-    that: app_config.app.version | default('') is match('^[0-9]+$')
-    fail_msg: "PostgreSQL app.version must be an explicit numeric major version."
+    that:
+      - app_config.app.version | default('') == '16'
+      - app_config.app.service_name | default('') == 'postgresql@16-main'
+    fail_msg: >-
+      This PostgreSQL role supports major version 16 only and must use
+      postgresql@16-main. Add a separate versioned role before selecting another major.
+
+- name: PostgreSQL | Inspect existing clusters before changing the guest
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    patterns: postgresql.conf
+    recurse: true
+    file_type: file
+  register: _postgresql_existing_conf_files
+  changed_when: false
+
+- name: PostgreSQL | Reject an existing different-major cluster before installation
+  ansible.builtin.assert:
+    that: >-
+      _postgresql_existing_conf_files.files | map(attribute='path')
+      | select('search', '/16/') | list | length == _postgresql_existing_conf_files.files | length
+    fail_msg: >-
+      PostgreSQL installation was not changed: an existing cluster uses a different major
+      version ({{ _postgresql_existing_conf_files.files | map(attribute='path') | join(', ') }}).
+      Migrate or retire that cluster before selecting PostgreSQL 16.
 
 - name: PostgreSQL | Install repository prerequisites
   ansible.builtin.apt:

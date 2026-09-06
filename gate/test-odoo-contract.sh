@@ -14,6 +14,9 @@ need "$repo/ansible/roles/odoo/tasks/main.yml" 'vault_item_secret_fields: [admin
 need "$repo/ansible/roles/odoo/tasks/main.yml" 'include_tasks: ../../../tasks/mail/resolve-mail.yml'
 need "$repo/ansible/playbooks/apps/odoo.yml" 'tasks/database/provision.yml'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'postgresql-{{ app_config.app.version }}'
+need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Inspect existing clusters before changing the guest'
+need "$repo/ansible/roles/postgresql/tasks/main.yml" "app_config.app.version | default('') == '16'"
+need "$repo/ansible/roles/postgresql/tasks/main.yml" "app_config.app.service_name | default('') == 'postgresql@16-main'"
 need "$repo/ansible/playbooks/apps/postgresql.yml" 'version: "{{ _postgresql_host.app_config.app.version }}"'
 need "$repo/rundeck/jobs/deploy-odoo.yaml" 'Run playbooks/apps/odoo.yml'
 
