@@ -9,6 +9,7 @@ odoo_defaults:
     database:
       provider: postgresql
       instance: postgresql-odoo
+      version: "16"
       name: odoo
       role: odoo
     filestore_path: "/opt/odoo/{{ instance }}/filestore"

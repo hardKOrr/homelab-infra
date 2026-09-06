@@ -2,11 +2,81 @@
 # PostgreSQL backend. Package-managed PostgreSQL is intentionally kept outside
 # application Compose files so its lifecycle, backup coverage and credentials are
 # explicit and independently recoverable.
-- name: PostgreSQL | Install server and client dependencies
+- name: PostgreSQL | Derive the service unit from the selected major
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'app': {
+        'service_name': 'postgresql@' ~ (app_config.app.version | string) ~ '-main'
+      }}, recursive=True) }}
+
+- name: PostgreSQL | Assert the supported major version and derived service unit
+  ansible.builtin.assert:
+    that:
+      - app_config.app.version | default('') == '16'
+      - app_config.app.service_name | default('') == 'postgresql@' ~ (app_config.app.version | string) ~ '-main'
+    fail_msg: >-
+      This PostgreSQL role supports major version 16 only and must use
+      postgresql@16-main. Add a separate versioned role before selecting another major.
+
+- name: PostgreSQL | Inspect existing clusters before changing the guest
+  ansible.builtin.stat:
+    path: /etc/postgresql
+  register: _postgresql_config_root
+  changed_when: false
+
+- name: PostgreSQL | Find existing clusters before changing the guest
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    patterns: postgresql.conf
+    recurse: true
+    file_type: file
+  register: _postgresql_existing_conf_files
+  changed_when: false
+  when: _postgresql_config_root.stat.exists | default(false)
+
+- name: PostgreSQL | Normalize existing cluster paths
+  ansible.builtin.set_fact:
+    _postgresql_existing_conf_paths: >-
+      {{ _postgresql_existing_conf_files.files | default([])
+         | map(attribute='path') | list }}
+
+- name: PostgreSQL | Reject an existing different-major cluster before installation
+  ansible.builtin.assert:
+    that: >-
+      _postgresql_existing_conf_paths | select('search', '/16/') | list | length
+      == _postgresql_existing_conf_paths | length
+    fail_msg: >-
+      PostgreSQL installation was not changed: an existing cluster uses a different major
+      version ({{ _postgresql_existing_conf_paths | join(', ') }}).
+      Migrate or retire that cluster before selecting PostgreSQL 16.
+
+- name: PostgreSQL | Install repository prerequisites
   ansible.builtin.apt:
-    name: [postgresql, postgresql-client, python3-psycopg2]
+    name: [ca-certificates, gnupg]
     state: present
     update_cache: true
+
+- name: PostgreSQL | Install the PGDG signing key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+    mode: "0644"
+
+- name: PostgreSQL | Configure the PGDG repository
+  ansible.builtin.apt_repository:
+    repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+    filename: postgresql
+    state: present
+    update_cache: true
+
+- name: PostgreSQL | Install server and client dependencies
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ app_config.app.version }}"
+      - "postgresql-client-{{ app_config.app.version }}"
+      - python3-psycopg2
+    state: present
+    update_cache: false
 
 - name: PostgreSQL | Find the package-created configuration directory
   ansible.builtin.find:
@@ -19,10 +89,13 @@
 
 - name: PostgreSQL | Assert one server configuration was found
   ansible.builtin.assert:
-    that: _postgresql_conf_files.files | length == 1
+    that:
+      - _postgresql_conf_files.files | length == 1
+      - _postgresql_conf_files.files[0].path is search('/' ~ app_config.app.version ~ '/')
     fail_msg: >-
       Expected exactly one package-managed PostgreSQL configuration beneath
-      /etc/postgresql, found {{ _postgresql_conf_files.files | length }}.
+      /etc/postgresql for major version {{ app_config.app.version }}, found
+      {{ _postgresql_conf_files.files | map(attribute='path') | join(', ') }}.
 
 - name: PostgreSQL | Set configuration paths
   ansible.builtin.set_fact:

@@ -13,9 +13,12 @@ postgresql_defaults:
       size: 32
     tags: [_+lab, _-debian]
   app:
+    # PostgreSQL 16 is the repository baseline for applications that consume this
+    # backend. Keep the major version explicit so a distro upgrade cannot silently
+    # change the application compatibility pairing.
+    version: "16"
     port: 5432
     data_path: /var/lib/postgresql
-    service_name: postgresql
     # CIDRs allowed to connect to this backend. Keep this a lab-local range.
     client_cidrs: ["10.0.0.0/8"]
   routing:

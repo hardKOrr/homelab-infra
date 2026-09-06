@@ -18,6 +18,7 @@
       - database_provision_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
       - database_provision_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
       - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - database_provision_config.version | default('') is match('^[0-9]+$') or database_provision_config.version | default('') == ''
       - database_provision_config.credential_action | default('reuse') in ['reuse', 'rotate']
     fail_msg: >-
       Database provisioning needs a supported provider plus safe instance, name and role values.
@@ -26,6 +27,16 @@
   ansible.builtin.set_fact:
     _database_backend: >-
       {{ (homelabinfra_infra.databases | default({})).get(database_provision_config.instance, {}) }}
+
+- name: Database | Assert requested backend major version is registered
+  ansible.builtin.assert:
+    that:
+      - database_provision_config.version | default('') | length == 0
+        or _database_backend.version | default('') | string == database_provision_config.version | string
+    fail_msg: >-
+      Backend {{ database_provision_config.instance }} does not advertise the requested
+      PostgreSQL major version {{ database_provision_config.version }}.
+  when: database_provision_config.version | default('') | length > 0
 
 - name: Database | Assert requested backend is registered
   ansible.builtin.assert:

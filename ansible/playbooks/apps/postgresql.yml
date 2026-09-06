@@ -113,6 +113,7 @@
         generated_facts_data:
           "{{ instance }}":
             provider: postgresql
+            version: "{{ _postgresql_host.app_config.app.version }}"
             host: "{{ _postgresql_host.ansible_host }}"
             port: "{{ _postgresql_host.app_config.app.port }}"
     - name: Record the app on its Proxmox guest
