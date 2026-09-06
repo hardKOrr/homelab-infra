@@ -25,6 +25,11 @@
     group: "{{ app_config.app.pgid }}"
     mode: "0750"
 
+- name: Odoo | Remove obsolete unused environment secret file
+  ansible.builtin.file:
+    path: "{{ odoo_project_dir }}/.env"
+    state: absent
+
 - name: Odoo | Resolve platform mail
   ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
 
