@@ -3,7 +3,8 @@
 #
 # Inputs from an application playbook:
 #   database_provision_app_instance  application instance (Vaultwarden item owner)
-#   database_provision_config        {provider, instance, name, role}
+#   database_provision_config        {provider, instance, name, role,
+#                                     credential_action: reuse|rotate}
 #
 # A backend is resolved from generated facts, creates the database and login role,
 # and returns only the application connection fields through the canonical app item.
@@ -17,6 +18,7 @@
       - database_provision_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
       - database_provision_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
       - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - database_provision_config.credential_action | default('reuse') in ['reuse', 'rotate']
     fail_msg: >-
       Database provisioning needs a supported provider plus safe instance, name and role values.
 
@@ -35,11 +37,40 @@
       {{ database_provision_config.provider }} backend {{ database_provision_config.instance }} is not registered.
       Deploy that backend before deploying {{ database_provision_app_instance }}.
 
-- name: Database | Generate application password when Vaultwarden has none
+- name: Database | Resolve the requested credential action
+  ansible.builtin.set_fact:
+    _database_credential_action: "{{ database_provision_config.credential_action | default('reuse') }}"
+
+- name: Database | Read the canonical application password
+  ansible.builtin.set_fact:
+    _database_existing_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(database_provision_app_instance, {}).database_password
+         | default('', true) }}
+  no_log: true
+
+- name: Database | Generate an initial or rotated application password
   ansible.builtin.set_fact:
     _database_password: >-
-      {{ (homelabinfra_vault.apps | default({})).get(database_provision_app_instance, {}).database_password
-         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+      {{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits')
+         if (_database_existing_password | length == 0 or _database_credential_action == 'rotate')
+         else _database_existing_password }}
+  no_log: true
+
+# Persist a generated value before it is applied to a backend. If backend mutation
+# fails, a rerun reuses the exact recorded value instead of losing the only copy.
+- name: Database | Store application connection fields in Vaultwarden
+  ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ database_provision_app_instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      database_provider: "{{ database_provision_config.provider }}"
+      database_host: "{{ _database_backend.host }}"
+      database_port: "{{ _database_backend.port }}"
+      database_name: "{{ database_provision_config.name }}"
+      database_user: "{{ database_provision_config.role }}"
+      database_password: "{{ _database_password }}"
+    vault_item_secret_fields: [database_password]
   no_log: true
 
 - name: Database | Register backend as a delegation target
@@ -77,7 +108,7 @@
       - --username=postgres
       - --dbname=postgres
       - "--port={{ _database_backend.port }}"
-      - "--command=CREATE ROLE {{ database_provision_config.role }} LOGIN PASSWORD :'database_password'"
+      - "--command=CREATE ROLE {{ database_provision_config.role }} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD :'database_password'"
   delegate_to: database_backend_target
   become: true
   become_user: postgres
@@ -103,6 +134,7 @@
   when:
     - database_provision_config.provider == 'postgresql'
     - _database_role_exists.stdout | trim == '1'
+    - _database_credential_action == 'rotate'
 
 - name: Database | Check whether the PostgreSQL database exists
   ansible.builtin.command:
@@ -163,24 +195,20 @@
     password: "{{ _database_password }}"
     priv: "{{ database_provision_config.name }}.*:ALL"
     state: present
-    update_password: always
+    update_password: "{{ 'always' if _database_credential_action == 'rotate' else 'on_create' }}"
     login_unix_socket: /run/mysqld/mysqld.sock
   loop: "{{ _database_backend.client_hosts | default([]) }}"
   delegate_to: database_backend_target
   become: true
   no_log: true
   when: database_provision_config.provider in ['mariadb', 'mysql']
-- name: Database | Store application connection fields in Vaultwarden
-  ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
-  vars:
-    vault_item_name: "homelab-infra/apps/{{ database_provision_app_instance }}"
-    vault_item_merge: true
-    vault_item_fields:
-      database_provider: "{{ database_provision_config.provider }}"
-      database_host: "{{ _database_backend.host }}"
-      database_port: "{{ _database_backend.port }}"
-      database_name: "{{ database_provision_config.name }}"
-      database_user: "{{ database_provision_config.role }}"
-      database_password: "{{ _database_password }}"
-    vault_item_secret_fields: [database_password]
+- name: Database | Return the Vaultwarden-backed connection to the consumer
+  ansible.builtin.set_fact:
+    database_provision_connection:
+      provider: "{{ database_provision_config.provider }}"
+      host: "{{ _database_backend.host }}"
+      port: "{{ _database_backend.port }}"
+      name: "{{ database_provision_config.name }}"
+      user: "{{ database_provision_config.role }}"
+      password: "{{ _database_password }}"
   no_log: true

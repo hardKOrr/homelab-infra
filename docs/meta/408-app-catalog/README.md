@@ -229,7 +229,7 @@ single row's implementer re-decides it.
       (slskd); each recorded passing `gate/lint.sh` and `gate/test.sh`. Readarr is
       void, as recorded in its Batch A row.
 - [ ] Batch A accepted — a live media-stack wiring run places every new registry entry
-- [ ] Batch B implemented, including the database-provisioning contract postgresql needs
+- [x] Batch B database-provisioning contract implemented (issue #45); live-lab observation remains required before closure
 - [ ] Shared Kubernetes storage scoped and implemented before storage-heavy applications
       or database HA move onto the cluster; acceptance includes capacity ownership,
       snapshots, application-consistent restore and one-node loss
