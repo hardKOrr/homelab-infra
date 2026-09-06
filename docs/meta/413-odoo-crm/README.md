@@ -23,8 +23,10 @@ modules.
       not runtime dependencies.
 - [x] Pair Odoo 18 with the named PostgreSQL 16 backend (`postgresql-odoo` by default).
       Odoo 18 supports PostgreSQL 12 and newer; PostgreSQL 16 is the repository baseline.
-- [ ] Complete slice 408's PostgreSQL provisioning contract and verify the supported Odoo and
-      PostgreSQL version pairing before fixing app defaults
+- [x] Complete slice 408's PostgreSQL provisioning contract and verify the supported Odoo and
+      PostgreSQL version pairing before fixing app defaults. Odoo uses the explicit PostgreSQL
+      16 backend baseline; the PostgreSQL role installs the matching PGDG major-version
+      packages and publishes the version in generated backend facts.
 - [ ] Add the role, app defaults, deploy playbook, documented config example and one-click
       Rundeck job with the backend instance named in `config/apps/<instance>.yml`
 - [ ] Complete unattended database initialization, preserve the generated administrator and
@@ -32,7 +34,9 @@ modules.
 - [ ] Consume the platform SMTP contract for application mail; keep optional modules and
       third-party add-ons under operator control
 - [ ] Wire the public route and monitor, and implement application-consistent backup and restore
-      across PostgreSQL plus the Odoo filestore
+      across PostgreSQL plus the Odoo filestore. The deployment preserves the named filestore
+      and leaves the shared PostgreSQL backend intact during removal; live paired recovery still
+      requires the named database and filestore to be restored together.
 - [ ] Prove lead and opportunity management, a second idempotent deploy, update, removal and
       cross-instance restore
 - [ ] Pass both repository gates

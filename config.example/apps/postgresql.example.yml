@@ -8,6 +8,9 @@
 #     instance: postgresql
 #     name: application_database
 #     role: application_role
+#
+# The default backend is PostgreSQL 16. Keep application/database version pairings
+# explicit when an application requires a particular major version.
 
 # proxmox:
 #   cores: 4

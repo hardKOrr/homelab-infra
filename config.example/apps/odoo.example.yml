@@ -7,6 +7,7 @@
 app:
   database:
     instance: postgresql-odoo
+    version: "16"
     name: odoo
     role: odoo
   filestore_path: /opt/odoo/odoo/filestore
@@ -16,3 +17,7 @@ routing:
 backup:
   enabled: true
   schedule: "0 3 * * *"
+
+# Recovery boundary: restore the PostgreSQL-odoo database and this instance's
+# filestore from the same recovery point. The PostgreSQL backend is shared and
+# must not be removed as part of Odoo removal.
