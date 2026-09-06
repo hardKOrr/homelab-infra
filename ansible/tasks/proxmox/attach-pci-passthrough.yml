@@ -1,0 +1,184 @@
+---
+# Assign a PCI device to a VM guest, exclusively: PCIe passthrough removes the device from
+# the Proxmox host, so exactly one guest may hold it. This is the DEDICATED-GPU half of the
+# device-passthrough contract — see docs/specs/device-passthrough.md. The SHARED half (an
+# iGPU bound into several LXC guests at once) is attach-shared-device.yml and does not share
+# this file, because the two modes have opposite conflict rules.
+#
+# Idempotent: a device already assigned to THIS guest is a no-op. A device already assigned
+# to a DIFFERENT guest is a preflight failure, not a silent reassignment — passthrough
+# cannot be shared, and moving it out from under a guest that is using it is a decision this
+# platform will not make for an operator.
+#
+# Inputs:
+#   pci_passthrough_guest — VM guest hostname to assign the device to
+#   pci_passthrough_device — {id: "0000:01:00.0", pcie: true}
+#                            `id` is the PCI address exactly as `lspci`/`pvesh` reports it.
+#                            `pcie` defaults to true (PCI Express); set false for a legacy
+#                            PCI device.
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+- name: PCI passthrough | Assert required input
+  ansible.builtin.assert:
+    that:
+      - pci_passthrough_guest is defined
+      - pci_passthrough_device is defined
+      - pci_passthrough_device.id is defined
+    fail_msg: >-
+      attach-pci-passthrough.yml needs pci_passthrough_guest and
+      pci_passthrough_device.id.
+
+- name: PCI passthrough | Verify the device is present on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/hardware/pci --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_hardware
+  changed_when: false
+
+- name: PCI passthrough | Assert the device exists on the node
+  ansible.builtin.assert:
+    that: pci_passthrough_device.id in _pci_ids
+    fail_msg: >-
+      {{ pci_passthrough_device.id }} is not present on
+      {{ homelabinfra_config.proxmox.node }}. This platform assigns a device the node
+      already exposes; it does not create or discover one.
+  vars:
+    _pci_ids: "{{ _pci_hardware.stdout | from_json | map(attribute='id') | list }}"
+
+- name: PCI passthrough | List every VM on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_vm_list
+  changed_when: false
+
+- name: PCI passthrough | Extract the vmid and tags for {{ pci_passthrough_guest }}
+  ansible.builtin.set_fact:
+    _pci_vmid: >-
+      {{ (_pci_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _pci_tags: >-
+      {{ ((_pci_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') }}
+    _pci_was_running: >-
+      {{ (_pci_entry | map(attribute='status') | list | first)
+         | default('') == 'running' }}
+  vars:
+    _pci_entry: >-
+      {{ _pci_vm_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', pci_passthrough_guest) | list }}
+
+- name: PCI passthrough | Assert the guest was found
+  ansible.builtin.assert:
+    that: _pci_vmid | length > 0
+    fail_msg: >-
+      No VM named {{ pci_passthrough_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. A device cannot be assigned to a guest that
+      `qm list` does not show.
+
+- name: PCI passthrough | Assert the guest carries the ownership tag
+  ansible.builtin.assert:
+    that: "'_+lab' in _pci_tags"
+    fail_msg: >-
+      {{ pci_passthrough_guest }} does not carry the _+lab ownership tag. This platform
+      does not assign a device to a guest it does not manage — see
+      ansible/tasks/proxmox/README.md.
+
+- name: PCI passthrough | Read every VM's configuration on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ item.vmid }}/config"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_all_configs
+  loop: "{{ _pci_vm_list.stdout | from_json }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+  changed_when: false
+
+# The whole node is scanned, not just this guest, because a dedicated device is a
+# node-wide resource: two VMs on the SAME node cannot both claim the SAME PCI address, and
+# the guest that already has it may not be the one asking.
+- name: PCI passthrough | Resolve device holders per guest
+  ansible.builtin.set_fact:
+    _pci_claims_by_vmid: "{{ _pci_claims_by_vmid | default({}) | combine({item.item.vmid | string: _pci_ids_for_guest}) }}"
+  loop: "{{ _pci_all_configs.results }}"
+  loop_control:
+    label: "{{ item.item.vmid }}"
+  vars:
+    _pci_ids_for_guest: >-
+      {{ item.stdout_lines | select('match', '^hostpci[0-9]+:')
+         | map('regex_replace', '^hostpci[0-9]+:\s*([^,]+).*$', '\1') | list }}
+
+- name: PCI passthrough | Assert the device is free, or already held by this guest
+  ansible.builtin.assert:
+    that: >-
+      (_pci_holders | length == 0) or (_pci_holders == [_pci_vmid])
+    fail_msg: >-
+      {{ pci_passthrough_device.id }} is already assigned to guest vmid
+      {{ _pci_holders | difference([_pci_vmid]) | first }}, not
+      {{ pci_passthrough_guest }}. A dedicated PCIe device cannot be assigned to a second
+      guest at once — detach it there first.
+  vars:
+    _pci_holders: >-
+      {{ _pci_claims_by_vmid | dict2items
+         | selectattr('value', 'contains', pci_passthrough_device.id)
+         | map(attribute='key') | list }}
+
+- name: PCI passthrough | Resolve whether this guest already has the device
+  ansible.builtin.set_fact:
+    _pci_already_present: >-
+      {{ pci_passthrough_device.id in (_pci_claims_by_vmid[_pci_vmid] | default([])) }}
+
+- name: PCI passthrough | Resolve the next free hostpci index for this guest
+  ansible.builtin.set_fact:
+    _pci_next_index: >-
+      {{ (_pci_used_indices + range(0, 16) | list) | unique | difference(_pci_used_indices) | first }}
+  vars:
+    _pci_used_indices: >-
+      {{ (_pci_all_configs.results | selectattr('item.vmid', 'equalto', _pci_vmid | int) | list | first).stdout_lines
+         | select('match', '^hostpci[0-9]+:')
+         | map('regex_replace', '^hostpci([0-9]+):.*$', '\1') | map('int') | list }}
+  when: not _pci_already_present
+
+# A stopped guest takes -hostpciN unconditionally; PCIe passthrough cannot be hotplugged.
+- name: PCI passthrough | Stop the guest so the device can be assigned
+  ansible.builtin.command:
+    cmd: "qm shutdown {{ _pci_vmid }} --forceStop 1 --timeout 120"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: not _pci_already_present and _pci_was_running | bool
+  changed_when: true
+
+- name: PCI passthrough | Wait for the guest to reach stopped
+  ansible.builtin.command:
+    cmd: "qm status {{ _pci_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_stop_check
+  until: _pci_stop_check.stdout is search('stopped')
+  retries: 30
+  delay: 4
+  when: not _pci_already_present and _pci_was_running | bool
+  changed_when: false
+
+- name: PCI passthrough | Assign the device
+  ansible.builtin.command:
+    cmd: >-
+      qm set {{ _pci_vmid }}
+      -hostpci{{ _pci_next_index }} {{ pci_passthrough_device.id }}{{
+        ',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else '' }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: not _pci_already_present
+  changed_when: true
+
+- name: PCI passthrough | Start the guest again
+  ansible.builtin.command:
+    cmd: "qm start {{ _pci_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: not _pci_already_present and _pci_was_running | bool
+  changed_when: true
+
+- name: PCI passthrough | Report what is assigned
+  ansible.builtin.debug:
+    msg: >-
+      {{ pci_passthrough_guest }} (vmid {{ _pci_vmid }}): {{ pci_passthrough_device.id }}
+      {{ 'already assigned' if _pci_already_present else 'assigned this run' }}.

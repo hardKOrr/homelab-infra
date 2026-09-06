@@ -1,0 +1,145 @@
+---
+# Bind a host device node into an LXC guest, shared: several guests may bind the same
+# device at once (an iGPU used by both Immich and Frigate, for example). This is the
+# SHARED half of the device-passthrough contract — see docs/specs/device-passthrough.md.
+# The DEDICATED half (a PCI or USB device leaving the host for one VM) is
+# attach-pci-passthrough.yml / attach-usb-passthrough.yml, and does not share this file,
+# because a shared bind and an exclusive one have opposite conflict rules.
+#
+# Idempotent and additive, on the same principle as attach-host-mounts.yml: a device
+# already bound is left exactly as it is, an unrelated devN belonging to something else is
+# never touched, and nothing is ever removed. Entries are matched on host path, not index —
+# PVE assigns indices in its own order.
+#
+# Inputs:
+#   shared_device_guest — LXC guest hostname to bind into
+#   shared_device_list  — [{host: /dev/dri/renderD128, mode: "0666"}, ...]
+#                         `host` is the device node's path, identical on the node and
+#                         inside the guest — a device node is not relocated the way a
+#                         mountpoint's guest-side path can be. `mode` is the permission
+#                         bits PVE grants the guest on that node; omit it to inherit PVE's
+#                         default (0660).
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+- name: Shared device | Assert required input
+  ansible.builtin.assert:
+    that:
+      - shared_device_guest is defined
+      - shared_device_list is defined
+      - shared_device_list | length > 0
+    fail_msg: >-
+      attach-shared-device.yml needs shared_device_guest and a non-empty
+      shared_device_list.
+
+- name: Shared device | List the node's containers
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/lxc --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _sd_lxc_list
+  changed_when: false
+
+- name: Shared device | Extract the vmid and tags for {{ shared_device_guest }}
+  ansible.builtin.set_fact:
+    _sd_vmid: >-
+      {{ (_sd_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _sd_tags: >-
+      {{ ((_sd_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') }}
+    _sd_was_running: >-
+      {{ (_sd_entry | map(attribute='status') | list | first)
+         | default('') == 'running' }}
+  vars:
+    _sd_entry: >-
+      {{ _sd_lxc_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', shared_device_guest) | list }}
+
+- name: Shared device | Assert the guest was found
+  ansible.builtin.assert:
+    that: _sd_vmid | length > 0
+    fail_msg: >-
+      No container named {{ shared_device_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. A device cannot be bound into a guest that
+      `pct list` does not show.
+
+# This platform binds devices only into guests it created and tags. Pointing this seam at
+# a guest it does not own would silently reconfigure somebody else's container.
+- name: Shared device | Assert the guest carries the ownership tag
+  ansible.builtin.assert:
+    that: "'_+lab' in _sd_tags"
+    fail_msg: >-
+      {{ shared_device_guest }} does not carry the _+lab ownership tag. This platform does
+      not bind a device into a guest it does not manage — see
+      ansible/tasks/proxmox/README.md.
+
+- name: Shared device | Verify the device nodes exist on the node
+  ansible.builtin.stat:
+    path: "{{ item.host }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _sd_device_paths
+  loop: "{{ shared_device_list }}"
+  loop_control:
+    label: "{{ item.host }}"
+
+- name: Shared device | Assert every device node exists on the node
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: >-
+      {{ item.item.host }} does not exist on {{ homelabinfra_config.proxmox.node }}. This
+      platform binds a device the node already exposes; it does not create one.
+  loop: "{{ _sd_device_paths.results }}"
+  loop_control:
+    label: "{{ item.item.host }}"
+
+- name: Shared device | Read the guest's current configuration
+  ansible.builtin.command:
+    cmd: "pct config {{ _sd_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _sd_config
+  changed_when: false
+
+- name: Shared device | Resolve which devices are already bound
+  ansible.builtin.set_fact:
+    _sd_existing_hosts: >-
+      {{ _sd_dev_lines
+         | map('regex_replace', '^dev[0-9]+:\s*([^,]+).*$', '\1')
+         | list }}
+    _sd_used_indices: >-
+      {{ _sd_dev_lines | map('regex_replace', '^dev([0-9]+):.*$', '\1')
+         | map('int') | list }}
+  vars:
+    _sd_dev_lines: >-
+      {{ _sd_config.stdout_lines | select('match', '^dev[0-9]+:') | list }}
+
+- name: Shared device | Resolve the devices still missing
+  ansible.builtin.set_fact:
+    _sd_missing: >-
+      {{ shared_device_list | rejectattr('host', 'in', _sd_existing_hosts) | list }}
+
+- name: Shared device | Bind the missing devices
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ _sd_vmid }}
+      -dev{{ _sd_next_index }} path={{ item.host }}{{
+        ',mode=' ~ item.mode if item.mode is defined else '' }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _sd_missing }}"
+  loop_control:
+    label: "{{ item.host }}"
+    index_var: _sd_loop_index
+  vars:
+    _sd_next_index: >-
+      {{ ((_sd_used_indices + range(0, 256) | list) | unique
+          | difference(_sd_used_indices))[_sd_loop_index] }}
+  changed_when: true
+
+# PVE hotplugs a devN entry into a running unprivileged container without a restart, unlike
+# a mountpoint — there is no apparmor profile change involved. Nothing is stopped here.
+- name: Shared device | Report what is bound
+  ansible.builtin.debug:
+    msg: >-
+      {{ shared_device_guest }} (vmid {{ _sd_vmid }}):
+      {{ _sd_missing | length }} device(s) bound this run,
+      {{ shared_device_list | length - (_sd_missing | length) }} already present.

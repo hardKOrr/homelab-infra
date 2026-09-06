@@ -38,6 +38,17 @@ Proxmox templates are filtered out before inventory groups are built, including 
 templates. Template tasks locate them through the Proxmox node instead of dynamic guest
 inventory.
 
+## Device passthrough
+
+`attach-shared-device.yml` binds a host device node (an iGPU) into one or more LXC guests —
+several guests may hold it at once. `attach-pci-passthrough.yml` and
+`attach-usb-passthrough.yml` assign a PCI or USB device to exactly one VM guest, exclusively;
+the device leaves the node for that guest, so a second assignment is a preflight failure, not
+a reassignment. All three run after `lxc-create.yml` / `vm-create.yml`, never in place of
+them, and each asserts the target guest carries the `_+lab` ownership tag before writing
+anything. See [`../../../docs/specs/device-passthrough.md`](../../../docs/specs/device-passthrough.md)
+for the full contract, including why the shared and dedicated modes are not interchangeable.
+
 ## Guest application records
 
 `record-app-on-guest.yml` records an application tag and a marker-delimited notes row. The
@@ -57,9 +68,11 @@ whether deployment succeeded.
 
 Run the checks selected by [`../../../gate/README.md`](../../../gate/README.md).
 `gate/test-proxmox-tags.sh` verifies the shared tag translation,
-`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams, and
+`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams,
 `gate/test-proxmox-api-contract.sh` drives the real `community.proxmox.proxmox` module
 and this repository's real dynamic inventory against a job-local HTTPS mock of the
 Proxmox REST endpoints they call, to prove ownership-tag filtering, idempotent
 create/no-change, and a controlled failure at the API-transport boundary — without a lab
-or real credentials.
+or real credentials, and `gate/test-device-passthrough-contract.sh` proves the ownership
+guard and the dedicated-device conflict check in the device-passthrough task files above
+against fixture guest configurations, also without a lab.
