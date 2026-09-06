@@ -12,7 +12,7 @@ need "$repo/ansible/roles/mautic/tasks/main.yml" 'vault_item_name: "homelab-infr
 need "$repo/ansible/roles/mautic/tasks/main.yml" 'vault_item_secret_fields: [admin_password, database_password]'
 need "$repo/ansible/roles/mautic/tasks/main.yml" 'include_tasks: ../../../tasks/mail/resolve-mail.yml'
 need "$repo/ansible/roles/mautic/templates/local.php.j2" "wiring_mail.enabled"
-need "$repo/ansible/roles/mautic/templates/local.php.j2" "'mailer_transport' => 'smtp'"
+need "$repo/ansible/roles/mautic/templates/local.php.j2" "'mailer_dsn'"
 need "$repo/ansible/playbooks/apps/mautic.yml" 'tasks/database/provision.yml'
 need "$repo/ansible/playbooks/apps/mautic.yml" 'stack/find-or-create-host.yml'
 
@@ -81,13 +81,20 @@ assert fields_expr.index("db_driver") < fields_expr.index("_mautic_installed_mar
     "db_driver must be inside the installed-only branch of the fields list"
 
 # Actually render the four (installed x mail-enabled) states through Jinja2, rather
-# than grep the source, to prove disabling mail after it was configured clears the
-# relay/credentials instead of the lineinfile loop simply going empty.
+# than grep the source, to prove the converged key is the single `mailer_dsn` the
+# pinned mautic/mautic 6.0.6 tag actually reads (app/bundles/EmailBundle/Config/
+# config.php's `parameters` array — the seven mailer_transport/host/port/user/
+# password/encryption/auth_mode keys this role wrote before appear nowhere in that
+# file or in EmailBundle's ConfigType form) — and that disabling mail after it was
+# configured replaces the credentialed DSN with Mautic's own shipped no-relay
+# default instead of the lineinfile loop simply going empty and leaving the old
+# relay/credentials live.
 # NativeEnvironment, not plain Environment: Ansible's own templar returns the real
 # Python object for a template that is a single whole expression (which is exactly
 # what makes `loop: "{{ _mautic_local_php_fields }}"` iterate dicts rather than parse
 # a string) — plain Jinja2 would only hand back that object's str() here.
 from jinja2.nativetypes import NativeEnvironment
+import urllib.parse
 class AttrDict(dict):
     def __getattr__(self, key):
         return self[key]
@@ -96,20 +103,37 @@ def wrap(value):
 
 env = NativeEnvironment()
 env.filters["bool"] = bool
+env.filters["urlencode"] = urllib.parse.quote
 tmpl = env.from_string(fields_expr)
 app_config = wrap({"app": {"database_host": "h", "database_port": 3306, "database": {"name": "mautic"},
                             "database_user": "u", "database_password": "p", "name": "Mautic"}})
+installed = wrap({"stat": {"exists": True}})
+
+wiring_mail_enabled = wrap({"enabled": True, "from_name": "X", "from_address": "a@b.com",
+                            "host": "smtp.example.com", "port": 587,
+                            "username": "user@example.com", "password": "p@ss:w/ord'\\x",
+                            "encryption": "tls"})
+fields_on = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_enabled,
+                         mautic_fqdn="m.example.com", _mautic_installed_marker=installed)
+by_key_on = {f["key"]: f["value"] for f in fields_on}
+assert "mailer_transport" not in by_key_on, \
+    "mailer_transport is not a Mautic 6.0.6 config key; the pinned release only reads mailer_dsn"
+dsn = by_key_on["mailer_dsn"]
+parsed = urllib.parse.urlsplit(dsn)
+assert parsed.scheme == "smtp"
+assert urllib.parse.unquote(parsed.username) == "user@example.com"
+assert urllib.parse.unquote(parsed.password) == "p@ss:w/ord'\\x", \
+    "the DSN must round-trip a password containing '@', ':', '/', an apostrophe and a backslash"
+assert parsed.hostname == "smtp.example.com" and parsed.port == 587
+
 wiring_mail_disabled = wrap({"enabled": False, "from_name": "", "from_address": "", "host": "",
                              "port": "", "username": "", "password": "", "encryption": ""})
-installed = wrap({"stat": {"exists": True}})
-fields = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_disabled,
-                      mautic_fqdn="m.example.com", _mautic_installed_marker=installed)
-by_key = {f["key"]: f["value"] for f in fields}
-assert by_key["mailer_transport"] == "mail", \
-    "disabling mail must reset mailer_transport off the stale smtp relay"
-for key in ("mailer_host", "mailer_user", "mailer_password", "mailer_encryption", "mailer_auth_mode"):
-    assert by_key[key] == "", f"disabling mail must clear {key}, not leave the prior value in local.php"
-print("Mautic mail-disable convergence actually clears the relay/credentials: OK")
+fields_off = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_disabled,
+                          mautic_fqdn="m.example.com", _mautic_installed_marker=installed)
+by_key_off = {f["key"]: f["value"] for f in fields_off}
+assert by_key_off["mailer_dsn"] == "smtp://localhost:25", \
+    "disabling mail must reset mailer_dsn to Mautic's own shipped no-relay default, not leave the old DSN"
+print("Mautic converges mailer_dsn (not the obsolete transport keys), round-tripping a hostile password: OK")
 
 installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]

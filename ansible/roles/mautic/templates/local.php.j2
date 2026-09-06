@@ -35,12 +35,19 @@ $parameters = array(
 {% if wiring_mail.enabled | default(false) | bool %}
     'mailer_from_name' => '{{ (wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true)) | replace('\\', '\\\\') | replace("'", "\\'") }}',
     'mailer_from_email' => '{{ wiring_mail.from_address | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'mailer_transport' => 'smtp',
-    'mailer_host' => '{{ wiring_mail.host | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'mailer_port' => '{{ wiring_mail.port | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'mailer_user' => '{{ wiring_mail.username | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'mailer_password' => '{{ wiring_mail.password | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'mailer_encryption' => '{{ 'ssl' if wiring_mail.encryption == 'ssl' else 'tls' }}',
-    'mailer_auth_mode' => 'login',
+    # A single Symfony Mailer DSN, not the discrete mailer_transport/host/port/user/
+    # password/encryption/auth_mode keys those seven were replaced by — see the header
+    # comment on roles/mautic/tasks/main.yml's converge task for how that was confirmed
+    # against the pinned release's own source rather than assumed. user/password are
+    # urlencoded because a DSN is a URI: an unescaped `@`, `:` or `/` in either would
+    # be parsed as a DSN delimiter rather than a literal credential character. `/` is
+    # added explicitly — Jinja's `urlencode` deliberately leaves it unescaped, since it
+    # is normally a path separator, which a DSN's userinfo segment is not.
+    'mailer_dsn' => '{{ (
+        ('smtps' if wiring_mail.encryption == 'ssl' else 'smtp')
+        ~ '://' ~ (wiring_mail.username | urlencode | replace('/', '%2F'))
+        ~ ':' ~ (wiring_mail.password | urlencode | replace('/', '%2F'))
+        ~ '@' ~ (wiring_mail.host | urlencode) ~ ':' ~ wiring_mail.port
+      ) | replace('\\', '\\\\') | replace("'", "\\'") }}',
 {% endif %}
 );

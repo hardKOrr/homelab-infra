@@ -118,16 +118,36 @@
   loop: "{{ _mautic_local_php_fields }}"
   loop_control:
     label: "{{ item.key }}"
-  # `_mautic_local_php_fields`'s mail branch is an explicit disabled path, not merely
-  # an empty one: `wiring_mail.enabled` turning false — infrastructure.mail.provider
-  # set back to `none` after a deployment that had it configured — must actively clear
-  # the relay, username and password already converged into local.php, not leave
-  # `lineinfile` with nothing in its loop and the stale SMTP credentials untouched.
-  # `mailer_transport: mail` is Mautic's own credential-free fallback (PHP's built-in
-  # mail()), so this state is not merely "the relay's credentials are blanked" but
-  # "Mautic no longer has a relay to send through at all". This comment lives up here,
-  # not inside the block scalar below: a `#` line inside a `>-` block is literal
-  # content, not a YAML or Jinja comment, and would corrupt the expression Jinja parses.
+  # `_mautic_local_php_fields`'s mail branch converges a single `mailer_dsn` key, not
+  # the discrete mailer_transport/host/port/user/password/encryption/auth_mode keys
+  # this role wrote before. Confirmed against the pinned mautic/mautic 6.0.6 tag's own
+  # source, not assumed: app/bundles/EmailBundle/Config/config.php's `parameters`
+  # array declares only `mailer_dsn` (default `smtp://localhost:25`) plus
+  # `mailer_from_name`/`mailer_from_email` — the seven transport-specific keys appear
+  # nowhere in that file or in EmailBundle's ConfigType form, and
+  # app/migrations/Version20230615101328.php is the migration that combined exactly
+  # those keys into one DSN string for every Mautic install upgrading from an older
+  # release. Writing the old keys converges nothing: Mautic keeps mailing through
+  # whatever `mailer_dsn` already holds — its own shipped default, `smtp://
+  # localhost:25`, on a fresh install — regardless of what this role wrote elsewhere.
+  # `mailer_dsn`'s username/password are urlencoded (with `/` additionally replaced —
+  # Jinja's `urlencode` deliberately leaves it unescaped for path segments, which a
+  # DSN's userinfo is not) because a DSN is a URI: any of `@`, `:` or `/` in either
+  # would otherwise be parsed as a DSN delimiter rather than a literal credential
+  # character — independent of, and applied before, the generic
+  # PHP-string escaping the `line:` template below applies to every field's value.
+  #
+  # This is also an explicit disabled path, not merely an empty one:
+  # `wiring_mail.enabled` turning false — infrastructure.mail.provider set back to
+  # `none` after a deployment that had it configured — must actively replace the
+  # relay/credentials already converged into `mailer_dsn`, not leave `lineinfile` with
+  # nothing in its loop and the old DSN untouched. Resetting to Mautic's own shipped
+  # default (`smtp://localhost:25`, the same value app.bundles/EmailBundle/Config/
+  # config.php ships) is the supported no-delivery state: no local MTA exists in this
+  # container, so this DSN fails outbound send rather than reaching a stale relay
+  # under credentials this role no longer manages. This comment lives up here, not
+  # inside the block scalar below: a `#` line inside a `>-` block is literal content,
+  # not a YAML or Jinja comment, and would corrupt the expression Jinja parses.
   vars:
     _mautic_local_php_fields: >-
       {{ ([
@@ -145,21 +165,13 @@
            {'key': 'mailer_from_name',
             'value': wiring_mail.from_name | default(app_config.app.name | default('Mautic'), true)},
            {'key': 'mailer_from_email', 'value': wiring_mail.from_address},
-           {'key': 'mailer_transport', 'value': 'smtp'},
-           {'key': 'mailer_host', 'value': wiring_mail.host},
-           {'key': 'mailer_port', 'value': wiring_mail.port},
-           {'key': 'mailer_user', 'value': wiring_mail.username},
-           {'key': 'mailer_password', 'value': wiring_mail.password},
-           {'key': 'mailer_encryption', 'value': 'ssl' if wiring_mail.encryption == 'ssl' else 'tls'},
-           {'key': 'mailer_auth_mode', 'value': 'login'},
+           {'key': 'mailer_dsn',
+            'value': ('smtps' if wiring_mail.encryption == 'ssl' else 'smtp')
+                     ~ '://' ~ (wiring_mail.username | urlencode | replace('/', '%2F'))
+                     ~ ':' ~ (wiring_mail.password | urlencode | replace('/', '%2F'))
+                     ~ '@' ~ (wiring_mail.host | urlencode) ~ ':' ~ wiring_mail.port},
          ] if wiring_mail.enabled | default(false) | bool else [
-           {'key': 'mailer_transport', 'value': 'mail'},
-           {'key': 'mailer_host', 'value': ''},
-           {'key': 'mailer_port', 'value': ''},
-           {'key': 'mailer_user', 'value': ''},
-           {'key': 'mailer_password', 'value': ''},
-           {'key': 'mailer_encryption', 'value': ''},
-           {'key': 'mailer_auth_mode', 'value': ''},
+           {'key': 'mailer_dsn', 'value': 'smtp://localhost:25'},
          ]) }}
   no_log: true
   notify: Restart mautic
