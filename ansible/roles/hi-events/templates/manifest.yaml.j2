@@ -119,19 +119,37 @@ spec:
               # volume shadowing what the image just created) and could break commands
               # that expect them to already exist.
               mountPath: /app/backend/storage/app
+          # AN EXEC PROBE, NOT httpGet — DELIBERATELY.
+          #
+          # docker/all-in-one/scripts/startup.sh (this image's PID 1, baked in and not
+          # something this role can change) runs `php artisan migrate --force`, and on
+          # failure only echoes an error — it does not exit, and execs supervisord
+          # (nginx + php-fpm + the frontend) regardless. `/` is nginx's own root
+          # location, proxied straight to the frontend Node process: it answers 200
+          # whether or not migrations ever succeeded, which would make an httpGet probe
+          # on it report ready while the backend's schema — and therefore every API
+          # workflow — is broken.
+          #
+          # `migrate:status` reads the same database this role provisioned and lists
+          # every migration's applied/pending state without side effects. Checked here
+          # instead: the command's own exit code (nonzero when the database is
+          # unreachable at all) and its output for "Pending" (a migration `startup.sh`
+          # never got to apply). Either failure keeps the pod NotReady — traffic is
+          # withheld until the schema this pod needs is actually in place, converging
+          # once a redeploy or a manual `artisan migrate` completes it.
           readinessProbe:
-            httpGet:
-              # `/` — the pinned v1.11.1-beta backend has no `/up` or `/api/status`
-              # route (that route only exists on the unreleased `develop` branch); `/`
-              # is nginx's own root location (docker/all-in-one/nginx/nginx.conf),
-              # proxied straight to the frontend's Node process, so it answers 200
-              # whenever the pod is actually serving traffic.
-              path: /
-              port: {{ app_config.app.port }}
+            exec:
+              command:
+                - sh
+                - -c
+                - >-
+                  cd /app/backend &&
+                  OUT=$(php artisan migrate:status 2>&1); RC=$?;
+                  [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending
             initialDelaySeconds: 30
-            periodSeconds: 10
-            # Generous: the first start runs database migrations before the HTTP server
-            # answers.
+            periodSeconds: 15
+            # Generous: the first start runs database migrations before this probe can
+            # report the schema as caught up.
             failureThreshold: 60
       volumes:
         - name: storage

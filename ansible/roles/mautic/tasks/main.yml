@@ -49,13 +49,62 @@
     vault_item_secret_fields: [admin_password, database_password]
   no_log: true
 
-- name: Mautic | Render configuration
+- name: Mautic | Check whether the configuration already exists
+  ansible.builtin.stat:
+    path: "{{ mautic_config_file }}"
+  register: _mautic_local_php_stat
+
+# Seeds a brand-new file only. See the header comment in templates/local.php.j2: Mautic
+# writes its own keys into this same file — most importantly `secret_key`, minted during
+# `mautic:install` below — that this role does not generate and would otherwise silently
+# delete by re-templating the whole file on every converge.
+- name: Mautic | Seed configuration on first deploy
   ansible.builtin.template:
     src: local.php.j2
     dest: "{{ mautic_config_file }}"
     owner: root
     group: root
     mode: "0600"
+  no_log: true
+  when: not _mautic_local_php_stat.stat.exists
+  notify: Restart mautic
+
+# The converge path for every later run: update only the keys this role actually owns,
+# by exact line replacement, and leave every other key already in the file — secret_key
+# above all — untouched. Idempotent against the seed task above: the line this task
+# looks for and the line the seed template writes are byte-identical, so a first deploy
+# converges here with no change.
+- name: Mautic | Converge platform-owned configuration fields
+  ansible.builtin.lineinfile:
+    path: "{{ mautic_config_file }}"
+    regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
+    line: "    '{{ item.key }}' => '{{ item.value }}',"
+  loop: "{{ _mautic_local_php_fields }}"
+  loop_control:
+    label: "{{ item.key }}"
+  vars:
+    _mautic_local_php_fields: >-
+      {{ [
+           {'key': 'db_driver', 'value': 'pdo_mysql'},
+           {'key': 'db_host', 'value': app_config.app.database_host},
+           {'key': 'db_port', 'value': app_config.app.database_port},
+           {'key': 'db_name', 'value': app_config.app.database.name},
+           {'key': 'db_user', 'value': app_config.app.database_user},
+           {'key': 'db_password', 'value': app_config.app.database_password},
+           {'key': 'site_url', 'value': 'https://' ~ mautic_fqdn},
+         ]
+         + ([
+           {'key': 'mailer_from_name',
+            'value': wiring_mail.from_name | default(app_config.app.name | default('Mautic'), true)},
+           {'key': 'mailer_from_email', 'value': wiring_mail.from_address},
+           {'key': 'mailer_transport', 'value': 'smtp'},
+           {'key': 'mailer_host', 'value': wiring_mail.host},
+           {'key': 'mailer_port', 'value': wiring_mail.port},
+           {'key': 'mailer_user', 'value': wiring_mail.username},
+           {'key': 'mailer_password', 'value': wiring_mail.password},
+           {'key': 'mailer_encryption', 'value': 'ssl' if wiring_mail.encryption == 'ssl' else 'tls'},
+           {'key': 'mailer_auth_mode', 'value': 'login'},
+         ] if wiring_mail.enabled | default(false) | bool else []) }}
   no_log: true
   notify: Restart mautic
 

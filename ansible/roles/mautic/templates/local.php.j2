@@ -1,9 +1,24 @@
 <?php
 // {{ ansible_managed }}
+//
+// SEED CONTENT ONLY — rendered once, by roles/mautic/tasks/main.yml, when this file does
+// not exist yet. Every later run leaves this file in place and instead converges the
+// specific platform-owned keys below through a set of `lineinfile` tasks in that same
+// file, matched by the exact `'key' => ...,` line shape this template writes.
+//
+// WHY NOT JUST RE-TEMPLATE IT EVERY RUN
+//
+// Mautic writes its own keys into this file that this role does not generate and cannot
+// reconstruct — most importantly `secret_key`, minted by `mautic:install` and used to
+// encrypt stored values, plus whatever the operator's own system-config screen adds.
+// Re-templating the whole file on every converge would silently delete all of that on the
+// next deploy, which is destructive rather than idempotent — the same reasoning
+// roles/mixpost and roles/odoo already apply to APP_KEY/db credentials, extended here to
+// a config file this role does not fully own.
 $parameters = array(
     'db_driver' => 'pdo_mysql',
     'db_host' => '{{ app_config.app.database_host }}',
-    'db_port' => {{ app_config.app.database_port }},
+    'db_port' => '{{ app_config.app.database_port }}',
     'db_name' => '{{ app_config.app.database.name }}',
     'db_user' => '{{ app_config.app.database_user }}',
     'db_password' => '{{ app_config.app.database_password }}',
@@ -14,7 +29,7 @@ $parameters = array(
     'mailer_from_email' => '{{ wiring_mail.from_address }}',
     'mailer_transport' => 'smtp',
     'mailer_host' => '{{ wiring_mail.host }}',
-    'mailer_port' => {{ wiring_mail.port }},
+    'mailer_port' => '{{ wiring_mail.port }}',
     'mailer_user' => '{{ wiring_mail.username }}',
     'mailer_password' => '{{ wiring_mail.password }}',
     'mailer_encryption' => '{{ 'ssl' if wiring_mail.encryption == 'ssl' else 'tls' }}',

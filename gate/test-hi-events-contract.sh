@@ -37,13 +37,25 @@ need "$repo/ansible/roles/hi-events/tasks/main.yml" 'VITE_API_URL_CLIENT'
 need "$repo/ansible/roles/hi-events/tasks/main.yml" 'VITE_STRIPE_PUBLISHABLE_KEY:'
 need "$repo/ansible/roles/hi-events/tasks/main.yml" 'APP_URL: "https://{{ hi_events_fqdn }}"'
 
-# The pinned v1.11.1-beta backend has no /up or /api/status route — only nginx's root
-# location (proxied to the frontend) is guaranteed to answer, so both the readiness
-# probe and the external monitor must target it rather than a route that 404s forever.
-need "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" 'path: /'
+# docker/all-in-one/scripts/startup.sh (this image's PID 1) does not exit when
+# `php artisan migrate --force` fails — it execs supervisord regardless — so an httpGet
+# probe against `/` (nginx's root, proxied to the frontend) would report ready with a
+# broken schema underneath it. The in-cluster readinessProbe must be exec-based and
+# actually inspect migration state; the external Uptime Kuma monitor, which cannot exec
+# into the pod, is documented as the weaker of the two rather than given the same claim.
 absent() { grep -Fq -- "$2" "$1" && { echo "unwanted Hi.Events contract: $2" >&2; exit 1; }; return 0; }
-absent "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" 'path: /up'
-absent "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" 'path: /api/status'
+absent "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" 'httpGet:'
+python3 - "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" <<'PYEOF'
+import sys, re
+text = open(sys.argv[1]).read()
+m = re.search(r"readinessProbe:\n(.*?)\n\s*initialDelaySeconds", text, re.S)
+assert m, "readinessProbe block not found"
+probe = m.group(1)
+assert "exec:" in probe, "readinessProbe must be exec-based, not httpGet"
+assert "migrate:status" in probe, "readinessProbe must inspect migration status"
+assert "Pending" in probe, "readinessProbe must fail while a migration is pending"
+print("Hi.Events readiness probe is exec-based and migration-aware: OK")
+PYEOF
 need "$repo/ansible/playbooks/apps/hi-events.yml" "hi_events_fqdn }}/\""
 
 need "$repo/catalog/applications.yml" 'job: deploy-hi-events.yaml'

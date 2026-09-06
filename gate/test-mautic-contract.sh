@@ -31,17 +31,34 @@ need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'DOCKER_MAUTIC
 # The rendered Compose file embeds MAUTIC_DB_PASSWORD; a diff/failure of the render task
 # must not print it. The installer runs as www-data, the same user every persisted
 # volume is chowned to, so its generated cache/config files stay usable by the web,
-# cron and worker services.
+# cron and worker services. local.php is seeded only when absent — never re-templated
+# wholesale — and then converged field-by-field, so Mautic's own secret_key (and
+# anything else this role does not generate) survives a second deploy.
 python3 - "$repo/ansible/roles/mautic/tasks/main.yml" <<'PYEOF'
 import sys, yaml
 tasks = yaml.safe_load(open(sys.argv[1]))
-render = next(t for t in tasks if t.get("name") == "Mautic | Render Compose project")
+by_name = {t.get("name"): t for t in tasks}
+
+render = by_name["Mautic | Render Compose project"]
 assert render.get("no_log") is True, "Render Compose project task must set no_log: true"
-installer = next(t for t in tasks if t.get("name") == "Mautic | Run the non-interactive installer")
+
+assert "Mautic | Render configuration" not in by_name, \
+    "local.php must not be unconditionally re-templated every run"
+
+seed = by_name["Mautic | Seed configuration on first deploy"]
+assert seed.get("when") == "not _mautic_local_php_stat.stat.exists", \
+    "the seed task must only run when local.php does not already exist"
+assert seed.get("no_log") is True, "the seed task embeds MAUTIC_DB_PASSWORD and must be no_log"
+
+converge = by_name["Mautic | Converge platform-owned configuration fields"]
+assert converge.get("no_log") is True, "the converge task embeds MAUTIC_DB_PASSWORD and must be no_log"
+assert converge["ansible.builtin.lineinfile"]["path"] == "{{ mautic_config_file }}"
+
+installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]
 assert "--user" in argv and argv[argv.index("--user") + 1] == "www-data", \
     "installer must run as --user www-data"
-print("Mautic secret-handling and installer-user checks: OK")
+print("Mautic secret-handling, local.php-preservation and installer-user checks: OK")
 PYEOF
 
 need "$repo/catalog/applications.yml" 'job: deploy-mautic.yaml'
