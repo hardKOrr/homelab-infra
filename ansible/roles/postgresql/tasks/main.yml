@@ -18,16 +18,23 @@
     recurse: true
     file_type: file
   register: _postgresql_existing_conf_files
+  failed_when: false
   changed_when: false
+
+- name: PostgreSQL | Normalize existing cluster paths
+  ansible.builtin.set_fact:
+    _postgresql_existing_conf_paths: >-
+      {{ _postgresql_existing_conf_files.files | default([])
+         | map(attribute='path') | list }}
 
 - name: PostgreSQL | Reject an existing different-major cluster before installation
   ansible.builtin.assert:
     that: >-
-      _postgresql_existing_conf_files.files | map(attribute='path')
-      | select('search', '/16/') | list | length == _postgresql_existing_conf_files.files | length
+      _postgresql_existing_conf_paths | select('search', '/16/') | list | length
+      == _postgresql_existing_conf_paths | length
     fail_msg: >-
       PostgreSQL installation was not changed: an existing cluster uses a different major
-      version ({{ _postgresql_existing_conf_files.files | map(attribute='path') | join(', ') }}).
+      version ({{ _postgresql_existing_conf_paths | join(', ') }}).
       Migrate or retire that cluster before selecting PostgreSQL 16.
 
 - name: PostgreSQL | Install repository prerequisites
