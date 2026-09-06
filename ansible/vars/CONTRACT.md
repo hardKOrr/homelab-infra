@@ -390,6 +390,14 @@ top of itself and would miss any window that opened while the control plane was 
 the resolved answer (`mode`, `due`, `text`, `cron`, `oncalendar`, `monitor_only`,
 `next_open`, `conflict`) and never re-derive it.
 
+### Application database provisioning
+
+A SQL-consuming catalog application must declare one named backend and include `tasks/database/provision.yml` before its workload is applied. The backend-independent request is `database_provision_app_instance` plus `database_provision_config: {provider: postgresql|mariadb|mysql, instance, name, role, credential_action: reuse|rotate}`. `reuse` is the default. The task rejects an unregistered or provider-mismatched backend and unsafe identifiers. PostgreSQL creates a non-administrative login; MariaDB and MySQL grant the role only `ALL` on the requested database from the backend's declared client hosts. A normal rerun reuses the canonical password and does not alter an existing role; `rotate` explicitly generates, records, then applies a replacement.
+
+Connection fields and hidden `database_password` exist only in the canonical Vaultwarden item `homelab-infra/apps/<application-instance>`; they are stored and read back before backend mutation, never enter generated facts, tracked config, or normal logs. The consumer reads that canonical item through the runtime vault contract. Redis is a cache, not a SQL provision request: consumers name a Redis instance, resolve its endpoint from `databases.<instance>`, and read that backend's password only from `homelab-infra/apps/<redis-instance>`. Current Redis has one password per instance, so consumers require distinct key prefixes and instances must not cross trust boundaries.
+
+A consumer owns only its named database and role. Backup and restore use a named logical dump with the application stopped or otherwise application-consistent; removal requires a confirmed backup and may delete only that named database and role. It must never remove the backend guest, registry entry, other applications, or unmanaged resources. A Vaultwarden or backend failure stops the request without logging a credential; rerun `reuse` to converge, or rerun the explicit `rotate` request if a recorded rotation was interrupted.
+
 ### Runtime secrets and external unlock material
 
 `lab-run.sh` constructs `homelabinfra_vault` in memory from canonical organization-owned
