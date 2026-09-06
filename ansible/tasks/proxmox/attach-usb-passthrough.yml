@@ -1,0 +1,195 @@
+---
+# Assign a USB device to a VM guest by its Proxmox USB resource mapping, exclusively: a USB
+# passthrough device leaves the host for one guest, so exactly one guest may hold it. This
+# is the dedicated half of the device-passthrough contract for USB — see
+# docs/specs/device-passthrough.md. Home Assistant's Zigbee coordinator is the driving case:
+# the guest needs that exact physical adapter, not "the first USB serial device attached
+# today".
+#
+# A resource mapping (`/etc/pve/mapping/usb.cfg`, `pvesh ... /cluster/mapping/usb`) is used
+# instead of a raw vendorid:productid pair. A vendor:product pair is a MODEL identifier, not
+# a device one — two identical Zigbee coordinators plugged into the same node share it, so
+# it cannot tell them apart for presence, conflict or attachment. A mapping name is defined
+# once against one physical bus-port (or serial, for a device that reports one) and is what
+# both `qm set ... -usbN mapping=<name>` and this seam's conflict check key on.
+#
+# Idempotent: a device already assigned to THIS guest is a no-op. A device already assigned
+# to a DIFFERENT guest is a preflight failure, not a silent reassignment.
+#
+# The guest also gets a `_.dev+<slug>` tag naming this exact mapping, written atomically
+# with the assignment and only when this run performs it — durable, project-owned proof of
+# authorship that detach-usb-passthrough.yml requires before it will remove the usbN entry.
+# It is never added retroactively to a mapping that was already assigned before this run.
+#
+# Inputs:
+#   usb_passthrough_guest — VM guest hostname to assign the device to
+#   usb_passthrough_device — {mapping: "ha-zigbee"}
+#                            `mapping` is the name of an existing entry in
+#                            `/cluster/mapping/usb` — created once by the operator against
+#                            the physical port the coordinator is plugged into. This seam
+#                            does not create the mapping; it only asserts one already
+#                            exists and assigns it.
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+- name: USB passthrough | Assert required input
+  ansible.builtin.assert:
+    that:
+      - usb_passthrough_guest is defined
+      - usb_passthrough_device is defined
+      - usb_passthrough_device.mapping is defined
+      - usb_passthrough_device.mapping | length > 0
+    fail_msg: >-
+      attach-usb-passthrough.yml needs usb_passthrough_guest and
+      usb_passthrough_device.mapping (a USB resource mapping name, not a raw
+      vendorid:productid pair — see docs/specs/device-passthrough.md).
+
+- name: USB passthrough | Verify the mapping exists on the cluster
+  ansible.builtin.command:
+    cmd: "pvesh get /cluster/mapping/usb/{{ usb_passthrough_device.mapping }} --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_mapping
+  failed_when: false
+  changed_when: false
+
+- name: USB passthrough | Assert the mapping exists and names this node
+  ansible.builtin.assert:
+    that:
+      - _usb_mapping.rc == 0
+      - homelabinfra_config.proxmox.node in _usb_mapping_nodes
+    fail_msg: >-
+      USB resource mapping {{ usb_passthrough_device.mapping }} does not exist, or does not
+      cover {{ homelabinfra_config.proxmox.node }}. This platform assigns a mapping the
+      operator already defined against a physical port; it does not create or discover one
+      — see docs/specs/device-passthrough.md.
+  vars:
+    _usb_mapping_nodes: >-
+      {{ (_usb_mapping.stdout | from_json).map | default([])
+         | map(attribute='node') | list }}
+
+- name: USB passthrough | List every VM on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_vm_list
+  changed_when: false
+
+- name: USB passthrough | Extract the vmid and tags for {{ usb_passthrough_guest }}
+  ansible.builtin.set_fact:
+    _usb_vmid: >-
+      {{ (_usb_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _usb_tags: >-
+      {{ ((_usb_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') }}
+    _usb_was_running: >-
+      {{ (_usb_entry | map(attribute='status') | list | first)
+         | default('') == 'running' }}
+  vars:
+    _usb_entry: >-
+      {{ _usb_vm_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', usb_passthrough_guest) | list }}
+
+- name: USB passthrough | Assert the guest was found
+  ansible.builtin.assert:
+    that: _usb_vmid | length > 0
+    fail_msg: >-
+      No VM named {{ usb_passthrough_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. A device cannot be assigned to a guest that
+      `qm list` does not show.
+
+- name: USB passthrough | Assert the guest carries the ownership tag
+  ansible.builtin.assert:
+    that: "'_+lab' in _usb_tags"
+    fail_msg: >-
+      {{ usb_passthrough_guest }} does not carry the _+lab ownership tag. This platform
+      does not assign a device to a guest it does not manage — see
+      ansible/tasks/proxmox/README.md.
+
+- name: USB passthrough | Read every VM's configuration on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ item.vmid }}/config"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_all_configs
+  loop: "{{ _usb_vm_list.stdout | from_json }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+  changed_when: false
+
+# The whole node is scanned, not just this guest, for the same reason as PCI passthrough:
+# a dedicated USB device is a node-wide resource, and the guest that already has it may not
+# be the one asking.
+- name: USB passthrough | Resolve device holders per guest
+  ansible.builtin.set_fact:
+    _usb_claims_by_vmid: "{{ _usb_claims_by_vmid | default({}) | combine({item.item.vmid | string: _usb_mappings_for_guest}) }}"
+  loop: "{{ _usb_all_configs.results }}"
+  loop_control:
+    label: "{{ item.item.vmid }}"
+  vars:
+    _usb_mappings_for_guest: >-
+      {{ item.stdout_lines | select('match', '^usb[0-9]+:\s*mapping=')
+         | map('regex_replace', '^usb[0-9]+:\s*mapping=([^,]+).*$', '\1') | list }}
+
+- name: USB passthrough | Assert the device is free, or already held by this guest
+  ansible.builtin.assert:
+    that: >-
+      (_usb_holders | length == 0) or (_usb_holders == [_usb_vmid])
+    fail_msg: >-
+      USB mapping {{ usb_passthrough_device.mapping }} is already assigned to guest vmid
+      {{ _usb_holders | difference([_usb_vmid]) | first }}, not
+      {{ usb_passthrough_guest }}. A dedicated USB device cannot be assigned to a second
+      guest at once — detach it there first, with detach-usb-passthrough.yml.
+  vars:
+    _usb_holders: >-
+      {{ _usb_claims_by_vmid | dict2items
+         | selectattr('value', 'contains', usb_passthrough_device.mapping)
+         | map(attribute='key') | list }}
+
+- name: USB passthrough | Resolve whether this guest already has the device
+  ansible.builtin.set_fact:
+    _usb_already_present: >-
+      {{ usb_passthrough_device.mapping in (_usb_claims_by_vmid[_usb_vmid] | default([])) }}
+
+- name: USB passthrough | Resolve the next free usb index for this guest
+  ansible.builtin.set_fact:
+    _usb_next_index: >-
+      {{ (_usb_used_indices + range(0, 16) | list) | unique | difference(_usb_used_indices) | first }}
+  vars:
+    _usb_used_indices: >-
+      {{ (_usb_all_configs.results | selectattr('item.vmid', 'equalto', _usb_vmid | int) | list | first).stdout_lines
+         | select('match', '^usb[0-9]+:')
+         | map('regex_replace', '^usb([0-9]+):.*$', '\1') | map('int') | list }}
+  when: not _usb_already_present
+
+# PVE hotplugs a usbN entry into a running VM guest with the QEMU guest agent present; no
+# stop/start is needed the way PCIe passthrough requires.
+#
+# A content match on the mapping name does not by itself prove THIS platform assigned it
+# — an operator can run the identical `qm set` by hand. The `_.dev+<slug>` tag is written
+# in the SAME call as the assignment, only when this run is the one performing it
+# (`not _usb_already_present`): a mapping already assigned before this run — including one
+# an operator assigned by hand — is never tagged after the fact. Combining assignment and
+# tag into one API call also means there is no window where the mapping is assigned but
+# the tag write is still pending; a failed call is simply retried.
+- name: USB passthrough | Assign the device and its provenance tag
+  ansible.builtin.command:
+    cmd: >-
+      qm set {{ _usb_vmid }}
+      -usb{{ _usb_next_index }} mapping={{ usb_passthrough_device.mapping }}
+      -tags {{ (_usb_current_tags | union([_usb_provenance_tag])) | unique | sort | join(';') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: not _usb_already_present
+  changed_when: true
+  vars:
+    _usb_current_tags: "{{ _usb_tags | reject('equalto', '') | list }}"
+    _usb_provenance_tag: >-
+      _.dev+{{ usb_passthrough_device.mapping | lower | regex_replace('[^a-z0-9]+', '-')
+               | regex_replace('^-+|-+$', '') }}
+
+- name: USB passthrough | Report what is assigned
+  ansible.builtin.debug:
+    msg: >-
+      {{ usb_passthrough_guest }} (vmid {{ _usb_vmid }}): mapping
+      {{ usb_passthrough_device.mapping }}
+      {{ 'already assigned' if _usb_already_present else 'assigned this run' }}.

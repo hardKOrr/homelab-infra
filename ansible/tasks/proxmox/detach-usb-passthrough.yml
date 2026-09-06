@@ -1,0 +1,126 @@
+---
+# Remove a dedicated USB device assignment from a VM guest — the recovery half of
+# attach-usb-passthrough.yml. See docs/specs/device-passthrough.md.
+#
+# A usbN entry is removed only when BOTH are true: its mapping equals
+# usb_passthrough_device.mapping, AND the guest carries the `_.dev+<slug>` provenance tag
+# attach-usb-passthrough.yml wrote for that same mapping. Content alone does not prove
+# this platform assigned the device — an operator can run the identical `qm set` by hand
+# — so a content match with no provenance tag is left in place and reported, never
+# deleted. A raw `host=` entry this platform never writes never carries that tag either,
+# so it is never touched.
+#
+# Idempotent: a mapping already absent, or assigned but not project-owned, is a no-op, not
+# a failure. Detaching frees the mapping for another guest; `pvesh get
+# /cluster/mapping/usb/<name>` remains the inspectable record of the physical device
+# itself, unaffected by this call.
+#
+# Inputs:
+#   usb_passthrough_guest — VM guest hostname to detach the device from
+#   usb_passthrough_device — {mapping: "ha-zigbee"} — same shape as
+#                            attach-usb-passthrough.yml; only `mapping` is read here
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+- name: Detach USB passthrough | Assert required input
+  ansible.builtin.assert:
+    that:
+      - usb_passthrough_guest is defined
+      - usb_passthrough_device is defined
+      - usb_passthrough_device.mapping is defined
+      - usb_passthrough_device.mapping | length > 0
+    fail_msg: >-
+      detach-usb-passthrough.yml needs usb_passthrough_guest and
+      usb_passthrough_device.mapping.
+
+- name: Detach USB passthrough | List every VM on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dusb_vm_list
+  changed_when: false
+
+- name: Detach USB passthrough | Extract the vmid and tags for {{ usb_passthrough_guest }}
+  ansible.builtin.set_fact:
+    _dusb_vmid: >-
+      {{ (_dusb_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _dusb_tags: >-
+      {{ ((_dusb_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') | reject('equalto', '') | list }}
+  vars:
+    _dusb_entry: >-
+      {{ _dusb_vm_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', usb_passthrough_guest) | list }}
+
+- name: Detach USB passthrough | Assert the guest was found
+  ansible.builtin.assert:
+    that: _dusb_vmid | length > 0
+    fail_msg: >-
+      No VM named {{ usb_passthrough_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. Nothing can be detached from a guest that
+      `qm list` does not show.
+
+# This platform detaches a device only from a guest it owns — the same guard every attach
+# seam applies. Without it, a caller could remove a matching usbN from any untagged guest.
+- name: Detach USB passthrough | Assert the guest carries the ownership tag
+  ansible.builtin.assert:
+    that: "'_+lab' in _dusb_tags"
+    fail_msg: >-
+      {{ usb_passthrough_guest }} does not carry the _+lab ownership tag. This platform
+      does not modify a guest it does not manage — see ansible/tasks/proxmox/README.md.
+
+- name: Detach USB passthrough | Read the guest's current configuration
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ _dusb_vmid }}/config"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dusb_config
+  changed_when: false
+
+- name: Detach USB passthrough | Resolve whether the mapping is assigned here, and at what index
+  ansible.builtin.set_fact:
+    _dusb_matched_index: >-
+      {{ (_dusb_usb_lines
+          | map('regex_replace', '^usb([0-9]+):\s*mapping=([^,]+).*$', '\1|\2')
+          | select('search', '\|' ~ (usb_passthrough_device.mapping | regex_escape) ~ '$')
+          | map('regex_replace', '^([0-9]+)\|.*$', '\1')
+          | list | first) | default('') }}
+  vars:
+    _dusb_usb_lines: >-
+      {{ _dusb_config.stdout_lines | select('match', '^usb[0-9]+:\s*mapping=') | list }}
+
+# A content match alone is not proof this platform wrote the entry: an operator can
+# assign the identical mapping by hand. Only an assignment that is present AND whose
+# provenance tag is present is safe to remove.
+- name: Detach USB passthrough | Resolve whether this platform actually owns the assignment
+  ansible.builtin.set_fact:
+    _dusb_provenance_tag: >-
+      _.dev+{{ usb_passthrough_device.mapping | lower | regex_replace('[^a-z0-9]+', '-')
+               | regex_replace('^-+|-+$', '') }}
+    _dusb_owned: >-
+      {{ (_dusb_matched_index | length > 0)
+         and (('_.dev+' ~ (usb_passthrough_device.mapping | lower
+                            | regex_replace('[^a-z0-9]+', '-')
+                            | regex_replace('^-+|-+$', ''))) in _dusb_tags) }}
+
+# PVE hotplugs usbN removal on a running VM guest the same way it hotplugs attachment; no
+# stop/start is needed the way PCIe passthrough requires.
+- name: Detach USB passthrough | Remove the device and its provenance tag
+  ansible.builtin.command:
+    cmd: >-
+      qm set {{ _dusb_vmid }} -delete usb{{ _dusb_matched_index }}
+      -tags {{ (_dusb_tags | reject('equalto', _dusb_provenance_tag)) | join(';') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _dusb_owned | bool
+  changed_when: true
+
+- name: Detach USB passthrough | Report what was removed
+  ansible.builtin.debug:
+    msg: >-
+      {{ usb_passthrough_guest }} (vmid {{ _dusb_vmid }}): mapping
+      {{ usb_passthrough_device.mapping }}
+      {{ 'detached this run' if _dusb_owned | bool
+         else ('assigned here but NOT project-owned — left in place'
+               if _dusb_matched_index | length > 0
+               else 'was already absent') }}.

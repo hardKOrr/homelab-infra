@@ -103,6 +103,7 @@ bash gate/test-stale-service-detection.sh || rc=1
 bash gate/test-plex-client-troubleshooter.sh || rc=1
 bash gate/test-proxmox-tags.sh || rc=1
 bash gate/test-proxmox-api-contract.sh || rc=1
+bash gate/test-device-passthrough-contract.sh || rc=1
 bash gate/test-maintainerr-restore.sh || rc=1
 bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1

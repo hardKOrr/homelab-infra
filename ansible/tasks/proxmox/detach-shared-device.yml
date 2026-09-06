@@ -1,0 +1,138 @@
+---
+# Remove a shared device bind from an LXC guest — the recovery half of
+# attach-shared-device.yml. See docs/specs/device-passthrough.md.
+#
+# A devN entry is removed only when BOTH are true: its host path is in
+# shared_device_list, AND the guest carries the `_.dev+<slug>` provenance tag
+# attach-shared-device.yml wrote for that same path. Content alone does not prove this
+# platform created the entry — an operator can bind the identical device by hand outside
+# this contract — so a content match with no provenance tag is left in place and reported,
+# never deleted. This is the non-adoption guarantee: this platform detaches only bindings
+# it can prove it made, never "every device that happens to match".
+#
+# Idempotent: a device already absent, or bound but not project-owned, is a no-op for that
+# device, not a failure for the whole call.
+#
+# Inputs:
+#   shared_device_guest — LXC guest hostname to detach from
+#   shared_device_list  — [{host: /dev/dri/renderD128}, ...] — same shape as
+#                         attach-shared-device.yml; only `host` is read here
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+- name: Detach shared device | Assert required input
+  ansible.builtin.assert:
+    that:
+      - shared_device_guest is defined
+      - shared_device_list is defined
+      - shared_device_list | length > 0
+    fail_msg: >-
+      detach-shared-device.yml needs shared_device_guest and a non-empty
+      shared_device_list.
+
+- name: Detach shared device | List the node's containers
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/lxc --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dsd_lxc_list
+  changed_when: false
+
+- name: Detach shared device | Extract the vmid and tags for {{ shared_device_guest }}
+  ansible.builtin.set_fact:
+    _dsd_vmid: >-
+      {{ (_dsd_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _dsd_tags: >-
+      {{ ((_dsd_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') | reject('equalto', '') | list }}
+  vars:
+    _dsd_entry: >-
+      {{ _dsd_lxc_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', shared_device_guest) | list }}
+
+- name: Detach shared device | Assert the guest was found
+  ansible.builtin.assert:
+    that: _dsd_vmid | length > 0
+    fail_msg: >-
+      No container named {{ shared_device_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. Nothing can be detached from a guest that
+      `pct list` does not show.
+
+# This platform detaches a device only from a guest it owns — the same guard every attach
+# seam applies. Without it, a caller could remove a matching devN from any untagged guest.
+- name: Detach shared device | Assert the guest carries the ownership tag
+  ansible.builtin.assert:
+    that: "'_+lab' in _dsd_tags"
+    fail_msg: >-
+      {{ shared_device_guest }} does not carry the _+lab ownership tag. This platform does
+      not modify a guest it does not manage — see ansible/tasks/proxmox/README.md.
+
+- name: Detach shared device | Read the guest's current configuration
+  ansible.builtin.command:
+    cmd: "pct config {{ _dsd_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dsd_config
+  changed_when: false
+
+# One result per requested device: whether it is bound, at what index, what its
+# provenance tag would be, and whether that tag is actually present on the guest.
+- name: Detach shared device | Resolve bound state, provenance tag, and ownership per device
+  ansible.builtin.set_fact:
+    _dsd_results: "{{ _dsd_results | default([]) + [_dsd_status] }}"
+  loop: "{{ shared_device_list }}"
+  loop_control:
+    label: "{{ item.host }}"
+  vars:
+    _dsd_dev_pairs: >-
+      {{ (_dsd_config.stdout_lines | select('match', '^dev[0-9]+:') | list)
+         | map('regex_replace', '^dev([0-9]+):\s*path=([^,]+).*$', '\1|\2') | list }}
+    _dsd_index: >-
+      {{ (_dsd_dev_pairs
+          | select('search', '\|' ~ (item.host | regex_escape) ~ '$')
+          | map('regex_replace', '^([0-9]+)\|.*$', '\1')
+          | list | first) | default('') }}
+    _dsd_slug: >-
+      {{ item.host | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}
+    _dsd_tag: "_.dev+{{ _dsd_slug }}"
+    _dsd_status:
+      host: "{{ item.host }}"
+      index: "{{ _dsd_index }}"
+      tag: "{{ _dsd_tag }}"
+      owned: "{{ 'yes' if (_dsd_index | length > 0 and _dsd_tag in _dsd_tags) else 'no' }}"
+
+- name: Detach shared device | Split results into owned, unowned, and absent
+  ansible.builtin.set_fact:
+    _dsd_owned: "{{ _dsd_results | selectattr('owned', 'equalto', 'yes') | list }}"
+    _dsd_unowned: >-
+      {{ _dsd_results | selectattr('owned', 'equalto', 'no')
+         | selectattr('index', 'ne', '') | list }}
+    _dsd_absent: "{{ _dsd_results | selectattr('index', 'equalto', '') | list }}"
+
+- name: Detach shared device | Remove the owned, bound devices
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ _dsd_vmid }}
+      -delete {{ _dsd_owned | map(attribute='index')
+                 | map('regex_replace', '^(.*)$', 'dev\1') | join(',') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _dsd_owned | length > 0
+  changed_when: true
+
+- name: Detach shared device | Remove the provenance tags for what was just detached
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ _dsd_vmid }}
+      -tags {{ (_dsd_tags | reject('in', _dsd_owned | map(attribute='tag') | list)) | join(';') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _dsd_owned | length > 0
+  changed_when: true
+
+- name: Detach shared device | Report what was removed
+  ansible.builtin.debug:
+    msg: >-
+      {{ shared_device_guest }} (vmid {{ _dsd_vmid }}):
+      {{ _dsd_owned | length }} device(s) detached,
+      {{ _dsd_unowned | length }} bound but NOT project-owned — left in place:
+      {{ _dsd_unowned | map(attribute='host') | list }},
+      {{ _dsd_absent | length }} already absent.

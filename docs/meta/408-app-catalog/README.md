@@ -237,11 +237,16 @@ single row's implementer re-decides it.
 - [x] The open decisions are resolved and recorded above (2026-08-17)
 - [x] `hermes agent` identified — NousResearch/hermes-agent, now a Batch C row (2026-08-17)
 - [x] The SMTP contract is scoped — see slice 418 (2026-09-06)
-- [ ] The GPU contract covers both shared-iGPU-on-LXC and dedicated-passthrough-on-VM
+- [x] The GPU contract covers both shared-iGPU-on-LXC and dedicated-passthrough-on-VM
+      (issue #48): `ansible/tasks/proxmox/attach-shared-device.yml` (shared LXC bind) and
+      `attach-pci-passthrough.yml` / `attach-usb-passthrough.yml` (dedicated VM PCIe/USB,
+      exclusive assignment). See `docs/specs/device-passthrough.md`. No application role
+      (immich, frigate, home-assistant, ollama, comfyui) is implemented by this contract.
 
 ## Links
 - `docs/meta/418-platform-mail-contract/README.md` — the SMTP contract this ledger flagged
 - `ansible/vars/media-wiring.yml` — the media-registry kinds Batch A rows join
 - `ansible/roles/_template-docker/`, `ansible/roles/_template-native/` — what a new row copies
 - `docs/meta/done/505-app-servarr/notes.md` — the one-role-four-apps decision record
+- `docs/specs/device-passthrough.md` — the GPU/USB device-passthrough contract (issue #48)
 - notes.md — session narrative
