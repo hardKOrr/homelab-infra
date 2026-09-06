@@ -298,6 +298,36 @@
   vars:
     _rm_delete_data: "{{ delete_data | default(false) | bool }}"
     _rm_project_dir: "/opt/{{ instance }}"
+    _rm_is_postgresql: "{{ (app | default(instance)) == 'postgresql' }}"
+
+  pre_tasks:
+    # PostgreSQL's unit is derived by its role and is not present in the old
+    # instance config. Discover the installed unit before removal so a legacy
+    # PostgreSQL 15 guest is stopped before delete_data can remove its files.
+    - name: Discover installed PostgreSQL service units
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - list-unit-files
+          - --type=service
+          - --no-legend
+          - "postgresql@*.service"
+      register: _rm_postgresql_units
+      changed_when: false
+      when:
+        - remove_kind == 'native'
+        - _rm_is_postgresql | bool
+
+    - name: Resolve the PostgreSQL removal unit
+      ansible.builtin.set_fact:
+        _rm_service_name: >-
+          {{ (_rm_postgresql_units.stdout_lines | default([])
+              | select('match', '^postgresql@[0-9]+-main\.service') | list | first
+              | default('postgresql@' ~ (app_config.app.version | default('16') | string) ~ '-main.service'))
+             | regex_replace('\.service$', '') }}
+      when:
+        - remove_kind == 'native'
+        - _rm_is_postgresql | bool
 
   tasks:
     # ── Docker app on a shared stack host ──────────────────────────────────────
@@ -357,7 +387,7 @@
         # (PBS runs proxmox-backup-proxy). The instance name is the fallback.
         - name: Stop and disable the service
           ansible.builtin.systemd_service:
-            name: "{{ app_config.app.service_name | default(instance) }}"
+            name: "{{ _rm_service_name | default(app_config.app.service_name | default(instance)) }}"
             state: stopped
             enabled: false
           register: _rm_service_stop
@@ -369,7 +399,7 @@
           ansible.builtin.debug:
             msg: >-
               No systemd unit named
-              {{ app_config.app.service_name | default(instance) }} on
+              {{ _rm_service_name | default(app_config.app.service_name | default(instance)) }} on
               {{ inventory_hostname }} — nothing to stop.
           when: "'could not be found' in (_rm_service_stop.msg | default(''))"
 

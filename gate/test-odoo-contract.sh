@@ -13,6 +13,10 @@ need "$repo/ansible/roles/odoo/tasks/main.yml" 'vault_item_name: "homelab-infra/
 need "$repo/ansible/roles/odoo/tasks/main.yml" 'vault_item_secret_fields: [admin_password, database_password]'
 need "$repo/ansible/roles/odoo/tasks/main.yml" 'include_tasks: ../../../tasks/mail/resolve-mail.yml'
 need "$repo/ansible/playbooks/apps/odoo.yml" 'tasks/database/provision.yml'
+need "$repo/ansible/playbooks/apps/remove.yml" 'Discover installed PostgreSQL service units'
+need "$repo/ansible/playbooks/apps/remove.yml" 'Resolve the PostgreSQL removal unit'
+need "$repo/ansible/playbooks/apps/remove.yml" "postgresql@[0-9]+-main"
+need "$repo/ansible/playbooks/apps/remove.yml" '_rm_service_name | default(app_config.app.service_name | default(instance))'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'postgresql-{{ app_config.app.version }}'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Inspect existing clusters before changing the guest'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'stat:'
