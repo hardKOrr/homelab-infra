@@ -18,7 +18,7 @@ need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Inspect existing clusters 
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'failed_when: false'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Normalize existing cluster paths'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" "app_config.app.version | default('') == '16'"
-need "$repo/ansible/roles/postgresql/tasks/main.yml" "app_config.app.service_name | default('') == 'postgresql@16-main'"
+need "$repo/ansible/roles/postgresql/tasks/main.yml" "'service_name': 'postgresql@' ~ (app_config.app.version | string) ~ '-main'"
 need "$repo/ansible/playbooks/apps/postgresql.yml" 'version: "{{ _postgresql_host.app_config.app.version }}"'
 need "$repo/rundeck/jobs/deploy-odoo.yaml" 'Run playbooks/apps/odoo.yml'
 

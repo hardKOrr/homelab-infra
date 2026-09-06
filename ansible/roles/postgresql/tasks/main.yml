@@ -2,11 +2,18 @@
 # PostgreSQL backend. Package-managed PostgreSQL is intentionally kept outside
 # application Compose files so its lifecycle, backup coverage and credentials are
 # explicit and independently recoverable.
-- name: PostgreSQL | Assert the supported major version
+- name: PostgreSQL | Derive the service unit from the selected major
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'app': {
+        'service_name': 'postgresql@' ~ (app_config.app.version | string) ~ '-main'
+      }}, recursive=True) }}
+
+- name: PostgreSQL | Assert the supported major version and derived service unit
   ansible.builtin.assert:
     that:
       - app_config.app.version | default('') == '16'
-      - app_config.app.service_name | default('') == 'postgresql@16-main'
+      - app_config.app.service_name | default('') == 'postgresql@' ~ (app_config.app.version | string) ~ '-main'
     fail_msg: >-
       This PostgreSQL role supports major version 16 only and must use
       postgresql@16-main. Add a separate versioned role before selecting another major.
