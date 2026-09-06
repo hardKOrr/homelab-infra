@@ -178,21 +178,18 @@ normalized = norm_tmpl.render(wiring_mail=blank_wiring_mail)
 assert normalized["encryption"] == "starttls", \
     "a blank mail.encryption must normalize to starttls, not survive as '' into the scheme-mapping dict lookup"
 
-# mail.encryption: starttls is Symfony Mailer's weakest guarantee — smtp:// only
-# ATTEMPTS StartTLS if the server offers it in its EHLO response and has no DSN option
-# to require and abort otherwise (confirmed against the pinned symfony/mailer 6.4.13's
-# Transport/Smtp/EsmtpTransport.php). A relay that stops advertising STARTTLS must
-# fail this deploy rather than silently send the relay password in the clear.
-preflight = by_name["Mautic | Check whether the mail relay actually advertises STARTTLS"]
-assert preflight["when"] == ["wiring_mail.enabled | default(false) | bool", "wiring_mail.encryption == 'starttls'"]
-assert "has_extn(\"starttls\")" in preflight["ansible.builtin.command"]["argv"][2]
-refuse = by_name["Mautic | Refuse to deploy when the relay cannot actually enforce STARTTLS"]
-assert refuse["when"] == [
-    "wiring_mail.enabled | default(false) | bool",
-    "wiring_mail.encryption == 'starttls'",
-    "_mautic_starttls_check.rc | default(1) != 0",
-]
-print("Mautic normalizes a blank mail.encryption and preflights STARTTLS support before deploying: OK")
+# mail.encryption: starttls is rejected outright for Mautic, not merely warned about
+# and not "enforced" by a one-time deploy-time probe: Symfony Mailer's smtp:// scheme
+# opportunistically negotiates StartTLS per connection with no DSN option to require
+# and abort otherwise (confirmed against the pinned symfony/mailer 6.4.13's
+# Transport/Smtp/EsmtpTransport.php), and Mautic's worker/cron processes open a fresh
+# connection for every batch of mail — a probe at deploy time cannot speak for any of
+# those later connections. Only `tls` (implicit TLS, hard-enforced on every single
+# connection by PHP's own stream_socket_client) and `none` remain accepted.
+refuse = by_name["Mautic | Refuse a mail.encryption this app cannot actually enforce"]
+assert refuse["when"] == "wiring_mail.enabled | default(false) | bool"
+assert refuse["ansible.builtin.assert"]["that"] == "wiring_mail.encryption != 'starttls'"
+print("Mautic normalizes a blank mail.encryption and rejects starttls, which it cannot actually enforce: OK")
 
 installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]

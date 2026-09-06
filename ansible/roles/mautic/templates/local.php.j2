@@ -57,14 +57,17 @@ $parameters = array(
     # EsmtpTransportFactory would not recognise as a scheme anyway (it supports
     # exactly `smtp` and `smtps`). `tls` is the one value that means implicit TLS from
     # the first byte of the connection (EsmtpTransport.php: `$tls = 'smtps' ===
-    # $dsn->getScheme()`, then `port ?: 465`) and maps to `smtps`. `starttls` and
-    # `none` both map to plain `smtp`: stated plainly rather than left to look like an
-    # oversight, stock Symfony Mailer has no DSN option that forces a connection to
-    # refuse an opportunistic STARTTLS upgrade the server offers — `smtp://` always
-    # negotiates it when available (EsmtpTransport.php's `executeEhloCommand`), for
-    # both of these configured states alike. `none` cannot be made stronger than
-    # "unencrypted unless the server insists otherwise" without a transport this
-    # platform does not ship.
+    # $dsn->getScheme()`, then `port ?: 465`) and maps to `smtps`; `none` maps to
+    # plain `smtp`, which is genuinely unencrypted-unless-the-server-insists-otherwise
+    # with this transport, and that is what `none` asks for. `starttls` also maps to
+    # plain `smtp` here, but roles/mautic/tasks/main.yml refuses to deploy at all when
+    # `mail.encryption: starttls` is configured — stock Symfony Mailer has no DSN
+    # option that forces a connection to refuse an opportunistic STARTTLS upgrade the
+    # server offers, so every connection this transport opens is independently
+    # opportunistic and nothing deployed once could ever enforce it for the life of
+    # the deployment. The dict entry stays for defensive completeness (an unreachable
+    # value should still map to something sane rather than a KeyError), not because
+    # this branch is expected to run.
     #
     # user/password are urlencoded because a DSN is a URI: an unescaped `@`, `:` or
     # `/` in either would be parsed as a DSN delimiter rather than a literal
