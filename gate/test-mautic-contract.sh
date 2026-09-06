@@ -37,6 +37,7 @@ import sys
 content = open(sys.argv[1]).read()
 assert "'db_driver'" not in content, "the seed template must not write db_driver"
 assert "'site_url'" not in content, "the seed template must not write site_url"
+assert "replace('%', '%%')" in content, "seed values must have literal '%' doubled for Symfony's DI parameter bag too"
 assert "replace('\\\\', '\\\\\\\\')" in content, "seed values must be PHP-escaped too"
 print("Mautic local.php seed correctly omits the installed-state sentinel: OK")
 PYEOF
@@ -72,6 +73,8 @@ assert lineinfile["path"] == "{{ mautic_config_file }}"
 assert lineinfile.get("insertbefore"), \
     "a key absent from local.php must be inserted before the closing ');', not appended after it"
 line_tmpl = lineinfile["line"]
+assert "replace('%', '%%')" in line_tmpl, \
+    "every value written into local.php must have its literal '%' doubled for Symfony's DI parameter bag"
 assert "replace('\\\\', '\\\\\\\\')" in line_tmpl and "replace(\"'\", \"\\\\'\")" in line_tmpl, \
     "every value written into local.php must be escaped for a PHP single-quoted string"
 fields_expr = converge["vars"]["_mautic_local_php_fields"]
@@ -105,26 +108,49 @@ env = NativeEnvironment()
 env.filters["bool"] = bool
 env.filters["urlencode"] = urllib.parse.quote
 tmpl = env.from_string(fields_expr)
+line_tmpl = NativeEnvironment().from_string(line_tmpl)
 app_config = wrap({"app": {"database_host": "h", "database_port": 3306, "database": {"name": "mautic"},
                             "database_user": "u", "database_password": "p", "name": "Mautic"}})
 installed = wrap({"stat": {"exists": True}})
 
-wiring_mail_enabled = wrap({"enabled": True, "from_name": "X", "from_address": "a@b.com",
-                            "host": "smtp.example.com", "port": 587,
-                            "username": "user@example.com", "password": "p@ss:w/ord'\\x",
-                            "encryption": "tls"})
-fields_on = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_enabled,
-                         mautic_fqdn="m.example.com", _mautic_installed_marker=installed)
-by_key_on = {f["key"]: f["value"] for f in fields_on}
-assert "mailer_transport" not in by_key_on, \
-    "mailer_transport is not a Mautic 6.0.6 config key; the pinned release only reads mailer_dsn"
-dsn = by_key_on["mailer_dsn"]
-parsed = urllib.parse.urlsplit(dsn)
-assert parsed.scheme == "smtp"
-assert urllib.parse.unquote(parsed.username) == "user@example.com"
-assert urllib.parse.unquote(parsed.password) == "p@ss:w/ord'\\x", \
-    "the DSN must round-trip a password containing '@', ':', '/', an apostrophe and a backslash"
-assert parsed.hostname == "smtp.example.com" and parsed.port == 587
+# The pinned symfony/mailer 6.4.13's own Transport/Smtp/EsmtpTransportFactory.php
+# supports exactly `smtp` and `smtps`, and only `smtps` selects implicit TLS —
+# `mail.encryption`'s three real values (CONTRACT.md, config-doctor.sh:
+# starttls | tls | none — never `ssl`) must map onto that pair explicitly, not through
+# a two-way branch that tests the impossible `ssl` value.
+expected_scheme = {"starttls": "smtp", "tls": "smtps", "none": "smtp"}
+for encryption, scheme in expected_scheme.items():
+    wiring_mail_enabled = wrap({"enabled": True, "from_name": "X", "from_address": "a@b.com",
+                                "host": "smtp.example.com", "port": 587,
+                                "username": "user@example.com", "password": "p@ss:w/ord'\\%x",
+                                "encryption": encryption})
+    fields_on = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_enabled,
+                             mautic_fqdn="m.example.com", _mautic_installed_marker=installed)
+    by_key_on = {f["key"]: f["value"] for f in fields_on}
+    assert "mailer_transport" not in by_key_on, \
+        "mailer_transport is not a Mautic 6.0.6 config key; the pinned release only reads mailer_dsn"
+
+    dsn_field = next(f for f in fields_on if f["key"] == "mailer_dsn")
+    raw_dsn = dsn_field["value"]
+    parsed = urllib.parse.urlsplit(raw_dsn)
+    assert parsed.scheme == scheme, f"encryption={encryption!r} must select scheme {scheme!r}, got {parsed.scheme!r}"
+    assert urllib.parse.unquote(parsed.username) == "user@example.com"
+    assert urllib.parse.unquote(parsed.password) == "p@ss:w/ord'\\%x", \
+        "the runtime DSN must round-trip a password containing '@', ':', '/', an apostrophe, a backslash and a percent"
+    assert parsed.hostname == "smtp.example.com" and parsed.port == 587
+
+    # The ON-DISK value is a second, distinct thing from the runtime DSN above: every
+    # literal '%' in the urlencoded DSN must be doubled (Symfony DI parameter escaping,
+    # confirmed against app/bundles/ConfigBundle/Form/Type/EscapeTransformer.php), or
+    # the container fails to compile with a missing-parameter error. Simulate exactly
+    # that unescape (Symfony's ParameterBag does the same '%%' -> '%' substitution when
+    # it resolves this parameter) and confirm it reproduces the runtime DSN.
+    on_disk_line = line_tmpl.render(item=dsn_field)
+    on_disk_value = on_disk_line.split("=> '", 1)[1].rsplit("',", 1)[0]
+    assert on_disk_value.count("%%") >= raw_dsn.count("%"), \
+        "every literal '%' in the runtime DSN must be doubled in the on-disk local.php value"
+    assert on_disk_value.replace("%%", "%") == raw_dsn, \
+        "unescaping the on-disk value's doubled percents must reproduce the runtime DSN exactly"
 
 wiring_mail_disabled = wrap({"enabled": False, "from_name": "", "from_address": "", "host": "",
                              "port": "", "username": "", "password": "", "encryption": ""})
@@ -133,7 +159,8 @@ fields_off = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_disabled
 by_key_off = {f["key"]: f["value"] for f in fields_off}
 assert by_key_off["mailer_dsn"] == "smtp://localhost:25", \
     "disabling mail must reset mailer_dsn to Mautic's own shipped no-relay default, not leave the old DSN"
-print("Mautic converges mailer_dsn (not the obsolete transport keys), round-tripping a hostile password: OK")
+print("Mautic converges mailer_dsn with the correct scheme per encryption value, round-tripping a hostile "
+      "password through both the on-disk (percent-doubled) and runtime forms: OK")
 
 installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]

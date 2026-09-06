@@ -25,29 +25,57 @@
 // empty database instead of waiting for this role's own installer. Both keys, along
 // with `secret_key`, are written into this file by Mautic itself once installation
 // actually succeeds.
+//
+// EVERY VALUE BELOW IS ESCAPED TWICE, IN A SPECIFIC ORDER
+//
+//   1. `replace('%', '%%')` — this file is loaded as Symfony DI container parameters
+//      (confirmed against the pinned mautic/mautic 6.0.6 tag's own
+//      app/bundles/ConfigBundle/Form/Type/EscapeTransformer.php, which the config UI's
+//      own save path runs before writing this same file), and Symfony treats a single
+//      `%` as the start of a `%parameter.name%` reference. An unescaped `%` — which
+//      `mailer_dsn`'s own urlencoding introduces even when nothing else would — can
+//      make the container fail to compile with a missing-parameter error.
+//   2. `replace('\\', '\\\\') | replace("'", "\\'")` — PHP single-quoted string
+//      escaping, so the value cannot break out of the quotes it is embedded in below.
 $parameters = array(
-    'db_host' => '{{ app_config.app.database_host | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'db_port' => '{{ app_config.app.database_port | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'db_name' => '{{ app_config.app.database.name | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'db_user' => '{{ app_config.app.database_user | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'db_password' => '{{ app_config.app.database_password | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_host' => '{{ app_config.app.database_host | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_port' => '{{ app_config.app.database_port | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_name' => '{{ app_config.app.database.name | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_user' => '{{ app_config.app.database_user | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_password' => '{{ app_config.app.database_password | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
     'db_table_prefix' => '',
 {% if wiring_mail.enabled | default(false) | bool %}
-    'mailer_from_name' => '{{ (wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true)) | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    'mailer_from_email' => '{{ wiring_mail.from_address | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_from_name' => '{{ (wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true)) | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_from_email' => '{{ wiring_mail.from_address | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
     # A single Symfony Mailer DSN, not the discrete mailer_transport/host/port/user/
     # password/encryption/auth_mode keys those seven were replaced by — see the header
     # comment on roles/mautic/tasks/main.yml's converge task for how that was confirmed
-    # against the pinned release's own source rather than assumed. user/password are
-    # urlencoded because a DSN is a URI: an unescaped `@`, `:` or `/` in either would
-    # be parsed as a DSN delimiter rather than a literal credential character. `/` is
-    # added explicitly — Jinja's `urlencode` deliberately leaves it unescaped, since it
-    # is normally a path separator, which a DSN's userinfo segment is not.
+    # against the pinned release's own source rather than assumed.
+    #
+    # SCHEME: `mail.encryption` (CONTRACT.md, config-doctor.sh) is `starttls | tls |
+    # none` — never `ssl`, which the pinned symfony/mailer 6.4.13's own
+    # EsmtpTransportFactory would not recognise as a scheme anyway (it supports
+    # exactly `smtp` and `smtps`). `tls` is the one value that means implicit TLS from
+    # the first byte of the connection (EsmtpTransport.php: `$tls = 'smtps' ===
+    # $dsn->getScheme()`, then `port ?: 465`) and maps to `smtps`. `starttls` and
+    # `none` both map to plain `smtp`: stated plainly rather than left to look like an
+    # oversight, stock Symfony Mailer has no DSN option that forces a connection to
+    # refuse an opportunistic STARTTLS upgrade the server offers — `smtp://` always
+    # negotiates it when available (EsmtpTransport.php's `executeEhloCommand`), for
+    # both of these configured states alike. `none` cannot be made stronger than
+    # "unencrypted unless the server insists otherwise" without a transport this
+    # platform does not ship.
+    #
+    # user/password are urlencoded because a DSN is a URI: an unescaped `@`, `:` or
+    # `/` in either would be parsed as a DSN delimiter rather than a literal
+    # credential character. `/` is added explicitly — Jinja's `urlencode` deliberately
+    # leaves it unescaped, since it is normally a path separator, which a DSN's
+    # userinfo segment is not.
     'mailer_dsn' => '{{ (
-        ('smtps' if wiring_mail.encryption == 'ssl' else 'smtp')
+        ({'starttls': 'smtp', 'tls': 'smtps', 'none': 'smtp'}[wiring_mail.encryption])
         ~ '://' ~ (wiring_mail.username | urlencode | replace('/', '%2F'))
         ~ ':' ~ (wiring_mail.password | urlencode | replace('/', '%2F'))
         ~ '@' ~ (wiring_mail.host | urlencode) ~ ':' ~ wiring_mail.port
-      ) | replace('\\', '\\\\') | replace("'", "\\'") }}',
+      ) | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
 {% endif %}
 );

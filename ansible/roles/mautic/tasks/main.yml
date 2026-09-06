@@ -96,20 +96,27 @@
 # from this role at all; both end up in local.php because Mautic's installer, like its
 # web wizard, writes them there itself once installation actually succeeds.
 #
-# Every value is escaped for a PHP single-quoted string (backslash, then quote) before
-# it reaches `line:` — an unescaped `'` or `\` in a database or mail credential would
-# otherwise terminate the PHP string early and corrupt this file, which the platform
-# would then read as a syntax error on every subsequent request.
+# Every value is escaped twice before it reaches `line:`, in this order:
+#   1. `replace('%', '%%')` — this file is loaded as Symfony DI container parameters
+#      (confirmed against the pinned mautic/mautic 6.0.6 tag's own
+#      app/bundles/ConfigBundle/Form/Type/EscapeTransformer.php, which the config UI's
+#      own save path runs before writing this same file), and Symfony treats a single
+#      `%` as the start of a `%parameter.name%` reference — an unescaped one (which
+#      `mailer_dsn`'s own urlencoding introduces below even when nothing else would)
+#      can make the container fail to compile with a missing-parameter error.
+#   2. `replace('\\', '\\\\') | replace("'", "\\'")` — PHP single-quoted string
+#      escaping, so an unescaped `'` or `\` in a database or mail credential cannot
+#      terminate the PHP string early and corrupt this file.
 # `line:` is a block scalar, deliberately, not a quoted string: a double-quoted YAML
 # string applies its OWN backslash escaping before Jinja ever sees the content, which
-# collapses the `replace('\\', '\\\\')` below into something Jinja can't even parse. A
+# collapses the `replace(...)` chain below into something Jinja can't even parse. A
 # block scalar carries every backslash and quote through to Jinja untouched.
 - name: Mautic | Converge platform-owned configuration fields
   ansible.builtin.lineinfile:
     path: "{{ mautic_config_file }}"
     regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
     line: >-
-      '{{ item.key }}' => '{{ item.value | replace('\\', '\\\\') | replace("'", "\\'") }}',
+      '{{ item.key }}' => '{{ item.value | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
     # Without this, a key absent from a mail-disabled deploy's local.php (or from a
     # pre-install one) is inserted at end-of-file by lineinfile's own default — AFTER
     # the closing `);` of the PHP array, which is not valid PHP. Every new key this
@@ -130,12 +137,27 @@
   # release. Writing the old keys converges nothing: Mautic keeps mailing through
   # whatever `mailer_dsn` already holds — its own shipped default, `smtp://
   # localhost:25`, on a fresh install — regardless of what this role wrote elsewhere.
-  # `mailer_dsn`'s username/password are urlencoded (with `/` additionally replaced —
-  # Jinja's `urlencode` deliberately leaves it unescaped for path segments, which a
-  # DSN's userinfo is not) because a DSN is a URI: any of `@`, `:` or `/` in either
-  # would otherwise be parsed as a DSN delimiter rather than a literal credential
-  # character — independent of, and applied before, the generic
-  # PHP-string escaping the `line:` template below applies to every field's value.
+  # `mailer_dsn`'s scheme follows `mail.encryption` (CONTRACT.md, config-doctor.sh:
+  # `starttls | tls | none`, never `ssl`). `tls` means implicit TLS from the first byte
+  # of the connection and is the one value that needs its own scheme, `smtps` —
+  # confirmed against the pinned symfony/mailer 6.4.13's own
+  # Transport/Smtp/EsmtpTransportFactory.php (`$tls = 'smtps' === $dsn->getScheme()`)
+  # and EsmtpTransport.php (`port ?: 465`). `starttls` and `none` both map to plain
+  # `smtp`: stock Symfony Mailer has no DSN option that forces a connection to refuse
+  # an opportunistic STARTTLS upgrade the server offers — `smtp://` negotiates it
+  # automatically whenever available (EsmtpTransport.php's `executeEhloCommand`), for
+  # both of these configured states alike. `none` cannot be made stronger than
+  # "unencrypted unless the server insists otherwise" without a transport this
+  # platform does not ship; the mapping is written as an explicit three-entry lookup
+  # instead of a two-way branch so that fact is a decision on the page, not an
+  # assumption buried in an else.
+  #
+  # user/password are urlencoded (with `/` additionally replaced — Jinja's
+  # `urlencode` deliberately leaves it unescaped for path segments, which a DSN's
+  # userinfo is not) because a DSN is a URI: any of `@`, `:` or `/` in either would
+  # otherwise be parsed as a DSN delimiter rather than a literal credential character
+  # — independent of, and applied before, the generic %/PHP-string escaping the
+  # `line:` template above applies to every field's value.
   #
   # This is also an explicit disabled path, not merely an empty one:
   # `wiring_mail.enabled` turning false — infrastructure.mail.provider set back to
@@ -166,7 +188,7 @@
             'value': wiring_mail.from_name | default(app_config.app.name | default('Mautic'), true)},
            {'key': 'mailer_from_email', 'value': wiring_mail.from_address},
            {'key': 'mailer_dsn',
-            'value': ('smtps' if wiring_mail.encryption == 'ssl' else 'smtp')
+            'value': ({'starttls': 'smtp', 'tls': 'smtps', 'none': 'smtp'}[wiring_mail.encryption])
                      ~ '://' ~ (wiring_mail.username | urlencode | replace('/', '%2F'))
                      ~ ':' ~ (wiring_mail.password | urlencode | replace('/', '%2F'))
                      ~ '@' ~ (wiring_mail.host | urlencode) ~ ':' ~ wiring_mail.port},
