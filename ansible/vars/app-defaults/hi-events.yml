@@ -32,8 +32,18 @@ hi_events_defaults:
   # vars/app-defaults/jellyseerr.yml.
 
   app:
-    image: "ghcr.io/hi-events/hi-events:latest"
-    port: 8123
+    # The official published production image (hi.events/docker/all-in-one/README.md:
+    # "For production, you should use the Docker image", naming this repository — the
+    # in-repo docker-compose.yml next to it is explicitly development/testing-only, built
+    # from source rather than pulled). Pinned to a point release, the same reasoning as
+    # vars/app-defaults/odoo.yml's `odoo:18.0`; `latest` at the time of writing resolves
+    # to a `v2.0.0-rc.*` pre-release, which this default deliberately avoids.
+    image: "docker.io/daveearley/hi.events-all-in-one:v1.11.1-beta"
+
+    # The container's own fixed listening port (Dockerfile.all-in-one EXPOSEs 80; the
+    # upstream compose's `8123:80` is only that example's host-side choice, which this
+    # role's own Service/Ingress make irrelevant).
+    port: 80
 
     database:
       provider: postgresql
@@ -43,7 +53,9 @@ hi_events_defaults:
 
     # Uploaded event cover images, attendee-facing assets and generated ticket PDFs — not
     # the database, which lives entirely on the named PostgreSQL backend. This is the
-    # recovery unit roles/hi_events' backup CronJob covers.
+    # recovery unit roles/hi_events' backup CronJob covers. Mounted at
+    # /app/backend/storage — this image's Laravel application root is /app/backend, not
+    # /var/www/html.
     storage: 10   # GB
 
     cache:

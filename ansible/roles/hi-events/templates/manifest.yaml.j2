@@ -109,10 +109,17 @@ spec:
             - containerPort: {{ app_config.app.port }}
           volumeMounts:
             - name: storage
-              mountPath: /var/www/html/storage/app
+              # The image's Laravel application root is /app/backend, not
+              # /var/www/html — see the comment on app.storage in
+              # vars/app-defaults/hi-events.yml.
+              mountPath: /app/backend/storage
           readinessProbe:
             httpGet:
-              path: /api/status
+              # Laravel's own health route (backend/routes/web.php), answering
+              # {"status":"ok"}. The kubelet prober does not follow the SPA's own
+              # frontend fallback, so this proves the backend is actually up rather
+              # than only the static asset server in front of it.
+              path: /up
               port: {{ app_config.app.port }}
             initialDelaySeconds: 30
             periodSeconds: 10

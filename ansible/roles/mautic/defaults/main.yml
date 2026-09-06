@@ -1,3 +1,14 @@
 ---
 mautic_project_dir: "/opt/{{ instance }}"
-mautic_config_file: "{{ mautic_project_dir }}/local.php"
+
+# Laid out exactly as the upstream mautic/docker-mautic example volumes
+# (github.com/mautic/docker-mautic/examples/basic/docker-compose.yml): four host
+# directories bind-mounted individually, not the whole /var/www/html. Bind-mounting the
+# whole webroot would hide the image's own application code and its default config
+# directory under an empty host directory on first run; mounting only what Mautic itself
+# expects to persist (config, logs, media) leaves the image's code where the image put it.
+mautic_config_dir: "{{ app_config.app.data_path }}/config"
+mautic_config_file: "{{ mautic_config_dir }}/local.php"
+mautic_logs_dir: "{{ app_config.app.data_path }}/logs"
+mautic_media_files_dir: "{{ app_config.app.data_path }}/media/files"
+mautic_media_images_dir: "{{ app_config.app.data_path }}/media/images"

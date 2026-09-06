@@ -354,6 +354,9 @@ applications:
     root: Applications
     category: Search & Discovery
     scope: estate
+    # SearXNG declares no `backup:` block — see vars/app-defaults/searxng.yml — so a
+    # generated Backup/Restore job would always find nothing to run.
+    exclude: [backup, restore]
 
   mautic:
     name: Mautic

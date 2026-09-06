@@ -16,7 +16,10 @@ mautic_defaults:
   stack: services
 
   app:
-    image: docker.io/mautic/mautic:v5-apache
+    # `apache`, not `fpm`: the upstream README says plainly to prefer it — the FPM
+    # variant's exemplified nginx.conf has known issues. Pinned to a point release, the
+    # same reasoning as vars/app-defaults/odoo.yml's `odoo:18.0`.
+    image: docker.io/mautic/mautic:6.0.6-apache
 
     database:
       provider: mariadb
@@ -26,9 +29,11 @@ mautic_defaults:
 
     port: 8091
 
-    # Mautic's own uploaded media, plugins and generated assets — not its database, which
-    # lives entirely on the named MariaDB backend. This is the recovery unit a guest
-    # snapshot backup covers for this instance.
+    # Mautic's own config (config/local.php), logs, and uploaded media — not its
+    # database, which lives entirely on the named MariaDB backend. This is the recovery
+    # unit a guest snapshot backup covers for this instance. Laid out as four
+    # subdirectories rather than one, mirroring the upstream mautic/docker-mautic
+    # example's own volume list (see roles/mautic/defaults/main.yml).
     data_path: "/opt/mautic/{{ instance }}/data"
 
     admin_user: admin

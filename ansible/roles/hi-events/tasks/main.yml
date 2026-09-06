@@ -45,6 +45,13 @@
       {{ app_config.app.app_key
          | default('base64:' ~ (lookup('password', '/dev/null length=32 chars=ascii_letters,digits')
                                 | b64encode), true) }}
+    # No 'base64:' prefix, deliberately — unlike APP_KEY, the image's own setup guide
+    # (docker/all-in-one/README.md) generates this as a bare `openssl rand -base64 32`
+    # and reads it as a plain JWT signing secret, not a prefixed Laravel cipher key.
+    _he_jwt_secret: >-
+      {{ app_config.app.jwt_secret
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits')
+                    | b64encode, true) }}
     _he_redis_password: >-
       {{ app_config.app.redis_password
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
@@ -57,9 +64,11 @@
     vault_item_merge: true
     vault_item_fields:
       app_key: "{{ _he_app_key }}"
+      jwt_secret: "{{ _he_jwt_secret }}"
       redis_password: "{{ _he_redis_password }}"
     vault_item_secret_fields:
       - app_key
+      - jwt_secret
       - redis_password
 
 - name: Hi.Events | Sync the component credentials into the namespace
@@ -70,29 +79,58 @@
       redis-password: "{{ _he_redis_password }}"
       db-password: "{{ app_config.app.database_password }}"
 
+# One DATABASE_URL, not the DB_CONNECTION/DB_HOST/... split roles/odoo and roles/mautic
+# use — this image's own production docker-compose.yml
+# (HiEventsDev/hi.events:docker/all-in-one/docker-compose.yml) reads exactly this shape,
+# and its .env.example carries no DB_HOST-style keys at all.
+- name: Hi.Events | Build the database connection URL
+  ansible.builtin.set_fact:
+    _he_database_url: >-
+      postgresql://{{ app_config.app.database_user }}:{{ app_config.app.database_password }}@{{
+      app_config.app.database_host }}:{{ app_config.app.database_port }}/{{ app_config.app.database.name }}
+  no_log: true
+
 - name: Hi.Events | Sync the application environment into the namespace
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
   vars:
     k8s_secret_name: "{{ instance }}-env"
     k8s_secret_data:
       APP_KEY: "{{ _he_app_key }}"
-      APP_URL: "https://{{ hi_events_fqdn }}"
+      JWT_SECRET: "{{ _he_jwt_secret }}"
       APP_ENV: production
-      DB_CONNECTION: pgsql
-      DB_HOST: "{{ app_config.app.database_host }}"
-      DB_PORT: "{{ app_config.app.database_port | string }}"
-      DB_DATABASE: "{{ app_config.app.database.name }}"
-      DB_USERNAME: "{{ app_config.app.database_user }}"
-      DB_PASSWORD: "{{ app_config.app.database_password }}"
+      APP_DEBUG: "false"
+      APP_FRONTEND_URL: "https://{{ hi_events_fqdn }}"
+      APP_CDN_URL: "https://{{ hi_events_fqdn }}/storage"
+      APP_DISABLE_REGISTRATION: "false"
+      APP_SAAS_MODE_ENABLED: "false"
+      # The frontend is a Vite SPA whose API base URLs are baked in by this image's own
+      # startup script (docker/all-in-one/scripts/startup.sh) from these three, not from
+      # a build-time argument — CLIENT is what the attendee's browser calls, SERVER is
+      # this container calling its own backend over loopback for anything rendered
+      # server-side, and both share one origin because the all-in-one image serves
+      # frontend and API from the same nginx on port 80.
+      VITE_FRONTEND_URL: "https://{{ hi_events_fqdn }}"
+      VITE_API_URL_CLIENT: "https://{{ hi_events_fqdn }}/api"
+      VITE_API_URL_SERVER: "http://localhost/api"
+      VITE_APP_NAME: "Hi.Events"
+      LOG_CHANNEL: stderr
+      QUEUE_CONNECTION: redis
+      WEBHOOK_QUEUE_NAME: webhook-queue
+      FILESYSTEM_PUBLIC_DISK: public
+      FILESYSTEM_PRIVATE_DISK: local
+      DATABASE_URL: "{{ _he_database_url }}"
       REDIS_HOST: "{{ instance }}-redis"
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "{{ _he_redis_password }}"
       MAIL_MAILER: smtp
+      MAIL_DRIVER: smtp
       MAIL_HOST: "{{ wiring_mail.host }}"
       MAIL_PORT: "{{ wiring_mail.port | string }}"
       MAIL_USERNAME: "{{ wiring_mail.username }}"
       MAIL_PASSWORD: "{{ wiring_mail.password }}"
       MAIL_ENCRYPTION: "{{ wiring_mail.encryption }}"
+      MAIL_AUTO_TLS: "true"
+      MAIL_VERIFY_PEER: "true"
       MAIL_FROM_ADDRESS: "{{ wiring_mail.from_address }}"
       MAIL_FROM_NAME: "{{ wiring_mail.from_name | default('Hi.Events', true) }}"
 

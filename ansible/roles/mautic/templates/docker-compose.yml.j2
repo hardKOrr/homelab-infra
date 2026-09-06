@@ -1,20 +1,63 @@
 {{ ansible_managed | comment }}
+#
+# Three services, on the shape docker-mautic's own example ships
+# (github.com/mautic/docker-mautic/examples/basic/docker-compose.yml): a web front end,
+# a cron runner and a queue worker, all the same image, told apart only by
+# DOCKER_MAUTIC_ROLE. mautic_web is REQUIRED — Mautic's own scheduled campaigns,
+# segment rebuilds and email sends never run without it, and it is not something the
+# platform's `MAUTIC_RUN_CRON_JOBS` (an env var this image does not read) could ever
+# substitute for.
+x-mautic-env: &mautic-env
+  MAUTIC_DB_HOST: "{{ app_config.app.database_host }}"
+  MAUTIC_DB_PORT: "{{ app_config.app.database_port }}"
+  MAUTIC_DB_DATABASE: "{{ app_config.app.database.name }}"
+  MAUTIC_DB_USER: "{{ app_config.app.database_user }}"
+  MAUTIC_DB_PASSWORD: "{{ app_config.app.database_password }}"
+
+x-mautic-volumes: &mautic-volumes
+  - "{{ mautic_config_dir }}:/var/www/html/config"
+  - "{{ mautic_logs_dir }}:/var/www/html/var/logs"
+  - "{{ mautic_media_files_dir }}:/var/www/html/docroot/media/files"
+  - "{{ mautic_media_images_dir }}:/var/www/html/docroot/media/images"
+
 services:
-  mautic:
+  mautic_web:
     image: {{ app_config.app.image }}
-    container_name: "{{ instance }}-mautic"
+    container_name: "{{ instance }}-mautic-web"
     restart: unless-stopped
     environment:
-      MAUTIC_RUN_CRON_JOBS: "true"
+      <<: *mautic-env
       DOCKER_MAUTIC_ROLE: mautic_web
     ports:
       - "{{ app_config.app.port }}:80"
-    volumes:
-      - "{{ app_config.app.data_path }}:/var/www/html"
-      - "{{ mautic_config_file }}:/var/www/html/config/local.php:ro"
+    volumes: *mautic-volumes
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost/index_dev.php || curl -fsS http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10
       start_period: 60s
+
+  mautic_cron:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-mautic-cron"
+    restart: unless-stopped
+    environment:
+      <<: *mautic-env
+      DOCKER_MAUTIC_ROLE: mautic_cron
+    volumes: *mautic-volumes
+    depends_on:
+      mautic_web:
+        condition: service_healthy
+
+  mautic_worker:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-mautic-worker"
+    restart: unless-stopped
+    environment:
+      <<: *mautic-env
+      DOCKER_MAUTIC_ROLE: mautic_worker
+    volumes: *mautic-volumes
+    depends_on:
+      mautic_web:
+        condition: service_healthy

@@ -7,13 +7,18 @@
     group: root
     mode: "0750"
 
-- name: Mautic | Create writable data directory for the official image user
+- name: Mautic | Create writable volume directories for the official image user
   ansible.builtin.file:
-    path: "{{ app_config.app.data_path }}"
+    path: "{{ item }}"
     state: directory
     owner: "www-data"
     group: "www-data"
     mode: "0750"
+  loop:
+    - "{{ mautic_config_dir }}"
+    - "{{ mautic_logs_dir }}"
+    - "{{ mautic_media_files_dir }}"
+    - "{{ mautic_media_images_dir }}"
 
 - name: Mautic | Resolve platform mail
   ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
@@ -105,7 +110,7 @@
       - "{{ mautic_project_dir }}"
       - exec
       - -T
-      - mautic
+      - mautic_web
       - php
       - /var/www/html/bin/console
       - mautic:install
