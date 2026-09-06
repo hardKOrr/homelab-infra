@@ -42,6 +42,23 @@ doctor() {
   bash "$repo/ansible/scripts/config-doctor.sh" "$work/base" 2>&1
 }
 
+# Absent mail: block entirely (every checkout that predates this contract) must still
+# pass -- mail.provider is optional and defaults to disabled, exactly like the explicit
+# `none` the tracked fixtures declare. Exercised in a separate copy, not $infra itself,
+# so the regex-based mutations below still find a `mail:` anchor to replace.
+nomail_dir="$work/nomail"
+cp -r "$base" "$nomail_dir"
+python3 - "$nomail_dir/infrastructure.yml" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path).read()
+text = re.sub(r"mail:\n(?:  .*\n)*", "", text, count=1)
+open(path, "w").write(text)
+PY
+out="$(bash "$repo/ansible/scripts/config-doctor.sh" "$nomail_dir" 2>&1)" \
+  || fail "an infrastructure.yml with no mail: block must still pass config-doctor.sh: $out"
+grep -q '^OK\|0 error(s)' <<<"$out" || fail "absent mail block reported an error: $out"
+
 # Complete generic-SMTP block must pass.
 replace_mail_block $'mail:\n  provider: smtp\n  host: "smtp.example.test"\n  port: 587\n  from_address: "lab@example.test"\n'
 out="$(doctor)" || fail "complete smtp mail block must pass config-doctor.sh: $out"

@@ -281,7 +281,14 @@ else:
     # needs an address. The credential (mail.password, or a provider-specific api_key/
     # api_secret/token) must never be authored here at all -- it lives only in
     # homelab-infra/mail, resolved by tasks/wiring/smtp.yml at run time.
-    provider = enum(infra, "infrastructure.yml", "mail.provider", ["smtp", "none"])
+    #
+    # Optional and defaults to disabled: this key did not exist before this contract, so
+    # every checkout without a mail: block must keep passing exactly as resolve-mail.yml
+    # already treats an absent provider as `enabled: false` -- required=True here would
+    # fail config-doctor.sh (and therefore every job, since lab-run.sh runs it first) for
+    # every existing lab that has not opted in yet.
+    provider = enum(infra, "infrastructure.yml", "mail.provider", ["smtp", "none"],
+                     required=False) or "none"
     if provider and provider != "none":
         need(infra, "infrastructure.yml", "mail.host")
         need(infra, "infrastructure.yml", "mail.port")

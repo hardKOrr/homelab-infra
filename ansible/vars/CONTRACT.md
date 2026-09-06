@@ -291,7 +291,7 @@ exists on the wire.
 | `dns.host` | required for external providers | not in Proxmox inventory |
 | `dns.api_key` | optional | |
 | `dns.instance` | optional | |
-| `mail.provider` | required | `smtp \| none` |
+| `mail.provider` | optional, default `none` | `smtp \| none` — absent means disabled, exactly like an explicit `none`, so an existing checkout with no `mail:` block keeps passing `config-doctor.sh` unchanged |
 | `mail.host` | required unless provider `none` | SMTP relay hostname; never in Proxmox inventory |
 | `mail.port` | required unless provider `none` | typically `587` (STARTTLS) or `465` (implicit TLS) |
 | `mail.encryption` | optional | `starttls \| tls \| none`; default `starttls` |
