@@ -2,13 +2,16 @@
 # Remove a dedicated PCI device assignment from a VM guest — the recovery half of
 # attach-pci-passthrough.yml. See docs/specs/device-passthrough.md.
 #
-# Only the hostpciN entry whose device id equals pci_passthrough_device.id is removed,
-# matched on content, never on index. A hostpciN entry belonging to a different device is
-# left exactly as it is.
+# A hostpciN entry is removed only when BOTH are true: its device id equals
+# pci_passthrough_device.id, AND the guest carries the `_.dev+<slug>` provenance tag
+# attach-pci-passthrough.yml wrote for that same id. Content alone does not prove this
+# platform assigned the device — an operator can passthrough the identical address by
+# hand — so a content match with no provenance tag is left in place and reported, never
+# deleted.
 #
-# Idempotent: a device already absent from this guest is a no-op. Detaching gives the
-# device back to the node, where `lspci`/`pvesh` shows it as available again for another
-# guest — there is no separate ledger to update; the guest configuration IS the record.
+# Idempotent: a device already absent, or assigned but not project-owned, is a no-op, not
+# a failure. Detaching gives the device back to the node, where `lspci`/`pvesh` shows it as
+# available again for another guest.
 #
 # Inputs:
 #   pci_passthrough_guest — VM guest hostname to detach the device from
@@ -34,11 +37,14 @@
   register: _dpci_vm_list
   changed_when: false
 
-- name: Detach PCI passthrough | Extract the vmid for {{ pci_passthrough_guest }}
+- name: Detach PCI passthrough | Extract the vmid and tags for {{ pci_passthrough_guest }}
   ansible.builtin.set_fact:
     _dpci_vmid: >-
       {{ (_dpci_entry | map(attribute='vmid') | list | first)
          | default('') | string }}
+    _dpci_tags: >-
+      {{ ((_dpci_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') | reject('equalto', '') | list }}
     _dpci_was_running: >-
       {{ (_dpci_entry | map(attribute='status') | list | first)
          | default('') == 'running' }}
@@ -55,6 +61,16 @@
       No VM named {{ pci_passthrough_guest }} on node
       {{ homelabinfra_config.proxmox.node }}. Nothing can be detached from a guest that
       `qm list` does not show.
+
+# This platform detaches a device only from a guest it owns — the same guard every attach
+# seam applies. Without it, a caller could remove a matching hostpciN from any untagged
+# guest.
+- name: Detach PCI passthrough | Assert the guest carries the ownership tag
+  ansible.builtin.assert:
+    that: "'_+lab' in _dpci_tags"
+    fail_msg: >-
+      {{ pci_passthrough_guest }} does not carry the _+lab ownership tag. This platform
+      does not modify a guest it does not manage — see ansible/tasks/proxmox/README.md.
 
 - name: Detach PCI passthrough | Read the guest's current configuration
   ansible.builtin.command:
@@ -75,11 +91,25 @@
     _dpci_hostpci_lines: >-
       {{ _dpci_config.stdout_lines | select('match', '^hostpci[0-9]+:') | list }}
 
+# A content match alone is not proof this platform wrote the entry: an operator can
+# passthrough the identical address by hand. Only a device that is present AND whose
+# provenance tag is present is safe to remove.
+- name: Detach PCI passthrough | Resolve whether this platform actually owns the assignment
+  ansible.builtin.set_fact:
+    _dpci_provenance_tag: >-
+      _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
+               | regex_replace('^-+|-+$', '') }}
+    _dpci_owned: >-
+      {{ (_dpci_matched_index | length > 0)
+         and (('_.dev+' ~ (pci_passthrough_device.id | lower
+                            | regex_replace('[^a-z0-9]+', '-')
+                            | regex_replace('^-+|-+$', ''))) in _dpci_tags) }}
+
 - name: Detach PCI passthrough | Stop the guest so the device can be removed
   ansible.builtin.command:
     cmd: "qm shutdown {{ _dpci_vmid }} --forceStop 1 --timeout 120"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _dpci_matched_index | length > 0 and _dpci_was_running | bool
+  when: _dpci_owned | bool and _dpci_was_running | bool
   changed_when: true
 
 - name: Detach PCI passthrough | Wait for the guest to reach stopped
@@ -90,25 +120,31 @@
   until: _dpci_stop_check.stdout is search('stopped')
   retries: 30
   delay: 4
-  when: _dpci_matched_index | length > 0 and _dpci_was_running | bool
+  when: _dpci_owned | bool and _dpci_was_running | bool
   changed_when: false
 
-- name: Detach PCI passthrough | Remove the device
+- name: Detach PCI passthrough | Remove the device and its provenance tag
   ansible.builtin.command:
-    cmd: "qm set {{ _dpci_vmid }} -delete hostpci{{ _dpci_matched_index }}"
+    cmd: >-
+      qm set {{ _dpci_vmid }} -delete hostpci{{ _dpci_matched_index }}
+      -tags {{ (_dpci_tags | reject('equalto', _dpci_provenance_tag)) | join(';') }}
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _dpci_matched_index | length > 0
+  when: _dpci_owned | bool
   changed_when: true
 
 - name: Detach PCI passthrough | Start the guest again
   ansible.builtin.command:
     cmd: "qm start {{ _dpci_vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _dpci_matched_index | length > 0 and _dpci_was_running | bool
+  when: _dpci_owned | bool and _dpci_was_running | bool
   changed_when: true
 
 - name: Detach PCI passthrough | Report what was removed
   ansible.builtin.debug:
     msg: >-
       {{ pci_passthrough_guest }} (vmid {{ _dpci_vmid }}): {{ pci_passthrough_device.id }}
-      {{ 'detached this run, host and device state are inspectable via lspci/pvesh' if _dpci_matched_index | length > 0 else 'was already absent' }}.
+      {{ 'detached this run, host and device state are inspectable via lspci/pvesh'
+         if _dpci_owned | bool
+         else ('assigned here but NOT project-owned — left in place'
+               if _dpci_matched_index | length > 0
+               else 'was already absent') }}.

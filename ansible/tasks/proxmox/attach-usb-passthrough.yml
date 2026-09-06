@@ -16,6 +16,10 @@
 # Idempotent: a device already assigned to THIS guest is a no-op. A device already assigned
 # to a DIFFERENT guest is a preflight failure, not a silent reassignment.
 #
+# The guest also gets a `_.dev+<slug>` tag naming this exact mapping — durable,
+# project-owned proof of authorship that detach-usb-passthrough.yml requires before it
+# will remove the usbN entry.
+#
 # Inputs:
 #   usb_passthrough_guest — VM guest hostname to assign the device to
 #   usb_passthrough_device — {mapping: "ha-zigbee"}
@@ -167,6 +171,24 @@
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   when: not _usb_already_present
   changed_when: true
+
+# A content match on the mapping name does not by itself prove THIS platform assigned it
+# — an operator can run the identical `qm set` by hand. A `_.dev+<slug>` tag is the
+# durable, guest-inspectable proof detach-usb-passthrough.yml requires before it will
+# remove anything; see docs/specs/device-passthrough.md.
+- name: USB passthrough | Write the provenance tag if missing
+  ansible.builtin.command:
+    cmd: >-
+      qm set {{ _usb_vmid }}
+      -tags {{ (_usb_current_tags | union([_usb_provenance_tag])) | unique | sort | join(';') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _usb_provenance_tag not in _usb_current_tags
+  changed_when: true
+  vars:
+    _usb_current_tags: "{{ _usb_tags | reject('equalto', '') | list }}"
+    _usb_provenance_tag: >-
+      _.dev+{{ usb_passthrough_device.mapping | lower | regex_replace('[^a-z0-9]+', '-')
+               | regex_replace('^-+|-+$', '') }}
 
 - name: USB passthrough | Report what is assigned
   ansible.builtin.debug:

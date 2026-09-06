@@ -11,6 +11,11 @@
 # never touched, and nothing is ever removed. Entries are matched on host path, not index —
 # PVE assigns indices in its own order.
 #
+# Every requested device also gets a `_.dev+<slug>` guest tag — durable, project-owned
+# proof of authorship that detach-shared-device.yml requires before it will remove a devN
+# entry. A devN path match alone cannot show this platform wrote it rather than an
+# operator; the tag is what makes that provable.
+#
 # Inputs:
 #   shared_device_guest — LXC guest hostname to bind into
 #   shared_device_list  — [{host: /dev/dri/renderD128, mode: "0666"}, ...]
@@ -133,6 +138,28 @@
     _sd_next_index: >-
       {{ ((_sd_used_indices + range(0, 256) | list) | unique
           | difference(_sd_used_indices))[_sd_loop_index] }}
+  changed_when: true
+
+# A content match (the devN path) does not by itself prove THIS platform created the
+# entry — an operator can bind the identical device by hand. A `_.dev+<slug>` tag per
+# requested device is the durable, guest-inspectable proof detach-shared-device.yml
+# requires before it will remove anything; see docs/specs/device-passthrough.md.
+- name: Shared device | Resolve the provenance tags this guest should carry
+  ansible.builtin.set_fact:
+    _sd_provenance_tags: >-
+      {{ shared_device_list | map(attribute='host')
+         | map('lower') | map('regex_replace', '[^a-z0-9]+', '-')
+         | map('regex_replace', '^-+|-+$', '')
+         | map('regex_replace', '^(.*)$', '_.dev+\1') | list }}
+    _sd_current_tags: "{{ _sd_tags | reject('equalto', '') | list }}"
+
+- name: Shared device | Write the provenance tags if any are missing
+  ansible.builtin.command:
+    cmd: >-
+      pct set {{ _sd_vmid }}
+      -tags {{ (_sd_current_tags | union(_sd_provenance_tags)) | unique | sort | join(';') }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: (_sd_provenance_tags | difference(_sd_current_tags)) | length > 0
   changed_when: true
 
 # PVE hotplugs a devN entry into a running unprivileged container without a restart, unlike

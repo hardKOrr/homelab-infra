@@ -36,20 +36,32 @@ which remains authoritative for guest ownership and creation.
 - **Guest creation is not duplicated.** Device binding runs after `lxc-create.yml` or
   `vm-create.yml` has produced the guest; it does not create a guest of its own, and it does
   not offer a second way to create one.
-- **Removal and recovery detach only the project-owned binding.** Every attach seam has a
-  matching detach seam — `detach-shared-device.yml`, `detach-pci-passthrough.yml`,
-  `detach-usb-passthrough.yml` — that removes exactly the `devN` / `hostpciN` / `usbN`
-  entry whose content (host path, PCI address, or USB mapping name) matches the caller's
-  input, resolved by reading the guest's current configuration the same way the attach seam
-  does. Ownership of a binding is proved by that content match, not by a side ledger: an
-  entry belonging to a different device, or one an operator added by hand outside this
-  platform, is never touched, and the guest itself is never removed. A detach against a
-  guest or index that never held the requested device is a no-op, not a failure. After
-  detach the host and guest configuration are left in a state an operator can inspect
-  directly (`pct config` / `qm config` for the guest side, `lspci` / `pvesh get
-  /cluster/mapping/usb/<name>` for the device side) — no state is hidden in a side file
-  only this platform reads. Dedicated PCIe removal stops the guest first, for the same
-  hotplug reason attach does; USB and shared-LXC removal hotplug detach on a running guest.
+- **Every binding carries a durable, project-owned provenance tag; content match alone is
+  never proof of ownership.** A `devN`/`hostpciN`/`usbN` value matching the caller's input
+  shows only that SOME actor bound that device — an operator can create the identical
+  entry by hand, outside this platform, and the two are indistinguishable by content.
+  Every attach seam therefore also writes a `_.dev+<slug>` guest tag, one per bound
+  device, where `<slug>` is the device's host path / PCI address / USB mapping name
+  lowercased with every non-alphanumeric run collapsed to a single `-`. The tag is
+  guest-inspectable (`pct config` / `qm config` show it in `tags:`, the same way the
+  `_+lab` ownership tag is), requires no side ledger, and is what "project-owned" means
+  operationally in this contract.
+- **Removal and recovery detach only a binding this platform can prove it made.** Every
+  attach seam has a matching detach seam — `detach-shared-device.yml`,
+  `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — and each first asserts the
+  guest carries `_+lab`, exactly like attach. A `devN`/`hostpciN`/`usbN` entry is removed
+  only when BOTH are true: its content matches the caller's input, AND the guest carries
+  the matching `_.dev+<slug>` provenance tag. A content match with no provenance tag —
+  the identical device bound by an operator, by hand — is left in place and reported as
+  "not project-owned", never deleted; this is the non-adoption guarantee applied to
+  removal, not only to creation. Detach removes the specific provenance tag along with the
+  entry, and never touches the guest's other tags, its other `devN`/`hostpciN`/`usbN`
+  entries, or the guest itself. A detach against a guest or index that never held the
+  requested, project-owned device is a no-op, not a failure. After detach the host and
+  guest configuration are left in a state an operator can inspect directly (`pct config` /
+  `qm config` for the guest side, `lspci` / `pvesh get /cluster/mapping/usb/<name>` for the
+  device side). Dedicated PCIe removal stops the guest first, for the same hotplug reason
+  attach does; USB and shared-LXC removal hotplug detach on a running guest.
 - **Docker-on-VM is the seam Home Assistant needs, not a new application backend.** A
   Docker application already runs unmodified on any guest that has Docker installed and is
   reachable over the inventory connection (`ansible/roles/_template-docker` has no
@@ -68,14 +80,21 @@ distinct, named assertion, not a single catch-all check:
 | Device path/PCI address/USB mapping not present on the node | both modes | a typo here would otherwise produce a guest that boots with the feature silently absent |
 | Device already assigned to a different guest | dedicated only | a PCIe or USB device left the host for one guest; a second guest cannot also receive it |
 
-Detach uses the same identifiers to locate and remove a binding, so a typo in a removal call
-fails the same "not present" style assertion rather than deleting an unrelated entry.
+Detach uses the same identifiers to locate a binding, so a typo in a removal call fails the
+same "not present" style assertion rather than deleting an unrelated entry. Detach adds two
+rejections/no-ops of its own, both in `ansible/tasks/proxmox/detach-*.yml`:
+
+| Outcome | Reason |
+|---|---|
+| Guest missing the `_+lab` tag → refused | this platform modifies only guests it owns, on removal exactly as on creation |
+| Content matches but the `_.dev+<slug>` provenance tag is absent → left in place, reported, not a failure | the entry may be an operator's, created by hand outside this platform; content alone cannot prove otherwise |
 
 ## Enforced by
 
 - inspection — cite this specification in findings
-- `gate/test-device-passthrough-contract.sh` — proves the ownership guard, the
-  dedicated-device conflict check, and the detach-matches-only-the-named-binding behavior
-  against the real expressions in `ansible/tasks/proxmox/attach-pci-passthrough.yml`,
+- `gate/test-device-passthrough-contract.sh` — proves the ownership guard on every attach
+  AND detach seam, the dedicated-device conflict check, and that detach treats a content
+  match with no provenance tag as unowned rather than adopting it, against the real
+  expressions in `ansible/tasks/proxmox/attach-pci-passthrough.yml`,
   `attach-usb-passthrough.yml`, `detach-shared-device.yml`, `detach-pci-passthrough.yml`,
   and `detach-usb-passthrough.yml`, without a lab

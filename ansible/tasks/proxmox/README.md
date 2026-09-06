@@ -28,6 +28,7 @@ underscore alone identifies the platform tag namespace; it does not grant owners
 | `_.cluster+<name>` | Cluster member | `lab_cluster_<name>` |
 | `_.template` | Managed cloud template | `lab_template` |
 | `_.shared` | Hosting substrate deliberately shared across estates | `lab_shared` |
+| `_.dev+<slug>` | Device-passthrough binding this platform created (see *Device passthrough* below) | none — scoped to the guest's own tags, not translated into an inventory group |
 | `_<instance>` | Logical hosting unit for an application instance | `lab_app_<instance>` |
 
 `ansible/inventory/proxmox.yml` owns the translation from tags to group names.
@@ -46,12 +47,15 @@ several guests may hold it at once. `attach-pci-passthrough.yml` and
 exactly one VM guest, exclusively; the device leaves the node for that guest, so a second
 assignment is a preflight failure, not a reassignment. All three run after `lxc-create.yml` /
 `vm-create.yml`, never in place of them, and each asserts the target guest carries the
-`_+lab` ownership tag before writing anything.
+`_+lab` ownership tag before writing anything, then writes a `_.dev+<slug>` tag per bound
+device — durable proof this platform, not an operator by hand, created the binding.
 
 Each attach seam has a matching detach seam — `detach-shared-device.yml`,
-`detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that removes only the binding
-whose content matches the caller's input, leaving every other `devN`/`hostpciN`/`usbN` entry
-and the guest itself untouched.
+`detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that also asserts `_+lab`
+first, then removes a binding only when its content matches the caller's input AND its
+`_.dev+<slug>` tag is present. A content match with no tag is an operator's own entry, left
+in place and reported, never deleted. Every other `devN`/`hostpciN`/`usbN` entry, every
+other tag, and the guest itself are always untouched.
 
 See [`../../../docs/specs/device-passthrough.md`](../../../docs/specs/device-passthrough.md)
 for the full contract, including why the shared and dedicated modes are not interchangeable
@@ -82,5 +86,6 @@ and this repository's real dynamic inventory against a job-local HTTPS mock of t
 Proxmox REST endpoints they call, to prove ownership-tag filtering, idempotent
 create/no-change, and a controlled failure at the API-transport boundary — without a lab
 or real credentials, and `gate/test-device-passthrough-contract.sh` proves the ownership
-guard and the dedicated-device conflict check in the device-passthrough task files above
-against fixture guest configurations, also without a lab.
+guard, the dedicated-device conflict check, and the provenance-tag gate on every detach
+seam in the device-passthrough task files above against fixture guest configurations, also
+without a lab.

@@ -14,8 +14,17 @@
 #   4. Detach matches only the binding whose content (host path / PCI id / USB mapping)
 #      was requested — an unrelated devN/hostpciN/usbN entry, or a raw non-mapping usbN
 #      entry this platform never wrote, is never selected for removal.
+#   5. Every detach seam refuses a guest missing the `_+lab` ownership tag, exactly like
+#      attach.
+#   6. A content match is never enough for detach to treat a binding as project-owned: only
+#      a match paired with the `_.dev+<slug>` provenance tag attach wrote is removed. A
+#      content match with no provenance tag — an operator's own identical entry — is
+#      classified as NOT owned and left in place.
 #
-# No Proxmox is contacted and no Ansible is started: pure Python against the repository.
+# No Proxmox is contacted. Simple assert-only checks are evaluated with a standalone Jinja
+# environment; checks needing ansible's own \1/\2 regex-backreference and native-typing
+# behavior run through the real ansible-playbook binary against localhost (see
+# eval_set_fact below) — still no Proxmox, no network.
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -202,8 +211,8 @@ if "usb_passthrough_device.mapping" not in str(usb_input_task["ansible.builtin.a
 # character. Rather than re-implement ansible's escaping, these are run through the real
 # ansible-playbook binary against localhost — no Proxmox, no network.
 def eval_set_fact(task, context):
-    """Run a single set_fact task through real ansible-playbook and return its result."""
-    fact_name = next(iter(task["ansible.builtin.set_fact"]))
+    """Run a single set_fact task through real ansible-playbook and return every fact it sets."""
+    fact_names = list(task["ansible.builtin.set_fact"])
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "out.json"
         playbook = [{
@@ -216,7 +225,9 @@ def eval_set_fact(task, context):
                     "name": "capture",
                     "ansible.builtin.copy": {
                         "dest": str(out),
-                        "content": "{{ %s | to_json }}" % fact_name,
+                        "content": "{{ %s | to_json }}" % (
+                            "{" + ", ".join("'%s': %s" % (n, n) for n in fact_names) + "}"
+                        ),
                     },
                 },
             ],
@@ -233,35 +244,67 @@ def eval_set_fact(task, context):
         if result.returncode != 0:
             raise SystemExit(
                 "ansible-playbook failed evaluating %s:\n%s\n%s"
-                % (fact_name, result.stdout, result.stderr)
+                % (fact_names, result.stdout, result.stderr)
             )
-        return {fact_name: json.loads(out.read_text(encoding="utf-8"))}
+        return json.loads(out.read_text(encoding="utf-8"))
 
 
-# -- Detach: only the named binding is matched, everything else is left alone -------------
-dsd_task = task_named(
+# -- Detach: ownership guard on every detach seam, exactly like attach --------------------
+for path, tags_var in (
+    ("ansible/tasks/proxmox/detach-shared-device.yml", "_dsd_tags"),
+    ("ansible/tasks/proxmox/detach-pci-passthrough.yml", "_dpci_tags"),
+    ("ansible/tasks/proxmox/detach-usb-passthrough.yml", "_dusb_tags"),
+):
+    task = task_named(path, "Assert the guest carries the ownership tag")
+    check(
+        "%s: managed guest passes" % path,
+        eval_assert(task, {tags_var: ["_+lab", "_-debian"]}),
+        True,
+    )
+    check(
+        "%s: untagged/foreign guest is refused" % path,
+        eval_assert(task, {tags_var: ["_-debian"]}),
+        False,
+    )
+
+# -- Detach: content match alone is never ownership; the provenance tag decides -----------
+dsd_loop_task = task_named(
     "ansible/tasks/proxmox/detach-shared-device.yml",
-    "Resolve which requested devices are bound, and at what index",
+    "Resolve bound state, provenance tag, and ownership per device",
 )
-check(
-    "detach shared device: matches only the requested host path, not an unrelated dev0",
-    eval_set_fact(dsd_task, {
-        "shared_device_list": [{"host": "/dev/dri/renderD128"}],
-        "_dsd_config": {"stdout_lines": [
-            "dev0: path=/dev/dri/renderD128,mode=0666",
-            "dev1: path=/dev/ttyUSB3,mode=0660",
-        ]},
-    })["_dsd_matched_indices"],
-    ["0"],
+results = eval_set_fact(dsd_loop_task, {
+    "shared_device_list": [
+        {"host": "/dev/dri/renderD128"},  # bound, owned
+        {"host": "/dev/ttyUSB3"},         # bound, but NOT ours (no provenance tag)
+        {"host": "/dev/dri/renderD129"},  # never bound at all
+    ],
+    "_dsd_config": {"stdout_lines": [
+        "dev0: path=/dev/dri/renderD128,mode=0666",
+        "dev1: path=/dev/ttyUSB3,mode=0660",
+    ]},
+    "_dsd_tags": ["_+lab", "_.dev+dev-dri-renderd128"],
+})["_dsd_results"]
+by_host = {r["host"]: r for r in results}
+check("shared device: bound + provenance tag present -> owned",
+      by_host["/dev/dri/renderD128"]["owned"], "yes")
+check("shared device: bound but NO provenance tag -> not owned, never adopted",
+      by_host["/dev/ttyUSB3"]["owned"], "no")
+check("shared device: never bound -> absent (empty index)",
+      by_host["/dev/dri/renderD129"]["index"], "")
+
+dsd_split_task = task_named(
+    "ansible/tasks/proxmox/detach-shared-device.yml",
+    "Split results into owned, unowned, and absent",
 )
-check(
-    "detach shared device: no-op when the requested device is absent",
-    eval_set_fact(dsd_task, {
-        "shared_device_list": [{"host": "/dev/dri/renderD128"}],
-        "_dsd_config": {"stdout_lines": ["dev0: path=/dev/ttyUSB3,mode=0660"]},
-    })["_dsd_matched_indices"],
-    [],
-)
+split = eval_set_fact(dsd_split_task, {"_dsd_results": [
+    {"host": "a", "index": "0", "tag": "_.dev+a", "owned": "yes"},
+    {"host": "b", "index": "1", "tag": "_.dev+b", "owned": "no"},
+    {"host": "c", "index": "", "tag": "_.dev+c", "owned": "no"},
+]})
+check("shared device split: owned", [x["host"] for x in split["_dsd_owned"]], ["a"])
+check("shared device split: unowned (bound, not ours) is reported, not deleted",
+      [x["host"] for x in split["_dsd_unowned"]], ["b"])
+check("shared device split: absent", [x["host"] for x in split["_dsd_absent"]], ["c"])
 
 dpci_task = task_named(
     "ansible/tasks/proxmox/detach-pci-passthrough.yml",
@@ -285,6 +328,38 @@ check(
         "_dpci_config": {"stdout_lines": ["hostpci0: 0000:02:00.0,pcie=1"]},
     })["_dpci_matched_index"],
     "",
+)
+
+dpci_owned_task = task_named(
+    "ansible/tasks/proxmox/detach-pci-passthrough.yml",
+    "Resolve whether this platform actually owns the assignment",
+)
+check(
+    "PCI: assigned here AND provenance tag present -> owned",
+    eval_set_fact(dpci_owned_task, {
+        "pci_passthrough_device": {"id": "0000:01:00.0"},
+        "_dpci_matched_index": "1",
+        "_dpci_tags": ["_+lab", "_.dev+0000-01-00-0"],
+    })["_dpci_owned"],
+    True,
+)
+check(
+    "PCI: assigned here but NO provenance tag -> not owned, never adopted",
+    eval_set_fact(dpci_owned_task, {
+        "pci_passthrough_device": {"id": "0000:01:00.0"},
+        "_dpci_matched_index": "1",
+        "_dpci_tags": ["_+lab"],
+    })["_dpci_owned"],
+    False,
+)
+check(
+    "PCI: not assigned here at all -> not owned regardless of tags",
+    eval_set_fact(dpci_owned_task, {
+        "pci_passthrough_device": {"id": "0000:01:00.0"},
+        "_dpci_matched_index": "",
+        "_dpci_tags": ["_+lab", "_.dev+0000-01-00-0"],
+    })["_dpci_owned"],
+    False,
 )
 
 dusb_task = task_named(
@@ -320,6 +395,38 @@ check(
         "_dusb_config": {"stdout_lines": ["usb0: host=0483:5740"]},
     })["_dusb_matched_index"],
     "",
+)
+
+dusb_owned_task = task_named(
+    "ansible/tasks/proxmox/detach-usb-passthrough.yml",
+    "Resolve whether this platform actually owns the assignment",
+)
+check(
+    "USB: assigned here AND provenance tag present -> owned",
+    eval_set_fact(dusb_owned_task, {
+        "usb_passthrough_device": {"mapping": "ha-zigbee"},
+        "_dusb_matched_index": "1",
+        "_dusb_tags": ["_+lab", "_.dev+ha-zigbee"],
+    })["_dusb_owned"],
+    True,
+)
+check(
+    "USB: assigned here but NO provenance tag -> not owned, never adopted",
+    eval_set_fact(dusb_owned_task, {
+        "usb_passthrough_device": {"mapping": "ha-zigbee"},
+        "_dusb_matched_index": "1",
+        "_dusb_tags": ["_+lab"],
+    })["_dusb_owned"],
+    False,
+)
+check(
+    "USB: not assigned here at all -> not owned regardless of tags",
+    eval_set_fact(dusb_owned_task, {
+        "usb_passthrough_device": {"mapping": "ha-zigbee"},
+        "_dusb_matched_index": "",
+        "_dusb_tags": ["_+lab", "_.dev+ha-zigbee"],
+    })["_dusb_owned"],
+    False,
 )
 
 # -- Shared devices never run this ownership/conflict logic at all ------------------------
