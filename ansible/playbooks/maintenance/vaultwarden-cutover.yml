@@ -144,6 +144,16 @@
         | rejectattr('value', 'equalto', '') | list | length > 0
       no_log: true
 
+    - name: Import and verify the mail credential
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: homelab-infra/mail
+        vault_item_fields:
+          password: "{{ homelabinfra_infra.mail.password | default('') }}"
+        vault_item_secret_fields: [password]
+      when: homelabinfra_infra.mail.password | default('') | length > 0
+      no_log: true
+
     # Two items per estate, mirroring the global pair — see the comment in
     # tasks/load-user-vars.yml for why the ACME challenge token and the DNS record
     # wiring credential must not share one item.

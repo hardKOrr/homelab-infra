@@ -276,6 +276,26 @@ else:
                    "required for provider %r unless dns.instance names a guest "
                    "this platform created" % provider)
 
+    # Mail is always an external relay -- this platform never runs an SMTP server, so
+    # unlike dns/pihole there is no in-lab instance option; a configured provider always
+    # needs an address. The credential (mail.password, or a provider-specific api_key/
+    # api_secret/token) must never be authored here at all -- it lives only in
+    # homelab-infra/mail, resolved by tasks/wiring/smtp.yml at run time.
+    provider = enum(infra, "infrastructure.yml", "mail.provider", ["smtp", "none"])
+    if provider and provider != "none":
+        need(infra, "infrastructure.yml", "mail.host")
+        need(infra, "infrastructure.yml", "mail.port")
+        need(infra, "infrastructure.yml", "mail.from_address")
+        encryption = dig(infra, "mail.encryption")
+        if encryption not in (None, "", "starttls", "tls", "none"):
+            report("ERROR", "infrastructure.yml", "mail.encryption",
+                   "%r is not one of starttls, tls, none" % encryption)
+    for secret_field in ("password", "api_key", "api_secret", "token"):
+        if dig(infra, "mail.%s" % secret_field) not in (None, ""):
+            report("ERROR", "infrastructure.yml", "mail.%s" % secret_field,
+                   "must not appear in tracked config -- store it in Vaultwarden "
+                   "homelab-infra/mail instead")
+
     need(infra, "infrastructure.yml", "backups.datastore_path")
 
     # Produced during Seed mode, then supplied from encrypted control-plane storage or

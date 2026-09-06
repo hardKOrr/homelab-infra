@@ -139,6 +139,33 @@ dns:
   # points certificate issuance at the wrong module.
   # instance: pihole        # for pihole/adguard: Proxmox hostname
 
+# ── Mail ───────────────────────────────────────────────────────────────────────
+# provider: smtp | none
+# This platform never runs its own SMTP server — mail is always an external relay
+# (your provider's own SMTP endpoint, a mail-sending service's SMTP gateway, or an
+# existing internal relay). A provider-specific extension (an API-based sender such
+# as Mailgun or SES) would add its own optional fields to this same block, the way
+# opnsense adds api_secret to dns above — there is no separate mail role key per
+# provider.
+mail:
+  provider: smtp
+  host: "smtp.example.com"
+  port: 587                 # 587 (STARTTLS) or 465 (implicit TLS) are typical
+  encryption: starttls      # starttls | tls | none — default starttls
+  from_address: "homelab@example.com"
+  # from_name: "Homelab"    # optional display name paired with from_address
+  # username: "homelab@example.com"   # SMTP AUTH username, if the relay requires one
+  #
+  # The AUTH password (and any provider-specific api_key/api_secret/token) MUST NOT be
+  # authored here — config-doctor.sh rejects the run if it finds one. It is read from
+  # homelab-infra/mail after cutover, and before it from LAB_MAIL_PASSWORD, which
+  # rundeck/bootstrap-rundeck.sh asks for beside this provider. A configured provider
+  # with no credential fails the next app deploy that needs mail, by contract.
+  #
+  # tasks/wiring/smtp.yml is the one seam a mail-sending app consumes; it does not
+  # configure any application's mail settings by itself. Set provider: none to leave
+  # every mail-sending app without mail configured — the wiring is then a silent no-op.
+
 # ── Media storage ──────────────────────────────────────────────────────────────
 # Where the media apps find the library and the downloads. Configured once here
 # for the whole lab; an app says only which subdirectory of the library it owns

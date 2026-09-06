@@ -26,6 +26,9 @@ notifications:
 dns:
   provider: none
 
+mail:
+  provider: none
+
 backups:
   datastore_path: "/mnt/backup"
   schedule: "daily"

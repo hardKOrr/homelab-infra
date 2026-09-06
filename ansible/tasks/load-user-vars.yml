@@ -201,6 +201,33 @@
     or (lookup('env', 'LAB_DNS_API_SECRET') | default('', true) | length > 0)
   no_log: true
 
+- name: Overlay the authored mail provider onto the registry
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine({'mail': (_config_infrastructure | default({})).mail | default({}, true)
+                            | combine(homelabinfra_infra.mail | default({}, true))}) }}
+  when: ((_config_infrastructure | default({})).mail | default({}, true)) | length > 0
+  no_log: true
+
+# Same Seed-mode shape as the DNS record-wiring credential above: mail is always an
+# external relay, so there is nothing for a baseline-service bootstrap play to write,
+# and a lab that declares mail.provider before cutover still needs a credential the
+# first time a mail-sending app deploys. rundeck/bootstrap-rundeck.sh asks for it
+# beside mail.provider and writes /etc/homelab-infra/secrets.d/mail.env;
+# vaultwarden-cutover.yml then imports it into homelab-infra/mail.
+- name: Overlay the Seed-mode mail credential onto the registry
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine({'mail': (homelabinfra_infra.mail | default({}, true))
+                            | combine({'password': _env_mail_password} if _env_mail_password | length > 0 else {})},
+                   recursive=True) }}
+  vars:
+    _env_mail_password: "{{ lookup('env', 'LAB_MAIL_PASSWORD') | default('', true) }}"
+  when: lookup('env', 'LAB_MAIL_PASSWORD') | default('', true) | length > 0
+  no_log: true
+
 - name: Overlay canonical DNS secrets into authored provider shape
   ansible.builtin.set_fact:
     homelabinfra_config: >-
@@ -208,6 +235,7 @@
          | combine({'infrastructure': {
              'dns': homelabinfra_vault.dns | default({}),
              'notifications': homelabinfra_vault.notifications | default({}),
+             'mail': homelabinfra_vault.mail | default({}),
              'domains': _vault_estate_domains
            }}, recursive=True) }}
   vars:

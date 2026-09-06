@@ -1,0 +1,52 @@
+---
+# Resolve the platform outbound-mail contract into one `wiring_mail` fact.
+#
+# Spec: ansible/vars/CONTRACT.md, "mail — the platform outbound-mail contract". Unlike
+# tasks/wiring/<provider>.yml this creates no external resource, so it has no unwiring
+# counterpart — an app that stops sending mail simply stops including this file and
+# stops reading wiring_mail. Like notifications, mail is read directly rather than
+# selected per provider name, because "smtp" is the only shape implemented so far.
+#
+# Reads from homelabinfra_infra.mail (Shape B, see CONTRACT.md §3):
+#   provider, host, port, encryption, from_address, from_name, username, password
+#
+# Sets:
+#   wiring_mail.enabled  — false when mail.provider is "none" or absent; every consumer
+#                          must check this before writing its own SMTP settings
+#   wiring_mail.{host,port,encryption,from_address,from_name,username,password}
+#
+# The password is never authored in config/infrastructure.yml (config-doctor.sh rejects
+# it) and never appears in generated facts (ansible/scripts/secret-shape.py rejects the
+# key shape) — it is resolved here only from the in-memory Vaultwarden overlay or, before
+# cutover, from LAB_MAIL_PASSWORD (see ansible/tasks/load-user-vars.yml). This task
+# itself carries no_log so the resolved password never reaches a log or a --check diff.
+
+- name: Resolve the outbound-mail contract
+  ansible.builtin.set_fact:
+    wiring_mail:
+      enabled: "{{ homelabinfra_infra.mail.provider | default('none') != 'none' }}"
+      provider: "{{ homelabinfra_infra.mail.provider | default('none') }}"
+      host: "{{ homelabinfra_infra.mail.host | default('') }}"
+      port: "{{ homelabinfra_infra.mail.port | default('') }}"
+      encryption: "{{ homelabinfra_infra.mail.encryption | default('starttls') }}"
+      from_address: "{{ homelabinfra_infra.mail.from_address | default('') }}"
+      from_name: "{{ homelabinfra_infra.mail.from_name | default('') }}"
+      username: "{{ homelabinfra_infra.mail.username | default('') }}"
+      password: "{{ homelabinfra_infra.mail.password | default('') }}"
+  no_log: true
+
+- name: Assert a configured mail provider carries a usable credential
+  ansible.builtin.assert:
+    that:
+      - wiring_mail.host | length > 0
+      - wiring_mail.port | string | length > 0
+      - wiring_mail.from_address | length > 0
+      - wiring_mail.password | length > 0
+    fail_msg: >-
+      infrastructure.yml declares mail.provider={{ wiring_mail.provider }} but
+      homelabinfra_infra.mail is incomplete (host/port/from_address) or the credential
+      has not been imported into homelab-infra/mail yet (or LAB_MAIL_PASSWORD, before
+      cutover). A configured mail provider that cannot authenticate is a failure by
+      contract, not a silent no-op.
+  when: wiring_mail.enabled
+  no_log: true
