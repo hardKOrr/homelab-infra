@@ -157,14 +157,18 @@ mail:
   # username: "homelab@example.com"   # SMTP AUTH username, if the relay requires one
   #
   # The AUTH password (and any provider-specific api_key/api_secret/token) MUST NOT be
-  # authored here — config-doctor.sh rejects the run if it finds one. It is read from
-  # homelab-infra/mail after cutover, and before it from LAB_MAIL_PASSWORD, which
-  # rundeck/bootstrap-rundeck.sh asks for beside this provider. A configured provider
-  # with no credential fails the next app deploy that needs mail, by contract.
+  # authored here — config-doctor.sh rejects the run if it finds one. After Vaultwarden
+  # cutover it is read from homelab-infra/mail (see the Store Secret job,
+  # playbooks/maintenance/store-secret.yml). Before cutover, set it by hand:
+  # export LAB_MAIL_PASSWORD before running a playbook that needs mail —
+  # rundeck/bootstrap-rundeck.sh does not yet prompt for it (no automated Seed-mode
+  # provisioning exists for this credential today). A configured provider with no
+  # credential fails the next app deploy that needs mail, by contract.
   #
-  # tasks/wiring/smtp.yml is the one seam a mail-sending app consumes; it does not
-  # configure any application's mail settings by itself. Set provider: none to leave
-  # every mail-sending app without mail configured — the wiring is then a silent no-op.
+  # ansible/tasks/mail/resolve-mail.yml is the one seam a mail-sending app consumes; it
+  # does not configure any application's mail settings by itself. Set provider: none to
+  # leave every mail-sending app without mail configured — resolve-mail.yml then reports
+  # wiring_mail.enabled: false and no assertion runs.
 
 # ── Media storage ──────────────────────────────────────────────────────────────
 # Where the media apps find the library and the downloads. Configured once here
