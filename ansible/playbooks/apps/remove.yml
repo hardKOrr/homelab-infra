@@ -301,18 +301,17 @@
     _rm_is_postgresql: "{{ (app | default(instance)) == 'postgresql' }}"
 
   pre_tasks:
-    # PostgreSQL's unit is derived by its role and is not present in the old
-    # instance config. Discover the installed unit before removal so a legacy
-    # PostgreSQL 15 guest is stopped before delete_data can remove its files.
-    - name: Discover installed PostgreSQL service units
+    # PostgreSQL's instantiated unit is derived from the cluster configuration
+    # and is not reliably listed by systemctl list-unit-files. Discover the
+    # cluster before removal so a legacy PostgreSQL 15 guest is stopped before
+    # delete_data can remove its files.
+    - name: Discover PostgreSQL clusters
       ansible.builtin.command:
         argv:
-          - systemctl
-          - list-unit-files
-          - --type=service
-          - --no-legend
-          - "postgresql@*.service"
-      register: _rm_postgresql_units
+          - pg_lsclusters
+          - --no-header
+      register: _rm_postgresql_clusters
+      failed_when: false
       changed_when: false
       when:
         - remove_kind == 'native'
@@ -321,10 +320,14 @@
     - name: Resolve the PostgreSQL removal unit
       ansible.builtin.set_fact:
         _rm_service_name: >-
-          {{ (_rm_postgresql_units.stdout_lines | default([])
-              | select('match', '^postgresql@[0-9]+-main\.service') | list | first
-              | default('postgresql@' ~ (app_config.app.version | default('16') | string) ~ '-main.service'))
-             | regex_replace('\.service$', '') }}
+          {{ 'postgresql@' ~ _rm_postgresql_cluster[0] ~ '-' ~ _rm_postgresql_cluster[1]
+             if _rm_postgresql_cluster | length >= 2
+             else 'postgresql@' ~ (app_config.app.version | default('16') | string) ~ '-main' }}
+      vars:
+        _rm_postgresql_cluster: >-
+          {{ ((_rm_postgresql_clusters.stdout_lines | default([])
+               | select('match', '^[0-9]+\s+') | list | first | default(''))
+             | split()) }}
       when:
         - remove_kind == 'native'
         - _rm_is_postgresql | bool
