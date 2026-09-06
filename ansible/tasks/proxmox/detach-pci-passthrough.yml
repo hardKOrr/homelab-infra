@@ -1,0 +1,114 @@
+---
+# Remove a dedicated PCI device assignment from a VM guest — the recovery half of
+# attach-pci-passthrough.yml. See docs/specs/device-passthrough.md.
+#
+# Only the hostpciN entry whose device id equals pci_passthrough_device.id is removed,
+# matched on content, never on index. A hostpciN entry belonging to a different device is
+# left exactly as it is.
+#
+# Idempotent: a device already absent from this guest is a no-op. Detaching gives the
+# device back to the node, where `lspci`/`pvesh` shows it as available again for another
+# guest — there is no separate ledger to update; the guest configuration IS the record.
+#
+# Inputs:
+#   pci_passthrough_guest — VM guest hostname to detach the device from
+#   pci_passthrough_device — {id: "0000:01:00.0"} — same shape as
+#                            attach-pci-passthrough.yml; only `id` is read here
+#
+# Runs on localhost, delegating node commands to the node itself.
+
+- name: Detach PCI passthrough | Assert required input
+  ansible.builtin.assert:
+    that:
+      - pci_passthrough_guest is defined
+      - pci_passthrough_device is defined
+      - pci_passthrough_device.id is defined
+    fail_msg: >-
+      detach-pci-passthrough.yml needs pci_passthrough_guest and
+      pci_passthrough_device.id.
+
+- name: Detach PCI passthrough | List every VM on the node
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dpci_vm_list
+  changed_when: false
+
+- name: Detach PCI passthrough | Extract the vmid for {{ pci_passthrough_guest }}
+  ansible.builtin.set_fact:
+    _dpci_vmid: >-
+      {{ (_dpci_entry | map(attribute='vmid') | list | first)
+         | default('') | string }}
+    _dpci_was_running: >-
+      {{ (_dpci_entry | map(attribute='status') | list | first)
+         | default('') == 'running' }}
+  vars:
+    _dpci_entry: >-
+      {{ _dpci_vm_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', pci_passthrough_guest) | list }}
+
+- name: Detach PCI passthrough | Assert the guest was found
+  ansible.builtin.assert:
+    that: _dpci_vmid | length > 0
+    fail_msg: >-
+      No VM named {{ pci_passthrough_guest }} on node
+      {{ homelabinfra_config.proxmox.node }}. Nothing can be detached from a guest that
+      `qm list` does not show.
+
+- name: Detach PCI passthrough | Read the guest's current configuration
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ _dpci_vmid }}/config"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dpci_config
+  changed_when: false
+
+- name: Detach PCI passthrough | Resolve whether the device is assigned here, and at what index
+  ansible.builtin.set_fact:
+    _dpci_matched_index: >-
+      {{ (_dpci_hostpci_lines
+          | map('regex_replace', '^hostpci([0-9]+):\s*([^,]+).*$', '\1|\2')
+          | select('search', '\|' ~ (pci_passthrough_device.id | regex_escape) ~ '$')
+          | map('regex_replace', '^([0-9]+)\|.*$', '\1')
+          | list | first) | default('') }}
+  vars:
+    _dpci_hostpci_lines: >-
+      {{ _dpci_config.stdout_lines | select('match', '^hostpci[0-9]+:') | list }}
+
+- name: Detach PCI passthrough | Stop the guest so the device can be removed
+  ansible.builtin.command:
+    cmd: "qm shutdown {{ _dpci_vmid }} --forceStop 1 --timeout 120"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _dpci_matched_index | length > 0 and _dpci_was_running | bool
+  changed_when: true
+
+- name: Detach PCI passthrough | Wait for the guest to reach stopped
+  ansible.builtin.command:
+    cmd: "qm status {{ _dpci_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dpci_stop_check
+  until: _dpci_stop_check.stdout is search('stopped')
+  retries: 30
+  delay: 4
+  when: _dpci_matched_index | length > 0 and _dpci_was_running | bool
+  changed_when: false
+
+- name: Detach PCI passthrough | Remove the device
+  ansible.builtin.command:
+    cmd: "qm set {{ _dpci_vmid }} -delete hostpci{{ _dpci_matched_index }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _dpci_matched_index | length > 0
+  changed_when: true
+
+- name: Detach PCI passthrough | Start the guest again
+  ansible.builtin.command:
+    cmd: "qm start {{ _dpci_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  when: _dpci_matched_index | length > 0 and _dpci_was_running | bool
+  changed_when: true
+
+- name: Detach PCI passthrough | Report what was removed
+  ansible.builtin.debug:
+    msg: >-
+      {{ pci_passthrough_guest }} (vmid {{ _dpci_vmid }}): {{ pci_passthrough_device.id }}
+      {{ 'detached this run, host and device state are inspectable via lspci/pvesh' if _dpci_matched_index | length > 0 else 'was already absent' }}.

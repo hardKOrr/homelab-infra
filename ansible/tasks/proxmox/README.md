@@ -42,12 +42,20 @@ inventory.
 
 `attach-shared-device.yml` binds a host device node (an iGPU) into one or more LXC guests —
 several guests may hold it at once. `attach-pci-passthrough.yml` and
-`attach-usb-passthrough.yml` assign a PCI or USB device to exactly one VM guest, exclusively;
-the device leaves the node for that guest, so a second assignment is a preflight failure, not
-a reassignment. All three run after `lxc-create.yml` / `vm-create.yml`, never in place of
-them, and each asserts the target guest carries the `_+lab` ownership tag before writing
-anything. See [`../../../docs/specs/device-passthrough.md`](../../../docs/specs/device-passthrough.md)
-for the full contract, including why the shared and dedicated modes are not interchangeable.
+`attach-usb-passthrough.yml` assign a PCI device, or a Proxmox USB resource mapping, to
+exactly one VM guest, exclusively; the device leaves the node for that guest, so a second
+assignment is a preflight failure, not a reassignment. All three run after `lxc-create.yml` /
+`vm-create.yml`, never in place of them, and each asserts the target guest carries the
+`_+lab` ownership tag before writing anything.
+
+Each attach seam has a matching detach seam — `detach-shared-device.yml`,
+`detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that removes only the binding
+whose content matches the caller's input, leaving every other `devN`/`hostpciN`/`usbN` entry
+and the guest itself untouched.
+
+See [`../../../docs/specs/device-passthrough.md`](../../../docs/specs/device-passthrough.md)
+for the full contract, including why the shared and dedicated modes are not interchangeable
+and why USB devices are identified by resource mapping rather than vendor:product.
 
 ## Guest application records
 
