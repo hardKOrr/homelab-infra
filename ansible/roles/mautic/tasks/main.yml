@@ -54,6 +54,13 @@
     path: "{{ mautic_config_file }}"
   register: _mautic_local_php_stat
 
+# Moved ahead of the config tasks below, because they need it: whether `db_driver` and
+# `site_url` belong in local.php at all depends on whether the installer has run yet.
+- name: Mautic | Check whether the application is already installed
+  ansible.builtin.stat:
+    path: "{{ mautic_project_dir }}/.installed"
+  register: _mautic_installed_marker
+
 # Seeds a brand-new file only. See the header comment in templates/local.php.j2: Mautic
 # writes its own keys into this same file — most importantly `secret_key`, minted during
 # `mautic:install` below — that this role does not generate and would otherwise silently
@@ -74,24 +81,55 @@
 # above all — untouched. Idempotent against the seed task above: the line this task
 # looks for and the line the seed template writes are byte-identical, so a first deploy
 # converges here with no change.
+#
+# `db_driver` and `site_url` are DELIBERATELY EXCLUDED until `.installed` exists.
+# mautic/docker-mautic's own entrypoints (common/startup/wait_for_mautic_install.sh,
+# common/entrypoint_mautic_web.sh) treat "both of these are non-empty in local.php" as
+# their only signal that Mautic is already installed: mautic_web runs
+# `doctrine:migrations:migrate` instead of waiting the moment it sees them, and
+# mautic_cron/mautic_worker block on that same check before starting at all. Writing
+# them before this role's own `mautic:install` task below has run would make the image's
+# entrypoint apply raw schema migrations to an empty database — skipping the seed data,
+# roles and admin user `mautic:install` creates — and then have this role's installer
+# run second, against a database in a state it was never designed to see. `site_url` is
+# supplied to `mautic:install` as its own CLI argument and `db_driver` needs no value
+# from this role at all; both end up in local.php because Mautic's installer, like its
+# web wizard, writes them there itself once installation actually succeeds.
+#
+# Every value is escaped for a PHP single-quoted string (backslash, then quote) before
+# it reaches `line:` — an unescaped `'` or `\` in a database or mail credential would
+# otherwise terminate the PHP string early and corrupt this file, which the platform
+# would then read as a syntax error on every subsequent request.
+# `line:` is a block scalar, deliberately, not a quoted string: a double-quoted YAML
+# string applies its OWN backslash escaping before Jinja ever sees the content, which
+# collapses the `replace('\\', '\\\\')` below into something Jinja can't even parse. A
+# block scalar carries every backslash and quote through to Jinja untouched.
 - name: Mautic | Converge platform-owned configuration fields
   ansible.builtin.lineinfile:
     path: "{{ mautic_config_file }}"
     regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
-    line: "    '{{ item.key }}' => '{{ item.value }}',"
+    line: >-
+      '{{ item.key }}' => '{{ item.value | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    # Without this, a key absent from a mail-disabled deploy's local.php (or from a
+    # pre-install one) is inserted at end-of-file by lineinfile's own default — AFTER
+    # the closing `);` of the PHP array, which is not valid PHP. Every new key this
+    # task adds must land inside the array instead.
+    insertbefore: '^\);$'
   loop: "{{ _mautic_local_php_fields }}"
   loop_control:
     label: "{{ item.key }}"
   vars:
     _mautic_local_php_fields: >-
-      {{ [
+      {{ ([
            {'key': 'db_driver', 'value': 'pdo_mysql'},
+           {'key': 'site_url', 'value': 'https://' ~ mautic_fqdn},
+         ] if _mautic_installed_marker.stat.exists else [])
+         + [
            {'key': 'db_host', 'value': app_config.app.database_host},
            {'key': 'db_port', 'value': app_config.app.database_port},
            {'key': 'db_name', 'value': app_config.app.database.name},
            {'key': 'db_user', 'value': app_config.app.database_user},
            {'key': 'db_password', 'value': app_config.app.database_password},
-           {'key': 'site_url', 'value': 'https://' ~ mautic_fqdn},
          ]
          + ([
            {'key': 'mailer_from_name',
@@ -149,11 +187,8 @@
 # roles/odoo's `--init`: this role has no way to drive a web wizard, and re-running an
 # installer against an already-installed database is destructive rather than idempotent,
 # so a marker file is what makes a second run a no-op instead of a second attempt.
-- name: Mautic | Check whether the application is already installed
-  ansible.builtin.stat:
-    path: "{{ mautic_project_dir }}/.installed"
-  register: _mautic_installed_marker
-
+# (`_mautic_installed_marker` was resolved earlier in this file, ahead of the local.php
+# tasks that also need to know whether installation has happened yet.)
 - name: Mautic | Run the non-interactive installer
   ansible.builtin.command:
     argv:

@@ -28,12 +28,27 @@ need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'mautic_worker
 need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'DOCKER_MAUTIC_ROLE: mautic_cron'
 need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'DOCKER_MAUTIC_ROLE: mautic_worker'
 
+# Confirmed against mautic/docker-mautic's own common/startup/wait_for_mautic_install.sh
+# and common/entrypoint_mautic_web.sh: both treat non-empty db_driver + site_url in
+# local.php as their only "already installed" signal, so the seed this role writes
+# before mautic:install has ever run must not carry either key.
+python3 - "$repo/ansible/roles/mautic/templates/local.php.j2" <<'PYEOF'
+import sys
+content = open(sys.argv[1]).read()
+assert "'db_driver'" not in content, "the seed template must not write db_driver"
+assert "'site_url'" not in content, "the seed template must not write site_url"
+assert "replace('\\\\', '\\\\\\\\')" in content, "seed values must be PHP-escaped too"
+print("Mautic local.php seed correctly omits the installed-state sentinel: OK")
+PYEOF
+
 # The rendered Compose file embeds MAUTIC_DB_PASSWORD; a diff/failure of the render task
 # must not print it. The installer runs as www-data, the same user every persisted
 # volume is chowned to, so its generated cache/config files stay usable by the web,
 # cron and worker services. local.php is seeded only when absent — never re-templated
 # wholesale — and then converged field-by-field, so Mautic's own secret_key (and
-# anything else this role does not generate) survives a second deploy.
+# anything else this role does not generate) survives a second deploy. db_driver and
+# site_url are converged only after `.installed` exists, and every converged value is
+# PHP-escaped and inserted inside the array rather than appended after its closing `);`.
 python3 - "$repo/ansible/roles/mautic/tasks/main.yml" <<'PYEOF'
 import sys, yaml
 tasks = yaml.safe_load(open(sys.argv[1]))
@@ -52,7 +67,18 @@ assert seed.get("no_log") is True, "the seed task embeds MAUTIC_DB_PASSWORD and 
 
 converge = by_name["Mautic | Converge platform-owned configuration fields"]
 assert converge.get("no_log") is True, "the converge task embeds MAUTIC_DB_PASSWORD and must be no_log"
-assert converge["ansible.builtin.lineinfile"]["path"] == "{{ mautic_config_file }}"
+lineinfile = converge["ansible.builtin.lineinfile"]
+assert lineinfile["path"] == "{{ mautic_config_file }}"
+assert lineinfile.get("insertbefore"), \
+    "a key absent from local.php must be inserted before the closing ');', not appended after it"
+line_tmpl = lineinfile["line"]
+assert "replace('\\\\', '\\\\\\\\')" in line_tmpl and "replace(\"'\", \"\\\\'\")" in line_tmpl, \
+    "every value written into local.php must be escaped for a PHP single-quoted string"
+fields_expr = converge["vars"]["_mautic_local_php_fields"]
+assert "_mautic_installed_marker.stat.exists else []" in fields_expr, \
+    "db_driver/site_url must stay out of local.php until installation has completed"
+assert fields_expr.index("db_driver") < fields_expr.index("_mautic_installed_marker.stat.exists else []"), \
+    "db_driver must be inside the installed-only branch of the fields list"
 
 installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]

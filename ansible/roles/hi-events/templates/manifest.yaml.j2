@@ -119,30 +119,36 @@ spec:
               # volume shadowing what the image just created) and could break commands
               # that expect them to already exist.
               mountPath: /app/backend/storage/app
-          # AN EXEC PROBE, NOT httpGet — DELIBERATELY.
+          # AN EXEC PROBE WITH TWO CHECKS, NOT A PLAIN httpGet — DELIBERATELY.
           #
           # docker/all-in-one/scripts/startup.sh (this image's PID 1, baked in and not
           # something this role can change) runs `php artisan migrate --force`, and on
           # failure only echoes an error — it does not exit, and execs supervisord
-          # (nginx + php-fpm + the frontend) regardless. `/` is nginx's own root
-          # location, proxied straight to the frontend Node process: it answers 200
-          # whether or not migrations ever succeeded, which would make an httpGet probe
-          # on it report ready while the backend's schema — and therefore every API
-          # workflow — is broken.
+          # (nginx + php-fpm + the frontend) regardless. Checking only migration state
+          # has the opposite gap: it would report ready while nginx, php-fpm or the
+          # frontend Node process is down or still starting, wiring a Service endpoint
+          # that answers nothing. Kubernetes runs one probe per container, so both
+          # checks have to live in this one script:
           #
-          # `migrate:status` reads the same database this role provisioned and lists
-          # every migration's applied/pending state without side effects. Checked here
-          # instead: the command's own exit code (nonzero when the database is
-          # unreachable at all) and its output for "Pending" (a migration `startup.sh`
-          # never got to apply). Either failure keeps the pod NotReady — traffic is
-          # withheld until the schema this pod needs is actually in place, converging
-          # once a redeploy or a manual `artisan migrate` completes it.
+          #   1. an actual HTTP GET of `/` from inside the pod — nginx's own root
+          #      location, proxied to the frontend Node process (nginx.conf) — using
+          #      PHP's http:// stream wrapper rather than depending on curl or wget
+          #      being present in this image (neither is installed by
+          #      Dockerfile.all-in-one; php always is).
+          #   2. `migrate:status` against the database this role provisioned, checked
+          #      for the command's own exit code (nonzero when the database is
+          #      unreachable at all) and for "Pending" in its output (a migration
+          #      startup.sh never got to apply).
+          #
+          # Either failure keeps the pod NotReady — traffic is withheld until the pod
+          # is both actually serving and running the schema it needs.
           readinessProbe:
             exec:
               command:
                 - sh
                 - -c
                 - >-
+                  php -r 'exit(@file_get_contents("http://127.0.0.1/") !== false ? 0 : 1);' &&
                   cd /app/backend &&
                   OUT=$(php artisan migrate:status 2>&1); RC=$?;
                   [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending

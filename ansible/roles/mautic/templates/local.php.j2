@@ -15,23 +15,31 @@
 // next deploy, which is destructive rather than idempotent — the same reasoning
 // roles/mixpost and roles/odoo already apply to APP_KEY/db credentials, extended here to
 // a config file this role does not fully own.
+//
+// NO `db_driver` OR `site_url` HERE, DELIBERATELY
+//
+// mautic/docker-mautic's own entrypoints treat "both of these are non-empty in
+// local.php" as their only signal that Mautic is already installed — see the identical,
+// longer comment on roles/mautic/tasks/main.yml's converge task. Seeding them before
+// `mautic:install` has ever run would make the image apply raw schema migrations to an
+// empty database instead of waiting for this role's own installer. Both keys, along
+// with `secret_key`, are written into this file by Mautic itself once installation
+// actually succeeds.
 $parameters = array(
-    'db_driver' => 'pdo_mysql',
-    'db_host' => '{{ app_config.app.database_host }}',
-    'db_port' => '{{ app_config.app.database_port }}',
-    'db_name' => '{{ app_config.app.database.name }}',
-    'db_user' => '{{ app_config.app.database_user }}',
-    'db_password' => '{{ app_config.app.database_password }}',
+    'db_host' => '{{ app_config.app.database_host | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_port' => '{{ app_config.app.database_port | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_name' => '{{ app_config.app.database.name | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_user' => '{{ app_config.app.database_user | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_password' => '{{ app_config.app.database_password | replace('\\', '\\\\') | replace("'", "\\'") }}',
     'db_table_prefix' => '',
-    'site_url' => 'https://{{ mautic_fqdn }}',
 {% if wiring_mail.enabled | default(false) | bool %}
-    'mailer_from_name' => '{{ wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true) }}',
-    'mailer_from_email' => '{{ wiring_mail.from_address }}',
+    'mailer_from_name' => '{{ (wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true)) | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_from_email' => '{{ wiring_mail.from_address | replace('\\', '\\\\') | replace("'", "\\'") }}',
     'mailer_transport' => 'smtp',
-    'mailer_host' => '{{ wiring_mail.host }}',
-    'mailer_port' => '{{ wiring_mail.port }}',
-    'mailer_user' => '{{ wiring_mail.username }}',
-    'mailer_password' => '{{ wiring_mail.password }}',
+    'mailer_host' => '{{ wiring_mail.host | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_port' => '{{ wiring_mail.port | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_user' => '{{ wiring_mail.username | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_password' => '{{ wiring_mail.password | replace('\\', '\\\\') | replace("'", "\\'") }}',
     'mailer_encryption' => '{{ 'ssl' if wiring_mail.encryption == 'ssl' else 'tls' }}',
     'mailer_auth_mode' => 'login',
 {% endif %}
