@@ -401,6 +401,16 @@
           # absent — the one check standing between a misread `spec.local.path` and an
           # `rm -rf` on a path this platform never created.
           storage_path: "{{ k8s_cluster_config.storage.path }}"
+          # Shared storage is opt-in and remains a separate class so consumers must name
+          # it deliberately. Target details are topology/accountability, not credentials.
+          shared_storage_enabled: "{{ k8s_cluster_config.shared_storage.enabled | default(false) | bool }}"
+          shared_storage_class: >-
+            {{ k8s_cluster_config.shared_storage.class
+               if (k8s_cluster_config.shared_storage.enabled | default(false) | bool) else '' }}
+          shared_storage_snapshot_class: >-
+            {{ k8s_cluster_config.shared_storage.snapshot.class
+               if (k8s_cluster_config.shared_storage.enabled | default(false) | bool) else '' }}
+          shared_storage_target: "{{ k8s_cluster_config.shared_storage.target | default({}) }}"
           failure_domain_mode: "{{ k8s_cluster_config.cluster.failure_domain_mode }}"
           # The declarations verbatim. Every field in them is topology — name, Proxmox
           # placement, address, sizing, taints, template vmid — so there is nothing to

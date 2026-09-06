@@ -25,6 +25,7 @@ bash gate/test.sh
 | [#10](https://github.com/hardKOrr/homelab-infra/issues/10) | [507 — Stale service detection](507-stale-service-detection/README.md) | Detect and report services still running replaced code; restart them only through the maintenance schedule |
 | [#11](https://github.com/hardKOrr/homelab-infra/issues/11) | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Add read-only, evidence-ranked triage for Plex client log bundles |
 | [#12](https://github.com/hardKOrr/homelab-infra/issues/12) | [408 — Application catalog](408-app-catalog/README.md) | Implement its application batches in the order defined by that slice |
+| [#46](https://github.com/hardKOrr/homelab-infra/issues/46) | [046 — Kubernetes shared storage](046-kubernetes-shared-storage/README.md) | Run and record the approved-target shared-volume, node-loss, snapshot, and restore drill |
 
 The following option slices refine application-catalog rows and have no issue of their own
 yet. Their own dependencies and acceptance criteria decide when each is actionable; file an

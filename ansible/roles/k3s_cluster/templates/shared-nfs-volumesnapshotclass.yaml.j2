@@ -1,0 +1,12 @@
+# CSI snapshots are crash-consistent filesystem artifacts. Application-consistent recovery
+# still requires the owning application's quiesce/dump and restore contract.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ k8s_cluster_config.shared_storage.snapshot.class }}
+  annotations:
+    homelab-infra.io/description: >-
+      NFS CSI snapshot artifact. Retain it until the tested restore and the storage-target
+      owner's retention policy permit explicit deletion.
+driver: {{ k8s_cluster_config.shared_storage.driver }}
+deletionPolicy: {{ k8s_cluster_config.shared_storage.snapshot.deletion_policy }}

@@ -1,0 +1,24 @@
+# A non-default class: an existing PVC never changes class, and an unqualified future PVC
+# continues to receive homelab-local-path. See tasks/kubernetes/README.md before migration.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ k8s_cluster_config.shared_storage.class }}
+  annotations:
+    homelab-infra.io/description: >-
+      Shared NFSv4 storage through nfs.csi.k8s.io. The export is externally owned;
+      Kubernetes-node loss does not make a single-replica application highly available.
+provisioner: {{ k8s_cluster_config.shared_storage.driver }}
+parameters:
+  server: {{ k8s_cluster_config.shared_storage.target.server | quote }}
+  share: {{ k8s_cluster_config.shared_storage.target.share | quote }}
+  # Keep directories when a PV is deliberately deleted. The StorageClass itself has
+  # Retain too; both are required to make data removal a separate, explicit operation.
+  onDelete: retain
+reclaimPolicy: {{ k8s_cluster_config.shared_storage.reclaim_policy }}
+volumeBindingMode: Immediate
+allowVolumeExpansion: {{ k8s_cluster_config.shared_storage.allow_volume_expansion | bool | lower }}
+mountOptions:
+{% for option in k8s_cluster_config.shared_storage.mount_options %}
+  - {{ option | quote }}
+{% endfor %}

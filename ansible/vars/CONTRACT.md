@@ -51,6 +51,7 @@ backups:       { instance, host, datastore, datastore_path, api_token_id }
 vaultwarden:   { host, port }
 kubernetes:    { instance, provider, version, host, ingress_vip, ingress_controller,
                  storage_class, storage_reclaim_policy, storage_path,
+                 shared_storage_enabled, shared_storage_class, shared_storage_snapshot_class, shared_storage_target,
                  failure_domain_mode, nodes }
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
@@ -121,6 +122,10 @@ Vaultwarden item `homelab-infra/<instance>` and never appear here.
 | `storage_class` | default StorageClass. The current `homelab-local-path` class is node-pinned: a pod whose volume lives on an unavailable node stays Pending rather than rescheduling |
 | `storage_reclaim_policy` | `Retain` — only the removal job's explicit `delete_data` removes a volume |
 | `storage_path` | the directory on each node that every volume lives under. Topology, not a secret. `maintenance/reclaim-volume.yml` refuses to delete a directory that is not under it, so the guard is inert while this is absent |
+| `shared_storage_enabled` | whether the opt-in NFS CSI contract was deployed; `false` preserves the existing node-local-only behavior |
+| `shared_storage_class` | non-default `nfs.csi.k8s.io` StorageClass. Empty when shared storage is disabled; workloads must name it explicitly |
+| `shared_storage_snapshot_class` | retained NFS CSI `VolumeSnapshotClass`. Empty when shared storage is disabled |
+| `shared_storage_target` | non-secret target accountability declaration: name, server, share, capacity owner and failure domains. It does not prove target health or capacity |
 | `failure_domain_mode` | `distinct-nodes` when every server sits on a different Proxmox node, `single` otherwise. Consumers describing availability read this rather than counting nodes |
 | `nodes` | the node declarations verbatim: name, Proxmox placement, address, sizing, taints |
 

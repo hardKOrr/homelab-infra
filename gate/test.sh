@@ -117,6 +117,7 @@ bash gate/test-config-loading.sh || rc=1
 bash gate/test-container-teardown.sh || rc=1
 bash gate/test-kind-teardown.sh || rc=1
 bash gate/test-kubernetes-namespace-ownership.sh || rc=1
+bash gate/test-kubernetes-shared-storage.sh || rc=1
 bash gate/test-fixture-secrets.sh || rc=1
 bash gate/test-workflow-policy.sh || rc=1
 exit $rc

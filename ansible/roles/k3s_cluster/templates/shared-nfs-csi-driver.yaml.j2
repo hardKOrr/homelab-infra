@@ -1,0 +1,36 @@
+# The upstream NFS CSI chart is reconciled by k3s, not a one-shot Helm command. This
+# survives a control-plane restart and records the exact chart version in cluster state.
+# The chart is the supported Kubernetes NFS CSI implementation; the NFS target is external
+# and appears only in the non-default StorageClass rendered separately.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: homelab-nfs-csi
+  namespace: kube-system
+spec:
+  chart: csi-driver-nfs
+  repo: https://kubernetes-csi.github.io/csi-driver-nfs
+  version: {{ k8s_cluster_config.shared_storage.chart_version }}
+  targetNamespace: kube-system
+  valuesContent: |-
+    driver:
+      name: {{ k8s_cluster_config.shared_storage.driver }}
+    controller:
+      replicas: {{ k8s_cluster_config.shared_storage.controller_replicas }}
+      # Controller Pods use host networking to mount the export while provisioning. Two
+      # Pods on one host collide on the liveness port, so co-location is forbidden.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: csi-nfs-controller
+    externalSnapshotter:
+      enabled: true
+    customResourceDefinitions:
+      enabled: true
+    storageClass:
+      create: false
+    volumeSnapshotClass:
+      create: false

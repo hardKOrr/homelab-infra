@@ -24,6 +24,12 @@ k3s_server_token_path: /var/lib/rancher/k3s/server/token
 k3s_storage_namespace: homelab-storage
 k3s_storage_provisioner_deployment: local-path-provisioner
 
+# Names declared by templates/shared-nfs-csi-driver.yaml.j2. These are role-owned
+# implementation identities rather than user configuration, so readiness checks and the
+# HelmChart manifest cannot drift apart.
+k3s_shared_storage_controller_deployment: csi-nfs-controller
+k3s_shared_storage_node_daemonset: csi-nfs-node
+
 # How long to wait for a joining server to report Ready. Three minutes is generous for a
 # LAN join and short enough that a genuinely stuck node fails the job rather than
 # hanging it.

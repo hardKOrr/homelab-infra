@@ -195,6 +195,15 @@
 - name: k3s | Apply this node's taints
   ansible.builtin.include_tasks: taints.yml
 
+# The NFS CSI node plugin uses the node's mount helper. Install it before the
+# cluster-scoped HelmChart can schedule the plugin. This remains a no-op on every
+# existing cluster because shared storage is opt-in.
+- name: k3s | Install the NFS client required by opted-in shared storage
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
 # storage.yml and metallb.yml are NOT called here, though both are cluster-scoped and the
 # founder is the obvious place to put them.
 #
