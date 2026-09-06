@@ -194,6 +194,14 @@
 # The shared class is deliberately a separate, opt-in contract. It is never default and
 # cannot be enabled with a half-described target: an NFS endpoint alone says nothing about
 # who owns capacity, snapshots or the Proxmox/external failure domains behind it.
+- name: k3s shared storage | Resolve nodes eligible to run CSI controllers
+  ansible.builtin.set_fact:
+    # The CSI controller does not tolerate this platform's quorum-only taint. Count only
+    # explicitly untainted nodes, because controller Pods require hostname anti-affinity.
+    _k3s_shared_storage_schedulable_nodes: >-
+      {{ k8s_cluster_config.cluster.nodes | selectattr('taints', 'equalto', []) | list }}
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
 - name: k3s shared storage | Assert the opted-in NFS CSI contract is complete
   ansible.builtin.assert:
     that:
@@ -212,15 +220,16 @@
       - not (k8s_cluster_config.shared_storage.allow_volume_expansion | bool)
       - k8s_cluster_config.shared_storage.controller_replicas | int >= 1
       - k8s_cluster_config.shared_storage.controller_replicas | int
-        <= k8s_cluster_config.cluster.nodes | length
+        <= _k3s_shared_storage_schedulable_nodes | length
       - k8s_cluster_config.shared_storage.snapshot.class | default('') | length > 0
       - k8s_cluster_config.shared_storage.snapshot.deletion_policy == 'Retain'
     fail_msg: >-
       shared_storage needs a non-default class, the supported nfs.csi.k8s.io driver, a
       pinned MAJOR.MINOR.PATCH chart_version, an approved target name/server/share, named
       capacity owner and failure domains, Retain policies, mount options, disabled volume
-      expansion, a controller replica count no greater than the declared node count, and
-      a retained snapshot class. The NFS target is not created or verified by this role;
+      expansion, a controller replica count no greater than the explicitly untainted,
+      schedulable node count ({{ _k3s_shared_storage_schedulable_nodes | length }}), and a
+      retained snapshot class. The NFS target is not created or verified by this role;
       declare its accountable owner and run the live drill in tasks/kubernetes/README.md.
   when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
 

@@ -47,6 +47,14 @@ for required in \
   grep -Fq -- "$required" "$storage_tasks" || fail "missing convergence safeguard: $required"
 done
 
+grep -Fq 'k3s shared storage | Resolve nodes eligible to run CSI controllers' "$storage_tasks" \
+  || fail "CSI controller preflight does not resolve schedulable nodes"
+grep -Fq "selectattr('taints', 'equalto', [])" "$storage_tasks" \
+  || fail "CSI controller preflight does not exclude tainted nodes"
+if grep -Fq '<= k8s_cluster_config.cluster.nodes | length' "$storage_tasks"; then
+  fail "CSI controller preflight counts total nodes instead of schedulable nodes"
+fi
+
 grep -Fq 'k8s_cluster_config.shared_storage.driver' "$repo/ansible/roles/k3s_cluster/templates/shared-nfs-csi-driver.yaml.j2" \
   || fail "CSI driver template does not use the supported NFS CSI identity"
 grep -Fq 'podAntiAffinity:' "$repo/ansible/roles/k3s_cluster/templates/shared-nfs-csi-driver.yaml.j2" \
