@@ -211,12 +211,14 @@ single row's implementer re-decides it.
   because passthrough removes that adapter from every other guest on the node. Whoever
   implements the first GPU row builds the contract for both modes, not only the mode that
   row needs.
-- **SMTP is a platform contract; its shape is not yet decided.** mautic, acellemail, hi.events,
-  paperless-ngx and nextcloud all send mail, and `notifications` (Ntfy) is not the same
-  thing. The lab wants a mail provider configured once and handed to apps. Provider,
-  relay and setup are open. The first row that needs mail scopes it as an
-  `infrastructure.yml` block plus Vaultwarden credentials, injected into each app's own
-  mail settings — not as a private SMTP config inside one app.
+- **SMTP is a platform contract — scoped 2026-09-06, see slice 418.** mautic, acellemail,
+  hi.events, paperless-ngx and nextcloud all send mail, and `notifications` (Ntfy) is not
+  the same thing. `infrastructure.mail` (`provider: smtp | none`) is validated by
+  `config-doctor.sh`, its credential lives only in `homelab-infra/mail`, and
+  `ansible/tasks/mail/resolve-mail.yml` is the one seam any app includes to get a
+  resolved `wiring_mail` fact — not a private SMTP config inside one app. No app yet
+  consumes it; the row that implements the first mail-sending app proves the contract
+  end-to-end.
 
 ## Remaining
 
@@ -234,10 +236,11 @@ single row's implementer re-decides it.
 - [ ] Batch C implemented
 - [x] The open decisions are resolved and recorded above (2026-08-17)
 - [x] `hermes agent` identified — NousResearch/hermes-agent, now a Batch C row (2026-08-17)
-- [ ] The SMTP contract is scoped by the first row that needs mail
+- [x] The SMTP contract is scoped — see slice 418 (2026-09-06)
 - [ ] The GPU contract covers both shared-iGPU-on-LXC and dedicated-passthrough-on-VM
 
 ## Links
+- `docs/meta/418-platform-mail-contract/README.md` — the SMTP contract this ledger flagged
 - `ansible/vars/media-wiring.yml` — the media-registry kinds Batch A rows join
 - `ansible/roles/_template-docker/`, `ansible/roles/_template-native/` — what a new row copies
 - `docs/meta/done/505-app-servarr/notes.md` — the one-role-four-apps decision record

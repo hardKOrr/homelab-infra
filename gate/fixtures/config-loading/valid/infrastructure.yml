@@ -21,6 +21,12 @@ dns:
   provider: opnsense
   host: "198.51.100.1"
 
+mail:
+  provider: smtp
+  host: "smtp.fixture.invalid"
+  port: 587
+  from_address: "lab@fixture.invalid"
+
 backups:
   datastore_path: "/mnt/backup"
   schedule: "daily"

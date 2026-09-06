@@ -20,6 +20,9 @@ notifications:
 dns:
   provider: none
 
+mail:
+  provider: none
+
 maintenance:
   boot:
     order: 30   # overrides the git-managed default (50) -- see gate/test-config-fixtures.sh,

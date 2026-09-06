@@ -46,6 +46,7 @@ notifications: { provider, instance, host, topic }   # NOT ntfy_url — consumer
 monitoring:    { provider, instance, host, admin_user, notification_id }
 metrics:       { provider, instance, host, prometheus_host, admin_user }
 dns:           { provider, host }
+mail:          { provider, host, port, encryption, from_address, from_name, username }
 backups:       { instance, host, datastore, datastore_path, api_token_id }
 vaultwarden:   { host, port }
 kubernetes:    { instance, provider, version, host, ingress_vip, ingress_controller,
@@ -102,6 +103,7 @@ and read only by that provider's wiring tasks:
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
+| `mail` | `password` | smtp | SMTP AUTH password for `mail.username`; Vaultwarden-only, never authored |
 
 `monitoring` is the role key for uptime monitoring. Do not use a provider-named
 `uptime_kuma` key.
@@ -169,6 +171,23 @@ scheme when it is missing.
 
 Do not use the superseded pre-built `notifications.ntfy_url` shape. The registry stores
 `notifications.host` and `notifications.topic`; consumers build the URL.
+
+**`mail` — the platform outbound-mail contract.** Always an external relay: this platform
+never runs an SMTP server, so `mail.host` is a bare hostname like `dns.host` and is never
+resolved from the Proxmox inventory. `mail.provider` is `smtp` (a generic SMTP relay — the
+only shape implemented so far) or `none`. A provider-specific extension (an API-based
+sending service such as Mailgun or SES) adds its own optional fields to this same block
+the way `dns` adds `api_secret` for OPNsense, rather than inventing a second mail role key.
+`mail.username` is the non-secret half of SMTP AUTH (often the same value as
+`from_address`); the password never appears in tracked config or generated facts — it
+lives only in `homelab-infra/mail`. Like `notifications`, mail has no per-record
+external resource to create, so there is no `tasks/wiring/<provider>.yml` pair — an app
+that sends mail includes the shared `ansible/tasks/mail/resolve-mail.yml`, which reads
+`homelabinfra_infra.mail` and sets one `wiring_mail` fact
+(`enabled, provider, host, port, encryption, from_address, from_name, username,
+password`) with `no_log: true`. `wiring_mail.enabled` is `false` whenever
+`mail.provider` is `none` or absent, and every consumer must check it before writing its
+own SMTP settings — `resolve-mail.yml` does not configure any application itself.
 
 ## 4. Merge order (low → high precedence)
 
@@ -272,6 +291,14 @@ exists on the wire.
 | `dns.host` | required for external providers | not in Proxmox inventory |
 | `dns.api_key` | optional | |
 | `dns.instance` | optional | |
+| `mail.provider` | optional, default `none` | `smtp \| none` — absent means disabled, exactly like an explicit `none`, so an existing checkout with no `mail:` block keeps passing `config-doctor.sh` unchanged |
+| `mail.host` | required unless provider `none` | SMTP relay hostname; never in Proxmox inventory |
+| `mail.port` | required unless provider `none` | typically `587` (STARTTLS) or `465` (implicit TLS) |
+| `mail.encryption` | optional | `starttls \| tls \| none`; default `starttls` |
+| `mail.from_address` | required unless provider `none` | the envelope/header From every app sends as |
+| `mail.from_name` | optional | display name paired with `from_address` |
+| `mail.username` | optional | SMTP AUTH username, often equal to `from_address` |
+| `mail.password`, `mail.api_key`, `mail.api_secret`, `mail.token` | rejected | secret-shaped fields must never be authored here — `config-doctor.sh` fails the run; store the credential in `homelab-infra/mail` |
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
 | `maintenance.schedule` | optional | when the lab may be DISRUPTED — `always`, `never`, or a window `{days, start, duration}`. Defaults to nightly 04:00 for 120 minutes. Update cadence is unaffected; only reboots and container restarts wait for it. `never` is notify-only |
@@ -380,6 +407,7 @@ The canonical top-level items are:
 | `homelab-infra/metrics` | `admin_password` |
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |
+| `homelab-infra/mail` | `password` |
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | application-owned credentials. Database provisioning writes `database_provider`, `database_host`, `database_port`, `database_name`, `database_user`, and hidden `database_password` here; the backend never places an application password in generated facts. |
@@ -397,13 +425,15 @@ options or config-file values:
 | `VAULTWARDEN_ADMIN_TOKEN` | server administration, enrollment and recovery | admin API only |
 | `RUNDECK_API_TOKEN` | job import/cutover control-plane calls | selected maintenance jobs only |
 
-Two more environment variables are Seed-mode inputs rather than control-plane material.
+Three more environment variables are Seed-mode inputs rather than control-plane material.
 `CLOUDFLARE_API_TOKEN` supplies the ACME DNS-01 challenge credential
-(`reverse_proxy.dns_challenge`), and `LAB_DNS_API_KEY` / `LAB_DNS_API_SECRET` supply the
-DNS provider's own RECORD-WIRING credential, overlaid onto `homelabinfra_infra.dns` by
+(`reverse_proxy.dns_challenge`), `LAB_DNS_API_KEY` / `LAB_DNS_API_SECRET` supply the
+DNS provider's own RECORD-WIRING credential, and `LAB_MAIL_PASSWORD` supplies the SMTP
+AUTH password — all three overlaid onto `homelabinfra_infra.{dns,mail}` by
 `load-user-vars.yml`. They are different credentials for different jobs — one proves
-domain ownership to a CA, the other writes an A record — and conflating them points
-certificate issuance at a module that is not the ACME provider.
+domain ownership to a CA, one writes an A record, one authenticates outbound mail — and
+conflating them points certificate issuance, or an app's mail settings, at the wrong
+material.
 
 `rundeck/bootstrap-rundeck.sh` asks for the record-wiring credential in the same breath as
 `dns.provider` and writes `/etc/homelab-infra/secrets.d/dns.env`; `vaultwarden-cutover.yml`

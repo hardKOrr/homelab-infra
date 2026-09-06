@@ -36,6 +36,13 @@ issue against one when it is ready to work:
 | CRM | [413 — Odoo](413-odoo-crm/README.md), [414 — SuiteCRM](414-suitecrm/README.md), [415 — Twenty](415-twenty-crm/README.md), [416 — EspoCRM](416-espocrm/README.md) |
 | Email marketing | [417 — AcelleMail](417-acellemail-email-marketing/README.md) |
 
+The following slice has no remaining repository implementation unless a Batch C
+consumer's own acceptance exposes a defect:
+
+| Issue | Slice | Remaining evidence |
+| --- | --- | --- |
+| [#47](https://github.com/hardKOrr/homelab-infra/issues/47) | [418 — Platform mail contract](418-platform-mail-contract/README.md) | A disposable-mailbox send test and credential-rotation test once a live provider account, sender domain and test mailbox are named; the first Batch C row that needs mail proving the contract end-to-end |
+
 ## Built; awaiting observation
 
 These slices have no remaining repository implementation unless an observation exposes a
