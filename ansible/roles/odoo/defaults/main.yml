@@ -1,0 +1,4 @@
+---
+odoo_project_dir: "/opt/{{ instance }}"
+odoo_env_file: "{{ odoo_project_dir }}/.env"
+odoo_config_file: "{{ odoo_project_dir }}/odoo.conf"

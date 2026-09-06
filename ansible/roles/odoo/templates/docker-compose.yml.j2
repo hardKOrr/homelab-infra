@@ -1,0 +1,19 @@
+{{ ansible_managed | comment }}
+services:
+  odoo:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-odoo"
+    restart: unless-stopped
+    command: ["odoo", "--config=/etc/odoo/odoo.conf"]
+    ports:
+      - "{{ app_config.app.port }}:8069"
+    env_file: .env
+    volumes:
+      - "{{ app_config.app.filestore_path }}:/var/lib/odoo"
+      - "{{ odoo_config_file }}:/etc/odoo/odoo.conf:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8069/web/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

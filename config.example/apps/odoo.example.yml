@@ -1,0 +1,18 @@
+---
+# Odoo Community CRM. Deploy the named PostgreSQL backend first.
+# Odoo 18 Community is paired with PostgreSQL 16 (Odoo supports PostgreSQL 12+).
+# Community CRM includes leads, opportunities, pipeline stages, activities and reporting.
+# Enterprise-only features such as Studio, VoIP, lead mining and advanced support are not
+# enabled or required by this baseline.
+app:
+  database:
+    instance: postgresql-odoo
+    name: odoo
+    role: odoo
+  filestore_path: /opt/odoo/odoo/filestore
+routing:
+  access: internal
+  identity: catalog
+backup:
+  enabled: true
+  schedule: "0 3 * * *"

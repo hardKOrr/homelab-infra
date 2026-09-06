@@ -1,0 +1,24 @@
+---
+odoo_defaults:
+  stack: services
+  app:
+    image: docker.io/odoo:18.0
+    port: 8069
+    database:
+      provider: postgresql
+      instance: postgresql-odoo
+      name: odoo
+      role: odoo
+    filestore_path: "/opt/odoo/{{ instance }}/filestore"
+    admin_user: admin
+  routing:
+    subdomain: odoo
+    proxy: internal
+    access: internal
+    identity: catalog
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+  crm:
+    modules: [crm]

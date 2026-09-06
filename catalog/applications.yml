@@ -339,3 +339,11 @@ applications:
     root: Platform
     category: Data Services
     scope: lab
+
+  odoo:
+    name: Odoo Community CRM
+    job: deploy-odoo.yaml
+    root: Applications
+    category: Business and CRM
+    type: Customer Relationship Management
+    scope: estate

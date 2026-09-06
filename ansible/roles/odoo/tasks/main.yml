@@ -1,0 +1,129 @@
+---
+- name: Odoo | Assert the supported Community CRM baseline
+  ansible.builtin.assert:
+    that:
+      - app_config.crm.modules | default(['crm']) is iterable
+      - "'crm' in (app_config.crm.modules | default(['crm']))"
+      - (app_config.crm.modules | default(['crm']) | intersect(['studio', 'voip', 'iap', 'lead_mining'])) | length == 0
+    fail_msg: >-
+      The supported baseline must include Community crm. Enterprise-only modules are not
+      deployment dependencies; add other Community modules explicitly in instance config.
+
+- name: Odoo | Create project and filestore directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ odoo_project_dir }}"
+    - "{{ app_config.app.filestore_path }}"
+
+- name: Odoo | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: Odoo | Generate or reuse administrator password
+  ansible.builtin.set_fact:
+    _odoo_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Odoo | Store credentials in the canonical Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: odoo-community
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _odoo_admin_password }}"
+      database_provider: postgresql
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      filestore_path: "{{ app_config.app.filestore_path }}"
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+- name: Odoo | Render configuration
+  ansible.builtin.template:
+    src: odoo.conf.j2
+    dest: "{{ odoo_config_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart odoo
+
+- name: Odoo | Render environment
+  ansible.builtin.copy:
+    dest: "{{ odoo_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "ODOO_DATABASE_PASSWORD={{ app_config.app.database_password }}\n"
+  no_log: true
+  notify: Restart odoo
+
+- name: Odoo | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ odoo_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart odoo
+
+- name: Odoo | Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ odoo_project_dir }}"
+
+- name: Odoo | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ odoo_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Odoo | Initialize the CRM database once
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ odoo_project_dir }}"
+      - run
+      - --rm
+      - odoo
+      - odoo
+      - --config=/etc/odoo/odoo.conf
+      - "--database={{ app_config.app.database.name }}"
+      - --init=crm
+      - --without-demo=all
+      - --stop-after-init
+  args:
+    creates: "{{ odoo_project_dir }}/.crm-initialized"
+  no_log: true
+
+- name: Odoo | Record completed CRM initialization
+  ansible.builtin.file:
+    path: "{{ odoo_project_dir }}/.crm-initialized"
+    state: touch
+    mode: "0600"
+
+- name: Odoo | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Odoo | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/web/health"
+    status_code: 200
+  register: _odoo_health
+  until: _odoo_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
