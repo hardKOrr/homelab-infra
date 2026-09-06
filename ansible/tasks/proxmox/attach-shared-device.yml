@@ -11,10 +11,15 @@
 # never touched, and nothing is ever removed. Entries are matched on host path, not index —
 # PVE assigns indices in its own order.
 #
-# Every requested device also gets a `_.dev+<slug>` guest tag — durable, project-owned
-# proof of authorship that detach-shared-device.yml requires before it will remove a devN
-# entry. A devN path match alone cannot show this platform wrote it rather than an
-# operator; the tag is what makes that provable.
+# Every device this call itself binds also gets a `_.dev+<slug>` guest tag, written in the
+# SAME `pct set` call as the bind — durable, project-owned proof of authorship that
+# detach-shared-device.yml requires before it will remove a devN entry. A devN path match
+# alone cannot show this platform wrote it rather than an operator, so a device that was
+# ALREADY present before this run — including one an operator bound by hand — is never
+# tagged after the fact: tagging happens only at the moment of binding, never retroactively
+# on an already-satisfied request. Combining bind and tag into one API call also means
+# there is no window where the device is bound but the tag write is still pending: either
+# both land or neither does, and a failed run is simply retried.
 #
 # Inputs:
 #   shared_device_guest — LXC guest hostname to bind into
@@ -123,43 +128,42 @@
     _sd_missing: >-
       {{ shared_device_list | rejectattr('host', 'in', _sd_existing_hosts) | list }}
 
-- name: Shared device | Bind the missing devices
-  ansible.builtin.command:
-    cmd: >-
-      pct set {{ _sd_vmid }}
-      -dev{{ _sd_next_index }} path={{ item.host }}{{
-        ',mode=' ~ item.mode if item.mode is defined else '' }}
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  loop: "{{ _sd_missing }}"
-  loop_control:
-    label: "{{ item.host }}"
-    index_var: _sd_loop_index
-  vars:
-    _sd_next_index: >-
-      {{ ((_sd_used_indices + range(0, 256) | list) | unique
-          | difference(_sd_used_indices))[_sd_loop_index] }}
-  changed_when: true
-
-# A content match (the devN path) does not by itself prove THIS platform created the
-# entry — an operator can bind the identical device by hand. A `_.dev+<slug>` tag per
-# requested device is the durable, guest-inspectable proof detach-shared-device.yml
-# requires before it will remove anything; see docs/specs/device-passthrough.md.
-- name: Shared device | Resolve the provenance tags this guest should carry
+# Free indices for the devices being bound THIS run, taken up front so every device in
+# _sd_missing gets a distinct one in the single combined command below.
+- name: Shared device | Resolve the free indices for the devices being bound this run
   ansible.builtin.set_fact:
-    _sd_provenance_tags: >-
-      {{ shared_device_list | map(attribute='host')
+    _sd_free_indices: >-
+      {{ ((_sd_used_indices + range(0, 256) | list) | unique
+          | difference(_sd_used_indices))[0:(_sd_missing | length)] }}
+    _sd_current_tags: "{{ _sd_tags | reject('equalto', '') | list }}"
+
+# Provenance tags only for the devices THIS run is about to bind — never for a device
+# already present, whether this platform bound it on a prior run or an operator bound it
+# by hand. That is what keeps a pre-existing, untagged, operator-created entry unowned.
+- name: Shared device | Resolve the provenance tags for the devices being bound this run
+  ansible.builtin.set_fact:
+    _sd_new_provenance_tags: >-
+      {{ _sd_missing | map(attribute='host')
          | map('lower') | map('regex_replace', '[^a-z0-9]+', '-')
          | map('regex_replace', '^-+|-+$', '')
          | map('regex_replace', '^(.*)$', '_.dev+\1') | list }}
-    _sd_current_tags: "{{ _sd_tags | reject('equalto', '') | list }}"
 
-- name: Shared device | Write the provenance tags if any are missing
+# One `pct set` call binds every missing device AND writes their provenance tags. Atomic:
+# PVE applies every -devN/-tags argument in the call or none of them, so there is no
+# partially-bound, partially-tagged state a rerun would need to reconcile — a failed call
+# is simply retried, and _sd_missing/_sd_existing_hosts are recomputed from scratch next
+# time.
+- name: Shared device | Bind the missing devices and their provenance tags in one call
   ansible.builtin.command:
     cmd: >-
       pct set {{ _sd_vmid }}
-      -tags {{ (_sd_current_tags | union(_sd_provenance_tags)) | unique | sort | join(';') }}
+      {% for pair in _sd_missing | zip(_sd_free_indices) %}
+      -dev{{ pair[1] }} path={{ pair[0].host }}{{
+        ',mode=' ~ pair[0].mode if pair[0].mode is defined else '' }}
+      {% endfor %}
+      -tags {{ (_sd_current_tags | union(_sd_new_provenance_tags)) | unique | sort | join(';') }}
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: (_sd_provenance_tags | difference(_sd_current_tags)) | length > 0
+  when: _sd_missing | length > 0
   changed_when: true
 
 # PVE hotplugs a devN entry into a running unprivileged container without a restart, unlike

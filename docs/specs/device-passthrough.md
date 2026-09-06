@@ -46,6 +46,19 @@ which remains authoritative for guest ownership and creation.
   guest-inspectable (`pct config` / `qm config` show it in `tags:`, the same way the
   `_+lab` ownership tag is), requires no side ledger, and is what "project-owned" means
   operationally in this contract.
+  - **The tag is written only at the moment of binding, never retroactively.** Each attach
+    seam writes the `_.dev+<slug>` tag in the SAME `pct set` / `qm set` call that performs
+    the bind or assignment, gated on the same condition that gates the bind itself (the
+    device was absent before this run). A device or mapping that was already present
+    before this run — whether bound by this platform on an earlier run or by an operator
+    by hand — is never tagged after the fact merely because attach happened to run again
+    and found nothing to do. This is what keeps a pre-existing, untagged, operator-created
+    binding permanently unowned rather than silently adopted on the next attach.
+  - **Bind and tag land together, or neither does.** Because both are arguments to one
+    Proxmox API call, there is no window in which a device is bound but its provenance tag
+    write is still outstanding. A failed call leaves the device absent, exactly as before
+    the run, and a retry attempts the whole bind-and-tag operation again — there is no
+    separate recovery step or reconciliation pass needed for a tag that failed to write.
 - **Removal and recovery detach only a binding this platform can prove it made.** Every
   attach seam has a matching detach seam — `detach-shared-device.yml`,
   `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — and each first asserts the

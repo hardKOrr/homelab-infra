@@ -10,10 +10,12 @@
 # cannot be shared, and moving it out from under a guest that is using it is a decision this
 # platform will not make for an operator.
 #
-# The guest also gets a `_.dev+<slug>` tag naming this exact device — durable,
-# project-owned proof of authorship that detach-pci-passthrough.yml requires before it
-# will remove the hostpciN entry. A hostpciN content match alone cannot show this platform
-# wrote it rather than an operator; the tag is what makes that provable.
+# The guest also gets a `_.dev+<slug>` tag naming this exact device, written atomically
+# with the assignment and only when this run performs it — durable, project-owned proof of
+# authorship that detach-pci-passthrough.yml requires before it will remove the hostpciN
+# entry. A hostpciN content match alone cannot show this platform wrote it rather than an
+# operator; the tag is what makes that provable, and it is never added retroactively to a
+# device that was already assigned before this run.
 #
 # Inputs:
 #   pci_passthrough_guest — VM guest hostname to assign the device to
@@ -165,15 +167,29 @@
   when: not _pci_already_present and _pci_was_running | bool
   changed_when: false
 
-- name: PCI passthrough | Assign the device
+# A content match on hostpciN does not by itself prove THIS platform assigned the device
+# — an operator can passthrough the identical address by hand. The `_.dev+<slug>` tag is
+# written in the SAME `qm set` call as the assignment, only when this run is the one
+# performing it (`not _pci_already_present`): a device already assigned before this run —
+# including one an operator assigned by hand — is never tagged after the fact. Combining
+# assignment and tag into one API call also means there is no window where the device is
+# assigned but the tag write is still pending; a failed call is simply retried, and
+# `_pci_already_present` is recomputed from scratch next run.
+- name: PCI passthrough | Assign the device and its provenance tag
   ansible.builtin.command:
     cmd: >-
       qm set {{ _pci_vmid }}
       -hostpci{{ _pci_next_index }} {{ pci_passthrough_device.id }}{{
         ',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else '' }}
+      -tags {{ (_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';') }}
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   when: not _pci_already_present
   changed_when: true
+  vars:
+    _pci_current_tags: "{{ _pci_tags | reject('equalto', '') | list }}"
+    _pci_provenance_tag: >-
+      _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
+               | regex_replace('^-+|-+$', '') }}
 
 - name: PCI passthrough | Start the guest again
   ansible.builtin.command:
@@ -181,24 +197,6 @@
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   when: not _pci_already_present and _pci_was_running | bool
   changed_when: true
-
-# A content match on hostpciN does not by itself prove THIS platform assigned the device
-# — an operator can passthrough the identical address by hand. A `_.dev+<slug>` tag is the
-# durable, guest-inspectable proof detach-pci-passthrough.yml requires before it will
-# remove anything; see docs/specs/device-passthrough.md.
-- name: PCI passthrough | Write the provenance tag if missing
-  ansible.builtin.command:
-    cmd: >-
-      qm set {{ _pci_vmid }}
-      -tags {{ (_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';') }}
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _pci_provenance_tag not in _pci_current_tags
-  changed_when: true
-  vars:
-    _pci_current_tags: "{{ _pci_tags | reject('equalto', '') | list }}"
-    _pci_provenance_tag: >-
-      _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
-               | regex_replace('^-+|-+$', '') }}
 
 - name: PCI passthrough | Report what is assigned
   ansible.builtin.debug:

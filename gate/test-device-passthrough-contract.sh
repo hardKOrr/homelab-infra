@@ -249,6 +249,70 @@ def eval_set_fact(task, context):
         return json.loads(out.read_text(encoding="utf-8"))
 
 
+# -- Attach must never tag a binding that already existed before this run -----------------
+# The provenance tag is only trustworthy if it is written exactly when, and only when, THIS
+# run performs the bind/assignment. If attach re-tagged an already-present device on every
+# rerun, an operator's own pre-existing, untagged entry would be silently adopted the next
+# time attach happened to run — which is exactly the gap this regression test closes.
+
+# PCI and USB: the single combined "assign + tag" task must be gated on the same
+# `not _..._already_present` condition that gates the assignment itself — there is no
+# separate tag-write path that could diverge from it.
+for path, task_name, present_var in (
+    ("ansible/tasks/proxmox/attach-pci-passthrough.yml",
+     "PCI passthrough | Assign the device and its provenance tag", "_pci_already_present"),
+    ("ansible/tasks/proxmox/attach-usb-passthrough.yml",
+     "USB passthrough | Assign the device and its provenance tag", "_usb_already_present"),
+):
+    task = task_named(path, task_name)
+    when = task.get("when")
+    if isinstance(when, list):
+        when = " and ".join(str(w) for w in when)
+    if ("not %s" % present_var) not in str(when):
+        failures.append(
+            "%s: %r must run only when the device was NOT already present "
+            "(when=%r) — otherwise a rerun would retroactively tag a pre-existing, "
+            "possibly operator-created, entry" % (path, task_name, when)
+        )
+    if "-tags" not in task["ansible.builtin.command"]["cmd"]:
+        failures.append(
+            "%s: %r must write -tags in the SAME command as the assignment, so a bind "
+            "and its provenance tag land atomically" % (path, task_name)
+        )
+
+# Shared device: the combined bind+tag command must build its tag list from _sd_missing
+# (devices THIS run is about to bind), never from the full shared_device_list — otherwise
+# an already-bound, untagged device would be tagged just because it was named again.
+sd_bind_task = task_named(
+    "ansible/tasks/proxmox/attach-shared-device.yml",
+    "Bind the missing devices and their provenance tags in one call",
+)
+sd_bind_cmd = sd_bind_task["ansible.builtin.command"]["cmd"]
+if "_sd_missing" not in sd_bind_cmd or "shared_device_list" in sd_bind_cmd:
+    failures.append(
+        "attach-shared-device.yml's bind+tag command must be built from _sd_missing "
+        "only, not the full shared_device_list, or an already-bound device would be "
+        "retagged on every rerun"
+    )
+sd_tags_task = task_named(
+    "ansible/tasks/proxmox/attach-shared-device.yml",
+    "Resolve the provenance tags for the devices being bound this run",
+)
+sd_tags_expr = sd_tags_task["ansible.builtin.set_fact"]["_sd_new_provenance_tags"]
+if "_sd_missing" not in sd_tags_expr or "shared_device_list" in sd_tags_expr:
+    failures.append(
+        "attach-shared-device.yml must compute _sd_new_provenance_tags from _sd_missing "
+        "only — tagging every requested host, including ones already bound, would adopt "
+        "pre-existing operator-created binds on a rerun"
+    )
+check(
+    "shared device: provenance tags cover only the device THIS run binds, not one already present",
+    eval_set_fact(sd_tags_task, {
+        "_sd_missing": [{"host": "/dev/dri/renderD128"}],
+    })["_sd_new_provenance_tags"],
+    ["_.dev+dev-dri-renderd128"],
+)
+
 # -- Detach: ownership guard on every detach seam, exactly like attach --------------------
 for path, tags_var in (
     ("ansible/tasks/proxmox/detach-shared-device.yml", "_dsd_tags"),
