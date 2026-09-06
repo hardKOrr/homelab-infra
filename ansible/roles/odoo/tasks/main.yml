@@ -84,9 +84,16 @@
     state: present
     remove_orphans: true
 
+- name: Odoo | Validate requested Community modules
+  ansible.builtin.assert:
+    that:
+      - app_config.crm.modules | default(['crm']) is sequence
+      - (app_config.crm.modules | default(['crm']) | select('match', '^[a-z][a-z0-9_]*$') | list | length) == (app_config.crm.modules | default(['crm']) | length)
+    fail_msg: "crm.modules must be a list of safe Odoo module names."
+
 - name: Odoo | Resolve requested Community modules
   ansible.builtin.set_fact:
-    _odoo_modules: "{{ app_config.crm.modules | default(['crm']) | join(',') }}"
+    _odoo_modules: "{{ app_config.crm.modules | default(['crm']) | unique | sort | join(',') }}"
 
 - name: Odoo | Read completed module set
   ansible.builtin.slurp:
