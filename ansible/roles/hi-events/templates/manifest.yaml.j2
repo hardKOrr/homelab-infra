@@ -111,15 +111,22 @@ spec:
             - name: storage
               # The image's Laravel application root is /app/backend, not
               # /var/www/html — see the comment on app.storage in
-              # vars/app-defaults/hi-events.yml.
-              mountPath: /app/backend/storage
+              # vars/app-defaults/hi-events.yml. Mounted at .../storage/app,
+              # deliberately one level below Laravel's storage/ root: storage/framework
+              # (view/session/cache scaffolding) and storage/logs are image-owned and
+              # recreated by docker/all-in-one/scripts/startup.sh on every start, and a
+              # PVC mounted over the whole storage/ directory would hide them (an empty
+              # volume shadowing what the image just created) and could break commands
+              # that expect them to already exist.
+              mountPath: /app/backend/storage/app
           readinessProbe:
             httpGet:
-              # Laravel's own health route (backend/routes/web.php), answering
-              # {"status":"ok"}. The kubelet prober does not follow the SPA's own
-              # frontend fallback, so this proves the backend is actually up rather
-              # than only the static asset server in front of it.
-              path: /up
+              # `/` — the pinned v1.11.1-beta backend has no `/up` or `/api/status`
+              # route (that route only exists on the unreleased `develop` branch); `/`
+              # is nginx's own root location (docker/all-in-one/nginx/nginx.conf),
+              # proxied straight to the frontend's Node process, so it answers 200
+              # whenever the pod is actually serving traffic.
+              path: /
               port: {{ app_config.app.port }}
             initialDelaySeconds: 30
             periodSeconds: 10

@@ -105,7 +105,9 @@
     wiring_subdomain: "{{ hostvars['localhost'].hi_events_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].hi_events_fqdn }}"
     wiring_app_display: "Hi.Events ({{ instance }})"
-    wiring_monitor_url: "https://{{ hostvars['localhost'].hi_events_fqdn }}/api/status"
+    # `/`, not an /api/status-style route — the pinned image ships no such route. See
+    # the identical readinessProbe comment in roles/hi-events/templates/manifest.yaml.j2.
+    wiring_monitor_url: "https://{{ hostvars['localhost'].hi_events_fqdn }}/"
     wiring_auth_group: "homelab-users"
     wiring_identity_mode: "{{ hostvars['localhost'].app_config.routing.identity | default('catalog') }}"
     wiring_access: "{{ hostvars['localhost'].app_config.routing.access | default('public') }}"

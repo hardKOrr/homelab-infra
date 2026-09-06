@@ -28,6 +28,22 @@ need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'mautic_worker
 need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'DOCKER_MAUTIC_ROLE: mautic_cron'
 need "$repo/ansible/roles/mautic/templates/docker-compose.yml.j2" 'DOCKER_MAUTIC_ROLE: mautic_worker'
 
+# The rendered Compose file embeds MAUTIC_DB_PASSWORD; a diff/failure of the render task
+# must not print it. The installer runs as www-data, the same user every persisted
+# volume is chowned to, so its generated cache/config files stay usable by the web,
+# cron and worker services.
+python3 - "$repo/ansible/roles/mautic/tasks/main.yml" <<'PYEOF'
+import sys, yaml
+tasks = yaml.safe_load(open(sys.argv[1]))
+render = next(t for t in tasks if t.get("name") == "Mautic | Render Compose project")
+assert render.get("no_log") is True, "Render Compose project task must set no_log: true"
+installer = next(t for t in tasks if t.get("name") == "Mautic | Run the non-interactive installer")
+argv = installer["ansible.builtin.command"]["argv"]
+assert "--user" in argv and argv[argv.index("--user") + 1] == "www-data", \
+    "installer must run as --user www-data"
+print("Mautic secret-handling and installer-user checks: OK")
+PYEOF
+
 need "$repo/catalog/applications.yml" 'job: deploy-mautic.yaml'
 need "$repo/rundeck/jobs/deploy-mautic.yaml" 'Run playbooks/apps/mautic.yml'
 

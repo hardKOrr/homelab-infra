@@ -99,20 +99,32 @@
       JWT_SECRET: "{{ _he_jwt_secret }}"
       APP_ENV: production
       APP_DEBUG: "false"
+      # Laravel's own base URL (config/app.php, read by the `url()`/`asset()` helpers)
+      # and, specifically, the public-disk URL builder
+      # (backend/config/filesystems.php: 'url' => env('APP_URL').'/storage') — without
+      # it Laravel falls back to its 'http://localhost' default and every uploaded
+      # event/ticket image link breaks for anyone off this host.
+      APP_URL: "https://{{ hi_events_fqdn }}"
       APP_FRONTEND_URL: "https://{{ hi_events_fqdn }}"
       APP_CDN_URL: "https://{{ hi_events_fqdn }}/storage"
       APP_DISABLE_REGISTRATION: "false"
       APP_SAAS_MODE_ENABLED: "false"
-      # The frontend is a Vite SPA whose API base URLs are baked in by this image's own
-      # startup script (docker/all-in-one/scripts/startup.sh) from these three, not from
-      # a build-time argument — CLIENT is what the attendee's browser calls, SERVER is
-      # this container calling its own backend over loopback for anything rendered
-      # server-side, and both share one origin because the all-in-one image serves
-      # frontend and API from the same nginx on port 80.
+      # The frontend Node process (docker/all-in-one/supervisor/supervisord.conf's
+      # `[program:nodejs]`) reads these three through supervisord's own
+      # `%(ENV_VAR)s` expansion, not a build-time argument — CLIENT is what the
+      # attendee's browser calls, SERVER is this container calling its own backend over
+      # loopback for anything rendered server-side, and both share one origin because
+      # the all-in-one image serves frontend and API from the same nginx on port 80.
       VITE_FRONTEND_URL: "https://{{ hi_events_fqdn }}"
       VITE_API_URL_CLIENT: "https://{{ hi_events_fqdn }}/api"
-      VITE_API_URL_SERVER: "http://localhost/api"
+      VITE_API_URL_SERVER: "http://localhost:80/api"
       VITE_APP_NAME: "Hi.Events"
+      # supervisord's `%(ENV_VITE_STRIPE_PUBLISHABLE_KEY)s` expansion is unconditional —
+      # an ABSENT variable (not merely an empty one) fails supervisord's own config
+      # parse and the container never starts any of its processes, Stripe or not. This
+      # platform has no payment-provider contract yet, so it is always present and
+      # empty; a lab wanting ticket sales sets app.stripe_publishable_key.
+      VITE_STRIPE_PUBLISHABLE_KEY: "{{ app_config.app.stripe_publishable_key | default('', true) }}"
       LOG_CHANNEL: stderr
       QUEUE_CONNECTION: redis
       WEBHOOK_QUEUE_NAME: webhook-queue

@@ -66,6 +66,10 @@
     owner: root
     group: root
     mode: "0640"
+  # The rendered file embeds MAUTIC_DB_PASSWORD in plain text (docker-compose.yml.j2's
+  # x-mautic-env anchor) — a diff or failure output would otherwise print it, contrary
+  # to docs/specs/secrets-handling.md.
+  no_log: true
   notify: Restart mautic
 
 - name: Mautic | Pull image
@@ -110,9 +114,13 @@
       - "{{ mautic_project_dir }}"
       - exec
       - -T
+      - --user
+      - www-data
+      - --workdir
+      - /var/www/html
       - mautic_web
       - php
-      - /var/www/html/bin/console
+      - bin/console
       - mautic:install
       - "https://{{ mautic_fqdn }}"
       - "--admin_email={{ app_config.app.admin_user }}@{{ homelabinfra_infra.domain | default('invalid') }}"
