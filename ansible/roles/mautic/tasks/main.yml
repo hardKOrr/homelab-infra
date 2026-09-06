@@ -118,6 +118,16 @@
   loop: "{{ _mautic_local_php_fields }}"
   loop_control:
     label: "{{ item.key }}"
+  # `_mautic_local_php_fields`'s mail branch is an explicit disabled path, not merely
+  # an empty one: `wiring_mail.enabled` turning false — infrastructure.mail.provider
+  # set back to `none` after a deployment that had it configured — must actively clear
+  # the relay, username and password already converged into local.php, not leave
+  # `lineinfile` with nothing in its loop and the stale SMTP credentials untouched.
+  # `mailer_transport: mail` is Mautic's own credential-free fallback (PHP's built-in
+  # mail()), so this state is not merely "the relay's credentials are blanked" but
+  # "Mautic no longer has a relay to send through at all". This comment lives up here,
+  # not inside the block scalar below: a `#` line inside a `>-` block is literal
+  # content, not a YAML or Jinja comment, and would corrupt the expression Jinja parses.
   vars:
     _mautic_local_php_fields: >-
       {{ ([
@@ -142,7 +152,15 @@
            {'key': 'mailer_password', 'value': wiring_mail.password},
            {'key': 'mailer_encryption', 'value': 'ssl' if wiring_mail.encryption == 'ssl' else 'tls'},
            {'key': 'mailer_auth_mode', 'value': 'login'},
-         ] if wiring_mail.enabled | default(false) | bool else []) }}
+         ] if wiring_mail.enabled | default(false) | bool else [
+           {'key': 'mailer_transport', 'value': 'mail'},
+           {'key': 'mailer_host', 'value': ''},
+           {'key': 'mailer_port', 'value': ''},
+           {'key': 'mailer_user', 'value': ''},
+           {'key': 'mailer_password', 'value': ''},
+           {'key': 'mailer_encryption', 'value': ''},
+           {'key': 'mailer_auth_mode', 'value': ''},
+         ]) }}
   no_log: true
   notify: Restart mautic
 

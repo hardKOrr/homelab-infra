@@ -119,7 +119,7 @@ spec:
               # volume shadowing what the image just created) and could break commands
               # that expect them to already exist.
               mountPath: /app/backend/storage/app
-          # AN EXEC PROBE WITH TWO CHECKS, NOT A PLAIN httpGet — DELIBERATELY.
+          # AN EXEC PROBE WITH THREE CHECKS, NOT A PLAIN httpGet — DELIBERATELY.
           #
           # docker/all-in-one/scripts/startup.sh (this image's PID 1, baked in and not
           # something this role can change) runs `php artisan migrate --force`, and on
@@ -127,21 +127,29 @@ spec:
           # (nginx + php-fpm + the frontend) regardless. Checking only migration state
           # has the opposite gap: it would report ready while nginx, php-fpm or the
           # frontend Node process is down or still starting, wiring a Service endpoint
-          # that answers nothing. Kubernetes runs one probe per container, so both
-          # checks have to live in this one script:
+          # that answers nothing. And the frontend root alone proves only nginx and
+          # Node — nginx's `/` location (nginx.conf) proxies straight to the Node
+          # process and never reaches PHP-FPM, so a crash-looping PHP-FPM leaves every
+          # API-backed flow broken while both of those checks still pass. Kubernetes
+          # runs one probe per container, so all three checks have to live in this one
+          # script:
           #
-          #   1. an actual HTTP GET of `/` from inside the pod — nginx's own root
-          #      location, proxied to the frontend Node process (nginx.conf) — using
-          #      PHP's http:// stream wrapper rather than depending on curl or wget
-          #      being present in this image (neither is installed by
-          #      Dockerfile.all-in-one; php always is).
-          #   2. `migrate:status` against the database this role provisioned, checked
+          #   1. an actual HTTP GET of `/` from inside the pod — nginx's root,
+          #      proxied to the frontend Node process — proving nginx and Node.
+          #   2. an HTTP GET of `/api/public/color-themes` — an unauthenticated route
+          #      (backend/routes/api.php, inside the `/public` group) that nginx's
+          #      `location ^~ /api/` rewrites straight to PHP-FPM, so this is the one
+          #      check that actually traverses PHP-FPM and Laravel's own router.
+          #   3. `migrate:status` against the database this role provisioned, checked
           #      for the command's own exit code (nonzero when the database is
           #      unreachable at all) and for "Pending" in its output (a migration
           #      startup.sh never got to apply).
           #
-          # Either failure keeps the pod NotReady — traffic is withheld until the pod
-          # is both actually serving and running the schema it needs.
+          # Both HTTP checks use PHP's http:// stream wrapper rather than curl or
+          # wget, since this image ships neither (confirmed against
+          # Dockerfile.all-in-one) but always ships php. Any failure keeps the pod
+          # NotReady — traffic is withheld until the pod is serving through its full
+          # stack and running the schema it needs.
           readinessProbe:
             exec:
               command:
@@ -149,6 +157,7 @@ spec:
                 - -c
                 - >-
                   php -r 'exit(@file_get_contents("http://127.0.0.1/") !== false ? 0 : 1);' &&
+                  php -r 'exit(@file_get_contents("http://127.0.0.1/api/public/color-themes") !== false ? 0 : 1);' &&
                   cd /app/backend &&
                   OUT=$(php artisan migrate:status 2>&1); RC=$?;
                   [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending

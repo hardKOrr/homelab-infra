@@ -38,11 +38,14 @@ need "$repo/ansible/roles/hi-events/tasks/main.yml" 'VITE_STRIPE_PUBLISHABLE_KEY
 need "$repo/ansible/roles/hi-events/tasks/main.yml" 'APP_URL: "https://{{ hi_events_fqdn }}"'
 
 # docker/all-in-one/scripts/startup.sh (this image's PID 1) does not exit when
-# `php artisan migrate --force` fails — it execs supervisord regardless — so a probe
-# that only checks migration state, or only checks HTTP, each miss a different way for
-# the pod to be falsely Ready. The in-cluster readinessProbe must be exec-based and
-# check both; the external Uptime Kuma monitor, which cannot exec into the pod, is
-# documented as the weaker of the two rather than given the same claim.
+# `php artisan migrate --force` fails — it execs supervisord regardless — and
+# nginx.conf's `/` location proxies straight to the frontend Node process, never
+# reaching PHP-FPM. A probe checking only migration state, or only the frontend root,
+# each miss a different way for the pod to be falsely Ready — including PHP-FPM itself
+# crash-looping while nginx and Node are fine. The in-cluster readinessProbe must be
+# exec-based and check all three; the external Uptime Kuma monitor, which cannot exec
+# into the pod, is documented as the weakest of the three rather than given the same
+# claim.
 absent() { grep -Fq -- "$2" "$1" && { echo "unwanted Hi.Events contract: $2" >&2; exit 1; }; return 0; }
 absent "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" 'httpGet:'
 python3 - "$repo/ansible/roles/hi-events/templates/manifest.yaml.j2" <<'PYEOF'
@@ -52,10 +55,13 @@ m = re.search(r"readinessProbe:\n(.*?)\n\s*initialDelaySeconds", text, re.S)
 assert m, "readinessProbe block not found"
 probe = m.group(1)
 assert "exec:" in probe, "readinessProbe must be exec-based, not httpGet"
-assert "file_get_contents" in probe, "readinessProbe must also check that nginx/frontend actually answers HTTP"
+assert probe.count("file_get_contents") == 2, \
+    "readinessProbe must check both the frontend root and a PHP-FPM-backed API route"
+assert "/api/public/color-themes" in probe, \
+    "readinessProbe must traverse PHP-FPM through a real, unauthenticated API route"
 assert "migrate:status" in probe, "readinessProbe must inspect migration status"
 assert "Pending" in probe, "readinessProbe must fail while a migration is pending"
-print("Hi.Events readiness probe checks both local HTTP and migration state: OK")
+print("Hi.Events readiness probe checks the frontend, PHP-FPM/API, and migration state: OK")
 PYEOF
 need "$repo/ansible/playbooks/apps/hi-events.yml" "hi_events_fqdn }}/\""
 

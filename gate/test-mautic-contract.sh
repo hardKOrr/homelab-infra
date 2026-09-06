@@ -80,6 +80,37 @@ assert "_mautic_installed_marker.stat.exists else []" in fields_expr, \
 assert fields_expr.index("db_driver") < fields_expr.index("_mautic_installed_marker.stat.exists else []"), \
     "db_driver must be inside the installed-only branch of the fields list"
 
+# Actually render the four (installed x mail-enabled) states through Jinja2, rather
+# than grep the source, to prove disabling mail after it was configured clears the
+# relay/credentials instead of the lineinfile loop simply going empty.
+# NativeEnvironment, not plain Environment: Ansible's own templar returns the real
+# Python object for a template that is a single whole expression (which is exactly
+# what makes `loop: "{{ _mautic_local_php_fields }}"` iterate dicts rather than parse
+# a string) — plain Jinja2 would only hand back that object's str() here.
+from jinja2.nativetypes import NativeEnvironment
+class AttrDict(dict):
+    def __getattr__(self, key):
+        return self[key]
+def wrap(value):
+    return AttrDict({k: wrap(v) for k, v in value.items()}) if isinstance(value, dict) else value
+
+env = NativeEnvironment()
+env.filters["bool"] = bool
+tmpl = env.from_string(fields_expr)
+app_config = wrap({"app": {"database_host": "h", "database_port": 3306, "database": {"name": "mautic"},
+                            "database_user": "u", "database_password": "p", "name": "Mautic"}})
+wiring_mail_disabled = wrap({"enabled": False, "from_name": "", "from_address": "", "host": "",
+                             "port": "", "username": "", "password": "", "encryption": ""})
+installed = wrap({"stat": {"exists": True}})
+fields = tmpl.render(app_config=app_config, wiring_mail=wiring_mail_disabled,
+                      mautic_fqdn="m.example.com", _mautic_installed_marker=installed)
+by_key = {f["key"]: f["value"] for f in fields}
+assert by_key["mailer_transport"] == "mail", \
+    "disabling mail must reset mailer_transport off the stale smtp relay"
+for key in ("mailer_host", "mailer_user", "mailer_password", "mailer_encryption", "mailer_auth_mode"):
+    assert by_key[key] == "", f"disabling mail must clear {key}, not leave the prior value in local.php"
+print("Mautic mail-disable convergence actually clears the relay/credentials: OK")
+
 installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]
 assert "--user" in argv and argv[argv.index("--user") + 1] == "www-data", \
