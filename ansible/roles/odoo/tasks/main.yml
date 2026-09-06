@@ -21,8 +21,8 @@
   ansible.builtin.file:
     path: "{{ app_config.app.filestore_path }}"
     state: directory
-    owner: "101"
-    group: "101"
+    owner: "{{ app_config.app.puid }}"
+    group: "{{ app_config.app.pgid }}"
     mode: "0750"
 
 - name: Odoo | Resolve platform mail

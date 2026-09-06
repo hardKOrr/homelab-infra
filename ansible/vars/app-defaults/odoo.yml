@@ -4,6 +4,8 @@ odoo_defaults:
   app:
     image: docker.io/odoo:18.0
     port: 8069
+    puid: 101
+    pgid: 101
     database:
       provider: postgresql
       instance: postgresql-odoo
