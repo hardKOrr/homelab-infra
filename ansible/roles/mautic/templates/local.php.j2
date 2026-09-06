@@ -1,0 +1,23 @@
+<?php
+// {{ ansible_managed }}
+$parameters = array(
+    'db_driver' => 'pdo_mysql',
+    'db_host' => '{{ app_config.app.database_host }}',
+    'db_port' => {{ app_config.app.database_port }},
+    'db_name' => '{{ app_config.app.database.name }}',
+    'db_user' => '{{ app_config.app.database_user }}',
+    'db_password' => '{{ app_config.app.database_password }}',
+    'db_table_prefix' => '',
+    'site_url' => 'https://{{ mautic_fqdn }}',
+{% if wiring_mail.enabled | default(false) | bool %}
+    'mailer_from_name' => '{{ wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true) }}',
+    'mailer_from_email' => '{{ wiring_mail.from_address }}',
+    'mailer_transport' => 'smtp',
+    'mailer_host' => '{{ wiring_mail.host }}',
+    'mailer_port' => {{ wiring_mail.port }},
+    'mailer_user' => '{{ wiring_mail.username }}',
+    'mailer_password' => '{{ wiring_mail.password }}',
+    'mailer_encryption' => '{{ 'ssl' if wiring_mail.encryption == 'ssl' else 'tls' }}',
+    'mailer_auth_mode' => 'login',
+{% endif %}
+);

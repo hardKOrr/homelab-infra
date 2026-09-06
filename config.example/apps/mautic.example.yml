@@ -1,0 +1,23 @@
+---
+# Mautic marketing automation. Deploy the named MariaDB backend first (instance
+# mariadb-mautic by default — a lab may point several apps at one shared MariaDB
+# instance instead by overriding app.database.instance below).
+#
+# Outbound mail (campaign sends, transactional email) reads infrastructure.yml's
+# mail.provider contract — configure that once, platform-wide, before deploying Mautic.
+# Mautic will run without it, but cannot send anything.
+app:
+  database:
+    instance: mariadb-mautic
+    name: mautic
+    role: mautic
+routing:
+  access: internal
+  identity: catalog
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Recovery boundary: restore the MariaDB-mautic database and this instance's data
+# directory from the same recovery point. The MariaDB backend is shared and must not be
+# removed as part of Mautic removal.

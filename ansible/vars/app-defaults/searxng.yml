@@ -1,0 +1,59 @@
+---
+# Default configuration for SearXNG — the metasearch engine, on the Kubernetes hosting
+# backend. Users override specific values in config/apps/searxng.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# WHY THIS IS A KUBERNETES CANDIDATE THAT SHIPPED, AND WHY IT STAYS INTERNAL-ONLY
+#
+# docs/meta/408-app-catalog/README.md's searxng row: "Mostly stateless metasearch
+# workload; usually internal-only. Keep any cache disposable or external." SearXNG's own
+# state is exactly one thing: `secret_key`, the value it signs its own cookies and CSRF
+# tokens with. That is generated once and kept in Vaultwarden like every other
+# application credential (roles/searxng/tasks/main.yml) — it is a credential, not data,
+# and losing it costs nothing but a session reset. Search results, engine state and the
+# optional rate-limiter counters are never written to a volume.
+#
+# NO PERSISTENT VOLUME ANYWHERE IN THIS ROLE, DELIBERATELY
+#
+# The instance's Redis is a Deployment with no PersistentVolumeClaim — see
+# roles/searxng/templates/manifest.yaml.j2. It backs SearXNG's own bot/rate limiter
+# (server.limiter), and losing it on a pod restart only resets counters, never data a
+# restore would need to recover. This is the "disposable" half of the catalog note; the
+# other half — pointing it at a lab's own shared Redis/Valkey backend instead — remains a
+# later option once this platform has a named-Redis consumer contract to point it at
+# (CONTRACT.md's "Application database provisioning" section). Until then this role
+# declares no `backup:` block at all, the same as roles/flaresolverr: there is nothing a
+# nightly job would have to preserve.
+searxng_defaults:
+
+  hosting: kubernetes
+
+  # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
+  # vars/app-defaults/jellyseerr.yml. The resolver has no per-app selector to read it.
+
+  app:
+    image: "searxng/searxng:latest"
+    port: 8080
+
+    # SearXNG's own instance name, shown in its UI and its opensearch descriptor. Distinct
+    # from `instance` (the deployment identity) on purpose — a lab may rename the
+    # deployment without renaming what its users see.
+    instance_name: "SearXNG"
+
+    limiter:
+      image: "redis:7-alpine"
+
+  routing:
+    subdomain: searxng
+    proxy: internal
+
+    # Internal by default, and the catalog note's "usually" is doing real work: SearXNG
+    # has no login of its own, so a public route would hand an anonymous metasearch proxy
+    # to the whole internet. A lab that wants that makes it an explicit choice in its own
+    # config/apps/searxng.yml, not this default.
+    access: internal
+
+    # `catalog`, not `forward_auth`. SearXNG's UI is a search box with no session or
+    # account model to protect; an identity object exists only so the launcher can show a
+    # tile.
+    identity: catalog

@@ -1,0 +1,41 @@
+# Deploy Mautic. Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs
+# job rather than a raw import: the renderer injects this job's Key Storage options and
+# validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+- id: 3d5e9a71-4c2b-5f88-9a01-mautic000001
+  uuid: 3d5e9a71-4c2b-5f88-9a01-mautic000001
+  name: Deploy Mautic
+  group: Applications/Marketing/Email Campaigns/Mautic
+  description: |-
+    Deploy or converge an instanced **Mautic** marketing-automation service.
+
+    - **Database:** named external MariaDB backend `mariadb-mautic` by default.
+    - **Mail:** SMTP is read from the platform mail contract — configure
+      `infrastructure.mail` before deploying, or campaigns cannot send.
+    - **Credentials:** generated administrator and database credentials are stored in
+      `homelab-infra/apps/<instance>` in Vaultwarden and reused on every run.
+    - **Recovery:** the MariaDB database and this instance's data directory are one
+      recovery unit.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name for a
+      second Mautic deployment.'
+    required: true
+    value: mautic
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/mautic.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/mautic.yml -e "instance=$RD_OPTION_INSTANCE"

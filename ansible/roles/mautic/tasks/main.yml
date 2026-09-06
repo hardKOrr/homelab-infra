@@ -1,0 +1,126 @@
+---
+- name: Mautic | Create project directory
+  ansible.builtin.file:
+    path: "{{ mautic_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Mautic | Create writable data directory for the official image user
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "www-data"
+    group: "www-data"
+    mode: "0750"
+
+- name: Mautic | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: Mautic | Generate or reuse administrator password
+  ansible.builtin.set_fact:
+    _mautic_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Mautic | Store credentials in the canonical Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: mautic
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _mautic_admin_password }}"
+      database_provider: mariadb
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+- name: Mautic | Render configuration
+  ansible.builtin.template:
+    src: local.php.j2
+    dest: "{{ mautic_config_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart mautic
+
+- name: Mautic | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mautic_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart mautic
+
+- name: Mautic | Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ mautic_project_dir }}"
+
+- name: Mautic | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ mautic_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Mautic | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Mautic | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: [200, 302]
+  register: _mautic_health
+  until: _mautic_health.status | default(0) in [200, 302]
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# Mautic's schema and admin user are created once, non-interactively, through its own
+# console installer rather than the browser-based setup wizard — the same reasoning as
+# roles/odoo's `--init`: this role has no way to drive a web wizard, and re-running an
+# installer against an already-installed database is destructive rather than idempotent,
+# so a marker file is what makes a second run a no-op instead of a second attempt.
+- name: Mautic | Check whether the application is already installed
+  ansible.builtin.stat:
+    path: "{{ mautic_project_dir }}/.installed"
+  register: _mautic_installed_marker
+
+- name: Mautic | Run the non-interactive installer
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ mautic_project_dir }}"
+      - exec
+      - -T
+      - mautic
+      - php
+      - /var/www/html/bin/console
+      - mautic:install
+      - "https://{{ mautic_fqdn }}"
+      - "--admin_email={{ app_config.app.admin_user }}@{{ homelabinfra_infra.domain | default('invalid') }}"
+      - "--admin_password={{ _mautic_admin_password }}"
+      - --force
+  no_log: true
+  when: not _mautic_installed_marker.stat.exists
+
+- name: Mautic | Record installation complete
+  ansible.builtin.copy:
+    dest: "{{ mautic_project_dir }}/.installed"
+    content: "{{ ansible_date_time.iso8601 }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not _mautic_installed_marker.stat.exists

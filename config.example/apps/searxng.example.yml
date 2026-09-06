@@ -1,0 +1,30 @@
+---
+# SearXNG — self-hosted metasearch engine, on the Kubernetes hosting backend.
+#
+# Copy to config/apps/searxng.yml and change what differs for your lab. Anything you
+# leave out falls through to ansible/vars/app-defaults/searxng.yml, which is git-managed
+# and improves on `git pull`.
+#
+# Requires a cluster: run the `Deploy k3s Cluster` job first. SearXNG has no guest of its
+# own and no database — its only generated credential is `secret_key`, its cookie-signing
+# key, stored in the Vaultwarden item `homelab-infra/apps/<instance>` and reused on every
+# later run. Do not put it in this file.
+#
+# NOTHING HERE IS BACKED UP, DELIBERATELY: SearXNG keeps no data. See the header comment
+# in ansible/vars/app-defaults/searxng.yml.
+
+app:
+  image: "searxng/searxng:latest"
+  instance_name: "SearXNG"
+
+routing:
+  # Internal by default: SearXNG has no login of its own, so a public route hands an
+  # anonymous metasearch proxy to the whole internet. Change to `public` deliberately, in
+  # this file, if that is what you want.
+  access: internal
+  identity: catalog
+
+  # estate: <name>      # which `domains:` estate publishes it. Required once
+                       #   infrastructure.yml declares two or more estates, and the
+                       #   instance file is then named searxng-<estate>[-<variant>].
+  # subdomain: searxng  # override the published hostname; the app default is searxng

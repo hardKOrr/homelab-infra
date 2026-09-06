@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+services:
+  mautic:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-mautic"
+    restart: unless-stopped
+    environment:
+      MAUTIC_RUN_CRON_JOBS: "true"
+      DOCKER_MAUTIC_ROLE: mautic_web
+    ports:
+      - "{{ app_config.app.port }}:80"
+    volumes:
+      - "{{ app_config.app.data_path }}:/var/www/html"
+      - "{{ mautic_config_file }}:/var/www/html/config/local.php:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/index_dev.php || curl -fsS http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

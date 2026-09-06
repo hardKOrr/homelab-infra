@@ -1,0 +1,3 @@
+---
+mautic_project_dir: "/opt/{{ instance }}"
+mautic_config_file: "{{ mautic_project_dir }}/local.php"

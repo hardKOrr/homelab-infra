@@ -1,0 +1,215 @@
+---
+# Deploy Hi.Events onto the Kubernetes hosting backend.
+#
+# Runs on localhost, like every Kubernetes app role in this repo: there is no guest to run
+# on, so the adapter tasks delegate kubectl to a cluster node resolved by
+# tasks/kubernetes/resolve-cluster.yml.
+#
+# Inputs:
+#   instance                — the app instance name
+#   app_config               — merged defaults + user config, with the database connection
+#                              already resolved onto app_config.app (see
+#                              playbooks/apps/hi-events.yml, which runs
+#                              tasks/database/provision.yml before including this role)
+#   hi_events_fqdn           — the hostname the Ingress answers on
+#
+# Idempotent: secrets are generated once and reused from Vaultwarden thereafter, and a
+# converged manifest applies with no change.
+
+- name: Hi.Events | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: Hi.Events | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: Hi.Events | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+# Order confirmations and ticket delivery ARE the application — see the header comment in
+# vars/app-defaults/hi-events.yml. A ticketing platform that silently degrades to sending
+# no email is worse than one that refuses to deploy without it.
+- name: Hi.Events | Assert the platform mail contract is configured
+  ansible.builtin.assert:
+    that: wiring_mail.enabled | default(false) | bool
+    fail_msg: >-
+      Hi.Events sends order confirmations and tickets by email and has no fallback
+      channel. Configure infrastructure.mail (CONTRACT.md's platform mail contract)
+      before deploying this instance.
+
+# Generated once, then read back from the canonical Vaultwarden item on every later run —
+# the same idiom as roles/mixpost. Regenerating APP_KEY on a converged run would silently
+# invalidate every value the application has already encrypted with the old one.
+- name: Hi.Events | Resolve application secrets
+  ansible.builtin.set_fact:
+    _he_app_key: >-
+      {{ app_config.app.app_key
+         | default('base64:' ~ (lookup('password', '/dev/null length=32 chars=ascii_letters,digits')
+                                | b64encode), true) }}
+    _he_redis_password: >-
+      {{ app_config.app.redis_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Hi.Events | Store the canonical application secrets
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      app_key: "{{ _he_app_key }}"
+      redis_password: "{{ _he_redis_password }}"
+    vault_item_secret_fields:
+      - app_key
+      - redis_password
+
+- name: Hi.Events | Sync the component credentials into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      redis-password: "{{ _he_redis_password }}"
+      db-password: "{{ app_config.app.database_password }}"
+
+- name: Hi.Events | Sync the application environment into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-env"
+    k8s_secret_data:
+      APP_KEY: "{{ _he_app_key }}"
+      APP_URL: "https://{{ hi_events_fqdn }}"
+      APP_ENV: production
+      DB_CONNECTION: pgsql
+      DB_HOST: "{{ app_config.app.database_host }}"
+      DB_PORT: "{{ app_config.app.database_port | string }}"
+      DB_DATABASE: "{{ app_config.app.database.name }}"
+      DB_USERNAME: "{{ app_config.app.database_user }}"
+      DB_PASSWORD: "{{ app_config.app.database_password }}"
+      REDIS_HOST: "{{ instance }}-redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "{{ _he_redis_password }}"
+      MAIL_MAILER: smtp
+      MAIL_HOST: "{{ wiring_mail.host }}"
+      MAIL_PORT: "{{ wiring_mail.port | string }}"
+      MAIL_USERNAME: "{{ wiring_mail.username }}"
+      MAIL_PASSWORD: "{{ wiring_mail.password }}"
+      MAIL_ENCRYPTION: "{{ wiring_mail.encryption }}"
+      MAIL_FROM_ADDRESS: "{{ wiring_mail.from_address }}"
+      MAIL_FROM_NAME: "{{ wiring_mail.from_name | default('Hi.Events', true) }}"
+
+- name: Hi.Events | Render the workload manifest
+  ansible.builtin.set_fact:
+    _he_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: Hi.Events | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _he_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-redis"
+      - "deployment/{{ instance }}"
+    k8s_wait_timeout: 600
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+#
+# Filesystem archive of the storage volume only, on the same contract as
+# roles/jellyseerr — the database is the named PostgreSQL backend's own recovery unit and
+# is backed up with that guest, not duplicated here.
+
+- name: Hi.Events | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: Hi.Events | Note that this lab has no backup target
+  ansible.builtin.debug:
+    msg: >-
+      {{ instance }} declares backup.enabled, but no Proxmox Backup Server is recorded in
+      config/.generated/facts.yml, so no backup was scheduled. Deploy PBS and re-run this
+      job. Until then this instance's uploaded media exists in exactly one place: the
+      volume on the cluster node that holds it.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (k8s_pbs_available | default(false) | bool)
+
+- name: Hi.Events | Configure the nightly application backup
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - k8s_pbs_available | default(false) | bool
+  block:
+    - name: Hi.Events | Resolve the backup's identity and destination
+      ansible.builtin.set_fact:
+        _he_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        _he_backup_timezone: >-
+          {{ app_config.backup.timezone | default('', true)
+             or homelabinfra_config.timezone | default('UTC') }}
+        _he_backup_repository: "{{ k8s_pbs_repository }}"
+        _he_backup_fingerprint: "{{ k8s_pbs_fingerprint }}"
+        _he_backup_datastore: "{{ k8s_pbs_datastore }}"
+        _he_ntfy_url: >-
+          {{ (homelabinfra_infra.notifications.host ~ '/'
+              ~ (homelabinfra_infra.notifications.topic | default('homelab')))
+             if (((homelabinfra_infra | default({})).notifications | default({})).provider
+                 | default('none') == 'ntfy'
+                 and (homelabinfra_infra.notifications.host | default('') | length > 0))
+             else '' }}
+
+    - name: Hi.Events | Read the notification publish token
+      ansible.builtin.set_fact:
+        _he_ntfy_token: >-
+          {{ ((homelabinfra_infra | default({})).notifications | default({})).token
+             | default('') }}
+      no_log: true
+
+    - name: Hi.Events | Sync the backup credentials into the namespace
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+      vars:
+        k8s_secret_name: "{{ instance }}-backup"
+        k8s_secret_data: >-
+          {{ {'pbs-password': k8s_pbs_password}
+             | combine({'ntfy-token': _he_ntfy_token}
+                       if _he_ntfy_token | length > 0 else {}) }}
+
+    - name: Hi.Events | Render the backup CronJob
+      ansible.builtin.set_fact:
+        _he_backup_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
+
+    - name: Hi.Events | Apply the backup CronJob
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ _he_backup_manifest }}"
+
+    - name: Hi.Events | State the backup contract
+      ansible.builtin.debug:
+        msg:
+          - "Backup: a filesystem archive of the storage volume (uploaded event/ticket
+             media), pushed to PBS datastore {{ _he_backup_datastore }} as
+             host/{{ _he_backup_id }}. The named PostgreSQL backend
+             ({{ app_config.app.database.instance }}) is that guest's own recovery unit,
+             not duplicated here."
+          - "Schedule: {{ app_config.backup.schedule }} ({{ _he_backup_timezone }}).
+             Retention: {{ app_config.backup.retention_days }} daily snapshots.
+             Encryption: {{ app_config.backup.encryption }}."
+          - "Run one now: the `Backup App` job, or
+             playbooks/maintenance/backup-app.yml -e instance={{ instance }}."
+          - "Restore: the `Restore App` job, or
+             playbooks/maintenance/restore-app.yml -e instance={{ instance }} —
+             read that playbook's header for the procedure."
+
+- name: Hi.Events | Remove the backup CronJob when no backup was configured
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - cronjob
+      - "{{ instance }}-backup"
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _he_backup_removed
+  when: not ((app_config.backup.enabled | default(false) | bool)
+             and (k8s_pbs_available | default(false) | bool))
+  changed_when: "'deleted' in (_he_backup_removed.stdout | default(''))"

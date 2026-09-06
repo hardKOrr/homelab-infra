@@ -1,0 +1,48 @@
+---
+# Default configuration for Mautic — the marketing-automation platform, on the
+# services_stack Docker host. Users override specific values in config/apps/mautic.yml.
+# This file is git-managed — git pull may update these defaults.
+#
+# docs/meta/408-app-catalog/README.md's mautic row: "MariaDB. Sends mail — needs an SMTP
+# contract this platform does not have." That contract shipped in #47
+# (docs/meta/418-platform-mail-contract); this is the first row that actually consumes it,
+# alongside the named-backend database contract from #45
+# (docs/meta/408-app-catalog/README.md's Batch B preamble). Both are named instances, not
+# private sidecars: roles/mautic/tasks/main.yml provisions its database on the named
+# MariaDB backend through tasks/database/provision.yml, and reads outbound mail through
+# tasks/mail/resolve-mail.yml — the same two seams roles/odoo/tasks/main.yml already
+# proved for PostgreSQL.
+mautic_defaults:
+  stack: services
+
+  app:
+    image: docker.io/mautic/mautic:v5-apache
+
+    database:
+      provider: mariadb
+      instance: mariadb-mautic
+      name: mautic
+      role: mautic
+
+    port: 8091
+
+    # Mautic's own uploaded media, plugins and generated assets — not its database, which
+    # lives entirely on the named MariaDB backend. This is the recovery unit a guest
+    # snapshot backup covers for this instance.
+    data_path: "/opt/mautic/{{ instance }}/data"
+
+    admin_user: admin
+
+  routing:
+    subdomain: mautic
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+
+  # Recovery boundary: restore the MariaDB-mautic database and this instance's data
+  # directory from the same recovery point. The MariaDB backend is shared and must not be
+  # removed as part of Mautic removal.
