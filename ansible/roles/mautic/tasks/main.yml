@@ -23,6 +23,66 @@
 - name: Mautic | Resolve platform mail
   ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
 
+# `wiring_mail.encryption` normalized here, once, rather than at every point this role
+# reads it: tasks/mail/resolve-mail.yml resolves it with a bare
+# `default('starttls')` (no boolean mode), which only substitutes when the key is
+# UNDEFINED. config-doctor.sh explicitly accepts `mail.encryption: ""` as valid
+# authored config, so an authored blank survives resolve-mail.yml as the empty string,
+# not as `starttls` — and an empty string is not a key in the scheme-mapping dict this
+# role's local.php tasks index below, which would otherwise fail templating on an
+# entirely valid configuration.
+- name: Mautic | Normalize a blank mail.encryption to its documented default
+  ansible.builtin.set_fact:
+    wiring_mail: "{{ wiring_mail | combine({'encryption': wiring_mail.encryption | default('starttls', true)}) }}"
+  no_log: true
+
+# Symfony Mailer's `smtp://` scheme (the one both `starttls` and `none` select — see
+# the comment in templates/local.php.j2) only ATTEMPTS StartTLS when the server
+# advertises it in its EHLO response; it never refuses to send credentials over a
+# connection that didn't get it, and the pinned symfony/mailer 6.4.13 has no DSN option
+# to require and abort instead (confirmed against Transport/Smtp/EsmtpTransport.php:
+# `executeEhloCommand`'s STARTTLS branch has no failure path for "not offered").
+# `mail.encryption: starttls` is the operator asking for that encryption, not merely
+# hinting at it — CONTRACT.md draws that line for `routing.access: authenticated` for
+# the same reason (tasks/wiring/caddy.yml asserts identity actually gates the route
+# rather than trusting the label). This preflight is that same assertion for mail: it
+# connects to the configured relay from the guest that will actually run Mautic, and
+# refuses to deploy rather than silently downgrading to a connection that will send the
+# relay password in the clear if the relay's STARTTLS support is ever missing,
+# misconfigured, or stripped in transit.
+- name: Mautic | Check whether the mail relay actually advertises STARTTLS
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import smtplib, sys
+        with smtplib.SMTP("{{ wiring_mail.host }}", {{ wiring_mail.port }}, timeout=10) as smtp:
+            smtp.ehlo()
+            sys.exit(0 if smtp.has_extn("starttls") else 1)
+  register: _mautic_starttls_check
+  failed_when: false
+  changed_when: false
+  when:
+    - wiring_mail.enabled | default(false) | bool
+    - wiring_mail.encryption == 'starttls'
+
+- name: Mautic | Refuse to deploy when the relay cannot actually enforce STARTTLS
+  ansible.builtin.fail:
+    msg: >-
+      infrastructure.yml declares mail.encryption: starttls, but
+      {{ wiring_mail.host }}:{{ wiring_mail.port }} did not advertise STARTTLS support
+      in its EHLO response (or could not be reached). Deploying anyway would let
+      Mautic's mail transport send the relay password over an unencrypted connection
+      the moment STARTTLS is unavailable, which is exactly the outcome
+      mail.encryption: starttls exists to prevent. Fix the relay's STARTTLS support,
+      or set mail.encryption to tls (implicit TLS, typically port 465) if the relay
+      supports it, or to the explicit none if plaintext is genuinely acceptable here.
+  when:
+    - wiring_mail.enabled | default(false) | bool
+    - wiring_mail.encryption == 'starttls'
+    - _mautic_starttls_check.rc | default(1) != 0
+
 - name: Mautic | Generate or reuse administrator password
   ansible.builtin.set_fact:
     _mautic_admin_password: >-

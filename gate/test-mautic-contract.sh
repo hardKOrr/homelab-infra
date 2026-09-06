@@ -162,6 +162,38 @@ assert by_key_off["mailer_dsn"] == "smtp://localhost:25", \
 print("Mautic converges mailer_dsn with the correct scheme per encryption value, round-tripping a hostile "
       "password through both the on-disk (percent-doubled) and runtime forms: OK")
 
+# config-doctor.sh explicitly accepts mail.encryption: "" as valid authored config,
+# and tasks/mail/resolve-mail.yml's bare `default('starttls')` (no boolean mode) does
+# NOT catch that blank — only an undefined key. Render the normalize task's own
+# expression with encryption="" and confirm it produces 'starttls', the value the
+# scheme-mapping dict above can actually index.
+normalize = by_name["Mautic | Normalize a blank mail.encryption to its documented default"]
+assert normalize.get("no_log") is True, "the normalize task re-assigns the whole wiring_mail dict and must be no_log"
+normalize_expr = normalize["ansible.builtin.set_fact"]["wiring_mail"]
+norm_env = NativeEnvironment()
+norm_env.filters["combine"] = lambda base, other: wrap({**base, **other})
+norm_tmpl = norm_env.from_string(normalize_expr)
+blank_wiring_mail = wrap({"encryption": "", "host": "h", "port": 25})
+normalized = norm_tmpl.render(wiring_mail=blank_wiring_mail)
+assert normalized["encryption"] == "starttls", \
+    "a blank mail.encryption must normalize to starttls, not survive as '' into the scheme-mapping dict lookup"
+
+# mail.encryption: starttls is Symfony Mailer's weakest guarantee — smtp:// only
+# ATTEMPTS StartTLS if the server offers it in its EHLO response and has no DSN option
+# to require and abort otherwise (confirmed against the pinned symfony/mailer 6.4.13's
+# Transport/Smtp/EsmtpTransport.php). A relay that stops advertising STARTTLS must
+# fail this deploy rather than silently send the relay password in the clear.
+preflight = by_name["Mautic | Check whether the mail relay actually advertises STARTTLS"]
+assert preflight["when"] == ["wiring_mail.enabled | default(false) | bool", "wiring_mail.encryption == 'starttls'"]
+assert "has_extn(\"starttls\")" in preflight["ansible.builtin.command"]["argv"][2]
+refuse = by_name["Mautic | Refuse to deploy when the relay cannot actually enforce STARTTLS"]
+assert refuse["when"] == [
+    "wiring_mail.enabled | default(false) | bool",
+    "wiring_mail.encryption == 'starttls'",
+    "_mautic_starttls_check.rc | default(1) != 0",
+]
+print("Mautic normalizes a blank mail.encryption and preflights STARTTLS support before deploying: OK")
+
 installer = by_name["Mautic | Run the non-interactive installer"]
 argv = installer["ansible.builtin.command"]["argv"]
 assert "--user" in argv and argv[argv.index("--user") + 1] == "www-data", \
