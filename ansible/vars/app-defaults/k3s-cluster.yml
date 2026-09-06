@@ -155,6 +155,51 @@ k3s_cluster_defaults:
     provisioner_image: "rancher/local-path-provisioner:v0.0.30"
     helper_image: "rancher/mirrored-library-busybox:1.36.1"
 
+  # ── Opt-in shared storage ──────────────────────────────────────────────────
+  #
+  # The supported shared-storage implementation is the upstream Kubernetes NFS CSI
+  # driver, deployed by the role as a pinned HelmChart. It dynamically creates one
+  # directory per PV beneath an EXISTING NFS export. The NFS service and the backing
+  # filesystem are deliberately outside this cluster's authority: the owner names their
+  # capacity, snapshots and recovery process below, and this role never formats, exports,
+  # deletes or snapshots that target.
+  #
+  # This is disabled by default. Enabling it adds a second, non-default StorageClass;
+  # it never changes existing PVCs and it never changes the default local-path class.
+  # Turning it back off also does NOT delete the HelmChart, StorageClass, snapshot class
+  # or any PVC. Removal needs an explicit target-specific operation after every PV has
+  # been accounted for.
+  shared_storage:
+    enabled: false
+    class: homelab-nfs-csi
+    driver: nfs.csi.k8s.io
+    # The chart is pinned. Its image set is part of that release; update this only after
+    # reviewing the upstream release and re-running the node-loss and restore drill.
+    chart_version: "4.13.4"
+    # An approved, already-configured NFSv4 target is required when enabled. Empty
+    # defaults keep a stock checkout from accidentally exporting or consuming storage.
+    target:
+      name: ""
+      server: ""
+      share: ""
+      # Human-accountable declarations retained in generated topology. Kubernetes PVC
+      # requests are not NFS quotas; the target owner owns actual capacity enforcement.
+      capacity_owner: ""
+      failure_domains: []
+    reclaim_policy: Retain
+    mount_options:
+      - nfsvers=4.1
+      - hard
+      - timeo=600
+      - retrans=2
+    # NFS exposes the capacity of its export, not a per-PVC block device. Do not present
+    # a changed PVC request as guaranteed quota or a safely expandable volume.
+    allow_volume_expansion: false
+    controller_replicas: 2
+    snapshot:
+      class: homelab-nfs-csi-snapshot
+      deletion_policy: Retain
+
   # ── Backup ──────────────────────────────────────────────────────────────────
   backup:
     # PBS snapshots the k3s VMs on the lab's normal schedule; that is the node rebuild

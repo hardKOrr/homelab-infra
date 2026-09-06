@@ -191,6 +191,145 @@
       reclaimPolicy is immutable, so a class holding the wrong one has to be deleted and
       redeclared — and every volume already bound through it has to be accounted for first.
 
+# The shared class is deliberately a separate, opt-in contract. It is never default and
+# cannot be enabled with a half-described target: an NFS endpoint alone says nothing about
+# who owns capacity, snapshots or the Proxmox/external failure domains behind it.
+- name: k3s shared storage | Resolve nodes eligible to run CSI controllers
+  ansible.builtin.set_fact:
+    # The CSI controller does not tolerate this platform's quorum-only taint. Count only
+    # explicitly untainted nodes, because controller Pods require hostname anti-affinity.
+    _k3s_shared_storage_schedulable_nodes: >-
+      {{ k8s_cluster_config.cluster.nodes | selectattr('taints', 'equalto', []) | list }}
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+- name: k3s shared storage | Assert the opted-in NFS CSI contract is complete
+  ansible.builtin.assert:
+    that:
+      - k8s_cluster_config.shared_storage.class | default('') | length > 0
+      - k8s_cluster_config.shared_storage.class != k8s_cluster_config.storage.class
+      - k8s_cluster_config.shared_storage.driver == 'nfs.csi.k8s.io'
+      - k8s_cluster_config.shared_storage.chart_version | default('')
+        is match('^[0-9]+\\.[0-9]+\\.[0-9]+$')
+      - k8s_cluster_config.shared_storage.target.name | default('') | length > 0
+      - k8s_cluster_config.shared_storage.target.server | default('') | length > 0
+      - k8s_cluster_config.shared_storage.target.share | default('') | length > 0
+      - k8s_cluster_config.shared_storage.target.capacity_owner | default('') | length > 0
+      - k8s_cluster_config.shared_storage.target.failure_domains | default([]) | length > 0
+      - k8s_cluster_config.shared_storage.reclaim_policy == 'Retain'
+      - k8s_cluster_config.shared_storage.mount_options | default([]) | length > 0
+      - not (k8s_cluster_config.shared_storage.allow_volume_expansion | bool)
+      - k8s_cluster_config.shared_storage.controller_replicas | int >= 1
+      - k8s_cluster_config.shared_storage.controller_replicas | int
+        <= _k3s_shared_storage_schedulable_nodes | length
+      - k8s_cluster_config.shared_storage.snapshot.class | default('') | length > 0
+      - k8s_cluster_config.shared_storage.snapshot.deletion_policy == 'Retain'
+    fail_msg: >-
+      shared_storage needs a non-default class, the supported nfs.csi.k8s.io driver, a
+      pinned MAJOR.MINOR.PATCH chart_version, an approved target name/server/share, named
+      capacity owner and failure domains, Retain policies, mount options, disabled volume
+      expansion, a controller replica count no greater than the explicitly untainted,
+      schedulable node count ({{ _k3s_shared_storage_schedulable_nodes | length }}), and a
+      retained snapshot class. The NFS target is not created or verified by this role;
+      declare its accountable owner and run the live drill in tasks/kubernetes/README.md.
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+- name: k3s shared storage | Declare the pinned NFS CSI driver
+  ansible.builtin.template:
+    src: shared-nfs-csi-driver.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/homelab-nfs-csi-driver.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+# HelmChart reconciliation is asynchronous. A StorageClass before its provisioner is a
+# broken promise, so wait for both controller and node plugin before declaring the class.
+- name: k3s shared storage | Wait for the NFS CSI controller
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - -n
+      - kube-system
+      - rollout
+      - status
+      - "deployment/{{ k3s_shared_storage_controller_deployment }}"
+      - --timeout=30s
+  register: _k3s_nfs_controller_ready
+  retries: 20
+  delay: 15
+  until: _k3s_nfs_controller_ready.rc == 0
+  changed_when: false
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+- name: k3s shared storage | Wait for the NFS CSI node plugin
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - -n
+      - kube-system
+      - rollout
+      - status
+      - "daemonset/{{ k3s_shared_storage_node_daemonset }}"
+      - --timeout=30s
+  register: _k3s_nfs_node_ready
+  retries: 20
+  delay: 15
+  until: _k3s_nfs_node_ready.rc == 0
+  changed_when: false
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+- name: k3s shared storage | Declare the non-default NFS StorageClass
+  ansible.builtin.template:
+    src: shared-nfs-storageclass.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/homelab-nfs-storageclass.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+- name: k3s shared storage | Declare the retained NFS snapshot class
+  ansible.builtin.template:
+    src: shared-nfs-volumesnapshotclass.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/homelab-nfs-volumesnapshotclass.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+# k3s retries manifests asynchronously. Do not call the StorageClass/snapshot contract
+# established merely because their files exist; read each API object back first.
+- name: k3s shared storage | Wait for the NFS StorageClass
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - storageclass
+      - "{{ k8s_cluster_config.shared_storage.class }}"
+  register: _k3s_nfs_storageclass_ready
+  retries: 20
+  delay: 5
+  until: _k3s_nfs_storageclass_ready.rc == 0
+  changed_when: false
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
+- name: k3s shared storage | Wait for the NFS snapshot class
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - volumesnapshotclass
+      - "{{ k8s_cluster_config.shared_storage.snapshot.class }}"
+  register: _k3s_nfs_snapshotclass_ready
+  retries: 20
+  delay: 5
+  until: _k3s_nfs_snapshotclass_ready.rc == 0
+  changed_when: false
+  when: k8s_cluster_config.shared_storage.enabled | default(false) | bool
+
 # Read-only, and never fatal. The bundled `local-path` class is removed from the cluster
 # along with the rest of the disabled addon, and an existing bound volume does not care —
 # a StorageClass is consulted when a volume is provisioned, not afterwards. What does care

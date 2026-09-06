@@ -124,6 +124,42 @@ storage:
   # provisioner_image: "rancher/local-path-provisioner:v0.0.30"
   # helper_image: "rancher/mirrored-library-busybox:1.36.1"
 
+# Shared NFS storage is opt-in and is NEVER the default class. It uses the upstream NFS
+# CSI driver and an NFSv4 target that already exists. The role installs the CSI driver,
+# but it does not create, export, format, resize, snapshot or delete the target.
+#
+# Do not enable this until the target owner has approved this exact disposable target and
+# you have read ansible/tasks/kubernetes/README.md's shared-storage migration and drill
+# contract. `failure_domains` is an accountable declaration, not a health check.
+shared_storage:
+  enabled: false
+  class: homelab-nfs-csi
+  driver: nfs.csi.k8s.io
+  chart_version: "4.13.4"
+  target:
+    name: "approved-nfs-target"
+    server: "192.168.0.40"
+    share: "/kubernetes"
+    capacity_owner: "storage operator"
+    # Name the physical Proxmox nodes or external failure domains that can take this
+    # export down. Use at least two values only when the target is genuinely redundant.
+    failure_domains:
+      - pve-host-2
+      - pve-host-3
+  reclaim_policy: Retain
+  mount_options:
+    - nfsvers=4.1
+    - hard
+    - timeo=600
+    - retrans=2
+  # PVC requests are not NFS quotas, so volume expansion stays deliberately disabled.
+  allow_volume_expansion: false
+  # Two replicas require two schedulable nodes. The role anti-affines them by hostname.
+  controller_replicas: 2
+  snapshot:
+    class: homelab-nfs-csi-snapshot
+    deletion_policy: Retain
+
 backup:
   # PBS snapshots of the node VMs are your cluster REBUILD path and nothing more. A
   # whole-VM image is crash-consistent only and cannot see inside a volume, so it is not
