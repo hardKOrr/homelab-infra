@@ -15,7 +15,8 @@ need "$repo/ansible/roles/odoo/tasks/main.yml" 'include_tasks: ../../../tasks/ma
 need "$repo/ansible/playbooks/apps/odoo.yml" 'tasks/database/provision.yml'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'postgresql-{{ app_config.app.version }}'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Inspect existing clusters before changing the guest'
-need "$repo/ansible/roles/postgresql/tasks/main.yml" 'failed_when: false'
+need "$repo/ansible/roles/postgresql/tasks/main.yml" 'stat:'
+need "$repo/ansible/roles/postgresql/tasks/main.yml" 'when: _postgresql_config_root.stat.exists | default(false)'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" 'Normalize existing cluster paths'
 need "$repo/ansible/roles/postgresql/tasks/main.yml" "app_config.app.version | default('') == '16'"
 need "$repo/ansible/roles/postgresql/tasks/main.yml" "'service_name': 'postgresql@' ~ (app_config.app.version | string) ~ '-main'"

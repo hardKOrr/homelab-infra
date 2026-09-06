@@ -19,14 +19,20 @@
       postgresql@16-main. Add a separate versioned role before selecting another major.
 
 - name: PostgreSQL | Inspect existing clusters before changing the guest
+  ansible.builtin.stat:
+    path: /etc/postgresql
+  register: _postgresql_config_root
+  changed_when: false
+
+- name: PostgreSQL | Find existing clusters before changing the guest
   ansible.builtin.find:
     paths: /etc/postgresql
     patterns: postgresql.conf
     recurse: true
     file_type: file
   register: _postgresql_existing_conf_files
-  failed_when: false
   changed_when: false
+  when: _postgresql_config_root.stat.exists | default(false)
 
 - name: PostgreSQL | Normalize existing cluster paths
   ansible.builtin.set_fact:
