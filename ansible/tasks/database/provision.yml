@@ -134,7 +134,7 @@
   when:
     - database_provision_config.provider == 'postgresql'
     - _database_role_exists.stdout | trim == '1'
-    - _database_credential_action == 'rotate'
+    - _database_existing_password | length == 0 or _database_credential_action == 'rotate'
 
 - name: Database | Check whether the PostgreSQL database exists
   ansible.builtin.command:
@@ -195,7 +195,10 @@
     password: "{{ _database_password }}"
     priv: "{{ database_provision_config.name }}.*:ALL"
     state: present
-    update_password: "{{ 'always' if _database_credential_action == 'rotate' else 'on_create' }}"
+    update_password: >-
+      {{ 'always'
+         if (_database_existing_password | length == 0 or _database_credential_action == 'rotate')
+         else 'on_create' }}
     login_unix_socket: /run/mysqld/mysqld.sock
   loop: "{{ _database_backend.client_hosts | default([]) }}"
   delegate_to: database_backend_target
