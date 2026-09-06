@@ -59,6 +59,14 @@ which remains authoritative for guest ownership and creation.
     write is still outstanding. A failed call leaves the device absent, exactly as before
     the run, and a retry attempts the whole bind-and-tag operation again — there is no
     separate recovery step or reconciliation pass needed for a tag that failed to write.
+  - **A guest this seam stopped is always put back to running, even on failure.** PCIe
+    passthrough cannot be hotplugged, so attach and detach stop a running VM before
+    changing `hostpciN` and start it again after. The stop/change/start sequence runs
+    inside a block whose `rescue` path restarts the guest — if it was running — before
+    re-raising the original error, so a `qm set` failure (a concurrent config change, a
+    device validation error) never leaves a previously running VM stopped while the error
+    propagates. A guest that was already stopped before the run is left stopped, exactly
+    as found.
 - **Removal and recovery detach only a binding this platform can prove it made.** Every
   attach seam has a matching detach seam — `detach-shared-device.yml`,
   `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — and each first asserts the

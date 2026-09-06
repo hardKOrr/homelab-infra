@@ -10,6 +10,11 @@
 # cannot be shared, and moving it out from under a guest that is using it is a decision this
 # platform will not make for an operator.
 #
+# A guest that was running when this seam stopped it to make the assignment is always put
+# back to running, even when the assignment itself fails: the stop/assign/start sequence
+# runs inside a block whose rescue path restarts the guest before re-raising the original
+# error, so a failed PCI attach never leaves a previously running VM down.
+#
 # The guest also gets a `_.dev+<slug>` tag naming this exact device, written atomically
 # with the assignment and only when this run performs it — durable, project-owned proof of
 # authorship that detach-pci-passthrough.yml requires before it will remove the hostpciN
@@ -149,54 +154,78 @@
   when: not _pci_already_present
 
 # A stopped guest takes -hostpciN unconditionally; PCIe passthrough cannot be hotplugged.
-- name: PCI passthrough | Stop the guest so the device can be assigned
-  ansible.builtin.command:
-    cmd: "qm shutdown {{ _pci_vmid }} --forceStop 1 --timeout 120"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: not _pci_already_present and _pci_was_running | bool
-  changed_when: true
-
-- name: PCI passthrough | Wait for the guest to reach stopped
-  ansible.builtin.command:
-    cmd: "qm status {{ _pci_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  register: _pci_stop_check
-  until: _pci_stop_check.stdout is search('stopped')
-  retries: 30
-  delay: 4
-  when: not _pci_already_present and _pci_was_running | bool
-  changed_when: false
-
-# A content match on hostpciN does not by itself prove THIS platform assigned the device
-# — an operator can passthrough the identical address by hand. The `_.dev+<slug>` tag is
-# written in the SAME `qm set` call as the assignment, only when this run is the one
-# performing it (`not _pci_already_present`): a device already assigned before this run —
-# including one an operator assigned by hand — is never tagged after the fact. Combining
-# assignment and tag into one API call also means there is no window where the device is
-# assigned but the tag write is still pending; a failed call is simply retried, and
-# `_pci_already_present` is recomputed from scratch next run.
-- name: PCI passthrough | Assign the device and its provenance tag
-  ansible.builtin.command:
-    cmd: >-
-      qm set {{ _pci_vmid }}
-      -hostpci{{ _pci_next_index }} {{ pci_passthrough_device.id }}{{
-        ',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else '' }}
-      -tags {{ (_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';') }}
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+# Stop, assign, and restart are one block so that a failure anywhere after the guest is
+# stopped — including the `qm set` itself, e.g. a concurrent config change or a device
+# validation error — is caught by `rescue` below and the guest is put back to the running
+# state it was found in, rather than left down while the original error propagates.
+- name: PCI passthrough | Stop, assign, and restart the guest
   when: not _pci_already_present
-  changed_when: true
-  vars:
-    _pci_current_tags: "{{ _pci_tags | reject('equalto', '') | list }}"
-    _pci_provenance_tag: >-
-      _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
-               | regex_replace('^-+|-+$', '') }}
+  block:
+    - name: PCI passthrough | Stop the guest so the device can be assigned
+      ansible.builtin.command:
+        cmd: "qm shutdown {{ _pci_vmid }} --forceStop 1 --timeout 120"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _pci_was_running | bool
+      changed_when: true
 
-- name: PCI passthrough | Start the guest again
-  ansible.builtin.command:
-    cmd: "qm start {{ _pci_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: not _pci_already_present and _pci_was_running | bool
-  changed_when: true
+    - name: PCI passthrough | Wait for the guest to reach stopped
+      ansible.builtin.command:
+        cmd: "qm status {{ _pci_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _pci_stop_check
+      until: _pci_stop_check.stdout is search('stopped')
+      retries: 30
+      delay: 4
+      when: _pci_was_running | bool
+      changed_when: false
+
+    # A content match on hostpciN does not by itself prove THIS platform assigned the
+    # device — an operator can passthrough the identical address by hand. The
+    # `_.dev+<slug>` tag is written in the SAME `qm set` call as the assignment: a device
+    # already assigned before this run — including one an operator assigned by hand — is
+    # never tagged after the fact. Combining assignment and tag into one API call also
+    # means there is no window where the device is assigned but the tag write is still
+    # pending: either both land, or the block below fails and rescue restores the guest.
+    - name: PCI passthrough | Assign the device and its provenance tag
+      ansible.builtin.command:
+        cmd: >-
+          qm set {{ _pci_vmid }}
+          -hostpci{{ _pci_next_index }} {{ pci_passthrough_device.id }}{{
+            ',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else '' }}
+          -tags {{ (_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';') }}
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      changed_when: true
+      vars:
+        _pci_current_tags: "{{ _pci_tags | reject('equalto', '') | list }}"
+        _pci_provenance_tag: >-
+          _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
+                   | regex_replace('^-+|-+$', '') }}
+
+    - name: PCI passthrough | Start the guest again
+      ansible.builtin.command:
+        cmd: "qm start {{ _pci_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _pci_was_running | bool
+      changed_when: true
+
+  rescue:
+    # The guest was stopped by THIS run (or was already stopped when it started, in which
+    # case _pci_was_running is false and nothing here fires) — restore it before anything
+    # else, then surface the real failure rather than swallowing it.
+    - name: PCI passthrough | Restore the guest to running after a failed assignment
+      ansible.builtin.command:
+        cmd: "qm start {{ _pci_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _pci_was_running | bool
+      changed_when: true
+
+    - name: PCI passthrough | Re-raise the original assignment failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ pci_passthrough_guest }}: PCI passthrough assignment failed
+          {{ '; the guest was restarted to its prior running state' if _pci_was_running | bool
+             else '' }}. Original error:
+          {{ ansible_failed_result.msg | default(ansible_failed_result) }}
 
 - name: PCI passthrough | Report what is assigned
   ansible.builtin.debug:

@@ -13,6 +13,11 @@
 # a failure. Detaching gives the device back to the node, where `lspci`/`pvesh` shows it as
 # available again for another guest.
 #
+# A guest that was running when this seam stopped it to remove the device is always put
+# back to running, even when the removal itself fails: the stop/remove/start sequence runs
+# inside a block whose rescue path restarts the guest before re-raising the original error,
+# so a failed PCI detach never leaves a previously running VM down.
+#
 # Inputs:
 #   pci_passthrough_guest — VM guest hostname to detach the device from
 #   pci_passthrough_device — {id: "0000:01:00.0"} — same shape as
@@ -105,39 +110,61 @@
                             | regex_replace('[^a-z0-9]+', '-')
                             | regex_replace('^-+|-+$', ''))) in _dpci_tags) }}
 
-- name: Detach PCI passthrough | Stop the guest so the device can be removed
-  ansible.builtin.command:
-    cmd: "qm shutdown {{ _dpci_vmid }} --forceStop 1 --timeout 120"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _dpci_owned | bool and _dpci_was_running | bool
-  changed_when: true
-
-- name: Detach PCI passthrough | Wait for the guest to reach stopped
-  ansible.builtin.command:
-    cmd: "qm status {{ _dpci_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  register: _dpci_stop_check
-  until: _dpci_stop_check.stdout is search('stopped')
-  retries: 30
-  delay: 4
-  when: _dpci_owned | bool and _dpci_was_running | bool
-  changed_when: false
-
-- name: Detach PCI passthrough | Remove the device and its provenance tag
-  ansible.builtin.command:
-    cmd: >-
-      qm set {{ _dpci_vmid }} -delete hostpci{{ _dpci_matched_index }}
-      -tags {{ (_dpci_tags | reject('equalto', _dpci_provenance_tag)) | join(';') }}
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+# Stop, remove, and restart are one block for the same reason as attach-pci-passthrough.yml:
+# a failure anywhere after the guest is stopped — including the `qm set` removal itself —
+# is caught by `rescue` below and the guest is put back to running, rather than left down
+# while the original error propagates.
+- name: Detach PCI passthrough | Stop, remove, and restart the guest
   when: _dpci_owned | bool
-  changed_when: true
+  block:
+    - name: Detach PCI passthrough | Stop the guest so the device can be removed
+      ansible.builtin.command:
+        cmd: "qm shutdown {{ _dpci_vmid }} --forceStop 1 --timeout 120"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _dpci_was_running | bool
+      changed_when: true
 
-- name: Detach PCI passthrough | Start the guest again
-  ansible.builtin.command:
-    cmd: "qm start {{ _dpci_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
-  when: _dpci_owned | bool and _dpci_was_running | bool
-  changed_when: true
+    - name: Detach PCI passthrough | Wait for the guest to reach stopped
+      ansible.builtin.command:
+        cmd: "qm status {{ _dpci_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _dpci_stop_check
+      until: _dpci_stop_check.stdout is search('stopped')
+      retries: 30
+      delay: 4
+      when: _dpci_was_running | bool
+      changed_when: false
+
+    - name: Detach PCI passthrough | Remove the device and its provenance tag
+      ansible.builtin.command:
+        cmd: >-
+          qm set {{ _dpci_vmid }} -delete hostpci{{ _dpci_matched_index }}
+          -tags {{ (_dpci_tags | reject('equalto', _dpci_provenance_tag)) | join(';') }}
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      changed_when: true
+
+    - name: Detach PCI passthrough | Start the guest again
+      ansible.builtin.command:
+        cmd: "qm start {{ _dpci_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _dpci_was_running | bool
+      changed_when: true
+
+  rescue:
+    - name: Detach PCI passthrough | Restore the guest to running after a failed removal
+      ansible.builtin.command:
+        cmd: "qm start {{ _dpci_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _dpci_was_running | bool
+      changed_when: true
+
+    - name: Detach PCI passthrough | Re-raise the original removal failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ pci_passthrough_guest }}: PCI passthrough removal failed
+          {{ '; the guest was restarted to its prior running state' if _dpci_was_running | bool
+             else '' }}. Original error:
+          {{ ansible_failed_result.msg | default(ansible_failed_result) }}
 
 - name: Detach PCI passthrough | Report what was removed
   ansible.builtin.debug:

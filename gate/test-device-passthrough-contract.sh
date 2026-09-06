@@ -76,13 +76,27 @@ env.tests["match"] = lambda value, pattern: re.match(pattern, value) is not None
 env.tests["search"] = lambda value, pattern: re.search(pattern, value) is not None
 
 
-def flatten(tasks):
+# Ansible ANDs a block's own `when:` onto every task inside its block/rescue/always,
+# whether or not that task also carries its own `when:`. Tests that inspect a task's
+# effective condition need that inherited half, not just what the task node itself
+# carries, so `flatten` folds a parent block's `when:` into each descendant task.
+def flatten(tasks, inherited_when=None):
     for task in tasks or []:
         if not isinstance(task, dict):
             continue
+        if inherited_when is not None and "block" not in task:
+            own_when = task.get("when")
+            if own_when is None:
+                task = {**task, "when": inherited_when}
+            else:
+                combined = (own_when if isinstance(own_when, list) else [own_when])
+                combined = combined + (inherited_when if isinstance(inherited_when, list)
+                                        else [inherited_when])
+                task = {**task, "when": combined}
         yield task
+        block_when = task.get("when") if "block" in task else inherited_when
         for key in ("block", "rescue", "always", "tasks"):
-            yield from flatten(task.get(key))
+            yield from flatten(task.get(key), inherited_when=block_when)
 
 
 def task_named(path, fragment):
@@ -312,6 +326,61 @@ check(
     })["_sd_new_provenance_tags"],
     ["_.dev+dev-dri-renderd128"],
 )
+
+# -- PCIe stop/configure/start must restore the guest on failure, not just on success ------
+# PCIe passthrough cannot be hotplugged, so attach and detach stop a running VM before
+# changing hostpciN. If the `qm set` itself then fails, the earlier (unwrapped) version of
+# this file aborted before ever reaching "Start the guest again", leaving a previously
+# running VM stopped. The fix wraps stop/configure/start in a block with a rescue path that
+# restarts the guest and re-raises the original error — checked here structurally, since
+# actually failing `qm set` would require a live Proxmox node.
+for path, block_name, restore_name, was_running_var in (
+    ("ansible/tasks/proxmox/attach-pci-passthrough.yml",
+     "PCI passthrough | Stop, assign, and restart the guest",
+     "PCI passthrough | Restore the guest to running after a failed assignment",
+     "_pci_was_running"),
+    ("ansible/tasks/proxmox/detach-pci-passthrough.yml",
+     "Detach PCI passthrough | Stop, remove, and restart the guest",
+     "Detach PCI passthrough | Restore the guest to running after a failed removal",
+     "_dpci_was_running"),
+):
+    document = yaml.safe_load((repo / path).read_text(encoding="utf-8"))
+    block_task = next(
+        (t for t in document if isinstance(t, dict) and t.get("name") == block_name), None
+    )
+    if block_task is None or "block" not in block_task or "rescue" not in block_task:
+        failures.append(
+            "%s: %r must be a block/rescue task so a failure after the guest is "
+            "stopped restores it instead of leaving it down" % (path, block_name)
+        )
+        continue
+    rescue_names = [t.get("name", "") for t in block_task["rescue"]]
+    if restore_name not in rescue_names:
+        failures.append(
+            "%s: rescue must include %r to restart the guest before re-raising the "
+            "original failure" % (path, restore_name)
+        )
+    restore_task = next(
+        (t for t in block_task["rescue"] if t.get("name") == restore_name), None
+    )
+    if restore_task is not None:
+        if was_running_var not in str(restore_task.get("when", "")):
+            failures.append(
+                "%s: %r must be gated on %s, so a guest that was already stopped "
+                "before the run is not started" % (path, restore_name, was_running_var)
+            )
+        if restore_task.get("ansible.builtin.command", {}).get("cmd", "").split()[0:2] \
+                != ["qm", "start"]:
+            failures.append(
+                "%s: %r must run 'qm start' to restore the guest" % (path, restore_name)
+            )
+    fail_task = block_task["rescue"][-1] if block_task["rescue"] else {}
+    if "ansible.builtin.fail" not in fail_task or \
+            "ansible_failed_result" not in str(fail_task.get("ansible.builtin.fail", {})):
+        failures.append(
+            "%s: rescue must end by re-raising the original failure (referencing "
+            "ansible_failed_result), not swallowing it" % path
+        )
 
 # -- Detach: ownership guard on every detach seam, exactly like attach --------------------
 for path, tags_var in (
