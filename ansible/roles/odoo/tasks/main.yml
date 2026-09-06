@@ -9,16 +9,21 @@
       The supported baseline must include Community crm. Enterprise-only modules are not
       deployment dependencies; add other Community modules explicitly in instance config.
 
-- name: Odoo | Create project and filestore directories
+- name: Odoo | Create project directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ odoo_project_dir }}"
     state: directory
     owner: root
     group: root
     mode: "0750"
-  loop:
-    - "{{ odoo_project_dir }}"
-    - "{{ app_config.app.filestore_path }}"
+
+- name: Odoo | Create writable filestore for the official image user
+  ansible.builtin.file:
+    path: "{{ app_config.app.filestore_path }}"
+    state: directory
+    owner: "101"
+    group: "101"
+    mode: "0750"
 
 - name: Odoo | Resolve platform mail
   ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
@@ -60,16 +65,6 @@
   no_log: true
   notify: Restart odoo
 
-- name: Odoo | Render environment
-  ansible.builtin.copy:
-    dest: "{{ odoo_env_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-    content: "ODOO_DATABASE_PASSWORD={{ app_config.app.database_password }}\n"
-  no_log: true
-  notify: Restart odoo
-
 - name: Odoo | Render Compose project
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -89,7 +84,18 @@
     state: present
     remove_orphans: true
 
-- name: Odoo | Initialize the CRM database once
+- name: Odoo | Resolve requested Community modules
+  ansible.builtin.set_fact:
+    _odoo_modules: "{{ app_config.crm.modules | default(['crm']) | join(',') }}"
+
+- name: Odoo | Read completed module set
+  ansible.builtin.slurp:
+    src: "{{ odoo_project_dir }}/.crm-modules"
+  register: _odoo_modules_current
+  failed_when: false
+  changed_when: false
+
+- name: Odoo | Initialize or extend the CRM module set
   ansible.builtin.command:
     argv:
       - docker
@@ -102,18 +108,22 @@
       - odoo
       - --config=/etc/odoo/odoo.conf
       - "--database={{ app_config.app.database.name }}"
-      - --init=crm
+      - "--init={{ _odoo_modules }}"
       - --without-demo=all
       - --stop-after-init
-  args:
-    creates: "{{ odoo_project_dir }}/.crm-initialized"
+  when: >-
+    _odoo_modules_current.content is not defined
+    or (_odoo_modules_current.content | b64decode | trim) != _odoo_modules
   no_log: true
 
-- name: Odoo | Record completed CRM initialization
-  ansible.builtin.file:
-    path: "{{ odoo_project_dir }}/.crm-initialized"
-    state: touch
+- name: Odoo | Record completed module set
+  ansible.builtin.copy:
+    dest: "{{ odoo_project_dir }}/.crm-modules"
+    content: "{{ _odoo_modules }}\n"
+    owner: root
+    group: root
     mode: "0600"
+  when: _odoo_modules_current.content is not defined or (_odoo_modules_current.content | b64decode | trim) != _odoo_modules
 
 - name: Odoo | Apply pending restart
   ansible.builtin.meta: flush_handlers
