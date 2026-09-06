@@ -1,0 +1,121 @@
+---
+# Deploy an instanced Odoo Community CRM service.
+- name: "Odoo | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe Odoo instance name: -e instance=odoo"
+    - name: Load Odoo defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/odoo.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Merge Odoo config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.odoo_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+  tasks:
+    - name: Provision the named PostgreSQL database and role
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+    - name: Add database connection to Odoo config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'database_host': database_provision_connection.host,
+            'database_port': database_provision_connection.port,
+            'database_user': database_provision_connection.user,
+            'database_password': database_provision_connection.password
+          }}, recursive=True) }}
+      no_log: true
+    - name: Find or create services stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+- name: "Odoo | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap Docker guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Deploy Odoo
+      ansible.builtin.include_role:
+        name: odoo
+
+- name: "Odoo | Wire"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _odoo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _odoo_host.ansible_host }}"
+    wiring_upstream_port: "{{ _odoo_host.app_config.app.port }}"
+    wiring_subdomain: "{{ _odoo_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Odoo Community CRM ({{ instance }})"
+    wiring_monitor_url: "https://{{ wiring_domain }}/web/health"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _odoo_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _odoo_host.app_config.routing.access | default('internal') }}"
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring.provider | default('none') != 'none'
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: Record Odoo on its stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: ["{{ _odoo_host.inventory_hostname }}"]
+        record_guest_kind: docker
+        record_guest_url: "https://{{ wiring_domain }}"
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Odoo CRM deployed"
+        notify_message: "{{ instance }} is running at https://{{ wiring_domain }}"
+    - name: Fail on wiring degradations
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

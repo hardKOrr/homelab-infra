@@ -1,0 +1,151 @@
+---
+- name: Odoo | Assert the supported Community CRM baseline
+  ansible.builtin.assert:
+    that:
+      - app_config.crm.modules | default(['crm']) is iterable
+      - "'crm' in (app_config.crm.modules | default(['crm']))"
+      - (app_config.crm.modules | default(['crm']) | intersect(['studio', 'voip', 'iap', 'lead_mining'])) | length == 0
+    fail_msg: >-
+      The supported baseline must include Community crm. Enterprise-only modules are not
+      deployment dependencies; add other Community modules explicitly in instance config.
+
+- name: Odoo | Create project directory
+  ansible.builtin.file:
+    path: "{{ odoo_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Odoo | Create writable filestore for the official image user
+  ansible.builtin.file:
+    path: "{{ app_config.app.filestore_path }}"
+    state: directory
+    owner: "{{ app_config.app.puid }}"
+    group: "{{ app_config.app.pgid }}"
+    mode: "0750"
+
+- name: Odoo | Remove obsolete unused environment secret file
+  ansible.builtin.file:
+    path: "{{ odoo_project_dir }}/.env"
+    state: absent
+
+- name: Odoo | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: Odoo | Generate or reuse administrator password
+  ansible.builtin.set_fact:
+    _odoo_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Odoo | Store credentials in the canonical Vaultwarden item
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: odoo-community
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _odoo_admin_password }}"
+      database_provider: postgresql
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      filestore_path: "{{ app_config.app.filestore_path }}"
+    vault_item_secret_fields: [admin_password, database_password]
+  no_log: true
+
+- name: Odoo | Render configuration
+  ansible.builtin.template:
+    src: odoo.conf.j2
+    dest: "{{ odoo_config_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart odoo
+
+- name: Odoo | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ odoo_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart odoo
+
+- name: Odoo | Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ odoo_project_dir }}"
+
+- name: Odoo | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ odoo_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Odoo | Validate requested Community modules
+  ansible.builtin.assert:
+    that:
+      - app_config.crm.modules | default(['crm']) is sequence
+      - (app_config.crm.modules | default(['crm']) | select('match', '^[a-z][a-z0-9_]*$') | list | length) == (app_config.crm.modules | default(['crm']) | length)
+    fail_msg: "crm.modules must be a list of safe Odoo module names."
+
+- name: Odoo | Resolve requested Community modules
+  ansible.builtin.set_fact:
+    _odoo_modules: "{{ app_config.crm.modules | default(['crm']) | unique | sort | join(',') }}"
+
+- name: Odoo | Read completed module set
+  ansible.builtin.slurp:
+    src: "{{ odoo_project_dir }}/.crm-modules"
+  register: _odoo_modules_current
+  failed_when: false
+  changed_when: false
+
+- name: Odoo | Initialize or extend the CRM module set
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ odoo_project_dir }}"
+      - run
+      - --rm
+      - odoo
+      - odoo
+      - --config=/etc/odoo/odoo.conf
+      - "--database={{ app_config.app.database.name }}"
+      - "--init={{ _odoo_modules }}"
+      - --without-demo=all
+      - --stop-after-init
+  when: >-
+    _odoo_modules_current.content is not defined
+    or (_odoo_modules_current.content | b64decode | trim) != _odoo_modules
+  no_log: true
+
+- name: Odoo | Record completed module set
+  ansible.builtin.copy:
+    dest: "{{ odoo_project_dir }}/.crm-modules"
+    content: "{{ _odoo_modules }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: _odoo_modules_current.content is not defined or (_odoo_modules_current.content | b64decode | trim) != _odoo_modules
+
+- name: Odoo | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Odoo | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/web/health"
+    status_code: 200
+  register: _odoo_health
+  until: _odoo_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false

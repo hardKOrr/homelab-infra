@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: odoo
+  description: "Deploys Odoo Community CRM on Docker with external PostgreSQL"
+  min_ansible_version: "2.15"
+dependencies: []

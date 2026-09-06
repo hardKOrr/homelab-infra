@@ -1,0 +1,5 @@
+---
+- name: Restart odoo
+  community.docker.docker_compose_v2:
+    project_src: "{{ odoo_project_dir }}"
+    state: restarted

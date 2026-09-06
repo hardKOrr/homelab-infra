@@ -1,0 +1,38 @@
+# Deploy Odoo Community CRM.
+# Rendered and imported by rundeck/render-job.py.
+- id: 8f34bd88-1e15-4b2c-91a4-odoo4130001
+  uuid: 8f34bd88-1e15-4b2c-91a4-odoo4130001
+  name: Deploy Odoo Community CRM
+  group: Applications/Business and CRM/Customer Relationship Management/Odoo Community CRM
+  description: |-
+    Deploy or converge an instanced **Odoo Community CRM** service.
+
+    - **Baseline:** Community `crm` module only; Enterprise modules are not required.
+    - **Database:** named external PostgreSQL backend `postgresql-odoo` by default.
+    - **Credentials:** generated administrator and database credentials are stored in
+      `homelab-infra/apps/<instance>` in Vaultwarden and reused on every run.
+    - **Recovery:** PostgreSQL data and the Odoo filestore are treated as one recovery unit.
+    - **Mail:** SMTP is read from the platform mail contract when configured.
+
+    Lead and opportunity workflow remains inside the Odoo Community CRM application.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name for a second
+      Odoo CRM deployment.'
+    required: true
+    value: odoo
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/odoo.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/odoo.yml -e "instance=$RD_OPTION_INSTANCE"

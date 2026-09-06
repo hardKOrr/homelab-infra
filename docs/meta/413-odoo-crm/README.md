@@ -15,9 +15,14 @@ modules.
 
 ## Remaining
 
-- [ ] Confirm the Odoo Community modules that make up the supported CRM baseline and document
+- [x] Confirm the Odoo Community modules that make up the supported CRM baseline and document
       material Community-versus-Enterprise limits without making Enterprise a deployment
-      requirement
+      requirement. The baseline is Odoo 18 Community with the `crm` module only. Leads,
+      opportunities, pipeline stages, activities and CRM reporting are included. Studio,
+      VoIP, lead mining and advanced support features remain Enterprise-only limits and are
+      not runtime dependencies.
+- [x] Pair Odoo 18 with the named PostgreSQL 16 backend (`postgresql-odoo` by default).
+      Odoo 18 supports PostgreSQL 12 and newer; PostgreSQL 16 is the repository baseline.
 - [ ] Complete slice 408's PostgreSQL provisioning contract and verify the supported Odoo and
       PostgreSQL version pairing before fixing app defaults
 - [ ] Add the role, app defaults, deploy playbook, documented config example and one-click

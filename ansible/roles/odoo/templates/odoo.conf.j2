@@ -1,0 +1,19 @@
+[options]
+admin_passwd = {{ _odoo_admin_password }}
+db_host = {{ app_config.app.database_host }}
+db_port = {{ app_config.app.database_port }}
+db_user = {{ app_config.app.database_user }}
+db_password = {{ app_config.app.database_password }}
+db_name = {{ app_config.app.database.name }}
+list_db = False
+proxy_mode = True
+addons_path = /usr/lib/python3/dist-packages/odoo/addons
+data_dir = /var/lib/odoo
+{% if wiring_mail.enabled | default(false) | bool %}
+smtp_server = {{ wiring_mail.host }}
+smtp_port = {{ wiring_mail.port }}
+smtp_user = {{ wiring_mail.username }}
+smtp_password = {{ wiring_mail.password }}
+smtp_ssl = {{ 'True' if wiring_mail.encryption == 'ssl' else 'False' }}
+email_from = {{ wiring_mail.from_address }}
+{% endif %}
