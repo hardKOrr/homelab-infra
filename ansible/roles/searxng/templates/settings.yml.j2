@@ -1,0 +1,26 @@
+{#
+  SearXNG's own settings.yml, mounted read-only over the image's default. Rendered by
+  roles/searxng/tasks/main.yml. `use_default_settings: true` keeps every engine and UI
+  default this image ships; the keys below are the only ones this platform overrides.
+#}
+use_default_settings: true
+
+general:
+  instance_name: "{{ app_config.app.instance_name }}"
+
+server:
+  secret_key: "{{ _sx_secret_key }}"
+  base_url: "https://{{ searxng_fqdn }}/"
+  # The bot/rate limiter needs the Redis below to keep counters across the multiple uwsgi
+  # workers the image starts in one pod — without it the limiter can only see the request
+  # count on whichever worker answered, which defeats it.
+  limiter: true
+  public_instance: false
+
+redis:
+  url: "redis://:{{ _sx_redis_password }}@{{ instance }}-redis:6379/0"
+
+search:
+  formats:
+    - html
+    - json

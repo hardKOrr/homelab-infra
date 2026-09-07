@@ -1,0 +1,84 @@
+<?php
+// {{ ansible_managed }}
+//
+// SEED CONTENT ONLY — rendered once, by roles/mautic/tasks/main.yml, when this file does
+// not exist yet. Every later run leaves this file in place and instead converges the
+// specific platform-owned keys below through a set of `lineinfile` tasks in that same
+// file, matched by the exact `'key' => ...,` line shape this template writes.
+//
+// WHY NOT JUST RE-TEMPLATE IT EVERY RUN
+//
+// Mautic writes its own keys into this file that this role does not generate and cannot
+// reconstruct — most importantly `secret_key`, minted by `mautic:install` and used to
+// encrypt stored values, plus whatever the operator's own system-config screen adds.
+// Re-templating the whole file on every converge would silently delete all of that on the
+// next deploy, which is destructive rather than idempotent — the same reasoning
+// roles/mixpost and roles/odoo already apply to APP_KEY/db credentials, extended here to
+// a config file this role does not fully own.
+//
+// NO `db_driver` OR `site_url` HERE, DELIBERATELY
+//
+// mautic/docker-mautic's own entrypoints treat "both of these are non-empty in
+// local.php" as their only signal that Mautic is already installed — see the identical,
+// longer comment on roles/mautic/tasks/main.yml's converge task. Seeding them before
+// `mautic:install` has ever run would make the image apply raw schema migrations to an
+// empty database instead of waiting for this role's own installer. Both keys, along
+// with `secret_key`, are written into this file by Mautic itself once installation
+// actually succeeds.
+//
+// EVERY VALUE BELOW IS ESCAPED TWICE, IN A SPECIFIC ORDER
+//
+//   1. `replace('%', '%%')` — this file is loaded as Symfony DI container parameters
+//      (confirmed against the pinned mautic/mautic 6.0.6 tag's own
+//      app/bundles/ConfigBundle/Form/Type/EscapeTransformer.php, which the config UI's
+//      own save path runs before writing this same file), and Symfony treats a single
+//      `%` as the start of a `%parameter.name%` reference. An unescaped `%` — which
+//      `mailer_dsn`'s own urlencoding introduces even when nothing else would — can
+//      make the container fail to compile with a missing-parameter error.
+//   2. `replace('\\', '\\\\') | replace("'", "\\'")` — PHP single-quoted string
+//      escaping, so the value cannot break out of the quotes it is embedded in below.
+$parameters = array(
+    'db_host' => '{{ app_config.app.database_host | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_port' => '{{ app_config.app.database_port | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_name' => '{{ app_config.app.database.name | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_user' => '{{ app_config.app.database_user | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_password' => '{{ app_config.app.database_password | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'db_table_prefix' => '',
+{% if wiring_mail.enabled | default(false) | bool %}
+    'mailer_from_name' => '{{ (wiring_mail.from_name | default(app_config.app.name | default("Mautic"), true)) | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    'mailer_from_email' => '{{ wiring_mail.from_address | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+    # A single Symfony Mailer DSN, not the discrete mailer_transport/host/port/user/
+    # password/encryption/auth_mode keys those seven were replaced by — see the header
+    # comment on roles/mautic/tasks/main.yml's converge task for how that was confirmed
+    # against the pinned release's own source rather than assumed.
+    #
+    # SCHEME: `mail.encryption` (CONTRACT.md, config-doctor.sh) is `starttls | tls |
+    # none` — never `ssl`, which the pinned symfony/mailer 6.4.13's own
+    # EsmtpTransportFactory would not recognise as a scheme anyway (it supports
+    # exactly `smtp` and `smtps`). `tls` is the one value that means implicit TLS from
+    # the first byte of the connection (EsmtpTransport.php: `$tls = 'smtps' ===
+    # $dsn->getScheme()`, then `port ?: 465`) and maps to `smtps`; `none` maps to
+    # plain `smtp`, which is genuinely unencrypted-unless-the-server-insists-otherwise
+    # with this transport, and that is what `none` asks for. `starttls` also maps to
+    # plain `smtp` here, but roles/mautic/tasks/main.yml refuses to deploy at all when
+    # `mail.encryption: starttls` is configured — stock Symfony Mailer has no DSN
+    # option that forces a connection to refuse an opportunistic STARTTLS upgrade the
+    # server offers, so every connection this transport opens is independently
+    # opportunistic and nothing deployed once could ever enforce it for the life of
+    # the deployment. The dict entry stays for defensive completeness (an unreachable
+    # value should still map to something sane rather than a KeyError), not because
+    # this branch is expected to run.
+    #
+    # user/password are urlencoded because a DSN is a URI: an unescaped `@`, `:` or
+    # `/` in either would be parsed as a DSN delimiter rather than a literal
+    # credential character. `/` is added explicitly — Jinja's `urlencode` deliberately
+    # leaves it unescaped, since it is normally a path separator, which a DSN's
+    # userinfo segment is not.
+    'mailer_dsn' => '{{ (
+        ({'starttls': 'smtp', 'tls': 'smtps', 'none': 'smtp'}[wiring_mail.encryption])
+        ~ '://' ~ (wiring_mail.username | urlencode | replace('/', '%2F'))
+        ~ ':' ~ (wiring_mail.password | urlencode | replace('/', '%2F'))
+        ~ '@' ~ (wiring_mail.host | urlencode) ~ ':' ~ wiring_mail.port
+      ) | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
+{% endif %}
+);

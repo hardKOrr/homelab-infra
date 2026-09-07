@@ -1,0 +1,142 @@
+{#
+  The backup for one Hi.Events instance: a CronJob in the instance's own namespace that
+  archives its storage volume (uploaded event/ticket media) and pushes it into the lab's
+  existing PBS datastore with proxmox-backup-client.
+
+  Rendered by roles/hi_events/tasks/main.yml and applied through
+  tasks/kubernetes/apply-manifest.yml. Owned by the namespace like everything else the
+  instance owns, so removal deletes it and nothing has to remember it exists.
+
+  SAME SHAPE AS roles/jellyseerr/templates/backup-cronjob.yaml.j2, byte-for-byte in
+  structure: there is no database pod here to quiesce, because Hi.Events' database is the
+  named PostgreSQL backend, backed up as part of that guest's own recovery unit — see the
+  header comment in vars/app-defaults/hi-events.yml.
+#}
+{% set b = app_config.backup %}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: backup
+{% endset %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ b.schedule }}"
+  timeZone: "{{ _he_backup_timezone }}"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ b.timeout_seconds | int }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: push
+              image: {{ b.client.image }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  export DEBIAN_FRONTEND=noninteractive
+
+                  # Never `set -x` in this script. The client reads its credential from
+                  # PBS_PASSWORD, and a trace would print the environment into the job log.
+
+                  command -v curl >/dev/null 2>&1 || \
+                    echo "WARNING: no curl in this image — a failure of this job cannot be notified"
+
+                  notify() {
+                    [ -n "${NTFY_URL:-}" ] || return 0
+                    command -v curl >/dev/null 2>&1 || return 0
+                    if [ -n "${NTFY_TOKEN:-}" ]; then
+                      curl -fsS -m 15 -X POST \
+                        -H "Title: $1" -H "Priority: high" \
+                        -H "Authorization: Bearer ${NTFY_TOKEN}" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    else
+                      curl -fsS -m 15 -X POST \
+                        -H "Title: $1" -H "Priority: high" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    fi
+                  }
+                  on_exit() {
+                    if [ "$1" -eq 0 ]; then
+                      return 0
+                    fi
+                    notify "Backup FAILED: {{ instance }}" \
+                      "The nightly application backup for {{ instance }} exited $1. It pushes to PBS datastore {{ _he_backup_datastore }} as host/{{ _he_backup_id }}. Read the failed job's output with: kubectl -n {{ k8s_namespace }} logs -l app.kubernetes.io/component=backup --all-containers --prefix"
+                    return 0
+                  }
+                  trap 'on_exit $?' EXIT
+
+                  apt-get update -qq
+                  install -d -m 0755 /etc/apt/keyrings
+                  curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+                  echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                    > /etc/apt/sources.list.d/pbs-client.list
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+
+                  proxmox-backup-client backup \
+                    storage.pxar:/app-storage \
+                    --backup-id "${BACKUP_ID}"
+
+                  proxmox-backup-client prune "host/${BACKUP_ID}" \
+                    --keep-daily "${RETENTION_DAYS}"
+
+                  echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
+              env:
+                - name: PBS_REPOSITORY
+                  value: "{{ _he_backup_repository }}"
+                - name: PBS_FINGERPRINT
+                  value: "{{ _he_backup_fingerprint }}"
+                - name: PBS_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: pbs-password }
+                - name: BACKUP_ID
+                  value: "{{ _he_backup_id }}"
+                - name: RETENTION_DAYS
+                  value: "{{ b.retention_days | int }}"
+                - name: PBS_KEY_URL
+                  value: "{{ b.client.key_url }}"
+                - name: PBS_APT_REPO
+                  value: "{{ b.client.repository }} {{ b.client.suite }} {{ b.client.component }}"
+{% if _he_ntfy_url | length > 0 %}
+                - name: NTFY_URL
+                  value: "{{ _he_ntfy_url }}"
+{% endif %}
+{% if _he_ntfy_token | length > 0 %}
+                - name: NTFY_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: ntfy-token }
+{% endif %}
+              volumeMounts:
+                - name: app-storage
+                  mountPath: /app-storage
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+          volumes:
+            - name: app-storage
+              persistentVolumeClaim:
+                claimName: {{ instance }}-storage
+                readOnly: true

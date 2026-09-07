@@ -1,0 +1,167 @@
+---
+# Deploy Hi.Events — an event ticketing and registration platform — onto the Kubernetes
+# hosting backend.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/hi-events.yml -e instance=hi-events
+#
+# STRUCTURALLY IDENTICAL TO playbooks/apps/jellyseerr.yml, WITH ONE ADDITION
+#
+# No guest to provision and no guest to run a role on: its resources live in a namespace
+# on a cluster that outlives any deployment of it, so the whole thing runs on localhost and
+# reaches the cluster through tasks/kubernetes/, which delegates kubectl to a cluster node.
+# The addition is tasks/database/provision.yml, run before the role — the same
+# backend-independent contract playbooks/apps/odoo.yml proved for a Docker consumer, now
+# proved for a Kubernetes one, ahead of roles/mixpost's own namespaced MySQL.
+
+# ── Play 1: Resolve and deploy ─────────────────────────────────────────────────
+- name: "Hi.Events | Deploy"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=hi-events"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/hi-events.yml"
+        name: _app_defaults
+
+    - name: Load instance config (optional — all defaults used if absent)
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge app config (instance overrides defaults)
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.hi_events_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        hi_events_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        hi_events_fqdn: >-
+          {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
+
+    - name: Provision the named PostgreSQL database and role
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+
+    - name: Add database connection to Hi.Events config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'database_host': database_provision_connection.host,
+            'database_port': database_provision_connection.port,
+            'database_user': database_provision_connection.user,
+            'database_password': database_provision_connection.password
+          }}, recursive=True) }}
+      no_log: true
+
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Deploy Hi.Events onto the cluster
+      ansible.builtin.include_role:
+        name: hi-events
+      vars:
+        hi_events_fqdn: "{{ hostvars['localhost'].hi_events_fqdn }}"
+
+
+# ── Play 2: Wire ───────────────────────────────────────────────────────────────
+- name: "Hi.Events | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    wiring_upstream_port: 80
+    wiring_subdomain: "{{ hostvars['localhost'].hi_events_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].hi_events_fqdn }}"
+    wiring_app_display: "Hi.Events ({{ instance }})"
+    # `/`, not an /api/status-style route — the pinned image ships no such route.
+    # Necessarily weaker than roles/hi-events' own in-cluster readinessProbe: Uptime
+    # Kuma is an external HTTP client and cannot run the `migrate:status` exec check
+    # that probe uses to catch a silently-failed migration (see that probe's comment in
+    # roles/hi-events/templates/manifest.yaml.j2), so this monitor confirms the app is
+    # reachable, not that its schema is caught up. The Kubernetes probe is what keeps a
+    # broken pod out of the Service in the meantime.
+    wiring_monitor_url: "https://{{ hostvars['localhost'].hi_events_fqdn }}/"
+    wiring_auth_group: "homelab-users"
+    wiring_identity_mode: "{{ hostvars['localhost'].app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ hostvars['localhost'].app_config.routing.access | default('public') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra.monitoring is defined
+        - homelabinfra_infra.monitoring.provider | default('none') != 'none'
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Record the app on every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].hi_events_fqdn }}"
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Hi.Events deployed"
+        notify_message: >-
+          {{ instance }} is running on the Kubernetes backend at
+          https://{{ hostvars['localhost'].hi_events_fqdn }}
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

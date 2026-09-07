@@ -1,0 +1,119 @@
+{#
+  The restore side of the backup contract, as one Kubernetes Job in the TARGET instance's
+  namespace. Rendered by roles/hi_events/tasks/restore.yml and run through
+  tasks/kubernetes/run-job.yml. Same shape as
+  roles/jellyseerr/templates/restore-job.yaml.j2, restoring the storage volume rather than
+  the config volume.
+
+    plan     — reads only. Lists what PBS holds for this application, proves the named
+               snapshot is readable, and reports what the target currently contains.
+               Writes nothing.
+    restore  — replaces the target's storage volume with the snapshot's.
+#}
+{% set client = app_config.backup.client %}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ _he_r_job_name }}
+  labels:
+    app.kubernetes.io/instance: {{ _he_r_target }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: restore
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ _he_r_timeout | int }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ _he_r_target }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: restore
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: {{ client.image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              export DEBIAN_FRONTEND=noninteractive
+              # Never `set -x`: PBS_PASSWORD is in this process's environment.
+
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+              install -d -m 0755 /etc/apt/keyrings
+              curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                > /etc/apt/sources.list.d/pbs-client.list
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+{% if _he_r_mode == 'plan' %}
+
+              echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
+              proxmox-backup-client snapshot list "host/${BACKUP_ID}" \
+                || proxmox-backup-client snapshot list
+
+              if [ -n "${SNAPSHOT:-}" ]; then
+                echo
+                echo "=== files in ${SNAPSHOT} ==="
+                proxmox-backup-client snapshot files "${SNAPSHOT}"
+              else
+                echo
+                echo "No snapshot named. Re-run with one of the identifiers above to check"
+                echo "that it is readable and to see what a restore would replace."
+              fi
+
+              echo
+              echo "=== what the target namespace holds NOW ==="
+              echo "storage volume: $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+{% else %}
+
+              echo "=== restoring ${SNAPSHOT} ==="
+              echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+              find /app-storage -mindepth 1 -delete
+              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
+              echo "restored storage volume: now $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+{% endif %}
+          env:
+            - name: PBS_REPOSITORY
+              value: "{{ k8s_pbs_repository }}"
+            - name: PBS_FINGERPRINT
+              value: "{{ k8s_pbs_fingerprint }}"
+            - name: PBS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ _he_r_secret }}, key: pbs-password }
+            - name: BACKUP_ID
+              value: "{{ _he_r_backup_id }}"
+            - name: SNAPSHOT
+              value: "{{ _he_r_snapshot }}"
+            - name: PBS_KEY_URL
+              value: "{{ client.key_url }}"
+            - name: PBS_APT_REPO
+              value: "{{ client.repository }} {{ client.suite }} {{ client.component }}"
+          volumeMounts:
+            - name: pbs-tmp
+              mountPath: /tmp
+            - name: app-storage
+              mountPath: /app-storage
+{% if _he_r_mode == 'plan' %}
+              readOnly: true
+{% endif %}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: pbs-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: app-storage
+          persistentVolumeClaim:
+            claimName: {{ _he_r_target }}-storage
+{% if _he_r_mode == 'plan' %}
+            readOnly: true
+{% endif %}

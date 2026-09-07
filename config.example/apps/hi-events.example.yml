@@ -1,0 +1,42 @@
+---
+# Hi.Events — event ticketing and registration, on the Kubernetes hosting backend.
+#
+# Copy to config/apps/hi-events.yml and change what differs for your lab. Anything you
+# leave out falls through to ansible/vars/app-defaults/hi-events.yml, which is
+# git-managed and improves on `git pull`.
+#
+# Requires a cluster (`Deploy k3s Cluster`) and the named PostgreSQL backend
+# (postgresql-hi-events by default — a lab may point several apps at one shared
+# PostgreSQL instance instead by overriding app.database.instance below).
+#
+# Order confirmations and ticket delivery read infrastructure.yml's mail.provider
+# contract. Configure that before deploying — this role refuses to deploy without it.
+#
+# CREDENTIALS ARE NOT CONFIGURED HERE. APP_KEY and the Redis password are generated on
+# first deploy, stored in the Vaultwarden item `homelab-infra/apps/<instance>`, and read
+# back from it on every later run. Do not put them in this file.
+
+app:
+  database:
+    instance: postgresql-hi-events
+    name: hi_events
+    role: hi_events
+
+routing:
+  # PUBLIC BY DEFAULT — see the header comment in ansible/vars/app-defaults/hi-events.yml.
+  # Attendees reach the event page and checkout flow with no Authentik account. Set this
+  # to `internal` only for a private, staff-only trial.
+  access: public
+  identity: catalog
+
+  # estate: <name>        # which `domains:` estate publishes it, once your lab has two
+  # subdomain: events     # override the published hostname; the app default is events
+
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Recovery boundary: restore the PostgreSQL-hi-events database (through that backend's
+# own restore procedure) and this instance's storage volume (the `Restore App` job) from
+# the same recovery point. The PostgreSQL backend is shared and must not be removed as
+# part of Hi.Events removal.

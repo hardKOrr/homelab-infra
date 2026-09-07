@@ -1,0 +1,211 @@
+{#
+  Hi.Events and its disposable Redis — everything the instance owns, in the namespace the
+  instance owns. Rendered by roles/hi_events/tasks/main.yml and applied through
+  tasks/kubernetes/apply-manifest.yml.
+
+  NO DATABASE POD HERE, UNLIKE roles/mixpost. Hi.Events' database is the named PostgreSQL
+  backend resolved by tasks/database/provision.yml in playbooks/apps/hi-events.yml before
+  this role runs — see the header comment in vars/app-defaults/hi-events.yml for why. The
+  one PersistentVolumeClaim here holds only uploaded event/ticket media.
+
+  Every object carries the instance labels, and every object is namespaced. Ownership is
+  therefore the namespace boundary rather than a label selector.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+# ── Redis (cache and queue) ─────────────────────────────────────────────────────
+# No volume: queued jobs and cached responses are not the recovery unit for this
+# application — the database and the storage volume are.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}-redis
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: cache
+    spec:
+      containers:
+        - name: redis
+          image: {{ app_config.app.cache.image }}
+          command: [redis-server, --requirepass, $(REDIS_PASSWORD)]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ instance }}, key: redis-password }
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}-redis
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: cache
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# ── Hi.Events ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ instance }}-storage
+  labels:
+{{ labels }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ app_config.app.storage }}Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate — the storage volume is ReadWriteOnce on a node-pinned
+  # StorageClass, the same reasoning as roles/mixpost and roles/jellyseerr.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: hi-events
+          image: {{ app_config.app.image }}
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-env
+          ports:
+            - containerPort: {{ app_config.app.port }}
+          volumeMounts:
+            - name: storage
+              # The image's Laravel application root is /app/backend, not
+              # /var/www/html — see the comment on app.storage in
+              # vars/app-defaults/hi-events.yml. Mounted at .../storage/app,
+              # deliberately one level below Laravel's storage/ root: storage/framework
+              # (view/session/cache scaffolding) and storage/logs are image-owned and
+              # recreated by docker/all-in-one/scripts/startup.sh on every start, and a
+              # PVC mounted over the whole storage/ directory would hide them (an empty
+              # volume shadowing what the image just created) and could break commands
+              # that expect them to already exist.
+              mountPath: /app/backend/storage/app
+          # AN EXEC PROBE WITH THREE CHECKS, NOT A PLAIN httpGet — DELIBERATELY.
+          #
+          # docker/all-in-one/scripts/startup.sh (this image's PID 1, baked in and not
+          # something this role can change) runs `php artisan migrate --force`, and on
+          # failure only echoes an error — it does not exit, and execs supervisord
+          # (nginx + php-fpm + the frontend) regardless. Checking only migration state
+          # has the opposite gap: it would report ready while nginx, php-fpm or the
+          # frontend Node process is down or still starting, wiring a Service endpoint
+          # that answers nothing. And the frontend root alone proves only nginx and
+          # Node — nginx's `/` location (nginx.conf) proxies straight to the Node
+          # process and never reaches PHP-FPM, so a crash-looping PHP-FPM leaves every
+          # API-backed flow broken while both of those checks still pass. Kubernetes
+          # runs one probe per container, so all three checks have to live in this one
+          # script:
+          #
+          #   1. an actual HTTP GET of `/` from inside the pod — nginx's root,
+          #      proxied to the frontend Node process — proving nginx and Node.
+          #   2. an HTTP GET of `/api/public/color-themes` — an unauthenticated route
+          #      (backend/routes/api.php, inside the `/public` group) that nginx's
+          #      `location ^~ /api/` rewrites straight to PHP-FPM, so this is the one
+          #      check that actually traverses PHP-FPM and Laravel's own router.
+          #   3. `migrate:status` against the database this role provisioned, checked
+          #      for the command's own exit code (nonzero when the database is
+          #      unreachable at all) and for "Pending" in its output (a migration
+          #      startup.sh never got to apply).
+          #
+          # Both HTTP checks use PHP's http:// stream wrapper rather than curl or
+          # wget, since this image ships neither (confirmed against
+          # Dockerfile.all-in-one) but always ships php. Any failure keeps the pod
+          # NotReady — traffic is withheld until the pod is serving through its full
+          # stack and running the schema it needs.
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - >-
+                  php -r 'exit(@file_get_contents("http://127.0.0.1/") !== false ? 0 : 1);' &&
+                  php -r 'exit(@file_get_contents("http://127.0.0.1/api/public/color-themes") !== false ? 0 : 1);' &&
+                  cd /app/backend &&
+                  OUT=$(php artisan migrate:status 2>&1); RC=$?;
+                  [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q Pending
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            # Generous: the first start runs database migrations before this probe can
+            # report the schema as caught up.
+            failureThreshold: 60
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: {{ instance }}-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ app_config.app.port }}
+---
+# ── Ingress ───────────────────────────────────────────────────────────────────
+# Plain HTTP to the in-cluster controller, which answers on the MetalLB VIP. TLS is not
+# terminated here: the platform Caddy is the sole public TLS edge and proxies to that VIP.
+# `routing.access: public` (this app's default) is enforced entirely by that wiring step —
+# nothing here restricts the Ingress itself, because the Ingress has no source-address
+# concept of its own.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ hi_events_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

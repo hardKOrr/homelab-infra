@@ -1,0 +1,99 @@
+---
+# Default configuration for Hi.Events — the event ticketing and registration platform, on
+# the Kubernetes hosting backend. Users override specific values in
+# config/apps/hi-events.yml. This file is git-managed — git pull may update these
+# defaults.
+#
+# docs/meta/408-app-catalog/README.md's hi-events row: "The recorded second Kubernetes
+# consumer: Postgres-backed, and the first application that must prove the public access
+# class and SMTP contract." Three things follow directly from that sentence:
+#
+#   1. Postgres-backed, not a private sidecar. roles/hi_events/tasks/main.yml provisions
+#      its database on the named PostgreSQL backend through tasks/database/provision.yml
+#      — the same seam roles/odoo already proved for a Docker consumer, now proved for a
+#      Kubernetes one. Its own PersistentVolumeClaim holds only uploaded event/ticket
+#      media, never the database.
+#   2. `routing.access: public`, by default, not internal-then-widened. An event page and
+#      its checkout flow have to be reachable by attendees who hold no Authentik account
+#      and never will — that is the application, not an exception to it. `identity:
+#      catalog` alongside it: Hi.Events runs its own organizer login, and a forward-auth
+#      gate in front of the whole app would put an Authentik sign-in between every
+#      attendee and the tickets they came to buy. CONTRACT.md's access/identity split
+#      (tasks/wiring/caddy.yml) is what makes this a supported, asserted combination
+#      rather than an app quietly bypassing the platform's identity gate.
+#   3. SMTP: order confirmations and ticket delivery are the application, not an add-on,
+#      so this role asserts the platform mail contract is configured rather than
+#      degrading to "no email sent" the way a lower-stakes app might.
+hi_events_defaults:
+
+  hosting: kubernetes
+
+  # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
+  # vars/app-defaults/jellyseerr.yml.
+
+  app:
+    # The official published production image (hi.events/docker/all-in-one/README.md:
+    # "For production, you should use the Docker image", naming this repository — the
+    # in-repo docker-compose.yml next to it is explicitly development/testing-only, built
+    # from source rather than pulled). Pinned to a point release, the same reasoning as
+    # vars/app-defaults/odoo.yml's `odoo:18.0`; `latest` at the time of writing resolves
+    # to a `v2.0.0-rc.*` pre-release, which this default deliberately avoids.
+    image: "docker.io/daveearley/hi.events-all-in-one:v1.11.1-beta"
+
+    # The container's own fixed listening port (Dockerfile.all-in-one EXPOSEs 80; the
+    # upstream compose's `8123:80` is only that example's host-side choice, which this
+    # role's own Service/Ingress make irrelevant).
+    port: 80
+
+    database:
+      provider: postgresql
+      instance: postgresql-hi-events
+      name: hi_events
+      role: hi_events
+
+    # Uploaded event cover images, attendee-facing assets and generated ticket PDFs — not
+    # the database, which lives entirely on the named PostgreSQL backend. This is the
+    # recovery unit roles/hi_events' backup CronJob covers. Mounted at
+    # /app/backend/storage — this image's Laravel application root is /app/backend, not
+    # /var/www/html.
+    storage: 10   # GB
+
+    cache:
+      image: "redis:7-alpine"
+
+  routing:
+    subdomain: events
+    proxy: internal
+
+    # PUBLIC, DELIBERATELY — see the header comment above. Attendees reach this without an
+    # Authentik account.
+    access: public
+
+    # Hi.Events runs its own organizer login; Authentik supplies a launch tile for staff
+    # who also want one, and enforces nothing.
+    identity: catalog
+
+  # Application-consistent backup, on the same "filesystem archive of the volume this
+  # application actually owns" contract as roles/jellyseerr — the database itself is the
+  # named PostgreSQL backend's own recovery unit, backed up with that guest, not here.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
+
+  # Recovery boundary: restore the PostgreSQL-hi-events database (through that backend's
+  # own restore procedure) and this instance's storage volume (through the `Restore App`
+  # job) from the same recovery point. The PostgreSQL backend is shared and must not be
+  # removed as part of Hi.Events removal.

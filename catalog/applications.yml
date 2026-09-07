@@ -347,3 +347,29 @@ applications:
     category: Business and CRM
     type: Customer Relationship Management
     scope: estate
+
+  searxng:
+    name: SearXNG
+    job: deploy-searxng.yaml
+    root: Applications
+    category: Search & Discovery
+    scope: estate
+    # SearXNG declares no `backup:` block — see vars/app-defaults/searxng.yml — so a
+    # generated Backup/Restore job would always find nothing to run.
+    exclude: [backup, restore]
+
+  mautic:
+    name: Mautic
+    job: deploy-mautic.yaml
+    root: Applications
+    category: Marketing
+    type: Email Campaigns
+    scope: estate
+
+  hi-events:
+    name: Hi.Events
+    job: deploy-hi-events.yaml
+    root: Applications
+    category: Events
+    type: Ticketing
+    scope: estate

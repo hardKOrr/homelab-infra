@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: mautic
+  description: "Deploys Mautic on Docker with external MariaDB and the platform SMTP contract"
+  min_ansible_version: "2.15"
+dependencies: []

@@ -1,0 +1,82 @@
+---
+# Deploy SearXNG onto the Kubernetes hosting backend.
+#
+# Runs on localhost, like every Kubernetes app role in this repo: there is no guest to run
+# on, so the adapter tasks delegate kubectl to a cluster node resolved by
+# tasks/kubernetes/resolve-cluster.yml.
+#
+# Inputs:
+#   instance      — the app instance name
+#   app_config    — merged defaults + user config
+#   searxng_fqdn  — the hostname the Ingress answers on
+#
+# Idempotent: the secret key and the limiter's Redis password are generated once and
+# reused from Vaultwarden thereafter, and a converged manifest applies with no change.
+#
+# NO BACKUP CONTRACT — see the header comment in vars/app-defaults/searxng.yml. Nothing
+# this role creates is a PersistentVolumeClaim.
+
+- name: SearXNG | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: SearXNG | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+# Generated once, then read back from the canonical Vaultwarden item on every later run —
+# the same idiom as roles/mixpost. Regenerating secret_key on a converged run would
+# silently invalidate every session cookie and CSRF token SearXNG already issued; it costs
+# nothing real, but there is no reason to churn it on every deploy either.
+- name: SearXNG | Resolve application secrets
+  ansible.builtin.set_fact:
+    _sx_secret_key: >-
+      {{ app_config.app.secret_key
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _sx_redis_password: >-
+      {{ app_config.app.redis_password
+         | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: SearXNG | Store the canonical application secrets
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      secret_key: "{{ _sx_secret_key }}"
+      redis_password: "{{ _sx_redis_password }}"
+    vault_item_secret_fields:
+      - secret_key
+      - redis_password
+
+- name: SearXNG | Sync the limiter Redis credential into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}"
+    k8s_secret_data:
+      redis-password: "{{ _sx_redis_password }}"
+
+# settings.yml carries secret_key, so it is a Secret rather than a ConfigMap even though
+# every other field in it is public search-engine configuration.
+- name: SearXNG | Render the settings file
+  ansible.builtin.set_fact:
+    _sx_settings_yml: "{{ lookup('ansible.builtin.template', 'settings.yml.j2') }}"
+  no_log: true
+
+- name: SearXNG | Sync the settings file into the namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-settings"
+    k8s_secret_data:
+      settings.yml: "{{ _sx_settings_yml }}"
+
+- name: SearXNG | Render the workload manifest
+  ansible.builtin.set_fact:
+    _sx_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+
+- name: SearXNG | Apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ _sx_manifest }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}-redis"
+      - "deployment/{{ instance }}"

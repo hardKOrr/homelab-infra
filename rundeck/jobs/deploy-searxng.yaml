@@ -1,0 +1,48 @@
+# Deploy SearXNG — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+#
+# Requires the `Deploy k3s Cluster` job to have run: SearXNG has no guest of its own and
+# deploys into a namespace on that cluster.
+
+- id: 1a2f8c3e-6b7d-5e91-8f02-searxng00001
+  uuid: 1a2f8c3e-6b7d-5e91-8f02-searxng00001
+  name: Deploy SearXNG
+  group: Applications/Search & Discovery/SearXNG
+  description: |-
+    Deploy or converge **SearXNG**, the self-hosted metasearch engine.
+
+    - **Hosting:** Kubernetes. No database; a disposable in-namespace Redis backs its
+      own bot/rate limiter only.
+    - **Route:** `searxng.<estate domain>`, restricted to internal sources by default.
+    - **Identity:** SearXNG has no login of its own; Authentik supplies a launch tile.
+
+    No persistent volume is created and no backup is scheduled — SearXNG's only generated
+    credential (`secret_key`) is stored in Vaultwarden and reused on every run.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to
+      deploy an additional SearXNG instance. The value identifies its config file,
+      `app-<instance>` namespace, route, and Vaultwarden item.'
+    required: true
+    value: searxng
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/searxng.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/searxng.yml -e "instance=$RD_OPTION_INSTANCE"

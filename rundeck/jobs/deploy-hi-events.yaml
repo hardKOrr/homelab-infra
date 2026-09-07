@@ -1,0 +1,49 @@
+# Deploy Hi.Events. Rendered and imported by rundeck/render-job.py. Use the Reimport
+# Jobs job rather than a raw import: the renderer injects this job's Key Storage options
+# and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
+#
+# Requires the `Deploy k3s Cluster` job and a named PostgreSQL backend instance
+# (postgresql-hi-events by default) to have run first.
+- id: 7be2a9d4-1f6c-5a33-b7de-hievents0001
+  uuid: 7be2a9d4-1f6c-5a33-b7de-hievents0001
+  name: Deploy Hi.Events
+  group: Applications/Events/Ticketing/Hi.Events
+  description: |-
+    Deploy or converge an instanced **Hi.Events** ticketing and registration platform.
+
+    - **Hosting:** Kubernetes, with named external PostgreSQL and an in-namespace Redis
+      cache/queue.
+    - **Route:** `events.<estate domain>`, **public by default** — attendees reach the
+      event page and checkout with no Authentik account. Hi.Events runs its own
+      organizer login; Authentik supplies a launch tile only.
+    - **Mail:** order confirmations and ticket delivery require the platform mail
+      contract — this job refuses to deploy without one configured.
+    - **Recovery:** the PostgreSQL database and this instance's storage volume are backed
+      up and restored separately; see the role's header for the boundary.
+
+    Generated credentials are minted once and reused from Vaultwarden.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to
+      deploy an additional Hi.Events instance. The value identifies its config file,
+      `app-<instance>` namespace, route, and Vaultwarden item.'
+    required: true
+    value: hi-events
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/hi-events.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/hi-events.yml -e "instance=$RD_OPTION_INSTANCE"
