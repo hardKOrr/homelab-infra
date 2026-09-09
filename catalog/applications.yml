@@ -125,6 +125,17 @@ applications:
     type: Media Servers
     scope: estate
 
+  immich:
+    name: Immich
+    job: deploy-immich.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Photo Management
+    scope: estate
+    # Immich owns a role-backed database/media recovery path in addition to the generic
+    # Docker actions. Its named external backends and shared iGPU are not sidecars.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
+
   plex:
     name: Plex
     job: deploy-plex.yaml

@@ -103,6 +103,11 @@ stack_defaults:
     disk_volume:
       size: 32
 
+  # Immich's server and OpenVINO worker share a host, while originals and thumbnails
+  # live on the explicitly declared media mount rather than the stack rootfs.
+  photos:
+    cores: 4
+    memory: 8192
   # Frigate gets its own Docker-on-LXC guest. Its recording workload is continuously
   # writing, and its devices must not be co-tenants of an unrelated stack.
   frigate:

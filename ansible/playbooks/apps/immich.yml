@@ -1,0 +1,223 @@
+---
+# Deploy Immich on the dedicated photos Docker stack.
+#
+# The hosting unit is an LXC stack host, not a VM. The exact shared render node is
+# declared in config/proxmox.yml under proxmox.devices with mode: shared. The durable
+# originals/thumbnails mount and its owner are supplied by this Immich instance config;
+# no existing global media library is inherited.
+
+- name: "Immich | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe Immich instance name: -e instance=immich"
+
+    - name: Load Immich defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/immich.yml
+        name: _app_defaults
+
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge Immich config without adopting global media storage
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.immich_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+        _immich_mounts: "{{ (_app_defaults.immich_defaults.media_storage.mounts | default([])) }}"
+      no_log: true
+
+    - name: Require exactly one new durable Immich media mount
+      ansible.builtin.assert:
+        that:
+          - app_config.media_storage.mounts is sequence
+          - app_config.media_storage.mounts | length == 1
+          - app_config.media_storage.mounts[0].host | default('') is match('^/')
+          - app_config.media_storage.mounts[0].path | default('') is match('^/')
+          - app_config.media_storage.owner.user | default('') is match('^[a-z_][a-z0-9_-]*$')
+          - app_config.media_storage.owner.uid | default(0) | int > 0
+          - app_config.media_storage.owner.gid | default(0) | int > 0
+        fail_msg: >-
+          Immich needs exactly one explicitly declared media_storage.mounts entry for
+          originals/thumbnails plus media_storage.owner. The platform will attach that
+          existing host directory and will not adopt global media storage.
+      no_log: true
+
+    - name: Resolve the Immich media path
+      ansible.builtin.set_fact:
+        _immich_media_path: "{{ app_config.media_storage.mounts[0].path }}"
+
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        immich_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        immich_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+
+  tasks:
+    - name: Provision the named PostgreSQL database and role
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+
+    - name: Add database connection to Immich config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'database_host': database_provision_connection.host,
+            'database_port': database_provision_connection.port,
+            'database_user': database_provision_connection.user,
+            'database_password': database_provision_connection.password
+          }}, recursive=True) }}
+      no_log: true
+
+    - name: Find or create the photos stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+    - name: Attach the Immich originals and thumbnails mount
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_list: "{{ app_config.media_storage.mounts }}"
+        attach_mounts_owner: "{{ app_config.media_storage.owner }}"
+
+    - name: Bind the declared shared iGPU render node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-shared-device.yml
+      vars:
+        shared_device_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        shared_device_list:
+          - host: "{{ app_config.app.shared_device }}"
+            mode: "{{ app_config.app.shared_device_mode }}"
+      # This task is intentionally never replaced with attach-pci-passthrough.yml:
+      # Immich's inference device is shared between LXC guests.
+      when: app_config.app.shared_device | default('') | length > 0
+
+- name: "Immich | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Carry the resolved media path into the deployment host
+      ansible.builtin.set_fact:
+        _immich_media_path: "{{ hostvars['localhost']._immich_media_path }}"
+
+  tasks:
+    - name: Bootstrap the photos stack host
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+
+    - name: Deploy Immich
+      ansible.builtin.include_role:
+        name: immich
+
+- name: "Immich | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate | default('') }}"
+
+  vars:
+    _immich_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _immich_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _immich_deploy_host.app_config.app.port }}"
+    wiring_subdomain: "{{ _immich_deploy_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Immich ({{ instance }})"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/api/server/ping"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _immich_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _immich_deploy_host.app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Record Immich on its photos stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: ["{{ _immich_deploy_host.inventory_hostname }}"]
+        record_guest_kind: docker
+        record_guest_url: "https://{{ immich_fqdn }}/"
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

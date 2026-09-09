@@ -200,6 +200,7 @@
       vars:
         app_config: "{{ hostvars['localhost'].app_config }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
       when: app_target_kind | default('native') == 'docker'
 
     - name: Notify Docker backup

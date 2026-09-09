@@ -4,7 +4,8 @@
 # Inputs from an application playbook:
 #   database_provision_app_instance  application instance (Vaultwarden item owner)
 #   database_provision_config        {provider, instance, name, role,
-#                                     credential_action: reuse|rotate}
+#                                     credential_action: reuse|rotate,
+#                                     extensions: []|[vector]}
 #
 # A backend is resolved from generated facts, creates the database and login role,
 # and returns only the application connection fields through the canonical app item.
@@ -20,6 +21,8 @@
       - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
       - database_provision_config.version | default('') is match('^[0-9]+$') or database_provision_config.version | default('') == ''
       - database_provision_config.credential_action | default('reuse') in ['reuse', 'rotate']
+      - database_provision_config.extensions | default([]) is sequence
+      - (database_provision_config.extensions | default([]) | difference(['vector']) | length) == 0
     fail_msg: >-
       Database provisioning needs a supported provider plus safe instance, name and role values.
 
@@ -181,6 +184,59 @@
   when:
     - database_provision_config.provider == 'postgresql'
     - _database_exists.stdout | trim != '1'
+
+# Immich requires pgvector for its face/CLIP embeddings. The extension is a backend
+# capability, not an application-side package: install it on the named PostgreSQL host
+# and create it in the named application database before the app starts.
+- name: Database | Install the PostgreSQL vector extension package
+  ansible.builtin.apt:
+    name: "postgresql-{{ database_provision_config.version | default(_database_backend.version | default('16'), true) }}-pgvector"
+    state: present
+    update_cache: true
+  delegate_to: database_backend_target
+  become: true
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - "'vector' in (database_provision_config.extensions | default([]))"
+
+- name: Database | Check whether the PostgreSQL vector extension exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - --dbname={{ database_provision_config.name }}
+      - "--port={{ _database_backend.port }}"
+      - --command=SELECT 1 FROM pg_extension WHERE extname = 'vector'
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: false
+  register: _database_vector_extension_exists
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - "'vector' in (database_provision_config.extensions | default([]))"
+
+- name: Database | Enable the PostgreSQL vector extension
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - --username=postgres
+      - --dbname={{ database_provision_config.name }}
+      - "--port={{ _database_backend.port }}"
+      - --command=CREATE EXTENSION IF NOT EXISTS vector
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: true
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - "'vector' in (database_provision_config.extensions | default([]))"
+    - _database_vector_extension_exists.stdout | trim != '1'
 
 - name: Database | Assert MySQL-compatible client hosts are declared
   ansible.builtin.assert:

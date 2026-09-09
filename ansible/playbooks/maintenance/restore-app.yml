@@ -88,8 +88,14 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
-# use their namespaced restore job; Actual Budget is the explicit Docker exception and
-# archives/restores its complete application-native /data directory on the services host.
+# use their namespaced restore job; application-consistent Docker roles such as Actual Budget
+# and Immich own their recovery mechanism. Native apps and Docker apps without one
+# remain on whole-guest PBS recovery.
+
+# Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
+# durable originals/thumbnails from one application-consistent PBS snapshot. Plan mode lists
+# snapshots only; overwrite mode validates the archive before replacing media and leaves
+# services stopped after a failed destructive step.
 
 - name: "Restore App | Restore application data from PBS"
   hosts: localhost
@@ -178,13 +184,13 @@
             (_ra_kind == 'kubernetes' and app_config.backup is defined)
             or
             (_ra_kind == 'docker'
-             and _ra_app == 'actual-budget'
+             and _ra_app in ['actual-budget', 'immich']
              and app_config.backup.enabled | default(false) | bool
              and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
           {{ _ra_app }} has no declared application restore path. Kubernetes roles use their
-          backup contract; the only Docker exception is Actual Budget's application-native
-          /data archive. Other Docker and native applications remain on whole-guest PBS
+          backup contract; supported Docker roles own their application-consistent archive
+          and restore tasks. Other Docker and native applications remain on whole-guest PBS
           recovery.
 
     - name: Resolve the Docker target
@@ -253,8 +259,11 @@
                  'data_path': (hostvars['localhost'].restore_target_config.app.data_path
                                | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
                                          '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
-               }}, recursive=True) }}
+               }}, recursive=True)
+             if hostvars['localhost']._ra_app == 'actual-budget'
+             else hostvars['localhost'].restore_target_config }}
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
         restore_target: "{{ hostvars['localhost']._ra_target }}"
         restore_snapshot: "{{ hostvars['localhost']._ra_snapshot }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"

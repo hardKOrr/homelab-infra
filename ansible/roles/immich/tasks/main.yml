@@ -1,0 +1,157 @@
+---
+# Immich is a two-service Compose application. Its database and cache are resolved from
+# independently deployed named backends before this role runs; no backend service is
+# allowed to appear in this Compose project.
+- name: Immich | Resolve the configured media path
+  ansible.builtin.set_fact:
+    _immich_media_path: "{{ (app_config.media_storage.mounts | first).path }}"
+
+- name: Immich | Resolve the named Redis backend
+  ansible.builtin.set_fact:
+    _immich_redis_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(app_config.app.redis.instance, {}) }}
+    _immich_redis_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.redis.instance, {}).password
+         | default('', true) }}
+  no_log: true
+
+- name: Immich | Assert the named PostgreSQL and Redis backends are available
+  ansible.builtin.assert:
+    that:
+      - app_config.app.database.provider == 'postgresql'
+      - app_config.app.database.instance | length > 0
+      - app_config.app.database_host | default('') | length > 0
+      - app_config.app.database_port | default(0) | int > 0
+      - app_config.app.database_user | default('') | length > 0
+      - app_config.app.database_password | default('') | length > 0
+      - _immich_redis_backend.provider | default('') == 'redis'
+      - _immich_redis_backend.host | default('') | length > 0
+      - _immich_redis_backend.port | default(0) | int > 0
+      - _immich_redis_password | length > 0
+    fail_msg: >-
+      Immich requires the named PostgreSQL instance {{ app_config.app.database.instance }}
+      and Redis instance {{ app_config.app.redis.instance }}. Deploy both backends first;
+      credentials must come from Vaultwarden, not config/apps/{{ instance }}.yml.
+  no_log: true
+
+- name: Immich | Assert the durable media mount is visible
+  ansible.builtin.stat:
+    path: "{{ _immich_media_path }}"
+  register: _immich_media_stat
+  changed_when: false
+
+- name: Immich | Require the declared durable media mount
+  ansible.builtin.assert:
+    that:
+      - _immich_media_stat.stat.exists
+      - _immich_media_stat.stat.isdir
+      - app_config.media_storage.owner.user | default('') | length > 0
+      - app_config.media_storage.owner.uid | default(0) | int > 0
+      - app_config.media_storage.owner.gid | default(0) | int > 0
+    fail_msg: >-
+      Immich's originals and thumbnails must be on the declared media_storage mount
+      {{ _immich_media_path }}, not under /opt/{{ instance }}. Attach an existing host
+      directory with an explicit media_storage.owner before deploying.
+
+- name: Immich | Create project and disposable model-cache directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ immich_project_dir }}"
+    - "{{ app_config.app.model_cache_path }}"
+
+- name: Immich | Store the backend and device contract in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: immich
+      instance: "{{ instance }}"
+      database_instance: "{{ app_config.app.database.instance }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      redis_instance: "{{ app_config.app.redis.instance }}"
+      redis_host: "{{ _immich_redis_backend.host }}"
+      redis_port: "{{ _immich_redis_backend.port }}"
+      redis_password: "{{ _immich_redis_password }}"
+      media_path: "{{ _immich_media_path }}"
+      shared_device: "{{ app_config.app.shared_device }}"
+    vault_item_secret_fields: [database_password, redis_password]
+  no_log: true
+
+- name: Immich | Render runtime environment
+  ansible.builtin.template:
+    src: immich.env.j2
+    dest: "{{ immich_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Immich
+
+- name: Immich | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ immich_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart Immich
+
+- name: Immich | Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ immich_project_dir }}"
+
+- name: Immich | Start the application
+  community.docker.docker_compose_v2:
+    project_src: "{{ immich_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Immich | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Immich | Wait for the server health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/server/ping"
+    status_code: 200
+  register: _immich_health
+  until: _immich_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Immich | Assert the ML service is running
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ immich_project_dir }}"
+      - ps
+      - --status
+      - running
+      - --services
+  register: _immich_running_services
+  changed_when: false
+
+- name: Immich | Prove the shared iGPU ML service is running
+  ansible.builtin.assert:
+    that: "'immich-machine-learning' in _immich_running_services.stdout_lines"
+    fail_msg: >-
+      Immich's machine-learning service is not running with shared device
+      {{ app_config.app.shared_device }}. Check the declared shared iGPU mode and the
+      render-node bind before retrying; dedicated GPU passthrough is not supported here.
+
+- name: Immich | Export the app URL to the playbook
+  ansible.builtin.set_fact:
+    immich_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"
