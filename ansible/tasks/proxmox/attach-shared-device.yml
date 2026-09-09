@@ -29,6 +29,9 @@
 #                         mountpoint's guest-side path can be. `mode` is the permission
 #                         bits PVE grants the guest on that node; omit it to inherit PVE's
 #                         default (0660).
+#   homelabinfra_config.proxmox.devices — named physical-device declarations. Every matching
+#                                        declaration must explicitly say `mode: shared`;
+#                                        its `identifiers` list includes each host path.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -41,6 +44,28 @@
     fail_msg: >-
       attach-shared-device.yml needs shared_device_guest and a non-empty
       shared_device_list.
+
+# This is the primary mode gate. It intentionally runs before any node or guest query: a
+# declaration is an operator-owned config fact, not something inferred from current LXC
+# bindings. Every identifier for one physical device belongs in the same named declaration,
+# so a PCI request and a render-node request cannot commit that device to opposite modes.
+- name: Shared device | Assert every physical device is declared shared
+  ansible.builtin.assert:
+    that:
+      - _sd_device_declarations | length == 1
+      - (_sd_device_declarations | map(attribute='value.mode') | first | default('', true)) == 'shared'
+    fail_msg: >-
+      Shared device {{ item.host }} must match exactly one physical-device declaration
+      with mode: shared in homelabinfra_config.proxmox.devices. A device declared dedicated
+      cannot be bound into an LXC guest.
+  vars:
+    _sd_device_declarations: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
+         | selectattr('value.identifiers', 'defined')
+         | selectattr('value.identifiers', 'contains', item.host) | list }}
+  loop: "{{ shared_device_list }}"
+  loop_control:
+    label: "{{ item.host }}"
 
 - name: Shared device | List the node's containers
   ansible.builtin.command:

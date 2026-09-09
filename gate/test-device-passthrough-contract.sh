@@ -6,17 +6,20 @@
 #
 #   1. The ownership guard: a guest missing the `_+lab` tag must be refused by the PCI and
 #      USB passthrough seams.
-#   2. The dedicated-device conflict check: a device already claimed by a DIFFERENT guest
+#   2. The declared physical-device mode gate: a PCI request for a `shared` declaration and
+#      a shared request for a `dedicated` declaration must both be refused before any guest
+#      or node state is inspected.
+#   3. The dedicated-device conflict check: a device already claimed by a DIFFERENT guest
 #      must be refused, a device already held by the SAME guest must pass (idempotent
 #      no-op), and a free device must pass.
-#   3. USB identity is a Proxmox resource mapping, not a raw vendor:product pair, which
+#   4. USB identity is a Proxmox resource mapping, not a raw vendor:product pair, which
 #      cannot distinguish two identical physical devices.
-#   4. Detach matches only the binding whose content (host path / PCI id / USB mapping)
+#   5. Detach matches only the binding whose content (host path / PCI id / USB mapping)
 #      was requested — an unrelated devN/hostpciN/usbN entry, or a raw non-mapping usbN
 #      entry this platform never wrote, is never selected for removal.
-#   5. Every detach seam refuses a guest missing the `_+lab` ownership tag, exactly like
+#   6. Every detach seam refuses a guest missing the `_+lab` ownership tag, exactly like
 #      attach.
-#   6. A content match is never enough for detach to treat a binding as project-owned: only
+#   7. A content match is never enough for detach to treat a binding as project-owned: only
 #      a match paired with the `_.dev+<slug>` provenance tag attach wrote is removed. A
 #      content match with no provenance tag — an operator's own identical entry — is
 #      classified as NOT owned and left in place.
@@ -141,6 +144,96 @@ for path, task_name, tags_var in (
         eval_assert(task, {tags_var: ["_-debian"]}),
         False,
     )
+
+# -- Declared physical-device mode gate, PCI and shared -------------------------------
+# One declaration owns both the shared render-node path and the PCI identity of this
+# synthetic iGPU. The requested seam must agree with the declared mode, regardless of any
+# current guest bindings (which are not present in these fixtures).
+physical_devices = {
+    "intel-igpu": {
+        "mode": "shared",
+        "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+    },
+}
+pci_mode_task = task_named(
+    "ansible/tasks/proxmox/attach-pci-passthrough.yml",
+    "Assert the physical device is declared dedicated",
+)
+check(
+    "PCI: request for a device declared shared is refused",
+    eval_assert(pci_mode_task, {
+        "homelabinfra_config": {"proxmox": {"devices": physical_devices}},
+        "pci_passthrough_device": {"id": "0000:00:02.0"},
+    }),
+    False,
+)
+check(
+    "PCI: request for a device declared dedicated passes the mode gate",
+    eval_assert(pci_mode_task, {
+        "homelabinfra_config": {"proxmox": {"devices": {
+            "intel-igpu": {
+                "mode": "dedicated",
+                "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+            },
+        }}},
+        "pci_passthrough_device": {"id": "0000:00:02.0"},
+    }),
+    True,
+)
+
+shared_mode_task = task_named(
+    "ansible/tasks/proxmox/attach-shared-device.yml",
+    "Assert every physical device is declared shared",
+)
+check(
+    "shared: request for a device declared dedicated is refused",
+    eval_assert(shared_mode_task, {
+        "homelabinfra_config": {"proxmox": {"devices": {
+            "intel-igpu": {
+                "mode": "dedicated",
+                "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+            },
+        }}},
+        "item": {"host": "/dev/dri/renderD128"},
+    }),
+    False,
+)
+check(
+    "shared: request for a device declared shared passes the mode gate",
+    eval_assert(shared_mode_task, {
+        "homelabinfra_config": {"proxmox": {"devices": physical_devices}},
+        "item": {"host": "/dev/dri/renderD128"},
+    }),
+    True,
+)
+
+# The mode assertions are the primary gate and must precede the first node query. This
+# keeps a missing/mismatched declaration independent of guest state and prevents any
+# Proxmox command from running for a request that can never be valid.
+def task_index(path, fragment):
+    document = yaml.safe_load((repo / path).read_text(encoding="utf-8"))
+    names = [task.get("name", "") for task in flatten(document)]
+    for index, name in enumerate(names):
+        if fragment in name:
+            return index
+    raise SystemExit("no task matching %r in %s" % (fragment, path))
+
+check(
+    "PCI: mode gate precedes the first node query",
+    task_index("ansible/tasks/proxmox/attach-pci-passthrough.yml",
+               "Assert the physical device is declared dedicated")
+    < task_index("ansible/tasks/proxmox/attach-pci-passthrough.yml",
+                 "Verify the device is present on the node"),
+    True,
+)
+check(
+    "shared: mode gate precedes the first node query",
+    task_index("ansible/tasks/proxmox/attach-shared-device.yml",
+               "Assert every physical device is declared shared")
+    < task_index("ansible/tasks/proxmox/attach-shared-device.yml",
+                 "List the node's containers"),
+    True,
+)
 
 # -- Dedicated-device conflict check, PCI ------------------------------------------------
 pci_task = task_named(

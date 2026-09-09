@@ -58,6 +58,11 @@ homelabinfra_defaults:
   proxmox:
     api_port: 8006
     api_user: root@pam
+    # Physical devices must be explicitly assigned a mode before an attachment task can
+    # use them. Each named device lists every identifier by which its shared or dedicated
+    # attachment may refer to the same physical unit; the map is intentionally empty until
+    # the operator declares the node's hardware in config/proxmox.yml.
+    devices: {}
     lxc:
       # The OS image every container this platform creates starts from. It lives here, in
       # the GLOBAL defaults, because a Docker stack host has no app-defaults file to carry
