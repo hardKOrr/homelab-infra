@@ -353,3 +353,17 @@ vaultwarden:
 #     ip_address: "192.168.1.50"
 #     disk_volume:
 #       size: 64
+
+# ── Frigate recording storage (optional) ───────────────────────────────────────
+# Frigate is a dedicated Docker-on-LXC guest with continuous recording writes. The
+# node-side path must already be mounted and have capacity for the configured retention
+# period; the deploy checks minimum_free_gb before attaching it and never formats it.
+#
+# frigate_storage:
+#   mounts:
+#     - host: /mnt/frigate-recordings   # existing path on the target Proxmox node
+#       path: /mnt/frigate-recordings   # path visible in stack-frigate and the container
+#   owner:                              # same identity on node and in the unprivileged LXC
+#     user: homelab-infra
+#     uid: 1313
+#     gid: 1313

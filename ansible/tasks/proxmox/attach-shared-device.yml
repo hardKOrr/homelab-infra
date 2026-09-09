@@ -24,6 +24,9 @@
 # Inputs:
 #   shared_device_guest — LXC guest hostname to bind into
 #   shared_device_list  — [{host: /dev/dri/renderD128, mode: "0666"}, ...]
+#                         An item may also carry identity, an exact physical-device
+#                         identifier (for example a Proxmox USB mapping name) when the
+#                         host path is resolved at runtime.
 #                         `host` is the device node's path, identical on the node and
 #                         inside the guest — a device node is not relocated the way a
 #                         mountpoint's guest-side path can be. `mode` is the permission
@@ -62,7 +65,7 @@
     _sd_device_declarations: >-
       {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
          | selectattr('value.identifiers', 'defined')
-         | selectattr('value.identifiers', 'contains', item.host) | list }}
+         | selectattr('value.identifiers', 'contains', item.identity | default(item.host)) | list }}
   loop: "{{ shared_device_list }}"
   loop_control:
     label: "{{ item.host }}"

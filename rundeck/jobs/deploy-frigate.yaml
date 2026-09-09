@@ -1,0 +1,41 @@
+# Deploy Frigate. Rendered and imported by rundeck/render-job.py.
+- id: 4c6ed4df-7d8c-4ae6-90c6-f3cc6b7ce0e9
+  uuid: 4c6ed4df-7d8c-4ae6-90c6-f3cc6b7ce0e9
+  name: Deploy Frigate
+  group: Applications/Media & Entertainment/Video Surveillance/Frigate
+  description: |-
+    Deploy or converge Frigate on its own Docker-on-LXC guest.
+
+    - **Dedicated guest:** Frigate uses the frigate stack host and is never placed beside
+      unrelated media or services applications.
+    - **Storage:** recording storage is an existing Proxmox-node mount. The deploy checks
+      the configured retention floor and applies the platform's mount-owner mapping; it
+      does not create, format, or adopt storage.
+    - **Devices:** the operator must name the shared iGPU render node and Coral USB resource
+      mapping. Device mode, guest ownership, mapping presence, and conflicting holders are
+      checked before binding.
+    - **Secrets:** camera credentials and the optional MQTT password are hidden fields in
+      Vaultwarden item homelab-infra/apps/<instance> and never live in config/apps.
+    - **Recovery:** PBS restores the guest/config; the recording-storage owner restores the
+      external recording mount. Read ansible/roles/frigate/README.md before live binding.
+    - **Rerun:** the same guest, mount, device provenance, config, and credentials are reused.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Frigate instance. Enter another name for a second deployment.'
+    required: true
+    value: frigate
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/frigate.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "\${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/frigate.yml -e "instance=\$RD_OPTION_INSTANCE"

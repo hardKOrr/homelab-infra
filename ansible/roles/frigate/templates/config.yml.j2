@@ -1,0 +1,45 @@
+{{ ansible_managed | comment }}
+{% if app_config.app.hwaccel_args | default('') | length > 0 %}
+ffmpeg:
+  hwaccel_args: {{ app_config.app.hwaccel_args | to_json }}
+{% endif %}
+
+detectors:
+  coral:
+    type: edgetpu
+    device: usb
+
+{% set mqtt = app_config.app.mqtt | default({}) %}
+{% if mqtt.host | default('') | length > 0 %}
+mqtt:
+  enabled: true
+  host: {{ mqtt.host | to_json }}
+  port: {{ mqtt.port | default(1883) | int }}
+{% if mqtt.username | default('') | length > 0 %}
+  user: {{ mqtt.username | to_json }}
+  password: {{ _frigate_mqtt_password | to_json }}
+{% endif %}
+{% else %}
+mqtt:
+  enabled: false
+{% endif %}
+
+cameras:
+{% if (app_config.app.cameras | default({})) | length == 0 %}
+  {}
+{% else %}
+{% for camera_name, camera in app_config.app.cameras.items() %}
+  {{ camera_name }}:
+    enabled: {{ camera.enabled | default(true) | bool | lower }}
+    ffmpeg:
+      inputs:
+        - path: {{ _frigate_rtsp_urls[camera_name] | to_json }}
+          roles: {{ camera.roles | default(['detect', 'record']) | to_json }}
+{% if camera.detect is defined %}
+    detect:
+{% for key, value in camera.detect.items() %}
+      {{ key }}: {{ value | to_json }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}

@@ -1,0 +1,144 @@
+---
+- name: Frigate | Resolve the Vaultwarden item
+  ansible.builtin.set_fact:
+    _frigate_vault_item: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}"
+  no_log: true
+
+- name: Frigate | Resolve hidden credentials
+  ansible.builtin.set_fact:
+    _frigate_camera_credentials: >-
+      {{ (_frigate_vault_item.camera_credentials | default('{}')) | from_json }}
+    _frigate_mqtt_password: "{{ _frigate_vault_item.mqtt_password | default('') }}"
+  no_log: true
+
+- name: Frigate | Assert the device and recording contract reached the role
+  ansible.builtin.assert:
+    that:
+      - app_config.app.igpu_render_node | default('') | length > 0
+      - app_config.app.coral_usb_mapping | default('') | length > 0
+      - app_config.app.coral_usb_device_path | default('') | length > 0
+      - app_config.app.recordings_path | default('') | length > 0
+      - app_config.app.retention_days | int > 0
+    fail_msg: >-
+      Frigate requires an explicitly named shared iGPU render node, Coral USB mapping,
+      recording mount path, and positive retention_days. No device discovery is allowed.
+
+- name: Frigate | Assert every configured camera has Vaultwarden credentials
+  ansible.builtin.assert:
+    that:
+      - _frigate_camera_credentials[item.key] is defined
+      - _frigate_camera_credentials[item.key].username | default('') | length > 0
+      - _frigate_camera_credentials[item.key].password | default('') | length > 0
+    fail_msg: >-
+      Camera {{ item.key }} has no complete credential in hidden Vaultwarden field
+      camera_credentials for homelab-infra/apps/{{ instance }}. Camera passwords never
+      belong in config/apps/{{ instance }}.yml.
+  loop: "{{ app_config.app.cameras | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+
+- name: Frigate | Assert MQTT credentials are present when MQTT authentication is configured
+  ansible.builtin.assert:
+    that: _frigate_mqtt_password | length > 0
+    fail_msg: >-
+      Frigate MQTT authentication is configured for {{ instance }}, but hidden Vaultwarden
+      field mqtt_password is empty.
+  when: app_config.app.mqtt.username | default('') | length > 0
+  no_log: true
+
+- name: Frigate | Resolve camera URLs without logging credentials
+  ansible.builtin.set_fact:
+    _frigate_rtsp_urls: >-
+      {{ _frigate_rtsp_urls | default({}) | combine({item.key:
+         ('rtsp://' ~ (_frigate_camera_credentials[item.key].username | urlencode) ~ ':' ~
+          (_frigate_camera_credentials[item.key].password | urlencode) ~ '@' ~ item.value.host ~ ':' ~
+          (item.value.port | default(554) | string) ~ item.value.path)}) }}
+  loop: "{{ app_config.app.cameras | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  no_log: true
+
+- name: Frigate | Create the application and recording mount paths
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ frigate_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+    - "{{ app_config.app.recordings_path }}"
+
+- name: Frigate | Verify the recording mount is visible in the Docker LXC
+  ansible.builtin.stat:
+    path: "{{ app_config.app.recordings_path }}"
+  register: _frigate_recordings_path
+
+- name: Frigate | Assert the recording mount is a directory
+  ansible.builtin.assert:
+    that: _frigate_recordings_path.stat.exists and _frigate_recordings_path.stat.isdir
+    fail_msg: >-
+      {{ app_config.app.recordings_path }} is not visible as a directory inside the
+      Frigate LXC. Attach the declared recording-storage mount before deploying.
+
+- name: Frigate | Verify the recording path is an actual mountpoint
+  ansible.builtin.command:
+    argv: [mountpoint, -q, "{{ app_config.app.recordings_path }}"]
+  register: _frigate_mountpoint
+  changed_when: false
+  failed_when: false
+
+- name: Frigate | Refuse to write recordings to the guest root filesystem
+  ansible.builtin.assert:
+    that: _frigate_mountpoint.rc == 0
+    fail_msg: >-
+      {{ app_config.app.recordings_path }} is a directory but not a mounted recording
+      volume. Frigate refuses to write continuous recordings into the guest rootfs.
+
+- name: Frigate | Render the redacted Compose project and application config
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: docker-compose.yml.j2, dest: "{{ frigate_project_dir }}/docker-compose.yml", mode: "0640"}
+    - {src: config.yml.j2, dest: "{{ app_config.app.config_path }}/config.yml", mode: "0600"}
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+  notify: Restart Frigate
+
+- name: Frigate | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ frigate_project_dir }}"
+
+- name: Frigate | Start the service
+  community.docker.docker_compose_v2:
+    project_src: "{{ frigate_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Frigate | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Frigate | Wait for the version endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/version"
+    return_content: true
+    status_code: 200
+  register: _frigate_health
+  until: _frigate_health.status | default(0) == 200
+  retries: "{{ frigate_http_retries }}"
+  delay: "{{ frigate_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Frigate | Assert the health response identifies a version
+  ansible.builtin.assert:
+    that:
+      - _frigate_health.content | default('') is search('version')
+    fail_msg: Frigate answered its health endpoint without a version response.
