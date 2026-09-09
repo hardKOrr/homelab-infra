@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+{% set rtsp_host_port = _frigate_rtsp_host_port | int %}
+{% set webrtc_host_port = _frigate_webrtc_host_port | int %}
+services:
+  frigate:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: "{{ app_config.app.shm_size }}"
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+      - "{{ app_config.app.recordings_path }}:/media/frigate"
+      # Only the exact node resolved from the named Proxmox mapping reaches this container.
+      - "/etc/localtime:/etc/localtime:ro"
+    devices:
+      # Shared render-node access; this is never PCI passthrough.
+      - "{{ app_config.app.igpu_render_node }}:{{ app_config.app.igpu_render_node }}"
+      # Exact Coral node from the LXC USB resource-mapping seam; no USB directory bind.
+      - "{{ app_config.app.coral_usb_device_path }}:{{ app_config.app.coral_usb_device_path }}"
+    ports:
+      - "{{ app_config.app.port }}:8971"
+      - "{{ rtsp_host_port }}:8554"
+      - "{{ webrtc_host_port }}:8555/tcp"
+      - "{{ webrtc_host_port }}:8555/udp"

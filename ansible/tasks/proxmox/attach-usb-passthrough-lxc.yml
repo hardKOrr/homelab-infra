@@ -1,0 +1,165 @@
+---
+# Bind one operator-identified USB device into an LXC guest.
+#
+# Proxmox USB resource mappings are the authority for which physical device is meant,
+# but qm's usbN mapping assignment is VM-only. An LXC needs the current device node
+# under /dev/bus/usb instead. This seam resolves the mapping's physical port on the target
+# node, refuses a second LXC holder, and then delegates the actual bind/tag write to the
+# shared-device seam. The mapping name is retained as the declaration identity so a
+# reconnect can be resolved again without accepting an arbitrary vendor:product pair.
+#
+# Inputs:
+#   usb_lxc_guest   - LXC guest hostname
+#   usb_lxc_device  - {mapping: "frigate-coral"}
+#
+# The mapping must be declared under homelabinfra_config.proxmox.devices with mode: shared
+# and the mapping identifier in its identifiers list. This is the LXC counterpart to the
+# existing dedicated VM attach-usb-passthrough.yml seam; it does not adopt a device or
+# create a mapping.
+
+- name: LXC USB passthrough | Assert required input
+  ansible.builtin.assert:
+    that:
+      - usb_lxc_guest is defined
+      - usb_lxc_device is defined
+      - usb_lxc_device.mapping is defined
+      - usb_lxc_device.mapping | length > 0
+    fail_msg: >-
+      attach-usb-passthrough-lxc.yml needs usb_lxc_guest and
+      usb_lxc_device.mapping (a Proxmox USB resource mapping name).
+
+# Keep the mode gate before any mapping, node, or guest-state query. A USB mapping bound
+# into an LXC is a shared-mode declaration; current PVE bindings never authorize it.
+- name: LXC USB passthrough | Assert the mapping is declared shared
+  ansible.builtin.assert:
+    that:
+      - _usb_lxc_declarations | length == 1
+      - (_usb_lxc_declarations | map(attribute='value.mode') | first | default('', true)) == 'shared'
+    fail_msg: >-
+      USB mapping {{ usb_lxc_device.mapping }} must match exactly one physical-device
+      declaration with mode: shared in homelabinfra_config.proxmox.devices. The LXC seam
+      never assigns a dedicated USB device.
+  vars:
+    _usb_lxc_declarations: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
+         | selectattr('value.identifiers', 'defined')
+         | selectattr('value.identifiers', 'contains', usb_lxc_device.mapping) | list }}
+
+- name: LXC USB passthrough | Verify the mapping exists on the cluster
+  ansible.builtin.command:
+    cmd: "pvesh get /cluster/mapping/usb/{{ usb_lxc_device.mapping }} --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_lxc_mapping
+  failed_when: false
+  changed_when: false
+
+- name: LXC USB passthrough | Assert the mapping names this node exactly once
+  ansible.builtin.assert:
+    that:
+      - _usb_lxc_mapping.rc == 0
+      - _usb_lxc_mapping_entries | length == 1
+      - (_usb_lxc_mapping_entries[0].port | default('')) | length > 0
+    fail_msg: >-
+      USB resource mapping {{ usb_lxc_device.mapping }} does not exist, does not cover
+      {{ homelabinfra_config.proxmox.node }}, or has no physical port entry for that node.
+      This platform does not create or discover USB mappings.
+  vars:
+    _usb_lxc_mapping_entries: >-
+      {{ (_usb_lxc_mapping.stdout | default('{}') | from_json).map | default([])
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node) | list }}
+
+- name: LXC USB passthrough | List the node's containers
+  ansible.builtin.command:
+    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/lxc --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_lxc_list
+  changed_when: false
+
+- name: LXC USB passthrough | Resolve the target vmid and ownership tags
+  ansible.builtin.set_fact:
+    _usb_lxc_vmid: >-
+      {{ (_usb_lxc_entry | map(attribute='vmid') | list | first) | default('') | string }}
+    _usb_lxc_tags: >-
+      {{ ((_usb_lxc_entry | map(attribute='tags') | list | first) | default(''))
+         | split(';') | reject('equalto', '') | list }}
+  vars:
+    _usb_lxc_entry: >-
+      {{ _usb_lxc_list.stdout | from_json
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', usb_lxc_guest) | list }}
+
+- name: LXC USB passthrough | Assert the guest exists and is project-owned
+  ansible.builtin.assert:
+    that:
+      - _usb_lxc_vmid | length > 0
+      - "'_+lab' in _usb_lxc_tags"
+    fail_msg: >-
+      {{ usb_lxc_guest }} is absent from {{ homelabinfra_config.proxmox.node }}, or does
+      not carry the _+lab ownership tag. This platform never adopts an untagged guest.
+
+- name: LXC USB passthrough | Resolve the current device node for the mapped port
+  ansible.builtin.shell: >-
+    set -eu;
+    sysdev="/sys/bus/usb/devices/{{ _usb_lxc_mapping_entries[0].port }}";
+    test -r "$sysdev/busnum" -a -r "$sysdev/devnum";
+    printf '/dev/bus/usb/%03d/%03d\n' "$(cat "$sysdev/busnum")" "$(cat "$sysdev/devnum")"
+  args:
+    executable: /bin/sh
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _usb_lxc_path
+  changed_when: false
+  failed_when: false
+  vars:
+    _usb_lxc_mapping_entries: >-
+      {{ (_usb_lxc_mapping.stdout | from_json).map | default([])
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node) | list }}
+
+- name: LXC USB passthrough | Assert the mapped device is present on the node
+  ansible.builtin.assert:
+    that:
+      - _usb_lxc_path.rc == 0
+      - _usb_lxc_path.stdout | trim is match('^/dev/bus/usb/[0-9]{3}/[0-9]{3}$')
+    fail_msg: >-
+      USB mapping {{ usb_lxc_device.mapping }} resolves to no present device node on
+      {{ homelabinfra_config.proxmox.node }}. Reconnect the named device and retry; this
+      platform does not substitute another USB device.
+
+- name: LXC USB passthrough | Read every LXC configuration
+  ansible.builtin.command:
+    cmd: "pct config {{ item.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _usb_lxc_list.stdout | from_json }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+  register: _usb_lxc_configs
+  changed_when: false
+
+- name: LXC USB passthrough | Resolve existing holders of this exact device node
+  ansible.builtin.set_fact:
+    _usb_lxc_holders: >-
+      {{ _usb_lxc_holders | default([]) +
+         ([item.item.vmid | string] if
+          ((_usb_lxc_path.stdout | trim) in
+           (item.stdout_lines | select('match', '^dev[0-9]+:')
+            | map('regex_replace', '^dev[0-9]+:\s*path=([^,]+).*$', '\\1') | list))
+          else []) }}
+  loop: "{{ _usb_lxc_configs.results }}"
+  loop_control:
+    label: "{{ item.item.vmid }}"
+
+- name: LXC USB passthrough | Refuse a conflicting LXC holder
+  ansible.builtin.assert:
+    that: _usb_lxc_holders | difference([_usb_lxc_vmid]) | length == 0
+    fail_msg: >-
+      USB mapping {{ usb_lxc_device.mapping }} is already bound to LXC vmid
+      {{ _usb_lxc_holders | difference([_usb_lxc_vmid]) | first }}. Detach that
+      project-owned binding before assigning this exact Coral device to another guest.
+
+- name: LXC USB passthrough | Bind the mapped device through the shared-device seam
+  ansible.builtin.include_tasks: attach-shared-device.yml
+  vars:
+    shared_device_guest: "{{ usb_lxc_guest }}"
+    shared_device_list:
+      - host: "{{ _usb_lxc_path.stdout | trim }}"
+        identity: "{{ usb_lxc_device.mapping }}"
+        mode: "0666"

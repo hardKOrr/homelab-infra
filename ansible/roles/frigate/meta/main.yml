@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: frigate
+  description: "Deploys Frigate as a device-bound Docker application on its own LXC stack host"
+  min_ansible_version: "2.15"
+dependencies: []

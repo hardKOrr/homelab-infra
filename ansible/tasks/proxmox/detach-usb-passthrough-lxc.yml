@@ -1,0 +1,71 @@
+---
+# Resolve a Proxmox USB mapping to its current LXC device node, then remove only the
+# project-owned bind. A USB reconnect changes bus/device numbers, so the mapping is
+# resolved again instead of trusting a stale path from the previous run.
+
+- name: LXC USB detach | Assert required input
+  ansible.builtin.assert:
+    that:
+      - usb_lxc_guest is defined
+      - usb_lxc_device is defined
+      - usb_lxc_device.mapping is defined
+      - usb_lxc_device.mapping | length > 0
+    fail_msg: >-
+      detach-usb-passthrough-lxc.yml needs usb_lxc_guest and
+      usb_lxc_device.mapping.
+
+- name: LXC USB detach | Verify the mapping exists on the cluster
+  ansible.builtin.command:
+    cmd: "pvesh get /cluster/mapping/usb/{{ usb_lxc_device.mapping }} --output-format json"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dusbl_mapping
+  failed_when: false
+  changed_when: false
+
+- name: LXC USB detach | Resolve this node's mapping entry
+  ansible.builtin.set_fact:
+    _dusbl_entries: >-
+      {{ (_dusbl_mapping.stdout | default('{}', true) | from_json).map | default([])
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node) | list }}
+  when: _dusbl_mapping.rc == 0
+
+- name: LXC USB detach | Mark an unavailable mapping as absent
+  ansible.builtin.set_fact:
+    _dusbl_entries: []
+  when: _dusbl_mapping.rc != 0
+
+- name: LXC USB detach | Report an unavailable mapped device
+  ansible.builtin.debug:
+    msg: >-
+      USB mapping {{ usb_lxc_device.mapping }} is not currently present on
+      {{ homelabinfra_config.proxmox.node }}; no binding was removed. Reconnect the named
+      Coral before retrying removal so an exact project-owned node can be detached.
+  when: >-
+    _dusbl_entries | length != 1 or
+    (_dusbl_entries[0].port | default('') | length == 0)
+
+- name: LXC USB detach | Resolve the current device node
+  ansible.builtin.shell: >-
+    set -eu;
+    sysdev="/sys/bus/usb/devices/{{ _dusbl_entries[0].port }}";
+    test -r "$sysdev/busnum" -a -r "$sysdev/devnum";
+    printf '/dev/bus/usb/%03d/%03d\n' "$(cat "$sysdev/busnum")" "$(cat "$sysdev/devnum")"
+  args:
+    executable: /bin/sh
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _dusbl_path
+  changed_when: false
+  failed_when: false
+  when:
+    - _dusbl_entries | length == 1
+    - _dusbl_entries[0].port | default('') | length > 0
+
+- name: LXC USB detach | Detach only the project-owned mapped device
+  ansible.builtin.include_tasks: detach-shared-device.yml
+  vars:
+    shared_device_guest: "{{ usb_lxc_guest }}"
+    shared_device_list:
+      - host: "{{ _dusbl_path.stdout | trim }}"
+  when:
+    - _dusbl_path.rc | default(1) == 0
+    - _dusbl_path.stdout | default('') | trim is match('^/dev/bus/usb/[0-9]{3}/[0-9]{3}$')
