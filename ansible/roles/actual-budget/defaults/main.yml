@@ -1,0 +1,4 @@
+---
+actual_budget_project_dir: "/opt/{{ instance }}"
+actual_budget_compose_file: "{{ actual_budget_project_dir }}/docker-compose.yml"
+actual_budget_password_marker: "{{ app_config.app.data_path }}/.homelab-infra-password-initialized"

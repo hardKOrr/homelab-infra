@@ -1,0 +1,7 @@
+---
+- name: Restart Actual Budget
+  community.docker.docker_compose_v2:
+    project_src: "{{ actual_budget_project_dir }}"
+    state: restarted
+    services:
+      - "{{ app_config.app.service_name }}"

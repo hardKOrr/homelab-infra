@@ -6,7 +6,7 @@ repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 need() { grep -Fq -- "$2" "$1" || { echo "missing Batch C contract: $2 ($1)" >&2; exit 1; }; }
 absent() { grep -Fq -- "$2" "$1" && { echo "unwanted Batch C contract: $2 ($1)" >&2; exit 1; } || true; }
 
-for app in n8n plane forgejo forgejo-runner; do
+for app in n8n plane forgejo forgejo-runner actual-budget; do
   need "$repo/ansible/vars/app-defaults/$app.yml" 'stack: services'
   need "$repo/ansible/playbooks/apps/$app.yml" 'stack/find-or-create-host.yml'
   need "$repo/ansible/playbooks/apps/$app.yml" "combine({'app':"
@@ -56,11 +56,27 @@ need "$repo/ansible/roles/forgejo-runner/files/register-and-run.sh" 'homelab-inf
 need "$repo/ansible/roles/forgejo-runner/templates/docker-compose.yml.j2" 'docker:27-dind'
 need "$repo/ansible/playbooks/apps/forgejo-runner.yml" 'Deploy that named Forgejo instance before deploying'
 need "$repo/ansible/playbooks/apps/forgejo-runner.yml" 'homelabinfra_infra.apps'
+
+need "$repo/ansible/vars/app-defaults/actual-budget.yml" 'actualbudget/actual-server'
+need "$repo/ansible/vars/app-defaults/actual-budget.yml" 'application_consistent: true'
+need "$repo/ansible/playbooks/apps/actual-budget.yml" 'tasks/stack/find-or-create-host.yml'
+need "$repo/ansible/playbooks/apps/actual-budget.yml" "combine({'app':"
+need "$repo/ansible/roles/actual-budget/tasks/main.yml" '_actual_budget_server_password'
+need "$repo/ansible/roles/actual-budget/tasks/main.yml" 'vault_item_secret_fields: [server_password]'
+need "$repo/ansible/roles/actual-budget/tasks/main.yml" 'reset-password.js'
+need "$repo/ansible/roles/actual-budget/templates/docker-compose.yml.j2" ':/data'
+need "$repo/ansible/roles/actual-budget/templates/docker-compose.yml.j2" 'health-check.js'
+need "$repo/ansible/roles/actual-budget/tasks/backup.yml" 'data.pxar:/source'
+need "$repo/ansible/roles/actual-budget/tasks/restore.yml" 'data.pxar /restore'
+need "$repo/ansible/playbooks/maintenance/backup-app.yml" 'application-consistent backup task'
+need "$repo/ansible/playbooks/maintenance/restore-app.yml" 'Actual Budget'
 need "$repo/ansible/tasks/app-wiring/forgejo-runner-remove.yml" 'method: DELETE'
 need "$repo/ansible/tasks/app-wiring/forgejo-runner-remove.yml" 'admin_api_token'
 need "$repo/ansible/playbooks/apps/remove.yml" 'Deregister Forgejo Runner'
 need "$repo/ansible/playbooks/apps/remove.yml" 'Remove Forgejo Runner registration state'
 need "$repo/ansible/scripts/registry-forget.py" 'if key == "apps":'
+
+absent "$repo/config.example/apps/actual-budget.example.yml" 'server_password:'
 
 # These are the three sensitive values that must never be authored in a tracked app
 # example. The comments may document their Vaultwarden field names, but no YAML key/value
@@ -72,7 +88,7 @@ absent "$repo/config.example/apps/forgejo-runner.example.yml" 'runner_token:'
 python3 - "$repo" <<'PY'
 import pathlib, sys, yaml
 repo = pathlib.Path(sys.argv[1])
-for app in ('n8n', 'plane', 'forgejo', 'forgejo-runner'):
+for app in ('n8n', 'plane', 'forgejo', 'forgejo-runner', 'actual-budget'):
     for path in (
         repo / 'ansible' / 'playbooks' / 'apps' / f'{app}.yml',
         repo / 'ansible' / 'vars' / 'app-defaults' / f'{app}.yml',
@@ -83,10 +99,16 @@ for app in ('n8n', 'plane', 'forgejo', 'forgejo-runner'):
 
 catalog = yaml.safe_load((repo / 'catalog' / 'applications.yml').read_text())
 apps = catalog['applications']
-for slug in ('n8n', 'plane', 'forgejo', 'forgejo-runner'):
+for slug in ('n8n', 'plane', 'forgejo', 'forgejo-runner', 'actual-budget'):
     entry = apps[slug]
     assert entry['job'] == f'deploy-{slug}.yaml'
     assert entry['scope'] == 'estate'
+
+actual_defaults = yaml.safe_load((repo / 'ansible' / 'vars' / 'app-defaults' / 'actual-budget.yml').read_text())['actual_budget_defaults']
+assert 'database' not in actual_defaults['app'], 'Actual Budget must not declare a platform database'
+actual_entry = apps['actual-budget']
+assert set(actual_entry['actions']) >= {'backup', 'restore', 'remove'}
+assert actual_entry['scope'] == 'estate'
 
 # Prove the one dangerous publication is present exactly as two host mappings and does
 # not acquire a reverse-proxy SSH route.
@@ -97,4 +119,4 @@ assert 'wiring_ssh' not in (repo / 'ansible' / 'playbooks' / 'apps' / 'forgejo.y
 print('Batch C app catalog, secret boundaries, dependencies, and Forgejo publication: OK')
 PY
 
-echo "PASS: Batch C n8n, Plane, Forgejo, and Forgejo Runner surface"
+echo "PASS: Batch C n8n, Plane, Forgejo, Forgejo Runner, and Actual Budget surface"

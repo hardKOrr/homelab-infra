@@ -1,0 +1,29 @@
+---
+# Actual Budget — local-first personal finance and budgeting on the services stack.
+#
+# Actual uses its own server account and file storage. The role generates the server
+# password, stores it in Vaultwarden at homelab-infra/apps/<instance>, and initializes
+# Actual through its own reset-password utility. Do not add credentials here.
+
+app:
+  # The upstream stable image. Override only when deliberately pinning or testing a tag.
+  image: docker.io/actualbudget/actual-server:latest
+  # Host path containing account.sqlite, server-files, and user-files. This entire
+  # directory is the application's persistent recovery unit.
+  data_path: /opt/actual-budget/data
+
+routing:
+  access: internal
+  identity: catalog
+  # estate: <name>      # required in a multi-estate lab
+  # subdomain: actual-budget
+
+backup:
+  # A manual or scheduled recovery point stops only Actual Budget, archives all of /data
+  # as one PBS data.pxar, and restarts the service. It does not snapshot or restore the
+  # other applications sharing the services stack guest.
+  enabled: true
+  schedule: "0 3 * * *"
+  retention_days: 14
+  # datastore: ""       # blank uses the lab's configured PBS datastore
+  # backup_id: ""       # blank uses the instance name

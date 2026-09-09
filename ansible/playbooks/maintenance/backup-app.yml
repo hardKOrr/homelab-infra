@@ -11,11 +11,12 @@
 #
 # WHY THIS EXISTS AND WHAT IT IS NOT
 #
-# It is not a second implementation of the backup. It runs the CronJob the deploy already
-# installed, with `kubectl create job --from=cronjob/…`, so the on-demand backup and the
-# scheduled one are byte-for-byte the same pod template. Two copies of a backup definition
-# is how the tested one and the nightly one quietly stop matching, and the difference is
-# discovered on the night the wrong one runs.
+# For Kubernetes it runs the CronJob the deploy already installed, with
+# `kubectl create job --from=cronjob/…`, so the on-demand backup and the scheduled one are
+# byte-for-byte the same pod template. An explicitly selected Docker application instead
+# dispatches to its role-owned recovery task. Two copies of a backup definition is how the
+# tested one and the nightly one quietly stop matching, and the difference is discovered on
+# the night the wrong one runs.
 #
 # It exists because three ordinary things need a snapshot at a moment somebody chose:
 #
@@ -70,25 +71,37 @@
       vars:
         _ba_defaults_key: "{{ _ba_app | replace('-', '_') }}_defaults"
 
-    # The CronJob only exists for a Kubernetes app that declared a backup and whose deploy
-    # found a PBS to push to. Everything else is either backed up by PBS's whole-guest
-    # snapshots or not backed up at all, and neither is something this job can start.
-    - name: Assert this app has an in-cluster backup
+    - name: Resolve the hosting kind
+      ansible.builtin.set_fact:
+        _ba_kind: >-
+          {{ app_config.hosting
+             | default('docker' if app_config.stack is defined else 'native', true) }}
+
+    - name: Assert this app has an application backup
       ansible.builtin.assert:
         that:
-          - app_config.hosting | default('') == 'kubernetes'
-          - app_config.backup.enabled | default(false) | bool
+          - >-
+            (_ba_kind == 'kubernetes' and app_config.backup.enabled | default(false) | bool)
+            or
+            (_ba_kind == 'docker'
+             and app_config.backup.enabled | default(false) | bool
+             and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
-          {{ instance }} has no in-cluster backup to run. In-cluster application backups
-          are a Kubernetes-hosting-backend contract, declared per app under `backup:`;
-          a native or Docker app is covered by PBS's whole-guest snapshots instead, which
-          PBS runs on its own schedule.
+          {{ instance }} has no application backup to run. Kubernetes apps use their
+          declared backup CronJob; a Docker app must explicitly own an
+          application-consistent backup task.
+
+    - name: Resolve the Docker application target
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      when: _ba_kind == 'docker'
 
   tasks:
     - name: Resolve the cluster and its API host
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
 
     - name: Derive the instance's namespace
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.include_tasks: ../../tasks/kubernetes/derive-namespace.yml
       vars:
         k8s_namespace_for: "{{ instance }}"
@@ -98,6 +111,7 @@
     # application nor what to do about it. Both cases have the same cause and it is worth
     # saying out loud: this instance's backup is declared in config but is not deployed.
     - name: Read the instance's backup CronJob
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.command:
         argv:
           - k3s
@@ -115,6 +129,7 @@
       changed_when: false
 
     - name: Assert the backup is deployed
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.assert:
         that: _ba_cronjob.rc == 0
         fail_msg: >-
@@ -133,6 +148,7 @@
     # snapshot, so the cost is duplicated work rather than a damaged backup — but it is a
     # reason not to schedule this job.
     - name: Run the backup job
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.include_tasks: ../../tasks/kubernetes/run-job.yml
       vars:
         k8s_job_name: "{{ instance }}-backup-manual"
@@ -140,6 +156,7 @@
         k8s_job_timeout: "{{ app_config.backup.timeout_seconds | default(3600) | int }}"
 
     - name: State where the snapshot went
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.debug:
         msg:
           - "Backup complete. The job's own output above names the PBS group it wrote to."
@@ -149,6 +166,7 @@
              instance={{ instance }}, overwrite=false."
 
     - name: Notify
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
         notify_title: "{{ instance }} backed up"
@@ -162,6 +180,36 @@
     # this repo forbids. The snapshot is already in PBS by the time this runs, so failing
     # here aborts nothing: it refuses to call the run successful when nobody was told.
     - name: Fail if anything about this backup did not work
+      when: _ba_kind == 'kubernetes'
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ instance }} backup"
+
+- name: "Backup App | Run the Docker application backup"
+  hosts: "apptarget_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the application-owned Docker backup
+      ansible.builtin.include_role:
+        name: "{{ hostvars['localhost']._ba_app }}"
+        tasks_from: backup
+      vars:
+        app_config: "{{ hostvars['localhost'].app_config }}"
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+      when: app_target_kind | default('native') == 'docker'
+
+    - name: Notify Docker backup
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ app_target_instance }} backed up"
+        notify_message: >-
+          An application-consistent backup of {{ app_target_instance }} completed and was
+          pushed to the lab's PBS datastore. Restore it with the Restore App job.
+      when: _actual_budget_backup_complete | default(false) | bool
+
+    - name: Fail if Docker backup degraded
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ app_target_instance }} backup"
+      when: _actual_budget_backup_complete | default(false) | bool

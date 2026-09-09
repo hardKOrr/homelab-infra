@@ -87,9 +87,9 @@
 #
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# Only apps whose role ships a `restore.yml` can be restored this way — today that is the
-# Kubernetes-hosted `mixpost` and `jellyseerr`. The playbook says so plainly rather than
-# failing on a missing file.
+# Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
+# use their namespaced restore job; Actual Budget is the explicit Docker exception and
+# archives/restores its complete application-native /data directory on the services host.
 
 - name: "Restore App | Restore application data from PBS"
   hosts: localhost
@@ -163,19 +163,36 @@
         # carries a hyphen declares its defaults under an underscored name.
         _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
 
-    # The restore path is Kubernetes-shaped: it loads a dump into a namespaced database and
-    # writes into a PersistentVolumeClaim. A native or Docker app has neither, and would
-    # need its own restore.yml written against how IT stores things.
+    - name: Resolve the hosting kind
+      ansible.builtin.set_fact:
+        _ra_kind: >-
+          {{ app_config.hosting
+             | default('docker' if app_config.stack is defined else 'native', true) }}
+        _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        _ra_source_instance: "{{ instance }}"
+
     - name: Assert this app has a restore path
       ansible.builtin.assert:
         that:
-          - app_config.hosting | default('') == 'kubernetes'
-          - app_config.backup is defined
+          - >-
+            (_ra_kind == 'kubernetes' and app_config.backup is defined)
+            or
+            (_ra_kind == 'docker'
+             and _ra_app == 'actual-budget'
+             and app_config.backup.enabled | default(false) | bool
+             and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
-          {{ _ra_app }} is not a Kubernetes-hosted app with a declared backup contract, so
-          this job has nothing to restore. Application backup and restore is currently
-          implemented for the Kubernetes hosting backend only; a native or Docker app is
-          covered by PBS's whole-guest snapshots, which are restored from PBS itself.
+          {{ _ra_app }} has no declared application restore path. Kubernetes roles use their
+          backup contract; the only Docker exception is Actual Budget's application-native
+          /data archive. Other Docker and native applications remain on whole-guest PBS
+          recovery.
+
+    - name: Resolve the Docker target
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        app: "{{ _ra_app }}"
+        resolve_app_target_instance: "{{ _ra_target }}"
+      when: _ra_kind == 'docker'
 
   tasks:
     - name: Restore the application
@@ -186,6 +203,7 @@
         restore_target: "{{ _ra_target }}"
         restore_snapshot: "{{ _ra_snapshot }}"
         restore_overwrite: "{{ _ra_overwrite }}"
+      when: _ra_kind == 'kubernetes'
 
     # The plan path changes nothing, and a read-only job does not notify
     # (docs/specs/one-click-idempotent.md). A restore is about as state-changing as this
@@ -199,7 +217,9 @@
           {{ _ra_target }} was restored from PBS snapshot {{ _ra_snapshot }},
           taken from {{ instance }}'s backups. Its database and storage volume were
           replaced. Verify the application before trusting it.
-      when: _ra_overwrite | bool
+      when:
+        - _ra_kind == 'kubernetes'
+        - _ra_overwrite | bool
 
     # The last task of the play, and it matters most here: a restore is the single most
     # consequential state change this platform makes. notify.yml records an undelivered
@@ -210,3 +230,47 @@
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ _ra_target }} restore"
+      when: _ra_kind == 'kubernetes'
+
+- name: "Restore App | Restore Docker application data from PBS"
+  hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Restore the application-owned Docker archive
+      ansible.builtin.include_role:
+        name: "{{ hostvars['localhost']._ra_app }}"
+        tasks_from: restore
+      vars:
+        instance: "{{ hostvars['localhost']._ra_target }}"
+        actual_budget_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
+        app_config: >-
+          {{ hostvars['localhost'].restore_target_config
+             | combine({'app': {
+                 'data_path': (hostvars['localhost'].restore_target_config.app.data_path
+                               | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
+                                         '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
+               }}, recursive=True) }}
+        homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
+        restore_target: "{{ hostvars['localhost']._ra_target }}"
+        restore_snapshot: "{{ hostvars['localhost']._ra_snapshot }}"
+        restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
+        restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"
+      when: app_target_kind | default('native') == 'docker'
+
+    - name: Notify Docker restore
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ app_target_instance }} restored from backup"
+        notify_priority: high
+        notify_message: >-
+          {{ app_target_instance }} was restored from PBS snapshot
+          {{ hostvars['localhost']._ra_snapshot }}. Its complete application-native data
+          directory was replaced. Verify the application before trusting it.
+      when: _actual_budget_restore_complete | default(false) | bool
+
+    - name: Fail if Docker restore degraded
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "the {{ app_target_instance }} restore"
+      when: _actual_budget_restore_complete | default(false) | bool

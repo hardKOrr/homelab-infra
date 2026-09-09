@@ -1,0 +1,107 @@
+---
+# Actual's server password is not an environment variable: it is hashed into the
+# application-owned account.sqlite file. Generate it once, write it to Vaultwarden, and
+# use the application's own reset utility on first deployment. Later converges leave the
+# password and every user-created budget untouched.
+- name: Actual Budget | Create project directory
+  ansible.builtin.file:
+    path: "{{ actual_budget_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Actual Budget | Create writable application data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "1001"
+    group: "1001"
+    mode: "0750"
+
+- name: Actual Budget | Check the password initialization marker
+  ansible.builtin.stat:
+    path: "{{ actual_budget_password_marker }}"
+  register: _actual_budget_password_marker
+  changed_when: false
+
+- name: Actual Budget | Generate or reuse the server password
+  ansible.builtin.set_fact:
+    _actual_budget_server_password: >-
+      {{ app_config.app.server_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Actual Budget | Store the application credential in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: actual-budget
+      instance: "{{ instance }}"
+      server_password: "{{ _actual_budget_server_password }}"
+      data_path: "{{ app_config.app.data_path }}"
+    vault_item_secret_fields: [server_password]
+  no_log: true
+
+- name: Actual Budget | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ actual_budget_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart Actual Budget
+
+- name: Actual Budget | Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ actual_budget_project_dir }}"
+
+- name: Actual Budget | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ actual_budget_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Actual Budget | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Actual Budget | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}"
+    status_code: 200
+  register: _actual_budget_health
+  until: _actual_budget_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# The upstream reset utility prompts twice and writes the password hash into
+# account.sqlite. Feeding it through stdin keeps the generated credential out of command
+# arguments and lets the application own its native authentication format.
+- name: Actual Budget | Initialize the application server password
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ actual_budget_project_dir }}"
+      - exec
+      - -T
+      - "{{ app_config.app.service_name }}"
+      - node
+      - /app/src/scripts/reset-password.js
+    stdin: "{{ _actual_budget_server_password }}\n{{ _actual_budget_server_password }}\n"
+  when: not _actual_budget_password_marker.stat.exists
+  no_log: true
+  changed_when: true
+
+- name: Actual Budget | Record password initialization
+  ansible.builtin.copy:
+    dest: "{{ actual_budget_password_marker }}"
+    content: "Managed by homelab-infra; the password is stored in Vaultwarden.\n"
+    owner: "1001"
+    group: "1001"
+    mode: "0600"
+  when: not _actual_budget_password_marker.stat.exists

@@ -1,0 +1,39 @@
+---
+# Deploy Actual Budget. Rendered and imported by rundeck/render-job.py.
+- id: 5f44f3e0-1e0e-47bb-9874-143000000001
+  uuid: 5f44f3e0-1e0e-47bb-9874-143000000001
+  name: Deploy Actual Budget
+  group: Applications/Personal Finance/Budgeting/Actual Budget
+  description: |-
+    Deploy or converge an instanced **Actual Budget** server on the services Docker stack.
+
+    - **Storage:** Actual's application-native /data directory contains account.sqlite,
+      server files, and all budget blobs; no platform database or cache is required.
+    - **Authentication:** a server password is generated once, initialized through Actual's
+      own reset utility, and stored in Vaultwarden at homelab-infra/apps/<instance>.
+    - **Wiring:** the route, Authentik catalog tile, Uptime Kuma monitor, and DNS record are
+      reconciled when their providers are configured; provider none is a no-op.
+    - **Recovery:** the per-application Backup and Restore actions quiesce only Actual,
+      archive all of /data as one PBS recovery unit, and never restore sibling services.
+
+    Open the generated URL and retrieve the server password from Vaultwarden on first use.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Actual Budget instance. Enter another name for a second deployment.'
+    required: true
+    value: actual-budget
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/actual-budget.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/actual-budget.yml -e "instance=$RD_OPTION_INSTANCE"

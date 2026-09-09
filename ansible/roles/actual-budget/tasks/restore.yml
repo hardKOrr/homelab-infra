@@ -1,0 +1,235 @@
+---
+# Restore one Actual Budget data.pxar archive. The generic Restore App playbook only
+# dispatches here for applications that explicitly declare this path; ordinary Docker
+# applications remain covered by their whole-guest PBS snapshots.
+
+- name: Actual Budget restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Actual Budget restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Actual Budget restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Actual Budget restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Actual Budget. Deploy PBS before listing or restoring
+      application data.
+
+- name: Actual Budget restore | Resolve the source backup identity
+  ansible.builtin.set_fact:
+    _actual_budget_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+  no_log: true
+
+- name: Actual Budget restore | List available snapshots
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _actual_budget_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _actual_budget_restore_backup_id }}"
+  no_log: true
+
+- name: Actual Budget restore | Print available snapshots
+  ansible.builtin.debug:
+    msg: "PBS snapshots for host/{{ _actual_budget_restore_backup_id }}:\n{{ _actual_budget_snapshots.stdout }}"
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Actual Budget restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with snapshot=<PBS snapshot ID> and overwrite=true to
+      replace {{ app_config.app.data_path }} from one application-consistent data.pxar.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Actual Budget restore | Create a private staging directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-actual-budget-restore-"
+  register: _actual_budget_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Actual Budget restore | Stop and replace application state
+  when: restore_overwrite | bool
+  block:
+    - name: Actual Budget restore | Stop only Actual Budget
+      community.docker.docker_compose_v2:
+        project_src: "{{ actual_budget_project_dir }}"
+        state: stopped
+        services:
+          - "{{ app_config.app.service_name }}"
+
+    - name: Actual Budget restore | Extract the selected archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _actual_budget_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    # The archive is complete before the live path is removed. If extraction fails, the
+    # original data remains in place and the service is restored by the failure boundary.
+    - name: Actual Budget restore | Replace the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: absent
+
+    - name: Actual Budget restore | Recreate the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: directory
+        owner: "1001"
+        group: "1001"
+        mode: "0750"
+
+    - name: Actual Budget restore | Copy the archived application state into place
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - "{{ _actual_budget_restore_tmp.path }}/."
+          - "{{ app_config.app.data_path }}/"
+      changed_when: true
+      no_log: true
+
+    - name: Actual Budget restore | Restore application data ownership
+      ansible.builtin.command:
+        argv: [chown, -R, "1001:1001", "{{ app_config.app.data_path }}"]
+      changed_when: true
+      no_log: true
+
+    - name: Actual Budget restore | Start only Actual Budget
+      community.docker.docker_compose_v2:
+        project_src: "{{ actual_budget_project_dir }}"
+        state: present
+        services:
+          - "{{ app_config.app.service_name }}"
+
+    - name: Actual Budget restore | Wait for the restored service
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}"
+        status_code: 200
+      register: _actual_budget_restore_health
+      until: _actual_budget_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    # Keep the canonical Vaultwarden password usable after restoring an older
+    # account.sqlite. This is still Actual's own authentication utility; the platform does
+    # not write or invent a second authentication database.
+    - name: Actual Budget restore | Reapply the Vaultwarden-owned server password
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ actual_budget_project_dir }}"
+          - exec
+          - -T
+          - "{{ app_config.app.service_name }}"
+          - node
+          - /app/src/scripts/reset-password.js
+        stdin: "{{ app_config.app.server_password }}\n{{ app_config.app.server_password }}\n"
+      when: app_config.app.server_password | default('') | length > 0
+      no_log: true
+      changed_when: true
+
+    - name: Actual Budget restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _actual_budget_restore_complete: true
+  rescue:
+    - name: Actual Budget restore | State that the service remains stopped
+      ansible.builtin.fail:
+        msg: >-
+          Actual Budget restore failed. The service was left stopped rather than serving
+          partial state; inspect the job output and rerun the restore after correcting it.
+  always:
+    - name: Actual Budget restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _actual_budget_restore_tmp.path }}"
+        state: absent
+      when: _actual_budget_restore_tmp.path is defined

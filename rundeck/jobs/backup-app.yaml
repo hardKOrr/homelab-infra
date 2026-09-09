@@ -1,9 +1,9 @@
 # Backup App — a PER-APPLICATION TEMPLATE, not a job.
 #
-# rundeck/render-job.py expands this file into one "Backup <App>" job per Kubernetes-hosted
-# application, filed under that application's own Maintenance folder. Docker and native
-# applications get no Backup job: their data is covered by the guest's PBS backup, and
-# there is no per-application backup CronJob to start.
+# rundeck/render-job.py expands this file into one "Backup <App>" job for each catalog
+# application that explicitly owns an application-consistent recovery path, filed under
+# that application's Maintenance folder. Most Docker and native applications rely on the
+# guest's PBS backup; Actual Budget is the explicit Docker exception.
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
@@ -19,13 +19,13 @@
 
     ### What it captures
 
-    - A quiesced database dump
-    - The instance's persistent storage volume
+    - The application-consistent state owned by this instance
+    - The instance's complete persistent storage
     - One snapshot in the lab's PBS datastore
 
-    This starts the same Kubernetes CronJob used by the nightly schedule, waits for it to
-    finish, and prints the pod output. Use it before a risky change, after repairing a
-    failed scheduled backup, or before a restore rehearsal.
+    This runs the application's own recovery procedure, waits for it to finish, and reports
+    the result. Use it before a risky change, after repairing a failed scheduled backup, or
+    before a restore rehearsal. It never snapshots sibling applications on a shared host.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

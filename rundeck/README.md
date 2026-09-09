@@ -152,12 +152,14 @@ exceptions. The renderer reads an explicit `hosting:` first; otherwise the prese
 `stack:` distinguishes Docker from native LXC. Catalog `extra:` entries opt an application
 into an action that hosting kind alone does not select.
 
-An action absent from a folder is absent because it is not implemented safely. There is no
-Backup for a Docker app — its data is covered by the guest's PBS backup and there is no
-per-application CronJob to start — and no Rollback for a Kubernetes workload. Authentik and
-Observability also exclude Rollback: each is a multi-service Compose project, while the
-generic rollback seam pins one image. A button that misstates what it changed is worse than
-no button.
+An action absent from a folder is absent because it is not implemented safely. Most Docker
+apps rely on the shared guest's PBS backup and therefore get no per-application Backup or
+Restore action. An application may explicitly replace the derived action set when its role
+owns a truthful recovery seam — Actual Budget archives and restores its quiesced /data
+mount without touching sibling services. There is no Rollback for a Kubernetes workload.
+Authentik and Observability also exclude Rollback: each is a multi-service Compose project,
+while the generic rollback seam pins one image. A button that misstates what it changed is
+worse than no button.
 
 An application marked `essential:` in the catalog gets no Remove job. The platform does not
 offer a one-click removal of the reverse proxy or the vault every other job depends on.

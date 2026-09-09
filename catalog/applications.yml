@@ -411,3 +411,14 @@ applications:
     # The runner has a Docker-in-Docker sidecar and registration state, so a generic
     # single-container image rollback would not be a safe recovery operation.
     exclude: [rollback]
+  actual-budget:
+    name: Actual Budget
+    job: deploy-actual-budget.yaml
+    root: Applications
+    category: Personal Finance
+    type: Budgeting
+    scope: estate
+    # Unlike ordinary Docker applications, Actual's role owns an application-consistent
+    # per-app PBS archive and restore path. Explicit actions keep those jobs local to this
+    # application instead of changing the default action set for every Docker stack app.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
