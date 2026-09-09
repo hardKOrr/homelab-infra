@@ -1,0 +1,19 @@
+{{ ansible_managed | comment }}
+services:
+  actual_server:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-actual-budget"
+    restart: unless-stopped
+    ports:
+      - "{{ app_config.app.port }}:5006"
+    volumes:
+      # Actual stores account.sqlite, server configuration, and all budget blobs below
+      # this one application-owned directory. Keep the mount at /data as required by the
+      # upstream image; splitting server-files from user-files would make recovery partial.
+      - "{{ app_config.app.data_path }}:/data"
+    healthcheck:
+      test: ["CMD-SHELL", "node src/scripts/health-check.js"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

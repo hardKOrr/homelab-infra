@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: actual_budget
+  description: "Deploys Actual Budget on Docker with application-native storage and authentication"
+  min_ansible_version: "2.15"
+dependencies: []

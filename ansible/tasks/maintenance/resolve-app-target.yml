@@ -13,6 +13,8 @@
 #
 # Inputs:
 #   instance  — the app instance name (required)
+#   resolve_app_target_instance — optional target instance; defaults to `instance`.
+#                                Restore uses this when source and target differ.
 #   app       — the application the instance belongs to. Defaults to `instance`; the
 #               Rundeck jobs always pass it, because a second instance named radarr-4k is
 #               still app radarr and its defaults live in app-defaults/radarr.yml.
@@ -30,14 +32,18 @@
 # and the same reason, as tasks/config/run-doctor.yml. Both current callers live in
 # playbooks/maintenance/.
 
+- name: Resolve app target | Resolve the target instance
+  ansible.builtin.set_fact:
+    _rat_instance: "{{ resolve_app_target_instance | default(instance, true) }}"
+
 - name: Resolve app target | Assert the instance is named
   ansible.builtin.assert:
-    that: instance is defined and instance | length > 0
+    that: _rat_instance is defined and _rat_instance | length > 0
     fail_msg: "Pass the app instance name: -e instance=<name>"
 
 - name: Resolve app target | Resolve the application
   ansible.builtin.set_fact:
-    _rat_app: "{{ app | default(instance, true) }}"
+    _rat_app: "{{ app | default(_rat_instance, true) }}"
 
 - name: Resolve app target | Load the application defaults
   ansible.builtin.include_vars:
@@ -47,7 +53,7 @@
 
 - name: Resolve app target | Load the instance config
   ansible.builtin.include_vars:
-    file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+    file: "{{ playbook_dir }}/../../../config/apps/{{ _rat_instance }}.yml"
     name: _rat_instance_config
   failed_when: false
 
@@ -75,7 +81,7 @@
   ansible.builtin.assert:
     that: _rat_kind in (resolve_app_target_kinds | default(['native', 'docker']))
     fail_msg: >-
-      {{ instance }} is hosted on {{ _rat_kind }}, but this action supports only
+      {{ _rat_instance }} is hosted on {{ _rat_kind }}, but this action supports only
       {{ resolve_app_target_kinds | default(['native', 'docker']) | join(', ') }}.
 
 - name: Resolve app target | Refresh inventory to get current Proxmox state
@@ -89,7 +95,7 @@
 - name: Resolve app target | Resolve the application's inventory group
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
-    tag_group_tag: "_{{ instance }}"
+    tag_group_tag: "_{{ _rat_instance }}"
   when: _rat_kind == 'docker'
 
 - name: Resolve app target | Select the stack host for a Docker app
@@ -99,7 +105,7 @@
 
 - name: Resolve app target | A native app owns the guest that carries its name
   ansible.builtin.set_fact:
-    _rat_host: "{{ instance }}"
+    _rat_host: "{{ _rat_instance }}"
   when: _rat_kind == 'native'
 
 - name: Resolve app target | Assert the target host exists
@@ -108,21 +114,21 @@
       - _rat_host | length > 0
       - _rat_host in hostvars
     fail_msg: >-
-      {{ 'No Proxmox guest is tagged _' ~ instance ~ ' — deploy the app first, or check
+      {{ 'No Proxmox guest is tagged _' ~ _rat_instance ~ ' — deploy the app first, or check
           the instance name.'
          if _rat_kind == 'docker'
-         else 'No Proxmox guest is named ' ~ instance ~ ' — check the instance name.' }}
+         else 'No Proxmox guest is named ' ~ _rat_instance ~ ' — check the instance name.' }}
 
 - name: Resolve app target | Put the target in its own group
   ansible.builtin.add_host:
     name: "{{ _rat_host }}"
-    groups: "apptarget_{{ instance }}"
+    groups: "apptarget_{{ _rat_instance }}"
     ansible_host: >-
       {{ hostvars[_rat_host].ansible_host
          | default(hostvars[_rat_host].ansible_default_ipv4.address | default('')) }}
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
     app_target_kind: "{{ _rat_kind }}"
     app_target_stack: "{{ _rat_stack }}"
-    app_target_instance: "{{ instance }}"
-    app_target_project_dir: "/opt/{{ instance }}"
+    app_target_instance: "{{ _rat_instance }}"
+    app_target_project_dir: "/opt/{{ _rat_instance }}"
   changed_when: false

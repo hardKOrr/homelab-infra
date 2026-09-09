@@ -1,0 +1,44 @@
+---
+# Default configuration for Actual Budget — a local-first personal finance application
+# on the services Docker stack. Users override specific values in
+# config/apps/<instance>.yml.
+#
+# Actual keeps both its server account database and its budget blobs below /data. There is
+# deliberately no PostgreSQL, MariaDB, Redis, or other platform backend in this contract.
+# The role generates the Actual server password once and keeps its canonical copy in the
+# Vaultwarden item homelab-infra/apps/<instance>.
+actual_budget_defaults:
+  stack: services
+
+  app:
+    image: docker.io/actualbudget/actual-server:latest
+    port: 5006
+    data_path: "/opt/{{ instance }}/data"
+    service_name: actual_server
+
+  routing:
+    subdomain: actual-budget
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  # Actual's server password and all budget files are application-native state. The role
+  # stops the one Compose service before archiving /data, so account.sqlite and the budget
+  # blobs are captured as one recovery unit rather than as a live filesystem copy.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+
+    # The backup client is installed inside a short-lived Debian container. This keeps the
+    # services host free of a PBS apt source while using the same signed Proxmox client
+    # source as the Kubernetes application backup roles.
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

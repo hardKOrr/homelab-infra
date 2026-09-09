@@ -1,9 +1,9 @@
 # Restore App — a PER-APPLICATION TEMPLATE, not a job.
 #
-# rundeck/render-job.py expands this file into one "Restore <App>" job per Kubernetes-hosted
-# application, filed under that application's own Maintenance folder next to its Backup
-# job. A restore belongs beside the backup that produced the snapshot, not in a separate
-# recovery branch the operator has to go and find under pressure.
+# rundeck/render-job.py expands this file into one "Restore <App>" job for each catalog
+# application that explicitly owns an application-consistent recovery path, filed under
+# that application's own Maintenance folder next to its Backup job. A restore belongs
+# beside the backup that produced the snapshot, not in a separate recovery branch.
 #
 # The full procedure — find a snapshot, choose where it lands, check the plan, restore,
 # verify — is in the header of ansible/playbooks/maintenance/restore-app.yml.
@@ -13,19 +13,19 @@
   name: Restore %NAME%
   group: '%GROUP%'
   description: |-
-    Restore %NAME% application data from PBS: its quiesced database dump and persistent
-    volume, not a whole-VM snapshot.
+    Restore %NAME% application-owned state from PBS: its application-consistent recovery
+    artifact and complete persistent storage, not a whole-VM snapshot.
 
     ### Safe first run
 
     Keep **Overwrite** set to `false`. With no snapshot, the job lists available backups.
-    With a snapshot, it verifies readability and reports the target's current data. Neither
+    With a snapshot, it verifies readability and reports the target's current state. Neither
     operation writes anything.
 
     ### Restore
 
-    Setting **Overwrite** to `true` stops the target and replaces its database and volume.
-    If restoration fails, the target stays stopped to avoid serving partial data.
+    Setting **Overwrite** to `true` stops the target and replaces its application-owned
+    state. If restoration fails, the target stays stopped to avoid serving partial data.
 
     > To rehearse safely, deploy a second instance and select it as the **Target**.
   loglevel: INFO
@@ -42,8 +42,8 @@
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
   - name: target
-    description: 'Instance whose namespace receives the data. **Blank:** Restore over the
-      source instance. Select a second deployed instance for a rehearsal.'
+    description: 'Instance whose application-owned state receives the data. **Blank:**
+      Restore over the source instance. Select a second deployed instance for a rehearsal.'
     required: false
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
@@ -53,7 +53,7 @@
     required: false
   - name: overwrite
     description: '**`false` (safe):** Plan only. **`true` (destructive):** Replace the
-      target database and storage volume.'
+      target application state and persistent storage.'
     required: true
     value: 'false'
     values: ['false', 'true']
