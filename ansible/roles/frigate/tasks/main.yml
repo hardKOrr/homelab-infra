@@ -27,7 +27,8 @@
       - _frigate_rtsp_host_port | int <= 65535
       - _frigate_webrtc_host_port | int > 0
       - _frigate_webrtc_host_port | int <= 65535
-      - [app_config.app.port | int, _frigate_rtsp_host_port | int,
+      - >-
+        [app_config.app.port | int, _frigate_rtsp_host_port | int,
          _frigate_webrtc_host_port | int] | unique | length == 3
     fail_msg: >-
       Frigate host ports app.port, rtsp_port, and webrtc_port must be valid, distinct
