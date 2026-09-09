@@ -4,6 +4,15 @@
 # Plan mode only lists the source snapshots. Overwrite mode is deliberately destructive:
 # services stop, the PBS archives are fetched and validated, then the media mount and named
 # database are replaced. A failed restore leaves services stopped for operator recovery.
+- name: Immich restore | Require one declared durable media mount
+  ansible.builtin.assert:
+    that:
+      - app_config.media_storage.mounts is sequence
+      - app_config.media_storage.mounts | length == 1
+      - app_config.media_storage.mounts[0].path | default('') is match('^/')
+    fail_msg: >-
+      Immich restore requires the deployed target's one explicitly declared media_storage.mounts entry.
+
 - name: Immich restore | Resolve the target backend and credential
   ansible.builtin.set_fact:
     _immich_restore_database_backend: >-

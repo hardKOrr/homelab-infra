@@ -4,6 +4,15 @@
 # The PBS guest snapshot cannot contain a Proxmox bind mount, so this task quiesces the
 # Compose project and archives the named PostgreSQL database and Immich media together.
 # The model cache is disposable and is intentionally not part of the recovery artifact.
+- name: Immich backup | Require one declared durable media mount
+  ansible.builtin.assert:
+    that:
+      - app_config.media_storage.mounts is sequence
+      - app_config.media_storage.mounts | length == 1
+      - app_config.media_storage.mounts[0].path | default('') is match('^/')
+    fail_msg: >-
+      Immich backup requires exactly one explicitly declared media_storage.mounts entry; refusing to use an implicit or global photo library.
+
 - name: Immich backup | Resolve the named PostgreSQL backend and credential
   ansible.builtin.set_fact:
     _immich_backup_database_backend: >-
