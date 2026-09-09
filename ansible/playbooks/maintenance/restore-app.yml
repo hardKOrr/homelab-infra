@@ -88,8 +88,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
-# use their namespaced restore job; application-consistent Docker roles such as Actual
-# Budget and Immich own their recovery mechanism. Native apps and Docker apps without one
+# use their namespaced restore job; application-consistent Docker roles such as Actual Budget
+# and Immich own their recovery mechanism. Native apps and Docker apps without one
 # remain on whole-guest PBS recovery.
 
 # Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
