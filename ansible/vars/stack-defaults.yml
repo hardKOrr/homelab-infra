@@ -108,5 +108,10 @@ stack_defaults:
   photos:
     cores: 4
     memory: 8192
+  # Frigate gets its own Docker-on-LXC guest. Its recording workload is continuously
+  # writing, and its devices must not be co-tenants of an unrelated stack.
+  frigate:
+    cores: 4
+    memory: 4096
     disk_volume:
       size: 32

@@ -1,0 +1,47 @@
+# Frigate is a dedicated Docker-on-LXC guest, not a tenant of media/services.
+# Copy this to config/apps/<instance>.yml after naming the exact target devices and mount.
+# Store camera credentials as one JSON value in hidden Vaultwarden field
+# camera_credentials on homelab-infra/apps/<instance>, for example:
+#   {"front":{"username":"camera-user","password":"..."}}
+# Store the optional MQTT password in hidden field mqtt_password. Never put either secret
+# in this file or in a camera URL.
+
+app:
+  # The exact shared iGPU render node declared under proxmox.devices with mode: shared.
+  igpu_render_node: /dev/dri/renderD128
+  # The exact Proxmox USB resource mapping declared under proxmox.devices with mode: shared.
+  coral_usb_mapping: frigate-coral
+  # A second instance on the shared frigate guest needs a distinct app.port. Auxiliary
+  # host ports default to app.port + 1 (RTSP) and +2 (WebRTC); override them if needed.
+  # rtsp_port: 8972
+  # webrtc_port: 8973
+  # Must equal the path of one frigate_storage.mounts entry in config/infrastructure.yml. Keep this mount
+  # on storage sized for retention_days; recordings are continuously written.
+  recordings_path: /mnt/frigate-recordings
+  minimum_free_gb: 256
+  retention_days: 7
+  cameras:
+    front:
+      host: camera.example.test
+      port: 554
+      path: /stream1
+      roles: [detect, record]
+      detect:
+        width: 1920
+        height: 1080
+        fps: 5
+  mqtt:
+    host: mqtt.example.test
+    port: 1883
+    username: frigate
+
+routing:
+  identity: catalog
+
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Recovery: the LXC PBS snapshot covers config; the external recording-storage owner must
+# snapshot/restore its mount separately before Frigate is redeployed. See
+# ansible/roles/frigate/README.md and docs/specs/frigate-recovery.md.

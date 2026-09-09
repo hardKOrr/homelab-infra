@@ -453,3 +453,12 @@ applications:
     # Karakeep is a multi-container Compose recovery unit; the generic one-image
     # rollback action cannot truthfully converge its web, Chrome, and Meilisearch images.
     exclude: [rollback]
+  frigate:
+    name: Frigate
+    job: deploy-frigate.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Video Surveillance
+    scope: estate
+    # Recordings live on an external retention-sized mount and the guest owns shared
+    # iGPU/Coral device bindings, so this is not a shared media-stack tenant.

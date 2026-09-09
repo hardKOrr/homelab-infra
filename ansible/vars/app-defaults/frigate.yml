@@ -1,0 +1,46 @@
+---
+# Frigate is deliberately a one-tenant Docker-on-LXC stack. Its recording workload is
+# continuously writing and its iGPU is shared with other LXC guests, so it must not land
+# on media/services or be changed to a VM for convenience.
+frigate_defaults:
+  stack: frigate
+
+  app:
+    image: "ghcr.io/blakeblackshear/frigate:stable"
+    # app.port is the per-instance base host port. Blank auxiliary values derive from
+    # it (+1 for RTSP and +2 for WebRTC) so a second instance only needs a new app.port.
+    port: 8971
+    rtsp_port: ""
+    webrtc_port: ""
+    config_path: "/opt/{{ instance }}/config"
+    recordings_path: "/mnt/frigate-recordings"
+    # The host path and free-space floor are operator decisions. The playbook checks the
+    # floor before attaching the existing mount; it never formats or creates storage.
+    minimum_free_gb: 256
+    retention_days: 7
+    shm_size: "256m"
+    # Both are intentionally empty. A deployment must name the exact shared render node
+    # and the exact Proxmox USB mapping; no device is discovered or adopted by default.
+    igpu_render_node: ""
+    coral_usb_mapping: ""
+    hwaccel_args: "preset-intel-qsv-h264"
+    # Camera endpoint metadata is not a credential. Per-camera username/password pairs
+    # are the hidden camera_credentials JSON field in Vaultwarden.
+    cameras: {}
+    mqtt:
+      host: ""
+      port: 1883
+      username: ""
+
+  routing:
+    subdomain: frigate
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  # The LXC's config and Compose project are covered by the guest PBS snapshot. The
+  # recording mount is external and needs the storage owner's own snapshot/backup; see
+  # docs/specs/frigate-recovery.md before live binding.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"

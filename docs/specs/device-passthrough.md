@@ -11,6 +11,9 @@ which remains authoritative for guest ownership and creation.
 - **Two modes exist, and they are not interchangeable.**
   - *Shared* — a device node (e.g. `/dev/dri/renderD128`) is bound into one or more LXC
     guests. Several guests may share it; binding it into a second guest is not a conflict.
+    An operator-owned Proxmox USB resource mapping may resolve to its current
+    `/dev/bus/usb/<bus>/<device>` node for an LXC bind; the mapping, not a raw
+    vendor:product pair, remains the physical-device identity.
   - *Dedicated* — a PCI or USB device is removed from the Proxmox host entirely and handed
     to exactly one VM. Assigning it to a second guest is a capacity conflict, not a valid
     configuration, because the host itself can no longer see the device.

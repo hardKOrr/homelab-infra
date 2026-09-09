@@ -1,0 +1,249 @@
+---
+# Deploy Frigate as its own Docker-on-LXC guest. The dedicated frigate stack host is
+# intentionally not shared with media or services: recording writes and device ownership
+# are application-specific.
+#
+# Before a live run, name the instance, Proxmox node, recording mount, Coral mapping and
+# iGPU render node in config. This playbook refuses empty or ambiguous device inputs.
+
+- name: "Frigate | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance | length > 0
+        fail_msg: "Provide the instance name: -e instance=frigate"
+
+    - name: Load app defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/frigate.yml
+        name: _app_defaults
+
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge Frigate config and external recording-storage declaration
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.frigate_defaults
+             | combine({
+                 'recording_storage':
+                   homelabinfra_config.infrastructure.frigate_storage | default({})
+               }, recursive=True)
+             | combine(_instance_config | default({}), recursive=True) }}
+
+    - name: Assert Frigate has a complete operator-owned storage and device declaration
+      ansible.builtin.assert:
+        that:
+          - app_config.stack == 'frigate'
+          - app_config.app.igpu_render_node | default('') | length > 0
+          - app_config.app.coral_usb_mapping | default('') | length > 0
+          - app_config.app.recordings_path | default('') | length > 0
+          - app_config.app.retention_days | int > 0
+          - app_config.recording_storage.mounts | default([]) | length > 0
+          - app_config.recording_storage.owner | default({}) | length > 0
+        fail_msg: >-
+          Frigate needs its own frigate stack, an exact shared iGPU render node, an exact
+          Coral USB resource mapping, positive retention_days, and a declared
+          infrastructure.frigate_storage mount with owner. The playbook never discovers
+          or adopts devices or storage.
+
+  tasks:
+    - name: Find or create the dedicated Frigate Docker-on-LXC host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+    - name: Resolve the declared Frigate recording mount
+      ansible.builtin.set_fact:
+        _frigate_recording_mount: >-
+          {{ (app_config.recording_storage.mounts
+              | selectattr('path', 'equalto', app_config.app.recordings_path)
+              | list | first) | default({}) }}
+
+    - name: Assert the recording path maps to exactly one existing-storage declaration
+      ansible.builtin.assert:
+        that:
+          - _frigate_recording_mount | length > 0
+          - _frigate_recording_mount.host | default('') | length > 0
+        fail_msg: >-
+          app.recordings_path must match the path of one
+          infrastructure.frigate_storage.mounts entry. Storage is mounted by the lab;
+          this playbook does not create or format it.
+
+    - name: Check free space for the declared recording-retention floor
+      ansible.builtin.command:
+        argv: [df, -Pk, "{{ _frigate_recording_mount.host }}"]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _frigate_recording_df
+      changed_when: false
+
+    - name: Assert the recording mount meets the retention floor
+      ansible.builtin.assert:
+        that:
+          - (_frigate_recording_df.stdout_lines | last | split() | length) >= 4
+          - ((_frigate_recording_df.stdout_lines | last | split())[3] | int)
+            >= (app_config.app.minimum_free_gb | int * 1024 * 1024)
+        fail_msg: >-
+          {{ _frigate_recording_mount.host }} has less than
+          {{ app_config.app.minimum_free_gb }} GiB free for {{ app_config.app.retention_days }}
+          days of recording retention.
+
+    - name: Attach Frigate's existing recording storage with the platform owner mapping
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-host-mounts.yml
+      vars:
+        attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        attach_mounts_list: "{{ app_config.recording_storage.mounts }}"
+        attach_mounts_owner: "{{ app_config.recording_storage.owner }}"
+
+    - name: Bind the declared shared iGPU render node
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-shared-device.yml
+      vars:
+        shared_device_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        shared_device_list:
+          - host: "{{ app_config.app.igpu_render_node }}"
+            mode: "0666"
+
+    - name: Bind the declared Coral through its USB resource-mapping seam
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough-lxc.yml
+      vars:
+        usb_lxc_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        usb_lxc_device:
+          mapping: "{{ app_config.app.coral_usb_mapping }}"
+
+    # The mapping seam resolved a reconnect-safe bus/device path. Forward that exact
+    # node to the guest's Compose config; mounting the whole /dev/bus/usb directory would
+    # expose unrelated USB devices and break the non-adoption boundary.
+    - name: Forward the resolved Coral node to the Frigate guest
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.stack.hostname }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ hostvars[homelabinfra_instance.stack.hostname].ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: >-
+          {{ app_config | combine({
+               'app': {'coral_usb_device_path': _usb_lxc_path.stdout | trim}
+             }, recursive=True) }}
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+        homelabinfra_stack_host_created: >-
+          {{ hostvars[homelabinfra_instance.stack.hostname].homelabinfra_stack_host_created
+             | default(false) }}
+      changed_when: false
+
+- name: "Frigate | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    - name: Bootstrap the Frigate LXC
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    - name: Ensure Docker is installed
+      ansible.builtin.include_role:
+        name: docker
+
+    - name: Deploy Frigate
+      ansible.builtin.include_role:
+        name: frigate
+
+- name: "Frigate | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: >-
+          {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate
+             | default('') }}
+
+  vars:
+    _frigate_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _frigate_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _frigate_deploy_host.app_config.app.port }}"
+    wiring_subdomain: >-
+      {{ _frigate_deploy_host.app_config.routing.subdomain | default(instance, true) }}
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Frigate ({{ instance }})"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/api/version"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _frigate_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _frigate_deploy_host.app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Record Frigate on its dedicated Docker guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

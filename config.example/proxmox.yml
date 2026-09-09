@@ -35,6 +35,10 @@ proxmox:
   #     identifiers:
   #       - /dev/dri/renderD128
   #       - "0000:00:02.0"
+  #   frigate-coral:
+  #     mode: shared       # LXC USB bind resolved from this exact mapping name
+  #     identifiers:
+  #       - frigate-coral
 
   # Storage every guest lands on. bootstrap-rundeck.sh discovers this as the first active
   # storage advertising content type 'rootdir' — the type a container rootfs requires. A

@@ -278,6 +278,34 @@
     # stamped it on every node of the cluster, and the withdrawal has to reach exactly the
     # same set. Withdrawing from one node would leave the other two claiming to host an app
     # that no longer exists.
+    # Frigate owns two project-tagged LXC device binds. Detach them before the generic
+    # Docker stop so Remove App is also the recovery path; untagged operator bindings are
+    # left by the detach seams. The recording mount is deliberately not removed: it is
+    # existing node storage and remains a restore point until the operator removes it.
+    - name: Detach Frigate shared iGPU binding
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-shared-device.yml
+      vars:
+        shared_device_guest: "{{ _rm_hosts[0] }}"
+        shared_device_list:
+          - host: "{{ app_config.app.igpu_render_node }}"
+      when:
+        - _rm_kind == 'docker'
+        - (app | default(instance)) == 'frigate'
+        - _rm_hosts | length > 0
+        - app_config.app.igpu_render_node | default('') | length > 0
+
+    - name: Detach Frigate Coral USB binding
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough-lxc.yml
+      vars:
+        usb_lxc_guest: "{{ _rm_hosts[0] }}"
+        usb_lxc_device:
+          mapping: "{{ app_config.app.coral_usb_mapping }}"
+      when:
+        - _rm_kind == 'docker'
+        - (app | default(instance)) == 'frigate'
+        - _rm_hosts | length > 0
+        - app_config.app.coral_usb_mapping | default('') | length > 0
+
     - name: Withdraw the app's record from its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/unwiring/guest-record.yml
       vars:

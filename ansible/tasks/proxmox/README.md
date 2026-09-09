@@ -42,14 +42,17 @@ inventory.
 ## Device passthrough
 
 `attach-shared-device.yml` binds a host device node (an iGPU) into one or more LXC guests —
-several guests may hold it at once. `attach-pci-passthrough.yml` and
+several guests may hold it at once. `attach-usb-passthrough-lxc.yml` resolves an operator
+owned Proxmox USB resource mapping to the current `/dev/bus/usb` node and then uses the
+shared LXC seam with a conflict check; the mapping is still exact and no raw
+vendor:product identity is accepted. `attach-pci-passthrough.yml` and
 `attach-usb-passthrough.yml` assign a PCI device, or a Proxmox USB resource mapping, to
 exactly one VM guest, exclusively; the device leaves the node for that guest, so a second
-assignment is a preflight failure, not a reassignment. All three run after `lxc-create.yml` /
+assignment is a preflight failure, not a reassignment. All four run after `lxc-create.yml` /
 `vm-create.yml`, never in place of them, and each asserts the target guest carries the
 `_+lab` ownership tag before writing anything, then writes a `_.dev+<slug>` tag per bound
 device — durable proof this platform, not an operator by hand, created the binding. Before
-the PCI and shared seams inspect the node or any guest, the requested identifier must match
+the PCI, shared, and LXC USB seams inspect the node or any guest, the requested identifier must match
 exactly one named entry in `homelabinfra_config.proxmox.devices`, whose explicit `mode`
 must agree with the seam. Put every identifier for one physical device (such as an iGPU's
 render node and PCI address) in that entry; the declaration, not current bindings, is what
