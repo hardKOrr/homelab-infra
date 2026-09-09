@@ -1,0 +1,63 @@
+---
+# Forgejo Runner has no supported unregister command. Remove exactly the named runner
+# through Forgejo's admin API before its Compose project is stopped. The admin token is a
+# separate Vaultwarden-only field on homelab-infra/apps/<forgejo-instance>; this file never
+# accepts it from config/apps or generated topology facts.
+
+- name: Forgejo Runner removal | Resolve named Forgejo endpoint
+  ansible.builtin.set_fact:
+    _runner_remove_endpoint: >-
+      {{ (homelabinfra_infra.apps | default({})).get(runner_remove_forgejo_instance, {}) }}
+  no_log: true
+
+- name: Forgejo Runner removal | Resolve Forgejo admin token from Vaultwarden
+  ansible.builtin.set_fact:
+    _runner_remove_admin_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).admin_api_token
+         | default('', true) }}
+  no_log: true
+
+- name: Forgejo Runner removal | Require the Vaultwarden-only admin token
+  ansible.builtin.assert:
+    that:
+      - _runner_remove_endpoint.url | default('') | length > 0
+      - _runner_remove_admin_token | length > 0
+    fail_msg: >-
+      Cannot deregister runner {{ runner_remove_instance }}: named Forgejo instance
+      {{ runner_remove_forgejo_instance }} or its Vaultwarden-only admin_api_token is
+      unavailable. Store admin_api_token in homelab-infra/apps/{{ runner_remove_forgejo_instance }};
+      do not add it to config/apps or generated facts.
+  no_log: true
+
+- name: Forgejo Runner removal | List registered runners
+  ansible.builtin.uri:
+    url: "{{ _runner_remove_endpoint.url | regex_replace('/+$', '') }}/api/v1/admin/actions/runners"
+    method: GET
+    headers:
+      Authorization: "token {{ _runner_remove_admin_token }}"
+    status_code: 200
+    return_content: true
+  register: _runner_remove_listing
+  no_log: true
+
+- name: Forgejo Runner removal | Select only the exact runner name
+  ansible.builtin.set_fact:
+    _runner_remove_matches: >-
+      {{ ((_runner_remove_listing.json.runners
+           if (_runner_remove_listing.json is mapping and _runner_remove_listing.json.runners is defined)
+           else _runner_remove_listing.json) | default([]))
+         | selectattr('name', 'equalto', runner_remove_instance)
+         | map(attribute='id') | list }}
+  no_log: true
+
+- name: Forgejo Runner removal | Delete exact runner registrations
+  ansible.builtin.uri:
+    url: "{{ _runner_remove_endpoint.url | regex_replace('/+$', '') }}/api/v1/admin/actions/runners/{{ item }}"
+    method: DELETE
+    headers:
+      Authorization: "token {{ _runner_remove_admin_token }}"
+    status_code: [204, 404]
+  loop: "{{ _runner_remove_matches }}"
+  register: _runner_remove_result
+  changed_when: _runner_remove_result.status | default(0) == 204
+  no_log: true

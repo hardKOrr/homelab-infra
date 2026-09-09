@@ -55,6 +55,13 @@ expect '{"estates":{"foxglove":{"sso":{"instance":"authentik-foxglove"}}}}' \
 expect '{}' \
   '{"registry":{"estates":{"foxglove":{"sso":{"instance":"authentik-foxglove"}}}},"instance":"authentik-foxglove"}'
 
+# App-to-app consumers use an exact-key endpoint map. Removing a runner must not remove
+# the named Forgejo endpoint or another app's endpoint.
+expect '{"apps":{"forgejo":{"provider":"forgejo","url":"http://forgejo:3000/"}}}' \
+  '{"registry":{"apps":{"forgejo":{"provider":"forgejo","url":"http://forgejo:3000/"},"forgejo-runner":{"provider":"forgejo-runner"}}},"instance":"forgejo-runner"}'
+expect '{"apps":{"forgejo-runner":{"provider":"forgejo-runner"}}}' \
+  '{"registry":{"apps":{"forgejo":{"provider":"forgejo","url":"http://forgejo:3000/"},"forgejo-runner":{"provider":"forgejo-runner"}}},"instance":"forgejo"}'
+
 # THE ONES THAT MUST NOT MOVE. One estate's removal never reaches another estate's
 # entries, and a same-named key in a different scope is a different service.
 expect '{"estates":{"personal":{"sso":{"instance":"authentik"}}}}' \

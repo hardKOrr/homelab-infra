@@ -57,6 +57,8 @@ media:                               # optional — app-to-app wiring for the me
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
 databases:                           # optional — independently deployed database backends
   <instance>: { provider, host, port, client_hosts } # host is a bare SSH/database address
+apps:                               # optional — named application endpoints
+  <instance>: { provider, instance, host, port, url, ssh_port } # topology only
 runner:                              # the host this platform runs FROM — see below
   { provider, instance, host, vmid, node, checkout_path, venv_path, branch }
 estates:                             # optional — only when infrastructure.yml declares domains:
@@ -166,6 +168,13 @@ their `database` configuration; generated facts contain topology only.
 | `host` | bare SSH and database address, not an HTTP URL; database consumers pair it with `port` |
 | `port` | backend listener port; provider-specific, for example PostgreSQL `5432` or InfluxDB `8086` |
 | `client_hosts` | MySQL/MariaDB only: account-host patterns allowed for provisioned application roles; never use `%` |
+
+**`apps` — named application endpoints.** This optional registry is for app-to-app
+dependencies, not platform wiring. Forgejo publishes its HTTP endpoint and direct Git
+SSH port here; Forgejo Runner resolves the named Forgejo instance from this map before
+deploying. It contains topology only — no registration token, admin token, password,
+or other credential-shaped field. Removing an app prunes only its exact key and never
+removes the independently managed backend it consumed.
 
 Ntfy ships with `auth-default-access: deny-all`, so notification consumers authenticate
 when credentials are present. Credential fields remain optional for compatibility with an
@@ -424,6 +433,7 @@ The canonical top-level items are:
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | application-owned credentials. Database provisioning writes `database_provider`, `database_host`, `database_port`, `database_name`, `database_user`, and hidden `database_password` here; the backend never places an application password in generated facts. |
+| `homelab-infra/apps/<instance>` (Batch C) | n8n encryption keys, Plane application/RabbitMQ/object-storage secrets, and Forgejo Runner registration tokens are hidden fields here. Forgejo Runner removal reads `admin_api_token` only from the named Forgejo item; no credential is placed in generated facts. |
 | `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields — e.g. `.../sso` (`token`, `admin_password`, `postgres_password`, `secret_key`) and `.../dns` (`api_token`). A non-default estate must not write a top-level role item or read the default estate's credential |
 
 The following process variables are external control-plane inputs. Rundeck injects them

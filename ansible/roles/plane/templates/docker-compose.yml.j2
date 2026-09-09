@@ -1,0 +1,109 @@
+{{ ansible_managed | comment }}
+services:
+  plane-web:
+    image: makeplane/plane-frontend:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-web"
+    env_file: ["{{ plane_env_file }}"]
+    restart: unless-stopped
+
+  plane-space:
+    image: makeplane/plane-space:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-space"
+    env_file: ["{{ plane_env_file }}"]
+    restart: unless-stopped
+
+  plane-admin:
+    image: makeplane/plane-admin:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-admin"
+    env_file: ["{{ plane_env_file }}"]
+    restart: unless-stopped
+
+  plane-live:
+    image: makeplane/plane-live:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-live"
+    env_file: ["{{ plane_env_file }}"]
+    restart: unless-stopped
+    depends_on: [plane-mq, plane-api]
+
+  plane-api:
+    image: makeplane/plane-backend:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-api"
+    env_file: ["{{ plane_env_file }}"]
+    command: ["./bin/docker-entrypoint-api.sh"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.data_path }}/api:/code/plane/media"
+    depends_on: [plane-mq, plane-minio]
+
+  plane-worker:
+    image: makeplane/plane-backend:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-worker"
+    env_file: ["{{ plane_env_file }}"]
+    command: ["./bin/docker-entrypoint-worker.sh"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.data_path }}/worker:/code/plane/media"
+    depends_on: [plane-mq, plane-minio]
+
+  plane-beat-worker:
+    image: makeplane/plane-backend:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-beat-worker"
+    env_file: ["{{ plane_env_file }}"]
+    command: ["./bin/docker-entrypoint-beat.sh"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.data_path }}/beat:/code/plane/media"
+    depends_on: [plane-mq, plane-minio]
+
+  plane-migrator:
+    image: makeplane/plane-backend:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-migrator"
+    # This one-shot service is run explicitly after the persistent unit starts. Keeping it
+    # out of the default `up` avoids a fixed-name container conflict with `compose run`.
+    profiles: ["init"]
+    env_file: ["{{ plane_env_file }}"]
+    command: ["./bin/docker-entrypoint-migrator.sh"]
+    restart: "no"
+    volumes:
+      - "{{ app_config.app.data_path }}/migrator:/code/plane/media"
+
+  plane-mq:
+    image: rabbitmq:3.13.6-management-alpine
+    container_name: "{{ instance }}-plane-mq"
+    env_file: ["{{ plane_env_file }}"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.data_path }}/rabbitmq:/var/lib/rabbitmq"
+
+  plane-minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    container_name: "{{ instance }}-plane-minio"
+    env_file: ["{{ plane_env_file }}"]
+    command: ["server", "/export", "--console-address", ":9090"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.object_storage_path }}:/export"
+
+  plane-minio-init:
+    image: minio/mc:RELEASE.2024-06-11T11-32-16Z
+    container_name: "{{ instance }}-plane-minio-init"
+    # See plane-migrator above: init services never start as part of default `up`.
+    profiles: ["init"]
+    env_file: ["{{ plane_env_file }}"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://plane-minio:9000 "$${MINIO_ROOT_USER}"
+        "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "local/$${AWS_S3_BUCKET_NAME}"
+    restart: "no"
+    depends_on: [plane-minio]
+
+  plane-proxy:
+    image: makeplane/plane-proxy:{{ app_config.app.release }}
+    container_name: "{{ instance }}-plane-proxy"
+    env_file: ["{{ plane_env_file }}"]
+    restart: unless-stopped
+    ports:
+      - "{{ app_config.app.port }}:80"
+    depends_on: [plane-web, plane-space, plane-admin, plane-live, plane-api]

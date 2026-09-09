@@ -1,0 +1,37 @@
+---
+# Deploy Forgejo Runner. Rendered and imported by rundeck/render-job.py.
+- id: 70b7c182-8ef3-4a56-b901-36cf4d6e8a20
+  uuid: 70b7c182-8ef3-4a56-b901-36cf4d6e8a20
+  name: Deploy Forgejo Runner
+  group: Applications/Developer Tools/CI/Forgejo Runner
+  description: |-
+    Deploy or converge a separately managed **Forgejo Runner**.
+
+    - **Dependency:** the named Forgejo instance must be deployed and registered first.
+    - **Registration:** the runner token is read only from Vaultwarden. The registration
+      marker makes reruns idempotent, and a restarted daemon reconnects without duplicates.
+    - **Recovery/removal:** runner data and the Docker-in-Docker state are backed up with
+      this Compose project. Removal deregisters only this runner name through Forgejo's
+      API, removes local registration state, and preserves the shared Forgejo instance.
+      The named Forgejo item's Vaultwarden-only `admin_api_token` is required for that
+      deregistration; shared Forgejo state is never removed.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Forgejo Runner instance. Enter another name for a second runner.'
+    required: true
+    value: forgejo-runner
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/forgejo-runner.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/forgejo-runner.yml -e "instance=$RD_OPTION_INSTANCE"

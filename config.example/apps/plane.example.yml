@@ -1,0 +1,20 @@
+---
+# Plane planning and collaboration. Deploy postgresql-plane and redis-plane first.
+app:
+  database:
+    instance: postgresql-plane
+    version: "16"
+    name: plane
+    role: plane
+  redis:
+    instance: redis-plane
+routing:
+  access: internal
+  identity: catalog
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Object storage contract: Plane owns a named local MinIO service (`plane-minio`) as
+# part of this Compose recovery unit. Its object-storage path is recovered with Plane;
+# generated access keys are stored only in Vaultwarden, not in this example.

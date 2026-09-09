@@ -1,0 +1,22 @@
+---
+# The registration token is intentionally absent. An operator creates it for this
+# named runner in Forgejo and stores it in Vaultwarden under the runner app item.
+forgejo_runner_defaults:
+  stack: services
+  app:
+    image: data.forgejo.org/forgejo/runner:13
+    data_path: "/opt/{{ instance }}/data"
+    registration_config_path: "/opt/{{ instance }}/data/runner-config.yml"
+    registration_marker_path: "/opt/{{ instance }}/data/.homelab-infra-registered"
+    registration_env_path: "/opt/{{ instance }}/runner.env"
+    forgejo:
+      instance: forgejo
+    runner_name: "{{ instance }}"
+    labels: "docker:docker://docker.io/library/alpine:3.20"
+  routing:
+    proxy: none
+    access: internal
+    identity: none
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"

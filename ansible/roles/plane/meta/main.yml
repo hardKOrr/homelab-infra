@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: plane
+  description: "Deploys the Plane multi-container recovery unit with external PostgreSQL and Redis"
+  min_ansible_version: "2.15"
+dependencies: []

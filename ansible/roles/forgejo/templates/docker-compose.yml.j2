@@ -1,0 +1,21 @@
+{{ ansible_managed | comment }}
+services:
+  forgejo:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-forgejo"
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file:
+      - "{{ forgejo_env_file }}"
+    ports:
+      - "{{ app_config.app.port }}:3000"
+      # Git-over-SSH is a direct host publication, not sent through Caddy or any HTTP reverse-proxy route.
+      - "{{ app_config.app.ssh_port }}:2222"
+    volumes:
+      - "{{ app_config.app.data_path }}:/data"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/-/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

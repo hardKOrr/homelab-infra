@@ -1,0 +1,5 @@
+---
+- name: Restart Plane
+  community.docker.docker_compose_v2:
+    project_src: "{{ plane_project_dir }}"
+    state: restarted

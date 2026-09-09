@@ -1,0 +1,18 @@
+---
+# Forgejo Actions runner. Deploy Forgejo first and create a token for this named runner.
+app:
+  forgejo:
+    instance: forgejo
+  runner_name: forgejo-runner
+  labels: "docker:docker://docker.io/library/alpine:3.20"
+routing:
+  proxy: none
+  access: internal
+  identity: none
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Store runner_token only in Vaultwarden item homelab-infra/apps/<instance>. The runner
+# deregistration path uses Forgejo's admin_api_token from the named Forgejo Vaultwarden
+# item; neither token is accepted from tracked configuration.

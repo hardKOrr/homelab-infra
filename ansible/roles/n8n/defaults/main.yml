@@ -1,0 +1,3 @@
+---
+n8n_project_dir: "/opt/{{ instance }}"
+n8n_env_file: "{{ n8n_project_dir }}/n8n.env"

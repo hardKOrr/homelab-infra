@@ -1,0 +1,37 @@
+---
+# Plane's object-storage contract is deliberately explicit: this recovery unit owns a
+# named MinIO service and its bind-mounted object-storage path. The database and Redis
+# remain independently managed platform backends; no credentials belong in this file.
+plane_defaults:
+  stack: services
+  app:
+    release: v1.4.2
+    port: 8093
+    data_path: "/opt/{{ instance }}/data"
+    object_storage_path: "/opt/{{ instance }}/object-storage"
+    object_storage:
+      provider: minio
+      instance: plane-minio
+      bucket: plane
+    database:
+      provider: postgresql
+      instance: postgresql-plane
+      version: "16"
+      name: plane
+      role: plane
+    redis:
+      provider: redis
+      instance: redis-plane
+    rabbitmq:
+      host: plane-mq
+      port: 5672
+      user: plane
+      vhost: plane
+  routing:
+    subdomain: plane
+    proxy: internal
+    access: internal
+    identity: catalog
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"

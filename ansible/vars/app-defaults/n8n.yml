@@ -1,0 +1,21 @@
+---
+n8n_defaults:
+  stack: services
+  app:
+    image: docker.n8n.io/n8nio/n8n:1.104.2
+    port: 5678
+    data_path: "/opt/{{ instance }}/data"
+    database:
+      provider: postgresql
+      instance: postgresql-n8n
+      version: "16"
+      name: n8n
+      role: n8n
+  routing:
+    subdomain: n8n
+    proxy: internal
+    access: internal
+    identity: catalog
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
