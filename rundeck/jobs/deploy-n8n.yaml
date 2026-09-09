@@ -1,0 +1,35 @@
+---
+# Deploy n8n. Rendered and imported by rundeck/render-job.py.
+- id: 4e819c67-7cf4-4a31-8b72-08d1c5e5a8c1
+  uuid: 4e819c67-7cf4-4a31-8b72-08d1c5e5a8c1
+  name: Deploy n8n
+  group: Applications/Automation/Workflow Automation/n8n
+  description: |-
+    Deploy or converge an instanced **n8n** workflow-automation service.
+
+    - **Database:** named external PostgreSQL backend `postgresql-n8n` by default.
+    - **Secrets:** the n8n encryption key and database password are generated or reused
+      from Vaultwarden; credentials are never read from tracked configuration.
+    - **Recovery:** the named PostgreSQL database and this instance's `/opt/<instance>/data`
+      directory are one recovery unit. The Docker guest backup includes the Compose project.
+    - **Rerun:** the same encryption key and database role are reused on every converge.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected n8n instance. Enter another name for a second deployment.'
+    required: true
+    value: n8n
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/n8n.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/n8n.yml -e "instance=$RD_OPTION_INSTANCE"

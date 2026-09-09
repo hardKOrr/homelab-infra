@@ -373,3 +373,41 @@ applications:
     category: Events
     type: Ticketing
     scope: estate
+
+  n8n:
+    name: n8n
+    job: deploy-n8n.yaml
+    root: Applications
+    category: Automation
+    type: Workflow Automation
+    scope: estate
+
+  plane:
+    name: Plane
+    job: deploy-plane.yaml
+    root: Applications
+    category: Planning and Collaboration
+    type: Project Management
+    scope: estate
+    # Plane is a multi-container recovery unit; the generic one-image rollback action
+    # cannot truthfully converge all of its services.
+    exclude: [rollback]
+
+  forgejo:
+    name: Forgejo
+    job: deploy-forgejo.yaml
+    root: Applications
+    category: Developer Tools
+    type: Source Control
+    scope: estate
+
+  forgejo-runner:
+    name: Forgejo Runner
+    job: deploy-forgejo-runner.yaml
+    root: Applications
+    category: Developer Tools
+    type: CI
+    scope: estate
+    # The runner has a Docker-in-Docker sidecar and registration state, so a generic
+    # single-container image rollback would not be a safe recovery operation.
+    exclude: [rollback]

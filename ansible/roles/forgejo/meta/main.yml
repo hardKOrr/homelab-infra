@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: forgejo
+  description: "Deploys Forgejo on Docker with external PostgreSQL and direct Git SSH publication"
+  min_ansible_version: "2.15"
+dependencies: []

@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: forgejo_runner
+  description: "Deploys and registers a Forgejo Actions runner against a named Forgejo instance"
+  min_ansible_version: "2.15"
+dependencies: []

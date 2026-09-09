@@ -1,0 +1,3 @@
+---
+forgejo_project_dir: "/opt/{{ instance }}"
+forgejo_env_file: "{{ forgejo_project_dir }}/forgejo.env"

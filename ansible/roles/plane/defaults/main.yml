@@ -1,0 +1,3 @@
+---
+plane_project_dir: "/opt/{{ instance }}"
+plane_env_file: "{{ plane_project_dir }}/plane.env"

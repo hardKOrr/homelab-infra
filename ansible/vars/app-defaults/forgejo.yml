@@ -1,0 +1,22 @@
+---
+forgejo_defaults:
+  stack: services
+  app:
+    image: codeberg.org/forgejo/forgejo:16
+    port: 3000
+    ssh_port: 2222
+    data_path: "/opt/{{ instance }}/data"
+    database:
+      provider: postgresql
+      instance: postgresql-forgejo
+      version: "16"
+      name: forgejo
+      role: forgejo
+  routing:
+    subdomain: forgejo
+    proxy: internal
+    access: internal
+    identity: catalog
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"

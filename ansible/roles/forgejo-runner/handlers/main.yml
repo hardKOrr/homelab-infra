@@ -1,0 +1,5 @@
+---
+- name: Restart Forgejo Runner
+  community.docker.docker_compose_v2:
+    project_src: "{{ forgejo_runner_project_dir }}"
+    state: restarted

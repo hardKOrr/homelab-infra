@@ -140,6 +140,19 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
+    # The runner is an app-to-app registration, not a proxy route. Remove exactly this
+    # named registration while the Forgejo endpoint and its admin credential still exist;
+    # the shared Forgejo instance and all other runners are left untouched.
+    - name: Deregister Forgejo Runner
+      ansible.builtin.include_tasks: ../../tasks/app-wiring/forgejo-runner-remove.yml
+      vars:
+        runner_remove_instance: "{{ instance }}"
+        runner_remove_forgejo_instance: "{{ app_config.app.forgejo.instance }}"
+      when:
+        - (app | default(instance)) == 'forgejo-runner'
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.apps is defined
+
     # After the provider unwiring, deliberately: the registry is what the unwire steps
     # above read to find those providers, so pruning it first would remove the app's own
     # entry while the reverse proxy and DNS still carried its route.
@@ -247,6 +260,7 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
         remove_kind: "{{ _rm_kind }}"
+        remove_app: "{{ app | default(instance) }}"
       when: _rm_hosts | length > 0
       # Inventory bookkeeping, not a lab change — the same reason
       # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without
@@ -368,6 +382,19 @@
             remove_volumes: "{{ _rm_delete_data | bool }}"
             remove_orphans: true
           when: _rm_compose_stat.stat.exists
+
+        # A stopped runner must not leave a registration token or the local registration
+        # marker behind. Removing these files even when delete_data is false makes a later
+        # deploy perform a fresh, token-backed registration after the API deregistration.
+        - name: Remove Forgejo Runner registration state
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ app_config.app.registration_config_path | default(_rm_project_dir ~ '/data/runner-config.yml') }}"
+            - "{{ app_config.app.registration_marker_path | default(_rm_project_dir ~ '/data/.homelab-infra-registered') }}"
+            - "{{ app_config.app.registration_env_path | default(_rm_project_dir ~ '/runner.env') }}"
+          when: remove_app == 'forgejo-runner'
 
         - name: Delete the project directory
           ansible.builtin.file:

@@ -1,0 +1,106 @@
+---
+- name: Forgejo Runner | Create project directory
+  ansible.builtin.file:
+    path: "{{ forgejo_runner_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Forgejo Runner | Create runner data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0750"
+
+- name: Forgejo Runner | Read the registration token from Vaultwarden
+  ansible.builtin.set_fact:
+    _forgejo_runner_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).runner_token
+         | default('', true) }}
+  no_log: true
+
+- name: Forgejo Runner | Assert the registration token is from Vaultwarden
+  ansible.builtin.assert:
+    that: _forgejo_runner_token | length > 0
+    fail_msg: >-
+      Runner token for {{ instance }} is unavailable. Create a token for the named
+      runner in Forgejo and store it as runner_token in Vaultwarden item
+      homelab-infra/apps/{{ instance }}; do not add it to tracked configuration.
+  no_log: true
+
+- name: Forgejo Runner | Store registration metadata in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: forgejo-runner
+      instance: "{{ instance }}"
+      forgejo_instance: "{{ app_config.app.forgejo.instance }}"
+      forgejo_url: "{{ app_config.app.forgejo_url }}"
+      runner_name: "{{ app_config.app.runner_name }}"
+      runner_token: "{{ _forgejo_runner_token }}"
+    vault_item_secret_fields: [runner_token]
+  no_log: true
+
+- name: Forgejo Runner | Render registration environment
+  ansible.builtin.template:
+    src: runner.env.j2
+    dest: "{{ forgejo_runner_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Install idempotent registration entrypoint
+  ansible.builtin.copy:
+    src: register-and-run.sh
+    dest: "{{ forgejo_runner_entrypoint }}"
+    owner: root
+    group: root
+    mode: "0750"
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ forgejo_runner_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart Forgejo Runner
+
+- name: Forgejo Runner | Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ forgejo_runner_project_dir }}"
+
+- name: Forgejo Runner | Start and register the runner
+  community.docker.docker_compose_v2:
+    project_src: "{{ forgejo_runner_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Forgejo Runner | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Forgejo Runner | Check that the runner daemon is connected
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ forgejo_runner_project_dir }}"
+      - ps
+      - --status
+      - running
+      - --services
+  register: _forgejo_runner_services
+  changed_when: false
+  failed_when: >-
+    _forgejo_runner_services.rc != 0
+    or 'runner' not in (_forgejo_runner_services.stdout_lines | default([]))

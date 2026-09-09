@@ -1,0 +1,4 @@
+---
+forgejo_runner_project_dir: "/opt/{{ instance }}"
+forgejo_runner_env_file: "{{ forgejo_runner_project_dir }}/runner.env"
+forgejo_runner_entrypoint: "{{ forgejo_runner_project_dir }}/register-and-run.sh"

@@ -1,0 +1,18 @@
+---
+# n8n workflow automation. Deploy the named PostgreSQL backend first.
+app:
+  database:
+    instance: postgresql-n8n
+    version: "16"
+    name: n8n
+    role: n8n
+routing:
+  access: internal
+  identity: catalog
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# The n8n encryption key is generated once and stored in Vaultwarden under
+# homelab-infra/apps/<instance>. Credentials and workflow data are application state;
+# this example deliberately contains no credential values or tokens.

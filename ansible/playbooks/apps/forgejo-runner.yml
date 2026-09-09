@@ -1,0 +1,110 @@
+---
+# Deploy an independently removable Forgejo Actions runner. Forgejo must already be
+# deployed and registered in generated topology facts; no endpoint is guessed.
+- name: "Forgejo Runner | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe Forgejo Runner instance name: -e instance=forgejo-runner"
+    - name: Load Forgejo Runner defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/forgejo-runner.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Merge Forgejo Runner config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.forgejo_runner_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+  tasks:
+    - name: Resolve the named Forgejo endpoint
+      ansible.builtin.set_fact:
+        _forgejo_endpoint: >-
+          {{ (homelabinfra_infra.apps | default({})).get(app_config.app.forgejo.instance, {}) }}
+      no_log: true
+    - name: Assert the named Forgejo instance is deployed first
+      ansible.builtin.assert:
+        that:
+          - _forgejo_endpoint.provider | default('') == 'forgejo'
+          - _forgejo_endpoint.url | default('') | length > 0
+        fail_msg: >-
+          Forgejo instance {{ app_config.app.forgejo.instance }} is not registered.
+          Deploy that named Forgejo instance before deploying {{ instance }}.
+    - name: Add the Forgejo endpoint to the runner config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'forgejo_url': _forgejo_endpoint.url,
+            'forgejo_instance': app_config.app.forgejo.instance
+          }}, recursive=True) }}
+      no_log: true
+    - name: Resolve the estate this runner belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+    - name: Find or create services stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+- name: "Forgejo Runner | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap Docker guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Deploy Forgejo Runner
+      ansible.builtin.include_role:
+        name: forgejo-runner
+
+- name: "Forgejo Runner | Record"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _runner_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+  tasks:
+    - name: Record Forgejo Runner on its stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: ["{{ _runner_host.inventory_hostname }}"]
+        record_guest_kind: docker
+        record_guest_url: ""
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Forgejo Runner deployed"
+        notify_message: >-
+          {{ instance }} is registered against named Forgejo instance
+          {{ _runner_host.app_config.app.forgejo_instance }} and will reconnect on rerun.
+    - name: Fail on wiring degradations
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

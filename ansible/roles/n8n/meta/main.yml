@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: n8n
+  description: "Deploys n8n on Docker with external PostgreSQL and Vaultwarden-backed encryption"
+  min_ansible_version: "2.15"
+dependencies: []

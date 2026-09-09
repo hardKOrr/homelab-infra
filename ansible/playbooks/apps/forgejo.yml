@@ -1,0 +1,147 @@
+---
+# Deploy Forgejo with PostgreSQL and a direct, explicitly published Git SSH port.
+- name: "Forgejo | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe Forgejo instance name: -e instance=forgejo"
+    - name: Load Forgejo defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/forgejo.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Merge Forgejo config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.forgejo_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        forgejo_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        forgejo_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+    - name: Provision the named PostgreSQL database and role
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+    - name: Add database connection to Forgejo config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'database_host': database_provision_connection.host,
+            'database_port': database_provision_connection.port,
+            'database_user': database_provision_connection.user,
+            'database_password': database_provision_connection.password
+          }}, recursive=True) }}
+      no_log: true
+    - name: Find or create services stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+- name: "Forgejo | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap Docker guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Deploy Forgejo
+      ansible.builtin.include_role:
+        name: forgejo
+      vars:
+        forgejo_fqdn: "{{ hostvars['localhost'].forgejo_fqdn }}"
+
+- name: "Forgejo | Wire"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _forgejo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _forgejo_host.ansible_host }}"
+    wiring_upstream_port: "{{ _forgejo_host.app_config.app.port }}"
+    wiring_subdomain: "{{ hostvars['localhost'].forgejo_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].forgejo_fqdn }}"
+    wiring_app_display: "Forgejo ({{ instance }})"
+    wiring_monitor_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}/-/health"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _forgejo_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _forgejo_host.app_config.routing.access | default('internal') }}"
+  tasks:
+    - name: Record Forgejo endpoint for app-to-app consumers
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: apps
+        generated_facts_data:
+          "{{ instance }}":
+            provider: forgejo
+            instance: "{{ instance }}"
+            host: "http://{{ _forgejo_host.ansible_host }}"
+            port: "{{ _forgejo_host.app_config.app.port }}"
+            url: "http://{{ _forgejo_host.ansible_host }}:{{ _forgejo_host.app_config.app.port }}/"
+            ssh_port: "{{ _forgejo_host.app_config.app.ssh_port }}"
+    - name: Wire reverse proxy (HTTP only)
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring.provider | default('none') != 'none'
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: Record Forgejo on its stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: ["{{ _forgejo_host.inventory_hostname }}"]
+        record_guest_kind: docker
+        record_guest_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}"
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Forgejo deployed"
+        notify_message: >-
+          {{ instance }} is running at https://{{ hostvars['localhost'].forgejo_fqdn }}.
+          Git-over-SSH is published directly at port {{ _forgejo_host.app_config.app.ssh_port }};
+          it is not routed through Caddy.
+    - name: Fail on wiring degradations
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

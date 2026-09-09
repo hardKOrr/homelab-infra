@@ -1,0 +1,178 @@
+---
+- name: Plane | Create project directory
+  ansible.builtin.file:
+    path: "{{ plane_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Plane | Create persistent service directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ app_config.app.data_path }}"
+    - "{{ app_config.app.data_path }}/api"
+    - "{{ app_config.app.data_path }}/worker"
+    - "{{ app_config.app.data_path }}/beat"
+    - "{{ app_config.app.data_path }}/migrator"
+    - "{{ app_config.app.data_path }}/proxy"
+    - "{{ app_config.app.object_storage_path }}"
+
+- name: Plane | Resolve the named Redis backend
+  ansible.builtin.set_fact:
+    _plane_redis_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(app_config.app.redis.instance, {}) }}
+  no_log: true
+
+- name: Plane | Assert the named Redis backend is deployed
+  ansible.builtin.assert:
+    that:
+      - _plane_redis_backend.provider | default('') == 'redis'
+      - _plane_redis_backend.host | default('') | length > 0
+      - _plane_redis_backend.port | default(0) | int > 0
+    fail_msg: >-
+      Redis backend {{ app_config.app.redis.instance }} is not registered. Deploy that
+      named Redis instance before deploying {{ instance }}.
+
+- name: Plane | Resolve the Redis password from Vaultwarden
+  ansible.builtin.set_fact:
+    _plane_redis_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.redis.instance, {}).password
+         | default('', true) }}
+  no_log: true
+
+- name: Plane | Assert the Redis credential is available
+  ansible.builtin.assert:
+    that: _plane_redis_password | length > 0
+    fail_msg: >-
+      Redis credential for {{ app_config.app.redis.instance }} is unavailable. Read it
+      from Vaultwarden; do not add it to config/apps/{{ instance }}.yml.
+  no_log: true
+
+- name: Plane | Generate or reuse application and storage secrets
+  ansible.builtin.set_fact:
+    _plane_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _plane_live_server_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).live_server_secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _plane_rabbitmq_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).rabbitmq_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+    _plane_object_storage_access_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).object_storage_access_key
+         | default('plane-' ~ instance | regex_replace('[^A-Za-z0-9]', ''), true) }}
+    _plane_object_storage_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).object_storage_secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Plane | Store application secrets in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: plane
+      instance: "{{ instance }}"
+      secret_key: "{{ _plane_secret_key }}"
+      live_server_secret_key: "{{ _plane_live_server_secret_key }}"
+      rabbitmq_password: "{{ _plane_rabbitmq_password }}"
+      object_storage_access_key: "{{ _plane_object_storage_access_key }}"
+      object_storage_secret_key: "{{ _plane_object_storage_secret_key }}"
+      database_provider: "{{ app_config.app.database.provider }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+      redis_instance: "{{ app_config.app.redis.instance }}"
+      redis_host: "{{ _plane_redis_backend.host }}"
+      redis_port: "{{ _plane_redis_backend.port }}"
+    vault_item_secret_fields:
+      - secret_key
+      - live_server_secret_key
+      - rabbitmq_password
+      - object_storage_access_key
+      - object_storage_secret_key
+      - database_password
+  no_log: true
+
+- name: Plane | Render environment file
+  ansible.builtin.template:
+    src: plane.env.j2
+    dest: "{{ plane_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Plane
+
+- name: Plane | Render Compose recovery unit
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ plane_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart Plane
+
+- name: Plane | Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ plane_project_dir }}"
+
+- name: Plane | Start the recovery unit
+  community.docker.docker_compose_v2:
+    project_src: "{{ plane_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Plane | Apply database migrations
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ plane_project_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - plane-migrator
+  register: _plane_migrator
+  changed_when: false
+  no_log: true
+
+- name: Plane | Ensure the named object-storage bucket exists
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ plane_project_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - plane-minio-init
+  register: _plane_storage_init
+  changed_when: false
+  no_log: true
+
+- name: Plane | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Plane | Wait for the recovery unit health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _plane_health
+  until: _plane_health.status | default(0) == 200
+  retries: 90
+  delay: 5
+  changed_when: false

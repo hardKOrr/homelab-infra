@@ -1,0 +1,83 @@
+---
+- name: n8n | Create project directory
+  ansible.builtin.file:
+    path: "{{ n8n_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: n8n | Create writable application data directory
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0750"
+
+- name: n8n | Generate or reuse the encryption key
+  ansible.builtin.set_fact:
+    _n8n_encryption_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).encryption_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: n8n | Store application and database credentials in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: n8n
+      instance: "{{ instance }}"
+      encryption_key: "{{ _n8n_encryption_key }}"
+      database_provider: "{{ app_config.app.database.provider }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+    vault_item_secret_fields: [encryption_key, database_password]
+  no_log: true
+
+- name: n8n | Render environment file
+  ansible.builtin.template:
+    src: n8n.env.j2
+    dest: "{{ n8n_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart n8n
+
+- name: n8n | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ n8n_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart n8n
+
+- name: n8n | Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ n8n_project_dir }}"
+
+- name: n8n | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ n8n_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: n8n | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: n8n | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/healthz"
+    status_code: 200
+  register: _n8n_health
+  until: _n8n_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false

@@ -14,6 +14,7 @@ source. [`../architecture.md`](../architecture.md) maps the components that impl
 | [Provider no-op wiring](provider-noop-wiring.md) | Symmetric and optional platform integration |
 | [Secrets handling](secrets-handling.md) | Seed mode, Vault mode, redaction, and secret storage |
 | [Device passthrough](device-passthrough.md) | Shared LXC device binds and dedicated VM PCIe/USB passthrough |
+| [Object storage](object-storage.md) | Named storage ownership, credentials, and recovery boundaries |
 
 When a specification and the authoritative variable schema differ, update the specification to
 match [`ansible/vars/CONTRACT.md`](../../ansible/vars/CONTRACT.md). Work state and historical

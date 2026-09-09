@@ -1,0 +1,19 @@
+---
+# Forgejo source control. Deploy the named PostgreSQL backend first.
+app:
+  database:
+    instance: postgresql-forgejo
+    version: "16"
+    name: forgejo
+    role: forgejo
+  # Git-over-SSH is a direct publication and is intentionally not a Caddy route.
+  ssh_port: 2222
+routing:
+  access: internal
+  identity: catalog
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Forgejo's optional runner-removal admin_api_token is a Vaultwarden-only field on the
+# Forgejo item; no credentials or tokens belong in this file.

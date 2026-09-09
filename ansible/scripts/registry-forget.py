@@ -16,10 +16,11 @@ removed app as a download client in every *arr and then fails when it does not a
 Measured on the live lab: `media.sabnzbd-foxglove` survived the removal of the app
 (execution 153) and its container no longer exists.
 
-Two shapes are pruned, at the top level and inside every `estates.<name>` scope:
+Three shapes are pruned, at the top level and inside every `estates.<name>` scope:
 
   1. `media.<instance>` — the per-instance media registry entry.
-  2. any role entry (`sso`, `monitoring`, `notifications`, …) whose `instance` field
+  2. `apps.<instance>` — the per-instance app endpoint registry entry.
+  3. any role entry (`sso`, `monitoring`, `notifications`, …) whose `instance` field
      names this instance — the removed app WAS that service, so the registry must stop
      claiming the lab has one.
 
@@ -45,6 +46,11 @@ def prune_scope(scope: dict, instance: str) -> dict:
             result[key] = value
             continue
         if key == "media":
+            remaining = {k: v for k, v in value.items() if k != instance}
+            if remaining:
+                result[key] = remaining
+            continue
+        if key == "apps":
             remaining = {k: v for k, v in value.items() if k != instance}
             if remaining:
                 result[key] = remaining

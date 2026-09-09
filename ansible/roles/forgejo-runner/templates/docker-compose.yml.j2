@@ -1,0 +1,26 @@
+{{ ansible_managed | comment }}
+services:
+  docker:
+    image: docker:27-dind
+    container_name: "{{ instance }}-runner-docker"
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["--mtu=1450"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.data_path }}/docker:/var/lib/docker"
+
+  runner:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-forgejo-runner"
+    user: "1000:1000"
+    env_file:
+      - "{{ forgejo_runner_env_file }}"
+    entrypoint: ["/opt/runner/register-and-run.sh"]
+    restart: unless-stopped
+    volumes:
+      - "{{ app_config.app.data_path }}:/data"
+      - "{{ forgejo_runner_entrypoint }}:/opt/runner/register-and-run.sh:ro"
+    depends_on:
+      - docker
