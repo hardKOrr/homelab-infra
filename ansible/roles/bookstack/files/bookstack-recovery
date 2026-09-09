@@ -1,0 +1,158 @@
+#!/bin/bash
+# Application-consistent BookStack recovery helper.
+#
+# This file deliberately contains no credentials. The role writes one root-only env file
+# from the canonical Vaultwarden item. The database dump and /config archive are uploaded
+# as two archives in ONE PBS snapshot, so a restore cannot accidentally pair page media
+# with a different database point in time.
+set -Eeuo pipefail
+
+CONFIG=/etc/homelab-infra/bookstack/${BOOKSTACK_INSTANCE:-bookstack}.env
+if [[ ! -r "$CONFIG" ]]; then
+  echo "BookStack recovery is not configured: $CONFIG is absent. Deploy with backup enabled and a PBS target." >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$CONFIG"
+set +a
+
+for required in BOOKSTACK_PROJECT_DIR BOOKSTACK_SERVICE BOOKSTACK_DATA_PATH \
+  BOOKSTACK_DB_HOST BOOKSTACK_DB_PORT BOOKSTACK_DB_NAME BOOKSTACK_DB_USER \
+  BOOKSTACK_DB_PASSWORD BOOKSTACK_DB_CLIENT_IMAGE PBS_REPOSITORY PBS_FINGERPRINT \
+  PBS_PASSWORD PBS_BACKUP_ID PBS_RETENTION_DAYS; do
+  [[ -n "${!required:-}" ]] || { echo "BookStack recovery configuration is incomplete: $required" >&2; exit 1; }
+done
+
+[[ "$PBS_BACKUP_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "BookStack recovery backup id is unsafe" >&2
+  exit 1
+}
+
+compose=(docker compose --project-directory "$BOOKSTACK_PROJECT_DIR" -f "$BOOKSTACK_PROJECT_DIR/docker-compose.yml")
+work=$(mktemp -d /var/tmp/homelab-bookstack.XXXXXX)
+stopped=0
+restart_on_failure=0
+
+finish() {
+  local rc=$?
+  rm -rf -- "$work"
+  if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+    "${compose[@]}" start "$BOOKSTACK_SERVICE" >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap finish EXIT
+
+mysql_client() {
+  local command=$1
+  shift
+  docker run --rm --network host \
+    -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
+    --entrypoint "$command" "$BOOKSTACK_DB_CLIENT_IMAGE" "$@"
+}
+
+write_client_config() {
+  umask 077
+  cat > "$work/my.cnf" <<CNF
+[client]
+user=$BOOKSTACK_DB_USER
+password=$BOOKSTACK_DB_PASSWORD
+CNF
+}
+
+backup() {
+  write_client_config
+  # BookStack is stopped before the dump and the archive. The external backend remains
+  # available to every other application on it; only this application's writes pause.
+  "${compose[@]}" stop "$BOOKSTACK_SERVICE" >/dev/null
+  stopped=1
+  restart_on_failure=1
+  mkdir -p "$work/database"
+  mysql_client mysqldump \
+    --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
+    --single-transaction --routines --triggers --events --hex-blob \
+    --no-create-db --databases "$BOOKSTACK_DB_NAME" > "$work/database/database.sql"
+  echo "dumped BookStack database $BOOKSTACK_DB_NAME ($(wc -c < "$work/database/database.sql") bytes)"
+  PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
+    PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client backup \
+    database.pxar:"$work/database" storage.pxar:"$BOOKSTACK_DATA_PATH" \
+    --backup-id "$PBS_BACKUP_ID"
+  PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
+    PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client prune \
+    "host/$PBS_BACKUP_ID" --keep-daily "$PBS_RETENTION_DAYS"
+  echo "BookStack backup complete: host/$PBS_BACKUP_ID in ${PBS_REPOSITORY##*:}"
+  "${compose[@]}" start "$BOOKSTACK_SERVICE" >/dev/null
+  stopped=0
+}
+
+plan() {
+  # A plan never calls Docker and never writes the application data path.
+  PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
+    PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client snapshot list "host/$PBS_BACKUP_ID"
+  if [[ -n "${SNAPSHOT:-}" ]]; then
+    case "$SNAPSHOT" in
+      host/$PBS_BACKUP_ID/*) ;;
+      *) echo "snapshot is not in the BookStack backup group host/$PBS_BACKUP_ID" >&2; exit 1 ;;
+    esac
+    PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
+      PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client snapshot files "$SNAPSHOT"
+  else
+    echo "No snapshot selected; nothing was changed."
+  fi
+}
+
+restore() {
+  [[ "${SNAPSHOT:-}" == host/$PBS_BACKUP_ID/* ]] || {
+    echo "restore requires a snapshot from host/$PBS_BACKUP_ID" >&2
+    exit 1
+  }
+  write_client_config
+  PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
+    PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client restore "$SNAPSHOT" \
+    database.pxar "$work/database"
+  PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
+    PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client restore "$SNAPSHOT" \
+    storage.pxar "$work/storage"
+
+  # A failed restore leaves the app stopped deliberately: serving half of a recovery
+  # point is worse than a plainly unavailable service. The shared backend is never
+  # stopped, dropped, or changed outside this database.
+  "${compose[@]}" stop "$BOOKSTACK_SERVICE" >/dev/null
+  stopped=1
+  find "$BOOKSTACK_DATA_PATH" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  cp -a "$work/storage/." "$BOOKSTACK_DATA_PATH/"
+
+  # The application role has ALL only on this named database. Clear its existing tables
+  # through that grant instead of requesting backend-admin credentials or touching any
+  # other database on the shared MariaDB/MySQL guest.
+  table_sql=$(mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" --batch --skip-column-names \
+    --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', TABLE_NAME, ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$BOOKSTACK_DB_NAME';")
+  if [[ -n "$table_sql" ]]; then
+    printf '%s\n' "$table_sql" | mysql_client mysql \
+      --defaults-extra-file=/run/secrets/my.cnf --host="$BOOKSTACK_DB_HOST" \
+      --port="$BOOKSTACK_DB_PORT" --database="$BOOKSTACK_DB_NAME"
+  fi
+  mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" \
+    --database="$BOOKSTACK_DB_NAME" < "$work/database/database.sql"
+  echo "BookStack database and /config data restored from $SNAPSHOT"
+  "${compose[@]}" start "$BOOKSTACK_SERVICE" >/dev/null
+  stopped=0
+}
+
+case "${1:-}" in
+  --backup) backup ;;
+  --plan)
+    [[ "${2:-}" == --snapshot ]] && SNAPSHOT="${3:-}" || SNAPSHOT=""
+    plan
+    ;;
+  --restore)
+    [[ "${2:-}" == --snapshot && -n "${3:-}" ]] || { echo "restore requires --snapshot" >&2; exit 1; }
+    SNAPSHOT="$3"
+    restore
+    ;;
+  *) echo "usage: $0 --backup | --plan [--snapshot PBS_SNAPSHOT] | --restore --snapshot PBS_SNAPSHOT" >&2; exit 2 ;;
+esac

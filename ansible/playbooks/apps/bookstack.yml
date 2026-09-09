@@ -1,0 +1,157 @@
+---
+# Deploy an instanced BookStack service on the services Docker stack.
+#
+# Usage:
+#   ansible-playbook -i inventory/ playbooks/apps/bookstack.yml -e instance=bookstack
+#
+# The named MariaDB/MySQL backend must already be deployed. Database provisioning writes
+# the generated application role password to Vaultwarden before changing the backend; the
+# BookStack role does the same for its APP_KEY and initial administrator password.
+
+- name: "BookStack | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe BookStack instance name: -e instance=bookstack"
+    - name: Load BookStack defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/bookstack.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Merge BookStack config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.bookstack_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        bookstack_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        bookstack_fqdn: >-
+          {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
+
+    - name: Provision the named MySQL-compatible database and role
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+
+    - name: Add database connection to BookStack config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'database_host': database_provision_connection.host,
+            'database_port': database_provision_connection.port,
+            'database_user': database_provision_connection.user,
+            'database_password': database_provision_connection.password
+          }}, recursive=True) }}
+      no_log: true
+
+    # The resolver is shared with the Kubernetes recovery implementation because it is the
+    # one place that turns the registry's PBS entry into a verified client endpoint. The
+    # BookStack role receives these values from localhost; no secret enters generated facts.
+    - name: Resolve the lab PBS target for application-consistent recovery
+      ansible.builtin.include_tasks: ../../tasks/backup/resolve-pbs-target.yml
+      vars:
+        k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('', true) }}"
+      when: app_config.backup.enabled | default(false) | bool
+
+    - name: Find or create services stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+- name: "BookStack | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap Docker guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Deploy BookStack
+      ansible.builtin.include_role:
+        name: bookstack
+      vars:
+        bookstack_fqdn: "{{ hostvars['localhost'].bookstack_fqdn }}"
+        bookstack_pbs_available: "{{ hostvars['localhost'].k8s_pbs_available | default(false) }}"
+        bookstack_pbs_repository: "{{ hostvars['localhost'].k8s_pbs_repository | default('') }}"
+        bookstack_pbs_fingerprint: "{{ hostvars['localhost'].k8s_pbs_fingerprint | default('') }}"
+        bookstack_pbs_password: "{{ hostvars['localhost'].k8s_pbs_password | default('') }}"
+
+- name: "BookStack | Wire"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _bookstack_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _bookstack_host.ansible_host }}"
+    wiring_upstream_port: "{{ _bookstack_host.app_config.app.port }}"
+    wiring_subdomain: "{{ hostvars['localhost'].bookstack_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].bookstack_fqdn }}"
+    wiring_app_display: "BookStack ({{ instance }})"
+    wiring_monitor_url: "https://{{ hostvars['localhost'].bookstack_fqdn }}/login"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _bookstack_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _bookstack_host.app_config.routing.access | default('internal') }}"
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring.provider | default('none') != 'none'
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: Record BookStack on its stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: ["{{ _bookstack_host.inventory_hostname }}"]
+        record_guest_kind: docker
+        record_guest_url: "https://{{ hostvars['localhost'].bookstack_fqdn }}"
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "BookStack deployed"
+        notify_message: "{{ instance }} is running at https://{{ hostvars['localhost'].bookstack_fqdn }}"
+    - name: Fail on wiring degradations
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

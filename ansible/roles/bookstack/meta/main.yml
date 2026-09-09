@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: bookstack
+  description: "Deploys BookStack on Docker with a named MySQL-compatible backend"
+  min_ansible_version: "2.15"
+dependencies: []

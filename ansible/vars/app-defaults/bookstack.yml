@@ -1,0 +1,50 @@
+---
+# Default configuration for BookStack on the services Docker stack. The application
+# database is deliberately external: deploy the named MariaDB/MySQL backend first.
+bookstack_defaults:
+  stack: services
+
+  app:
+    # LinuxServer's image keeps BookStack's .env, uploads, themes and generated files in
+    # /config. The tag is pinned so an upstream release cannot change the runtime contract
+    # underneath an existing database during an unrelated converge.
+    # LinuxServer's version-v tag tracks the upstream BookStack point release without
+    # floating on latest (verified against the linuxserver/bookstack package registry).
+    image: lscr.io/linuxserver/bookstack:version-v26.05.3
+    port: 6875
+    container_port: 80
+    puid: 1000
+    pgid: 1000
+    database:
+      provider: mariadb
+      instance: mariadb-bookstack
+      name: bookstack
+      role: bookstack
+    data_path: "/opt/{{ instance }}/data"
+    # Initial administrator only; the role records the email in /config and refuses an
+    # accidental change on a later deploy.
+    admin_user: admin@example.invalid
+    admin_name: Homelab Admin
+
+  routing:
+    subdomain: bookstack
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  # The role stops only BookStack, dumps this named database, and archives /config before
+  # uploading both as one PBS snapshot. The shared backend guest and its other databases
+  # are never stopped or removed. If the lab has no PBS, the recovery schedule is a safe
+  # no-op and the deploy says so; deploy PBS and rerun BookStack to enable it.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      # Client-only repository, not the PBS server's subscription repository.
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

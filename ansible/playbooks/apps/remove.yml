@@ -396,6 +396,23 @@
             - "{{ app_config.app.registration_env_path | default(_rm_project_dir ~ '/runner.env') }}"
           when: remove_app == 'forgejo-runner'
 
+        # BookStack's application-consistent backup timer and its root-only runtime
+        # credential copy live outside /opt/<instance>. Remove both on every BookStack
+        # removal, even when delete_data is false, so an unwired application cannot keep
+        # stopping the shared stack host and writing snapshots after it was removed.
+        - name: Remove BookStack recovery schedule
+          ansible.builtin.cron:
+            name: "homelab-infra BookStack backup {{ instance }}"
+            cron_file: "homelab-infra-bookstack-{{ instance }}"
+            state: absent
+          when: remove_app == 'bookstack'
+
+        - name: Remove BookStack recovery configuration
+          ansible.builtin.file:
+            path: "/etc/homelab-infra/bookstack/{{ instance }}.env"
+            state: absent
+          when: remove_app == 'bookstack'
+
         - name: Delete the project directory
           ansible.builtin.file:
             path: "{{ _rm_project_dir }}"

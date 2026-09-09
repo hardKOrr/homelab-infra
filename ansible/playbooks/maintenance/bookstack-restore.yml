@@ -1,0 +1,95 @@
+---
+# Plan or perform a restore of one BookStack instance from its own PBS snapshot.
+#
+# overwrite=false (the default) is read-only. overwrite=true stops only the named
+# BookStack service, replaces its /config data and named database, and leaves the shared
+# backend and every other application untouched. A failed restore deliberately leaves the
+# service stopped for operator inspection.
+
+- name: "BookStack Restore | Resolve"
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that:
+          - instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+          - snapshot | default('') is match('^$|^host/[A-Za-z0-9_.-]+/[A-Za-z0-9T:_.+Z-]+$')
+          - overwrite | default(false) | string in ['false', 'true', 'False', 'True']
+          - not (overwrite | default(false) | bool) or snapshot | default('') | length > 0
+        fail_msg: "Provide a BookStack instance, an optional PBS snapshot, and overwrite=false|true."
+    - ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/bookstack.yml
+        name: _app_defaults
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.bookstack_defaults | combine(_instance_config | default({}), recursive=True) }}"
+  tasks:
+    - name: Resolve the existing services stack host
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        resolve_stack_deploy_group: "bookstack_recovery_{{ instance }}"
+
+- name: "BookStack Restore | Run"
+  hosts: "bookstack_recovery_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the BookStack restore plan
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/homelab-infra-bookstack-recovery
+          - --plan
+          - --snapshot
+          - "{{ snapshot | default('') }}"
+      environment:
+        BOOKSTACK_INSTANCE: "{{ instance }}"
+      register: bookstack_restore_result
+      changed_when: false
+      when: not (overwrite | default(false) | bool)
+
+    - name: Run the destructive BookStack restore
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/homelab-infra-bookstack-recovery
+          - --restore
+          - --snapshot
+          - "{{ snapshot }}"
+      environment:
+        BOOKSTACK_INSTANCE: "{{ instance }}"
+      register: bookstack_restore_result
+      changed_when: true
+      when: overwrite | default(false) | bool
+
+- name: "BookStack Restore | Notify"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Notify completed BookStack restore
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} restored"
+        notify_message: "BookStack {{ instance }} was restored from its application-consistent PBS snapshot."
+      when:
+        - overwrite | default(false) | bool
+        - hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
+    - name: Fail if BookStack restore did not complete
+      ansible.builtin.assert:
+        that: hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
+        fail_msg: >-
+          BookStack restore failed; inspect the target service before starting it and no
+          success notification was sent.

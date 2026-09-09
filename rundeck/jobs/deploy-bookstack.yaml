@@ -1,0 +1,41 @@
+---
+# Deploy BookStack. Rendered and imported by rundeck/render-job.py.
+- id: 5f2ccf37-40b5-4b10-9c47-6a1c2d3e4f50
+  uuid: 5f2ccf37-40b5-4b10-9c47-6a1c2d3e4f50
+  name: Deploy BookStack
+  group: Applications/Content & Publishing/Documentation/BookStack
+  description: |-
+    Deploy or converge an instanced BookStack documentation wiki.
+
+    - Database: named external MariaDB backend mariadb-bookstack by default; no database
+      sidecar is created in the services stack.
+    - Credentials: APP_KEY, the initial administrator password, and the named database
+      role password are generated or reused from homelab-infra/apps/<instance> in
+      Vaultwarden.
+    - Durability: BookStack's LinuxServer /config mount contains page attachments, images,
+      themes and generated state.
+    - Recovery: the BookStack backup captures a quiesced database dump and /config in one
+      PBS snapshot. Use Backup BookStack and Restore BookStack; the shared backend and
+      other stack applications are not changed.
+
+    Re-running preserves the application key and administrator credentials.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: 'Default: Keep the selected BookStack instance. Enter another name for a second deployment.'
+    required: true
+    value: bookstack
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/bookstack.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/bookstack.yml -e "instance=${RD_OPTION_INSTANCE}"

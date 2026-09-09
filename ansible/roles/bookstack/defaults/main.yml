@@ -1,0 +1,8 @@
+---
+# Role-internal paths. User-facing settings live in vars/app-defaults/bookstack.yml.
+bookstack_project_dir: "/opt/{{ instance }}"
+bookstack_env_file: "{{ bookstack_project_dir }}/bookstack.env"
+bookstack_admin_marker: "{{ app_config.app.data_path }}/.homelab-infra-admin"
+bookstack_recovery_config_dir: /etc/homelab-infra/bookstack
+bookstack_recovery_config: "{{ bookstack_recovery_config_dir }}/{{ instance }}.env"
+bookstack_recovery_script: /usr/local/sbin/homelab-infra-bookstack-recovery

@@ -1,0 +1,261 @@
+---
+- name: BookStack | Validate administrator email
+  ansible.builtin.assert:
+    that:
+      - app_config.app.admin_user is match('^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$')
+    fail_msg: "app.admin_user must be a valid email address for the initial BookStack administrator."
+
+- name: BookStack | Create project and durable data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ bookstack_project_dir }}", owner: root, group: root, mode: "0750"}
+    - {path: "{{ app_config.app.data_path }}", owner: "{{ app_config.app.puid }}", group: "{{ app_config.app.pgid }}", mode: "0750"}
+
+- name: BookStack | Resolve platform mail
+  ansible.builtin.include_tasks: ../../../tasks/mail/resolve-mail.yml
+
+- name: BookStack | Resolve generated and reused application credentials
+  ansible.builtin.set_fact:
+    _bookstack_app_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).app_key
+         | default('base64:' ~ (lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode), true) }}
+    _bookstack_admin_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).admin_password
+         | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: BookStack | Store application and database credentials in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: bookstack
+      instance: "{{ instance }}"
+      admin_user: "{{ app_config.app.admin_user }}"
+      admin_password: "{{ _bookstack_admin_password }}"
+      app_key: "{{ _bookstack_app_key }}"
+      database_provider: "{{ app_config.app.database.provider }}"
+      database_host: "{{ app_config.app.database_host }}"
+      database_port: "{{ app_config.app.database_port }}"
+      database_name: "{{ app_config.app.database.name }}"
+      database_user: "{{ app_config.app.database_user }}"
+      database_password: "{{ app_config.app.database_password }}"
+    vault_item_secret_fields: [admin_password, app_key, database_password]
+  no_log: true
+
+- name: BookStack | Render environment file
+  ansible.builtin.template:
+    src: bookstack.env.j2
+    dest: "{{ bookstack_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart BookStack
+
+- name: BookStack | Render Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ bookstack_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart BookStack
+
+- name: BookStack | Pull image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ bookstack_project_dir }}"
+    policy: missing
+  no_log: true
+
+- name: BookStack | Start service
+  community.docker.docker_compose_v2:
+    project_src: "{{ bookstack_project_dir }}"
+    state: present
+    remove_orphans: true
+  no_log: true
+
+- name: BookStack | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: BookStack | Wait for login endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/login"
+    status_code: 200
+  register: _bookstack_health
+  until: _bookstack_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+# BookStack's supported create-admin command updates the known default account on a new
+# install and returns 2 when a non-default admin already exists. The marker is deliberately
+# non-secret and lives in /config, so a missing Vaultwarden password cannot silently mint a
+# replacement that does not unlock the existing account.
+- name: BookStack | Check administrator initialization marker
+  ansible.builtin.stat:
+    path: "{{ bookstack_admin_marker }}"
+  register: _bookstack_admin_marker
+
+- name: BookStack | Read administrator initialization marker
+  ansible.builtin.slurp:
+    src: "{{ bookstack_admin_marker }}"
+  register: _bookstack_admin_marker_content
+  when: _bookstack_admin_marker.stat.exists
+
+- name: BookStack | Validate administrator credentials after initialization
+  ansible.builtin.assert:
+    that: >-
+      ((homelabinfra_vault.apps | default({})).get(instance, {}).admin_password | default('', true) | length > 0
+      or not _bookstack_admin_marker.stat.exists)
+      and (not _bookstack_admin_marker.stat.exists
+      or _bookstack_admin_marker_content.content | b64decode | trim == app_config.app.admin_user)
+    fail_msg: >-
+      BookStack {{ instance }} is already initialized but its administrator password is
+      missing from Vaultwarden item homelab-infra/apps/{{ instance }}, or app.admin_user
+      no longer matches the initial administrator recorded in {{ bookstack_admin_marker }}.
+      Restore the Vaultwarden item and original admin_user before rerunning the deploy.
+  no_log: true
+
+- name: BookStack | Initialize the administrator without printing credentials
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ bookstack_project_dir }}"
+      - exec
+      - -T
+      - bookstack
+      - php
+      - /app/www/artisan
+      - bookstack:create-admin
+      - --initial
+      - "--email={{ app_config.app.admin_user }}"
+      - "--name={{ app_config.app.admin_name }}"
+      - "--password={{ _bookstack_admin_password }}"
+  register: _bookstack_admin_create
+  changed_when: _bookstack_admin_create.rc == 0
+  failed_when: _bookstack_admin_create.rc not in [0, 2]
+  no_log: true
+  when: not _bookstack_admin_marker.stat.exists
+
+- name: BookStack | Record administrator initialization
+  ansible.builtin.copy:
+    dest: "{{ bookstack_admin_marker }}"
+    content: "{{ app_config.app.admin_user }}\n"
+    owner: "{{ app_config.app.puid }}"
+    group: "{{ app_config.app.pgid }}"
+    mode: "0600"
+  when:
+    - not _bookstack_admin_marker.stat.exists
+    - _bookstack_admin_create.rc | default(2) == 0
+  no_log: true
+
+- name: BookStack | Report backup provider no-op
+  ansible.builtin.debug:
+    msg: >-
+      BookStack backup is enabled but this lab has no usable PBS target; deployment will
+      continue without a recovery timer. Deploy PBS and rerun BookStack to enable the
+      application-consistent database plus /config recovery path.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (bookstack_pbs_available | default(false) | bool)
+
+- name: BookStack | Install PBS recovery client
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+  block:
+    - name: BookStack | Create apt keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: BookStack | Install PBS repository signing key
+      ansible.builtin.get_url:
+        url: "{{ app_config.backup.client.key_url }}"
+        dest: /etc/apt/keyrings/proxmox-release.gpg
+        mode: "0644"
+
+    - name: BookStack | Configure PBS client repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg]
+          {{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }}
+          {{ app_config.backup.client.component }}
+        filename: homelab-infra-pbs-client
+        state: present
+        update_cache: true
+
+    - name: BookStack | Install PBS client
+      ansible.builtin.apt:
+        name: proxmox-backup-client
+        state: present
+
+- name: BookStack | Install recovery helper
+  ansible.builtin.copy:
+    src: bookstack-recovery
+    dest: "{{ bookstack_recovery_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: BookStack | Create recovery configuration directory
+  ansible.builtin.file:
+    path: "{{ bookstack_recovery_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: BookStack | Validate backup schedule
+  ansible.builtin.assert:
+    that:
+      - (app_config.backup.schedule | string).split() | length == 5
+      - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
+      - app_config.backup.retention_days | int > 0
+    fail_msg: "BookStack backup.schedule must be a five-field cron expression and retention_days must be positive."
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: BookStack | Write recovery configuration
+  ansible.builtin.template:
+    src: bookstack-recovery.env.j2
+    dest: "{{ bookstack_recovery_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: BookStack | Schedule application-consistent backup
+  ansible.builtin.cron:
+    name: "homelab-infra BookStack backup {{ instance }}"
+    cron_file: "homelab-infra-bookstack-{{ instance }}"
+    user: root
+    minute: "{{ (app_config.backup.schedule.split())[0] }}"
+    hour: "{{ (app_config.backup.schedule.split())[1] }}"
+    day: "{{ (app_config.backup.schedule.split())[2] }}"
+    month: "{{ (app_config.backup.schedule.split())[3] }}"
+    weekday: "{{ (app_config.backup.schedule.split())[4] }}"
+    job: "BOOKSTACK_INSTANCE={{ instance }} {{ bookstack_recovery_script }} --backup"
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: BookStack | Remove stale recovery schedule when backup is unavailable
+  ansible.builtin.cron:
+    name: "homelab-infra BookStack backup {{ instance }}"
+    cron_file: "homelab-infra-bookstack-{{ instance }}"
+    state: absent
+  when: not (bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool)
+
+- name: BookStack | Remove stale recovery configuration when backup is unavailable
+  ansible.builtin.file:
+    path: "{{ bookstack_recovery_config }}"
+    state: absent
+  when: not (bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool)

@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+services:
+  bookstack:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-bookstack"
+    restart: unless-stopped
+    env_file:
+      - "{{ bookstack_env_file }}"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port }}"
+    volumes:
+      # LinuxServer's /config contains BookStack's .env, uploads, themes and generated
+      # application state. It is the durable half paired with the named SQL database.
+      - "{{ app_config.app.data_path }}:/config"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:{{ app_config.app.container_port }}/login >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
