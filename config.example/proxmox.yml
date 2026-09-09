@@ -23,6 +23,19 @@ proxmox:
   api_user: homelab-infra@pve   # bootstrap-rundeck.sh creates this user with a scoped role
   api_token_id: automation      # the token bootstrap-rundeck.sh mints for that user
 
+  # Declare each physical device once, including every identifier an attachment seam may
+  # use for it. `mode` is a commitment: shared permits several LXC binds, while dedicated
+  # removes the device from the host for one VM. Listing both identifiers below matters for
+  # an iGPU: its shared render node and its dedicated PCI address identify the same hardware.
+  # The attachment tasks refuse a request whose mode disagrees with this declaration before
+  # inspecting any guest state.
+  # devices:
+  #   intel-igpu:
+  #     mode: shared       # shared | dedicated
+  #     identifiers:
+  #       - /dev/dri/renderD128
+  #       - "0000:00:02.0"
+
   # Storage every guest lands on. bootstrap-rundeck.sh discovers this as the first active
   # storage advertising content type 'rootdir' — the type a container rootfs requires. A
   # stock Proxmox `local` is vztmpl/iso/backup and will NOT hold a container.

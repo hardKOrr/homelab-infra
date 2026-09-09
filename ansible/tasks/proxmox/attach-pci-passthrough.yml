@@ -28,6 +28,9 @@
 #                            `id` is the PCI address exactly as `lspci`/`pvesh` reports it.
 #                            `pcie` defaults to true (PCI Express); set false for a legacy
 #                            PCI device.
+#   homelabinfra_config.proxmox.devices — named physical-device declarations. The matching
+#                                        declaration must explicitly say `mode: dedicated`;
+#                                        its `identifiers` list includes this PCI address.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -40,6 +43,26 @@
     fail_msg: >-
       attach-pci-passthrough.yml needs pci_passthrough_guest and
       pci_passthrough_device.id.
+
+# This is the primary mode gate. It intentionally runs before any node or guest query: a
+# declaration is an operator-owned config fact, not something inferred from current VM
+# bindings. A shared render node and the PCI identity of the same physical iGPU can both be
+# listed under one named declaration, so a later dedicated request cannot evade the gate by
+# using a different identifier for the same device.
+- name: PCI passthrough | Assert the physical device is declared dedicated
+  ansible.builtin.assert:
+    that:
+      - _pci_device_declarations | length == 1
+      - (_pci_device_declarations | map(attribute='value.mode') | first | default('', true)) == 'dedicated'
+    fail_msg: >-
+      PCI device {{ pci_passthrough_device.id }} must match exactly one physical-device
+      declaration with mode: dedicated in homelabinfra_config.proxmox.devices. A device
+      declared shared cannot be assigned exclusively to a VM.
+  vars:
+    _pci_device_declarations: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
+         | selectattr('value.identifiers', 'defined')
+         | selectattr('value.identifiers', 'contains', pci_passthrough_device.id) | list }}
 
 - name: PCI passthrough | Verify the device is present on the node
   ansible.builtin.command:

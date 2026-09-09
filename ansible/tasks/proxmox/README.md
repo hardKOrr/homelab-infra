@@ -48,7 +48,12 @@ exactly one VM guest, exclusively; the device leaves the node for that guest, so
 assignment is a preflight failure, not a reassignment. All three run after `lxc-create.yml` /
 `vm-create.yml`, never in place of them, and each asserts the target guest carries the
 `_+lab` ownership tag before writing anything, then writes a `_.dev+<slug>` tag per bound
-device — durable proof this platform, not an operator by hand, created the binding.
+device — durable proof this platform, not an operator by hand, created the binding. Before
+the PCI and shared seams inspect the node or any guest, the requested identifier must match
+exactly one named entry in `homelabinfra_config.proxmox.devices`, whose explicit `mode`
+must agree with the seam. Put every identifier for one physical device (such as an iGPU's
+render node and PCI address) in that entry; the declaration, not current bindings, is what
+keeps shared and dedicated mutually exclusive.
 
 Each attach seam has a matching detach seam — `detach-shared-device.yml`,
 `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that also asserts `_+lab`

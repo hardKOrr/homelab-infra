@@ -16,6 +16,20 @@ which remains authoritative for guest ownership and creation.
     configuration, because the host itself can no longer see the device.
   - The two modes have separate task seams and separate schemas — see below. Neither
     seam adopts the other's device class.
+- **Mode is a declared configuration fact, not an inferred binding fact.** Under
+  `homelabinfra_config.proxmox.devices`, the operator names each physical device once and
+  declares `mode: shared` or `mode: dedicated`, plus every exact identifier an attach seam
+  may use for that unit (for example `/dev/dri/renderD128` and the corresponding PCI
+  address). On the one configured `proxmox.node`, all identifiers in one entry describe the
+  same physical device. The PCI and shared attach seams read this declaration before any
+  guest-state inference and refuse a request whose mode disagrees; a missing or ambiguous
+  declaration is refused too. Current bindings never establish or change the mode.
+- **Modes are mutually exclusive per physical device on the node.** A device declared
+  `shared` may be bound into multiple LXC guests, but its dedicated PCI/USB identity cannot
+  be assigned to a VM. A device declared `dedicated` may be assigned to one VM, but its
+  render-node or other shared identity cannot be bound into an LXC. Changing the declaration
+  is an explicit operator decision and is outside an attach run; detach and recovery do not
+  infer a new mode from what happens to be present.
 - **The exact node, guest, and device are explicit before mutation.** Every seam takes the
   guest hostname and the exact device identifier as input: a host path for a shared device,
   a PCI address for a dedicated GPU, or a Proxmox USB resource mapping name for a dedicated
@@ -99,6 +113,7 @@ distinct, named assertion, not a single catch-all check:
 | Guest not found on the node | both modes | the seam attaches to an existing guest; it does not create one |
 | Guest missing the `_+lab` tag | both modes | this platform binds devices only into guests it owns — see the ownership contract |
 | Device path/PCI address/USB mapping not present on the node | both modes | a typo here would otherwise produce a guest that boots with the feature silently absent |
+| Declared mode missing, ambiguous, or different from the requested seam | PCI and shared attach | mode is a per-device configuration commitment; current bindings cannot authorize the opposite mode |
 | Device already assigned to a different guest | dedicated only | a PCIe or USB device left the host for one guest; a second guest cannot also receive it |
 
 Detach uses the same identifiers to locate a binding, so a typo in a removal call fails the
@@ -113,9 +128,10 @@ rejections/no-ops of its own, both in `ansible/tasks/proxmox/detach-*.yml`:
 ## Enforced by
 
 - inspection — cite this specification in findings
-- `gate/test-device-passthrough-contract.sh` — proves the ownership guard on every attach
-  AND detach seam, the dedicated-device conflict check, and that detach treats a content
-  match with no provenance tag as unowned rather than adopting it, against the real
-  expressions in `ansible/tasks/proxmox/attach-pci-passthrough.yml`,
+- `gate/test-device-passthrough-contract.sh` — proves the declared-mode rejection in both
+  directions, the ownership guard on every attach AND detach seam, the dedicated-device
+  conflict check, and that detach treats a content match with no provenance tag as unowned
+  rather than adopting it, against the real expressions in
+  `ansible/tasks/proxmox/attach-pci-passthrough.yml`,
   `attach-usb-passthrough.yml`, `detach-shared-device.yml`, `detach-pci-passthrough.yml`,
   and `detach-usb-passthrough.yml`, without a lab
