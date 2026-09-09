@@ -1,0 +1,48 @@
+---
+# BookStack Restore — a per-application action selected by catalog extra.
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Restore %NAME%
+  group: '%GROUP%'
+  description: |-
+    Plan or perform a restore of this BookStack instance from its own PBS snapshots.
+
+    overwrite=false (recommended) lists and validates the selected snapshot without
+    changing anything. Set overwrite=true only after confirming the snapshot; the named
+    BookStack service is stopped, its /config data and named database are replaced, then
+    it is started again. No shared backend guest or other stack application is touched.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: 'Default: Keep the selected BookStack instance.'
+    required: true
+    value: '%SLUG%'
+  - name: snapshot
+    description: 'Optional: PBS snapshot identifier, for example host/bookstack/2026-09-09T03:00:00Z. Blank lists snapshots and changes nothing.'
+    required: false
+    value: ''
+  - name: overwrite
+    description: 'false (recommended): plan only. true: replace this instance from the selected snapshot.'
+    required: true
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run the BookStack restore playbook
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          : "${RD_OPTION_OVERWRITE:?overwrite option is required}"
+          ARGS=(-e "instance=${RD_OPTION_INSTANCE}" -e "overwrite=${RD_OPTION_OVERWRITE}")
+          if [ -n "${RD_OPTION_SNAPSHOT:-}" ]; then
+            ARGS+=(-e "snapshot=${RD_OPTION_SNAPSHOT}")
+          fi
+          exec lab-run playbooks/maintenance/bookstack-restore.yml "${ARGS[@]}"

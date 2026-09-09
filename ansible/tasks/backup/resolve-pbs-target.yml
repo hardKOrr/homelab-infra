@@ -3,14 +3,9 @@
 # there. The one place that turns "the lab has a PBS" into the three values
 # proxmox-backup-client actually needs.
 #
-# WHY THIS LIVES UNDER tasks/kubernetes/ AND NOT SOMEWHERE MORE OBVIOUS
-#
-# Nothing here is Kubernetes-specific — it is PBS connection resolution. It sits with the
-# other adapter seams because it exists for them: every other consumer of PBS in this repo
-# is a Proxmox-side integration (tasks/bootstrap/configure-pbs.yml registers a storage
-# backend and a vzdump job), and this is the first caller that needs the CLIENT's view of
-# the same server. If a second hosting backend ever needs it too, it moves up a level; a
-# file used once should not be filed as though it were shared.
+# This task is shared by application recovery consumers on Kubernetes and Docker hosts.
+# It resolves the client view of the lab's PBS registry entry once, while each caller keeps
+# ownership of its own backup schedule and application-consistent archive.
 #
 # THERE IS EXACTLY ONE SOURCE OF TRUTH FOR PBS AND THIS IS NOT IT
 #

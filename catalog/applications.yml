@@ -366,6 +366,15 @@ applications:
     type: Email Campaigns
     scope: estate
 
+  bookstack:
+    name: BookStack
+    job: deploy-bookstack.yaml
+    root: Applications
+    category: Content & Publishing
+    type: Documentation
+    scope: estate
+    extra: [bookstack_backup, bookstack_restore]
+
   hi-events:
     name: Hi.Events
     job: deploy-hi-events.yaml

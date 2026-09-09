@@ -166,7 +166,7 @@
 # is backed up with that guest, not duplicated here.
 
 - name: Hi.Events | Resolve the lab's PBS target
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
   vars:
     k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
   when: app_config.backup.enabled | default(false) | bool

@@ -1,0 +1,63 @@
+---
+# Resolve an existing stack host without provisioning one. This is for per-application
+# recovery/removal actions: a missing target must fail clearly, never create a new guest.
+#
+# Inputs: stack_name, stack_estate, resolve_stack_deploy_group, resolve_stack_app_instance.
+# Output: resolve_stack_host is the one existing host in that stack's ownership group and
+# resolve_stack_deploy_group contains it for the following play.
+- name: Resolve existing stack host | Load sizing defaults
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../vars/stack-defaults.yml"
+    name: _resolve_stack_defaults_file
+
+- name: Resolve existing stack host | Resolve estate identity
+  ansible.builtin.set_fact:
+    _resolve_stack_id: >-
+      {{ stack_name
+         if (_resolve_stack_shared | bool) or _resolve_stack_estates | length < 2
+         else stack_name ~ '-' ~ _resolve_stack_estate }}
+  vars:
+    _resolve_stack_shared: >-
+      {{ ((_resolve_stack_defaults_file.stack_defaults[stack_name] | default({})).shared | default(false) | bool)
+         or ((((homelabinfra_config.infrastructure | default({})).stacks | default({}))[stack_name] | default({})).shared | default(false) | bool) }}
+    _resolve_stack_estates: "{{ (homelabinfra_config.infrastructure | default({})).domains | default({}) }}"
+    _resolve_stack_estate: >-
+      {{ (stack_estate | default('', true))
+         or (((_resolve_stack_estates | dict2items)
+              | selectattr('value.default', 'defined') | selectattr('value.default')
+              | map(attribute='key') | list) | first)
+         or (_resolve_stack_estates | list | first | default('')) }}
+
+- name: Resolve existing stack host | Translate ownership tag
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_.stack+{{ _resolve_stack_id }}"
+
+- name: Resolve existing stack host | Refresh inventory
+  ansible.builtin.meta: refresh_inventory
+
+- name: Resolve existing stack host | Find owned host
+  ansible.builtin.set_fact:
+    _resolve_stack_hosts: "{{ groups[tag_group_name] | default([]) }}"
+
+- name: Resolve existing stack host | Require an owned host
+  ansible.builtin.assert:
+    that: _resolve_stack_hosts | length > 0
+    fail_msg: >-
+      No existing stack host is tagged _.stack+{{ _resolve_stack_id }}. Deploy the named
+      application instance {{ resolve_stack_app_instance | default('(unknown)') }} before
+      running its recovery action.
+
+- name: Resolve existing stack host | Export host
+  ansible.builtin.set_fact:
+    resolve_stack_host: "{{ _resolve_stack_hosts[0] }}"
+
+- name: Resolve existing stack host | Add host to recovery play
+  ansible.builtin.add_host:
+    name: "{{ resolve_stack_host }}"
+    groups: "{{ resolve_stack_deploy_group }}"
+    ansible_host: >-
+      {{ hostvars[resolve_stack_host].ansible_host
+         | default(hostvars[resolve_stack_host].ansible_default_ipv4.address | default('')) }}
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+  changed_when: false

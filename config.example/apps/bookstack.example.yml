@@ -1,0 +1,28 @@
+---
+# BookStack documentation wiki on the services Docker stack.
+# Deploy the named MariaDB/MySQL backend first. The database role, APP_KEY and initial
+# administrator password are generated and stored in Vaultwarden; do not add credentials
+# to this file.
+app:
+  database:
+    instance: mariadb-bookstack
+    name: bookstack
+    role: bookstack
+  data_path: /opt/bookstack/data
+  # Initial administrator only; changing this after deployment is rejected by the role.
+  admin_user: admin@example.invalid
+  admin_name: Homelab Admin
+
+routing:
+  access: internal
+  identity: catalog
+
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+  retention_days: 14
+
+# Recovery is one named PBS snapshot containing a quiesced SQL dump and BookStack's
+# /config data (page attachments, images, themes and generated state). Use the generated
+# Backup BookStack and Restore BookStack jobs; neither operation changes the shared
+# backend guest or any other database.
