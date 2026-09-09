@@ -259,6 +259,7 @@
              | default(hostvars[_rm_hosts[0]].ansible_default_ipv4.address | default('')) }}
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
+        homelabinfra_config: "{{ homelabinfra_config }}"
         remove_kind: "{{ _rm_kind }}"
         remove_app: "{{ app | default(instance) }}"
       when: _rm_hosts | length > 0
@@ -438,6 +439,19 @@
           when:
             - _rm_delete_data | bool
             - item | length > 0
+
+    # A shared render-node bind is detached only after its Compose services stop.
+    # The attach task's provenance tag protects an unowned/pre-existing bind from removal.
+    # The durable media mount is operator-owned and deliberately remains in place.
+    - name: Detach the app's project-owned shared device
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-shared-device.yml
+      vars:
+        shared_device_guest: "{{ inventory_hostname }}"
+        shared_device_list:
+          - host: "{{ app_config.app.shared_device }}"
+      when:
+        - remove_kind == 'docker'
+        - app_config.app.shared_device | default('') | length > 0
 
     # ── Native app on its own LXC ──────────────────────────────────────────────
     - name: Stop the native service

@@ -1,0 +1,62 @@
+---
+# Immich on the dedicated photos Docker stack. PostgreSQL and Redis are platform
+# backends, not Compose sidecars. The media mount is deliberately empty here: an
+# instance must name the exact existing host directory it owns in config/apps/<instance>.yml.
+immich_defaults:
+  stack: photos
+
+  app:
+    image: ghcr.io/immich-app/immich-server:v3.1.0
+    machine_learning_image: ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino
+    port: 2283
+    database:
+      provider: postgresql
+      instance: postgresql-immich
+      version: "16"
+      name: immich
+      role: immich
+      extensions: [vector]
+    redis:
+      provider: redis
+      instance: redis-immich
+    # The exact render node is an operator-declared shared physical device. The
+    # playbook passes this to attach-shared-device.yml; it never requests PCI passthrough.
+    shared_device: /dev/dri/renderD128
+    shared_device_mode: "0666"
+    # The ML model cache is disposable and stays on the photos stack rootfs.
+    model_cache_path: "/opt/{{ instance }}/model-cache"
+
+  # No global media_storage is inherited. Immich must not adopt an existing photo
+  # library: the instance config names one new durable mount and its ownership.
+  media_storage:
+    mounts: []
+    owner:
+      user: homelab-infra
+      uid: 1313
+      gid: 1313
+
+  routing:
+    subdomain: immich
+    proxy: internal
+    access: internal
+    # Mobile clients authenticate to Immich and cannot complete a browser-only proxy
+    # challenge. Authentik supplies a catalog tile; Immich remains the auth boundary.
+    identity: catalog
+
+  # The app-owned recovery path archives the named PostgreSQL database and the durable
+  # originals/thumbnails mount together. PBS guest snapshots alone do not include a bind
+  # mount, so this is deliberately application-consistent.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
+    postgres_client_image: postgres:16-alpine

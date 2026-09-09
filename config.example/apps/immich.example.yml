@@ -1,0 +1,58 @@
+# Immich is a Docker application on the dedicated photos stack.
+#
+# Before a live deployment, name and verify all three authority points in the change
+# record: the Immich instance (for example, immich), the Proxmox photos-stack target
+# (for example, stack-photos), and the exact host directory/render node below. This
+# example deliberately does not inherit infrastructure.media_storage: doing so could
+# adopt an existing photo library that this deployment does not own.
+#
+# Dependencies to deploy first:
+#   - PostgreSQL instance `postgresql-immich` (with pgvector)
+#   - Redis instance `redis-immich`
+#   - proxmox.devices entry for `/dev/dri/renderD128` with mode: shared
+#
+# The mount host directory must already exist and be authorized for this new Immich
+# instance. The playbook attaches it with media_storage.owner and refuses an empty or
+# ambiguous declaration.
+stack: photos
+
+app:
+  database:
+    instance: postgresql-immich
+    name: immich
+    role: immich
+    version: "16"
+    extensions: [vector]
+  redis:
+    instance: redis-immich
+  # Shared render-node bind only; never replace this with dedicated PCI passthrough.
+  shared_device: /dev/dri/renderD128
+  shared_device_mode: "0666"
+
+media_storage:
+  mounts:
+    - host: /srv/photos/immich
+      path: /mnt/photos/immich
+  owner:
+    user: homelab-infra
+    uid: 1313
+    gid: 1313
+
+routing:
+  access: internal
+  identity: catalog
+
+backup:
+  enabled: true
+  application_consistent: true
+  schedule: "0 3 * * *"
+
+# Recovery procedure: `Backup Immich` quiesces both services, dumps the named PostgreSQL
+# database, and archives it with this durable media mount in one PBS snapshot. PBS guest
+# snapshots alone do not contain the bind mount. `Restore Immich` is plan-only by default;
+# overwrite mode validates both archives, replaces the database and media, and leaves
+# services stopped if any destructive step fails. Test in a disposable target first.
+#
+# Removal detaches only the shared device bind tagged as Immich-owned. An unowned/pre-
+# existing bind is left in place. The durable mount remains operator-owned and is not
+# adopted or deleted by one-click removal; handle its retention/deletion separately.

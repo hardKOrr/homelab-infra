@@ -1,0 +1,184 @@
+---
+# Application-consistent Immich backup.
+#
+# The PBS guest snapshot cannot contain a Proxmox bind mount, so this task quiesces the
+# Compose project and archives the named PostgreSQL database and Immich media together.
+# The model cache is disposable and is intentionally not part of the recovery artifact.
+- name: Immich backup | Resolve the named PostgreSQL backend and credential
+  ansible.builtin.set_fact:
+    _immich_backup_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(app_config.app.database.instance, {}) }}
+    _immich_backup_database_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).database_password
+         | default(app_config.app.database_password | default(''), true) }}
+    _immich_backup_database_user: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).database_user
+         | default(app_config.app.database.role | default(''), true) }}
+    _immich_backup_media_path: "{{ (app_config.media_storage.mounts | first).path }}"
+  no_log: true
+
+- name: Immich backup | Assert the application backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _immich_backup_database_backend.provider | default('') == 'postgresql'
+      - _immich_backup_database_backend.host | default('') | length > 0
+      - _immich_backup_database_backend.port | default(0) | int > 0
+      - app_config.app.database.name | default('') | length > 0
+      - _immich_backup_database_user | length > 0
+      - _immich_backup_database_password | length > 0
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Immich's application-consistent backup needs its named PostgreSQL backend, its
+      Vaultwarden credential, and a configured PBS target.
+  no_log: true
+
+- name: Immich backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Immich backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Immich. No local archive is treated as a recovery point.
+
+- name: Immich backup | Check the durable media directory
+  ansible.builtin.stat:
+    path: "{{ _immich_backup_media_path }}"
+  register: _immich_backup_media_stat
+  changed_when: false
+
+- name: Immich backup | Require the durable media directory
+  ansible.builtin.assert:
+    that:
+      - _immich_backup_media_stat.stat.exists
+      - _immich_backup_media_stat.stat.isdir
+    fail_msg: >-
+      Immich media path {{ _immich_backup_media_path }} is missing; refusing to create an
+      application backup that would omit originals and thumbnails.
+
+- name: Immich backup | Stop Immich services before the consistent dump
+  community.docker.docker_compose_v2:
+    project_src: "{{ immich_project_dir }}"
+    state: stopped
+    services:
+      - immich-server
+      - immich-machine-learning
+
+- name: Immich backup | Allocate private scratch space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: immich-backup-
+  register: _immich_backup_scratch
+  changed_when: true
+
+- name: Immich backup | Archive the database and media to PBS
+  block:
+    - name: Immich backup | Dump the named PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _immich_backup_scratch.path }}:/backup"
+          - --env
+          - DB_HOST
+          - --env
+          - DB_PORT
+          - --env
+          - DB_NAME
+          - --env
+          - DB_USER
+          - --env
+          - DB_PASSWORD
+          - "{{ app_config.backup.postgres_client_image }}"
+          - /bin/sh
+          - -ceu
+          - >-
+            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
+            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
+            --dbname="$DB_NAME" --file=/backup/immich.dump
+        environment:
+          DB_HOST: "{{ _immich_backup_database_backend.host }}"
+          DB_PORT: "{{ _immich_backup_database_backend.port }}"
+          DB_NAME: "{{ app_config.app.database.name }}"
+          DB_USER: "{{ _immich_backup_database_user }}"
+          DB_PASSWORD: "{{ _immich_backup_database_password }}"
+        no_log: true
+        changed_when: true
+
+    - name: Immich backup | Push the database and durable media archives
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _immich_backup_scratch.path }}:/backup:ro"
+          - --volume
+          - "{{ _immich_backup_media_path }}:/media:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - RETENTION_DAYS
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup database.pxar:/backup media.pxar:/media
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
+        environment:
+          PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+          PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+          PBS_PASSWORD: "{{ k8s_pbs_password }}"
+          BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+          RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+          PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+          PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+        no_log: true
+        changed_when: true
+
+    - name: Immich backup | Mark the application backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: Immich backup | Start Immich services after the attempt
+      community.docker.docker_compose_v2:
+        project_src: "{{ immich_project_dir }}"
+        state: present
+        services:
+          - immich-server
+          - immich-machine-learning
+
+    - name: Immich backup | Remove private scratch space
+      ansible.builtin.file:
+        path: "{{ _immich_backup_scratch.path }}"
+        state: absent
+      when: _immich_backup_scratch.path is defined

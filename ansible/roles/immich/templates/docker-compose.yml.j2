@@ -1,0 +1,34 @@
+{{ ansible_managed | comment }}
+# Immich's PostgreSQL and Redis are deliberately absent here. They are named,
+# independently managed platform backends with their own credentials and recovery units.
+services:
+  immich-server:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}-server"
+    env_file:
+      - "{{ immich_env_file }}"
+    volumes:
+      - "{{ _immich_media_path }}:/data"
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "{{ app_config.app.port }}:2283"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2283/api/server/ping').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  immich-machine-learning:
+    image: "{{ app_config.app.machine_learning_image }}"
+    container_name: "{{ instance }}-machine-learning"
+    env_file:
+      - "{{ immich_env_file }}"
+    volumes:
+      - "{{ app_config.app.model_cache_path }}:/cache"
+    devices:
+      # OpenVINO uses the operator-declared shared render node for inference. This
+      # is a Docker device bind inside an LXC, not dedicated PCI passthrough.
+      - "{{ app_config.app.shared_device }}:{{ app_config.app.shared_device }}"
+    restart: unless-stopped

@@ -1,0 +1,41 @@
+# Deploy Immich. Rendered and imported by rundeck/render-job.py.
+- id: a8b2efd1-6e75-471e-859d-6723e6ce6be1
+  uuid: a8b2efd1-6e75-471e-859d-6723e6ce6be1
+  name: Deploy Immich
+  group: Applications/Media & Entertainment/Photo Management/Immich
+  description: |-
+    Deploy or converge **Immich** on the dedicated `photos` Docker stack.
+
+    - **Dependencies:** named PostgreSQL `postgresql-immich` with pgvector and Redis `redis-immich`;
+      neither database is a Compose sidecar.
+    - **Storage:** attach only the explicitly authorized `media_storage` mount for originals
+      and thumbnails. The playbook does not adopt the global media library.
+    - **Device:** bind the declared `/dev/dri/renderD128` render node in `shared` mode for
+      ML/OpenVINO inference. Dedicated GPU passthrough is not requested.
+    - **Secrets:** database and Redis credentials are generated/reused in Vaultwarden and
+      rendered only into the protected runtime environment.
+    - **Recovery:** application-consistent PBS backup includes the named database and media
+      mount; test restore in a disposable target before live recovery.
+
+    Before live deployment, record the exact Immich instance, Proxmox target, media mount,
+    and iGPU device. Live-lab execution is deferred to the isolated acceptance lane.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Immich instance. Enter another name for a disposable restore target.'
+    required: true
+    value: immich
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/immich.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/immich.yml -e "instance=$RD_OPTION_INSTANCE"

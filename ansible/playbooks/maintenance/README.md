@@ -13,7 +13,9 @@ that interface.
 - Vaultwarden operations enrol accounts, perform the verified Seed-to-Vault cutover, store
   secrets, or enter the explicit recovery path.
 - Backup and restore operations use the backend-specific data path rather than treating a
-  VM snapshot as application-consistent data.
+  VM snapshot as application-consistent data. Role-backed Docker apps such as Immich stop
+  their Compose services and archive named PostgreSQL data with explicitly owned durable
+  media mounts; a restore is plan-only until an operator supplies a snapshot and overwrite.
 - Status and ascent verification read state without enforcing drift.
 
 Read [`../../../rundeck/README.md`](../../../rundeck/README.md) for the supported job

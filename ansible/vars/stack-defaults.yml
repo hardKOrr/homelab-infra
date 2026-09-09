@@ -102,3 +102,11 @@ stack_defaults:
     memory: 4096
     disk_volume:
       size: 32
+
+  # Immich's server and OpenVINO worker share a host, while originals and thumbnails
+  # live on the explicitly declared media mount rather than the stack rootfs.
+  photos:
+    cores: 4
+    memory: 8192
+    disk_volume:
+      size: 32
