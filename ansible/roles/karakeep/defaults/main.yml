@@ -1,0 +1,4 @@
+---
+karakeep_project_dir: "/opt/{{ instance }}"
+karakeep_env_file: "{{ karakeep_project_dir }}/karakeep.env"
+karakeep_meilisearch_data_path: "{{ karakeep_project_dir }}/meilisearch"

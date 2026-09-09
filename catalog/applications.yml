@@ -366,6 +366,15 @@ applications:
     type: Email Campaigns
     scope: estate
 
+  bookstack:
+    name: BookStack
+    job: deploy-bookstack.yaml
+    root: Applications
+    category: Content & Publishing
+    type: Documentation
+    scope: estate
+    extra: [bookstack_backup, bookstack_restore]
+
   hi-events:
     name: Hi.Events
     job: deploy-hi-events.yaml
@@ -422,3 +431,14 @@ applications:
     # per-app PBS archive and restore path. Explicit actions keep those jobs local to this
     # application instead of changing the default action set for every Docker stack app.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
+
+  karakeep:
+    name: Karakeep
+    job: deploy-karakeep.yaml
+    root: Applications
+    category: Search & Discovery
+    type: Bookmarks and Read Later
+    scope: estate
+    # Karakeep is a multi-container Compose recovery unit; the generic one-image
+    # rollback action cannot truthfully converge its web, Chrome, and Meilisearch images.
+    exclude: [rollback]

@@ -33,6 +33,16 @@ actions:
     template: configure-app.yaml
     hosting: [native, docker, kubernetes]
 
+  bookstack_backup:
+    template: bookstack-backup.yaml
+    hosting: []
+    opt_in: true
+
+  bookstack_restore:
+    template: bookstack-restore.yaml
+    hosting: []
+    opt_in: true
+
   migrate:
     template: migrate-servarr.yaml
     hosting: []

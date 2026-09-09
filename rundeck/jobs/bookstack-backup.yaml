@@ -1,0 +1,32 @@
+---
+# BookStack Backup — a per-application action selected by catalog extra.
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Backup %NAME%
+  group: '%GROUP%'
+  description: |-
+    Run an on-demand, application-consistent BookStack backup.
+
+    BookStack is stopped briefly, its named database is dumped, and its /config data
+    (including page attachments and images) is uploaded with that dump as one PBS snapshot.
+    The shared MariaDB/MySQL backend and other applications remain running and untouched.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: 'Default: Keep the selected BookStack instance. Choose another only for a second deployment.'
+    required: true
+    value: '%SLUG%'
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run the BookStack backup playbook
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/maintenance/bookstack-backup.yml -e "instance=${RD_OPTION_INSTANCE}"
