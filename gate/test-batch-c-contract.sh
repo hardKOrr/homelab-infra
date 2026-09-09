@@ -36,6 +36,8 @@ need "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'plane-worker:'
 need "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'plane-beat-worker:'
 need "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'plane-minio:'
 need "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'plane-minio-init:'
+need "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'profiles: ["init"]'
+need "$repo/ansible/roles/plane/tasks/main.yml" '--profile'
 absent "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'plane-db:'
 absent "$repo/ansible/roles/plane/templates/docker-compose.yml.j2" 'plane-redis:'
 

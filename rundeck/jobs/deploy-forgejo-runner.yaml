@@ -13,6 +13,8 @@
     - **Recovery/removal:** runner data and the Docker-in-Docker state are backed up with
       this Compose project. Removal deregisters only this runner name through Forgejo's
       API, removes local registration state, and preserves the shared Forgejo instance.
+      The named Forgejo item's Vaultwarden-only `admin_api_token` is required for that
+      deregistration; shared Forgejo state is never removed.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

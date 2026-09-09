@@ -58,6 +58,9 @@ services:
   plane-migrator:
     image: makeplane/plane-backend:{{ app_config.app.release }}
     container_name: "{{ instance }}-plane-migrator"
+    # This one-shot service is run explicitly after the persistent unit starts. Keeping it
+    # out of the default `up` avoids a fixed-name container conflict with `compose run`.
+    profiles: ["init"]
     env_file: ["{{ plane_env_file }}"]
     command: ["./bin/docker-entrypoint-migrator.sh"]
     restart: "no"
@@ -84,6 +87,8 @@ services:
   plane-minio-init:
     image: minio/mc:RELEASE.2024-06-11T11-32-16Z
     container_name: "{{ instance }}-plane-minio-init"
+    # See plane-migrator above: init services never start as part of default `up`.
+    profiles: ["init"]
     env_file: ["{{ plane_env_file }}"]
     entrypoint: ["/bin/sh", "-c"]
     command:

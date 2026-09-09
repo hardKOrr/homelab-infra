@@ -139,6 +139,8 @@
     argv:
       - docker
       - compose
+      - --profile
+      - init
       - --project-directory
       - "{{ plane_project_dir }}"
       - run
@@ -154,6 +156,8 @@
     argv:
       - docker
       - compose
+      - --profile
+      - init
       - --project-directory
       - "{{ plane_project_dir }}"
       - run
