@@ -2,6 +2,10 @@
 
 Frigate runs in the dedicated stack-frigate Docker-on-LXC guest. The guest PBS snapshot
 covers the Compose project, /opt/<instance>/config, and the generated Frigate config.
+The web host port is `app.port`; RTSP and WebRTC host ports derive from it (+1 and +2)
+unless `rtsp_port` and `webrtc_port` are explicitly set. Give a second instance a distinct
+`app.port` (and auxiliary overrides only when needed) because the `frigate` stack host is
+shared by instances.
 The continuously written recording mount is an existing Proxmox-node mount and is not
 silently adopted, formatted, or deleted by this role. Its storage owner must provide the
 retention-sized snapshot/backup and restore it at the same guest path before redeployment.

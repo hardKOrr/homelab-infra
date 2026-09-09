@@ -7,7 +7,11 @@ frigate_defaults:
 
   app:
     image: "ghcr.io/blakeblackshear/frigate:stable"
+    # app.port is the per-instance base host port. Blank auxiliary values derive from
+    # it (+1 for RTSP and +2 for WebRTC) so a second instance only needs a new app.port.
     port: 8971
+    rtsp_port: ""
+    webrtc_port: ""
     config_path: "/opt/{{ instance }}/config"
     recordings_path: "/mnt/frigate-recordings"
     # The host path and free-space floor are operator decisions. The playbook checks the

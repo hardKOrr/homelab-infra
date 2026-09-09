@@ -19,6 +19,8 @@
     - **Recovery:** PBS restores the guest/config; the recording-storage owner restores the
       external recording mount. Read ansible/roles/frigate/README.md before live binding.
     - **Rerun:** the same guest, mount, device provenance, config, and credentials are reused.
+      A second instance must set a distinct app.port in its config; RTSP/WebRTC host ports
+      derive from that base port unless explicitly overridden.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

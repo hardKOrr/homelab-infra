@@ -11,6 +11,10 @@ app:
   igpu_render_node: /dev/dri/renderD128
   # The exact Proxmox USB resource mapping declared under proxmox.devices with mode: shared.
   coral_usb_mapping: frigate-coral
+  # A second instance on the shared frigate guest needs a distinct app.port. Auxiliary
+  # host ports default to app.port + 1 (RTSP) and +2 (WebRTC); override them if needed.
+  # rtsp_port: 8972
+  # webrtc_port: 8973
   # Must equal the path of one frigate_storage.mounts entry in config/infrastructure.yml. Keep this mount
   # on storage sized for retention_days; recordings are continuously written.
   recordings_path: /mnt/frigate-recordings

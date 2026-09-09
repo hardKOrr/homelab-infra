@@ -47,7 +47,11 @@ need ansible/roles/frigate/tasks/main.yml "no_log: true"
 need ansible/roles/frigate/tasks/main.yml "/api/version"
 need ansible/roles/frigate/templates/docker-compose.yml.j2 "coral_usb_device_path"
 need ansible/roles/frigate/templates/docker-compose.yml.j2 "igpu_render_node"
+need ansible/roles/frigate/templates/docker-compose.yml.j2 "rtsp_host_port"
+need ansible/roles/frigate/templates/docker-compose.yml.j2 "webrtc_host_port"
 need ansible/roles/frigate/templates/docker-compose.yml.j2 "recordings_path"
+absent ansible/roles/frigate/templates/docker-compose.yml.j2 "8554:8554"
+absent ansible/roles/frigate/templates/docker-compose.yml.j2 "8555:8555/tcp"
 absent ansible/roles/frigate/templates/docker-compose.yml.j2 "privileged: true"
 absent ansible/roles/frigate/templates/docker-compose.yml.j2 "/dev/bus/usb:/dev/bus/usb"
 absent config.example/apps/frigate.example.yml "password:"
@@ -81,6 +85,8 @@ assert defaults["stack"] == "frigate"
 assert defaults["app"]["igpu_render_node"] == ""
 assert defaults["app"]["coral_usb_mapping"] == ""
 assert defaults["app"]["recordings_path"]
+assert defaults["app"]["rtsp_port"] == ""
+assert defaults["app"]["webrtc_port"] == ""
 assert defaults["app"]["retention_days"] > 0
 
 catalog = yaml.safe_load(
@@ -103,6 +109,7 @@ assert playbook.count("attach-usb-passthrough-lxc.yml") == 1
 assert "recording_storage.mounts" in playbook
 assert "recording_storage.owner" in playbook
 assert "coral_usb_device_path" in playbook
+assert "app.port" in (repo / "rundeck/jobs/deploy-frigate.yaml").read_text(encoding="utf-8")
 assert "deploy_{{ instance | default('_instance_unset') }}" in playbook
 
 usb = (repo / "ansible/tasks/proxmox/attach-usb-passthrough-lxc.yml").read_text(encoding="utf-8")

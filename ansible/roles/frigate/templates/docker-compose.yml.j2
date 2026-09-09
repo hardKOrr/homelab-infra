@@ -1,4 +1,6 @@
 {{ ansible_managed | comment }}
+{% set rtsp_host_port = _frigate_rtsp_host_port | int %}
+{% set webrtc_host_port = _frigate_webrtc_host_port | int %}
 services:
   frigate:
     image: "{{ app_config.app.image }}"
@@ -18,6 +20,6 @@ services:
       - "{{ app_config.app.coral_usb_device_path }}:{{ app_config.app.coral_usb_device_path }}"
     ports:
       - "{{ app_config.app.port }}:8971"
-      - "8554:8554"
-      - "8555:8555/tcp"
-      - "8555:8555/udp"
+      - "{{ rtsp_host_port }}:8554"
+      - "{{ webrtc_host_port }}:8555/tcp"
+      - "{{ webrtc_host_port }}:8555/udp"

@@ -11,6 +11,29 @@
     _frigate_mqtt_password: "{{ _frigate_vault_item.mqtt_password | default('') }}"
   no_log: true
 
+- name: Frigate | Resolve per-instance host ports
+  ansible.builtin.set_fact:
+    _frigate_rtsp_host_port: >-
+      {{ app_config.app.rtsp_port | default((app_config.app.port | int) + 1, true) | int }}
+    _frigate_webrtc_host_port: >-
+      {{ app_config.app.webrtc_port | default((app_config.app.port | int) + 2, true) | int }}
+
+- name: Frigate | Assert per-instance host ports are valid and distinct
+  ansible.builtin.assert:
+    that:
+      - app_config.app.port | int > 0
+      - app_config.app.port | int <= 65535
+      - _frigate_rtsp_host_port | int > 0
+      - _frigate_rtsp_host_port | int <= 65535
+      - _frigate_webrtc_host_port | int > 0
+      - _frigate_webrtc_host_port | int <= 65535
+      - [app_config.app.port | int, _frigate_rtsp_host_port | int,
+         _frigate_webrtc_host_port | int] | unique | length == 3
+    fail_msg: >-
+      Frigate host ports app.port, rtsp_port, and webrtc_port must be valid, distinct
+      host ports. Auxiliary ports default to app.port + 1 and app.port + 2 so another
+      instance can use a different app.port on the shared frigate stack host.
+
 - name: Frigate | Assert the device and recording contract reached the role
   ansible.builtin.assert:
     that:
