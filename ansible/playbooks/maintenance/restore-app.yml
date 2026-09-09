@@ -237,6 +237,9 @@
   become: true
   gather_facts: false
   tasks:
+    # A dispatched Docker recovery task must set this generic completion fact only after
+    # its restore and health check are complete; the notification and degradation gate
+    # below must not silently skip a future Docker role.
     - name: Restore the application-owned Docker archive
       ansible.builtin.include_role:
         name: "{{ hostvars['localhost']._ra_app }}"
@@ -267,10 +270,10 @@
           {{ app_target_instance }} was restored from PBS snapshot
           {{ hostvars['localhost']._ra_snapshot }}. Its complete application-native data
           directory was replaced. Verify the application before trusting it.
-      when: _actual_budget_restore_complete | default(false) | bool
+      when: _application_restore_complete | default(false) | bool
 
     - name: Fail if Docker restore degraded
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ app_target_instance }} restore"
-      when: _actual_budget_restore_complete | default(false) | bool
+      when: _application_restore_complete | default(false) | bool

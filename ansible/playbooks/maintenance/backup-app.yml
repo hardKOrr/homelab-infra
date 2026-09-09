@@ -190,6 +190,9 @@
   become: true
   gather_facts: false
   tasks:
+    # A dispatched Docker recovery task must set this generic completion fact only after
+    # its archive is complete. Keeping the contract generic prevents a future role from
+    # silently skipping the notification and degradation gate.
     - name: Run the application-owned Docker backup
       ansible.builtin.include_role:
         name: "{{ hostvars['localhost']._ba_app }}"
@@ -206,10 +209,10 @@
         notify_message: >-
           An application-consistent backup of {{ app_target_instance }} completed and was
           pushed to the lab's PBS datastore. Restore it with the Restore App job.
-      when: _actual_budget_backup_complete | default(false) | bool
+      when: _application_backup_complete | default(false) | bool
 
     - name: Fail if Docker backup degraded
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ app_target_instance }} backup"
-      when: _actual_budget_backup_complete | default(false) | bool
+      when: _application_backup_complete | default(false) | bool

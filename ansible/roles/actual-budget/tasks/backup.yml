@@ -104,7 +104,7 @@
 
     - name: Actual Budget backup | Mark the backup complete
       ansible.builtin.set_fact:
-        _actual_budget_backup_complete: true
+        _application_backup_complete: true
   always:
     # A failed PBS upload must not leave the application down. The backup task's failure
     # still propagates, while this service restart is limited to Actual Budget itself.

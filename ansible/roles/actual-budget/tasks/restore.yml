@@ -220,7 +220,7 @@
 
     - name: Actual Budget restore | Mark the recovery complete
       ansible.builtin.set_fact:
-        _actual_budget_restore_complete: true
+        _application_restore_complete: true
   rescue:
     - name: Actual Budget restore | State that the service remains stopped
       ansible.builtin.fail:
