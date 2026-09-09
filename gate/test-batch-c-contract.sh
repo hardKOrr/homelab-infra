@@ -6,7 +6,7 @@ repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 need() { grep -Fq -- "$2" "$1" || { echo "missing Batch C contract: $2 ($1)" >&2; exit 1; }; }
 absent() { grep -Fq -- "$2" "$1" && { echo "unwanted Batch C contract: $2 ($1)" >&2; exit 1; } || true; }
 
-for app in n8n plane forgejo forgejo-runner; do
+for app in n8n plane forgejo forgejo-runner karakeep; do
   need "$repo/ansible/vars/app-defaults/$app.yml" 'stack: services'
   need "$repo/ansible/playbooks/apps/$app.yml" 'stack/find-or-create-host.yml'
   need "$repo/ansible/playbooks/apps/$app.yml" "combine({'app':"
@@ -62,17 +62,36 @@ need "$repo/ansible/playbooks/apps/remove.yml" 'Deregister Forgejo Runner'
 need "$repo/ansible/playbooks/apps/remove.yml" 'Remove Forgejo Runner registration state'
 need "$repo/ansible/scripts/registry-forget.py" 'if key == "apps":'
 
+need "$repo/ansible/vars/app-defaults/karakeep.yml" 'stack: services'
+need "$repo/ansible/vars/app-defaults/karakeep.yml" 'data_path:'
+need "$repo/ansible/vars/app-defaults/karakeep.yml" 'db_wal_mode: true'
+need "$repo/ansible/roles/karakeep/tasks/main.yml" '_karakeep_nextauth_secret'
+need "$repo/ansible/roles/karakeep/tasks/main.yml" '_karakeep_meili_master_key'
+need "$repo/ansible/roles/karakeep/tasks/main.yml" 'vault_item_secret_fields: [nextauth_secret, meili_master_key]'
+need "$repo/ansible/roles/karakeep/templates/docker-compose.yml.j2" 'meilisearch:'
+need "$repo/ansible/roles/karakeep/templates/docker-compose.yml.j2" ':/meili_data'
+need "$repo/ansible/roles/karakeep/templates/docker-compose.yml.j2" 'BROWSER_WEB_URL: http://chrome:9222'
+need "$repo/ansible/roles/karakeep/templates/karakeep.env.j2" 'NEXTAUTH_SECRET='
+need "$repo/ansible/roles/karakeep/templates/karakeep.env.j2" 'MEILI_MASTER_KEY='
+need "$repo/ansible/roles/karakeep/templates/karakeep.env.j2" 'NEXTAUTH_URL=https://'
+need "$repo/ansible/roles/karakeep/tasks/main.yml" '/api/health'
+absent "$repo/ansible/vars/app-defaults/karakeep.yml" 'provider: postgresql'
+absent "$repo/ansible/vars/app-defaults/karakeep.yml" 'provider: mariadb'
+absent "$repo/ansible/playbooks/apps/karakeep.yml" 'tasks/database/provision.yml'
+
 # These are the three sensitive values that must never be authored in a tracked app
 # example. The comments may document their Vaultwarden field names, but no YAML key/value
 # enables them from config.example.
 absent "$repo/config.example/apps/n8n.example.yml" 'credentials:'
 absent "$repo/config.example/apps/plane.example.yml" 'object_storage:'
 absent "$repo/config.example/apps/forgejo-runner.example.yml" 'runner_token:'
+absent "$repo/config.example/apps/karakeep.example.yml" 'nextauth_secret:'
+absent "$repo/config.example/apps/karakeep.example.yml" 'meili_master_key:'
 
 python3 - "$repo" <<'PY'
 import pathlib, sys, yaml
 repo = pathlib.Path(sys.argv[1])
-for app in ('n8n', 'plane', 'forgejo', 'forgejo-runner'):
+for app in ('n8n', 'plane', 'forgejo', 'forgejo-runner', 'karakeep'):
     for path in (
         repo / 'ansible' / 'playbooks' / 'apps' / f'{app}.yml',
         repo / 'ansible' / 'vars' / 'app-defaults' / f'{app}.yml',
@@ -83,7 +102,7 @@ for app in ('n8n', 'plane', 'forgejo', 'forgejo-runner'):
 
 catalog = yaml.safe_load((repo / 'catalog' / 'applications.yml').read_text())
 apps = catalog['applications']
-for slug in ('n8n', 'plane', 'forgejo', 'forgejo-runner'):
+for slug in ('n8n', 'plane', 'forgejo', 'forgejo-runner', 'karakeep'):
     entry = apps[slug]
     assert entry['job'] == f'deploy-{slug}.yaml'
     assert entry['scope'] == 'estate'
@@ -94,7 +113,12 @@ compose = (repo / 'ansible' / 'roles' / 'forgejo' / 'templates' / 'docker-compos
 assert compose.count('ports:') == 1
 assert 'app_config.app.ssh_port }}:2222' in compose
 assert 'wiring_ssh' not in (repo / 'ansible' / 'playbooks' / 'apps' / 'forgejo.yml').read_text()
+defaults = yaml.safe_load((repo / 'ansible' / 'vars' / 'app-defaults' / 'karakeep.yml').read_text())['karakeep_defaults']
+assert 'database' not in defaults['app']
+assert 'redis' not in defaults['app']
+karakeep_playbook = (repo / 'ansible' / 'playbooks' / 'apps' / 'karakeep.yml').read_text()
+assert 'tasks/database/' not in karakeep_playbook
 print('Batch C app catalog, secret boundaries, dependencies, and Forgejo publication: OK')
 PY
 
-echo "PASS: Batch C n8n, Plane, Forgejo, and Forgejo Runner surface"
+echo "PASS: Batch C n8n, Plane, Forgejo, Forgejo Runner, and Karakeep surface"

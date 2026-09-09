@@ -1,0 +1,42 @@
+{{ ansible_managed | comment }}
+services:
+  web:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-karakeep"
+    restart: unless-stopped
+    env_file:
+      - "{{ karakeep_env_file }}"
+    environment:
+      MEILI_ADDR: http://meilisearch:7700
+      BROWSER_WEB_URL: http://chrome:9222
+      DATA_DIR: /data
+    ports:
+      - "{{ app_config.app.port }}:3000"
+    volumes:
+      - "{{ app_config.app.data_path }}:/data"
+    depends_on:
+      - chrome
+      - meilisearch
+
+  chrome:
+    image: {{ app_config.app.chrome_image }}
+    container_name: "{{ instance }}-karakeep-chrome"
+    restart: unless-stopped
+    init: true
+    command:
+      - --disable-gpu
+      - --disable-dev-shm-usage
+      - --hide-scrollbars
+      - --disable-blink-features=AutomationControlled
+      - --window-size=1440,900
+
+  meilisearch:
+    image: {{ app_config.app.meilisearch_image }}
+    container_name: "{{ instance }}-karakeep-meilisearch"
+    restart: unless-stopped
+    env_file:
+      - "{{ karakeep_env_file }}"
+    environment:
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - "{{ karakeep_meilisearch_data_path }}:/meili_data"

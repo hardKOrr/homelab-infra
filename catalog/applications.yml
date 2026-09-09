@@ -411,3 +411,14 @@ applications:
     # The runner has a Docker-in-Docker sidecar and registration state, so a generic
     # single-container image rollback would not be a safe recovery operation.
     exclude: [rollback]
+
+  karakeep:
+    name: Karakeep
+    job: deploy-karakeep.yaml
+    root: Applications
+    category: Search & Discovery
+    type: Bookmarks and Read Later
+    scope: estate
+    # Karakeep is a multi-container Compose recovery unit; the generic one-image
+    # rollback action cannot truthfully converge its web, Chrome, and Meilisearch images.
+    exclude: [rollback]

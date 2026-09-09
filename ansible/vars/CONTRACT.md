@@ -434,7 +434,7 @@ The canonical top-level items are:
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | application-owned credentials. Database provisioning writes `database_provider`, `database_host`, `database_port`, `database_name`, `database_user`, and hidden `database_password` here; the backend never places an application password in generated facts. |
-| `homelab-infra/apps/<instance>` (Batch C) | n8n encryption keys, Plane application/RabbitMQ/object-storage secrets, and Forgejo Runner registration tokens are hidden fields here. Forgejo Runner removal reads `admin_api_token` only from the named Forgejo item; no credential is placed in generated facts. |
+| `homelab-infra/apps/<instance>` (Batch C) | n8n encryption keys, Plane application/RabbitMQ/object-storage secrets, Karakeep NEXTAUTH_SECRET/Meilisearch master keys, and Forgejo Runner registration tokens are hidden fields here. Forgejo Runner removal reads `admin_api_token` only from the named Forgejo item; no credential is placed in generated facts. |
 | `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields — e.g. `.../sso` (`token`, `admin_password`, `postgres_password`, `secret_key`) and `.../dns` (`api_token`). A non-default estate must not write a top-level role item or read the default estate's credential |
 
 The following process variables are external control-plane inputs. Rundeck injects them

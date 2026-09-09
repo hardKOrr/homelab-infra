@@ -1,0 +1,36 @@
+---
+# Default configuration for Karakeep — the self-hosted bookmark and read-later
+# application on the services Docker stack. Karakeep owns its SQLite database and
+# Meilisearch index; it does not need a platform database backend.
+karakeep_defaults:
+  stack: services
+
+  app:
+    image: ghcr.io/karakeep-app/karakeep:0.33.2
+    chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
+    meilisearch_image: getmeili/meilisearch:v1.41.0
+    port: 3000
+    # SQLite database, uploaded assets and crawled archives. The role binds this path
+    # into the application container as /data.
+    data_path: "/opt/{{ instance }}/data"
+    # Allow the first operator to create the initial Karakeep account. Operators can
+    # disable further local signups after that account exists.
+    disable_signups: false
+    # The application uses SQLite. WAL mode is appropriate for the local filesystem on
+    # the Docker LXC and avoids readers blocking normal crawler writes.
+    db_wal_mode: true
+
+  routing:
+    subdomain: karakeep
+    proxy: internal
+    access: internal
+    # Karakeep owns its user accounts and password authentication. Authentik provides a
+    # catalog tile but does not become an authentication dependency for the app.
+    identity: catalog
+
+  # Docker applications are covered by the services stack host's PBS guest backup.
+  # The Compose project, Karakeep data path, and Meilisearch path below /opt/<instance>
+  # are one recovery unit; restore the stack guest before starting the project again.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
