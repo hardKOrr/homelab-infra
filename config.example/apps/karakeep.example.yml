@@ -1,0 +1,27 @@
+---
+# Karakeep bookmarks and read-later. It uses its own SQLite database, application
+# authentication, and Meilisearch index; deploy no PostgreSQL, MariaDB, or Redis backend.
+#
+# Karakeep's generated NEXTAUTH_SECRET and MEILI_MASTER_KEY are stored in Vaultwarden
+# under homelab-infra/apps/<instance>. Do not add either credential here.
+app:
+  # The default is the current pinned Karakeep release. Change image tags deliberately.
+  image: ghcr.io/karakeep-app/karakeep:0.33.2
+  chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
+  meilisearch_image: getmeili/meilisearch:v1.41.0
+  # Karakeep's SQLite database, assets, and archives are stored here and included in the
+  # services stack guest backup. Keep this on durable local storage.
+  data_path: "/opt/{{ instance }}/data"
+  # Leave signups enabled until the first account is created, then set true and redeploy.
+  disable_signups: false
+  db_wal_mode: true
+routing:
+  access: internal
+  identity: catalog
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+
+# Recovery boundary: the services stack guest backup includes the Compose project, this
+# data path, and /opt/<instance>/meilisearch. Restore all of them together before starting
+# Karakeep; the SQLite database and its Meilisearch index are one application recovery unit.

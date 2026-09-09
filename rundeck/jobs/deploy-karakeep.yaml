@@ -1,0 +1,42 @@
+---
+# Deploy Karakeep. Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs
+# job rather than a raw import: the renderer injects this job's Key Storage options and
+# validates its group.
+- id: 6f8d4f62-3c25-4f63-9e19-0b9fd65d6e1e
+  uuid: 6f8d4f62-3c25-4f63-9e19-0b9fd65d6e1e
+  name: Deploy Karakeep
+  group: Applications/Search & Discovery/Bookmarks and Read Later/Karakeep
+  description: |-
+    Deploy or converge an instanced **Karakeep** bookmark and read-later service.
+
+    - **Storage:** Karakeep owns its SQLite database and crawled assets under
+      /opt/<instance>/data; Meilisearch owns its persistent index under
+      /opt/<instance>/meilisearch. Chrome is disposable runtime support.
+    - **Authentication:** Karakeep's own local-user authentication is used. Authentik
+      provides a catalog tile only and is not a login dependency.
+    - **Secrets:** NEXTAUTH_SECRET and MEILI_MASTER_KEY are generated or reused in
+      Vaultwarden; they are never read from tracked configuration.
+    - **Recovery:** the services stack guest backup covers the Compose project, both
+      persistent paths, and the generated environment file. Restore them together as one
+      application recovery unit before starting Karakeep again.
+    - **Rerun:** the same credentials and durable paths are reused on every converge.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Karakeep instance. Enter another name for a second deployment.'
+    required: true
+    value: karakeep
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/karakeep.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "\${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/karakeep.yml -e "instance=\$RD_OPTION_INSTANCE"

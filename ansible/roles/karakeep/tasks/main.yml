@@ -1,0 +1,88 @@
+---
+# Karakeep is a three-container application-native recovery unit. The web container
+# owns the SQLite database and assets under /data; Meilisearch owns its index under
+# /meili_data; Chrome is disposable runtime support and has no persistent state.
+
+- name: Karakeep | Create project directory
+  ansible.builtin.file:
+    path: "{{ karakeep_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Karakeep | Create persistent application directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0750"
+  loop:
+    - "{{ app_config.app.data_path }}"
+    - "{{ karakeep_meilisearch_data_path }}"
+
+- name: Karakeep | Generate or reuse application credentials
+  ansible.builtin.set_fact:
+    _karakeep_nextauth_secret: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).nextauth_secret
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _karakeep_meili_master_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).meili_master_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: Karakeep | Store application credentials in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: karakeep
+      instance: "{{ instance }}"
+      nextauth_secret: "{{ _karakeep_nextauth_secret }}"
+      meili_master_key: "{{ _karakeep_meili_master_key }}"
+    vault_item_secret_fields: [nextauth_secret, meili_master_key]
+  no_log: true
+
+- name: Karakeep | Render environment file
+  ansible.builtin.template:
+    src: karakeep.env.j2
+    dest: "{{ karakeep_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Karakeep
+
+- name: Karakeep | Render Compose recovery unit
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ karakeep_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart Karakeep
+
+- name: Karakeep | Pull images
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ karakeep_project_dir }}"
+
+- name: Karakeep | Start recovery unit
+  community.docker.docker_compose_v2:
+    project_src: "{{ karakeep_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Karakeep | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Karakeep | Wait for health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/health"
+    status_code: 200
+  register: _karakeep_health
+  until: _karakeep_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
