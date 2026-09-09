@@ -38,6 +38,7 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         resolve_stack_deploy_group: "bookstack_recovery_{{ instance }}"
+        resolve_stack_app_instance: "{{ instance }}"
 
 - name: "BookStack Restore | Run"
   hosts: "bookstack_recovery_{{ instance | default('_instance_unset') }}"

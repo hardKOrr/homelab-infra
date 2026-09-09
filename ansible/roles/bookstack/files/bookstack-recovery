@@ -47,7 +47,7 @@ trap finish EXIT
 mysql_client() {
   local command=$1
   shift
-  docker run --rm --network host \
+  docker run --rm --network host -i \
     -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
     --entrypoint "$command" "$BOOKSTACK_DB_CLIENT_IMAGE" "$@"
 }
