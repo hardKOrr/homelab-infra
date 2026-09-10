@@ -247,5 +247,9 @@ grep -Fq 'chown -R rundeck:rundeck /var/lib/rundeck/app-instances' "$bootstrap" 
     echo "ERROR: bootstrap does not adopt existing instance option files" >&2
     exit 1
 }
+grep -Fq 'sudo -u rundeck HOME=/var/lib/rundeck "$VENV_DIR/bin/python3"' "$bootstrap" || {
+    echo "ERROR: bootstrap publishes instance option files as the wrong user" >&2
+    exit 1
+}
 
 echo "Rundeck render: all jobs ok"
