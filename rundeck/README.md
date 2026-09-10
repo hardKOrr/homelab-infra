@@ -171,7 +171,8 @@ of that application from
 `/var/lib/rundeck/app-instances/<app>.json`. `../ansible/scripts/app-instances.py` rewrites
 those files before and after every job from the `config/apps/*.yml` that exist right then,
 so a second instance created by Configure is offered when the operator opens the next job
-without a reimport.
+without a reimport. Bootstrap creates the directory and its files owned by `rundeck`, the
+account that runs job steps, so later list changes remain writable.
 
 In a single-estate lab, the instance form is `<app>[-<variant>]` (`radarr`, `radarr-4k`).
 When `domains:` declares two or more estates, exactly one estate must be the explicit

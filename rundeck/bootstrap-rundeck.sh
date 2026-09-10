@@ -1664,7 +1664,12 @@ n=0; f=0
 # The generated per-application jobs offer their instances as a dropdown read from these
 # files. Write them before the import so the option provider resolves on the first visit;
 # lab-run.sh rewrites them before and after every job afterwards.
-"$VENV_DIR/bin/python3" "$REPO_DIR/ansible/scripts/app-instances.py" \
+# Job steps run as rundeck, not root. Adopt the directory and any files left by an older
+# bootstrap before publishing so a changed instance list remains writable on every run.
+install -d -m 0755 -o rundeck -g rundeck /var/lib/rundeck/app-instances
+chown -R rundeck:rundeck /var/lib/rundeck/app-instances
+sudo -u rundeck HOME=/var/lib/rundeck "$VENV_DIR/bin/python3" \
+  "$REPO_DIR/ansible/scripts/app-instances.py" \
   --repo "$REPO_DIR" --out /var/lib/rundeck/app-instances
 "$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/render-job.py" --check "$REPO_DIR/rundeck/jobs"
 for job in "$REPO_DIR"/rundeck/jobs/*.yaml; do
