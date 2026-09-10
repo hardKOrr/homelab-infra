@@ -197,11 +197,11 @@ three_node_errors = device_mode_errors({
     },
 })
 check(
-    "the declaration differing from the three-node majority is reported once",
+    "the cross-node dedicated declaration is reported once",
     [key for key, _ in three_node_errors],
     ["proxmox.devices.igpu-b.mode"],
 )
-four_node_errors = device_mode_errors({
+four_node_config = {
     "node": "pve-a",
     "nodes": {
         "pve-a": "198.51.100.10",
@@ -235,11 +235,32 @@ four_node_errors = device_mode_errors({
             "identifiers": ["/dev/dri/renderD128", "0000:03:00.0"],
         },
     },
-})
+}
+four_node_errors = device_mode_errors(four_node_config)
 check(
     "each declaration disagreeing with the reference iGPU mode is reported once",
-    [key for key, _ in four_node_errors],
+    sorted(key for key, _ in four_node_errors),
     ["proxmox.devices.igpu-b.mode", "proxmox.devices.igpu-c.mode"],
+)
+reverse_four_node_errors = device_mode_errors({
+    **four_node_config,
+    "devices": dict(reversed(list(four_node_config["devices"].items()))),
+})
+check(
+    "reverse declaration order reports the same dedicated iGPU declarations once",
+    sorted(key for key, _ in reverse_four_node_errors),
+    ["proxmox.devices.igpu-b.mode", "proxmox.devices.igpu-c.mode"],
+)
+check(
+    "uniformly dedicated iGPU declarations do not self-conflict",
+    bool(device_mode_errors({
+        **four_node_config,
+        "devices": {
+            name: {**device, "mode": "dedicated"}
+            for name, device in four_node_config["devices"].items()
+        },
+    })),
+    False,
 )
 check(
     "uniform shared iGPU modes across nodes pass",

@@ -67,19 +67,12 @@ def validate_device_modes(proxmox, report):
 
     # This intentionally compares only declarations on DIFFERENT nodes. The existing #130
     # per-device mutual-exclusivity check remains responsible for one node; this guard adds
-    # only the cross-node failover invariant requested by #157. Use one stable reference mode
-    # so each declaration that disagrees with it is reported once, rather than once per
-    # conflicting pair.
-    mode_counts = {}
-    for _, _, mode in igpu_declarations:
-        mode_counts[mode] = mode_counts.get(mode, 0) + 1
-    reference_mode = igpu_declarations[0][2] if igpu_declarations else None
-    for mode in mode_counts:
-        if mode_counts[mode] > mode_counts[reference_mode]:
-            reference_mode = mode
-
+    # only the cross-node failover invariant requested by #157. Shared is the reference mode
+    # named by the contract, so each dedicated declaration that conflicts with it is reported
+    # once rather than once per conflicting pair.
+    reference_mode = "shared"
     for name, node, mode in igpu_declarations:
-        if mode == reference_mode:
+        if mode != "dedicated":
             continue
         reference = next(
             (
