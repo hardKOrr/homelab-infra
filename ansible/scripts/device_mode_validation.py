@@ -10,9 +10,10 @@ DEVICE_MODES = {"shared", "dedicated"}
 def validate_device_modes(proxmox, report):
     """Report malformed device declarations and mixed iGPU modes across nodes.
 
-    ``report`` accepts ``(key, message)``.  A declaration without ``kind`` deliberately
-    defaults to ``igpu``: the #130 shape remains covered by this cross-node guard instead of
-    silently opting out.  Dedicated-only GPU and USB declarations can opt out explicitly.
+    ``report`` accepts ``(key, message)``.  A declaration without ``kind`` defaults to
+    ``igpu`` only for ``mode: shared``; a bare ``mode: dedicated`` declaration is the
+    pre-existing dedicated-only GPU shape from #130 and does not opt into this iGPU rule.
+    A dedicated declaration for an iGPU must say ``kind: igpu`` explicitly.
     """
     if not isinstance(proxmox, dict):
         return
@@ -45,7 +46,12 @@ def validate_device_modes(proxmox, report):
                  for identifier in identifiers):
             report("%s.identifiers" % key, "every identifier must be a non-empty string")
 
-        kind = declaration.get("kind", "igpu")
+        kind = declaration.get("kind")
+        if kind is None:
+            # Shared declarations are iGPU-mode declarations by default. A bare dedicated
+            # declaration remains the #130 dedicated-only GPU shape so this rule does not
+            # reject Ollama/ComfyUI merely because they share a cluster with an iGPU.
+            kind = "igpu" if mode == "shared" else "gpu"
         if kind not in DEVICE_KINDS:
             report("%s.kind" % key,
                    "%r is not recognised -- one of igpu | gpu | usb | other" % kind)

@@ -58,9 +58,10 @@ must agree with the seam. A declaration's optional `node` statically scopes it t
 `proxmox.nodes` entry and falls back to `proxmox.node`; it never selects a node
 automatically. Put every identifier for one physical device (such as an iGPU's render node
 and PCI address) in that entry; the declaration, not current bindings, is what keeps shared
-and dedicated mutually exclusive. `kind` defaults to `igpu` so existing #130 declarations
-participate in the cross-node uniform-mode check; mark dedicated-only GPU or USB entries
-explicitly as `gpu`, `usb`, or `other`.
+and dedicated mutually exclusive. `kind` defaults to `igpu` for shared declarations
+and to `gpu` for a bare dedicated declaration, preserving #130's dedicated-only GPU shape;
+a dedicated iGPU must opt in with `kind: igpu`, while dedicated USB or other entries use
+`kind: usb` or `kind: other`.
 
 Each attach seam has a matching detach seam — `detach-shared-device.yml`,
 `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that also asserts `_+lab`

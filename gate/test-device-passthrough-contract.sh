@@ -150,14 +150,14 @@ for path, task_name, tags_var in (
 
 # -- Cross-node iGPU mode validation ---------------------------------------------------
 # This fixture exercises the real config-validation helper, not a copy of its comparison.
-# Both declarations are intentionally unmarked: the default kind is deliberately `igpu`,
-# so an old #130-shaped declaration cannot silently escape the cross-node rule.
+# A shared declaration without `kind` defaults to `igpu`; a dedicated declaration must opt
+# in explicitly when it is the dedicated identity of that same iGPU.
 def device_mode_errors(proxmox):
     errors = []
     validate_device_modes(proxmox, lambda key, message: errors.append((key, message)))
     return errors
 
-mixed_unmarked = {
+mixed_shared_and_igpu = {
     "node": "pve-a",
     "nodes": {"pve-a": "198.51.100.10", "pve-b": "198.51.100.11"},
     "devices": {
@@ -168,41 +168,43 @@ mixed_unmarked = {
         },
         "igpu-b": {
             "node": "pve-b",
+            "kind": "igpu",
             "mode": "dedicated",
             "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
         },
     },
 }
 check(
-    "cross-node mixed modes are rejected",
-    bool(device_mode_errors(mixed_unmarked)),
+    "cross-node shared/dedicated iGPU modes are rejected",
+    bool(device_mode_errors(mixed_shared_and_igpu)),
     True,
 )
 check(
-    "unmarked declarations default to iGPU for cross-node validation",
-    any("igpu-b" in key for key, _ in device_mode_errors(mixed_unmarked)),
+    "an unmarked shared declaration defaults to iGPU",
+    any("igpu-b" in key for key, _ in device_mode_errors(mixed_shared_and_igpu)),
     True,
 )
 check(
     "uniform shared iGPU modes across nodes pass",
     bool(device_mode_errors({
-        **mixed_unmarked,
+        **mixed_shared_and_igpu,
         "devices": {
-            name: {**device, "mode": "shared"}
-            for name, device in mixed_unmarked["devices"].items()
+            name: {**device, "kind": "igpu", "mode": "shared"}
+            for name, device in mixed_shared_and_igpu["devices"].items()
         },
     })),
     False,
 )
+# Regression for #146/#147: a pre-existing bare dedicated declaration is a dedicated-only
+# GPU, not an iGPU declaration, and must remain accepted beside a shared iGPU on another node.
 check(
-    "dedicated-only GPU declarations opt out explicitly",
+    "bare dedicated GPU on a second node is accepted",
     bool(device_mode_errors({
-        **mixed_unmarked,
+        **mixed_shared_and_igpu,
         "devices": {
-            "igpu-a": {**mixed_unmarked["devices"]["igpu-a"]},
-            "gpu-b": {
+            "igpu-a": {**mixed_shared_and_igpu["devices"]["igpu-a"]},
+            "ollama-gpu": {
                 "node": "pve-b",
-                "kind": "gpu",
                 "mode": "dedicated",
                 "identifiers": ["0000:01:00.0"],
             },

@@ -30,15 +30,17 @@ which remains authoritative for guest ownership and creation.
   mode or target node disagrees; a missing or ambiguous declaration is refused too. Current
   bindings never establish or change the mode.
 - **Every iGPU-mode node in a cluster uses one mode.** A device declaration's optional
-  `kind` defaults deliberately to `igpu`, so an unmarked #130 declaration cannot silently
-  escape this check. Mark dedicated-only GPU or USB declarations `kind: gpu`, `kind: usb`,
-  or `kind: other` to exclude them. When two or more distinct nodes carry `kind: igpu`
-  declarations, their modes MUST be uniform: the cluster may not mix `shared` and
-  `dedicated` iGPU-mode nodes. This keeps a shared-iGPU consumer from failing over to a
+  `kind` defaults deliberately to `igpu` when `mode: shared`, so an unmarked shared #130
+  declaration cannot silently escape this check. A bare `mode: dedicated` declaration keeps
+  #130's dedicated-only GPU convention and defaults to `kind: gpu`; a dedicated declaration
+  for an iGPU must opt in explicitly with `kind: igpu`. Mark other dedicated-only devices
+  `kind: usb` or `kind: other` as applicable. When two or more distinct nodes carry
+  `kind: igpu` declarations, their modes MUST be uniform: the cluster may not mix `shared`
+  and `dedicated` iGPU-mode nodes. This keeps a shared-iGPU consumer from failing over to a
   dedicated-mode node and contending with its existing VM, and keeps the reverse transition
-  from creating the same conflict. The config preflight rejects a mixed declaration before
-  any device mutation. Placement remains static and operator-named; this rule adds no load
-  balancing or automatic device selection.
+  from creating the same conflict, without classifying a dedicated-only GPU as an iGPU. The
+  config preflight rejects a mixed declaration before any device mutation. Placement remains
+  static and operator-named; this rule adds no load balancing or automatic device selection.
 - **Modes are mutually exclusive per physical device on the node.** A device declared
   `shared` may be bound into multiple LXC guests, but its dedicated PCI/USB identity cannot
   be assigned to a VM. A device declared `dedicated` may be assigned to one VM, but its

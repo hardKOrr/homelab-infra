@@ -28,8 +28,9 @@ proxmox:
   # removes the device from the host for one VM. Listing both identifiers below matters for
   # an iGPU: its shared render node and its dedicated PCI address identify the same hardware.
   # `node` is optional and falls back to this file's proxmox.node. `kind` defaults to `igpu`
-  # so an unmarked #130 declaration participates in the cross-node uniform-mode check; mark
-  # a dedicated-only GPU or USB device as `gpu` or `usb` instead.
+  # for mode: shared, but to `gpu` for a bare mode: dedicated so #130's dedicated-only GPU
+  # convention remains valid. A dedicated iGPU must opt in with kind: igpu; mark a dedicated
+  # USB device as kind: usb instead.
   # The attachment tasks refuse a request whose mode or node disagrees with this declaration
   # before inspecting any guest state.
   # devices:
