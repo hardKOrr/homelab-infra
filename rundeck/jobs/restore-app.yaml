@@ -49,11 +49,11 @@
     values: [pbs_guest, native, project_managed]
     enforced: false
   - name: destination
-    description: 'Restore destination: `existing` replaces the selected target; `new` is
-      the isolated destination contract.'
+    description: 'This native restore entry point supports `existing` only and replaces
+      the selected target. Isolated `new` restores are owned by the #78 orchestration path.'
     required: true
     value: existing
-    values: [new, existing]
+    values: [existing]
     enforced: true
   - name: target
     description: 'Instance whose application-owned state receives the data. **Blank:**

@@ -11,7 +11,7 @@
 #   app        — only when the instance was deployed under a different name from the app
 #                (instance mixpost-restore of app mixpost). Defaults to `instance`.
 #   method     — pbs_guest, native, or project_managed; defaults when only one is declared.
-#   destination — new or existing; defaults to existing.
+#   destination — existing for this playbook; the shared contract reserves `new` for #78.
 #   target     — the instance whose namespace receives the data. Defaults to `instance`,
 #                which means restoring the application over itself.
 #   recovery_point — artifact identifier; blank lists what PBS holds and changes nothing.
@@ -203,6 +203,17 @@
           destination={{ recovery_destination_resolved }}. Use the method-specific recovery
           job declared by that method; this playbook dispatches native and project-managed
           role tasks only.
+
+    # Destination=new is a shared contract value, but this legacy native entry point does
+    # not provision or isolate a destination. Refusing it here is safer than passing a
+    # dead flag to a role that would replace the selected target in place; #78 owns the
+    # new-instance orchestration.
+    - name: Require an existing destination for this restore entry point
+      ansible.builtin.assert:
+        that: recovery_destination_resolved == 'existing'
+        fail_msg: >-
+          Restore App supports destination=existing only. destination=new requires the
+          isolated-target orchestration from #78 and is not executed by this playbook.
 
     - name: Assert this app has a restore path
       ansible.builtin.assert:
