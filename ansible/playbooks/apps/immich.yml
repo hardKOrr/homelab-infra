@@ -182,6 +182,12 @@
     wiring_access: "{{ _immich_deploy_host.app_config.routing.access | default('internal') }}"
 
   tasks:
+    # New-instance recovery provisions the workload without allowing it to publish
+    # the target route or contact production peers before its selected artifact verifies.
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:

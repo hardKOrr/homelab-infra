@@ -9,6 +9,7 @@ recovery_parameter_contract:
   destination: new|existing
   target: defaults to instance
   recovery_point: blank lists available points and changes nothing
+  pre_restore_point: independent target point required before existing replacement
   overwrite: false (plan-only, default)|true (execute)
 legacy_recovery_aliases:
   snapshot: recovery_point
@@ -75,11 +76,12 @@ actions:
   restore:
     template: restore-app.yaml
     hosting: [kubernetes]
-    recovery_parameters: [instance, method, destination, target, recovery_point, overwrite]
+    recovery_parameters: [instance, method, destination, target, recovery_point, pre_restore_point, overwrite]
 
   pdm_restore:
     template: restore-pdm.yaml
     hosting: [appliance]
+    recovery_parameters: [instance, destination, target, recovery_point, pre_restore_point, overwrite]
     opt_in: true
 
   pdm_remove:

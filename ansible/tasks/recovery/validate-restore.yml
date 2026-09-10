@@ -1,0 +1,168 @@
+---
+# Validate the destination side of a restore before a provider is allowed to mutate.
+#
+# This task owns the method-independent part of the recovery state machine. Provider
+# adapters still verify their artifact and know how to quiesce/replace application state,
+# but they receive a plan whose source, target, isolation and replacement effects have
+# already been checked. The task deliberately has no Proxmox, Kubernetes or application
+# calls, which makes it safe to exercise with a local fixture.
+#
+# Required inputs:
+#   recovery_source_instance, recovery_target_instance
+#   recovery_destination                  new | existing
+#   recovery_overwrite                     false (plan) | true (replace)
+#   recovery_point                        selected artifact, may be blank in plan mode
+#   recovery_pre_restore_point            independent target recovery point for replace
+#   recovery_target_config_present        required for a new destination
+#
+# Optional provider evidence inputs:
+#   recovery_artifact_available           false fails before mutation; undefined lets the
+#                                         method-specific adapter perform its own check
+#   recovery_pre_restore_available        same for the independent pre-restore point
+#   recovery_target_name_collision,
+#   recovery_target_vmid_collision,
+#   recovery_target_address_collision,
+#   recovery_target_resource_collision,
+#   recovery_target_storage_collision    target storage maps to a source-owned path
+#                                        instead of a target-owned path
+#   recovery_source_route_key,
+#   recovery_target_route_key             same identity means a new target would take over
+#                                         the source route; an empty target key is isolated
+#   recovery_source_storage_key,
+#   recovery_target_storage_key          explicit storage ownership keys
+#   recovery_affected_scope               complete shared-guest/application scope
+
+- name: Recovery | Assert restore inputs are present
+  ansible.builtin.assert:
+    that:
+      - recovery_source_instance is defined
+      - recovery_source_instance | string | length > 0
+      - recovery_target_instance is defined
+      - recovery_target_instance | string | length > 0
+      - (recovery_destination | default('')) in ['new', 'existing']
+      - recovery_overwrite is defined
+    fail_msg: >-
+      Restore validation needs a source, an exact target, destination=new|existing, and
+      overwrite=false|true before any provider task can run.
+
+- name: Recovery | Assert instance names are safe and exact
+  ansible.builtin.assert:
+    that:
+      - recovery_source_instance | string is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - recovery_target_instance | string is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+    fail_msg: >-
+      Restore source and target names must use letters, digits, '.', '_' or '-' and must
+      start with a letter or digit; no derived or partial target is accepted.
+
+- name: Recovery | Require a different target for a new destination
+  ansible.builtin.assert:
+    that: recovery_target_instance != recovery_source_instance
+    fail_msg: >-
+      destination=new requires a distinct target instance. Use destination=existing to
+      replace {{ recovery_source_instance }}; a new route never aliases the source.
+  when: recovery_destination == 'new'
+
+- name: Recovery | Require the new target's authored configuration
+  ansible.builtin.assert:
+    that: recovery_target_config_present | default(false) | bool
+    fail_msg: >-
+      The new restore target {{ recovery_target_instance }} has no authored instance
+      configuration. Create config/apps/{{ recovery_target_instance }}.yml with its
+      storage, identity, network and intended service settings before provisioning it.
+  when: recovery_destination == 'new'
+
+- name: Recovery | Refuse a new target collision before creation
+  ansible.builtin.assert:
+    that:
+      - not (recovery_target_name_collision | default(false) | bool)
+      - not (recovery_target_vmid_collision | default(false) | bool)
+      - not (recovery_target_address_collision | default(false) | bool)
+      - not (recovery_target_resource_collision | default(false) | bool)
+      - not (recovery_target_storage_collision | default(false) | bool)
+      - recovery_target_storage_key | default('') | string | length > 0
+    fail_msg: >-
+      Cannot create restore target {{ recovery_target_instance }}: its name, VMID, address,
+      storage mapping, or owned resource collides with an existing target. No destination
+      mutation was run;
+      choose an unused identity and retry.
+  when: recovery_destination == 'new'
+
+- name: Recovery | Refuse a new target that would take the source route
+  ansible.builtin.assert:
+    that:
+      - >-
+        (recovery_target_route_key | default('') | length == 0)
+        or recovery_target_route_key != (recovery_source_route_key | default(''))
+    fail_msg: >-
+      Restore target {{ recovery_target_instance }} resolves to the source's production
+      route. Give the isolated target a distinct DNS/proxy/SSO identity, or disable its
+      route explicitly; production cutover is a separate operation and is never implicit.
+  when: recovery_destination == 'new'
+
+- name: Recovery | Require the selected artifact before replacement
+  ansible.builtin.assert:
+    that:
+      - recovery_point | default('') | string | length > 0
+      - recovery_artifact_available | default(true) | bool
+    fail_msg: >-
+      The selected recovery artifact is missing or unavailable. Plan/list the method's
+      recovery points and retry without stopping or replacing the target.
+  when: recovery_overwrite | bool
+
+- name: Recovery | Require an independent pre-restore recovery point
+  ansible.builtin.assert:
+    that:
+      - recovery_pre_restore_point | default('') | string | length > 0
+      - recovery_pre_restore_point != recovery_point
+      - recovery_pre_restore_available | default(true) | bool
+    fail_msg: >-
+      Existing-target replacement needs an independent, usable pre-restore recovery point
+      for {{ recovery_target_instance }}. Capture or verify it before retrying; the selected
+      source artifact cannot also be the target's recovery point.
+  when:
+    - recovery_destination == 'existing'
+    - recovery_overwrite | bool
+
+- name: Recovery | Require an explicit affected scope
+  ansible.builtin.assert:
+    that:
+      - recovery_affected_scope | default([recovery_source_instance]) is sequence
+      - recovery_affected_scope | default([recovery_source_instance]) is not string
+      - recovery_affected_scope | default([recovery_source_instance]) | length > 0
+    fail_msg: >-
+      Restore dispatch must name every affected application/guest in the recovery scope;
+      a shared guest cannot be presented as an application-only replacement.
+
+- name: Recovery | Publish the immutable restore plan
+  ansible.builtin.set_fact:
+    recovery_plan: >-
+      {{ recovery_plan | default({}) | combine({
+        'source': recovery_source_instance,
+        'target': recovery_target_instance,
+        'destination': recovery_destination,
+        'overwrite': recovery_overwrite | bool,
+        'recovery_point': recovery_point | default(''),
+        'pre_restore_point': recovery_pre_restore_point | default(''),
+        'source_storage': recovery_source_storage_key | default(''),
+        'target_storage': recovery_target_storage_key | default(''),
+        'affected_scope': recovery_affected_scope | default([recovery_source_instance]),
+        'target_isolated': recovery_destination == 'new',
+        'production_cutover': false
+      }, recursive=True) }}
+
+- name: Recovery | State the destination and replacement effects
+  ansible.builtin.debug:
+    msg:
+      - >-
+        RESTORE PLAN: {{ recovery_destination }} destination {{ recovery_target_instance }}
+        from source {{ recovery_source_instance }}.
+      - >-
+        EFFECT: {{ 'replace the exact existing target after quiesce and pre-restore proof'
+        if recovery_destination == 'existing' else 'create an isolated target, restore into
+        its target-specific storage, then establish its intended connections' }}.
+      - >-
+        STORAGE: {{ recovery_source_storage_key | default('source-owned') }} ->
+        {{ recovery_target_storage_key | default('target-owned') }}.
+      - >-
+        SCOPE: {{ recovery_affected_scope | default([recovery_source_instance]) | join(', ') }}.
+      - 'PRODUCTION CUTOVER: separate operation; not part of this restore.'

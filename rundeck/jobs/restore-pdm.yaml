@@ -2,7 +2,7 @@
   uuid: '%UUID%'
   name: Restore %NAME%
   group: '%GROUP%'
-  description: Restore only this managed PDM VM from a PBS backup. Requires an exact backup volume and confirmation.
+  description: Restore a managed PDM VM to an isolated new target or replace an exact existing target after independent pre-restore proof.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -10,8 +10,34 @@
   multipleExecutions: false
   options:
   - {name: instance, required: true, value: '%SLUG%', valuesUrl: 'file:/var/lib/rundeck/app-instances/%SLUG%.json', enforced: false}
-  - {name: backup_volume, required: true, description: 'PBS volume, e.g. backup/vm/420/vzdump-qemu-420-...'}
-  - {name: confirm, required: true, value: '', description: 'Type RESTORE-PDM.'}
+  - name: destination
+    required: true
+    value: existing
+    values: [new, existing]
+    enforced: true
+    description: new restores to a stopped isolated VM; existing replaces the exact target VM.
+  - name: target
+    required: false
+    description: Exact destination instance. Blank defaults to instance; new requires a distinct authored config.
+  - name: recovery_point
+    required: false
+    description: PBS backup volume, for example backup/vm/420/vzdump-qemu-420-...
+  - name: backup_volume
+    required: false
+    description: Compatibility alias for recovery_point.
+  - name: pre_restore_point
+    required: false
+    description: Independent existing-target PBS volume. It is checked before replacement and retained for retry.
+  - name: pre_restore_volume
+    required: false
+    description: Compatibility alias for pre_restore_point.
+  - name: overwrite
+    required: true
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+    description: false plans only; true performs the verified restore.
+  - {name: confirm, required: false, value: '', description: Compatibility confirmation. RESTORE-PDM also enables execution.}
   sequence:
     keepgoing: false
     strategy: node-first
@@ -19,4 +45,27 @@
     - script: |-
         #!/bin/bash
         set -euo pipefail
-        exec lab-run playbooks/maintenance/restore-pdm.yml -e "instance=${RD_OPTION_INSTANCE:?instance is required}" -e "backup_volume=${RD_OPTION_BACKUP_VOLUME:?backup_volume is required}" -e "confirm=${RD_OPTION_CONFIRM:?confirm is required}"
+        ARGS=(
+          -e "instance=${RD_OPTION_INSTANCE:?instance is required}"
+          -e "destination=${RD_OPTION_DESTINATION:?destination is required}"
+          -e "overwrite=${RD_OPTION_OVERWRITE:-false}"
+        )
+        if [ -n "${RD_OPTION_TARGET:-}" ]; then
+          ARGS+=(-e "target=$RD_OPTION_TARGET")
+        fi
+        if [ -n "${RD_OPTION_RECOVERY_POINT:-}" ]; then
+          ARGS+=(-e "recovery_point=$RD_OPTION_RECOVERY_POINT")
+        fi
+        if [ -n "${RD_OPTION_BACKUP_VOLUME:-}" ]; then
+          ARGS+=(-e "backup_volume=$RD_OPTION_BACKUP_VOLUME")
+        fi
+        if [ -n "${RD_OPTION_PRE_RESTORE_POINT:-}" ]; then
+          ARGS+=(-e "pre_restore_point=$RD_OPTION_PRE_RESTORE_POINT")
+        fi
+        if [ -n "${RD_OPTION_PRE_RESTORE_VOLUME:-}" ]; then
+          ARGS+=(-e "pre_restore_volume=$RD_OPTION_PRE_RESTORE_VOLUME")
+        fi
+        if [ -n "${RD_OPTION_CONFIRM:-}" ]; then
+          ARGS+=(-e "confirm=$RD_OPTION_CONFIRM")
+        fi
+        exec lab-run playbooks/maintenance/restore-pdm.yml "${ARGS[@]}"
