@@ -85,6 +85,7 @@ class GuestRecoveryContractTests(unittest.TestCase):
         self.assertLess(capture, stop)
         self.assertLess(stop, restore)
         self.assertIn("_rg_pre_restore_point != _rg_artifact", self.restore)
+        self.assertIn("not ((_rg_targets | first).template | default(0) | bool)", self.restore)
         self.assertIn("Require the independent pre-restore point to remain available", self.restore)
         self.assertIn("Require independent pre-restore credentials and decryption material", self.restore)
         self.assertIn("failed or timed out", self.restore)

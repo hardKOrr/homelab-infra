@@ -90,7 +90,8 @@
             (_rg_destination == 'new' and _rg_targets | length == 0)
             or
             (_rg_destination == 'existing' and _rg_targets | length == 1
-             and "'_+lab' in ((_rg_targets | first).tags | default('')).split(';')")
+             and "'_+lab' in ((_rg_targets | first).tags | default('')).split(';')"
+             and not ((_rg_targets | first).template | default(0) | bool))
         fail_msg: >-
           New restore VMID {{ _rg_target_vmid }} must be unused; an existing restore must
           name exactly one _+lab-owned VM/LXC. Unmanaged or ambiguous targets are never
