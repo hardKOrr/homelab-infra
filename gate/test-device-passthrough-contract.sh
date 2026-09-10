@@ -51,6 +51,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(sys.argv[1]) / "ansible/scripts"))
+from device_mode_validation import validate_device_modes
+
 try:
     from jinja2.nativetypes import NativeEnvironment
 except ImportError:  # pragma: no cover - the gate's own dependency
@@ -145,6 +148,149 @@ for path, task_name, tags_var in (
         False,
     )
 
+# -- Cross-node iGPU mode validation ---------------------------------------------------
+# This fixture exercises the real config-validation helper, not a copy of its comparison.
+# A shared declaration without `kind` defaults to `igpu`; a dedicated declaration must opt
+# in explicitly when it is the dedicated identity of that same iGPU.
+def device_mode_errors(proxmox):
+    errors = []
+    validate_device_modes(proxmox, lambda key, message: errors.append((key, message)))
+    return errors
+
+mixed_shared_and_igpu = {
+    "node": "pve-a",
+    "nodes": {"pve-a": "198.51.100.10", "pve-b": "198.51.100.11"},
+    "devices": {
+        "igpu-a": {
+            "node": "pve-a",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+        },
+        "igpu-b": {
+            "node": "pve-b",
+            "kind": "igpu",
+            "mode": "dedicated",
+            "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+        },
+    },
+}
+check(
+    "cross-node shared/dedicated iGPU modes are rejected",
+    bool(device_mode_errors(mixed_shared_and_igpu)),
+    True,
+)
+check(
+    "an unmarked shared declaration defaults to iGPU",
+    any("igpu-b" in key for key, _ in device_mode_errors(mixed_shared_and_igpu)),
+    True,
+)
+three_node_errors = device_mode_errors({
+    **mixed_shared_and_igpu,
+    "devices": {
+        **mixed_shared_and_igpu["devices"],
+        "igpu-c": {
+            "node": "pve-c",
+            "kind": "igpu",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:02:00.0"],
+        },
+    },
+})
+check(
+    "the cross-node dedicated declaration is reported once",
+    [key for key, _ in three_node_errors],
+    ["proxmox.devices.igpu-b.mode"],
+)
+four_node_config = {
+    "node": "pve-a",
+    "nodes": {
+        "pve-a": "198.51.100.10",
+        "pve-b": "198.51.100.11",
+        "pve-c": "198.51.100.12",
+        "pve-d": "198.51.100.13",
+    },
+    "devices": {
+        "igpu-a": {
+            "node": "pve-a",
+            "kind": "igpu",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+        },
+        "igpu-b": {
+            "node": "pve-b",
+            "kind": "igpu",
+            "mode": "dedicated",
+            "identifiers": ["/dev/dri/renderD128", "0000:01:00.0"],
+        },
+        "igpu-c": {
+            "node": "pve-c",
+            "kind": "igpu",
+            "mode": "dedicated",
+            "identifiers": ["/dev/dri/renderD128", "0000:02:00.0"],
+        },
+        "igpu-d": {
+            "node": "pve-d",
+            "kind": "igpu",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:03:00.0"],
+        },
+    },
+}
+four_node_errors = device_mode_errors(four_node_config)
+check(
+    "each declaration disagreeing with the reference iGPU mode is reported once",
+    sorted(key for key, _ in four_node_errors),
+    ["proxmox.devices.igpu-b.mode", "proxmox.devices.igpu-c.mode"],
+)
+reverse_four_node_errors = device_mode_errors({
+    **four_node_config,
+    "devices": dict(reversed(list(four_node_config["devices"].items()))),
+})
+check(
+    "reverse declaration order reports the same dedicated iGPU declarations once",
+    sorted(key for key, _ in reverse_four_node_errors),
+    ["proxmox.devices.igpu-b.mode", "proxmox.devices.igpu-c.mode"],
+)
+check(
+    "uniformly dedicated iGPU declarations do not self-conflict",
+    bool(device_mode_errors({
+        **four_node_config,
+        "devices": {
+            name: {**device, "mode": "dedicated"}
+            for name, device in four_node_config["devices"].items()
+        },
+    })),
+    False,
+)
+check(
+    "uniform shared iGPU modes across nodes pass",
+    bool(device_mode_errors({
+        **mixed_shared_and_igpu,
+        "devices": {
+            name: {**device, "kind": "igpu", "mode": "shared"}
+            for name, device in mixed_shared_and_igpu["devices"].items()
+        },
+    })),
+    False,
+)
+# Regression for #146/#147: a pre-existing bare dedicated declaration is a dedicated-only
+# GPU, not an iGPU declaration, and must remain accepted beside a shared iGPU on another node.
+check(
+    "bare dedicated GPU on a second node is accepted",
+    bool(device_mode_errors({
+        **mixed_shared_and_igpu,
+        "devices": {
+            "igpu-a": {**mixed_shared_and_igpu["devices"]["igpu-a"]},
+            "ollama-gpu": {
+                "node": "pve-b",
+                "mode": "dedicated",
+                "identifiers": ["0000:01:00.0"],
+            },
+        },
+    })),
+    False,
+)
+
 # -- Declared physical-device mode gate, PCI and shared -------------------------------
 # One declaration owns both the shared render-node path and the PCI identity of this
 # synthetic iGPU. The requested seam must agree with the declared mode, regardless of any
@@ -203,6 +349,32 @@ check(
     eval_assert(shared_mode_task, {
         "homelabinfra_config": {"proxmox": {"devices": physical_devices}},
         "item": {"host": "/dev/dri/renderD128"},
+    }),
+    True,
+)
+
+# Same identifier on two nodes is valid only when the static target selects the matching
+# declaration. No task is allowed to choose a free declaration or rebalance placement.
+node_scoped_devices = {
+    "igpu-a": {
+        "node": "pve-a",
+        "mode": "shared",
+        "identifiers": ["/dev/dri/renderD128"],
+    },
+    "igpu-b": {
+        "node": "pve-b",
+        "mode": "dedicated",
+        "identifiers": ["/dev/dri/renderD128"],
+    },
+}
+check(
+    "PCI: static target selects its node-scoped declaration",
+    eval_assert(pci_mode_task, {
+        "homelabinfra_config": {"proxmox": {
+            "node": "pve-b",
+            "devices": node_scoped_devices,
+        }},
+        "pci_passthrough_device": {"id": "/dev/dri/renderD128"},
     }),
     True,
 )

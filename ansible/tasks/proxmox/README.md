@@ -54,9 +54,14 @@ assignment is a preflight failure, not a reassignment. All four run after `lxc-c
 device — durable proof this platform, not an operator by hand, created the binding. Before
 the PCI, shared, and LXC USB seams inspect the node or any guest, the requested identifier must match
 exactly one named entry in `homelabinfra_config.proxmox.devices`, whose explicit `mode`
-must agree with the seam. Put every identifier for one physical device (such as an iGPU's
-render node and PCI address) in that entry; the declaration, not current bindings, is what
-keeps shared and dedicated mutually exclusive.
+must agree with the seam. A declaration's optional `node` statically scopes it to one
+`proxmox.nodes` entry and falls back to `proxmox.node`; it never selects a node
+automatically. Put every identifier for one physical device (such as an iGPU's render node
+and PCI address) in that entry; the declaration, not current bindings, is what keeps shared
+and dedicated mutually exclusive. `kind` defaults to `igpu` for shared declarations
+and to `gpu` for a bare dedicated declaration, preserving #130's dedicated-only GPU shape;
+a dedicated iGPU must opt in with `kind: igpu`, while dedicated USB or other entries use
+`kind: usb` or `kind: other`.
 
 Each attach seam has a matching detach seam — `detach-shared-device.yml`,
 `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that also asserts `_+lab`

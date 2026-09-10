@@ -30,7 +30,8 @@
 #                            PCI device.
 #   homelabinfra_config.proxmox.devices — named physical-device declarations. The matching
 #                                        declaration must explicitly say `mode: dedicated`;
-#                                        its `identifiers` list includes this PCI address.
+#                                        its `identifiers` list includes this PCI address, and
+#                                        its optional `node` matches the selected target node.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -59,10 +60,14 @@
       declaration with mode: dedicated in homelabinfra_config.proxmox.devices. A device
       declared shared cannot be assigned exclusively to a VM.
   vars:
-    _pci_device_declarations: >-
+    _pci_device_candidates: >-
       {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
          | selectattr('value.identifiers', 'defined')
          | selectattr('value.identifiers', 'contains', pci_passthrough_device.id) | list }}
+    _pci_device_declarations: >-
+      {{ (_pci_device_candidates | selectattr('value.node', 'undefined') | list)
+         + (_pci_device_candidates | selectattr('value.node', 'defined')
+            | selectattr('value.node', 'equalto', homelabinfra_config.proxmox.node) | list) }}
 
 - name: PCI passthrough | Verify the device is present on the node
   ansible.builtin.command:

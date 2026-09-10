@@ -145,3 +145,16 @@ also consumes Redis. SuiteCRM and EspoCRM start with MariaDB. Twenty and EspoCRM
 container deployment surfaces. SuiteCRM's documented production path starts with a pre-built
 package on Apache, so its hosting kind remains a native-LXC candidate until implementation proves
 the exact path.
+
+## 2026-09-09 — one shared iGPU remains the default; no second node yet
+
+Batch C does not add a second iGPU-equipped Proxmox node. One shared iGPU serving the
+existing Plex/Jellyfin consumers and the Immich and Frigate LXCs remains the deliberate
+default while the lab is not live. Adding another node solely for paper headroom would be
+capacity engineering before there is evidence that the first adapter is insufficient.
+
+Reconsider this only after the lab is live and real Batch C load provides measured evidence
+of contention or latency impact on the single shared iGPU. A preference for spare capacity
+on paper is not a trigger. If another node is added for that measured reason or an unrelated
+hardware refresh, its iGPU mode must still follow the cross-node passthrough rule; placement
+remains the operator's static node choice, with no automatic balancing or rebalancing.

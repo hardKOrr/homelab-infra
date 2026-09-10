@@ -23,10 +23,24 @@ which remains authoritative for guest ownership and creation.
   `homelabinfra_config.proxmox.devices`, the operator names each physical device once and
   declares `mode: shared` or `mode: dedicated`, plus every exact identifier an attach seam
   may use for that unit (for example `/dev/dri/renderD128` and the corresponding PCI
-  address). On the one configured `proxmox.node`, all identifiers in one entry describe the
-  same physical device. The PCI and shared attach seams read this declaration before any
-  guest-state inference and refuse a request whose mode disagrees; a missing or ambiguous
-  declaration is refused too. Current bindings never establish or change the mode.
+  address). A declaration's optional `node` names the Proxmox node that owns it; when it is
+  absent, it explicitly falls back to `homelabinfra_config.proxmox.node`. On that node, all
+  identifiers in one entry describe the same physical device. The PCI and shared attach
+  seams read this declaration before any guest-state inference and refuse a request whose
+  mode or target node disagrees; a missing or ambiguous declaration is refused too. Current
+  bindings never establish or change the mode.
+- **Every iGPU-mode node in a cluster uses one mode.** A device declaration's optional
+  `kind` defaults deliberately to `igpu` when `mode: shared`, so an unmarked shared #130
+  declaration cannot silently escape this check. A bare `mode: dedicated` declaration keeps
+  #130's dedicated-only GPU convention and defaults to `kind: gpu`; a dedicated declaration
+  for an iGPU must opt in explicitly with `kind: igpu`. Mark other dedicated-only devices
+  `kind: usb` or `kind: other` as applicable. When two or more distinct nodes carry
+  `kind: igpu` declarations, their modes MUST be uniform: the cluster may not mix `shared`
+  and `dedicated` iGPU-mode nodes. This keeps a shared-iGPU consumer from failing over to a
+  dedicated-mode node and contending with its existing VM, and keeps the reverse transition
+  from creating the same conflict, without classifying a dedicated-only GPU as an iGPU. The
+  config preflight rejects a mixed declaration before any device mutation. Placement remains
+  static and operator-named; this rule adds no load balancing or automatic device selection.
 - **Modes are mutually exclusive per physical device on the node.** A device declared
   `shared` may be bound into multiple LXC guests, but its dedicated PCI/USB identity cannot
   be assigned to a VM. A device declared `dedicated` may be assigned to one VM, but its
@@ -117,6 +131,7 @@ distinct, named assertion, not a single catch-all check:
 | Guest missing the `_+lab` tag | both modes | this platform binds devices only into guests it owns — see the ownership contract |
 | Device path/PCI address/USB mapping not present on the node | both modes | a typo here would otherwise produce a guest that boots with the feature silently absent |
 | Declared mode missing, ambiguous, or different from the requested seam | PCI and shared attach | mode is a per-device configuration commitment; current bindings cannot authorize the opposite mode |
+| iGPU-mode declarations differ across nodes | config validation | a cluster cannot offer shared consumers a failover target that contends with a dedicated VM, or the reverse |
 | Device already assigned to a different guest | dedicated only | a PCIe or USB device left the host for one guest; a second guest cannot also receive it |
 
 Detach uses the same identifiers to locate a binding, so a typo in a removal call fails the
@@ -131,7 +146,10 @@ rejections/no-ops of its own, both in `ansible/tasks/proxmox/detach-*.yml`:
 ## Enforced by
 
 - inspection — cite this specification in findings
-- `gate/test-device-passthrough-contract.sh` — proves the declared-mode rejection in both
+- `ansible/scripts/config-doctor.sh` — rejects malformed device declarations and mixed
+  iGPU modes across distinct nodes before a play can mutate a device.
+- `gate/test-device-passthrough-contract.sh` — proves the cross-node rejection (including
+  the deliberate default for an unmarked declaration), the declared-mode rejection in both
   directions, the ownership guard on every attach AND detach seam, the dedicated-device
   conflict check, and that detach treats a content match with no provenance tag as unowned
   rather than adopting it, against the real expressions in

@@ -43,6 +43,9 @@ import yaml
 CONFIG_DIR = sys.argv[1]
 REPO_ROOT = os.path.abspath(sys.argv[2])
 PROBLEMS = []          # (severity, file, key path, message)
+sys.path.insert(0, os.path.join(REPO_ROOT, "ansible", "scripts"))
+
+from device_mode_validation import validate_device_modes
 
 
 def report(severity, where, key, message):
@@ -143,6 +146,10 @@ else:
     for key in ("proxmox.api_host", "proxmox.node", "proxmox.api_user", "proxmox.api_token_id"):
         need(proxmox, "proxmox.yml", key)
     need(proxmox, "proxmox.yml", "proxmox.api_token_secret", env_var="PROXMOX_API_TOKEN")
+    validate_device_modes(
+        proxmox.get("proxmox"),
+        lambda key, message: report("ERROR", "proxmox.yml", key, message),
+    )
 
     networks = proxmox.get("networks")
     network_names = set(networks) if isinstance(networks, dict) else set()
