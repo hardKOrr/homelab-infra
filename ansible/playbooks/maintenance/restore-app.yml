@@ -11,12 +11,14 @@
 #   app        — only when the instance was deployed under a different name from the app
 #                (instance mixpost-restore of app mixpost). Defaults to `instance`.
 #   method     — pbs_guest, native, or project_managed; defaults when only one is declared.
-#   destination — existing for this playbook; the shared contract reserves `new` for #78.
+#   destination — new creates an isolated target through its existing app playbook;
+#                existing replaces the exact target after pre-restore proof.
 #   target     — the instance whose namespace receives the data. Defaults to `instance`,
 #                which means restoring the application over itself.
 #   recovery_point — artifact identifier; blank lists what PBS holds and changes nothing.
 #   snapshot   — compatibility alias for recovery_point.
 #   overwrite  — false (default) plans and writes nothing. true performs the restore.
+#   pre_restore_point — independent recovery point for an existing target replacement.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 # THE RESTORE PROCEDURE
@@ -115,6 +117,7 @@
     # snapshot remains an additive compatibility alias for existing callers.
     _ra_recovery_point: "{{ recovery_point | default(snapshot | default('', true), true) }}"
     _ra_overwrite: "{{ overwrite | default(false) | bool }}"
+    _ra_pre_restore_point: "{{ pre_restore_point | default('', true) }}"
 
   pre_tasks:
     - name: Load platform vars
@@ -150,6 +153,12 @@
         name: _target_config
       failed_when: false
 
+    - name: Check whether the target instance configuration is authored
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../../config/apps/{{ _ra_target }}.yml"
+      register: _ra_target_config_file
+      changed_when: false
+
     - name: Load infrastructure facts
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
@@ -182,6 +191,94 @@
         _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
         _ra_source_instance: "{{ instance }}"
 
+    - name: Resolve target identities before mutation
+      ansible.builtin.set_fact:
+        _ra_source_route_key: >-
+          {{ ((app_config.routing.estate | default('')) ~ '/' ~
+              (app_config.routing.subdomain | default(instance, true)))
+             if app_config.routing.proxy | default('none') != 'none' else '' }}
+        _ra_target_route_key: >-
+          {{ ((restore_target_config.routing.estate | default('')) ~ '/' ~
+              (restore_target_config.routing.subdomain | default(_ra_target, true)))
+             if restore_target_config.routing.proxy | default('none') != 'none' else '' }}
+        _ra_requested_vmid: >-
+          {{ restore_target_config.get('proxmox', {}).get('vm', {}).get('vmid',
+             restore_target_config.get('proxmox', {}).get('lxc', {}).get('vmid', '')) | string }}
+        _ra_requested_address: >-
+          {{ (restore_target_config.get('proxmox', {}).get('vm', {}).get('ip_address',
+             restore_target_config.get('proxmox', {}).get('lxc', {}).get('ip_address', '')) | string)
+             | regex_replace('/.*$', '') }}
+        _ra_source_storage_key: >-
+          {{ (_ra_kind ~ ':' ~ _ra_source_instance)
+             if _ra_kind == 'kubernetes'
+             else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
+                   or app_config.get('app', {}).get('data_path', '')
+                   or app_config.get('app', {}).get('config_path', '')
+                   or (_ra_kind ~ ':' ~ _ra_source_instance)) | string }}
+        _ra_target_storage_key: >-
+          {{ (_ra_kind ~ ':' ~ _ra_target)
+             if _ra_kind == 'kubernetes'
+             else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
+                   or restore_target_config.get('app', {}).get('data_path', '')
+                   or restore_target_config.get('app', {}).get('config_path', '')
+                   or (_ra_kind ~ ':' ~ _ra_target)) | string }}
+
+    - name: Refresh inventory before checking a new target's ownership
+      ansible.builtin.meta: refresh_inventory
+      when: _ra_destination == 'new'
+
+    - name: Resolve the target application ownership group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ _ra_target }}"
+      when:
+        - _ra_destination == 'new'
+        - _ra_kind != 'kubernetes'
+
+    - name: Resolve the target Kubernetes namespace for a collision check
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
+      when:
+        - _ra_destination == 'new'
+        - _ra_kind == 'kubernetes'
+
+    - name: Derive the target Kubernetes namespace for a collision check
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/derive-namespace.yml
+      vars:
+        k8s_namespace_for: "{{ _ra_target }}"
+      when:
+        - _ra_destination == 'new'
+        - _ra_kind == 'kubernetes'
+
+    - name: Check whether the target Kubernetes namespace already exists
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, namespace, "{{ k8s_namespace }}"]
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _ra_k8s_namespace
+      changed_when: false
+      failed_when: false
+      when:
+        - _ra_destination == 'new'
+        - _ra_kind == 'kubernetes'
+
+    - name: Collect existing VMIDs for a new-target collision check
+      ansible.builtin.set_fact:
+        _ra_existing_vmids: >-
+          {{ _ra_existing_vmids | default([]) +
+             ([hostvars[item].proxmox_vmid | string]
+              if hostvars[item].proxmox_vmid is defined else []) }}
+      loop: "{{ groups['proxmox_clients'] | default([]) }}"
+      when: _ra_destination == 'new'
+
+    - name: Collect existing addresses for a new-target collision check
+      ansible.builtin.set_fact:
+        _ra_existing_addresses: >-
+          {{ _ra_existing_addresses | default([]) +
+             ([hostvars[item].ansible_host | string]
+              if hostvars[item].ansible_host | default('') | length > 0 else []) }}
+      loop: "{{ groups['proxmox_clients'] | default([]) }}"
+      when: _ra_destination == 'new'
+
     # This is the common method/destination gate. It deliberately runs before any role
     # task, so an undeclared path fails as a capability error rather than as an include_role
     # or missing-file error.
@@ -204,17 +301,6 @@
           job declared by that method; this playbook dispatches native and project-managed
           role tasks only.
 
-    # Destination=new is a shared contract value, but this legacy native entry point does
-    # not provision or isolate a destination. Refusing it here is safer than passing a
-    # dead flag to a role that would replace the selected target in place; #78 owns the
-    # new-instance orchestration.
-    - name: Require an existing destination for this restore entry point
-      ansible.builtin.assert:
-        that: recovery_destination_resolved == 'existing'
-        fail_msg: >-
-          Restore App supports destination=existing only. destination=new requires the
-          isolated-target orchestration from #78 and is not executed by this playbook.
-
     - name: Assert this app has a restore path
       ansible.builtin.assert:
         that:
@@ -230,12 +316,84 @@
           application-consistent archive and restore tasks. Other applications remain on
           whole-guest PBS recovery.
 
+    - name: Validate the destination and replacement plan before mutation
+      ansible.builtin.include_tasks: ../../tasks/recovery/validate-restore.yml
+      vars:
+        recovery_source_instance: "{{ instance }}"
+        recovery_target_instance: "{{ _ra_target }}"
+        recovery_destination: "{{ recovery_destination_resolved }}"
+        recovery_overwrite: "{{ _ra_overwrite }}"
+        recovery_point: "{{ _ra_recovery_point }}"
+        recovery_pre_restore_point: "{{ _ra_pre_restore_point }}"
+        recovery_target_config_present: "{{ _ra_target_config_file.stat.exists | default(false) }}"
+        recovery_source_route_key: "{{ _ra_source_route_key }}"
+        recovery_target_route_key: "{{ _ra_target_route_key }}"
+        recovery_target_name_collision: >-
+          {{ ((_ra_kind != 'kubernetes' and
+               (groups[tag_group_name | default('')] | default([]) | length > 0))
+              or
+              (_ra_kind == 'kubernetes' and
+               (_ra_k8s_namespace.rc | default(1) | int == 0)))
+             | bool }}
+        recovery_target_vmid_collision: >-
+          {{ (_ra_requested_vmid | length > 0 and
+              _ra_requested_vmid in (_ra_existing_vmids | default([]))) | bool }}
+        recovery_target_address_collision: >-
+          {{ (_ra_requested_address | length > 0 and
+              _ra_requested_address | lower != 'dhcp' and
+              _ra_requested_address in (_ra_existing_addresses | default([]))) | bool }}
+        recovery_target_storage_collision: >-
+          {{ (_ra_source_storage_key | length > 0 and
+              _ra_source_storage_key == _ra_target_storage_key and
+              '{{' not in _ra_source_storage_key) | bool }}
+        recovery_source_storage_key: "{{ _ra_source_storage_key }}"
+        recovery_target_storage_key: "{{ _ra_target_storage_key }}"
+        recovery_affected_scope: "{{ app_config.recovery.affected_scope | default([instance]) }}"
+
+    # New destinations use the same application provisioning seam as a normal deploy,
+    # but the isolated flag suppresses route/SSO/DNS/monitor publication. The source is
+    # never contacted; only the target's authored config and defaults are loaded by this
+    # child playbook. Plan mode remains read-only and does not create the target.
+    - name: Provision the isolated new restore target
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+      ansible.builtin.command:
+        argv:
+          - ansible-playbook
+          - -i
+          - inventory/
+          - "playbooks/apps/{{ _ra_app }}.yml"
+          - -e
+          - "instance={{ _ra_target }}"
+          - -e
+          - recovery_isolated=true
+      changed_when: true
+
+    - name: Refresh inventory after provisioning the new restore target
+      ansible.builtin.meta: refresh_inventory
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
     - name: Resolve the Docker target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
         app: "{{ _ra_app }}"
         resolve_app_target_instance: "{{ _ra_target }}"
-      when: _ra_kind == 'docker'
+      when:
+        - _ra_kind == 'docker'
+        - recovery_destination_resolved == 'existing'
+
+    - name: Resolve the newly provisioned Docker target
+      ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
+      vars:
+        app: "{{ _ra_app }}"
+        resolve_app_target_instance: "{{ _ra_target }}"
+      when:
+        - _ra_kind == 'docker'
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
 
   tasks:
     - name: Restore the application
@@ -247,8 +405,23 @@
         restore_destination: "{{ recovery_destination_resolved }}"
         restore_method: "{{ recovery_method_resolved }}"
         restore_snapshot: "{{ _ra_recovery_point }}"
+        restore_pre_restore_point: "{{ _ra_pre_restore_point }}"
         restore_overwrite: "{{ _ra_overwrite }}"
-      when: _ra_kind == 'kubernetes'
+      when:
+        - _ra_kind == 'kubernetes'
+        - not (recovery_destination_resolved == 'new' and not (_ra_overwrite | bool))
+
+    - name: State the read-only new-destination plan
+      ansible.builtin.debug:
+        msg:
+          - "PLAN ONLY — no target was provisioned or changed."
+          - >-
+            Re-run with recovery_point=<artifact> and overwrite=true to provision
+            {{ _ra_target }} in isolation, restore the selected point, and wire it only
+            after application verification.
+      when:
+        - recovery_destination_resolved == 'new'
+        - not (_ra_overwrite | bool)
 
     # The plan path changes nothing, and a read-only job does not notify
     # (docs/specs/one-click-idempotent.md). A restore is about as state-changing as this
@@ -276,6 +449,32 @@
       vars:
         degradation_scope: "the {{ _ra_target }} restore"
       when: _ra_kind == 'kubernetes'
+
+- name: "Restore App | Establish intended connections after a verified new restore"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    # The first child deploy deliberately ended before its Wire play. Running the same
+    # deployment seam again after the provider restore lets the app playbook establish
+    # target-specific DNS, SSO, proxy, monitoring and guest records. It is not a cutover:
+    # validation above rejected the source route collision and this run never changes the
+    # source's identity.
+    - name: Reconcile the restored target's intended connections
+      ansible.builtin.command:
+        argv:
+          - ansible-playbook
+          - -i
+          - inventory/
+          - "playbooks/apps/{{ hostvars['localhost']._ra_app }}.yml"
+          - -e
+          - "instance={{ hostvars['localhost']._ra_target }}"
+          - -e
+          - recovery_isolated=false
+      changed_when: true
+      when:
+        - hostvars['localhost'].recovery_destination_resolved == 'new'
+        - hostvars['localhost']._ra_overwrite | bool
 
 - name: "Restore App | Restore Docker application data from PBS"
   hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"
@@ -315,6 +514,7 @@
         restore_destination: "{{ hostvars['localhost'].recovery_destination_resolved }}"
         restore_method: "{{ hostvars['localhost'].recovery_method_resolved }}"
         restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
+        restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"
       when: app_target_kind | default('native') == 'docker'

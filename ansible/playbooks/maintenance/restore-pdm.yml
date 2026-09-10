@@ -1,52 +1,357 @@
 ---
-# Destructive PDM-only restore. It never contacts any configured remote.
-- name: PDM | Restore appliance VM
+# Restore the managed PDM VM from a verified PBS volume.
+#
+# destination=existing replaces the exact managed VM after an independent target recovery
+# point is named. destination=new restores to a distinct stopped VMID and never starts or
+# publishes that guest; a separate cutover operation is required to make it production.
+#
+# Compatibility inputs:
+#   backup_volume is an alias for recovery_point.
+#   confirm=RESTORE-PDM remains the explicit destructive confirmation.
+#
+# New inputs:
+#   destination=new|existing, target, recovery_point, pre_restore_volume, overwrite.
+- name: PDM | Validate and restore appliance VM
   hosts: localhost
   become: false
   gather_facts: false
+
+  vars:
+    _pdm_target: "{{ target | default(instance, true) }}"
+    _pdm_destination: "{{ destination | default('existing', true) }}"
+    _pdm_recovery_point: "{{ recovery_point | default(backup_volume | default('', true), true) }}"
+    _pdm_pre_restore_point: "{{ pre_restore_volume | default(pre_restore_point | default('', true), true) }}"
+    _pdm_execute: "{{ (overwrite | default(false) | bool) or (confirm | default('') == 'RESTORE-PDM') }}"
+
   pre_tasks:
-    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
-    - ansible.builtin.assert:
-        that: [instance is defined, backup_volume is defined, confirm | default('') == 'RESTORE-PDM']
-        fail_msg: Provide instance, backup_volume, and confirm=RESTORE-PDM.
-    - ansible.builtin.include_vars:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert PDM recovery inputs
+      ansible.builtin.assert:
+        that:
+          - instance is defined
+          - instance | string | length > 0
+          - _pdm_recovery_point | length > 0
+          - _pdm_destination in ['new', 'existing']
+        fail_msg: >-
+          Provide instance, recovery_point (or backup_volume), and destination=new|existing.
+          Set overwrite=true or confirm=RESTORE-PDM only for an approved replacement.
+
+    - name: Load PDM defaults
+      ansible.builtin.include_vars:
         file: ../../vars/app-defaults/proxmox-datacenter-manager.yml
         name: _pdm_defaults
-    - ansible.builtin.include_vars:
+
+    - name: Load source PDM instance config
+      ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
         name: _pdm_instance
-    - ansible.builtin.set_fact:
-        pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance, recursive=True) }}"
-    - ansible.builtin.assert:
+
+    - name: Load target PDM instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ _pdm_target }}.yml"
+        name: _pdm_target_instance
+      failed_when: false
+
+    - name: Check whether the target PDM config is authored
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../../config/apps/{{ _pdm_target }}.yml"
+      register: _pdm_target_config_file
+      changed_when: false
+
+    - name: Merge source and target PDM configuration
+      ansible.builtin.set_fact:
+        pdm_config: >-
+          {{ _pdm_defaults.proxmox_datacenter_manager_defaults
+             | combine(_pdm_instance, recursive=True) }}
+        pdm_target_config: >-
+          {{ _pdm_defaults.proxmox_datacenter_manager_defaults
+             | combine(_pdm_target_instance | default({}), recursive=True) }}
+
+    - name: Resolve the exact PDM target VM and node
+      ansible.builtin.set_fact:
+        _pdm_target_vmid: "{{ (pdm_target_config.proxmox.vm.vmid | default('')) | string }}"
+        _pdm_target_node: "{{ pdm_target_config.proxmox.node | default(pdm_config.proxmox.node, true) }}"
+
+    - name: Validate the source PBS volume identity
+      ansible.builtin.assert:
         that:
-          - pdm_config.backup.storage | length > 0
-          - backup_volume is match('^backup/vm/' ~ (pdm_config.proxmox.vmid | string) ~ '/vzdump-qemu-' ~ (pdm_config.proxmox.vmid | string) ~ '-.+')
-        fail_msg: Restore accepts only a PBS backup volume for the declared PDM VMID.
+          - pdm_config.backup.storage | default('') | length > 0
+          - _pdm_recovery_point is match(
+              '^backup/vm/' ~ (pdm_config.proxmox.vm.vmid | string)
+              ~ '/vzdump-qemu-' ~ (pdm_config.proxmox.vm.vmid | string) ~ '-.+')
+        fail_msg: >-
+          Recovery point must be a PBS backup volume for the declared source PDM VMID
+          {{ pdm_config.proxmox.vm.vmid }}.
+
+    - name: Validate the exact PDM destination identity
+      ansible.builtin.assert:
+        that:
+          - _pdm_target_config_file.stat.exists | default(false) | bool
+          - pdm_target_config.proxmox.vm.vmid is defined
+        fail_msg: >-
+          PDM restore needs an authored config for the exact destination {{ _pdm_target }}
+          with an explicit VMID; it never guesses or aliases a guest.
+
+    - name: Validate the new PDM identity
+      ansible.builtin.assert:
+        that:
+          - _pdm_target != instance
+          - pdm_target_config.proxmox.vm.vmid | int != pdm_config.proxmox.vm.vmid | int
+        fail_msg: >-
+          A new PDM restore needs a distinct VMID and exact destination identity. It never
+          aliases or takes over the source VM.
+      when: _pdm_destination == 'new'
+
+    - name: Resolve target route identities
+      ansible.builtin.set_fact:
+        _pdm_source_route: >-
+          {{ ((pdm_config.routing.estate | default('')) ~ '/' ~
+              (pdm_config.routing.subdomain | default(instance, true)))
+             if pdm_config.routing.proxy | default('none') != 'none' else '' }}
+        _pdm_target_route: >-
+          {{ ((pdm_target_config.routing.estate | default('')) ~ '/' ~
+              (pdm_target_config.routing.subdomain | default(_pdm_target, true)))
+             if pdm_target_config.routing.proxy | default('none') != 'none' else '' }}
+
+    - name: Validate the common recovery destination contract
+      ansible.builtin.include_tasks: ../../tasks/recovery/validate-restore.yml
+      vars:
+        recovery_source_instance: "{{ instance }}"
+        recovery_target_instance: "{{ _pdm_target }}"
+        recovery_destination: "{{ _pdm_destination }}"
+        recovery_overwrite: "{{ _pdm_execute }}"
+        recovery_point: "{{ _pdm_recovery_point }}"
+        recovery_pre_restore_point: "{{ _pdm_pre_restore_point }}"
+        recovery_target_config_present: "{{ _pdm_target_config_file.stat.exists | default(false) }}"
+        recovery_source_route_key: "{{ _pdm_source_route }}"
+        recovery_target_route_key: "{{ _pdm_target_route }}"
+        recovery_source_storage_key: "pdm-vmid:{{ pdm_config.proxmox.vm.vmid }}"
+        recovery_target_storage_key: "pdm-vmid:{{ _pdm_target_vmid }}"
+        recovery_target_storage_collision: false
+        recovery_target_vmid_collision: false
+        recovery_target_address_collision: false
+        recovery_target_resource_collision: false
+        recovery_affected_scope: ["{{ instance }}"]
+
   tasks:
-    - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
-    - name: PDM | Inspect existing target VM
+    - name: Register Proxmox nodes
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+
+    # pvesm is read-only and runs before any stop/destroy. It checks the exact artifact
+    # rather than trusting its shape, which catches a deleted or inaccessible PBS volume.
+    - name: PDM | List readable PBS backup volumes
       ansible.builtin.command:
-        argv: [qm, config, "{{ pdm_config.proxmox.vmid | string }}"]
-      delegate_to: "{{ pdm_config.proxmox.node }}"
+        argv:
+          - pvesm
+          - list
+          - "{{ pdm_config.backup.storage }}"
+          - --content
+          - backup
+      delegate_to: "{{ _pdm_target_node }}"
+      register: _pdm_backup_inventory
+      changed_when: false
+      failed_when: false
+
+    - name: PDM | Require the selected recovery artifact to be readable
+      ansible.builtin.assert:
+        that:
+          - _pdm_backup_inventory.rc == 0
+          - _pdm_recovery_point in _pdm_backup_inventory.stdout
+        fail_msg: >-
+          PBS volume {{ _pdm_recovery_point }} is not readable from storage
+          {{ pdm_config.backup.storage }}. No target was stopped or replaced.
+      when: _pdm_execute | bool
+
+    - name: PDM | Verify the independent pre-restore volume
+      ansible.builtin.assert:
+        that:
+          - _pdm_backup_inventory.rc == 0
+          - _pdm_pre_restore_point in _pdm_backup_inventory.stdout
+          - _pdm_pre_restore_point is match(
+              '^backup/vm/' ~ _pdm_target_vmid
+              ~ '/vzdump-qemu-' ~ _pdm_target_vmid ~ '-.+')
+        fail_msg: >-
+          Pre-restore PBS volume {{ _pdm_pre_restore_point }} is not a readable backup of
+          the exact target VM {{ _pdm_target }}. The target remains untouched; capture or
+          verify that point and retry.
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+
+    - name: PDM | Inspect the exact target VM
+      ansible.builtin.command:
+        argv: [qm, config, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
       register: _pdm_existing
       failed_when: false
       changed_when: false
-    - ansible.builtin.assert:
-        that: ["_pdm_existing.rc != 0 or (('_+lab' in _pdm_existing.stdout) and (('_' ~ instance) in _pdm_existing.stdout))"]
-        fail_msg: Refusing to replace an unmanaged VM.
-    - name: PDM | Stop existing managed VM
+
+    - name: PDM | Require the exact existing target
+      ansible.builtin.assert:
+        that: _pdm_existing.rc == 0
+        fail_msg: >-
+          Existing-target restore requires the exact managed VM {{ _pdm_target }} to exist;
+          no VM was stopped or created.
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+
+    - name: PDM | Refuse an unmanaged existing target
+      ansible.builtin.assert:
+        that:
+          - _pdm_destination == 'new'
+            or (('_+lab' in _pdm_existing.stdout) and
+                (('_' ~ _pdm_target) in _pdm_existing.stdout))
+        fail_msg: >-
+          Refusing to replace an unmanaged or unrelated VM. The requested PDM target is
+          not the exact project-owned instance {{ _pdm_target }}.
+      when: _pdm_execute | bool
+
+    - name: PDM | Refuse a new target VMID collision
+      ansible.builtin.assert:
+        that: _pdm_existing.rc != 0
+        fail_msg: >-
+          New PDM target VMID {{ pdm_target_config.proxmox.vm.vmid }} already exists.
+          No restore was attempted; choose an unused VMID.
+      when:
+        - _pdm_destination == 'new'
+        - _pdm_execute | bool
+
+    - name: PDM | Read the existing target state before mutation
       ansible.builtin.command:
-        argv: [qm, stop, "{{ pdm_config.proxmox.vmid | string }}"]
-      delegate_to: "{{ pdm_config.proxmox.node }}"
-      when: _pdm_existing.rc == 0
+        argv: [qm, status, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
+      register: _pdm_status_before
+      changed_when: false
       failed_when: false
-      changed_when: _pdm_existing.rc == 0
-    - name: PDM | Remove existing managed VM before restore
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+        - _pdm_existing.rc == 0
+
+    - name: PDM | Require the existing target state to be readable
+      ansible.builtin.assert:
+        that: _pdm_status_before.rc == 0
+        fail_msg: >-
+          Could not determine the state of {{ _pdm_target }}. It was not stopped or
+          replaced; resolve the Proxmox error and retry.
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+
+    - name: PDM | Stop the existing target
       ansible.builtin.command:
-        argv: [qm, destroy, "{{ pdm_config.proxmox.vmid | string }}"]
-      delegate_to: "{{ pdm_config.proxmox.node }}"
-      when: _pdm_existing.rc == 0
-    - name: PDM | Restore managed VM from PBS
+        argv: [qm, stop, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
+      register: _pdm_stop
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+        - "'status: running' in _pdm_status_before.stdout"
+      failed_when: _pdm_stop.rc != 0
+      changed_when: true
+
+    - name: PDM | Destroy the exact managed target before replacement
       ansible.builtin.command:
-        argv: [qmrestore, "{{ pdm_config.backup.storage }}:{{ backup_volume }}", "{{ pdm_config.proxmox.vmid | string }}", --unique, '0']
-      delegate_to: "{{ pdm_config.proxmox.node }}"
+        argv: [qm, destroy, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+        - _pdm_existing.rc == 0
+
+    - name: PDM | Restore into the selected destination VMID
+      ansible.builtin.command:
+        argv:
+          - qmrestore
+          - "{{ pdm_config.backup.storage }}:{{ _pdm_recovery_point }}"
+          - "{{ _pdm_target_vmid }}"
+          - --unique
+          - "{{ '1' if _pdm_destination == 'new' else '0' }}"
+      delegate_to: "{{ _pdm_target_node }}"
+      when: _pdm_execute | bool
+      changed_when: true
+
+    - name: PDM | Apply the target identity
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _pdm_target_vmid }}"
+          - --name
+          - "{{ _pdm_target }}"
+          - --tags
+          - "_+lab,_{{ _pdm_target }}"
+      delegate_to: "{{ _pdm_target_node }}"
+      when:
+        - _pdm_execute | bool
+      changed_when: true
+
+    - name: PDM | Verify the restored target configuration
+      ansible.builtin.command:
+        argv: [qm, config, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
+      register: _pdm_restored
+      changed_when: false
+      when: _pdm_execute | bool
+
+    - name: PDM | Require a restored VM identity
+      ansible.builtin.assert:
+        that:
+          - _pdm_restored.rc == 0
+          - >-
+            ('name: ' ~ _pdm_target)
+            in _pdm_restored.stdout
+        fail_msg: >-
+          The PBS restore did not produce the exact requested PDM identity. The selected
+          pre-restore volume remains available for an existing-target retry.
+      when: _pdm_execute | bool
+
+    - name: PDM | Start and verify an existing target
+      ansible.builtin.command:
+        argv: [qm, start, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
+      register: _pdm_start
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+      changed_when: true
+
+    - name: PDM | Read the existing target state
+      ansible.builtin.command:
+        argv: [qm, status, "{{ _pdm_target_vmid }}"]
+      delegate_to: "{{ _pdm_target_node }}"
+      register: _pdm_status
+      changed_when: false
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+
+    - name: PDM | Require the existing target to be running
+      ansible.builtin.assert:
+        that: "'status: running' in _pdm_status.stdout"
+        fail_msg: >-
+          PDM was restored but did not return to running service. Leave the target stopped
+          and retry from {{ _pdm_pre_restore_point }} after investigating.
+      when:
+        - _pdm_destination == 'existing'
+        - _pdm_execute | bool
+
+    - name: PDM | State the new target remains isolated
+      ansible.builtin.debug:
+        msg: >-
+          PDM {{ _pdm_target }} was restored to VMID {{ pdm_target_config.proxmox.vm.vmid }}
+          and verified stopped. Production cutover is separate and was not performed.
+      when:
+        - _pdm_destination == 'new'
+        - _pdm_execute | bool
+
+    - name: PDM | State the read-only plan
+      ansible.builtin.debug:
+        msg: >-
+          PLAN ONLY — {{ _pdm_recovery_point }} is the selected artifact for
+          destination={{ _pdm_destination }} target={{ _pdm_target }}. No VM was stopped,
+          destroyed, restored or started.
+      when: not (_pdm_execute | bool)

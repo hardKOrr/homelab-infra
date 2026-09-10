@@ -49,15 +49,16 @@
     values: [pbs_guest, native, project_managed]
     enforced: false
   - name: destination
-    description: 'This native restore entry point supports `existing` only and replaces
-      the selected target. Isolated `new` restores are owned by the #78 orchestration path.'
+    description: '`new` provisions an isolated target and restores into it; `existing`
+      replaces the exact target after independent pre-restore proof.'
     required: true
     value: existing
-    values: [existing]
+    values: [new, existing]
     enforced: true
   - name: target
-    description: 'Instance whose application-owned state receives the data. **Blank:**
-      Restore over the source instance. Select a second deployed instance for a rehearsal.'
+    description: 'Exact instance whose application-owned state receives the data. **Blank:**
+      means the source for destination=existing. For destination=new, provide a distinct
+      authored instance config with a non-production route and storage.'
     required: false
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
@@ -68,6 +69,11 @@
   - name: snapshot
     description: 'Compatibility alias for the PBS recovery point, such as
       `host/%SLUG%/2026-08-19T03:00:00Z`. **Blank:** list available snapshots and change nothing.'
+    required: false
+  - name: pre_restore_point
+    description: 'For destination=existing and overwrite=true, independent recovery point
+      for the exact target. Capture or verify it before replacement; it is never deleted
+      by this job.'
     required: false
   - name: overwrite
     description: '**`false` (safe):** Plan only. **`true` (destructive):** Replace the
@@ -100,6 +106,9 @@
           fi
           if [ -n "${RD_OPTION_RECOVERY_POINT:-}" ]; then
             ARGS+=(-e "recovery_point=$RD_OPTION_RECOVERY_POINT")
+          fi
+          if [ -n "${RD_OPTION_PRE_RESTORE_POINT:-}" ]; then
+            ARGS+=(-e "pre_restore_point=$RD_OPTION_PRE_RESTORE_POINT")
           fi
           # Keep the old option additive for callers and imported jobs during transition.
           if [ -n "${RD_OPTION_SNAPSHOT:-}" ]; then
