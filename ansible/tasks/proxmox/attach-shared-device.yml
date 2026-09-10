@@ -34,7 +34,8 @@
 #                         default (0660).
 #   homelabinfra_config.proxmox.devices — named physical-device declarations. Every matching
 #                                        declaration must explicitly say `mode: shared`;
-#                                        its `identifiers` list includes each host path.
+#                                        its `identifiers` list includes each host path, and
+#                                        its optional `node` matches the selected target node.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -62,10 +63,14 @@
       with mode: shared in homelabinfra_config.proxmox.devices. A device declared dedicated
       cannot be bound into an LXC guest.
   vars:
-    _sd_device_declarations: >-
+    _sd_device_candidates: >-
       {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
          | selectattr('value.identifiers', 'defined')
          | selectattr('value.identifiers', 'contains', item.identity | default(item.host)) | list }}
+    _sd_device_declarations: >-
+      {{ (_sd_device_candidates | selectattr('value.node', 'undefined') | list)
+         + (_sd_device_candidates | selectattr('value.node', 'defined')
+            | selectattr('value.node', 'equalto', homelabinfra_config.proxmox.node) | list) }}
   loop: "{{ shared_device_list }}"
   loop_control:
     label: "{{ item.host }}"

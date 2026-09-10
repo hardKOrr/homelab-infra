@@ -51,6 +51,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(sys.argv[1]) / "ansible/scripts"))
+from device_mode_validation import validate_device_modes
+
 try:
     from jinja2.nativetypes import NativeEnvironment
 except ImportError:  # pragma: no cover - the gate's own dependency
@@ -145,6 +148,69 @@ for path, task_name, tags_var in (
         False,
     )
 
+# -- Cross-node iGPU mode validation ---------------------------------------------------
+# This fixture exercises the real config-validation helper, not a copy of its comparison.
+# Both declarations are intentionally unmarked: the default kind is deliberately `igpu`,
+# so an old #130-shaped declaration cannot silently escape the cross-node rule.
+def device_mode_errors(proxmox):
+    errors = []
+    validate_device_modes(proxmox, lambda key, message: errors.append((key, message)))
+    return errors
+
+mixed_unmarked = {
+    "node": "pve-a",
+    "nodes": {"pve-a": "198.51.100.10", "pve-b": "198.51.100.11"},
+    "devices": {
+        "igpu-a": {
+            "node": "pve-a",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+        },
+        "igpu-b": {
+            "node": "pve-b",
+            "mode": "dedicated",
+            "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+        },
+    },
+}
+check(
+    "cross-node mixed modes are rejected",
+    bool(device_mode_errors(mixed_unmarked)),
+    True,
+)
+check(
+    "unmarked declarations default to iGPU for cross-node validation",
+    any("igpu-b" in key for key, _ in device_mode_errors(mixed_unmarked)),
+    True,
+)
+check(
+    "uniform shared iGPU modes across nodes pass",
+    bool(device_mode_errors({
+        **mixed_unmarked,
+        "devices": {
+            name: {**device, "mode": "shared"}
+            for name, device in mixed_unmarked["devices"].items()
+        },
+    })),
+    False,
+)
+check(
+    "dedicated-only GPU declarations opt out explicitly",
+    bool(device_mode_errors({
+        **mixed_unmarked,
+        "devices": {
+            "igpu-a": {**mixed_unmarked["devices"]["igpu-a"]},
+            "gpu-b": {
+                "node": "pve-b",
+                "kind": "gpu",
+                "mode": "dedicated",
+                "identifiers": ["0000:01:00.0"],
+            },
+        },
+    })),
+    False,
+)
+
 # -- Declared physical-device mode gate, PCI and shared -------------------------------
 # One declaration owns both the shared render-node path and the PCI identity of this
 # synthetic iGPU. The requested seam must agree with the declared mode, regardless of any
@@ -203,6 +269,32 @@ check(
     eval_assert(shared_mode_task, {
         "homelabinfra_config": {"proxmox": {"devices": physical_devices}},
         "item": {"host": "/dev/dri/renderD128"},
+    }),
+    True,
+)
+
+# Same identifier on two nodes is valid only when the static target selects the matching
+# declaration. No task is allowed to choose a free declaration or rebalance placement.
+node_scoped_devices = {
+    "igpu-a": {
+        "node": "pve-a",
+        "mode": "shared",
+        "identifiers": ["/dev/dri/renderD128"],
+    },
+    "igpu-b": {
+        "node": "pve-b",
+        "mode": "dedicated",
+        "identifiers": ["/dev/dri/renderD128"],
+    },
+}
+check(
+    "PCI: static target selects its node-scoped declaration",
+    eval_assert(pci_mode_task, {
+        "homelabinfra_config": {"proxmox": {
+            "node": "pve-b",
+            "devices": node_scoped_devices,
+        }},
+        "pci_passthrough_device": {"id": "/dev/dri/renderD128"},
     }),
     True,
 )

@@ -27,15 +27,21 @@ proxmox:
   # use for it. `mode` is a commitment: shared permits several LXC binds, while dedicated
   # removes the device from the host for one VM. Listing both identifiers below matters for
   # an iGPU: its shared render node and its dedicated PCI address identify the same hardware.
-  # The attachment tasks refuse a request whose mode disagrees with this declaration before
-  # inspecting any guest state.
+  # `node` is optional and falls back to this file's proxmox.node. `kind` defaults to `igpu`
+  # so an unmarked #130 declaration participates in the cross-node uniform-mode check; mark
+  # a dedicated-only GPU or USB device as `gpu` or `usb` instead.
+  # The attachment tasks refuse a request whose mode or node disagrees with this declaration
+  # before inspecting any guest state.
   # devices:
   #   intel-igpu:
+  #     kind: igpu        # igpu | gpu | usb | other (optional; defaults to igpu)
+  #     node: pve         # optional; defaults to proxmox.node
   #     mode: shared       # shared | dedicated
   #     identifiers:
   #       - /dev/dri/renderD128
   #       - "0000:00:02.0"
   #   frigate-coral:
+  #     kind: usb         # LXC USB bind is not an iGPU declaration
   #     mode: shared       # LXC USB bind resolved from this exact mapping name
   #     identifiers:
   #       - frigate-coral

@@ -40,10 +40,14 @@
       declaration with mode: shared in homelabinfra_config.proxmox.devices. The LXC seam
       never assigns a dedicated USB device.
   vars:
-    _usb_lxc_declarations: >-
+    _usb_lxc_candidates: >-
       {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
          | selectattr('value.identifiers', 'defined')
          | selectattr('value.identifiers', 'contains', usb_lxc_device.mapping) | list }}
+    _usb_lxc_declarations: >-
+      {{ (_usb_lxc_candidates | selectattr('value.node', 'undefined') | list)
+         + (_usb_lxc_candidates | selectattr('value.node', 'defined')
+            | selectattr('value.node', 'equalto', homelabinfra_config.proxmox.node) | list) }}
 
 - name: LXC USB passthrough | Verify the mapping exists on the cluster
   ansible.builtin.command:
