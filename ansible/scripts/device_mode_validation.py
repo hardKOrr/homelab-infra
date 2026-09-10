@@ -1,8 +1,5 @@
 """Validation shared by config-doctor and the device passthrough contract gate."""
 
-from itertools import combinations
-
-
 DEVICE_KINDS = {"igpu", "gpu", "usb", "other"}
 DEVICE_MODES = {"shared", "dedicated"}
 
@@ -70,14 +67,34 @@ def validate_device_modes(proxmox, report):
 
     # This intentionally compares only declarations on DIFFERENT nodes. The existing #130
     # per-device mutual-exclusivity check remains responsible for one node; this guard adds
-    # only the cross-node failover invariant requested by #157.
-    for left, right in combinations(igpu_declarations, 2):
-        if left[1] == right[1] or left[2] == right[2]:
+    # only the cross-node failover invariant requested by #157. Use one stable reference mode
+    # so each declaration that disagrees with it is reported once, rather than once per
+    # conflicting pair.
+    mode_counts = {}
+    for _, _, mode in igpu_declarations:
+        mode_counts[mode] = mode_counts.get(mode, 0) + 1
+    reference_mode = igpu_declarations[0][2] if igpu_declarations else None
+    for mode in mode_counts:
+        if mode_counts[mode] > mode_counts[reference_mode]:
+            reference_mode = mode
+
+    for name, node, mode in igpu_declarations:
+        if mode == reference_mode:
+            continue
+        reference = next(
+            (
+                declaration
+                for declaration in igpu_declarations
+                if declaration[1] != node and declaration[2] == reference_mode
+            ),
+            None,
+        )
+        if reference is None:
             continue
         report(
-            "proxmox.devices.%s.mode" % right[0],
+            "proxmox.devices.%s.mode" % name,
             "iGPU mode %r on node %s conflicts with mode %r on node %s; "
             "all iGPU-mode nodes must use one mode so shared consumers can fail over "
             "without contending with a dedicated VM"
-            % (right[2], right[1], left[2], left[1]),
+            % (mode, node, reference[2], reference[1]),
         )

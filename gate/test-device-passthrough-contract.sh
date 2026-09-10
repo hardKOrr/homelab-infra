@@ -197,8 +197,48 @@ three_node_errors = device_mode_errors({
     },
 })
 check(
-    "all offending nodes in a three-node mixed configuration are reported",
+    "the declaration differing from the three-node majority is reported once",
     [key for key, _ in three_node_errors],
+    ["proxmox.devices.igpu-b.mode"],
+)
+four_node_errors = device_mode_errors({
+    "node": "pve-a",
+    "nodes": {
+        "pve-a": "198.51.100.10",
+        "pve-b": "198.51.100.11",
+        "pve-c": "198.51.100.12",
+        "pve-d": "198.51.100.13",
+    },
+    "devices": {
+        "igpu-a": {
+            "node": "pve-a",
+            "kind": "igpu",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:00:02.0"],
+        },
+        "igpu-b": {
+            "node": "pve-b",
+            "kind": "igpu",
+            "mode": "dedicated",
+            "identifiers": ["/dev/dri/renderD128", "0000:01:00.0"],
+        },
+        "igpu-c": {
+            "node": "pve-c",
+            "kind": "igpu",
+            "mode": "dedicated",
+            "identifiers": ["/dev/dri/renderD128", "0000:02:00.0"],
+        },
+        "igpu-d": {
+            "node": "pve-d",
+            "kind": "igpu",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:03:00.0"],
+        },
+    },
+})
+check(
+    "each declaration disagreeing with the reference iGPU mode is reported once",
+    [key for key, _ in four_node_errors],
     ["proxmox.devices.igpu-b.mode", "proxmox.devices.igpu-c.mode"],
 )
 check(
