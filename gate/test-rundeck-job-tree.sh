@@ -235,4 +235,21 @@ print(' '.join(document['applications']))
     }
 done
 
+# Job steps run as rundeck. The bootstrap must adopt the option directory and existing
+# files before the first publish, otherwise a changed instance list fails with EACCES and
+# every application form falls back to typed names.
+bootstrap="$repo/rundeck/bootstrap-rundeck.sh"
+grep -Fq 'install -d -m 0755 -o rundeck -g rundeck /var/lib/rundeck/app-instances' "$bootstrap" || {
+    echo "ERROR: bootstrap does not create the instance option directory for rundeck" >&2
+    exit 1
+}
+grep -Fq 'chown -R rundeck:rundeck /var/lib/rundeck/app-instances' "$bootstrap" || {
+    echo "ERROR: bootstrap does not adopt existing instance option files" >&2
+    exit 1
+}
+grep -Fq 'sudo -u rundeck HOME=/var/lib/rundeck "$VENV_DIR/bin/python3"' "$bootstrap" || {
+    echo "ERROR: bootstrap publishes instance option files as the wrong user" >&2
+    exit 1
+}
+
 echo "Rundeck render: all jobs ok"
