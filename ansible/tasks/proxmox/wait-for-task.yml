@@ -1,0 +1,54 @@
+---
+# Wait for one Proxmox API task and fail on an unsuccessful, cancelled, or timed-out
+# worker.  Proxmox mutation endpoints return an UPID immediately; callers must not treat
+# that response as restore/backup completion.
+#
+# Required inputs:
+#   proxmox_task_node, proxmox_task_upid
+# Optional:
+#   proxmox_task_timeout (seconds, default 3600)
+#   proxmox_task_poll (seconds, default 5)
+
+- name: Proxmox | Require a task identity
+  ansible.builtin.assert:
+    that:
+      - proxmox_task_node is defined
+      - proxmox_task_node in groups['proxmox_delegates'] | default([])
+      - proxmox_task_upid is defined
+      - proxmox_task_upid | string is match('^UPID:[^ ]+$')
+      - proxmox_task_timeout | default(3600) | int > 0
+      - proxmox_task_poll | default(5) | int > 0
+    fail_msg: A Proxmox task node and UPID are required before polling can begin.
+
+- name: Proxmox | Poll task {{ proxmox_task_upid }}
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ proxmox_task_node }}/tasks/{{ proxmox_task_upid }}/status"
+      - --output-format
+      - json
+  delegate_to: "{{ proxmox_task_node }}"
+  register: _proxmox_task_status
+  changed_when: false
+  failed_when: false
+  until: >-
+    _proxmox_task_status.rc == 0 and
+    (_proxmox_task_status.stdout | from_json).status | default('') == 'stopped'
+  retries: "{{ (proxmox_task_timeout | default(3600) | int / proxmox_task_poll | default(5) | int) | round(0, 'ceil') | int }}"
+  delay: "{{ proxmox_task_poll | default(5) | int }}"
+
+- name: Proxmox | Require task completion
+  ansible.builtin.assert:
+    that:
+      - _proxmox_task_status.rc == 0
+      - (_proxmox_task_status.stdout | from_json).status | default('') == 'stopped'
+      - (_proxmox_task_status.stdout | from_json).exitstatus | default('') == 'OK'
+    fail_msg: >-
+      Proxmox task {{ proxmox_task_upid }} did not complete successfully
+      ({{ _proxmox_task_status.stdout | default('no status') }}). The source and any
+      independent recovery point were retained; inspect the target before retrying.
+
+- name: Proxmox | Record completed task
+  ansible.builtin.debug:
+    msg: "Proxmox task {{ proxmox_task_upid }} completed successfully on {{ proxmox_task_node }}."

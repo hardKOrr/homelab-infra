@@ -7,6 +7,7 @@ schema_version: 1
 # the templates named in rundeck/app-actions.yml. Do not add a per-application job here.
 jobs:
   audit-backups.yaml: Manage/Lab/Health
+  backup-guest.yaml: Recover/Guests
   bootstrap.yaml: Setup/Platform
   check-native-updates.yaml: Manage/Lab/Updates
   config-doctor.yaml: Manage/Configuration/Validation
@@ -16,6 +17,7 @@ jobs:
   lab-status.yaml: Manage/Lab/Health
   reclaim-volume.yaml: Manage/Storage/Volumes
   reimport-jobs.yaml: Setup/Automation
+  restore-guest.yaml: Recover/Guests
   store-secret.yaml: Manage/Configuration/Secrets
   troubleshoot-plex-client.yaml: Operate/Troubleshooting
   vaultwarden-cutover.yaml: Setup/Credentials

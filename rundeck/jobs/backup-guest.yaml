@@ -1,0 +1,43 @@
+# Rendered and imported by rundeck/render-job.py. This is a lab-wide guest operation,
+# not an application action: the selected VMID is the recovery unit.
+- id: 50fbeff3-6d5c-4f92-a4de-8c3c342fe7e1
+  uuid: 50fbeff3-6d5c-4f92-a4de-8c3c342fe7e1
+  name: Backup Guest
+  group: Recover/Guests
+  description: >-
+    Create one native PBS backup for an owned Proxmox VM or LXC. The output discloses
+    shared-guest workload scope and data outside the PBS artifact. Scheduled coverage is
+    inspected, but this button starts an on-demand vzdump task.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+    - name: method
+      required: true
+      value: pbs_guest
+      values: [pbs_guest]
+      enforced: true
+      description: Shared guest recovery method; application-native recovery is separate.
+    - name: vmid
+      required: true
+      regex: '^[1-9][0-9]*$'
+      description: Exact owned Proxmox VMID. This is a whole-guest recovery operation.
+    - name: backup_storage
+      required: true
+      value: pbs-homelab
+      regex: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+      description: PVE PBS storage ID available on the guest's node.
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+      - description: Run the shared VM/LXC PBS backup route
+        script: |-
+          #!/bin/bash
+          set -euo pipefail
+          exec lab-run playbooks/maintenance/backup-guest.yml \
+            -e "method=${RD_OPTION_METHOD:?method is required}" \
+            -e "vmid=${RD_OPTION_VMID:?vmid is required}" \
+            -e "backup_storage=${RD_OPTION_BACKUP_STORAGE:?backup storage is required}"
