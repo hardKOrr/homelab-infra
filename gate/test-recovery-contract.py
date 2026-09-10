@@ -224,12 +224,30 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertIn("_pdm_execute | bool", pdm_playbook[stop:destroy])
         self.assertIn("_pdm_target_vmid", pdm_playbook[stop:destroy])
 
-    def test_new_restore_isolated_provisioning_precedes_target_wiring(self):
+    def test_new_restore_wires_only_after_kubernetes_or_docker_restore(self):
         text = RESTORE_APP.read_text(encoding="utf-8")
         self.assertIn("recovery_isolated=true", text)
         self.assertIn("recovery_isolated=false", text)
-        self.assertLess(text.index("recovery_isolated=true"), text.index("recovery_isolated=false"))
         self.assertIn("restore_pre_restore_point", text)
+
+        plays = yaml.safe_load(text)
+        play_names = [play["name"] for play in plays]
+        docker_restore = play_names.index("Restore App | Restore Docker application data from PBS")
+        reconcile = play_names.index("Restore App | Establish intended connections after a verified new restore")
+        self.assertGreater(
+            reconcile,
+            docker_restore,
+            "new-target wiring must run after the Docker restore play",
+        )
+
+        docker_play = plays[docker_restore]
+        docker_tasks = [task.get("name", "") for task in docker_play["tasks"]]
+        self.assertIn("Restore the application-owned Docker archive", docker_tasks)
+        self.assertIn("Fail if Docker restore degraded", docker_tasks)
+        self.assertLess(
+            docker_tasks.index("Restore the application-owned Docker archive"),
+            docker_tasks.index("Fail if Docker restore degraded"),
+        )
 
 
 if __name__ == "__main__":

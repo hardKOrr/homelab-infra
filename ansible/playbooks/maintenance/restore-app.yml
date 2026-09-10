@@ -450,32 +450,6 @@
         degradation_scope: "the {{ _ra_target }} restore"
       when: _ra_kind == 'kubernetes'
 
-- name: "Restore App | Establish intended connections after a verified new restore"
-  hosts: localhost
-  become: false
-  gather_facts: false
-  tasks:
-    # The first child deploy deliberately ended before its Wire play. Running the same
-    # deployment seam again after the provider restore lets the app playbook establish
-    # target-specific DNS, SSO, proxy, monitoring and guest records. It is not a cutover:
-    # validation above rejected the source route collision and this run never changes the
-    # source's identity.
-    - name: Reconcile the restored target's intended connections
-      ansible.builtin.command:
-        argv:
-          - ansible-playbook
-          - -i
-          - inventory/
-          - "playbooks/apps/{{ hostvars['localhost']._ra_app }}.yml"
-          - -e
-          - "instance={{ hostvars['localhost']._ra_target }}"
-          - -e
-          - recovery_isolated=false
-      changed_when: true
-      when:
-        - hostvars['localhost'].recovery_destination_resolved == 'new'
-        - hostvars['localhost']._ra_overwrite | bool
-
 - name: "Restore App | Restore Docker application data from PBS"
   hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"
   become: true
@@ -535,3 +509,29 @@
       vars:
         degradation_scope: "the {{ app_target_instance }} restore"
       when: _application_restore_complete | default(false) | bool
+
+- name: "Restore App | Establish intended connections after a verified new restore"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  tasks:
+    # The first child deploy deliberately ended before its Wire play. Running the same
+    # deployment seam again after the provider restore lets the app playbook establish
+    # target-specific DNS, SSO, proxy, monitoring and guest records. It is not a cutover:
+    # validation above rejected the source route collision and this run never changes the
+    # source's identity.
+    - name: Reconcile the restored target's intended connections
+      ansible.builtin.command:
+        argv:
+          - ansible-playbook
+          - -i
+          - inventory/
+          - "playbooks/apps/{{ hostvars['localhost']._ra_app }}.yml"
+          - -e
+          - "instance={{ hostvars['localhost']._ra_target }}"
+          - -e
+          - recovery_isolated=false
+      changed_when: true
+      when:
+        - hostvars['localhost'].recovery_destination_resolved == 'new'
+        - hostvars['localhost']._ra_overwrite | bool
