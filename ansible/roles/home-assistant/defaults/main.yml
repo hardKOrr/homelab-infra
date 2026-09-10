@@ -1,0 +1,4 @@
+---
+home_assistant_project_dir: "/opt/{{ instance }}"
+home_assistant_compose_file: "{{ home_assistant_project_dir }}/docker-compose.yml"
+home_assistant_secrets_file: "{{ app_config.app.config_path }}/secrets.yaml"

@@ -62,9 +62,10 @@ Replace `APP_NAME` with the application slug throughout the copied files.
 
 Kubernetes has a different play shape; read
 [`../../tasks/kubernetes/README.md`](../../tasks/kubernetes/README.md) and use the existing
-Kubernetes application as the current implementation reference. Docker on VM and standalone
-VM do not yet have application scaffolds. Adding either path includes defining its reusable
-seam rather than forcing it through the LXC template.
+Kubernetes application as the current implementation reference. Home Assistant is the
+Docker-on-VM reference: it uses `vm-clone.yml`, the ordinary `docker` role, and the dedicated
+USB passthrough seam. A future Docker-on-VM application should reuse those seams rather than
+forcing a VM through the LXC stack template.
 
 ---
 

@@ -92,13 +92,26 @@
 # day-2 action is asking — and it answers it without re-deriving which estate's stack host
 # the deploy chose. A stack tag lookup would have to repeat that arithmetic here, in a third
 # place, and get it identical.
-- name: Resolve app target | Resolve the application's inventory group
+# A Docker app with a stack is hosted by the stack tag. Docker on VM has no shared
+# stack: its own VM carries the application tag, just like a native app's guest. Both
+# paths still resolve to one target host and keep the action role backend as `docker`.
+- name: Resolve app target | Resolve the stack host inventory group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_.stack+{{ _rat_stack }}"
+  when:
+    - _rat_kind == 'docker'
+    - _rat_stack | length > 0
+
+- name: Resolve app target | Resolve the Docker-on-VM inventory group
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
     tag_group_tag: "_{{ _rat_instance }}"
-  when: _rat_kind == 'docker'
+  when:
+    - _rat_kind == 'docker'
+    - _rat_stack | length == 0
 
-- name: Resolve app target | Select the stack host for a Docker app
+- name: Resolve app target | Select the Docker target host
   ansible.builtin.set_fact:
     _rat_host: "{{ (groups[tag_group_name] | default([])) | first | default('') }}"
   when: _rat_kind == 'docker'

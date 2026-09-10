@@ -462,3 +462,15 @@ applications:
     scope: estate
     # Recordings live on an external retention-sized mount and the guest owns shared
     # iGPU/Coral device bindings, so this is not a shared media-stack tenant.
+
+  home-assistant:
+    name: Home Assistant
+    job: deploy-home-assistant.yaml
+    root: Applications
+    category: Home Automation
+    type: Smart Home
+    scope: estate
+    # Home Assistant is Docker on its own VM so its Zigbee coordinator can use a dedicated
+    # named Proxmox USB resource mapping. Its role owns application-consistent config/state
+    # backup and restore in addition to the generic Docker actions.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]

@@ -46,6 +46,11 @@ proxmox:
   #     mode: shared       # LXC USB bind resolved from this exact mapping name
   #     identifiers:
   #       - frigate-coral
+  #   home-assistant-zigbee:
+  #     kind: usb         # dedicated USB device assigned to the Home Assistant VM
+  #     mode: dedicated    # one VM only; do not use a raw vendorid:productid pair
+  #     identifiers:
+  #       - home-assistant-zigbee  # exact Proxmox USB resource mapping name
 
   # Storage every guest lands on. bootstrap-rundeck.sh discovers this as the first active
   # storage advertising content type 'rootdir' — the type a container rootfs requires. A

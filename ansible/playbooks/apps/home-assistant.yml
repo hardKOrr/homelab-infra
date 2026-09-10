@@ -1,0 +1,273 @@
+---
+# Deploy Home Assistant as Docker on its own VM. The full VM is intentional: its Zigbee
+# coordinator is assigned through a dedicated Proxmox USB resource mapping, never through
+# a raw vendor:product pair or an LXC bind.
+#
+# Before a live run, record the Home Assistant instance, Proxmox node, VM identity, USB
+# resource mapping, and guest serial path in the acceptance evidence. The mapping must
+# already exist and be declared `mode: dedicated` in config/proxmox.yml.
+
+- name: "Home Assistant | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe Home Assistant instance name: -e instance=home-assistant"
+
+    - name: Load Home Assistant defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/home-assistant.yml
+        name: _app_defaults
+
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge Home Assistant config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.home_assistant_defaults
+             | combine(_instance_config | default({}), recursive=True) }}
+      no_log: true
+
+    - name: Assert the explicit VM and USB contract
+      ansible.builtin.assert:
+        that:
+          - app_config.hosting == 'docker'
+          - app_config.proxmox.vm is mapping
+          - app_config.app.usb_mapping | default('') | length > 0
+          - app_config.app.usb_device_path | default('') is match('^/dev/')
+        fail_msg: >-
+          Home Assistant requires its own Docker-capable VM, an exact existing Proxmox USB
+          resource mapping, and the coordinator's guest serial path. Do not use a raw
+          vendor:product pair or adopt a pre-existing untagged device.
+
+  tasks:
+    - name: Refresh inventory to get current Proxmox state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Resolve the inventory group for this Home Assistant instance
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ instance }}"
+
+    - name: Check for an existing Home Assistant VM
+      ansible.builtin.set_fact:
+        _ha_existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+
+    - name: Add the existing VM to the deploy group
+      ansible.builtin.add_host:
+        name: "{{ _ha_existing_hosts[0] }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: >-
+          {{ hostvars[_ha_existing_hosts[0]].ansible_host
+             | default(hostvars[_ha_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+      when: _ha_existing_hosts | length > 0
+      changed_when: false
+
+    - name: Ensure the existing VM is running
+      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
+      vars:
+        ensure_guest_host: "{{ _ha_existing_hosts[0] }}"
+      when: _ha_existing_hosts | length > 0
+
+    - name: Set the existing VM guest name
+      ansible.builtin.set_fact:
+        _ha_guest: "{{ _ha_existing_hosts[0] }}"
+      when: _ha_existing_hosts | length > 0
+
+    - name: Provision a new Home Assistant VM
+      when: _ha_existing_hosts | length == 0
+      block:
+        - name: Resolve the Home Assistant network
+          ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+          vars:
+            resolve_network_app: home-assistant
+            resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
+            resolve_network_requested: "{{ app_config.proxmox.network | default('', true) }}"
+
+        - name: Ensure the Debian cloud-init template exists
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
+          vars:
+            cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
+            cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
+            cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
+            cloud_template_storage: >-
+              {{ app_config.proxmox.cloud_template.storage
+                 | default(homelabinfra_config.proxmox.storage, true) }}
+            cloud_template_bridge: "{{ network_effective.bridge | default('vmbr0') }}"
+
+        - name: Set the Home Assistant VM identity and ownership tags
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({'proxmox': {'vm':
+                   app_config.proxmox.vm | combine({
+                     'name': instance,
+                     'tags': ((app_config.proxmox.vm.tags | default(['_+lab', '_-debian']))
+                               + ['_' ~ instance]) | unique
+                   }, recursive=True)
+                 }}, recursive=True) }}
+
+        - name: Generate the Home Assistant VM address
+          ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+          vars:
+            network_name: "{{ app_config.proxmox.network | default('', true) }}"
+            pool_name: "{{ app_config.proxmox.pool | default('') }}"
+            requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+
+        - name: Set the VM address in the platform config
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({
+                'proxmox': {'vm': {'ip_address': homelabinfra_instance.network.ip_address}}
+              }, recursive=True) }}
+
+        - name: Derive the Home Assistant VMID
+          ansible.builtin.import_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+
+        - name: Clone the Home Assistant VM from the cloud-init template
+          ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
+
+        - name: Add the new VM to the deploy group
+          ansible.builtin.add_host:
+            name: "{{ instance }}"
+            groups: "deploy_{{ instance }}"
+            ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+            app_config: "{{ app_config }}"
+            homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+          changed_when: false
+
+        - name: Set the new VM guest name
+          ansible.builtin.set_fact:
+            _ha_guest: "{{ instance }}"
+
+    # This is deliberately after VM creation/reuse and before guest deployment. The shared
+    # task preflights the exact mapping, ownership tag, node presence, and dedicated-device
+    # conflict before it can issue qm set. A mapping already on this VM is a no-op; an
+    # identical mapping on a different VM fails rather than being adopted or moved.
+    - name: Attach the named Zigbee USB resource mapping
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
+      vars:
+        usb_passthrough_guest: "{{ _ha_guest }}"
+        usb_passthrough_device:
+          mapping: "{{ app_config.app.usb_mapping }}"
+
+- name: "Home Assistant | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+  tasks:
+    - name: Bootstrap the Home Assistant VM
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+
+    - name: Ensure Docker is installed on the VM
+      ansible.builtin.include_role:
+        name: docker
+
+    - name: Deploy Home Assistant
+      ansible.builtin.include_role:
+        name: home-assistant
+
+- name: "Home Assistant | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Resolve estate scope
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: >-
+          {{ hostvars[groups['deploy_' ~ instance][0]].app_config.routing.estate
+             | default('') }}
+
+  vars:
+    _ha_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _ha_deploy_host.ansible_host }}"
+    wiring_upstream_port: "{{ _ha_deploy_host.app_config.app.port }}"
+    wiring_subdomain: >-
+      {{ _ha_deploy_host.app_config.routing.subdomain | default(instance, true) }}
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "Home Assistant ({{ instance }})"
+    wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _ha_deploy_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _ha_deploy_host.app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Record Home Assistant on its dedicated VM
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

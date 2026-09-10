@@ -184,7 +184,7 @@
             (_ra_kind == 'kubernetes' and app_config.backup is defined)
             or
             (_ra_kind == 'docker'
-             and _ra_app in ['actual-budget', 'immich']
+             and _ra_app in ['actual-budget', 'immich', 'home-assistant']
              and app_config.backup.enabled | default(false) | bool
              and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
@@ -261,7 +261,15 @@
                                          '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
                }}, recursive=True)
              if hostvars['localhost']._ra_app == 'actual-budget'
-             else hostvars['localhost'].restore_target_config }}
+             else (hostvars['localhost'].restore_target_config
+                   | combine({'app': {
+                       'config_path': (hostvars['localhost'].restore_target_config.app.config_path
+                                       | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
+                                                 '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
+                     }}, recursive=True)
+                   if hostvars['localhost']._ra_app == 'home-assistant'
+                   else hostvars['localhost'].restore_target_config) }}
+        home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
         homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
         restore_target: "{{ hostvars['localhost']._ra_target }}"

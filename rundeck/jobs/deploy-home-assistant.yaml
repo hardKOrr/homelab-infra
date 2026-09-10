@@ -1,0 +1,41 @@
+# Deploy Home Assistant. Rendered and imported by rundeck/render-job.py.
+- id: 8f2e5b1e-3b1a-4e95-8d0f-76ea5d0a0c2f
+  uuid: 8f2e5b1e-3b1a-4e95-8d0f-76ea5d0a0c2f
+  name: Deploy Home Assistant
+  group: Applications/Home Automation/Smart Home/Home Assistant
+  description: |-
+    Deploy or converge **Home Assistant** as Docker on its own Debian VM.
+
+    - **Dedicated guest:** the VM is not an LXC and is not a shared Docker stack host.
+    - **USB authority:** the Zigbee coordinator must be an existing Proxmox USB resource
+      mapping declared `mode: dedicated`, `kind: usb`, and named in the instance config.
+      The job never accepts a raw vendor:product identity or adopts an untagged binding.
+    - **Secrets:** integration credentials are the hidden Vaultwarden field
+      `integration_credentials` in `homelab-infra/apps/<instance>` and logs are redacted.
+    - **Recovery:** the app-owned backup archives Home Assistant's complete `/config`
+      state to PBS; restore is plan-first and replaces state only with overwrite=true.
+    - **Rerun:** the VM, mapping assignment, Docker project, credentials, provider wiring,
+      and health check converge without replacing existing state.
+
+    Before live deployment, record the instance, Proxmox target, VM, guest serial path, and
+    exact USB resource mapping. Live-lab execution is deferred to the isolated acceptance lane.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Home Assistant instance. Enter another name for a disposable restore target.'
+    required: true
+    value: home-assistant
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/home-assistant.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/home-assistant.yml -e "instance=$RD_OPTION_INSTANCE"

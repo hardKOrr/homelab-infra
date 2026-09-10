@@ -1,0 +1,35 @@
+# Home Assistant runs in its own Docker-on-VM guest because the Zigbee coordinator is a
+# dedicated USB device. The named mapping is created by the operator in Proxmox first and
+# declared under proxmox.devices in config/proxmox.yml with mode: dedicated, kind: usb.
+# Do not put integration credentials in this file. Store the JSON object in hidden
+# Vaultwarden field homelab-infra/apps/<instance>/integration_credentials instead.
+
+app:
+  image: ghcr.io/home-assistant/home-assistant:stable
+  port: 8123
+  usb_mapping: home-assistant-zigbee
+  usb_device_path: /dev/ttyUSB0
+  # proxmox.ip_address may pin the VM address; otherwise the selected network allocates it.
+
+proxmox:
+  # network: shared
+  # ip_address: 192.168.1.80
+  # vm:
+  #   cores: 4
+  #   memory: 8192
+  #   disk_size: 64
+
+routing:
+  # subdomain: home-assistant
+  # access: internal
+  # identity: catalog
+
+backup:
+  # Home Assistant's config/state, including integration state and generated secrets, is
+  # archived application-consistently to PBS. USB is hardware, not part of the archive.
+  enabled: true
+  application_consistent: true
+  # schedule: "0 3 * * *"
+  # retention_days: 14
+  # datastore: REPLACE_WITH_PBS_DATASTORE
+  # backup_id: ""
