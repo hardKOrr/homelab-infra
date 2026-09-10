@@ -81,4 +81,3 @@ def validate_device_modes(proxmox, report):
             "without contending with a dedicated VM"
             % (right[2], right[1], left[2], left[1]),
         )
-        break

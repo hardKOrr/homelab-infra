@@ -184,6 +184,23 @@ check(
     any("igpu-b" in key for key, _ in device_mode_errors(mixed_shared_and_igpu)),
     True,
 )
+three_node_errors = device_mode_errors({
+    **mixed_shared_and_igpu,
+    "devices": {
+        **mixed_shared_and_igpu["devices"],
+        "igpu-c": {
+            "node": "pve-c",
+            "kind": "igpu",
+            "mode": "shared",
+            "identifiers": ["/dev/dri/renderD128", "0000:02:00.0"],
+        },
+    },
+})
+check(
+    "all offending nodes in a three-node mixed configuration are reported",
+    [key for key, _ in three_node_errors],
+    ["proxmox.devices.igpu-b.mode", "proxmox.devices.igpu-c.mode"],
+)
 check(
     "uniform shared iGPU modes across nodes pass",
     bool(device_mode_errors({
