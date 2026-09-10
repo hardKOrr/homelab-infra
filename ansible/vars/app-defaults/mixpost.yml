@@ -20,6 +20,14 @@ mixpost_defaults:
 
   hosting: kubernetes
 
+  # The Kubernetes CronJob and namespaced restore role are the application's native
+  # recovery method. A capability is explicit rather than inferred from backup files.
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   # Which cluster deployment to land on. Matches the `instance` of the k3s cluster job,
   # so a lab running two clusters points each app at the one it belongs to.
   cluster: k3s-cluster

@@ -35,6 +35,7 @@
 
   vars:
     _ba_app: "{{ app | default(instance, true) }}"
+    _ba_method: "{{ method | default('native', true) }}"
 
   pre_tasks:
     - name: Load platform vars
@@ -76,6 +77,26 @@
         _ba_kind: >-
           {{ app_config.hosting
              | default('docker' if app_config.stack is defined else 'native', true) }}
+
+    # Name the existing CronJob/role path as the native method. Product-specific
+    # non-Kubernetes exporters can declare another backup_playbook and use this same
+    # contract from their own entry point without changing the method vocabulary.
+    - name: Resolve the declared native recovery capability
+      ansible.builtin.include_tasks: ../../tasks/recovery/resolve-method.yml
+      vars:
+        recovery_app: "{{ _ba_app }}"
+        recovery_app_config: "{{ app_config }}"
+        recovery_instance: "{{ instance }}"
+        recovery_method_requested: "{{ _ba_method }}"
+        recovery_destination_requested: existing
+        recovery_operation: backup
+
+    - name: Require Backup App's native method
+      ansible.builtin.assert:
+        that: recovery_method_resolved == 'native'
+        fail_msg: >-
+          Backup App executes the native recovery method only; instance={{ instance }}
+          declared method={{ recovery_method_resolved }}.
 
     - name: Assert this app has an application backup
       ansible.builtin.assert:

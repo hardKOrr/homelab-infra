@@ -4,6 +4,12 @@
 home_assistant_defaults:
   hosting: docker
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   proxmox:
     vm:
       cores: 2

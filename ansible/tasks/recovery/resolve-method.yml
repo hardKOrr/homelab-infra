@@ -1,0 +1,106 @@
+---
+# Resolve the shared recovery contract for one application operation.
+#
+# Required inputs:
+#   recovery_app_config             merged app defaults + instance config
+#   recovery_instance               instance that owns the artifact
+#   recovery_method_requested       optional method extra-var
+#   recovery_destination_requested  optional new|existing extra-var
+#   recovery_operation              backup or restore
+#
+# The task deliberately resolves declarations, not provider mechanics. A PBS guest
+# implementation may be added by #89 and a project-managed implementation by a product
+# issue without changing this seam. A non-Kubernetes native implementation supplies its
+# own product-specific playbook or role task; it enters through the same declaration and
+# receives the same operation inputs as the Kubernetes path.
+
+- name: Recovery | Require an application configuration mapping
+  ansible.builtin.assert:
+    that:
+      - recovery_app_config is defined
+      - recovery_app_config is mapping
+    fail_msg: >-
+      {{ recovery_instance | default('The requested instance') }} cannot resolve recovery:
+      the merged application configuration is missing.
+
+- name: Recovery | Read the explicit capability declaration
+  ansible.builtin.set_fact:
+    _recovery_contract: "{{ recovery_app_config.recovery | default({}) }}"
+    _recovery_instance_name: "{{ recovery_instance | default(instance | default('unknown'), true) }}"
+    _recovery_requested_method: "{{ recovery_method_requested | default('', true) }}"
+    _recovery_requested_destination: "{{ recovery_destination_requested | default('existing', true) }}"
+
+- name: Recovery | Require an explicit method list
+  ansible.builtin.assert:
+    that:
+      - _recovery_contract is mapping
+      - _recovery_contract.methods is defined
+      - _recovery_contract.methods is sequence
+      - _recovery_contract.methods is not string
+      - _recovery_contract.methods | length > 0
+      - (_recovery_contract.methods | difference(['pbs_guest', 'native', 'project_managed'])) | length == 0
+    fail_msg: >-
+      {{ _recovery_instance_name }} has no declared recovery capability for method={{
+      _recovery_requested_method | default('unspecified', true) }} destination={{
+      _recovery_requested_destination }}. Declare recovery.methods and the matching
+      recovery method block in ansible/vars/app-defaults/{{ recovery_app | default('the app') }}.yml;
+      capabilities are never inferred from a missing file.
+
+- name: Recovery | Require an explicit method when more than one is declared
+  ansible.builtin.assert:
+    that:
+      - _recovery_requested_method | length > 0 or _recovery_contract.methods | length == 1
+    fail_msg: >-
+      {{ _recovery_instance_name }} declares multiple recovery methods
+      ({{ _recovery_contract.methods | join(', ') }}); method is required.
+
+- name: Recovery | Resolve the selected method and destination
+  ansible.builtin.set_fact:
+    recovery_method_resolved: "{{ _recovery_requested_method or _recovery_contract.methods[0] }}"
+    recovery_destination_resolved: "{{ _recovery_requested_destination }}"
+
+- name: Recovery | Require the selected method and destination
+  ansible.builtin.assert:
+    that:
+      - recovery_method_resolved in _recovery_contract.methods
+      - recovery_destination_resolved in ['new', 'existing']
+    fail_msg: >-
+      {{ _recovery_instance_name }} has no declared recovery capability for
+      method={{ recovery_method_resolved }} destination={{ recovery_destination_resolved }}.
+      Declare that method under recovery.methods in its app defaults; every declared method
+      must accept destination new or existing.
+
+- name: Recovery | Read the selected capability block
+  ansible.builtin.set_fact:
+    recovery_capability: "{{ _recovery_contract[recovery_method_resolved] | default({}) }}"
+
+- name: Recovery | Require the selected capability block
+  ansible.builtin.assert:
+    that:
+      - recovery_capability is mapping
+      - recovery_capability | length > 0
+    fail_msg: >-
+      {{ _recovery_instance_name }} has no declared recovery capability for
+      method={{ recovery_method_resolved }} destination={{ recovery_destination_resolved }}.
+      Add recovery.{{ recovery_method_resolved }} to its app defaults; a missing task file
+      is not a capability declaration.
+
+- name: Recovery | Validate the method-specific interface
+  ansible.builtin.assert:
+    that:
+      - >-
+        (recovery_method_resolved == 'pbs_guest'
+         and recovery_capability.applicable is defined
+         and recovery_capability.applicable | bool)
+        or
+        (recovery_method_resolved == 'native'
+         and recovery_capability.restore_playbook | default('') | length > 0
+         and recovery_capability.backup_playbook | default('') | length > 0)
+        or
+        (recovery_method_resolved == 'project_managed'
+         and recovery_capability.restore_role_task | default('') | length > 0)
+    fail_msg: >-
+      {{ _recovery_instance_name }} has no declared recovery capability for
+      method={{ recovery_method_resolved }} destination={{ recovery_destination_resolved }}.
+      Its recovery block is missing the method interface required for
+      {{ recovery_operation | default('this operation') }}.

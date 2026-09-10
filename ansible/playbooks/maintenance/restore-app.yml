@@ -10,10 +10,12 @@
 #   instance   — the instance that OWNS the backup. Required.
 #   app        — only when the instance was deployed under a different name from the app
 #                (instance mixpost-restore of app mixpost). Defaults to `instance`.
+#   method     — pbs_guest, native, or project_managed; defaults when only one is declared.
+#   destination — new or existing; defaults to existing.
 #   target     — the instance whose namespace receives the data. Defaults to `instance`,
 #                which means restoring the application over itself.
-#   snapshot   — a PBS snapshot identifier, e.g. host/mixpost/2026-08-19T03:00:00Z.
-#                Leave blank to list what PBS holds and change nothing.
+#   recovery_point — artifact identifier; blank lists what PBS holds and changes nothing.
+#   snapshot   — compatibility alias for recovery_point.
 #   overwrite  — false (default) plans and writes nothing. true performs the restore.
 #
 # ══════════════════════════════════════════════════════════════════════════════
@@ -108,7 +110,10 @@
     # the destructive path is never what an incomplete invocation does.
     _ra_app: "{{ app | default(instance, true) }}"
     _ra_target: "{{ target | default(instance, true) }}"
-    _ra_snapshot: "{{ snapshot | default('', true) }}"
+    _ra_method: "{{ method | default('', true) }}"
+    _ra_destination: "{{ destination | default('existing', true) }}"
+    # snapshot remains an additive compatibility alias for existing callers.
+    _ra_recovery_point: "{{ recovery_point | default(snapshot | default('', true), true) }}"
     _ra_overwrite: "{{ overwrite | default(false) | bool }}"
 
   pre_tasks:
@@ -177,6 +182,28 @@
         _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
         _ra_source_instance: "{{ instance }}"
 
+    # This is the common method/destination gate. It deliberately runs before any role
+    # task, so an undeclared path fails as a capability error rather than as an include_role
+    # or missing-file error.
+    - name: Resolve the declared recovery capability
+      ansible.builtin.include_tasks: ../../tasks/recovery/resolve-method.yml
+      vars:
+        recovery_app: "{{ _ra_app }}"
+        recovery_app_config: "{{ app_config }}"
+        recovery_instance: "{{ instance }}"
+        recovery_method_requested: "{{ _ra_method }}"
+        recovery_destination_requested: "{{ _ra_destination }}"
+        recovery_operation: restore
+
+    - name: Require Restore App's native role dispatch
+      ansible.builtin.assert:
+        that: recovery_method_resolved in ['native', 'project_managed']
+        fail_msg: >-
+          Restore App cannot execute method={{ recovery_method_resolved }} for
+          destination={{ recovery_destination_resolved }}. Use the method-specific recovery
+          job declared by that method; this playbook dispatches native and project-managed
+          role tasks only.
+
     - name: Assert this app has a restore path
       ansible.builtin.assert:
         that:
@@ -184,14 +211,13 @@
             (_ra_kind == 'kubernetes' and app_config.backup is defined)
             or
             (_ra_kind == 'docker'
-             and _ra_app in ['actual-budget', 'immich', 'home-assistant']
              and app_config.backup.enabled | default(false) | bool
              and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
           {{ _ra_app }} has no declared application restore path. Kubernetes roles use their
-          backup contract; supported Docker roles own their application-consistent archive
-          and restore tasks. Other Docker and native applications remain on whole-guest PBS
-          recovery.
+          backup contract; a declared Docker native/project-managed role owns its
+          application-consistent archive and restore tasks. Other applications remain on
+          whole-guest PBS recovery.
 
     - name: Resolve the Docker target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
@@ -204,10 +230,12 @@
     - name: Restore the application
       ansible.builtin.include_role:
         name: "{{ _ra_app }}"
-        tasks_from: restore
+        tasks_from: "{{ recovery_capability.restore_role_task | default('restore') }}"
       vars:
         restore_target: "{{ _ra_target }}"
-        restore_snapshot: "{{ _ra_snapshot }}"
+        restore_destination: "{{ recovery_destination_resolved }}"
+        restore_method: "{{ recovery_method_resolved }}"
+        restore_snapshot: "{{ _ra_recovery_point }}"
         restore_overwrite: "{{ _ra_overwrite }}"
       when: _ra_kind == 'kubernetes'
 
@@ -220,7 +248,7 @@
         notify_title: "{{ _ra_target }} restored from backup"
         notify_priority: high
         notify_message: >-
-          {{ _ra_target }} was restored from PBS snapshot {{ _ra_snapshot }},
+          {{ _ra_target }} was restored from recovery point {{ _ra_recovery_point }},
           taken from {{ instance }}'s backups. Its database and storage volume were
           replaced. Verify the application before trusting it.
       when:
@@ -249,7 +277,7 @@
     - name: Restore the application-owned Docker archive
       ansible.builtin.include_role:
         name: "{{ hostvars['localhost']._ra_app }}"
-        tasks_from: restore
+        tasks_from: "{{ hostvars['localhost'].recovery_capability.restore_role_task | default('restore') }}"
       vars:
         instance: "{{ hostvars['localhost']._ra_target }}"
         actual_budget_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
@@ -273,7 +301,9 @@
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
         homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
         restore_target: "{{ hostvars['localhost']._ra_target }}"
-        restore_snapshot: "{{ hostvars['localhost']._ra_snapshot }}"
+        restore_destination: "{{ hostvars['localhost'].recovery_destination_resolved }}"
+        restore_method: "{{ hostvars['localhost'].recovery_method_resolved }}"
+        restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"
       when: app_target_kind | default('native') == 'docker'
@@ -284,8 +314,8 @@
         notify_title: "{{ app_target_instance }} restored from backup"
         notify_priority: high
         notify_message: >-
-          {{ app_target_instance }} was restored from PBS snapshot
-          {{ hostvars['localhost']._ra_snapshot }}. Its complete application-native data
+          {{ app_target_instance }} was restored from recovery point
+          {{ hostvars['localhost']._ra_recovery_point }}. Its complete application-native data
           directory was replaced. Verify the application before trusting it.
       when: _application_restore_complete | default(false) | bool
 
