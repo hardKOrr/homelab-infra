@@ -29,6 +29,12 @@ maintainerr_defaults:
 
   hosting: kubernetes
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   # NO `cluster:` HERE, DELIBERATELY.
   #
   # tasks/kubernetes/resolve-cluster.yml — the adapter every Kubernetes app role,

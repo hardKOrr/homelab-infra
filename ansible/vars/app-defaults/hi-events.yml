@@ -28,6 +28,12 @@ hi_events_defaults:
 
   hosting: kubernetes
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   # NO `cluster:` HERE, DELIBERATELY — see the identical comment in
   # vars/app-defaults/jellyseerr.yml.
 

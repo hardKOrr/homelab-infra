@@ -25,12 +25,38 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(row['guest_snapshot'], 'fresh')
         for key in ['artifact_identity', 'artifact_integrity', 'application_consistency', 'restore_test', 'application_recoverability']:
             self.assertEqual(row[key], 'unverified')
+        self.assertEqual(row['state'], 'verified_fresh')
+        self.assertEqual(row['method'], 'pbs_guest')
+        self.assertEqual(row['artifact_id'], self.artifact['volid'])
+        self.assertEqual(row['captured_at'], '1970-01-01T00:16:40Z')
+        self.assertEqual(row['restore_tested_at'], None)
+        self.assertEqual(row['exclusions'], [])
+        self.assertEqual(row['evidence'], {key: row[key] for key in (
+            'instance', 'method', 'state', 'artifact_id', 'captured_at',
+            'restore_tested_at', 'exclusions', 'notes')})
+
+    def test_configured_without_capture_is_not_missing_evidence(self):
+        row = self.row(artifacts=[])
+        self.assertEqual(row['guest_snapshot'], 'missing')
+        self.assertEqual(row['state'], 'configured_unverified')
+        self.assertEqual(row['artifact_id'], None)
+
+    def test_evidence_record_preserves_native_artifact_identity(self):
+        record = audit.evidence_record(
+            'mixpost', 'native', 'restore_tested',
+            artifact_id='host/mixpost/2026-09-05T00:00:00Z',
+            captured_at='2026-09-05T00:00:00Z',
+            restore_tested_at='2026-09-06T00:00:00Z',
+        )
+        self.assertEqual(record['artifact_id'], 'host/mixpost/2026-09-05T00:00:00Z')
+        self.assertEqual(record['restore_tested_at'], '2026-09-06T00:00:00Z')
 
     def test_missing_stale_future_and_unreadable_are_distinct(self):
         self.assertEqual(self.row(artifacts=[])['guest_snapshot'], 'missing')
         self.assertEqual(self.row(now=1300)['guest_snapshot'], 'stale')
         self.assertEqual(self.row(now=900)['guest_snapshot'], 'future')
         self.assertEqual(self.row(artifacts=[], unreadable=['store'])['guest_snapshot'], 'unknown')
+        self.assertEqual(self.row(artifacts=[], unreadable=['store'])['state'], 'configured_unverified')
         self.assertEqual(self.row(config=None)['config_read'], 'unknown')
 
     def test_wrong_type_and_vmid_do_not_match(self):
@@ -83,7 +109,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['guests'][0]['schedule'], 'unknown')
         self.assertEqual(result['guests'][0]['guest_snapshot'], 'unknown')
         self.assertNotIn('SECRET', str(result))
-        self.assertEqual(len(audit.collect('pve-1', include_legacy=True, reader=reader)['guests']), 2)
+        collected = audit.collect('pve-1', include_legacy=True, reader=reader)
+        self.assertEqual(len(collected['guests']), 2)
+        self.assertEqual(len(collected['evidence']), 2)
 
 
 if __name__ == '__main__':

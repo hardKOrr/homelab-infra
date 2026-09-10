@@ -17,6 +17,13 @@ class ReadError(Exception):
     """A read failed; its raw output must not be reported."""
 
 
+RECOVERY_METHODS = ('pbs_guest', 'native', 'project_managed')
+RECOVERY_DESTINATIONS = ('new', 'existing')
+EVIDENCE_STATES = (
+    'missing', 'configured_unverified', 'stale', 'verified_fresh', 'restore_tested'
+)
+
+
 def get(path, **params):
     argv = ['pvesh', 'get', path, '--output-format', 'json']
     for key, value in params.items():
@@ -104,6 +111,62 @@ def timestamp(value):
         return None
 
 
+def iso_timestamp(value):
+    """Return a UTC evidence timestamp without changing an artifact identifier."""
+    numeric = timestamp(value)
+    if numeric is not None:
+        return datetime.datetime.fromtimestamp(
+            numeric, datetime.timezone.utc
+        ).isoformat(timespec='seconds').replace('+00:00', 'Z')
+    return value if isinstance(value, str) and value else None
+
+
+def evidence_record(instance, method, state, artifact_id=None, captured_at=None,
+                    restore_tested_at=None, exclusions=None, notes=''):
+    """Build the shared recovery evidence record used by audit and product paths."""
+    if method not in RECOVERY_METHODS:
+        raise ValueError(f'unknown recovery method: {method}')
+    if state not in EVIDENCE_STATES:
+        raise ValueError(f'unknown recovery evidence state: {state}')
+    return {
+        'instance': str(instance),
+        'method': method,
+        'state': state,
+        # Deliberately keep this value as supplied. PBS/native consumers use their own
+        # identifiers and the evidence layer must not repackage them into a new archive.
+        'artifact_id': artifact_id,
+        'captured_at': iso_timestamp(captured_at),
+        'restore_tested_at': iso_timestamp(restore_tested_at),
+        'exclusions': list(exclusions or []),
+        'notes': str(notes or ''),
+    }
+
+
+def evidence_state(artifact_state, schedule_state):
+    """Map collector facts to the exact shared evidence-state vocabulary."""
+    if artifact_state == 'fresh':
+        return 'verified_fresh'
+    if artifact_state == 'stale':
+        return 'stale'
+    if artifact_state == 'missing' and schedule_state in ('missing', 'disabled'):
+        return 'missing'
+    # Future-dated, unreadable, and configured-without-a-candidate evidence all remain
+    # explicitly unverified. None of those conditions proves that the artifact is absent.
+    return 'configured_unverified'
+
+
+def evidence_notes(artifact_state, schedule_state, unreadable):
+    if artifact_state == 'future':
+        return 'The newest candidate is future-dated; freshness is unverified.'
+    if unreadable:
+        return 'Backup inventory or storage evidence was unreadable.'
+    if artifact_state == 'missing' and schedule_state == 'enabled':
+        return 'A backup schedule is configured, but no matching artifact was observed.'
+    if schedule_state == 'unknown':
+        return 'Backup schedule evidence was unreadable.'
+    return ''
+
+
 def report_guest(guest, jobs, config, artifacts, unreadable, now, max_age):
     vmid = str(guest['vmid'])
     kind = 'ct' if guest['type'] == 'lxc' else 'vm'
@@ -129,6 +192,15 @@ def report_guest(guest, jobs, config, artifacts, unreadable, now, max_age):
         artifact = {key: item.get(key) for key in ('volid', 'ctime', 'size')}
         artifact['age_hours'] = round(age / 3600, 2)
     review = exclusions(guest['type'], config) if config is not None else None
+    evidence = evidence_record(
+        guest.get('name') or vmid,
+        'pbs_guest',
+        evidence_state(artifact_state, state),
+        artifact_id=artifact.get('volid') if artifact else None,
+        captured_at=artifact.get('ctime') if artifact else None,
+        exclusions=review,
+        notes=evidence_notes(artifact_state, state, bool(unreadable)),
+    )
     return {
         'vmid': guest['vmid'], 'name': guest.get('name'), 'node': guest['node'],
         'type': guest['type'],
@@ -141,6 +213,10 @@ def report_guest(guest, jobs, config, artifacts, unreadable, now, max_age):
         'artifact_identity': 'unverified', 'artifact_integrity': 'unverified',
         'application_consistency': 'unverified', 'restore_test': 'unverified',
         'application_recoverability': 'unverified',
+        # The top-level fields keep the per-guest report easy to consume. `evidence` is
+        # also collected at the document root for #76/#80 rollups.
+        **evidence,
+        'evidence': evidence,
     }
 
 
@@ -200,6 +276,8 @@ def collect(node, include_legacy=False, max_age_hours=36, reader=get):
             'Guest config does not enumerate application databases, secrets or guest-mounted external storage.',
             'Pool selectors require a separate membership check.',
         ],
+        'evidence_schema_version': 1,
+        'evidence': [row['evidence'] for row in rows],
         'guests': rows,
     }
 

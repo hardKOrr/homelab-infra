@@ -5,6 +5,12 @@
 immich_defaults:
   stack: photos
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     image: ghcr.io/immich-app/immich-server:v3.1.0
     machine_learning_image: ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino

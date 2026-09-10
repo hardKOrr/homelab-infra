@@ -405,6 +405,58 @@ top of itself and would miss any window that opened while the control plane was 
 the resolved answer (`mode`, `due`, `text`, `cron`, `oncalendar`, `monitor_only`,
 `next_open`, `conflict`) and never re-derive it.
 
+### Recovery contract
+
+`recovery:` is an explicit capability declaration in each app's defaults block. It is
+merged with the instance file in the same recursive app-layer merge as `backup:` and
+`hosting:`. A missing method is not inferred from a missing playbook: it means that method
+is not declared and a recovery request fails with a missing-capability error.
+
+```yaml
+mixpost_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+    # project_managed:
+    #   restore_role_task: restore
+```
+
+The method axis is `pbs_guest`, `native`, or `project_managed`. The destination axis is
+independent and is always `new` or `existing`; all three methods accept both. A native
+non-Kubernetes application plugs in by naming its product-specific backup/restore
+playbook (or role task) and receives the same `instance`, `method`, `destination`,
+`target`, `recovery_point`, and `overwrite` inputs as the Kubernetes implementation.
+
+Recovery jobs use `instance`, `method`, `destination`, `target`, `recovery_point`, and
+`overwrite`; `method` is required when more than one method is declared. The shared
+resolver is [`tasks/recovery/resolve-method.yml`](../tasks/recovery/resolve-method.yml),
+which validates the declaration before any provider or role task runs. `restore-app.yml`
+keeps `snapshot` as a compatibility alias for `recovery_point`.
+
+Every implementation writes one evidence shape. `state` is exactly one of `missing`,
+`configured_unverified`, `stale`, `verified_fresh`, or `restore_tested`:
+
+```json
+{
+  "instance": "mixpost",
+  "method": "native",
+  "state": "verified_fresh",
+  "artifact_id": "host/mixpost/2026-08-19T03:00:00Z",
+  "captured_at": "2026-08-19T03:00:00Z",
+  "restore_tested_at": null,
+  "exclusions": [],
+  "notes": ""
+}
+```
+
+`audit.py` emits the `pbs_guest` form and product paths must preserve `artifact_id` as-is.
+A configured path without a captured artifact is `configured_unverified`; freshness does
+not claim integrity or a successful restore. Recovery paths reuse `notify.yml` and
+`assert-no-degradations.yml`, so an undelivered notification or an inactive target after
+a failed restore cannot report success with a caveat.
+
 ### Application database provisioning
 
 A SQL-consuming catalog application must declare one named backend and include `tasks/database/provision.yml` before its workload is applied. The backend-independent request is `database_provision_app_instance` plus `database_provision_config: {provider: postgresql|mariadb|mysql, instance, name, role, credential_action: reuse|rotate, extensions: []|[vector]}`. `reuse` is the default. The task rejects an unregistered or provider-mismatched backend and unsafe identifiers. The optional PostgreSQL `vector` extension is installed and enabled on the named database backend before the consumer starts; no arbitrary extension or package name is accepted. PostgreSQL creates a non-administrative login; MariaDB and MySQL grant the role only `ALL` on the requested database from the backend's declared client hosts. A normal rerun reuses the canonical password and does not alter an existing role; `rotate` explicitly generates, records, then applies a replacement.

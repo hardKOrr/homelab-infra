@@ -10,6 +10,12 @@
 actual_budget_defaults:
   stack: services
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     image: docker.io/actualbudget/actual-server:latest
     port: 5006

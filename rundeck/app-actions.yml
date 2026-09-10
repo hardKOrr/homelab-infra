@@ -1,5 +1,19 @@
 schema_version: 1
 
+# Recovery actions share these option names. The job templates carry the user-facing
+# descriptions and transition aliases; keeping the vocabulary here lets future actions
+# (#78/#89) add a method without inventing a product-specific parameter set.
+recovery_parameter_contract:
+  instance: required
+  method: pbs_guest|native|project_managed (required when more than one is declared)
+  destination: new|existing
+  target: defaults to instance
+  recovery_point: blank lists available points and changes nothing
+  overwrite: false (plan-only, default)|true (execute)
+legacy_recovery_aliases:
+  snapshot: recovery_point
+  backup_volume: recovery_point
+
 # Day-2 actions that exist once per application instead of once for the whole lab.
 #
 # Each entry names a template in rundeck/jobs/. The renderer expands one template into one
@@ -23,6 +37,7 @@ actions:
   backup:
     template: backup-app.yaml
     hosting: [kubernetes]
+    recovery_parameters: [instance, method]
 
   pdm_backup:
     template: backup-pdm.yaml
@@ -60,6 +75,7 @@ actions:
   restore:
     template: restore-app.yaml
     hosting: [kubernetes]
+    recovery_parameters: [instance, method, destination, target, recovery_point, overwrite]
 
   pdm_restore:
     template: restore-pdm.yaml

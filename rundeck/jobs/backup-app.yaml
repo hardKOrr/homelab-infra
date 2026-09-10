@@ -40,6 +40,12 @@
     value: '%SLUG%'
     valuesUrl: file:/var/lib/rundeck/app-instances/%SLUG%.json
     enforced: false
+  - name: method
+    description: 'Recovery method. This action runs the declared application-native method.'
+    required: false
+    value: native
+    values: [native]
+    enforced: true
   sequence:
     keepgoing: false
     strategy: node-first
@@ -54,6 +60,9 @@
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
           ARGS+=(-e "app=%SLUG%")
+          if [ -n "${RD_OPTION_METHOD:-}" ]; then
+            ARGS+=(-e "method=$RD_OPTION_METHOD")
+          fi
 
           # lab-run refreshes the checkout, runs config-doctor, and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
