@@ -1,0 +1,94 @@
+---
+- name: Home Assistant | Resolve hidden integration credentials
+  ansible.builtin.set_fact:
+    _ha_vault_item: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}"
+  no_log: true
+
+- name: Home Assistant | Parse the Vaultwarden integration credential object
+  ansible.builtin.set_fact:
+    _ha_integration_credentials: >-
+      {{ _ha_vault_item.integration_credentials
+         if (_ha_vault_item.integration_credentials | default('{}', true)) is mapping
+         else (_ha_vault_item.integration_credentials | default('{}', true) | from_json) }}
+  no_log: true
+
+- name: Home Assistant | Assert the VM device contract reached the role
+  ansible.builtin.assert:
+    that:
+      - app_config.app.usb_mapping | default('') | length > 0
+      - app_config.app.usb_device_path | default('') is match('^/dev/')
+      - _ha_integration_credentials is mapping
+    fail_msg: >-
+      Home Assistant requires an explicit Proxmox USB resource mapping, its guest serial
+      device path, and a JSON object of integration credentials from Vaultwarden. Raw
+      vendor:product identities and credential values in config/apps are not accepted.
+  no_log: true
+
+- name: Home Assistant | Create the project and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ home_assistant_project_dir }}"
+    - "{{ app_config.app.config_path }}"
+
+- name: Home Assistant | Store integration credentials in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: home-assistant
+      instance: "{{ instance }}"
+      integration_credentials: "{{ _ha_integration_credentials | to_json }}"
+    vault_item_secret_fields: [integration_credentials]
+  no_log: true
+
+- name: Home Assistant | Render the hidden integration secrets
+  ansible.builtin.template:
+    src: secrets.yaml.j2
+    dest: "{{ home_assistant_secrets_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Home Assistant
+
+- name: Home Assistant | Render the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ home_assistant_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart Home Assistant
+
+- name: Home Assistant | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ home_assistant_project_dir }}"
+
+- name: Home Assistant | Start the application
+  community.docker.docker_compose_v2:
+    project_src: "{{ home_assistant_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Home Assistant | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Home Assistant | Wait for the health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/"
+    status_code: 200
+  register: _ha_health
+  until: _ha_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
+
+- name: Home Assistant | Export the application URL
+  ansible.builtin.set_fact:
+    home_assistant_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

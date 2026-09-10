@@ -205,18 +205,27 @@
     - name: Classify how the app is hosted
       ansible.builtin.set_fact:
         _rm_kind: >-
-          {{ app_config.hosting if (app_config.hosting | default('')) in ['kubernetes', 'appliance']
+          {{ app_config.hosting if (app_config.hosting | default('')) in ['kubernetes', 'appliance', 'docker']
              else ('docker' if app_config.stack is defined else 'native') }}
 
-    # Removal resolves the stack host through the SAME estate-aware identity the deploy
-    # used, so removing an estate-scoped app cannot reach into another estate's host. The
-    # rule is one line in two places by necessity — this play never calls
-    # find-or-create-host.yml, which would provision the host it is trying to empty.
+    # Removal resolves a shared Docker stack through the SAME estate-aware identity the
+    # deploy used. Docker-on-VM apps have no stack tag; their own VM carries _<instance>,
+    # so removal never creates a host while trying to empty it.
     - name: Resolve the stack host's inventory group
       ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
       vars:
         tag_group_tag: "_.stack+{{ _rm_stack_id }}"
-      when: _rm_kind == 'docker'
+      when:
+        - _rm_kind == 'docker'
+        - app_config.stack | default('') | length > 0
+
+    - name: Resolve the Docker-on-VM inventory group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ instance }}"
+      when:
+        - _rm_kind == 'docker'
+        - app_config.stack | default('') | length == 0
 
     - name: Select the host running the app
       ansible.builtin.set_fact:
@@ -245,7 +254,10 @@
     - name: Report a missing host
       ansible.builtin.debug:
         msg: >-
-          No {{ 'stack host tagged _.stack+' ~ _rm_stack_id if _rm_kind == 'docker'
+          No {{ ('stack host tagged _.stack+' ~ _rm_stack_id
+                  if app_config.stack | default('') | length > 0
+                  else 'Docker-on-VM guest tagged _' ~ instance)
+                if _rm_kind == 'docker'
                 else 'Proxmox guest named ' ~ instance }} is in inventory —
           nothing to stop. Unwiring completed; {{ instance }} is fully removed.
       when: _rm_hosts | length == 0
@@ -467,6 +479,20 @@
           when:
             - _rm_delete_data | bool
             - item | length > 0
+
+    # Home Assistant's USB coordinator is a dedicated VM mapping. Detach it only after
+    # Compose has stopped and only when the USB seam can prove this platform created the
+    # mapping; an untagged operator assignment remains in place for manual recovery.
+    - name: Detach Home Assistant's project-owned Zigbee USB mapping
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough.yml
+      vars:
+        usb_passthrough_guest: "{{ inventory_hostname }}"
+        usb_passthrough_device:
+          mapping: "{{ app_config.app.usb_mapping }}"
+      when:
+        - remove_kind == 'docker'
+        - (remove_app | default(instance)) == 'home-assistant'
+        - app_config.app.usb_mapping | default('') | length > 0
 
     # A shared render-node bind is detached only after its Compose services stop.
     # The attach task's provenance tag protects an unowned/pre-existing bind from removal.

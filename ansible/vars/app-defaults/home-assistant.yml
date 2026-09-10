@@ -1,0 +1,52 @@
+---
+# Home Assistant is Docker on a dedicated Debian VM. The VM boundary is required by
+# the dedicated USB/Zigbee mapping; Docker itself is the ordinary application runtime.
+home_assistant_defaults:
+  hosting: docker
+
+  proxmox:
+    vm:
+      cores: 2
+      memory: 4096
+      disk_size: 32
+      agent: 1
+      onboot: true
+      description: "Home Assistant, created by homelab-infra"
+      # Home Assistant owns this VM; it is not a shared Docker stack host.
+      tags: [_+lab, _-debian]
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
+  app:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    port: 8123
+    config_path: "/opt/{{ instance }}/config"
+    # Both values are deliberately empty/defaulted to a common guest path. The mapping
+    # must be named by the operator and the path must match the coordinator's guest node.
+    usb_mapping: ""
+    usb_device_path: /dev/ttyUSB0
+    # Integration credentials are a JSON object in the hidden Vaultwarden field
+    # integration_credentials, not in config/apps/<instance>.yml.
+
+  routing:
+    subdomain: home-assistant
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  # The entire Home Assistant config directory is quiesced and archived as one PBS
+  # recovery unit. It includes the generated secrets file and integration state.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

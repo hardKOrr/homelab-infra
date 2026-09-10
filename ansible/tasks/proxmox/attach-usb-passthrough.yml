@@ -29,6 +29,8 @@
 #                            the physical port the coordinator is plugged into. This seam
 #                            does not create the mapping; it only asserts one already
 #                            exists and assigns it.
+#   homelabinfra_config.proxmox.devices — the matching physical-device declaration must
+#                                        explicitly say mode: dedicated and kind: usb.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -43,6 +45,29 @@
       attach-usb-passthrough.yml needs usb_passthrough_guest and
       usb_passthrough_device.mapping (a USB resource mapping name, not a raw
       vendorid:productid pair — see docs/specs/device-passthrough.md).
+
+# Mode is an authored physical-device fact, not something this seam infers from current
+# VM configuration. Keep the check ahead of the first Proxmox query so a shared declaration,
+# missing declaration, or node mismatch cannot mutate a guest and fail later.
+- name: USB passthrough | Assert the physical device is declared dedicated
+  ansible.builtin.assert:
+    that:
+      - _usb_device_declarations | length == 1
+      - (_usb_device_declarations | map(attribute='value.mode') | first | default('', true)) == 'dedicated'
+      - (_usb_device_declarations | map(attribute='value.kind') | first | default('', true)) == 'usb'
+    fail_msg: >-
+      USB mapping {{ usb_passthrough_device.mapping }} must match exactly one physical-device
+      declaration with mode: dedicated in homelabinfra_config.proxmox.devices. A shared
+      declaration cannot be assigned exclusively to a VM.
+  vars:
+    _usb_device_candidates: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
+         | selectattr('value.identifiers', 'defined')
+         | selectattr('value.identifiers', 'contains', usb_passthrough_device.mapping) | list }}
+    _usb_device_declarations: >-
+      {{ (_usb_device_candidates | selectattr('value.node', 'undefined') | list)
+         + (_usb_device_candidates | selectattr('value.node', 'defined')
+            | selectattr('value.node', 'equalto', homelabinfra_config.proxmox.node) | list) }}
 
 - name: USB passthrough | Verify the mapping exists on the cluster
   ansible.builtin.command:
