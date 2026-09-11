@@ -122,6 +122,7 @@ bash gate/test-homepage-dashboard.sh || rc=1
 python3 gate/test-backup-audit.py || rc=1
 python3 gate/test-recovery-contract.py || rc=1
 python3 gate/test-guest-recovery-contract.py || rc=1
+python3 gate/test-runner-recovery-contract.py || rc=1
 bash gate/test-config-fixtures.sh || rc=1
 bash gate/test-mail-contract.sh || rc=1
 bash gate/test-config-loading.sh || rc=1

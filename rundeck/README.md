@@ -31,12 +31,25 @@ contracts.
 Everything is idempotent — re-running converges an existing container, rotates no
 credential, and overwrites no answer you already gave. Override any default with an
 environment variable (`VMID`, `CT_IP`, `CT_GW`, `CT_STORAGE`, `TEMPLATE`, `REPO_URL`,
-`REPO_BRANCH`, …); see the header of the script.
+`REPO_BRANCH`, `DEPLOY_VAULTWARDEN`, `RUNDECK_PACKAGE_VERSION_PIN`,
+`PLATFORM_SSH_KEY_FILE`, `ANSIBLE_CORE_SPEC`, …); see the header of the script.
 
 `DEPLOY_VAULTWARDEN=1` is the default. Set `DEPLOY_VAULTWARDEN=0` only for a
 runner-only recovery or diagnostic run. The shell script does not contain a second
 Vaultwarden provisioner: it invokes the normal Ansible playbook, and later inventory
 refreshes find `tag_vaultwarden` and reuse that guest.
+
+A recovery rebuild can set `RUNDECK_PACKAGE_VERSION_PIN` to the exact Debian package
+version recorded in the handover. The bootstrap verifies that version and records the
+installed Rundeck and Ansible versions plus the AES-GCM storage format. This makes the
+compatibility boundary explicit before persisted database or encrypted Key Storage state
+is trusted; it does not rotate or replace any identity or decryption material.
+
+The database, encrypted Key Storage, converter password, runner identity, and execution
+evidence are not reproducible from this checkout. The independent retention and restore
+contract is [RUNNER-RECOVERY.md](RUNNER-RECOVERY.md); it also covers the shared
+[new/existing guest restore](jobs/restore-guest.yaml) route and the offline route when the
+original runner is unavailable.
 
 ### What it asks
 
@@ -292,6 +305,12 @@ key and job memory.
 The pre-cutover `keys/proxmox/api-token`, `keys/rundeck/homelab-ssh`, and Cloudflare
 bootstrap entries are imported into their canonical Vaultwarden items, verified, then
 deleted. Recovery is documented in [VAULTWARDEN-RECOVERY.md](VAULTWARDEN-RECOVERY.md).
+
+When the control plane itself is lost, use [RUNNER-RECOVERY.md](RUNNER-RECOVERY.md) for
+the dependency-ordered procedure. It starts with independently available PBS access and
+decryption material, restores a stopped/isolated runner, restores both converter
+namespaces before ordinary jobs, and only then recovers Vaultwarden and its dependent
+services. It does not authorize cutover, credential rotation, source shutdown, or cleanup.
 
 ### Rundeck API token rotation
 
