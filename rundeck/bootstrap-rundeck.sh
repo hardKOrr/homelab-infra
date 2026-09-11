@@ -126,8 +126,17 @@ DEPLOY_VAULTWARDEN="${DEPLOY_VAULTWARDEN:-1}"
 # somewhere else, or set SSH_PUBKEY to a single literal key, to override.
 SSH_PUBKEY_FILE="${SSH_PUBKEY_FILE:-/root/.ssh/authorized_keys}"
 SSH_PUBKEY="${SSH_PUBKEY:-}"
+# Optional recovery input for a rebuilt runner. The file is copied through pct push
+# into a transient guest path, fingerprint-checked, and removed by the guest trap.
+# Supplying it preserves the canonical platform identity instead of generating a new one.
+PLATFORM_SSH_KEY_FILE="${PLATFORM_SSH_KEY_FILE:-}"
 
 ANSIBLE_CORE_SPEC="${ANSIBLE_CORE_SPEC:-ansible-core==2.18.*}"
+# A fresh rebuild normally takes the current package from the configured Rundeck
+# repository. Recovery of a persisted Rundeck database/key store can instead pin the
+# exact package version recorded in the handover file. An unavailable version fails
+# before any restored state is trusted; it must not be papered over by rotating keys.
+RUNDECK_PACKAGE_VERSION_PIN="${RUNDECK_PACKAGE_VERSION_PIN:-}"
 
 REPO_DIR=/var/lib/rundeck/homelab-infra
 VENV_DIR=/opt/homelab-ansible
@@ -344,7 +353,10 @@ case "$DEPLOY_VAULTWARDEN" in
   0|1) : ;;
   *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
 esac
-
+if [ -n "$PLATFORM_SSH_KEY_FILE" ]; then
+  [ -f "$PLATFORM_SSH_KEY_FILE" ] && [ -r "$PLATFORM_SSH_KEY_FILE" ] \
+    || die "PLATFORM_SSH_KEY_FILE is not a readable regular file"
+fi
 # The runner container's own ADDRESS is asked, never assumed; its VMID is derived from that
 # address, exactly as every other guest's is. Converging an EXISTING runner defaults to what
 # that container already is - found by its `_rundeck` tag below, so a re-run never proposes
@@ -555,6 +567,16 @@ done
 in_ct ping -c 1 -W 2 deb.debian.org >/dev/null 2>&1 || die "container $VMID has no outbound network"
 info "network up"
 
+# A Git reconstruction may preserve the canonical platform identity from an independently
+# retained copy. Transfer it only after the target exists and only to a transient guest
+# path; the quoted guest script fingerprint-checks it before putting it at LAB_SSH_KEY.
+RECOVERY_SSH_KEY_PATH=""
+if [ -n "$PLATFORM_SSH_KEY_FILE" ]; then
+  RECOVERY_SSH_KEY_PATH=/run/homelab-infra-platform-key
+  log "Stage the retained platform SSH identity"
+  pct push "$VMID" "$PLATFORM_SSH_KEY_FILE" "$RECOVERY_SSH_KEY_PATH" --perms 0600
+fi
+
 # ── Guest provisioning ─────────────────────────────────────────────────────────
 # Passed through `env` so the heredoc can stay quoted (no host-side expansion surprises).
 log "Provision guest (packages, Java, Rundeck, Ansible)"
@@ -571,9 +593,22 @@ in_ct env \
   LAB_ETC="$LAB_ETC" \
   LAB_SSH_KEY="$LAB_SSH_KEY" \
   ANSIBLE_CORE_SPEC="$ANSIBLE_CORE_SPEC" \
+  RUNDECK_PACKAGE_VERSION_PIN="$RUNDECK_PACKAGE_VERSION_PIN" \
+  RECOVERY_SSH_KEY_PATH="$RECOVERY_SSH_KEY_PATH" \
   SSH_PUBKEY="$SSH_PUBKEY" \
   bash -s <<'GUEST'
 set -euo pipefail
+
+# The guest receives RECOVERY_SSH_KEY_PATH before this heredoc starts. Register cleanup
+# before any fallible setup command so package, locale, or service failures cannot leave
+# the retained private key in the guest filesystem.
+cleanup_recovery_ssh_key() {
+  if [ -n "$RECOVERY_SSH_KEY_PATH" ]; then
+    rm -f -- "$RECOVERY_SSH_KEY_PATH"
+  fi
+}
+trap cleanup_recovery_ssh_key EXIT
+
 export DEBIAN_FRONTEND=noninteractive
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 # `pct exec` hands the guest a PATH of /sbin:/bin:/usr/sbin:/usr/bin — no /usr/local/bin.
@@ -669,11 +704,33 @@ if [ ! -f /etc/apt/keyrings/rundeck.gpg ]; then
 fi
 
 say "rundeck package"
-apt-get install -y -qq rundeck >/dev/null
+if [ -n "$RUNDECK_PACKAGE_VERSION_PIN" ]; then
+  case "$RUNDECK_PACKAGE_VERSION_PIN" in
+    *[!A-Za-z0-9.+:~_-]*)
+      echo "RUNDECK_PACKAGE_VERSION_PIN contains unsafe characters" >&2
+      exit 1
+      ;;
+  esac
+  say "using recovery package pin $RUNDECK_PACKAGE_VERSION_PIN"
+  apt-get install --allow-downgrades -y -qq \
+    "rundeck=$RUNDECK_PACKAGE_VERSION_PIN" >/dev/null
+else
+  apt-get install -y -qq rundeck >/dev/null
+fi
 RUNDECK_PACKAGE_VERSION="$(dpkg-query -W -f='${Version}' rundeck)"
 dpkg --compare-versions "$RUNDECK_PACKAGE_VERSION" ge 6.0 \
   || { echo "Rundeck 6.0+ is required for AES-GCM Key Storage" >&2; exit 1; }
+if [ -n "$RUNDECK_PACKAGE_VERSION_PIN" ] \
+   && [ "$RUNDECK_PACKAGE_VERSION" != "$RUNDECK_PACKAGE_VERSION_PIN" ]; then
+  echo "Rundeck package pin was not installed: expected $RUNDECK_PACKAGE_VERSION_PIN, got $RUNDECK_PACKAGE_VERSION" >&2
+  exit 1
+fi
 say "rundeck $RUNDECK_PACKAGE_VERSION (AES-GCM capable)"
+# Keep non-secret compatibility metadata with the root-only handover. The database and
+# encrypted stores are not reproducible from Git, while this tells a rebuild which
+# package family actually encrypted them. cred_set preserves all sibling handover values.
+cred_set RUNDECK_PACKAGE_VERSION "$RUNDECK_PACKAGE_VERSION"
+cred_set RUNDECK_KEY_STORAGE_FORMAT "aes-256-gcm-v1"
 
 # Official Bitwarden CLI. Vault mode cannot start without it, so install it as
 # runner infrastructure rather than lazily during the first deploy.
@@ -835,6 +892,8 @@ say "ansible venv at $VENV_DIR"
 # very first app deploy fails with "Failed to import the required Python library (netaddr)".
 "$VENV_DIR/bin/pip" install -q "$ANSIBLE_CORE_SPEC" proxmoxer requests PyYAML netaddr
 say "$("$VENV_DIR/bin/ansible" --version | head -1)"
+ANSIBLE_CORE_VERSION="$("$VENV_DIR/bin/python3" -c 'import ansible; print(ansible.__version__)')"
+cred_set ANSIBLE_CORE_VERSION "$ANSIBLE_CORE_VERSION"
 
 # -- repo clone -----------------------------------------------------------------
 say "repo at $REPO_DIR"
@@ -849,9 +908,35 @@ fi
 say "at $(git -C "$REPO_DIR" log --oneline -1)"
 
 # -- the platform's own SSH identity --------------------------------------------
-# Ansible connects to every guest this platform creates with this key. Generating it
-# here rather than reusing the node's root key means the lab's guests trust exactly one
-# identity, held by exactly one host, and revoking it revokes only the platform.
+# A recovered key is an independent identity input, not a replacement generated to make
+# a rehearsal pass. Refuse a mismatch with any existing target identity before authorizing
+# anything on the PVE node. The early trap above has already protected the transient source.
+if [ -n "$RECOVERY_SSH_KEY_PATH" ]; then
+  [ -s "$RECOVERY_SSH_KEY_PATH" ] \
+    || { echo "retained platform SSH key was not staged" >&2; exit 1; }
+  recovery_public="$(ssh-keygen -y -P '' -f "$RECOVERY_SSH_KEY_PATH" 2>/dev/null)" \
+    || { echo "retained platform SSH key must be readable without a passphrase" >&2; exit 1; }
+  recovery_fingerprint="$(printf '%s\n' "$recovery_public" \
+    | ssh-keygen -lf - -E sha256 | awk 'NR == 1 {print $2}')"
+  [ -n "$recovery_fingerprint" ] \
+    || { echo "could not fingerprint retained platform SSH key" >&2; exit 1; }
+  if [ -e "$LAB_SSH_KEY" ] || [ -e "$LAB_SSH_KEY.pub" ]; then
+    [ -f "$LAB_SSH_KEY" ] && [ -f "$LAB_SSH_KEY.pub" ] \
+      || { echo "target platform SSH identity is incomplete" >&2; exit 1; }
+    target_fingerprint="$(ssh-keygen -y -P '' -f "$LAB_SSH_KEY" 2>/dev/null \
+      | ssh-keygen -lf - -E sha256 | awk 'NR == 1 {print $2}')"
+    [ "$target_fingerprint" = "$recovery_fingerprint" ] \
+      || { echo "retained platform SSH key does not match the target identity" >&2; exit 1; }
+    say "retained platform SSH identity matches the target"
+  else
+    install -d -m 0700 -o rundeck -g rundeck "$(dirname "$LAB_SSH_KEY")"
+    install -m 0600 -o rundeck -g rundeck "$RECOVERY_SSH_KEY_PATH" "$LAB_SSH_KEY"
+    printf '%s %s\n' "$recovery_public" "$PLATFORM_KEY_COMMENT" > "$LAB_SSH_KEY.pub"
+    chown rundeck:rundeck "$LAB_SSH_KEY.pub"
+    chmod 0644 "$LAB_SSH_KEY.pub"
+    say "installed the retained platform SSH identity without rotation"
+  fi
+fi
 if [ ! -f "$LAB_SSH_KEY" ]; then
   if [ -f "$LAB_ETC/state/vault-mode" ] && [ -f "${LAB_SSH_KEY}.pub" ]; then
     # The absent private half is the expected post-cutover state. Generating a replacement
