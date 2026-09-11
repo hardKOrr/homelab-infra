@@ -598,6 +598,17 @@ in_ct env \
   SSH_PUBKEY="$SSH_PUBKEY" \
   bash -s <<'GUEST'
 set -euo pipefail
+
+# The guest receives RECOVERY_SSH_KEY_PATH before this heredoc starts. Register cleanup
+# before any fallible setup command so package, locale, or service failures cannot leave
+# the retained private key in the guest filesystem.
+cleanup_recovery_ssh_key() {
+  if [ -n "$RECOVERY_SSH_KEY_PATH" ]; then
+    rm -f -- "$RECOVERY_SSH_KEY_PATH"
+  fi
+}
+trap cleanup_recovery_ssh_key EXIT
+
 export DEBIAN_FRONTEND=noninteractive
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 # `pct exec` hands the guest a PATH of /sbin:/bin:/usr/sbin:/usr/bin — no /usr/local/bin.
@@ -899,13 +910,7 @@ say "at $(git -C "$REPO_DIR" log --oneline -1)"
 # -- the platform's own SSH identity --------------------------------------------
 # A recovered key is an independent identity input, not a replacement generated to make
 # a rehearsal pass. Refuse a mismatch with any existing target identity before authorizing
-# anything on the PVE node. The trap removes the transient source on every exit.
-cleanup_recovery_ssh_key() {
-  if [ -n "$RECOVERY_SSH_KEY_PATH" ]; then
-    rm -f -- "$RECOVERY_SSH_KEY_PATH"
-  fi
-}
-trap cleanup_recovery_ssh_key EXIT
+# anything on the PVE node. The early trap above has already protected the transient source.
 if [ -n "$RECOVERY_SSH_KEY_PATH" ]; then
   [ -s "$RECOVERY_SSH_KEY_PATH" ] \
     || { echo "retained platform SSH key was not staged" >&2; exit 1; }

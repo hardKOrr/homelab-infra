@@ -78,6 +78,15 @@ class RunnerRecoveryContractTests(unittest.TestCase):
         self.assertIn("RUNDECK_PACKAGE_VERSION_PIN", self.bootstrap)
         self.assertIn("PLATFORM_SSH_KEY_FILE", self.bootstrap)
         self.assertIn("ssh-keygen -y -P ''", self.bootstrap)
+        guest_start = self.bootstrap.index(
+            "set -euo pipefail\n\n# The guest receives RECOVERY_SSH_KEY_PATH"
+        )
+        cleanup_trap = self.bootstrap.index(
+            "trap cleanup_recovery_ssh_key EXIT", guest_start
+        )
+        locale_setup = self.bootstrap.index("# -- locale", cleanup_trap)
+        self.assertLess(guest_start, cleanup_trap)
+        self.assertLess(cleanup_trap, locale_setup)
         self.assertIn('"rundeck=$RUNDECK_PACKAGE_VERSION_PIN"', self.bootstrap)
         self.assertIn('cred_set RUNDECK_PACKAGE_VERSION', self.bootstrap)
         self.assertIn('cred_set RUNDECK_KEY_STORAGE_FORMAT "aes-256-gcm-v1"', self.bootstrap)
