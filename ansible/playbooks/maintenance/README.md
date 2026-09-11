@@ -50,6 +50,29 @@ return, unreachable guests, and Kubernetes nodes that are not ready.
 Do not replace this flow with an Ansible reboot loop. The control plane cannot supervise a
 reboot that shuts down its own runner.
 
+## Shared PBS guest recovery
+
+`backup-guest.yml` and `restore-guest.yml` are the shared `pbs_guest` route for owned
+Proxmox VMs and LXCs. Rundeck exposes them under **Recover / Guests**. The exact VMID is
+the recovery unit; selecting an application is not an application-only restore. A shared
+Docker guest or Kubernetes node must be handled as a whole guest, with its workload scope
+shown in the job output.
+
+Backup coverage is read from the current PVE backup jobs before an on-demand `vzdump`
+request. PVE returns an UPID for backup, stop, start, and restore workers, so the shared
+`tasks/proxmox/wait-for-task.yml` task polls completion and rejects failure, cancellation,
+or timeout. The selected PBS volume identity is kept in native `backup/vm/...` or
+`backup/ct/...` form.
+
+New restores require an unused VMID, active destination storage, target name/tags and
+target-owned network configuration. They remain stopped and never perform route, identity,
+controller or writer cutover. Existing restores require the exact `_+lab` target and
+capture an independent target recovery point before stopping it; a failed or partial
+restore leaves the target stopped and the point accessible for retry. Bind/device mounts,
+physical or disabled disks, passthrough, hook resources, and external filesystems are
+outside PBS guest coverage and remain explicit review items. Guest restore correctness is
+not application-specific acceptance.
+
 ## Backup evidence audit
 
 `audit-backups.yml` powers **Audit Backups** under **Manage / Lab / Health**. It reads

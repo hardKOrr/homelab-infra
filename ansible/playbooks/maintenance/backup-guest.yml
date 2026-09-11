@@ -1,0 +1,191 @@
+---
+# Create one native PBS guest backup for an owned VM or LXC.
+#
+# This is a guest recovery operation, not an application backup.  `vmid` is the exact
+# recovery unit.  `instance` may select an application tag only when it resolves to one
+# guest; shared Docker and Kubernetes workloads are printed as scope and never reduced to
+# an application-only claim.  The scheduled job is inspected before the on-demand backup,
+# and the backup itself uses PVE's vzdump API so PBS keeps its native artifact format.
+#
+# Inputs:
+#   vmid              exact owned guest VMID (required unless instance resolves one guest)
+#   instance          optional application/guest tag selector
+#   backup_storage    PVE PBS storage ID, default pbs-homelab
+#   backup_timeout    task timeout in seconds, default 7200
+
+- name: "Backup Guest | Select and back up one Proxmox guest"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    _bg_control_node: "{{ backup_node | default(homelabinfra_config.proxmox.node, true) }}"
+    _bg_storage: "{{ backup_storage | default('pbs-homelab', true) }}"
+    _bg_method: "{{ method | default('pbs_guest', true) }}"
+    _bg_vmid: "{{ vmid | default('', true) | string }}"
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Register Proxmox delegation targets
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+
+    - name: Validate Backup Guest selector
+      ansible.builtin.assert:
+        that:
+          - _bg_method == 'pbs_guest'
+          - _bg_control_node in groups['proxmox_delegates']
+          - _bg_control_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - _bg_storage is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - (_bg_vmid | length > 0) or (instance | default('', true) | length > 0)
+          - (_bg_vmid | length == 0) or (_bg_vmid is match('^[1-9][0-9]*$'))
+        fail_msg: Provide an exact guest vmid, or an instance tag that resolves to one guest.
+
+    - name: Read the current guest inventory
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ _bg_control_node }}"
+      register: _bg_inventory
+      changed_when: false
+
+    - name: Resolve the exact guest recovery unit
+      ansible.builtin.set_fact:
+        _bg_matches: >-
+          {{ (_bg_inventory.stdout | from_json)
+             | selectattr('type', 'in', ['qemu', 'lxc'])
+             | selectattr('vmid', 'equalto', (_bg_vmid | int)) | list
+             if _bg_vmid | length > 0 else
+             (_bg_inventory.stdout | from_json)
+             | selectattr('type', 'in', ['qemu', 'lxc'])
+             | selectattr('tags', 'defined')
+             | selectattr('tags', 'search', '(^|;)' ~ ('_' ~ instance | regex_escape) ~ '(;|$)')
+             | list }}
+
+    - name: Require one owned guest recovery unit
+      ansible.builtin.assert:
+        that:
+          - _bg_matches | length == 1
+          - "'_+lab' in ((_bg_matches | first).tags | default('')).split(';')"
+          - not ((_bg_matches | first).template | default(0) | bool)
+        fail_msg: >-
+          The selector must resolve to exactly one non-template guest carrying the exact
+          _+lab ownership tag. Shared guests may contain several workloads; use vmid for
+          each guest when an application selector resolves to more than one guest.
+
+    - name: Publish guest identity and complete affected scope
+      ansible.builtin.set_fact:
+        _bg_guest: "{{ _bg_matches | first }}"
+        recovery_affected_scope: >-
+          {{ ((_bg_matches | first).tags | default('')).split(';')
+             | select('match', '^_[A-Za-z0-9]') | list }}
+
+    - name: Read guest configuration for explicit exclusions
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _bg_guest.node }}/{{ _bg_guest.type }}/{{ _bg_guest.vmid }}/config"
+          - --output-format
+          - json
+      delegate_to: "{{ _bg_guest.node }}"
+      register: _bg_config
+      changed_when: false
+      no_log: true
+
+    - name: Inspect current scheduled coverage
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/backup, --output-format, json]
+      delegate_to: "{{ _bg_control_node }}"
+      register: _bg_jobs
+      changed_when: false
+      failed_when: false
+
+    - name: Check PBS storage availability before starting a backup
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _bg_guest.node }}/storage/{{ _bg_storage }}/content"
+          - --content
+          - backup
+          - --output-format
+          - json
+      delegate_to: "{{ _bg_guest.node }}"
+      register: _bg_storage_content
+      changed_when: false
+
+    - name: Require the PBS storage backend and credentials to be usable
+      ansible.builtin.assert:
+        that:
+          - _bg_storage_content.rc == 0
+          - (_bg_storage_content.stdout | from_json) is sequence
+        fail_msg: >-
+          PBS storage {{ _bg_storage }} is unavailable from node {{ _bg_guest.node }};
+          no backup task was submitted. Check the PVE PBS credentials, certificate and
+          datastore before retrying.
+
+  tasks:
+    - name: Start an on-demand PBS guest backup
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - "/nodes/{{ _bg_guest.node }}/vzdump"
+          - --vmid
+          - "{{ _bg_guest.vmid }}"
+          - --storage
+          - "{{ _bg_storage }}"
+          - --mode
+          - snapshot
+      delegate_to: "{{ _bg_guest.node }}"
+      register: _bg_task
+      changed_when: true
+
+    - name: Wait for the PBS backup task
+      ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
+      vars:
+        proxmox_task_node: "{{ _bg_guest.node }}"
+        proxmox_task_upid: "{{ _bg_task.stdout | trim }}"
+        proxmox_task_timeout: "{{ backup_timeout | default(7200) }}"
+
+    - name: Read the completed guest artifacts
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _bg_guest.node }}/storage/{{ _bg_storage }}/content"
+          - --content
+          - backup
+          - --vmid
+          - "{{ _bg_guest.vmid }}"
+          - --output-format
+          - json
+      delegate_to: "{{ _bg_guest.node }}"
+      register: _bg_artifacts
+      changed_when: false
+
+    - name: Require a native PBS artifact for the guest
+      ansible.builtin.assert:
+        that:
+          - _bg_artifacts.rc == 0
+          - >-
+            (_bg_artifacts.stdout | from_json) | default([])
+            | selectattr('volid', 'defined') | list | length > 0
+        fail_msg: >-
+          The backup task completed but PBS did not expose a readable artifact for guest
+          {{ _bg_guest.vmid }}. The source guest was not changed; inspect PBS before retrying.
+
+    - name: Report schedule, exclusions, and guest/workload scope
+      ansible.builtin.debug:
+        msg:
+          guest: "{{ _bg_guest.name | default(_bg_guest.vmid) }}"
+          vmid: "{{ _bg_guest.vmid }}"
+          type: "{{ _bg_guest.type }}"
+          node: "{{ _bg_guest.node }}"
+          schedule_evidence: "{{ _bg_jobs.stdout | default('unreadable') }}"
+          excluded_or_external_data:
+            - "LXC bind/device mounts are not contained in a vzdump artifact."
+            - "VM physical disks, disabled disks, passthrough devices, and hook resources require separate recovery."
+          affected_guest_scope: "{{ recovery_affected_scope }}"
+          recovery_correctness: "PBS guest artifact completed and is readable; application acceptance remains separate."

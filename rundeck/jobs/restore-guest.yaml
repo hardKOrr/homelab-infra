@@ -1,0 +1,108 @@
+# Rendered and imported by rundeck/render-job.py. This is the shared pbs_guest route for
+# both Restore to New Instance and Restore Existing Instance; destination is explicit.
+- id: 8f5b08f6-79e2-4f32-a36d-b6dc6cfed7ce
+  uuid: 8f5b08f6-79e2-4f32-a36d-b6dc6cfed7ce
+  name: Restore Guest
+  group: Recover/Guests
+  description: |-
+    Restore a native PBS VM or LXC to a stopped isolated new target or an exact existing
+    target. The guest is the recovery unit, so this never presents a shared Docker guest
+    or Kubernetes node as an application-only restore.
+
+    Plan mode is read-only. Existing replacement captures an independent target recovery
+    point before stopping or replacing anything. New targets require target-specific name,
+    ownership and network values and are never started or cut over automatically.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+    - name: method
+      required: true
+      value: pbs_guest
+      values: [pbs_guest]
+      enforced: true
+      description: Shared guest recovery method; application-native recovery is separate.
+    - name: source_vmid
+      required: true
+      regex: '^[1-9][0-9]*$'
+      description: VMID encoded by the selected PBS artifact; the source need not be running.
+    - name: destination
+      required: true
+      value: existing
+      values: [new, existing]
+      enforced: true
+      description: New restores stopped and isolated; existing replaces an owned exact target.
+    - name: target_vmid
+      required: true
+      regex: '^[1-9][0-9]*$'
+      description: Exact destination VMID. New must be unused; existing must be _+lab-owned.
+    - name: target_node
+      required: true
+      regex: '^[A-Za-z0-9][A-Za-z0-9.-]*$'
+      description: Destination Proxmox node in the destination cluster.
+    - name: target_storage
+      required: true
+      regex: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+      description: Active destination disk/rootfs storage on target_node.
+    - name: target_name
+      required: false
+      regex: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+      description: Target guest name for a new restore; existing restores preserve the exact target identity.
+    - name: target_network
+      required: false
+      description: New target net0 value, including a target-owned MAC/bridge/address; required for new.
+    - name: target_tags
+      required: false
+      value: ''
+      description: Target ownership/workload tags. Must include the exact _+lab tag.
+    - name: backup_storage
+      required: true
+      value: pbs-homelab
+      regex: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+      description: PBS storage ID visible from target_node.
+    - name: recovery_point
+      required: true
+      description: Native PBS volume path, for example backup/vm/420/vzdump-qemu-420-....
+    - name: pre_restore_point
+      required: false
+      description: Independent target PBS point. Blank causes one to be captured before replacement.
+    - name: overwrite
+      required: true
+      value: 'false'
+      values: ['false', 'true']
+      enforced: true
+      description: false plans only; true performs all validated tasks.
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+      - description: Run the shared VM/LXC PBS restore route
+        script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=(
+            -e "method=${RD_OPTION_METHOD:?method is required}"
+            -e "source_vmid=${RD_OPTION_SOURCE_VMID:?source VMID is required}"
+            -e "destination=${RD_OPTION_DESTINATION:?destination is required}"
+            -e "target_vmid=${RD_OPTION_TARGET_VMID:?target VMID is required}"
+            -e "target_node=${RD_OPTION_TARGET_NODE:?target node is required}"
+            -e "target_storage=${RD_OPTION_TARGET_STORAGE:?target storage is required}"
+            -e "backup_storage=${RD_OPTION_BACKUP_STORAGE:?backup storage is required}"
+            -e "recovery_point=${RD_OPTION_RECOVERY_POINT:?recovery point is required}"
+            -e "overwrite=${RD_OPTION_OVERWRITE:-false}"
+          )
+          if [ -n "${RD_OPTION_TARGET_NAME:-}" ]; then
+            ARGS+=(-e "target_name=$RD_OPTION_TARGET_NAME")
+          fi
+          if [ -n "${RD_OPTION_TARGET_NETWORK:-}" ]; then
+            ARGS+=(-e "target_network=$RD_OPTION_TARGET_NETWORK")
+          fi
+          if [ -n "${RD_OPTION_TARGET_TAGS:-}" ]; then
+            ARGS+=(-e "target_tags=$RD_OPTION_TARGET_TAGS")
+          fi
+          if [ -n "${RD_OPTION_PRE_RESTORE_POINT:-}" ]; then
+            ARGS+=(-e "pre_restore_point=$RD_OPTION_PRE_RESTORE_POINT")
+          fi
+          exec lab-run playbooks/maintenance/restore-guest.yml "${ARGS[@]}"

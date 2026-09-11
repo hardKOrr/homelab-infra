@@ -15,6 +15,13 @@ The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.y
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path.
 
+## Asynchronous task completion
+
+`wait-for-task.yml` is the common completion boundary for asynchronous PVE and PBS
+operations. Callers pass a delegated Proxmox node and the returned `UPID`; the helper
+polls the task until it is stopped, rejects timeout, cancellation, or failure, and never
+interprets task submission as successful backup or restore completion.
+
 ## Ownership and tag grammar
 
 homelab-infra manages only resources carrying the exact `_+lab` ownership tag. A leading

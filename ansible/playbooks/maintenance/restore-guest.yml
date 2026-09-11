@@ -1,0 +1,621 @@
+---
+# Restore one native PBS VM or LXC to an isolated new VMID or an exact existing target.
+#
+# The recovery unit is the guest, never an application. A new target is always stopped,
+# gets a target-owned name/tags/network and requests a unique MAC. An existing target is
+# owned and inspected before it is stopped; an independent PBS point is captured and
+# verified before the Proxmox restore task is submitted. A failed worker leaves the target
+# stopped and reports the retained recovery point; it never deletes the source artifact or
+# unrelated resources.
+#
+# Shared contract inputs:
+#   instance/source_vmid  source VMID recorded in the native artifact (source need not run)
+#   destination           new|existing (default existing)
+#   target                target name (new) or target VMID alias; exact target_vmid wins
+#   recovery_point        PBS native backup volume path
+#   pre_restore_point     independent existing-target point; if blank, one is captured
+#   overwrite             false plan-only, true execute
+# Backend inputs:
+#   target_vmid, target_node, target_storage, target_name, target_network, target_tags
+
+- name: "Restore Guest | Validate a PBS VM/LXC restore"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    _rg_control_node: "{{ restore_node | default(homelabinfra_config.proxmox.node, true) }}"
+    _rg_method: "{{ method | default('pbs_guest', true) }}"
+    _rg_destination: "{{ destination | default('existing', true) }}"
+    _rg_execute: "{{ overwrite | default(false) | bool }}"
+    _rg_storage: "{{ backup_storage | default('pbs-homelab', true) }}"
+    _rg_source_vmid: "{{ source_vmid | default(instance | default('', true), true) | string }}"
+    _rg_target_vmid: "{{ target_vmid | default((vmid | default('', true) if _rg_destination == 'existing' else ''), true) | string }}"
+    _rg_target_name: "{{ target_name | default(target | default('', true), true) | string }}"
+    _rg_artifact: "{{ recovery_point | default('', true) | regex_replace('^[^:]+:', '') }}"
+    _rg_target_tags: "{{ target_tags | default('_+lab;_' ~ _rg_target_name, true) }}"
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Register Proxmox delegation targets
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+
+    - name: Validate the shared restore contract
+      ansible.builtin.assert:
+        that:
+          - _rg_method == 'pbs_guest'
+          - _rg_control_node in groups['proxmox_delegates']
+          - _rg_control_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - _rg_destination in ['new', 'existing']
+          - _rg_storage is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - _rg_artifact | length > 0
+          - _rg_artifact is match('^backup/(vm|ct)/[1-9][0-9]*/[^/]+$')
+          - _rg_source_vmid is match('^[1-9][0-9]*$')
+          - _rg_target_vmid is match('^[1-9][0-9]*$')
+          - _rg_execute | bool or (_rg_artifact | length > 0)
+        fail_msg: >-
+          Restore Guest needs recovery_point, source_vmid, an exact target VMID, and
+          destination=new|existing. Plan mode remains read-only.
+
+    - name: Validate artifact identity before touching a target
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_rg_artifact is match('^backup/vm/' ~ _rg_source_vmid ~ '/vzdump-qemu-' ~ _rg_source_vmid ~ '-.+$'))
+            or
+            (_rg_artifact is match('^backup/ct/' ~ _rg_source_vmid ~ '/vzdump-lxc-' ~ _rg_source_vmid ~ '-.+$'))
+        fail_msg: >-
+          {{ recovery_point }} is not a native PBS VM/LXC artifact for source VMID
+          {{ _rg_source_vmid }}. No destination was inspected or changed.
+
+    - name: Read destination cluster resources
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ _rg_control_node }}"
+      register: _rg_inventory
+      changed_when: false
+
+    - name: Resolve the exact destination node and guest
+      ansible.builtin.set_fact:
+        _rg_targets: >-
+          {{ (_rg_inventory.stdout | from_json)
+             | selectattr('vmid', 'equalto', (_rg_target_vmid | int)) | list }}
+
+    - name: Require a free new destination or owned existing destination
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_rg_destination == 'new' and _rg_targets | length == 0)
+            or
+            (_rg_destination == 'existing' and _rg_targets | length == 1
+             and "'_+lab' in ((_rg_targets | first).tags | default('')).split(';')"
+             and not ((_rg_targets | first).template | default(0) | bool))
+        fail_msg: >-
+          New restore VMID {{ _rg_target_vmid }} must be unused; an existing restore must
+          name exactly one _+lab-owned VM/LXC. Unmanaged or ambiguous targets are never
+          stopped or replaced.
+
+    - name: Resolve the destination node
+      ansible.builtin.set_fact:
+        _rg_target_node: >-
+          {{ target_node | default(
+               (_rg_targets | first).node if _rg_targets | length == 1 else _rg_control_node,
+               true) }}
+
+    - name: Validate destination identity and isolation inputs
+      ansible.builtin.assert:
+        that:
+          - _rg_target_node in groups['proxmox_delegates']
+          - _rg_target_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - >-
+            _rg_destination == 'existing'
+            or (_rg_target_name is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+                and target_network | default('', true) | length > 0
+                and _rg_target_tags is string
+                and '_+lab' in _rg_target_tags.split(';'))
+        fail_msg: >-
+          A new guest restore requires a target name, target network configuration and
+          ownership tag. It is restored stopped and cannot inherit the source identity.
+
+    - name: Read destination storage inventory
+      ansible.builtin.command:
+        argv: [pvesh, get, "/nodes/{{ _rg_target_node }}/storage", --output-format, json]
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_storages
+      changed_when: false
+
+    - name: Require destination storage availability
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_rg_storages.stdout | from_json) | default([])
+            | selectattr('storage', 'equalto', (target_storage | default('', true)))
+            | selectattr('active', 'equalto', 1) | list | length == 1
+          - target_storage | default('', true) | length > 0
+        fail_msg: >-
+          Destination storage {{ target_storage | default('(missing)') }} is not active on
+          {{ _rg_target_node }}. No target was stopped or created.
+
+    - name: Verify the selected PBS artifact on the destination cluster
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _rg_target_node }}/storage/{{ _rg_storage }}/content"
+          - --content
+          - backup
+          - --output-format
+          - json
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_artifacts
+      changed_when: false
+
+    - name: Require readable PBS credentials and artifact availability
+      ansible.builtin.assert:
+        that:
+          - _rg_artifacts.rc == 0
+          - >-
+            (_rg_artifacts.stdout | from_json) | default([])
+            | selectattr('volid', 'defined')
+            | selectattr('volid', 'search', '(^|:)' ~ (_rg_artifact | regex_escape) ~ '$') | list | length > 0
+        fail_msg: >-
+          PBS artifact {{ recovery_point }} is unavailable from {{ _rg_target_node }} via
+          {{ _rg_storage }}. Check PBS credentials, certificate and decryption material;
+          no target was stopped or replaced.
+      when: _rg_execute | bool
+
+    - name: Read the selected PBS configuration blob before mutation
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - extractconfig
+          - "{{ _rg_storage }}:{{ _rg_artifact }}"
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_artifact_config
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: _rg_execute | bool
+
+    - name: Require artifact credentials and decryption material
+      ansible.builtin.assert:
+        that:
+          - _rg_artifact_config.rc == 0
+          - _rg_artifact_config.stdout | length > 0
+        fail_msg: >-
+          PBS exposed the selected artifact index but its configuration blob could not be
+          read with the destination credentials/decryption material. No target was stopped
+          or replaced.
+      when: _rg_execute | bool
+
+    - name: Read the existing target configuration before mutation
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _rg_target_node }}/{{ (_rg_targets | first).type }}/{{ _rg_target_vmid }}/config"
+          - --output-format
+          - json
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_existing_config
+      changed_when: false
+      no_log: true
+      when:
+        - _rg_destination == 'existing'
+
+    - name: Read the existing target state before mutation
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _rg_target_node }}/{{ (_rg_targets | first).type }}/{{ _rg_target_vmid }}/status/current"
+          - --output-format
+          - json
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_existing_status
+      changed_when: false
+      when:
+        - _rg_destination == 'existing'
+
+    - name: Publish target identity and network to restore
+      ansible.builtin.set_fact:
+        _rg_target_type: >-
+          {{ 'qemu' if _rg_artifact is match('^backup/vm/') else 'lxc' }}
+        _rg_restore_name: >-
+          {{ _rg_target_name if _rg_destination == 'new'
+             else ((_rg_existing_config.stdout | from_json).name
+                   | default((_rg_existing_config.stdout | from_json).hostname, true)) }}
+        _rg_restore_tags: >-
+          {{ _rg_target_tags if _rg_destination == 'new'
+             else (_rg_existing_config.stdout | from_json).tags | default('_+lab', true) }}
+        _rg_restore_network: >-
+          {{ [ {'key': 'net0', 'value': target_network} ]
+             if _rg_destination == 'new' else
+             (_rg_existing_config.stdout | from_json) | dict2items
+             | selectattr('key', 'match', '^net[0-9]+$') | list }}
+        _rg_was_running: >-
+          {{ _rg_destination == 'existing'
+             and (_rg_existing_status.stdout | from_json).status | default('stopped') == 'running' }}
+
+    - name: Validate source and destination backend match
+      ansible.builtin.assert:
+        that: _rg_target_type == (_rg_targets | first).type if _rg_targets | length == 1 else true
+        fail_msg: A VM artifact cannot replace an LXC or an LXC artifact replace a VM.
+      when: _rg_destination == 'existing'
+
+    - name: Validate target identity before mutation
+      ansible.builtin.assert:
+        that:
+          - _rg_restore_name is string
+          - _rg_restore_name | length > 0
+          - _rg_restore_network | length > 0
+          - _rg_restore_tags is string
+          - "'_+lab' in _rg_restore_tags.split(';')"
+        fail_msg: >-
+          The target identity or network is incomplete. Restore remains blocked until the
+          destination name, ownership and intended connectivity are explicit.
+      when: _rg_execute | bool
+
+    - name: Capture and verify an independent pre-restore recovery point
+      when:
+        - _rg_destination == 'existing'
+        - _rg_execute | bool
+      block:
+        - name: Use the supplied pre-restore point when present
+          ansible.builtin.set_fact:
+            _rg_pre_restore_point: "{{ pre_restore_point | default('', true) | regex_replace('^[^:]+:', '') }}"
+
+        - name: Create the target recovery point when none was supplied
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - "/nodes/{{ _rg_target_node }}/vzdump"
+              - --vmid
+              - "{{ _rg_target_vmid }}"
+              - --storage
+              - "{{ _rg_storage }}"
+              - --mode
+              - snapshot
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_pre_task
+          changed_when: true
+          when: _rg_pre_restore_point | length == 0
+
+        - name: Wait for the independent target recovery point
+          ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
+          vars:
+            proxmox_task_node: "{{ _rg_target_node }}"
+            proxmox_task_upid: "{{ _rg_pre_task.stdout | trim }}"
+            proxmox_task_timeout: "{{ restore_timeout | default(7200) }}"
+          when: _rg_pre_restore_point | length == 0
+
+        - name: List target recovery points after the pre-restore backup
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - get
+              - "/nodes/{{ _rg_target_node }}/storage/{{ _rg_storage }}/content"
+              - --content
+              - backup
+              - --vmid
+              - "{{ _rg_target_vmid }}"
+              - --output-format
+              - json
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_pre_artifacts
+          changed_when: false
+          when: _rg_pre_restore_point | length == 0
+
+        - name: Select the newest independent target recovery point
+          ansible.builtin.set_fact:
+            _rg_pre_restore_point: >-
+              {{ ((_rg_pre_artifacts.stdout | from_json) | default([])
+                  | selectattr('volid', 'defined') | sort(attribute='ctime') | last).volid
+                  | regex_replace('^[^:]+:', '') }}
+          when: _rg_pre_restore_point | length == 0
+
+        - name: Require an independent readable pre-restore point
+          ansible.builtin.assert:
+            that:
+              - _rg_pre_restore_point | length > 0
+              - _rg_pre_restore_point != _rg_artifact
+              - >-
+                _rg_pre_restore_point is match(
+                  '^backup/' ~ ('vm' if _rg_target_type == 'qemu' else 'ct') ~ '/'
+                  ~ _rg_target_vmid ~ '/.+$')
+            fail_msg: >-
+              No independent readable pre-restore point exists for target VMID
+              {{ _rg_target_vmid }}. The target remains untouched.
+
+    - name: Verify the independent pre-restore point on the destination PBS
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _rg_target_node }}/storage/{{ _rg_storage }}/content"
+          - --content
+          - backup
+          - --output-format
+          - json
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_pre_restore_artifacts
+      changed_when: false
+      when:
+        - _rg_destination == 'existing'
+        - _rg_execute | bool
+
+    - name: Require the independent pre-restore point to remain available
+      ansible.builtin.assert:
+        that:
+          - _rg_pre_restore_artifacts.rc == 0
+          - >-
+            (_rg_pre_restore_artifacts.stdout | from_json) | default([])
+            | selectattr('volid', 'defined')
+            | selectattr('volid', 'search', '(^|:)' ~ (_rg_pre_restore_point | regex_escape) ~ '$')
+            | list | length > 0
+        fail_msg: >-
+          Independent pre-restore artifact {{ _rg_pre_restore_point }} is not available
+          from {{ _rg_target_node }}. No existing target was stopped or replaced.
+      when:
+        - _rg_destination == 'existing'
+        - _rg_execute | bool
+
+    - name: Read the independent pre-restore configuration blob
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - extractconfig
+          - "{{ _rg_storage }}:{{ _rg_pre_restore_point }}"
+      delegate_to: "{{ _rg_target_node }}"
+      register: _rg_pre_restore_config
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - _rg_destination == 'existing'
+        - _rg_execute | bool
+
+    - name: Require independent pre-restore credentials and decryption material
+      ansible.builtin.assert:
+        that:
+          - _rg_pre_restore_config.rc == 0
+          - _rg_pre_restore_config.stdout | length > 0
+        fail_msg: >-
+          PBS exposed the independent pre-restore point but its configuration blob could
+          not be read. No existing target was stopped or replaced.
+      when:
+        - _rg_destination == 'existing'
+        - _rg_execute | bool
+
+    - name: Validate the shared destination plan before mutation
+      ansible.builtin.include_tasks: ../../tasks/recovery/validate-restore.yml
+      vars:
+        recovery_source_instance: "{{ _rg_source_vmid }}"
+        recovery_target_instance: "{{ _rg_restore_name | default(_rg_target_vmid, true) }}"
+        recovery_destination: "{{ _rg_destination }}"
+        recovery_overwrite: "{{ _rg_execute }}"
+        recovery_point: "{{ _rg_artifact }}"
+        recovery_pre_restore_point: "{{ _rg_pre_restore_point | default('', true) }}"
+        recovery_artifact_available: "{{ _rg_artifacts.rc == 0 and (_rg_artifacts.stdout | default('') | length > 0) if _rg_execute | bool else true }}"
+        recovery_pre_restore_available: "{{ _rg_pre_restore_config.rc == 0 and (_rg_pre_restore_config.stdout | default('') | length > 0) if _rg_destination == 'existing' and _rg_execute | bool else true }}"
+        recovery_target_config_present: "{{ _rg_destination == 'existing' or target_network | default('', true) | length > 0 }}"
+        recovery_source_storage_key: "{{ _rg_storage }}:{{ _rg_artifact }}"
+        recovery_target_storage_key: "{{ _rg_target_node }}:{{ target_storage | default('', true) }}"
+        recovery_target_vmid_collision: "{{ _rg_destination == 'new' and _rg_targets | length > 0 }}"
+        recovery_target_name_collision: false
+        recovery_target_address_collision: false
+        recovery_target_resource_collision: false
+        recovery_target_storage_collision: false
+        recovery_affected_scope: >-
+          {{ ['guest:' ~ _rg_target_vmid, 'workloads:' ~ (_rg_restore_tags | default('_+lab'))] }}
+
+  tasks:
+    - name: Restore the guest without activating the target
+      block:
+        - name: Stop an existing running target
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - "/nodes/{{ _rg_target_node }}/{{ (_rg_targets | first).type }}/{{ _rg_target_vmid }}/status/stop"
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_stop_task
+          changed_when: true
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Wait for the existing target to stop
+          ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
+          vars:
+            proxmox_task_node: "{{ _rg_target_node }}"
+            proxmox_task_upid: "{{ _rg_stop_task.stdout | trim }}"
+            proxmox_task_timeout: "{{ restore_timeout | default(900) }}"
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Restore a VM from the native PBS artifact
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - "/nodes/{{ _rg_target_node }}/qemu"
+              - --vmid
+              - "{{ _rg_target_vmid }}"
+              - --archive
+              - "{{ _rg_storage }}:{{ _rg_artifact }}"
+              - --storage
+              - "{{ target_storage }}"
+              - --unique
+              - "{{ '1' if _rg_destination == 'new' else '0' }}"
+              - --force
+              - "{{ '0' if _rg_destination == 'new' else '1' }}"
+              - --start
+              - '0'
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_restore_task
+          changed_when: true
+          when:
+            - _rg_execute | bool
+            - _rg_target_type == 'qemu'
+
+        - name: Restore an LXC from the native PBS artifact
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - "/nodes/{{ _rg_target_node }}/lxc"
+              - --vmid
+              - "{{ _rg_target_vmid }}"
+              - --ostemplate
+              - "{{ _rg_storage }}:{{ _rg_artifact }}"
+              - --storage
+              - "{{ target_storage }}"
+              - --restore
+              - '1'
+              - --unique
+              - "{{ '1' if _rg_destination == 'new' else '0' }}"
+              - --force
+              - "{{ '0' if _rg_destination == 'new' else '1' }}"
+              - --start
+              - '0'
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_restore_task
+          changed_when: true
+          when:
+            - _rg_execute | bool
+            - _rg_target_type == 'lxc'
+
+        - name: Wait for the guest restore task
+          ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
+          vars:
+            proxmox_task_node: "{{ _rg_target_node }}"
+            proxmox_task_upid: "{{ _rg_restore_task.stdout | trim }}"
+            proxmox_task_timeout: "{{ restore_timeout | default(7200) }}"
+          when: _rg_execute | bool
+
+        - name: Apply the target identity and intended network
+          ansible.builtin.command:
+            argv: >-
+              {{ ['pvesh', 'set', '/nodes/' ~ _rg_target_node ~ '/' ~ _rg_target_type ~ '/' ~ _rg_target_vmid ~ '/config']
+                 + (['--name', _rg_restore_name] if _rg_target_type == 'qemu' else ['--hostname', _rg_restore_name])
+                 + ['--tags', _rg_restore_tags, '--onboot', '0']
+                 + (item.key | ternary(['--' ~ item.key, item.value], [])) }}
+          delegate_to: "{{ _rg_target_node }}"
+          loop: "{{ _rg_restore_network }}"
+          loop_control:
+            label: "{{ item.key }}"
+          changed_when: true
+          when: _rg_execute | bool
+
+        - name: Read the restored target configuration
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - get
+              - "/nodes/{{ _rg_target_node }}/{{ _rg_target_type }}/{{ _rg_target_vmid }}/config"
+              - --output-format
+              - json
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_restored_config
+          changed_when: false
+          no_log: true
+          when: _rg_execute | bool
+
+        - name: Verify restored identity, network and data volumes
+          ansible.builtin.assert:
+            that:
+              - _rg_restored_config.rc == 0
+              - >-
+                ((_rg_restored_config.stdout | from_json).name | default(
+                 (_rg_restored_config.stdout | from_json).hostname, true)) == _rg_restore_name
+              - "'_+lab' in ((_rg_restored_config.stdout | from_json).tags | default('')).split(';')"
+              - >-
+                (_rg_restored_config.stdout | from_json) | dict2items
+                | selectattr('key', 'match', '^(rootfs|scsi|sata|virtio|ide)[0-9]*$') | list | length > 0
+            fail_msg: >-
+              The guest restore completed but its target identity, network/data configuration,
+              or ownership could not be verified. The target remains stopped; retry from the
+              retained pre-restore point after inspection.
+          when: _rg_execute | bool
+
+        - name: Start an existing target that was running before restore
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - create
+              - "/nodes/{{ _rg_target_node }}/{{ _rg_target_type }}/{{ _rg_target_vmid }}/status/start"
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_start_task
+          changed_when: true
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Wait for the existing target to start
+          ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
+          vars:
+            proxmox_task_node: "{{ _rg_target_node }}"
+            proxmox_task_upid: "{{ _rg_start_task.stdout | trim }}"
+            proxmox_task_timeout: "{{ restore_timeout | default(900) }}"
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+        - name: Verify the intended existing-target connectivity state
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - get
+              - "/nodes/{{ _rg_target_node }}/{{ _rg_target_type }}/{{ _rg_target_vmid }}/status/current"
+              - --output-format
+              - json
+          delegate_to: "{{ _rg_target_node }}"
+          register: _rg_final_status
+          changed_when: false
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+
+        - name: Require an existing target to return to its prior running state
+          ansible.builtin.assert:
+            that: (_rg_final_status.stdout | from_json).status | default('') == 'running'
+            fail_msg: >-
+              The existing target was restored but did not return to running service. Leave
+              it stopped and retry from {{ _rg_pre_restore_point }} after investigation.
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'existing'
+            - _rg_was_running | bool
+
+      rescue:
+        - name: Report a failed or partial guest restore without destructive cleanup
+          ansible.builtin.fail:
+            msg: >-
+              PBS guest restore failed or timed out. No source artifact or unrelated
+              resource was deleted. Target VMID={{ _rg_target_vmid }} remains stopped or
+              partially restored for inspection. Existing-target recovery point={{
+              _rg_pre_restore_point | default('not captured', true) }}; retry only after
+              verifying that point and the target state.
+
+    - name: Report the read-only guest restore plan
+      ansible.builtin.debug:
+        msg:
+          - >-
+            PLAN ONLY — {{ _rg_artifact }} would restore {{ _rg_target_type }} source
+            VMID {{ _rg_source_vmid }} to {{ _rg_destination }} target VMID
+            {{ _rg_target_vmid }} on node {{ _rg_target_node }}.
+          - >-
+            New targets remain stopped and isolated; production cutover is false and
+            separate. Existing replacement requires an independent pre-restore point.
+            Bind/device mounts, passthrough and external storage are outside the PBS
+            artifact and application acceptance is separate.
+      when: not (_rg_execute | bool)
