@@ -1,0 +1,221 @@
+---
+# Restore one Open WebUI data.pxar archive. Plan mode lists snapshots without changing the
+# target. Overwrite mode validates the archive first, replaces only Open WebUI's data path,
+# and leaves the service stopped if anything after extraction fails.
+
+- name: Open WebUI restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Open WebUI restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Open WebUI restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Open WebUI restore | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Open WebUI. Deploy PBS before listing or restoring
+      application data.
+
+- name: Open WebUI restore | Resolve the source backup identity
+  ansible.builtin.set_fact:
+    _open_webui_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+  no_log: true
+
+- name: Open WebUI restore | List available snapshots
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - PBS_KEY_URL
+      - --env
+      - PBS_APT_REPO
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/proxmox-backup-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _open_webui_restore_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _open_webui_restore_backup_id }}"
+    PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+    PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+  no_log: true
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Open WebUI restore | Print available snapshots
+  ansible.builtin.debug:
+    msg: "PBS snapshots for host/{{ _open_webui_restore_backup_id }}:\n{{ _open_webui_restore_snapshots.stdout }}"
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Open WebUI restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with recovery_point=<PBS snapshot ID> and overwrite=true
+      to replace {{ app_config.app.data_path }} from one application-consistent data.pxar.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Open WebUI restore | Create private staging space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-open-webui-restore-"
+  register: _open_webui_restore_tmp
+  changed_when: true
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Replace application state
+  when: restore_overwrite | bool
+  block:
+    - name: Open WebUI restore | Stop only Open WebUI
+      community.docker.docker_compose_v2:
+        project_src: "{{ open_webui_project_dir }}"
+        state: stopped
+        services:
+          - "{{ app_config.app.service_name }}"
+
+    - name: Open WebUI restore | Extract and validate the selected archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _open_webui_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/proxmox-backup-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            test -d /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      no_log: true
+      changed_when: true
+
+    - name: Open WebUI restore | Replace the data directory after archive validation
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: absent
+
+    - name: Open WebUI restore | Recreate the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Open WebUI restore | Copy archived state into place
+      ansible.builtin.command:
+        argv: [cp, -a, "{{ _open_webui_restore_tmp.path }}/.", "{{ app_config.app.data_path }}/"]
+      changed_when: true
+      no_log: true
+
+    - name: Open WebUI restore | Start only Open WebUI
+      community.docker.docker_compose_v2:
+        project_src: "{{ open_webui_project_dir }}"
+        state: present
+        services:
+          - "{{ app_config.app.service_name }}"
+
+    - name: Open WebUI restore | Wait for the restored service
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/health"
+        status_code: 200
+      register: _open_webui_restore_health
+      until: _open_webui_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Open WebUI restore | Mark the application restore complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Open WebUI restore | Leave the service stopped after a failed restore
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ open_webui_project_dir }}"
+          - stop
+          - "{{ app_config.app.service_name }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Open WebUI restore | Report the failed restore
+      ansible.builtin.fail:
+        msg: >-
+          Open WebUI restore did not complete. The service is intentionally left stopped;
+          inspect the recovered data and retry after correcting the failure.
+  always:
+    - name: Open WebUI restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _open_webui_restore_tmp.path }}"
+        state: absent
+      when: _open_webui_restore_tmp.path is defined

@@ -1,0 +1,146 @@
+---
+# Deploy Open WebUI on the AI Docker stack. The app does not deploy or auto-select a model
+# backend: config/apps/<instance>.yml must name an already-deployed Ollama and/or LiteLLM
+# instance, and the preflight fails before host provisioning when that registry entry is
+# absent or has the wrong provider.
+
+- name: "Open WebUI | Provision"
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Assert instance name
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe Open WebUI instance name: -e instance=open-webui"
+    - name: Load Open WebUI defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/open-webui.yml
+        name: _app_defaults
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Merge Open WebUI config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.open_webui_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+    - name: Resolve the named deployed upstreams before provisioning
+      ansible.builtin.import_tasks: ../../tasks/app-wiring/open-webui-upstreams.yml
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        open_webui_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        open_webui_fqdn: "{{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}"
+    - name: Find or create the AI stack host
+      ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        deploy_group: "deploy_{{ instance }}"
+
+- name: "Open WebUI | Deploy"
+  hosts: "deploy_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Load user vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+  tasks:
+    - name: Bootstrap Docker guest
+      ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
+      when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Deploy Open WebUI
+      ansible.builtin.include_role:
+        name: open-webui
+      vars:
+        open_webui_ollama_instance: "{{ hostvars['localhost'].open_webui_ollama_instance }}"
+        open_webui_litellm_instance: "{{ hostvars['localhost'].open_webui_litellm_instance }}"
+        open_webui_ollama_url: "{{ hostvars['localhost'].open_webui_ollama_url }}"
+        open_webui_litellm_url: "{{ hostvars['localhost'].open_webui_litellm_url }}"
+
+- name: "Open WebUI | Wire"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _open_webui_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _open_webui_host.ansible_host }}"
+    wiring_upstream_port: "{{ _open_webui_host.app_config.app.port }}"
+    wiring_subdomain: "{{ hostvars['localhost'].open_webui_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].open_webui_fqdn }}"
+    wiring_app_display: "Open WebUI ({{ instance }})"
+    wiring_monitor_url: "https://{{ hostvars['localhost'].open_webui_fqdn }}/health"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _open_webui_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _open_webui_host.app_config.routing.access | default('internal') }}"
+  tasks:
+    # A new-instance recovery provisions the workload without publishing a route before
+    # its selected application archive has been restored and verified.
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+
+    - name: Record Open WebUI endpoint for app-to-app consumers
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: apps
+        generated_facts_data:
+          "{{ instance }}":
+            provider: open-webui
+            instance: "{{ instance }}"
+            host: "http://{{ _open_webui_host.ansible_host }}"
+            port: "{{ _open_webui_host.app_config.app.port }}"
+            url: "http://{{ _open_webui_host.ansible_host }}:{{ _open_webui_host.app_config.app.port }}/"
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring.provider | default('none') != 'none'
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: Record Open WebUI on its AI stack host
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: ["{{ _open_webui_host.inventory_hostname }}"]
+        record_guest_kind: docker
+        record_guest_url: "https://{{ hostvars['localhost'].open_webui_fqdn }}"
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "Open WebUI deployed"
+        notify_message: >-
+          {{ instance }} is running at https://{{ hostvars['localhost'].open_webui_fqdn }}.
+          Selected Ollama={{ hostvars['localhost'].open_webui_ollama_instance | default('none', true) }};
+          LiteLLM={{ hostvars['localhost'].open_webui_litellm_instance | default('none', true) }}.
+    - name: Fail on wiring degradations
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"
