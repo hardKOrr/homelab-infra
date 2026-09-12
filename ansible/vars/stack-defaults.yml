@@ -115,3 +115,13 @@ stack_defaults:
     memory: 4096
     disk_volume:
       size: 32
+
+  # AI applications share a Docker host, while GPU/model ownership stays with the
+  # explicitly selected upstream application. Open WebUI itself is light; the extra
+  # memory and disk leave room for its persistent chat/document state without silently
+  # changing the size of an unrelated stack.
+  ai:
+    cores: 4
+    memory: 8192
+    disk_volume:
+      size: 64

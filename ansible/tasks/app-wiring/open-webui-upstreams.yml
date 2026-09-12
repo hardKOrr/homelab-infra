@@ -1,0 +1,110 @@
+---
+# Resolve Open WebUI's explicitly selected model backends.
+#
+# This is intentionally a registry lookup, not a deployment lookup. Ollama and LiteLLM
+# own their guests and credentials in their own application issues; Open WebUI may only
+# consume an endpoint that one of those deployments has already recorded in
+# config/.generated/facts.yml. No first registered backend, default backend, or guessed
+# hostname is ever selected here.
+#
+# Inputs: app_config and homelabinfra_infra, both loaded by the caller.
+# Outputs on localhost: open_webui_ollama_instance, open_webui_litellm_instance,
+# open_webui_ollama_url and open_webui_litellm_url.
+
+- name: Open WebUI | Resolve named upstream selections
+  ansible.builtin.set_fact:
+    open_webui_ollama_instance: >-
+      {{ app_config.app.upstreams.ollama
+         | default(app_config.app.ollama.instance
+                   | default(app_config.app.ollama_instance | default('')), true) }}
+    open_webui_litellm_instance: >-
+      {{ app_config.app.upstreams.litellm
+         | default(app_config.app.litellm.instance
+                   | default(app_config.app.litellm_instance | default('')), true) }}
+    open_webui_registered_apps: >-
+      {{ (homelabinfra_infra | default({})).apps | default({}) }}
+
+- name: Open WebUI | Require at least one explicit named upstream
+  ansible.builtin.assert:
+    that:
+      - open_webui_ollama_instance | length > 0 or open_webui_litellm_instance | length > 0
+    fail_msg: >-
+      Open WebUI requires an explicit deployed upstream. Set
+      app.upstreams.ollama and/or app.upstreams.litellm in config/apps/{{ instance }}.yml;
+      no upstream is selected automatically.
+
+- name: Open WebUI | Validate the Ollama instance name
+  ansible.builtin.assert:
+    that: open_webui_ollama_instance is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      Open WebUI's selected Ollama instance {{ open_webui_ollama_instance | quote }} is not
+      a safe named application instance.
+  when: open_webui_ollama_instance | length > 0
+
+- name: Open WebUI | Validate the LiteLLM instance name
+  ansible.builtin.assert:
+    that: open_webui_litellm_instance is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      Open WebUI's selected LiteLLM instance {{ open_webui_litellm_instance | quote }} is not
+      a safe named application instance.
+  when: open_webui_litellm_instance | length > 0
+
+- name: Open WebUI | Require the selected Ollama deployment
+  ansible.builtin.assert:
+    that:
+      - open_webui_ollama_instance in open_webui_registered_apps
+      - open_webui_registered_apps[open_webui_ollama_instance].provider | default('') == 'ollama'
+      - >-
+        (open_webui_registered_apps[open_webui_ollama_instance].url | default('') | length > 0)
+        or
+        ((open_webui_registered_apps[open_webui_ollama_instance].host | default('') | length > 0)
+         and (open_webui_registered_apps[open_webui_ollama_instance].port | default(0) | int > 0))
+    fail_msg: >-
+      Open WebUI selected Ollama instance {{ open_webui_ollama_instance | quote }}, but no
+      deployed Ollama endpoint with that name is in homelabinfra_infra.apps. Deploy that
+      named Ollama instance first; Open WebUI will not invent or select another target.
+  when: open_webui_ollama_instance | length > 0
+
+- name: Open WebUI | Require the selected LiteLLM deployment
+  ansible.builtin.assert:
+    that:
+      - open_webui_litellm_instance in open_webui_registered_apps
+      - open_webui_registered_apps[open_webui_litellm_instance].provider | default('') == 'litellm'
+      - >-
+        (open_webui_registered_apps[open_webui_litellm_instance].url | default('') | length > 0)
+        or
+        ((open_webui_registered_apps[open_webui_litellm_instance].host | default('') | length > 0)
+         and (open_webui_registered_apps[open_webui_litellm_instance].port | default(0) | int > 0))
+    fail_msg: >-
+      Open WebUI selected LiteLLM instance {{ open_webui_litellm_instance | quote }}, but no
+      deployed LiteLLM endpoint with that name is in homelabinfra_infra.apps. Deploy that
+      named LiteLLM instance first; Open WebUI will not invent or select another target.
+  when: open_webui_litellm_instance | length > 0
+
+- name: Open WebUI | Derive the selected upstream base URLs
+  ansible.builtin.set_fact:
+    open_webui_ollama_url: >-
+      {{ (((_ollama.url | default('', true))
+           or ((_ollama.host | default('')) ~ ':' ~ (_ollama.port | default(0) | string)))
+          | regex_replace('/+$', ''))
+         if open_webui_ollama_instance | length > 0 else '' }}
+    open_webui_litellm_base_url: >-
+      {{ (((_litellm.url | default('', true))
+           or ((_litellm.host | default('')) ~ ':' ~ (_litellm.port | default(0) | string)))
+          | regex_replace('/+$', ''))
+         if open_webui_litellm_instance | length > 0 else '' }}
+  vars:
+    _ollama: "{{ open_webui_registered_apps.get(open_webui_ollama_instance, {}) }}"
+    _litellm: "{{ open_webui_registered_apps.get(open_webui_litellm_instance, {}) }}"
+
+- name: Open WebUI | Add the LiteLLM OpenAI API path
+  ansible.builtin.set_fact:
+    open_webui_litellm_url: >-
+      {{ open_webui_litellm_base_url
+         ~ ('' if open_webui_litellm_base_url is search('/v1$') else '/v1') }}
+  when: open_webui_litellm_instance | length > 0
+
+- name: Open WebUI | Keep the LiteLLM endpoint empty when it is not selected
+  ansible.builtin.set_fact:
+    open_webui_litellm_url: ''
+  when: open_webui_litellm_instance | length == 0

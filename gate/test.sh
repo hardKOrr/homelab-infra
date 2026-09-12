@@ -99,6 +99,7 @@ bash gate/test-searxng-contract.sh || rc=1
 bash gate/test-mautic-contract.sh || rc=1
 bash gate/test-hi-events-contract.sh || rc=1
 bash gate/test-batch-c-contract.sh || rc=1
+bash gate/test-open-webui-contract.sh || rc=1
 bash gate/test-bookstack-contract.sh || rc=1
 bash gate/test-immich-contract.sh || rc=1
 bash gate/test-registry-handoff.sh || rc=1

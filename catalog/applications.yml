@@ -474,3 +474,15 @@ applications:
     # named Proxmox USB resource mapping. Its role owns application-consistent config/state
     # backup and restore in addition to the generic Docker actions.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
+
+  open-webui:
+    name: Open WebUI
+    job: deploy-open-webui.yaml
+    root: Applications
+    category: AI and Machine Learning
+    type: Chat Interface
+    scope: estate
+    # Open WebUI owns a persistent data directory and an application-consistent PBS
+    # archive. Its selected Ollama/LiteLLM endpoints are named dependencies; Remove App
+    # only stops/removes Open WebUI's Compose project and data path.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]

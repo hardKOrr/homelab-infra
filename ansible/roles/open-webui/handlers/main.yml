@@ -1,0 +1,5 @@
+---
+- name: Restart Open WebUI
+  community.docker.docker_compose_v2:
+    project_src: "{{ open_webui_project_dir }}"
+    state: restarted

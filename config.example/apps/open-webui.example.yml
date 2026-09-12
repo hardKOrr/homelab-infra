@@ -1,0 +1,27 @@
+---
+# Open WebUI — persistent chat interface on the AI Docker stack.
+#
+# Copy this file to config/apps/open-webui.yml (or to the name of another instance) and
+# set at least one named upstream. The names below must already exist in the generated
+# application registry: Open WebUI fails before provisioning rather than selecting an
+# arbitrary backend. Deploy Ollama and/or LiteLLM first.
+#
+# Open WebUI's users, chats, documents and uploads live below /opt/<instance>/data and are
+# covered by its application-consistent PBS backup. The selected upstream applications are
+# independent and are never removed or included in this recovery unit.
+
+app:
+  upstreams:
+    ollama: ""       # e.g. ollama-gpu — an existing deployed Ollama instance
+    litellm: ""      # e.g. litellm — an existing deployed LiteLLM instance
+  enable_signup: true # set false after the first local account is created
+
+routing:
+  access: internal
+  identity: catalog
+  # estate: <name>      # required in a multi-estate lab
+  # subdomain: open-webui
+
+backup:
+  enabled: true
+  # schedule: "0 3 * * *"

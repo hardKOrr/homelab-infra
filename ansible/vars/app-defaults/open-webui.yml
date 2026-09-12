@@ -1,0 +1,51 @@
+---
+# Default configuration for Open WebUI — a persistent chat interface on the AI Docker
+# stack. Open WebUI does not deploy an inference backend of its own: every instance must
+# explicitly name at least one already-deployed Ollama and/or LiteLLM instance in its
+# config/apps/<instance>.yml file.
+open_webui_defaults:
+  stack: ai
+
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
+  app:
+    image: ghcr.io/open-webui/open-webui:main
+    port: 3000
+    service_name: open-webui
+    # Open WebUI stores users, chats, documents, uploads and its embedded database here.
+    data_path: "/opt/{{ instance }}/data"
+    # Keep the first-run account creation path open. Disable later from this app's admin
+    # settings, or override this value in config/apps/<instance>.yml.
+    enable_signup: true
+    upstreams:
+      # Empty by design: selecting a name is mandatory in the instance configuration.
+      ollama: ""
+      litellm: ""
+
+  routing:
+    subdomain: open-webui
+    proxy: internal
+    access: internal
+    # Open WebUI has its own accounts and session boundary. Authentik supplies a catalog
+    # tile but is not placed in front of the app's first-run login.
+    identity: catalog
+
+  # The data directory is quiesced and archived as one application-consistent PBS
+  # recovery point. The selected Ollama/LiteLLM services are never part of this backup.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
