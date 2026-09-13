@@ -3,10 +3,12 @@
   name: Audit Backups
   group: Manage/Lab/Health
   description: |-
-    Report guest backup schedules, recent snapshot candidates, and external or excluded data.
+    Report guest backup schedules, recent snapshot candidates, product recovery methods,
+    and external or excluded data.
 
     **Read-only.** A fresh snapshot does not prove application consistency or a successful
-    restore. Unverified recovery requirements remain visible in the report.
+    restore. Product identity in a shared guest, native artifacts, external data,
+    credentials, and unverified recovery requirements remain visible in the report.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

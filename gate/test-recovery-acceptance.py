@@ -39,6 +39,7 @@ class RecoveryAcceptanceTests(unittest.TestCase):
                 "home-assistant",
                 "immich",
                 "jellyseerr",
+                "litellm",
                 "maintainerr",
                 "mixpost",
                 "ollama",

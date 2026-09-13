@@ -1,0 +1,35 @@
+schema_version: 1
+
+# Synthetic component evidence only. These values deliberately exercise every state
+# that a status/audit consumer must preserve; none is live lab evidence.
+evidence:
+  - id: stale-native-artifact
+    schedule: {status: configured}
+    artifact: {state: stale, artifact_id: "host/fixture/old"}
+    integrity: {status: unknown}
+    external_data: {status: unknown}
+    restore: {status: unknown}
+  - id: missing-native-artifact
+    schedule: {status: configured}
+    artifact: {state: missing}
+    integrity: {status: unknown}
+    external_data: {status: unknown}
+    restore: {status: unknown}
+  - id: excluded-external-volume
+    schedule: {status: configured}
+    artifact: {state: verified_fresh, artifact_id: "host/fixture/fresh"}
+    integrity: {status: verified}
+    external_data: {status: excluded, notes: "external volume is outside this artifact"}
+    restore: {status: unknown}
+  - id: incomplete-artifact
+    schedule: {status: configured}
+    artifact: {status: incomplete, artifact_id: "host/fixture/partial"}
+    integrity: {status: failed}
+    external_data: {status: unknown}
+    restore: {status: unknown}
+  - id: unreadable-inventory
+    schedule: {status: unknown, notes: "backup inventory unreadable"}
+    artifact: {status: unreadable}
+    integrity: {status: unknown}
+    external_data: {status: unknown}
+    restore: {status: unknown}
