@@ -486,6 +486,17 @@ applications:
     # application-consistent model/config archive. It must not use the shared ai LXC.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
 
+  litellm:
+    name: LiteLLM
+    job: deploy-litellm.yaml
+    root: Applications
+    category: AI and Machine Learning
+    type: Model Gateway
+    scope: estate
+    # LiteLLM is a stateless Kubernetes proxy. Routing config is a ConfigMap, provider
+    # keys are Vaultwarden-only, and virtual-key/usage state belongs to named PostgreSQL.
+    actions: [backup, configure, remove, restore]
+
   open-webui:
     name: Open WebUI
     job: deploy-open-webui.yaml

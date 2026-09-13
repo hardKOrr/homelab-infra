@@ -1,0 +1,237 @@
+---
+# Deploy LiteLLM Proxy onto the Kubernetes hosting backend.
+#
+# Durable state is intentionally outside the pod: route configuration is a ConfigMap,
+# provider keys plus stable master/salt keys are Vaultwarden-backed runtime Secrets, and
+# virtual keys, key metadata, spend records and usage logs are in the named external
+# PostgreSQL database. A pod restart therefore does not lose gateway state and a cluster
+# node loss does not strand an application PVC.
+
+- name: LiteLLM | Resolve the cluster and its API host
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-cluster.yml
+
+- name: LiteLLM | Ensure the instance namespace exists
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/ensure-namespace.yml
+
+- name: LiteLLM | Validate credential references
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[A-Z][A-Z0-9_]*$')
+      - item.value is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      LiteLLM credential {{ item.key | quote }} must map to a safe Vaultwarden field name;
+      values are never accepted from config/apps/{{ instance }}.yml.
+  loop: "{{ app_config.app.credentials | default({}) | dict2items }}"
+
+- name: LiteLLM | Resolve the stable application keys
+  ansible.builtin.set_fact:
+    _litellm_vault_app: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}"
+    _litellm_master_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).master_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
+    _litellm_salt_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).salt_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+  no_log: true
+
+- name: LiteLLM | Store stable application keys in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      master_key: "{{ _litellm_master_key }}"
+      salt_key: "{{ _litellm_salt_key }}"
+    vault_item_secret_fields: [master_key, salt_key]
+  no_log: true
+
+- name: LiteLLM | Resolve provider keys from the canonical Vaultwarden item
+  ansible.builtin.set_fact:
+    _litellm_provider_secrets: >-
+      {{ _litellm_provider_secrets | default({})
+         | combine({item.key: _litellm_vault_app[item.value] | default('', true)}) }}
+  loop: "{{ app_config.app.credentials | default({}) | dict2items }}"
+  no_log: true
+
+- name: LiteLLM | Require every named provider key in Vaultwarden
+  ansible.builtin.assert:
+    that: _litellm_provider_secrets[item.key] | default('') | length > 0
+    fail_msg: >-
+      Vaultwarden item homelab-infra/apps/{{ instance }} is missing the hidden field
+      {{ item.value }} required by LiteLLM environment reference {{ item.key }}. Store the
+      provider key with the Store Secret job; it must not be added to config/apps.
+  loop: "{{ app_config.app.credentials | default({}) | dict2items }}"
+  no_log: true
+
+- name: LiteLLM | Reject inline provider credentials
+  ansible.builtin.assert:
+    that: item.litellm_params.api_key is not defined
+    fail_msg: >-
+      Model {{ item.model_name }} contains an inline api_key. Provider credentials must
+      use api_key_env and a hidden Vaultwarden field; they are never accepted in config/apps.
+  loop: "{{ app_config.app.models | default([]) }}"
+  no_log: true
+
+- name: LiteLLM | Require model credential references to be declared
+  ansible.builtin.assert:
+    that:
+      - item.litellm_params.api_key_env in (app_config.app.credentials | default({}))
+    fail_msg: >-
+      Model {{ item.model_name }} references {{ item.litellm_params.api_key_env | default('') }}
+      but app.credentials does not map that environment name to a Vaultwarden field.
+  loop: "{{ app_config.app.models | default([]) }}"
+  when: item.litellm_params.api_key_env | default('') | length > 0
+
+- name: LiteLLM | Build the database connection URL
+  ansible.builtin.set_fact:
+    _litellm_database_url: >-
+      postgresql://{{ app_config.app.database_user }}:{{ app_config.app.database_password }}@
+      {{ app_config.app.database_host }}:{{ app_config.app.database_port }}/{{ app_config.app.database_name }}
+  no_log: true
+
+- name: LiteLLM | Sync runtime credentials into the instance namespace
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+  vars:
+    k8s_secret_name: "{{ instance }}-runtime"
+    k8s_secret_data: >-
+      {{ {'LITELLM_MASTER_KEY': _litellm_master_key,
+          'LITELLM_SALT_KEY': _litellm_salt_key,
+          'DATABASE_URL': _litellm_database_url}
+         | combine(_litellm_provider_secrets | default({})) }}
+  no_log: true
+
+- name: LiteLLM | Read the archived routing ConfigMap during restore reconciliation
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - get
+      - configmap
+      - "{{ instance }}-config"
+      - -o
+      - jsonpath={.data.config\.yaml}
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _litellm_restored_config
+  changed_when: false
+  when: recovery_restore_config | default(false) | bool
+
+- name: LiteLLM | Require the archived routing ConfigMap during restore reconciliation
+  ansible.builtin.assert:
+    that:
+      - _litellm_restored_config.rc == 0
+      - _litellm_restored_config.stdout | trim | length > 0
+    fail_msg: >-
+      LiteLLM restore reconciliation could not read {{ instance }}-config. The target
+      remains on the restored database; inspect the namespace before retrying.
+  when: recovery_restore_config | default(false) | bool
+
+- name: LiteLLM | Render the routing configuration
+  ansible.builtin.set_fact:
+    _litellm_config: >-
+      {{ _litellm_restored_config.stdout
+         if (recovery_restore_config | default(false) | bool)
+         else lookup('ansible.builtin.template', 'config.yaml.j2') }}
+
+- name: LiteLLM | Render and apply the workload manifest
+  ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+  vars:
+    k8s_manifest: "{{ lookup('ansible.builtin.template', 'manifest.yaml.j2') }}"
+    k8s_wait_for:
+      - "deployment/{{ instance }}"
+
+# ── Application-consistent backup ──────────────────────────────────────────────
+# The external PostgreSQL database is the source of truth for virtual keys, key metadata,
+# spend records and usage logs. The CronJob dumps it and archives the rendered ConfigMap in
+# one PBS snapshot. Provider credentials remain Vaultwarden-only and are never archived.
+
+- name: LiteLLM | Resolve the lab's PBS target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: LiteLLM | Note that this lab has no backup target
+  ansible.builtin.debug:
+    msg: >-
+      {{ instance }} declares backup.enabled, but no Proxmox Backup Server is recorded;
+      no backup was scheduled. Deploy PBS and re-run this job.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (k8s_pbs_available | default(false) | bool)
+
+- name: LiteLLM | Configure the nightly application backup
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - k8s_pbs_available | default(false) | bool
+  block:
+    - name: LiteLLM | Resolve backup settings
+      ansible.builtin.set_fact:
+        _litellm_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        _litellm_backup_timezone: >-
+          {{ app_config.backup.timezone | default('', true)
+             or homelabinfra_config.timezone | default('UTC') }}
+        _litellm_backup_repository: "{{ k8s_pbs_repository }}"
+        _litellm_backup_fingerprint: "{{ k8s_pbs_fingerprint }}"
+        _litellm_backup_datastore: "{{ k8s_pbs_datastore }}"
+        _litellm_ntfy_url: >-
+          {{ (homelabinfra_infra.notifications.host ~ '/'
+              ~ (homelabinfra_infra.notifications.topic | default('homelab')))
+             if (((homelabinfra_infra | default({})).notifications | default({})).provider
+                 | default('none') == 'ntfy'
+                 and (homelabinfra_infra.notifications.host | default('') | length > 0))
+             else '' }}
+        _litellm_database_host: "{{ app_config.app.database_host }}"
+        _litellm_database_port: "{{ app_config.app.database_port }}"
+        _litellm_database_name: "{{ app_config.app.database_name }}"
+        _litellm_database_user: "{{ app_config.app.database_user }}"
+
+    - name: LiteLLM | Read the notification publish token
+      ansible.builtin.set_fact:
+        _litellm_ntfy_token: >-
+          {{ ((homelabinfra_infra | default({})).notifications | default({})).token
+             | default('') }}
+      no_log: true
+
+    - name: LiteLLM | Sync backup credentials into the instance namespace
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
+      vars:
+        k8s_secret_name: "{{ instance }}-backup"
+        k8s_secret_data: >-
+          {{ {'pbs-password': k8s_pbs_password,
+              'db-password': app_config.app.database_password}
+             | combine({'ntfy-token': _litellm_ntfy_token}
+                       if _litellm_ntfy_token | length > 0 else {}) }}
+      no_log: true
+
+    - name: LiteLLM | Render and apply the backup CronJob
+      ansible.builtin.include_tasks: ../../../tasks/kubernetes/apply-manifest.yml
+      vars:
+        k8s_manifest: "{{ lookup('ansible.builtin.template', 'backup-cronjob.yaml.j2') }}"
+
+    - name: LiteLLM | State the backup contract
+      ansible.builtin.debug:
+        msg:
+          - "Backup: an application-consistent PostgreSQL dump plus the rendered routing ConfigMap, pushed to PBS datastore {{ _litellm_backup_datastore }} as host/{{ _litellm_backup_id }}."
+          - "Provider keys and LiteLLM master/salt keys remain in Vaultwarden and are never archived."
+          - "Restore: Restore App instance={{ instance }}; plan first, then overwrite=true after deploying the target namespace."
+
+- name: LiteLLM | Remove the backup CronJob when no backup was configured
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - --namespace
+      - "{{ k8s_namespace }}"
+      - delete
+      - cronjob
+      - "{{ instance }}-backup"
+      - --ignore-not-found=true
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _litellm_backup_removed
+  when: not ((app_config.backup.enabled | default(false) | bool)
+             and (k8s_pbs_available | default(false) | bool))
+  changed_when: "'deleted' in (_litellm_backup_removed.stdout | default(''))"

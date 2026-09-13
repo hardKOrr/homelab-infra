@@ -1,0 +1,104 @@
+{#
+  LiteLLM — every object lives in the instance namespace. There is deliberately no PVC:
+  the proxy is replaceable, its route config is a ConfigMap, credentials are a Secret, and
+  durable virtual-key/usage state is the separately provisioned PostgreSQL database.
+#}
+{% set labels %}
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/managed-by: homelab-infra
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ instance }}-config
+  labels:
+{{ labels }}
+data:
+  config.yaml: {{ _litellm_config | to_json }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ instance }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ instance }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: web
+    spec:
+      containers:
+        - name: litellm
+          image: {{ app_config.app.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/app/config.yaml"]
+          envFrom:
+            - secretRef:
+                name: {{ instance }}-runtime
+          ports:
+            - containerPort: {{ app_config.app.port }}
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: {{ app_config.app.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: {{ app_config.app.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ instance }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ instance }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ app_config.app.port }}
+      targetPort: {{ app_config.app.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ instance }}
+  labels:
+{{ labels }}
+spec:
+  rules:
+    - host: {{ litellm_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ instance }}
+                port:
+                  number: {{ app_config.app.port }}

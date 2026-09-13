@@ -1,0 +1,77 @@
+---
+# Default configuration for LiteLLM Proxy — the stateless Kubernetes AI gateway.
+# Users override specific values in config/apps/litellm.yml. Provider credentials are
+# deliberately absent: the `app.credentials` map names Vaultwarden fields only.
+#
+# HOSTING DECISION (issue #145)
+#
+# LiteLLM's proxy process does not need a writable filesystem. Its routing configuration
+# is rendered into a ConfigMap, provider credentials are read from a Vaultwarden-backed
+# Kubernetes Secret, and virtual keys, key metadata, spend records and usage logs live in
+# the named external PostgreSQL database. This makes the pod replaceable and avoids a PVC
+# that would pin the gateway to one Kubernetes node. The database is backed up with the
+# rendered routing ConfigMap by this role's PBS CronJob.
+#
+# See docs/meta/145-litellm/README.md for the upstream validation and the recovery boundary.
+
+litellm_defaults:
+
+  hosting: kubernetes
+
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
+  cluster: k3s-cluster
+
+  app:
+    image: "docker.litellm.ai/berriai/litellm:main-stable"
+    port: 4000
+
+    # LiteLLM virtual keys, key metadata, spend logs and usage records. This is a named
+    # database on a separately deployed PostgreSQL instance, never an in-namespace sidecar.
+    database:
+      provider: postgresql
+      instance: postgresql-litellm
+      version: "16"
+      name: litellm
+      role: litellm
+
+    # Map runtime environment names used by model routes to hidden fields in
+    # homelab-infra/apps/<instance>. The values are entered with Store Secret and are
+    # never accepted from config/apps or this defaults file.
+    credentials: {}
+
+    # Each route may set model, api_base, api_version and other LiteLLM parameters. Set
+    # `api_key_env` when the provider needs a key; it must name an entry in credentials.
+    models: []
+
+  routing:
+    subdomain: litellm
+    proxy: internal
+    access: internal
+    # Authentik supplies a catalog tile, but does not sit in front of the OpenAI-compatible
+    # API: clients authenticate with LiteLLM's master/proxy key instead.
+    identity: catalog
+
+  # The backup is an application-consistent PostgreSQL dump plus the exact rendered
+  # routing ConfigMap. Vaultwarden remains the source of provider keys and is not copied
+  # into the archive.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

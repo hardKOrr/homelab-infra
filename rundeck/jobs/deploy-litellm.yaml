@@ -1,0 +1,50 @@
+---
+# Deploy LiteLLM — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. The renderer injects this job's Key
+# Storage options and expands the generated Maintenance actions from the app defaults.
+#
+# Requires `Deploy k3s Cluster` and the named PostgreSQL backend to have run first.
+
+- id: 8d2b9f5a-5e6a-4d0e-9a11-1451b7f0c2aa
+  uuid: 8d2b9f5a-5e6a-4d0e-9a11-1451b7f0c2aa
+  name: Deploy LiteLLM
+  group: Applications/AI and Machine Learning/Model Gateway/LiteLLM
+  description: |-
+    Deploy or converge **LiteLLM Proxy** as a stateless Kubernetes workload.
+
+    - **Hosting:** Kubernetes. The pod has no writable application volume.
+    - **Durable state:** named external PostgreSQL stores virtual keys, key metadata, spend
+      records and usage logs; the rendered routing ConfigMap is archived beside its dump.
+    - **Credentials:** provider keys, master key and salt key are read only from
+      `homelab-infra/apps/<instance>` in Vaultwarden. They are never committed or logged.
+    - **Route:** `litellm.<estate domain>`, restricted to internal sources by default.
+    - **Health:** `/health/readiness` verifies process and database readiness; liveness uses
+      `/health/liveliness`.
+    - **Recovery:** Backup App archives the PostgreSQL dump and routing config to PBS;
+      Restore App is plan-first and restores both into a deployed target namespace.
+
+    Before live work, name the LiteLLM instance, Kubernetes cluster, PostgreSQL instance and
+    provider accounts. Repository and synthetic fixture verification is the closure scope for
+    #145; live execution is deferred to the isolated real-Proxmox acceptance lane under #35.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected LiteLLM instance. Enter another name only to
+      deploy a disposable restore target. The value identifies the config file,
+      `app-<instance>` namespace, route, PostgreSQL credentials and Vaultwarden item.'
+    required: true
+    value: litellm
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/litellm.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/litellm.yml -e "instance=$RD_OPTION_INSTANCE"

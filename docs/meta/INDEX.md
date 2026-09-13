@@ -26,6 +26,7 @@ bash gate/test.sh
 | [#11](https://github.com/hardKOrr/homelab-infra/issues/11) | [506 — Plex client troubleshooter](506-plex-client-troubleshooter/README.md) | Add read-only, evidence-ranked triage for Plex client log bundles |
 | [#12](https://github.com/hardKOrr/homelab-infra/issues/12) | [408 — Application catalog](408-app-catalog/README.md) | Implement its application batches in the order defined by that slice |
 | [#46](https://github.com/hardKOrr/homelab-infra/issues/46) | [046 — Kubernetes shared storage](046-kubernetes-shared-storage/README.md) | Run and record the approved-target shared-volume, node-loss, snapshot, and restore drill |
+| [#145](https://github.com/hardKOrr/homelab-infra/issues/145) | [145 — Batch C: deploy LiteLLM](145-litellm/README.md) | Repository and synthetic verification are built; defer named live acceptance to #35 |
 
 The following option slices refine application-catalog rows and have no issue of their own
 yet. Their own dependencies and acceptance criteria decide when each is actionable; file an

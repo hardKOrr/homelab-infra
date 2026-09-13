@@ -1,0 +1,33 @@
+---
+# LiteLLM Proxy — stateless Kubernetes gateway with external PostgreSQL state.
+#
+# Copy to config/apps/litellm.yml. Run `Deploy k3s Cluster` first and deploy the named
+# PostgreSQL backend `postgresql-litellm` before deploying this app. Do not put provider
+# credentials in this file. For each entry below, create the corresponding hidden field
+# in Vaultwarden item homelab-infra/apps/litellm with the Store Secret job.
+
+app:
+  credentials:
+    # Environment name: Vaultwarden hidden-field name. Values never belong here.
+    OPENAI_API_KEY: openai_api_key
+
+  # Routing configuration is declarative and contains no provider secret. The role turns
+  # api_key_env into LiteLLM's `os.environ/<name>` reference.
+  models:
+    - model_name: gpt-4o-mini
+      litellm_params:
+        model: openai/gpt-4o-mini
+        api_key_env: OPENAI_API_KEY
+
+routing:
+  access: internal
+  identity: catalog
+  # estate: <name>      # required in a multi-estate lab
+  # subdomain: litellm
+
+backup:
+  enabled: true
+  # schedule: "0 3 * * *"
+  # retention_days: 14
+  # datastore: REPLACE_WITH_PBS_DATASTORE
+  # backup_id: ""
