@@ -11,6 +11,7 @@ This directory contains durable project design and implementation contracts.
 - [`../AGENTS.md`](../AGENTS.md) contains the concise project operating instructions used by
   agent tools.
 - [`../gate/README.md`](../gate/README.md) documents the executable lint and test gate.
+- [Recovery acceptance](recovery-acceptance.md) defines the two-destination fixture protocol and evidence boundary.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) defines the issue-to-PR lifecycle: GitHub
   Issues as the live work queue, issue and PR templates, and the AO worker lifecycle from
   intake to handoff.

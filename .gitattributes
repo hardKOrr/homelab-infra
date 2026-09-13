@@ -10,3 +10,5 @@ rundeck/*.sh text eol=lf
 
 # Python backup evidence tests are executed on Linux.
 gate/test-backup-audit.py text eol=lf
+gate/recovery_acceptance.py text eol=lf
+gate/test-recovery-acceptance.py text eol=lf
