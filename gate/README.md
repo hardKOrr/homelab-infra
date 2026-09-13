@@ -35,6 +35,8 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   `docs/specs/secrets-handling.md`.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
+  Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination
+  protocol and coverage rollup described in [`../docs/recovery-acceptance.md`](../docs/recovery-acceptance.md).
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
 - `container.sh` — runs the Molecule container role integration harness at
   `ansible/molecule/docker-app` (converge, idempotence, verify, teardown) against a
