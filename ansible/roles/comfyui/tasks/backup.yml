@@ -1,0 +1,108 @@
+---
+# The storage tree contains models, custom nodes, workflows, inputs, outputs, and the
+# ComfyUI user configuration. Stop the service before archiving it so model metadata and
+# the user database are captured as one application-consistent recovery unit.
+- name: ComfyUI backup | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      ComfyUI needs its application-consistent backup contract and a configured PBS before
+      an on-demand backup can run.
+
+- name: ComfyUI backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: ComfyUI backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for ComfyUI. Deploy PBS and re-run this backup; no local
+      archive is treated as a recovery point.
+
+- name: ComfyUI backup | Require the model/config storage tree
+  ansible.builtin.stat:
+    path: "{{ app_config.app.storage_path }}"
+  register: _comfyui_backup_storage
+  changed_when: false
+
+- name: ComfyUI backup | Refuse an incomplete recovery point
+  ansible.builtin.assert:
+    that:
+      - _comfyui_backup_storage.stat.exists
+      - _comfyui_backup_storage.stat.isdir
+    fail_msg: >-
+      ComfyUI storage path {{ app_config.app.storage_path }} is missing; refusing to create
+      a backup that would omit model storage and configuration.
+
+- name: ComfyUI backup | Stop ComfyUI before archiving state
+  community.docker.docker_compose_v2:
+    project_src: "{{ comfyui_project_dir }}"
+    state: stopped
+    services: [comfyui]
+
+- name: ComfyUI backup | Archive models and configuration to PBS
+  block:
+    - name: ComfyUI backup | Push one application archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ app_config.app.storage_path }}:/source:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - RETENTION_DAYS
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/proxmox-backup-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      no_log: true
+      changed_when: true
+
+    - name: ComfyUI backup | Mark the application backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: ComfyUI backup | Start ComfyUI after the attempt
+      community.docker.docker_compose_v2:
+        project_src: "{{ comfyui_project_dir }}"
+        state: present
+        services: [comfyui]

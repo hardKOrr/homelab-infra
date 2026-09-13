@@ -1,0 +1,34 @@
+{{ ansible_managed | comment }}
+services:
+  comfyui:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}-comfyui"
+    restart: unless-stopped
+    ports:
+      - "{{ app_config.app.port }}:8188"
+    # Compose asks Docker for every GPU visible to this VM. The VM itself receives only
+    # the exact PCI device named in app.pci_device; no second guest can use this card.
+    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      COMFYUI_PORT_HOST: "8188"
+      AUTO_UPDATE: "false"
+    volumes:
+      - "{{ app_config.app.models_path }}:/workspace/storage/models"
+      - "{{ app_config.app.config_path }}:/workspace/storage/user"
+      - "{{ app_config.app.custom_nodes_path }}:/workspace/storage/custom_nodes"
+      - "{{ app_config.app.input_path }}:/workspace/storage/input"
+      - "{{ app_config.app.output_path }}:/workspace/storage/output"
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8188/system_stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s

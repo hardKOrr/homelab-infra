@@ -1,0 +1,6 @@
+---
+galaxy_info:
+  role_name: comfyui
+  description: "Deploys ComfyUI as Docker on a dedicated VM with PCIe GPU passthrough"
+  min_ansible_version: "2.15"
+dependencies: []

@@ -51,6 +51,11 @@ proxmox:
   #     mode: dedicated    # one VM only; do not use a raw vendorid:productid pair
   #     identifiers:
   #       - home-assistant-zigbee  # exact Proxmox USB resource mapping name
+  #   comfyui-gpu:
+  #     kind: gpu
+  #     mode: dedicated
+  #     identifiers:
+  #       - "0000:01:00.0"  # exact PCI address from lspci; replace before deployment
 
   # Storage every guest lands on. bootstrap-rundeck.sh discovers this as the first active
   # storage advertising content type 'rootdir' — the type a container rootfs requires. A

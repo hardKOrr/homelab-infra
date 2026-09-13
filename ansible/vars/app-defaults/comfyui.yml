@@ -1,0 +1,65 @@
+---
+# ComfyUI is Docker on its own Debian VM. The VM boundary is required by the dedicated
+# PCIe GPU: the guest owns the device exclusively and no shared ai-stack LXC can bind it.
+# The VM root disk is intentionally large enough for the model storage tree; the role
+# exposes that tree as separate Compose mounts so checkpoints, custom nodes, inputs, and
+# outputs survive image replacement and are covered by the application archive.
+comfyui_defaults:
+  hosting: docker
+
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
+  proxmox:
+    vm:
+      cores: 8
+      memory: 16384
+      disk_size: 512
+      agent: 1
+      onboot: true
+      description: "ComfyUI, created by homelab-infra"
+      tags: [_+lab, _-debian]
+    cloud_template:
+      name: debian-12-cloud
+      image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
+
+  app:
+    image: ghcr.io/ai-dock/comfyui:latest-cuda
+    port: 8188
+    service_name: comfyui
+    # A blank PCI address is deliberate: the deploy must name the exact GPU in the
+    # instance config and the matching proxmox.devices declaration before it can mutate a
+    # guest. This is not a "first free GPU" selector.
+    pci_device: ""
+    pci_device_pcie: true
+    storage_path: "/opt/{{ instance }}/storage"
+    models_path: "/opt/{{ instance }}/storage/models"
+    config_path: "/opt/{{ instance }}/storage/user"
+    custom_nodes_path: "/opt/{{ instance }}/storage/custom_nodes"
+    input_path: "/opt/{{ instance }}/storage/input"
+    output_path: "/opt/{{ instance }}/storage/output"
+    # The application archive covers storage_path, including downloaded checkpoints and
+    # LoRAs. A model cache is not treated as disposable for this recovery contract.
+
+  routing:
+    subdomain: comfyui
+    proxy: internal
+    access: internal
+    identity: catalog
+
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

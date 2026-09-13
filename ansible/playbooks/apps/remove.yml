@@ -494,6 +494,20 @@
         - (remove_app | default(instance)) == 'home-assistant'
         - app_config.app.usb_mapping | default('') | length > 0
 
+    # ComfyUI's GPU is a dedicated PCI assignment. Detach it only after the Compose
+    # service has stopped, and only when the passthrough seam can prove this platform
+    # created the exact hostpciN entry. An untagged operator assignment remains in place.
+    - name: Detach ComfyUI's project-owned PCI GPU
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
+      vars:
+        pci_passthrough_guest: "{{ inventory_hostname }}"
+        pci_passthrough_device:
+          id: "{{ app_config.app.pci_device }}"
+      when:
+        - remove_kind == 'docker'
+        - (remove_app | default(instance)) == 'comfyui'
+        - app_config.app.pci_device | default('') | length > 0
+
     # A shared render-node bind is detached only after its Compose services stop.
     # The attach task's provenance tag protects an unowned/pre-existing bind from removal.
     # The durable media mount is operator-owned and deliberately remains in place.
