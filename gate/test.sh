@@ -116,6 +116,7 @@ bash gate/test-device-passthrough-contract.sh || rc=1
 bash gate/test-frigate-contract.sh || rc=1
 bash gate/test-home-assistant-contract.sh || rc=1
 bash gate/test-comfyui-contract.sh || rc=1
+bash gate/test-ollama-contract.sh || rc=1
 bash gate/test-maintainerr-restore.sh || rc=1
 bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1

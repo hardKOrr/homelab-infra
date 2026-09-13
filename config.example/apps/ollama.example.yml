@@ -1,0 +1,40 @@
+---
+# Ollama runs on its own Docker VM because its GPU is a dedicated PCIe device. The exact
+# PCI address must also appear in config/proxmox.yml under one device declaration with
+# mode: dedicated. Do not reuse that device in another guest or place Ollama on the shared
+# ai stack LXC.
+#
+# Before live binding, record the instance, Proxmox node, VM/VMID, PCI address, GPU console
+# recovery path, and model-storage path. The 1024 GiB default VM disk is intentionally sized
+# for local model downloads; override it only with an explicitly sized disk.
+
+app:
+  image: ollama/ollama:latest
+  port: 11434
+  pci_device: "0000:02:00.0" # replace with the exact declared PCI address
+  pci_device_pcie: true
+  # Models and Ollama metadata are retained here and included in the PBS archive.
+  storage_path: /opt/ollama/models
+  models_path: /opt/ollama/models
+
+proxmox:
+  # network: shared
+  # ip_address: 192.168.1.90
+  # vm:
+  #   cores: 8
+  #   memory: 32768
+  #   disk_size: 1024
+
+routing:
+  # subdomain: ollama
+  # access: internal
+  # identity: catalog
+
+backup:
+  # PBS archives storage_path, including downloaded models and Ollama metadata.
+  enabled: true
+  application_consistent: true
+  # schedule: "0 3 * * *"
+  # retention_days: 14
+  # datastore: REPLACE_WITH_PBS_DATASTORE
+  # backup_id: ""

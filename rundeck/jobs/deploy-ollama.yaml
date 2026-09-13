@@ -1,0 +1,46 @@
+---
+# Deploy Ollama. Rendered and imported by rundeck/render-job.py.
+- id: f976aff7-b985-4251-811a-ff2856282351
+  uuid: f976aff7-b985-4251-811a-ff2856282351
+  name: Deploy Ollama
+  group: Applications/AI and Machine Learning/Model Serving/Ollama
+  description: |-
+    Deploy or converge **Ollama** as Docker on its own Debian VM.
+
+    - **Dedicated guest:** Ollama is not placed on the shared ai-stack LXC. Its VM owns
+      the exact PCI address named in the instance config; the device is not shared with
+      another guest.
+    - **Storage:** the VM's large model-storage mount retains downloaded models and Ollama
+      metadata. The app archive covers that tree.
+    - **GPU authority:** the PCI address must be listed in config/proxmox.yml under one
+      `mode: dedicated` declaration. The job never chooses a free GPU or adopts an
+      untagged assignment.
+    - **Recovery:** Backup Ollama archives the quiesced model/config tree to PBS; Restore
+      Ollama is plan-first and replaces only that application tree.
+    - **Rerun:** VM identity, exact PCI assignment, storage paths, Compose state, provider
+      wiring, and the `/api/tags` health check converge without changing another guest.
+
+    Before live deployment, record the instance, Proxmox node, VM/VMID, PCI address, GPU
+    console recovery procedure, and model-storage path. Live-lab execution is deferred to
+    the isolated acceptance lane; repository and synthetic fixture verification are the
+    closure scope for #146.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Ollama instance. Enter another name for a disposable restore target.'
+    required: true
+    value: ollama
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/ollama.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/ollama.yml -e "instance=$RD_OPTION_INSTANCE"

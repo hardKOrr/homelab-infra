@@ -1,0 +1,5 @@
+---
+ollama_project_dir: "/opt/{{ instance }}"
+ollama_compose_file: "{{ ollama_project_dir }}/docker-compose.yml"
+ollama_http_retries: 60
+ollama_http_delay: 5

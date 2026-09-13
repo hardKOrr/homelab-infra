@@ -1,0 +1,97 @@
+---
+# The PCI attach seam proves that the exact GPU belongs to this VM. These checks prove the
+# guest can use it before Compose starts: PCI assignment alone is not a CUDA health check.
+# The Debian guest image must have the matching NVIDIA driver and NVIDIA Container Toolkit
+# prepared for the passed-through card; the role refuses to hide a missing runtime behind a
+# CPU-only Ollama deployment.
+- name: Ollama | Verify the passed-through NVIDIA GPU is visible
+  ansible.builtin.command:
+    argv: [nvidia-smi, --query-gpu=name, --format=csv,noheader]
+  register: _ollama_nvidia_smi
+  changed_when: false
+  failed_when: false
+
+- name: Ollama | Assert the passed-through GPU is usable in the guest
+  ansible.builtin.assert:
+    that:
+      - _ollama_nvidia_smi.rc == 0
+      - _ollama_nvidia_smi.stdout | trim | length > 0
+    fail_msg: >-
+      The Ollama VM does not report an NVIDIA GPU through nvidia-smi. Verify the exact PCI
+      device assignment, guest driver, console recovery, and VM reboot before deploying.
+
+- name: Ollama | Verify Docker exposes the NVIDIA runtime
+  ansible.builtin.command:
+    argv: [docker, info, --format, "{{ '{{json .Runtimes}}' }}"]
+  register: _ollama_docker_info
+  changed_when: false
+  failed_when: false
+
+- name: Ollama | Assert Docker has the NVIDIA Container Toolkit runtime
+  ansible.builtin.assert:
+    that:
+      - _ollama_docker_info.rc == 0
+      - _ollama_docker_info.stdout is search('nvidia')
+    fail_msg: >-
+      Docker does not expose the NVIDIA runtime in {{ instance }}. Install/configure the
+      NVIDIA Container Toolkit in the GPU guest before deploying Ollama.
+
+- name: Ollama | Create project and persistent storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ ollama_project_dir }}"
+    - "{{ app_config.app.storage_path }}"
+
+- name: Ollama | Assert the storage paths are inside the application storage root
+  ansible.builtin.assert:
+    that:
+      - (app_config.app.models_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
+    fail_msg: >-
+      Ollama storage paths must remain below app.storage_path so model files and
+      configuration share one owned recovery unit.
+
+- name: Ollama | Render the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ ollama_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart Ollama
+
+- name: Ollama | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ ollama_project_dir }}"
+
+- name: Ollama | Start the application
+  community.docker.docker_compose_v2:
+    project_src: "{{ ollama_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Ollama | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Ollama | Wait for the API tags endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/tags"
+    status_code: 200
+  register: _ollama_health
+  until: _ollama_health.status | default(0) == 200
+  retries: "{{ ollama_http_retries }}"
+  delay: "{{ ollama_http_delay }}"
+  changed_when: false
+
+- name: Ollama | Assert the API tags response is valid
+  ansible.builtin.assert:
+    that:
+      - _ollama_health.json is defined
+      - _ollama_health.json.models is defined
+    fail_msg: Ollama answered its API health endpoint without a model list.

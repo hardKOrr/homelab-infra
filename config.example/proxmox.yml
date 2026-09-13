@@ -56,6 +56,11 @@ proxmox:
   #     mode: dedicated
   #     identifiers:
   #       - "0000:01:00.0"  # exact PCI address from lspci; replace before deployment
+  #   ollama-gpu:
+  #     kind: gpu
+  #     mode: dedicated
+  #     identifiers:
+  #       - "0000:02:00.0"  # a separate exact GPU; never reuse comfyui-gpu
 
   # Storage every guest lands on. bootstrap-rundeck.sh discovers this as the first active
   # storage advertising content type 'rootdir' — the type a container rootfs requires. A

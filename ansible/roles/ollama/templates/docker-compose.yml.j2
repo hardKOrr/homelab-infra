@@ -1,0 +1,29 @@
+{{ ansible_managed | comment }}
+services:
+  ollama:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}-ollama"
+    restart: unless-stopped
+    ports:
+      - "{{ app_config.app.port }}:11434"
+    # Compose asks Docker for every GPU visible to this VM. The VM itself receives only
+    # the exact PCI device named in app.pci_device; no second guest can use this card.
+    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+    volumes:
+      - "{{ app_config.app.models_path }}:/root/.ollama"
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
