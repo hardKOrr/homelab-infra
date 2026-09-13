@@ -1,0 +1,170 @@
+---
+# Deploy LiteLLM Proxy — an external-state Kubernetes AI gateway.
+#
+# LiteLLM has no guest of its own. The pod, ConfigMap and runtime Secret live in an
+# instance namespace on the separately deployed k3s cluster; the named PostgreSQL backend
+# owns virtual keys, spend records and usage logs. Provider keys are read only from the
+# instance's Vaultwarden item.
+
+- name: "LiteLLM | Deploy"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert instance name is provided
+      ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide a safe LiteLLM instance name: -e instance=litellm"
+
+    - name: Load LiteLLM defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/litellm.yml
+        name: _app_defaults
+
+    - name: Load instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Load generated topology facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge LiteLLM config with its Vaultwarden overlay
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.litellm_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
+
+  tasks:
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+    - name: Derive the published hostname
+      ansible.builtin.set_fact:
+        litellm_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+        litellm_fqdn: >-
+          {{ app_config.routing.subdomain | default(instance, true) }}.{{ homelabinfra_infra.domain }}
+
+    - name: Provision the named PostgreSQL database and role
+      ansible.builtin.include_tasks: ../../tasks/database/provision.yml
+      vars:
+        database_provision_app_instance: "{{ instance }}"
+        database_provision_config: "{{ app_config.app.database }}"
+
+    - name: Add the Vaultwarden-backed database connection to LiteLLM config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'app': {
+            'database_provider': database_provision_connection.provider,
+            'database_host': database_provision_connection.host,
+            'database_port': database_provision_connection.port,
+            'database_name': database_provision_connection.name,
+            'database_user': database_provision_connection.user,
+            'database_password': database_provision_connection.password
+          }}, recursive=True) }}
+      no_log: true
+
+    - name: Refresh inventory to get current cluster state
+      ansible.builtin.meta: refresh_inventory
+
+    - name: Deploy LiteLLM onto the cluster
+      ansible.builtin.include_role:
+        name: litellm
+      vars:
+        litellm_fqdn: "{{ hostvars['localhost'].litellm_fqdn }}"
+
+- name: "LiteLLM | Wire"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+    wiring_upstream_port: 80
+    wiring_subdomain: "{{ hostvars['localhost'].litellm_subdomain }}"
+    wiring_domain: "{{ hostvars['localhost'].litellm_fqdn }}"
+    wiring_app_display: "LiteLLM ({{ instance }})"
+    wiring_monitor_url: "https://{{ hostvars['localhost'].litellm_fqdn }}/health/readiness"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ hostvars['localhost'].app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ hostvars['localhost'].app_config.routing.access | default('internal') }}"
+
+  tasks:
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+
+    - name: Record LiteLLM endpoint for named AI consumers
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/write-generated-facts.yml
+      vars:
+        generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        generated_facts_service: apps
+        generated_facts_data:
+          "{{ instance }}":
+            provider: litellm
+            instance: "{{ instance }}"
+            # Open WebUI uses the routed HTTPS endpoint so the Kubernetes Ingress receives
+            # the correct Host header. `/v1` is already present; its consumer seam will not
+            # append a second one.
+            host: "https://{{ hostvars['localhost'].litellm_fqdn }}"
+            port: 443
+            url: "https://{{ hostvars['localhost'].litellm_fqdn }}/v1"
+
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra.monitoring is defined
+        - homelabinfra_infra.monitoring.provider | default('none') != 'none'
+
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Record LiteLLM on every node of its cluster
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_names: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).nodes | default([])
+             | map(attribute='name') | list }}
+        record_guest_kind: kubernetes
+        record_guest_url: "https://{{ hostvars['localhost'].litellm_fqdn }}"
+
+    - name: Notify
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "LiteLLM deployed"
+        notify_message: >-
+          {{ instance }} is running on the Kubernetes backend at
+          https://{{ hostvars['localhost'].litellm_fqdn }}. Provider keys remain in Vaultwarden.
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

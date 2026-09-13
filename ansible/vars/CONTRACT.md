@@ -465,6 +465,24 @@ Connection fields and hidden `database_password` exist only in the canonical Vau
 
 A consumer owns only its named database and role. Backup and restore use a named logical dump with the application stopped or otherwise application-consistent; removal requires a confirmed backup and may delete only that named database and role. It must never remove the backend guest, registry entry, other applications, or unmanaged resources. A Vaultwarden or backend failure stops the request without logging a credential; rerun `reuse` to converge, or rerun the explicit `rotate` request if a recorded rotation was interrupted.
 
+### LiteLLM external-state contract
+
+LiteLLM declares `hosting: kubernetes` and `app.database` as a named PostgreSQL consumer.
+Its `app.models` list is routing configuration; a model's optional `litellm_params.api_key_env`
+must name an `app.credentials` entry of `ENVIRONMENT_NAME: vaultwarden_field_name`.
+Only the field name is authored in `config/apps/<instance>.yml`; the value is a hidden field
+in `homelab-infra/apps/<instance>` and is copied into a namespaced runtime Secret. The role
+also stores its generated stable `master_key` and `salt_key` in that same item. Neither
+provider keys nor database passwords enter generated facts, ConfigMaps, PBS archives, or
+normal task output.
+
+The routing ConfigMap sets `general_settings.database_url` to an environment reference and
+`store_model_in_db: false`. The external database therefore owns LiteLLM virtual keys, key
+metadata, spend records and usage logs, while the ConfigMap owns model routes. LiteLLM's
+native Kubernetes recovery method archives both objects' state as one PBS artifact: a custom
+PostgreSQL dump and the rendered routing ConfigMap. Restore stops the target, reloads the
+named database, applies the archived ConfigMap, and leaves the target stopped on failure.
+
 ### Runtime secrets and external unlock material
 
 `lab-run.sh` constructs `homelabinfra_vault` in memory from canonical organization-owned

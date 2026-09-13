@@ -1,0 +1,103 @@
+{#
+  Restore one LiteLLM PBS snapshot into the target's external PostgreSQL database. The
+  routing ConfigMap is restored into scratch and printed as base64 so the controller task
+  can apply it without granting the Job Kubernetes API write access.
+#}
+{% set client = app_config.backup.client %}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ _litellm_r_job_name }}
+  labels:
+    app.kubernetes.io/instance: {{ _litellm_r_target | default(restore_target) }}
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: restore
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ _litellm_r_timeout | int }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ _litellm_r_target | default(restore_target) }}
+        app.kubernetes.io/managed-by: homelab-infra
+        app.kubernetes.io/component: restore
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: {{ client.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              export DEBIAN_FRONTEND=noninteractive
+              # Never set -x: PBS_PASSWORD and PGPASSWORD are secrets.
+              apt-get update -qq
+              install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config
+              curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+              echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                > /etc/apt/sources.list.d/pbs-client.list
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client postgresql-client >/dev/null
+{% if _litellm_r_mode == 'plan' %}
+              echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
+              proxmox-backup-client snapshot list "host/${BACKUP_ID}" || proxmox-backup-client snapshot list
+              if [ -n "${SNAPSHOT:-}" ]; then
+                echo
+                echo "=== files in ${SNAPSHOT} ==="
+                proxmox-backup-client snapshot files "${SNAPSHOT}"
+                echo
+                echo "=== target database ==="
+                psql -Atqc "select current_database(), count(*) from pg_tables where schemaname = 'public'"
+              fi
+{% else %}
+              echo "=== restoring ${SNAPSHOT} ==="
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database
+              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /restore/config
+              pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
+                --dbname="postgresql://${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}" \
+                /restore/database/litellm.dump
+              test -s /restore/config/config.yaml
+              printf 'ROUTING_CONFIG_B64='
+              base64 -w0 /restore/config/config.yaml
+              printf '\n'
+              echo "database restore complete for ${TARGET_DATABASE_NAME}; routing config staged"
+{% endif %}
+          env:
+            - name: PBS_REPOSITORY
+              value: "{{ k8s_pbs_repository }}"
+            - name: PBS_FINGERPRINT
+              value: "{{ k8s_pbs_fingerprint }}"
+            - name: PBS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ _litellm_r_secret }}, key: pbs-password }
+            - name: BACKUP_ID
+              value: "{{ _litellm_r_backup_id }}"
+            - name: SNAPSHOT
+              value: "{{ _litellm_r_snapshot }}"
+            - name: PBS_KEY_URL
+              value: "{{ client.key_url }}"
+            - name: PBS_APT_REPO
+              value: "{{ client.repository }} {{ client.suite }} {{ client.component }}"
+            - name: PGHOST
+              value: "{{ _litellm_r_target_host }}"
+            - name: PGPORT
+              value: "{{ _litellm_r_target_port }}"
+            - name: PGDATABASE
+              value: "{{ _litellm_r_target_name }}"
+            - name: PGUSER
+              value: "{{ _litellm_r_target_user }}"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ _litellm_r_secret }}, key: db-password }
+            - name: TARGET_DATABASE_NAME
+              value: "{{ _litellm_r_target_name }}"
+          volumeMounts:
+            - name: restore
+              mountPath: /restore
+      volumes:
+        - name: restore
+          emptyDir:
+            sizeLimit: {{ app_config.backup.scratch_size | int }}Gi

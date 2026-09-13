@@ -1,0 +1,22 @@
+{#
+  LiteLLM's non-secret routing configuration. Provider credentials and database access
+  arrive through the runtime Secret as environment variables; this ConfigMap is therefore
+  safe to archive with the application database and safe to render in normal output.
+#}
+model_list:
+{% for model in app_config.app.models | default([]) %}
+  - model_name: {{ model.model_name | to_json }}
+    litellm_params:
+{% for key, value in model.litellm_params.items() if key != 'api_key_env' %}
+      {{ key }}: {{ value | to_json }}
+{% endfor %}
+{% if model.litellm_params.api_key_env | default('') | length > 0 %}
+      api_key: {{ ('os.environ/' ~ model.litellm_params.api_key_env) | to_json }}
+{% endif %}
+{% endfor %}
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  database_url: "os.environ/DATABASE_URL"
+  # Routing stays in this ConfigMap. The external database owns virtual keys, spend and
+  # usage state, not a second copy of routes or provider credentials entered in the UI.
+  store_model_in_db: false

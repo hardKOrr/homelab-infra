@@ -1,0 +1,142 @@
+{#
+  Application-consistent LiteLLM backup. The pod has no durable filesystem: this Job dumps
+  the external PostgreSQL database and archives the rendered routing ConfigMap together in
+  one PBS snapshot. Provider keys, master_key and salt_key remain in Vaultwarden.
+#}
+{% set b = app_config.backup %}
+{% set labels %}
+app.kubernetes.io/instance: {{ instance }}
+app.kubernetes.io/managed-by: homelab-infra
+app.kubernetes.io/component: backup
+{% endset %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ instance }}-backup
+  labels:
+{{ labels | trim | indent(4, true) }}
+spec:
+  schedule: "{{ b.schedule }}"
+  timeZone: "{{ _litellm_backup_timezone }}"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+{{ labels | trim | indent(8, true) }}
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: {{ b.timeout_seconds | int }}
+      template:
+        metadata:
+          labels:
+{{ labels | trim | indent(12, true) }}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: {{ b.client.image }}
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  export DEBIAN_FRONTEND=noninteractive
+                  # Never set -x: PBS_PASSWORD, PGPASSWORD and the database URL are secrets.
+                  command -v curl >/dev/null 2>&1 || \
+                    echo "WARNING: no curl in this image — a failed backup cannot be notified"
+                  notify() {
+                    [ -n "${NTFY_URL:-}" ] || return 0
+                    command -v curl >/dev/null 2>&1 || return 0
+                    if [ -n "${NTFY_TOKEN:-}" ]; then
+                      curl -fsS -m 15 -X POST -H "Title: $1" -H "Priority: high" \
+                        -H "Authorization: Bearer ${NTFY_TOKEN}" -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    else
+                      curl -fsS -m 15 -X POST -H "Title: $1" -H "Priority: high" \
+                        -d "$2" "${NTFY_URL}" >/dev/null 2>&1 || true
+                    fi
+                  }
+                  on_exit() {
+                    [ "$1" -eq 0 ] && return 0
+                    notify "Backup FAILED: {{ instance }}" \
+                      "LiteLLM backup {{ instance }} exited $1; inspect the failed Kubernetes Job in {{ k8s_namespace }}."
+                  }
+                  trap 'on_exit $?' EXIT
+
+                  apt-get update -qq
+                  install -d -m 0755 /etc/apt/keyrings /backup/database
+                  curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
+                  echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
+                    > /etc/apt/sources.list.d/pbs-client.list
+                  apt-get update -qq
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client postgresql-client >/dev/null
+
+                  # Custom format permits pg_restore --clean on the target while leaving the
+                  # external database and its application role owned by the platform.
+                  pg_dump --format=custom --no-owner --no-privileges \
+                    --file=/backup/database/litellm.dump
+                  proxmox-backup-client backup \
+                    database.pxar:/backup/database \
+                    config.pxar:/app-config \
+                    --backup-id "${BACKUP_ID}"
+                  proxmox-backup-client prune "host/${BACKUP_ID}" \
+                    --keep-daily "${RETENTION_DAYS}"
+                  echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:} (database plus routing config)"
+              env:
+                - name: PBS_REPOSITORY
+                  value: "{{ _litellm_backup_repository }}"
+                - name: PBS_FINGERPRINT
+                  value: "{{ _litellm_backup_fingerprint }}"
+                - name: PBS_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: pbs-password }
+                - name: BACKUP_ID
+                  value: "{{ _litellm_backup_id }}"
+                - name: RETENTION_DAYS
+                  value: "{{ b.retention_days | int }}"
+                - name: PBS_KEY_URL
+                  value: "{{ b.client.key_url }}"
+                - name: PBS_APT_REPO
+                  value: "{{ b.client.repository }} {{ b.client.suite }} {{ b.client.component }}"
+                - name: PGHOST
+                  value: "{{ _litellm_database_host }}"
+                - name: PGPORT
+                  value: "{{ _litellm_database_port }}"
+                - name: PGDATABASE
+                  value: "{{ _litellm_database_name }}"
+                - name: PGUSER
+                  value: "{{ _litellm_database_user }}"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: db-password }
+{% if _litellm_ntfy_url | length > 0 %}
+                - name: NTFY_URL
+                  value: "{{ _litellm_ntfy_url }}"
+{% endif %}
+{% if _litellm_ntfy_token | length > 0 %}
+                - name: NTFY_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: ntfy-token }
+{% endif %}
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: false
+                - name: config
+                  mountPath: /app-config
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+          volumes:
+            - name: backup
+              emptyDir:
+                sizeLimit: {{ b.scratch_size | int }}Gi
+            - name: config
+              configMap:
+                name: {{ instance }}-config
