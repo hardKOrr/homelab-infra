@@ -1,0 +1,46 @@
+---
+# Deploy Open WebUI. Rendered and imported by rundeck/render-job.py.
+- id: 7d6b3f6f-45b2-4de9-9f33-5b0f8a0d1490
+  uuid: 7d6b3f6f-45b2-4de9-9f33-5b0f8a0d1490
+  name: Deploy Open WebUI
+  group: Applications/AI and Machine Learning/Chat Interface/Open WebUI
+  description: |-
+    Deploy or converge an instanced **Open WebUI** chat interface on the AI Docker stack.
+
+    - **Upstreams:** the instance configuration must explicitly name an already-deployed
+      Ollama and/or LiteLLM instance. Preflight reads the named endpoint from the generated
+      application registry and fails before provisioning if it is absent or mismatched.
+    - **State:** Open WebUI's users, chats, documents, uploads and embedded database live
+      in its own persistent data directory. The selected upstream model service is neither
+      copied into this state nor changed by Open WebUI removal.
+    - **Secrets:** the WebUI secret key is generated once and stored in
+      `homelab-infra/apps/<instance>`; a selected LiteLLM key is read only from that named
+      upstream's Vaultwarden item when the upstream provides one.
+    - **Recovery:** the app-owned backup archives the quiesced Open WebUI data directory to
+      PBS; restore is plan-first and replaces only this instance's state.
+    - **Rerun:** named upstreams, connection environment, Compose state, provider wiring,
+      and the health check converge without selecting or changing another app.
+
+    Before live deployment, record the exact Open WebUI instance, AI stack host, and named
+    Ollama/LiteLLM instance(s). Live-lab execution is deferred to the isolated acceptance
+    lane; repository and synthetic fixture verification are the closure scope for #149.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected Open WebUI instance. Enter another name for a second deployment.'
+    required: true
+    value: open-webui
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/open-webui.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/open-webui.yml -e "instance=$RD_OPTION_INSTANCE"

@@ -1,0 +1,81 @@
+---
+# Open WebUI owns the persistent data directory. Ollama and LiteLLM remain independent
+# applications: only their already-recorded endpoint and, when available, their canonical
+# API credential are consumed here.
+
+- name: Open WebUI | Create project and data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ open_webui_project_dir }}"
+    - "{{ app_config.app.data_path }}"
+
+- name: Open WebUI | Generate or reuse the application secret
+  ansible.builtin.set_fact:
+    _open_webui_secret_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).secret_key
+         | default(lookup('ansible.builtin.password', '/dev/null length=64 chars=ascii_letters,digits'), true) }}
+    _open_webui_litellm_api_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(open_webui_litellm_instance, {}).api_key
+         | default((homelabinfra_vault.apps | default({})).get(open_webui_litellm_instance, {}).master_key
+                   | default((homelabinfra_vault.apps | default({})).get(open_webui_litellm_instance, {}).proxy_key
+                             | default('', true), true), true) }}
+  no_log: true
+
+- name: Open WebUI | Store the application secret in Vaultwarden
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/apps/{{ instance }}"
+    vault_item_merge: true
+    vault_item_fields:
+      provider: open-webui
+      instance: "{{ instance }}"
+      secret_key: "{{ _open_webui_secret_key }}"
+    vault_item_secret_fields: [secret_key]
+  no_log: true
+
+- name: Open WebUI | Render the environment file
+  ansible.builtin.template:
+    src: open-webui.env.j2
+    dest: "{{ open_webui_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Open WebUI
+
+- name: Open WebUI | Render the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ open_webui_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart Open WebUI
+
+- name: Open WebUI | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ open_webui_project_dir }}"
+
+- name: Open WebUI | Start the application
+  community.docker.docker_compose_v2:
+    project_src: "{{ open_webui_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Open WebUI | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: Open WebUI | Wait for the health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/health"
+    status_code: 200
+  register: _open_webui_health
+  until: _open_webui_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  changed_when: false
