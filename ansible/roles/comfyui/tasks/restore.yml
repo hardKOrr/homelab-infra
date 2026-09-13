@@ -143,7 +143,7 @@
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
             proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
-            test -d /restore
+            test -n "$(find /restore -mindepth 1 -print -quit)"
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"

@@ -6,6 +6,7 @@ set -euo pipefail
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 python3 - "$repo" <<'PY'
 from pathlib import Path
+import re
 import sys
 import yaml
 
@@ -75,13 +76,27 @@ for fragment in ("comfyui:", "gpus: all", "driver: nvidia", "models_path", "conf
 if "privileged: true" in compose:
     fail("ComfyUI must not run privileged")
 
+main_role = read("ansible/roles/comfyui/tasks/main.yml")
+for fragment in ("regex_escape", "(/|$)", ") is match("):
+    require("ansible/roles/comfyui/tasks/main.yml", fragment)
+if "storage_path | regex_replace('/+$', '') in" in main_role:
+    fail("ComfyUI storage containment must enforce a path boundary, not substring matching")
+storage_root = "/opt/comfyui/storage"
+storage_boundary = re.compile(r"^" + re.escape(storage_root) + r"(/|$)")
+if not storage_boundary.match("/opt/comfyui/storage/models"):
+    fail("storage boundary fixture should accept a child path")
+if storage_boundary.match("/opt/comfyui/storage-other/models"):
+    fail("storage boundary fixture must reject a sibling path")
+
 for path, fragments in {
     "ansible/roles/comfyui/tasks/backup.yml": ("models and configuration", "data.pxar:/source", "_application_backup_complete"),
-    "ansible/roles/comfyui/tasks/restore.yml": ("models and user config", "data.pxar /restore", "overwrite", "_application_restore_complete", "service stopped"),
+    "ansible/roles/comfyui/tasks/restore.yml": ("models and user config", "data.pxar /restore", "find /restore -mindepth 1 -print -quit", "overwrite", "_application_restore_complete", "service stopped"),
     "docs/specs/comfyui-recovery.md": ("mode: dedicated", "model-storage", "console recovery", "GPU is hardware"),
 }.items():
     for fragment in fragments:
         require(path, fragment)
+if "test -d /restore\n" in read("ansible/roles/comfyui/tasks/restore.yml"):
+    fail("ComfyUI restore must not treat the bind-mounted staging directory as validation")
 
 catalog = parse("catalog/applications.yml")["applications"]["comfyui"]
 if catalog["job"] != "deploy-comfyui.yaml" or catalog["scope"] != "estate":

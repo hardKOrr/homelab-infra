@@ -55,16 +55,21 @@
 - name: ComfyUI | Assert the storage paths are inside the application storage root
   ansible.builtin.assert:
     that:
-      - app_config.app.storage_path | regex_replace('/+$', '') in
-        (app_config.app.models_path | regex_replace('/+$', ''))
-      - app_config.app.storage_path | regex_replace('/+$', '') in
-        (app_config.app.config_path | regex_replace('/+$', ''))
-      - app_config.app.storage_path | regex_replace('/+$', '') in
-        (app_config.app.custom_nodes_path | regex_replace('/+$', ''))
-      - app_config.app.storage_path | regex_replace('/+$', '') in
-        (app_config.app.input_path | regex_replace('/+$', ''))
-      - app_config.app.storage_path | regex_replace('/+$', '') in
-        (app_config.app.output_path | regex_replace('/+$', ''))
+      - (app_config.app.models_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
+      - (app_config.app.config_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
+      - (app_config.app.custom_nodes_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
+      - (app_config.app.input_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
+      - (app_config.app.output_path | regex_replace('/+$', '')) is match(
+          ('^' ~ (app_config.app.storage_path | regex_replace('/+$', '') | regex_escape) ~ '(/|$)')
+        )
     fail_msg: >-
       ComfyUI storage paths must remain below app.storage_path so model files and
       configuration share one owned recovery unit.
