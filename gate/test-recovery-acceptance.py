@@ -25,7 +25,10 @@ class RecoveryAcceptanceTests(unittest.TestCase):
         self.assertIn("pbs-guest:pbs_guest:lxc", ids)
         pbs_cases = [case for case in self.cases if case.method == "pbs_guest"]
         self.assertEqual(len({artifact_identity(case, "A") for case in pbs_cases}), len(pbs_cases))
-        self.assertTrue(all("pbs-guest" in artifact_identity(case, "A") for case in pbs_cases))
+        for case in pbs_cases:
+            identity = artifact_identity(case, "A")
+            self.assertIn("fixture/pbs_guest/", identity)
+            self.assertIn(f"/{case.product}/", identity)
         native = {case.product for case in self.cases if case.method == "native"}
         self.assertEqual(
             native,
