@@ -6,6 +6,7 @@ import unittest
 
 from recovery_acceptance import (
     assert_public_report,
+    artifact_identity,
     build_rollup,
     catalog_remaining,
     load_method_cases,
@@ -22,6 +23,9 @@ class RecoveryAcceptanceTests(unittest.TestCase):
         ids = {case.case_id for case in self.cases}
         self.assertIn("pbs-guest:pbs_guest:vm", ids)
         self.assertIn("pbs-guest:pbs_guest:lxc", ids)
+        pbs_cases = [case for case in self.cases if case.method == "pbs_guest"]
+        self.assertEqual(len({artifact_identity(case, "A") for case in pbs_cases}), len(pbs_cases))
+        self.assertTrue(all("pbs-guest" in artifact_identity(case, "A") for case in pbs_cases))
         native = {case.product for case in self.cases if case.method == "native"}
         self.assertEqual(
             native,

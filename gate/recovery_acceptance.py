@@ -220,7 +220,8 @@ def new_fixture(case: MethodCase, name: str, marker: str = "A", *, kind: str | N
     )
 
 
-def artifact_identity(case: MethodCase, label: str) -> str:
+def native_artifact_id(case: MethodCase, label: str) -> str:
+    """Return the provider artifact identity, preserving PBS's native path."""
     if case.method == "pbs_guest":
         numeric = "501" if case.kind == "vm" else "502"
         prefix = "vzdump-qemu" if case.kind == "vm" else "vzdump-lxc"
@@ -228,10 +229,18 @@ def artifact_identity(case: MethodCase, label: str) -> str:
     return f"{case.artifact_prefix}/{label}"
 
 
+def artifact_identity(case: MethodCase, label: str) -> str:
+    """Return a product-qualified fixture locator for pasted evidence."""
+    native = native_artifact_id(case, label)
+    if case.method == "pbs_guest":
+        return f"fixture/pbs_guest/{case.product}/{native}"
+    return native
+
+
 def capture(case: MethodCase, fixture: Fixture, label: str, *, exclude_external: tuple[str, ...] = ()) -> RecoveryPoint:
     if fixture.method != case.method or fixture.kind != case.kind:
         raise ProtocolFailure("wrong target kind or method")
-    artifact_id = artifact_identity(case, label)
+    artifact_id = native_artifact_id(case, label)
     return RecoveryPoint(
         artifact_id=artifact_id,
         method=fixture.method,
@@ -508,7 +517,9 @@ def evidence_record(
         "state": "restore_tested",
         "version": case.version,
         "artifact_id": recovery_point.artifact_id,
+        "artifact_identity": artifact_identity(case, "A"),
         "pre_restore_artifact_id": pre_restore_point.artifact_id,
+        "pre_restore_artifact_identity": artifact_identity(case, "B"),
         "target_identity": target.identity,
         "target_state": "active-isolated" if target.active and target.isolated else "inactive",
         "connections_verified": True,

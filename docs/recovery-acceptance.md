@@ -8,8 +8,9 @@ same failure boundaries.
 ## Evidence boundary
 
 The report produced by `python3 gate/recovery_acceptance.py` is safe to paste into a
-product issue. It contains method, declared version label, native artifact identity,
-target identity/state and assertion names. It does not contain backup contents, keys,
+product issue. It contains method, declared version label, a product-qualified fixture
+artifact identity (while `artifact_id` preserves the native provider identity), target
+identity/state and assertion names. It does not contain backup contents, keys,
 credentials, endpoint secrets or live configuration. `restore_tested` in a report means
 the synthetic fixture completed both routes; `live_verified` is a separate field and is
 false until an authorized isolated lab run is recorded on #80.
