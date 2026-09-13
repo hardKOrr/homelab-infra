@@ -475,6 +475,17 @@ applications:
     # backup and restore in addition to the generic Docker actions.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
 
+  ollama:
+    name: Ollama
+    job: deploy-ollama.yaml
+    root: Applications
+    category: AI and Machine Learning
+    type: Model Serving
+    scope: estate
+    # Ollama owns a dedicated Docker VM, an exact PCIe GPU assignment, and a large
+    # application-consistent model/config archive. It must not use the shared ai LXC.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
+
   open-webui:
     name: Open WebUI
     job: deploy-open-webui.yaml
