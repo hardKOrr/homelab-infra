@@ -84,9 +84,7 @@
 
 - name: LiteLLM | Build the database connection URL
   ansible.builtin.set_fact:
-    _litellm_database_url: >-
-      postgresql://{{ app_config.app.database_user }}:{{ app_config.app.database_password }}@
-      {{ app_config.app.database_host }}:{{ app_config.app.database_port }}/{{ app_config.app.database_name }}
+    _litellm_database_url: "postgresql://{{ app_config.app.database_user }}:{{ app_config.app.database_password }}@{{ app_config.app.database_host }}:{{ app_config.app.database_port }}/{{ app_config.app.database_name }}"
   no_log: true
 
 - name: LiteLLM | Sync runtime credentials into the instance namespace
