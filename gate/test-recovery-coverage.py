@@ -53,6 +53,15 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(self.products["caddy"]["methods"]["native"]["evidence"]["artifact"]["status"], "unknown")
         self.assertEqual(self.products["caddy"]["fallback"]["disposition"], "pbs-guest-only")
 
+    def test_caddy_shared_guest_scope_is_explicit(self):
+        caddy = self.products["caddy"]
+        self.assertEqual(caddy["fallback"]["disposition"], "pbs-guest-only")
+        self.assertIn("shared Caddy LXC", caddy["methods"]["pbs_guest"]["recovery_unit"])
+        self.assertEqual(
+            caddy["shared_guest_effects"],
+            ["shared lab Caddy LXC: every catalog application's HTTPS route, TLS and access policy"],
+        )
+
     def test_rebuild_only_cannot_conflict_with_declared_recovery_method(self):
         resolved, _, _ = coverage.load_inputs()
         for method in ("native", "project_managed"):

@@ -157,6 +157,20 @@ def _version(defaults: dict[str, Any]) -> str:
     return image.rsplit(":", 1)[-1] if ":" in image else image
 
 
+def _shared_guest_declared(defaults: dict[str, Any]) -> bool:
+    """Return whether defaults explicitly mark the hosting guest as cross-estate shared."""
+    proxmox = defaults.get("proxmox") if isinstance(defaults.get("proxmox"), dict) else {}
+    candidates = [proxmox]
+    for kind in ("lxc", "vm"):
+        guest = proxmox.get(kind)
+        if isinstance(guest, dict):
+            candidates.append(guest)
+    return any(
+        isinstance(candidate.get("tags"), list) and "_.shared" in candidate["tags"]
+        for candidate in candidates
+    )
+
+
 def _shared_effects(slug: str, resolved: dict[str, dict[str, Any]], hosting: str, stack: str) -> list[str]:
     if stack:
         siblings = sorted(
@@ -172,6 +186,13 @@ def _shared_effects(slug: str, resolved: dict[str, dict[str, Any]], hosting: str
             if _hosting(name, item["defaults"])[0] == "kubernetes"
         )
         return ["shared Kubernetes node/cluster guest: " + ", ".join(siblings)]
+    defaults = resolved[slug]["defaults"]
+    if _shared_guest_declared(defaults):
+        if slug == "caddy":
+            return [
+                "shared lab Caddy LXC: every catalog application's HTTPS route, TLS and access policy"
+            ]
+        return [f"shared lab hosting guest {slug}: all workloads on this hosting substrate"]
     return []
 
 
@@ -183,6 +204,8 @@ def _recovery_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str
         )
     if stack:
         return f"the shared {stack} {_guest_kind(defaults, hosting)} guest and its workloads"
+    if slug == "caddy" and _shared_guest_declared(defaults):
+        return "the shared Caddy LXC guest and every routed application's edge connection"
     return f"the {slug} {_guest_kind(defaults, hosting)} guest"
 
 

@@ -17,6 +17,13 @@
     - Configures Cloudflare DNS-01 certificate issuance
     - Uses the temporary encrypted Cloudflare input before Vaultwarden Cutover
     - Reads the canonical reverse-proxy credential from Vaultwarden after cutover
+
+    **Recovery:** Caddy is the lab-wide shared TLS edge. Use **Backup Guest** and
+    **Restore Guest** with the exact Caddy LXC VMID; these are whole-guest PBS operations,
+    not application-only archives. Restore Guest supports an isolated stopped new target
+    and exact existing-target replacement with an independent pre-restore point. Replacing
+    Caddy interrupts every routed application while backend guests remain untouched. See
+    `docs/specs/caddy-recovery.md`; no Caddy-specific Backup/Restore action is exposed.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
