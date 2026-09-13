@@ -16,3 +16,10 @@ services and operator actions are classified separately in `rundeck/job-groups.y
 
 Add an entry when the application's playbook and Rundeck job become selectable. Future intent
 belongs in `docs/meta/`; it is not runtime catalog state.
+
+Recovery ownership is kept separately in [`recovery.yml`](recovery.yml). It is a complete,
+non-secret map from catalog product to its focused recovery issue and preserves deployment
+issue context for products added later. Recovery methods and their implementation details
+remain in the product defaults/roles; the coverage report joins those declarations with
+PR #81 guest evidence and leaves artifact, integrity, external-data, credential and restore
+status unknown until explicit evidence exists.

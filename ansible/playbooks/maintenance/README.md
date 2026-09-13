@@ -90,6 +90,16 @@ remote filesystems or application-specific backup jobs, and pool-based schedules
 a separate membership check. Its exit status reports whether inventory collection ran,
 not whether the applications are recoverable.
 
+The audit joins the unchanged PR #81 guest document with the controller-side
+[`catalog/recovery.yml`](../../../catalog/recovery.yml) inventory. That product view links
+every catalog product to its recovery issue, derives the declared native method from the
+product defaults, and records the PBS guest unit, shared-guest effects, external data and
+credential boundary. It never infers application identity from a guest name or VMID. A
+configured native schedule is not a successful artifact; artifact, integrity, external
+data and restore fields stay unknown until product evidence is supplied. The user's
+must-keep priority remains a separate pending selection. The one legacy source named by
+the PR #81 observation is preserved as an explicit, non-adopted pending selection.
+
 For recovery when the runner is unavailable, the same collector can run on a Proxmox
 node with Python 3 and read permission: `python3 audit.py --node <node> --include-legacy`.
 The source is [`../../files/recovery/audit.py`](../../files/recovery/audit.py). Only

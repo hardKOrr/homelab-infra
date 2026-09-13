@@ -39,6 +39,23 @@
       changed_when: false
       check_mode: false
 
-    - name: Report backup evidence and unresolved recovery requirements
+    # PR #81 is deliberately kept intact as `guest_audit` in the combined document.
+    # This second, controller-side read joins only tracked catalog/default metadata; it
+    # must not be run on PVE, where the repository catalog is not necessarily present.
+    - name: Join product recovery coverage without widening the evidence boundary
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../files/recovery/coverage.py"
+          - --audit-json
+          - -
+      args:
+        stdin: "{{ _audit_result.stdout }}"
+        stdin_add_newline: false
+      register: _coverage_result
+      changed_when: false
+      check_mode: false
+
+    - name: Report guest and product recovery evidence
       ansible.builtin.debug:
-        msg: "{{ _audit_result.stdout | from_json }}"
+        msg: "{{ _coverage_result.stdout | from_json }}"

@@ -129,6 +129,23 @@
         name: homelabinfra_infra
       failed_when: false   # absent pre-bootstrap — both sections report "not configured"
 
+    # This is the declaration/evidence inventory, not a second Proxmox collector. It is
+    # intentionally controller-side and keeps the PR #81 guest audit's limitations clear:
+    # no application identity is inferred from a VMID or a shared guest name.
+    - name: Load product recovery coverage inventory
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../files/recovery/coverage.py"
+      register: _st_recovery_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Record product recovery coverage inventory
+      ansible.builtin.set_fact:
+        _st_recovery: "{{ _st_recovery_raw.stdout | from_json }}"
+      when: _st_recovery_raw.rc | default(1) == 0
+
   vars:
     _st_guests: "{{ groups['lab_managed'] | default([]) | sort }}"
     # Play 2 sets _st_containers on every guest it reached, so its absence is the
@@ -530,4 +547,16 @@
           {% for s in _st_backups %}
             {{ '%-22s' | format(s['backup-id'] | string) }} newest {{ '%Y-%m-%d %H:%M' | strftime(s['backup-time']) }}
           {% endfor %}
+
+          RECOVERY COVERAGE
+          {% if _st_recovery.products is not defined %}
+            unavailable — the tracked product coverage inventory could not be read
+          {% else %}
+            {{ _st_recovery.products | length }} catalog products; priority remains pending the user's must-keep selection
+            Declaration is not restore proof. PBS artifact identity, integrity, external-data protection and restore evidence are
+            shown as unknown until explicitly recorded. PR #81 guest evidence is guest-scoped and cannot identify shared workloads.
+          {% for p in _st_recovery.products %}
+            {{ '%-22s' | format(p.product) }} issue #{{ p.recovery_issue.number }}  methods {{ p.available_methods | join(',') }}  PBS artifact {{ p.methods.pbs_guest.evidence.artifact.status }}
+          {% endfor %}
+          {% endif %}
           ══════════════════════════════════════════════════════════════════
