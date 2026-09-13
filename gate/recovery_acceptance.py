@@ -36,6 +36,7 @@ APPLICATION_ASSERTIONS = {
     "mixpost": ("post-record", "upload-file", "encryption-key", "database-connection"),
     "ollama": ("model-record", "model-file", "target-route", "gpu-rebind"),
     "open-webui": ("chat-record", "upload-file", "user-login", "ollama-connection"),
+    "odoo": ("crm-record", "filestore-document", "database-connection", "admin-login"),
 }
 
 

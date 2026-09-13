@@ -193,6 +193,15 @@
              | default('docker' if app_config.stack is defined else 'native', true) }}
         _ra_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
         _ra_source_instance: "{{ instance }}"
+        # Safe identity only. Product restore tasks may use this to reject a new target
+        # that would restore into the source's named external database; credentials stay
+        # in the source/target Vaultwarden overlays and are never copied into this fact.
+        restore_source_database: >-
+          {{ {
+               'provider': app_config.get('app', {}).get('database', {}).get('provider', ''),
+               'instance': app_config.get('app', {}).get('database', {}).get('instance', ''),
+               'name': app_config.get('app', {}).get('database', {}).get('name', '')
+             } }}
 
     - name: Resolve target identities before mutation
       ansible.builtin.set_fact:
@@ -217,6 +226,8 @@
              else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
                    or app_config.get('app', {}).get('data_path', '')
                    or app_config.get('app', {}).get('config_path', '')
+                   or (app_config.get('app', {}).get('filestore_path', '')
+                       | replace('{{ instance }}', _ra_source_instance))
                    or (_ra_kind ~ ':' ~ _ra_source_instance)) | string }}
         _ra_target_storage_key: >-
           {{ (_ra_kind ~ ':' ~ _ra_target)
@@ -224,6 +235,8 @@
              else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
                    or restore_target_config.get('app', {}).get('data_path', '')
                    or restore_target_config.get('app', {}).get('config_path', '')
+                   or (restore_target_config.get('app', {}).get('filestore_path', '')
+                       | replace('{{ instance }}', _ra_target))
                    or (_ra_kind ~ ':' ~ _ra_target)) | string }}
 
     - name: Refresh inventory before checking a new target's ownership
@@ -491,6 +504,7 @@
         restore_destination: "{{ hostvars['localhost'].recovery_destination_resolved }}"
         restore_method: "{{ hostvars['localhost'].recovery_method_resolved }}"
         restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
+        restore_source_database: "{{ hostvars['localhost'].restore_source_database | default({}) }}"
         restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"
