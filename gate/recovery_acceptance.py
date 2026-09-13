@@ -519,8 +519,13 @@ def evidence_record(
     }
 
 
-def build_rollup(cases: list[MethodCase] | None = None) -> dict[str, Any]:
+def build_rollup(
+    cases: list[MethodCase] | None = None,
+    *,
+    fixture_tested: list[str] | None = None,
+) -> dict[str, Any]:
     cases = cases if cases is not None else load_method_cases()
+    tested = set(fixture_tested or ())
     records = [
         {
             "case": case.case_id,
@@ -534,7 +539,7 @@ def build_rollup(cases: list[MethodCase] | None = None) -> dict[str, Any]:
             "source": case.source_file,
             "issue_reference": case.issue_reference,
             "implemented": True,
-            "fixture_tested": True,
+            "fixture_tested": case.case_id in tested,
             "live_verified": False,
         }
         for case in cases
@@ -544,7 +549,7 @@ def build_rollup(cases: list[MethodCase] | None = None) -> dict[str, Any]:
         "acceptance_issue": 80,
         "ordering": "user-supplied; no priority is inferred from catalog or issue order",
         "implemented": records,
-        "fixture_tested": [record["case"] for record in records],
+        "fixture_tested": sorted(tested),
         "live_verified": [],
         "catalog_remaining": catalog_remaining(cases),
     }
@@ -561,7 +566,11 @@ def assert_public_report(value: Any) -> None:
 
 
 def report_json() -> str:
-    return json.dumps(build_rollup(), indent=2, sort_keys=True) + "\n"
+    cases = load_method_cases()
+    # The report command performs the protocol; it never labels a case fixture-tested
+    # merely because a declaration exists.
+    tested = [run_protocol(case)["case"] for case in cases]
+    return json.dumps(build_rollup(cases, fixture_tested=tested), indent=2, sort_keys=True) + "\n"
 
 
 if __name__ == "__main__":

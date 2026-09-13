@@ -50,7 +50,7 @@ class RecoveryAcceptanceTests(unittest.TestCase):
                 self.assertIn("partial-recovery", result["negative_cases"])
 
     def test_rollup_separates_implementation_fixture_and_live_evidence(self):
-        report = build_rollup(self.cases)
+        report = build_rollup(self.cases, fixture_tested=[case.case_id for case in self.cases])
         implemented = {row["case"] for row in report["implemented"]}
         self.assertEqual(implemented, set(report["fixture_tested"]))
         self.assertEqual(report["live_verified"], [])
