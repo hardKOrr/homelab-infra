@@ -1,0 +1,109 @@
+---
+# The PCI attach seam proves that the exact GPU belongs to this VM. These checks prove the
+# guest can use it before Compose starts: PCI assignment alone is not a CUDA health check.
+# The Debian guest image must have the matching NVIDIA driver and NVIDIA Container Toolkit
+# prepared for the passed-through card; the role refuses to hide a missing runtime behind a
+# CPU-only ComfyUI deployment.
+- name: ComfyUI | Verify the passed-through NVIDIA GPU is visible
+  ansible.builtin.command:
+    argv: [nvidia-smi, --query-gpu=name, --format=csv,noheader]
+  register: _comfyui_nvidia_smi
+  changed_when: false
+  failed_when: false
+
+- name: ComfyUI | Assert the passed-through GPU is usable in the guest
+  ansible.builtin.assert:
+    that:
+      - _comfyui_nvidia_smi.rc == 0
+      - _comfyui_nvidia_smi.stdout | trim | length > 0
+    fail_msg: >-
+      The ComfyUI VM does not report an NVIDIA GPU through nvidia-smi. Verify the exact PCI
+      device assignment, guest driver, console recovery, and VM reboot before deploying.
+
+- name: ComfyUI | Verify Docker exposes the NVIDIA runtime
+  ansible.builtin.command:
+    argv: [docker, info, --format, "{{ '{{json .Runtimes}}' }}"]
+  register: _comfyui_docker_info
+  changed_when: false
+  failed_when: false
+
+- name: ComfyUI | Assert Docker has the NVIDIA Container Toolkit runtime
+  ansible.builtin.assert:
+    that:
+      - _comfyui_docker_info.rc == 0
+      - _comfyui_docker_info.stdout is search('nvidia')
+    fail_msg: >-
+      Docker does not expose the NVIDIA runtime in {{ instance }}. Install/configure the
+      NVIDIA Container Toolkit in the GPU guest before deploying ComfyUI.
+
+- name: ComfyUI | Create project and persistent storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ comfyui_project_dir }}"
+    - "{{ app_config.app.storage_path }}"
+    - "{{ app_config.app.models_path }}"
+    - "{{ app_config.app.config_path }}"
+    - "{{ app_config.app.custom_nodes_path }}"
+    - "{{ app_config.app.input_path }}"
+    - "{{ app_config.app.output_path }}"
+
+- name: ComfyUI | Assert the storage paths are inside the application storage root
+  ansible.builtin.assert:
+    that:
+      - app_config.app.storage_path | regex_replace('/+$', '') in
+        (app_config.app.models_path | regex_replace('/+$', ''))
+      - app_config.app.storage_path | regex_replace('/+$', '') in
+        (app_config.app.config_path | regex_replace('/+$', ''))
+      - app_config.app.storage_path | regex_replace('/+$', '') in
+        (app_config.app.custom_nodes_path | regex_replace('/+$', ''))
+      - app_config.app.storage_path | regex_replace('/+$', '') in
+        (app_config.app.input_path | regex_replace('/+$', ''))
+      - app_config.app.storage_path | regex_replace('/+$', '') in
+        (app_config.app.output_path | regex_replace('/+$', ''))
+    fail_msg: >-
+      ComfyUI storage paths must remain below app.storage_path so model files and
+      configuration share one owned recovery unit.
+
+- name: ComfyUI | Render the Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ comfyui_compose_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart ComfyUI
+
+- name: ComfyUI | Pull the image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ comfyui_project_dir }}"
+
+- name: ComfyUI | Start the application
+  community.docker.docker_compose_v2:
+    project_src: "{{ comfyui_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: ComfyUI | Apply pending restart
+  ansible.builtin.meta: flush_handlers
+
+- name: ComfyUI | Wait for the system stats endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/system_stats"
+    status_code: 200
+  register: _comfyui_health
+  until: _comfyui_health.status | default(0) == 200
+  retries: "{{ comfyui_http_retries }}"
+  delay: "{{ comfyui_http_delay }}"
+  changed_when: false
+
+- name: ComfyUI | Assert the health response identifies the GPU runtime
+  ansible.builtin.assert:
+    that:
+      - _comfyui_health.json is defined
+      - _comfyui_health.json.system is defined
+    fail_msg: ComfyUI answered its health endpoint without system information.

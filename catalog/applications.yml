@@ -486,3 +486,14 @@ applications:
     # archive. Its selected Ollama/LiteLLM endpoints are named dependencies; Remove App
     # only stops/removes Open WebUI's Compose project and data path.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
+
+  comfyui:
+    name: ComfyUI
+    job: deploy-comfyui.yaml
+    root: Applications
+    category: AI and Machine Learning
+    type: Image Generation
+    scope: estate
+    # ComfyUI owns a dedicated Docker VM, an exact PCIe GPU assignment, and a large
+    # application-consistent model/config archive. It must not use the shared ai LXC.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]

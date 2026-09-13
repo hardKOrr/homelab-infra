@@ -1,0 +1,44 @@
+---
+# ComfyUI runs as Docker on its own Debian VM because its GPU is a dedicated PCIe device.
+# The exact PCI address must also appear in config/proxmox.yml under one device declaration
+# with mode: dedicated (the bare declaration defaults to kind: gpu). Do not reuse that
+# device in another guest or place ComfyUI on the shared ai-stack LXC.
+#
+# Before live binding, record the instance, Proxmox node, VM/VMID, PCI address, console
+# recovery path, and the model-storage path. The 512 GiB default VM disk is intentionally
+# large for checkpoint and LoRA downloads; override it only with an explicitly sized disk.
+
+app:
+  image: ghcr.io/ai-dock/comfyui:latest-cuda
+  port: 8188
+  pci_device: "0000:01:00.0" # replace with the exact declared PCI address
+  pci_device_pcie: true
+  # Models, custom nodes, inputs, outputs, and user configuration are all retained here.
+  storage_path: /opt/comfyui/storage
+  models_path: /opt/comfyui/storage/models
+  config_path: /opt/comfyui/storage/user
+  custom_nodes_path: /opt/comfyui/storage/custom_nodes
+  input_path: /opt/comfyui/storage/input
+  output_path: /opt/comfyui/storage/output
+
+proxmox:
+  # network: shared
+  # ip_address: 192.168.1.90
+  # vm:
+  #   cores: 8
+  #   memory: 16384
+  #   disk_size: 512
+
+routing:
+  # subdomain: comfyui
+  # access: internal
+  # identity: catalog
+
+backup:
+  # PBS archives storage_path, including model files and ComfyUI user configuration.
+  enabled: true
+  application_consistent: true
+  # schedule: "0 3 * * *"
+  # retention_days: 14
+  # datastore: REPLACE_WITH_PBS_DATASTORE
+  # backup_id: ""

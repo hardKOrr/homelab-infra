@@ -1,0 +1,46 @@
+---
+# Deploy ComfyUI. Rendered and imported by rundeck/render-job.py.
+- id: 2f1f6f4d-94fd-4e7d-a8f1-4f0a3c2a6d71
+  uuid: 2f1f6f4d-94fd-4e7d-a8f1-4f0a3c2a6d71
+  name: Deploy ComfyUI
+  group: Applications/AI and Machine Learning/Image Generation/ComfyUI
+  description: |-
+    Deploy or converge **ComfyUI** as Docker on its own Debian VM.
+
+    - **Dedicated guest:** ComfyUI is not placed on the shared ai-stack LXC. Its VM owns
+      the exact PCI address named in the instance config; the device is not shared with
+      another guest.
+    - **Storage:** the VM's large storage tree retains checkpoints, LoRAs, custom nodes,
+      inputs, outputs, and user configuration. The app archive covers that tree.
+    - **GPU authority:** the PCI address must be listed in config/proxmox.yml under one
+      `mode: dedicated` declaration. The job never chooses a free GPU or adopts an
+      untagged assignment.
+    - **Recovery:** Backup ComfyUI archives the quiesced model/config tree to PBS; Restore
+      ComfyUI is plan-first and replaces only that application tree.
+    - **Rerun:** VM identity, exact PCI assignment, storage paths, Compose state, provider
+      wiring, and the system-stats health check converge without changing another guest.
+
+    Before live deployment, record the instance, Proxmox node, VM/VMID, PCI address, GPU
+    console recovery procedure, and model-storage path. Live-lab execution is deferred to
+    the isolated acceptance lane; repository and synthetic fixture verification are the
+    closure scope for #147.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected ComfyUI instance. Enter another name for a disposable restore target.'
+    required: true
+    value: comfyui
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/comfyui.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/comfyui.yml -e "instance=$RD_OPTION_INSTANCE"
