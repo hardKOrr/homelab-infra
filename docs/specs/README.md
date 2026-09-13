@@ -15,6 +15,7 @@ source. [`../architecture.md`](../architecture.md) maps the components that impl
 | [Secrets handling](secrets-handling.md) | Seed mode, Vault mode, redaction, and secret storage |
 | [Device passthrough](device-passthrough.md) | Shared LXC device binds and dedicated VM PCIe/USB passthrough |
 | [Object storage](object-storage.md) | Named storage ownership, credentials, and recovery boundaries |
+| [Caddy recovery](caddy-recovery.md) | PBS-only recovery unit, shared edge effects, and both destinations |
 | [ComfyUI recovery](comfyui-recovery.md) | Dedicated GPU ownership and model/config recovery |
 | [Ollama recovery](ollama-recovery.md) | Dedicated GPU ownership and model/config recovery |
 
