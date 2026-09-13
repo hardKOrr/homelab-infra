@@ -2,6 +2,7 @@
 """Synthetic tests for the product recovery coverage inventory."""
 
 import importlib.util
+from copy import deepcopy
 from pathlib import Path
 import unittest
 
@@ -51,6 +52,21 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(self.products["caddy"]["methods"]["native"]["availability"], "not_declared")
         self.assertEqual(self.products["caddy"]["methods"]["native"]["evidence"]["artifact"]["status"], "unknown")
         self.assertEqual(self.products["caddy"]["fallback"]["disposition"], "pbs-guest-only")
+
+    def test_rebuild_only_cannot_conflict_with_declared_recovery_method(self):
+        resolved, _, _ = coverage.load_inputs()
+        for method in ("native", "project_managed"):
+            item = deepcopy(resolved["homepage"])
+            item["manifest"]["rebuild_only"] = True
+            item["defaults"]["recovery"] = {"methods": [method]}
+            with self.assertRaisesRegex(ValueError, "rebuild_only"):
+                coverage._product(
+                    "homepage",
+                    item,
+                    resolved,
+                    audit=None,
+                    native_evidence=None,
+                )
 
     def test_explicit_guest_mapping_reuses_pr81_evidence_without_inference(self):
         audit = {

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -482,6 +483,16 @@ def _product(
     manifest = item["manifest"]
     hosting, stack = _hosting(slug, defaults)
     recovery = defaults.get("recovery") if isinstance(defaults.get("recovery"), dict) else {}
+    declared_methods = recovery.get("methods") or []
+    unknown = sorted(set(declared_methods) - set(SUPPORTED_METHODS))
+    if unknown:
+        raise ValueError(f"{slug}: unsupported recovery methods {unknown}")
+    if manifest.get("rebuild_only") is True:
+        conflicting = sorted(set(declared_methods) & {"native", "project_managed"})
+        if conflicting:
+            raise ValueError(
+                f"{slug}: rebuild_only cannot coexist with declared recovery methods {conflicting}"
+            )
     product_evidence = native_evidence.get(slug, {}) if isinstance(native_evidence, dict) else {}
     methods = {
         method: _method(
@@ -496,10 +507,6 @@ def _product(
         )
         for method in SUPPORTED_METHODS
     }
-    declared_methods = recovery.get("methods") or []
-    unknown = sorted(set(declared_methods) - set(SUPPORTED_METHODS))
-    if unknown:
-        raise ValueError(f"{slug}: unsupported recovery methods {unknown}")
     rebuild_only = manifest.get("rebuild_only")
     if rebuild_only is True:
         rebuild_only = DOCUMENTED_REBUILD_ONLY.get(slug, "Rebuild-only behavior is documented by the product issue.")
@@ -609,7 +616,7 @@ def build_report(
 
 
 def _read_json(path: str) -> dict[str, Any]:
-    text = __import__("sys").stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
     value = json.loads(text)
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected a JSON object")
