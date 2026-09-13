@@ -25,6 +25,7 @@ DEFAULTS = ROOT / "ansible/vars/app-defaults/odoo.yml"
 BACKUP = ROOT / "ansible/roles/odoo/tasks/backup.yml"
 RESTORE = ROOT / "ansible/roles/odoo/tasks/restore.yml"
 PLAYBOOK = ROOT / "ansible/playbooks/apps/odoo.yml"
+RESTORE_DISPATCH = ROOT / "ansible/playbooks/maintenance/restore-app.yml"
 DEPLOY_JOB = ROOT / "rundeck/jobs/deploy-odoo.yaml"
 SPEC = ROOT / "docs/specs/odoo-recovery.md"
 
@@ -36,6 +37,7 @@ class OdooRecoveryTests(unittest.TestCase):
         cls.backup = BACKUP.read_text(encoding="utf-8")
         cls.restore = RESTORE.read_text(encoding="utf-8")
         cls.playbook = PLAYBOOK.read_text(encoding="utf-8")
+        cls.restore_dispatch = RESTORE_DISPATCH.read_text(encoding="utf-8")
         cls.deploy_job = DEPLOY_JOB.read_text(encoding="utf-8")
         cls.spec = SPEC.read_text(encoding="utf-8")
         cls.case = MethodCase(
@@ -91,6 +93,9 @@ class OdooRecoveryTests(unittest.TestCase):
         self.assertIn("left stopped", self.restore.lower())
         self.assertIn("recovery_isolated", self.playbook)
         self.assertIn("Skip external wiring while the restore target is isolated", self.playbook)
+        self.assertIn("_ra_app == 'odoo'", self.restore_dispatch)
+        self.assertIn("'filestore_path'", self.restore_dispatch)
+        self.assertIn("replace('{{ instance }}', hostvars['localhost']._ra_target)", self.restore_dispatch)
         self.assertIn("project_managed", self.spec)
         self.assertIn("pbs_guest", self.spec)
         self.assertIn("host/<backup_id>", self.spec)

@@ -491,12 +491,20 @@
              if hostvars['localhost']._ra_app == 'actual-budget'
              else (hostvars['localhost'].restore_target_config
                    | combine({'app': {
-                       'config_path': (hostvars['localhost'].restore_target_config.app.config_path
-                                       | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                                 '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
+                       'filestore_path': (hostvars['localhost'].restore_target_config.app.filestore_path
+                                          | replace('/opt/odoo/' ~ hostvars['localhost']._ra_source_instance ~ '/',
+                                                    '/opt/odoo/' ~ hostvars['localhost']._ra_target ~ '/')
+                                          | replace('{{ instance }}', hostvars['localhost']._ra_target))
                      }}, recursive=True)
-                   if hostvars['localhost']._ra_app == 'home-assistant'
-                   else hostvars['localhost'].restore_target_config) }}
+                   if hostvars['localhost']._ra_app == 'odoo'
+                   else (hostvars['localhost'].restore_target_config
+                         | combine({'app': {
+                             'config_path': (hostvars['localhost'].restore_target_config.app.config_path
+                                             | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
+                                                       '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
+                           }}, recursive=True)
+                         if hostvars['localhost']._ra_app == 'home-assistant'
+                         else hostvars['localhost'].restore_target_config)) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
         homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
