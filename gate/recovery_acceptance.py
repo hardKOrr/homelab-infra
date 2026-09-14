@@ -37,6 +37,7 @@ APPLICATION_ASSERTIONS = {
     "ollama": ("model-record", "model-file", "target-route", "gpu-rebind"),
     "open-webui": ("chat-record", "upload-file", "user-login", "ollama-connection"),
     "odoo": ("crm-record", "filestore-document", "database-connection", "admin-login"),
+    "n8n": ("workflow-state", "credential-state", "encryption-key", "database-connection"),
 }
 
 
