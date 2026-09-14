@@ -1,0 +1,202 @@
+---
+# Application-consistent n8n recovery artifact.
+#
+# n8n stores workflows, encrypted credentials, users and execution metadata in its named
+# PostgreSQL database. The mounted .n8n tree remains part of the documented PostgreSQL
+# deployment even with an external database, so capture it beside the logical dump. The
+# encryption key is a Vaultwarden dependency and is verified independently; it is never
+# printed or copied into the PBS artifact as evidence.
+
+- name: n8n backup | Resolve the named PostgreSQL backend and credential
+  ansible.builtin.set_fact:
+    _n8n_backup_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           app_config.app.database.instance | default(''), {}) }}
+    _n8n_backup_database_user: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).database_user
+         | default(app_config.app.database_user
+           | default(app_config.app.database.role | default('')), true) }}
+    _n8n_backup_database_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).database_password
+         | default(app_config.app.database_password | default(''), true) }}
+    _n8n_backup_database_name: "{{ app_config.app.database.name | default('') }}"
+    _n8n_backup_data_path: "{{ app_config.app.data_path | default('') }}"
+    _n8n_backup_encryption_key: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).encryption_key
+         | default(app_config.app.encryption_key | default(''), true) }}
+  no_log: true
+
+- name: n8n backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _n8n_backup_database_backend.provider | default('') == 'postgresql'
+      - _n8n_backup_database_backend.host | default('') | length > 0
+      - _n8n_backup_database_backend.port | default(0) | int > 0
+      - _n8n_backup_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - _n8n_backup_database_user | length > 0
+      - _n8n_backup_database_password | length > 0
+      - _n8n_backup_encryption_key | length > 0
+      - _n8n_backup_data_path is match('^/[^/].*')
+      - _n8n_backup_data_path != '/'
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      n8n needs its named PostgreSQL backend, database credential, Vaultwarden encryption
+      key, non-root data path, and a configured PBS target before an application-consistent
+      backup can run.
+  no_log: true
+
+- name: n8n backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: n8n backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for n8n. Deploy PBS and re-run this backup; no local
+      archive is treated as a recovery point.
+
+- name: n8n backup | Check the instance data path
+  ansible.builtin.stat:
+    path: "{{ _n8n_backup_data_path }}"
+  register: _n8n_backup_data
+  changed_when: false
+
+- name: n8n backup | Require a complete data path
+  ansible.builtin.assert:
+    that:
+      - _n8n_backup_data.stat.exists
+      - _n8n_backup_data.stat.isdir
+    fail_msg: >-
+      n8n data path {{ _n8n_backup_data_path }} is missing; refusing to create a recovery
+      point that would omit instance assets and source-control state.
+
+- name: n8n backup | Allocate private scratch space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: n8n-backup-
+  register: _n8n_backup_scratch
+  changed_when: true
+
+- name: n8n backup | Quiesce n8n and archive database plus data
+  block:
+    - name: n8n backup | Stop only the n8n service
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ instance }}"
+        state: stopped
+        services: [n8n]
+
+    - name: n8n backup | Dump the named PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _n8n_backup_scratch.path }}:/backup"
+          - --env
+          - DB_HOST
+          - --env
+          - DB_PORT
+          - --env
+          - DB_NAME
+          - --env
+          - DB_USER
+          - --env
+          - DB_PASSWORD
+          - "{{ app_config.backup.postgres_client_image }}"
+          - /bin/sh
+          - -ceu
+          - >-
+            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
+            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
+            --dbname="$DB_NAME" --file=/backup/n8n.dump
+      environment:
+        DB_HOST: "{{ _n8n_backup_database_backend.host }}"
+        DB_PORT: "{{ _n8n_backup_database_backend.port }}"
+        DB_NAME: "{{ _n8n_backup_database_name }}"
+        DB_USER: "{{ _n8n_backup_database_user }}"
+        DB_PASSWORD: "{{ _n8n_backup_database_password }}"
+      no_log: true
+      changed_when: true
+
+    - name: n8n backup | Push the paired database and data snapshot to PBS
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _n8n_backup_scratch.path }}:/backup:ro"
+          - --volume
+          - "{{ _n8n_backup_data_path }}:/data:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - RETENTION_DAYS
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            test -s /backup/n8n.dump
+            proxmox-backup-client backup database.pxar:/backup data.pxar:/data \
+              --backup-id "$BACKUP_ID"
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
+            echo "backup complete: host/$BACKUP_ID (database plus n8n data)"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: >-
+          {{ app_config.backup.client.repository }}
+          {{ app_config.backup.client.suite }}
+          {{ app_config.backup.client.component }}
+      no_log: true
+      changed_when: true
+
+    - name: n8n backup | Mark the paired recovery artifact complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    # A failed PBS upload must not leave n8n down. PostgreSQL and every other service on
+    # the shared services guest remain untouched.
+    - name: n8n backup | Start only the n8n service after the attempt
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ instance }}"
+        state: present
+        services: [n8n]
+
+- name: n8n backup | Remove private scratch data
+  ansible.builtin.file:
+    path: "{{ _n8n_backup_scratch.path }}"
+    state: absent
+  when: _n8n_backup_scratch.path is defined

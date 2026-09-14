@@ -11,7 +11,13 @@ routing:
   identity: catalog
 backup:
   enabled: true
+  application_consistent: true
   schedule: "0 3 * * *"
+
+# Recovery boundary: the named PostgreSQL database and this instance's /opt/<instance>/data
+# directory are captured together. The n8n encryption key remains in Vaultwarden and is
+# carried to a new isolated target during restore; provider/execution credentials remain
+# independent recovery dependencies.
 
 # The n8n encryption key is generated once and stored in Vaultwarden under
 # homelab-infra/apps/<instance>. Credentials and workflow data are application state;

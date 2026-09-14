@@ -95,9 +95,8 @@
 #
 # Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
 # use their namespaced restore job; application-consistent Docker roles such as Actual Budget,
-# ComfyUI, Home Assistant, Ollama and Immich own their recovery mechanism. Native apps and
-# Docker apps without one
-# remain on whole-guest PBS recovery.
+# ComfyUI, Home Assistant, Immich, n8n, Odoo and Ollama own their recovery mechanism. Native
+# apps and Docker apps without one remain on whole-guest PBS recovery.
 
 # Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
 # durable originals/thumbnails from one application-consistent PBS snapshot. Plan mode lists
@@ -203,6 +202,11 @@
                'name': app_config.get('app', {}).get('database', {}).get('name', '')
              } }}
 
+    - name: Resolve source n8n recovery key without exposing it in evidence
+      ansible.builtin.set_fact:
+        restore_source_encryption_key: "{{ app_config.app.encryption_key | default('') }}"
+      no_log: true
+
     - name: Resolve target identities before mutation
       ansible.builtin.set_fact:
         _ra_source_route_key: >-
@@ -224,7 +228,8 @@
           {{ (_ra_kind ~ ':' ~ _ra_source_instance)
              if _ra_kind == 'kubernetes'
              else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
-                   or app_config.get('app', {}).get('data_path', '')
+                   or (app_config.get('app', {}).get('data_path', '')
+                       | replace('{{ instance }}', _ra_source_instance))
                    or app_config.get('app', {}).get('config_path', '')
                    or (app_config.get('app', {}).get('filestore_path', '')
                        | replace('{{ instance }}', _ra_source_instance))
@@ -233,7 +238,8 @@
           {{ (_ra_kind ~ ':' ~ _ra_target)
              if _ra_kind == 'kubernetes'
              else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
-                   or restore_target_config.get('app', {}).get('data_path', '')
+                   or (restore_target_config.get('app', {}).get('data_path', '')
+                       | replace('{{ instance }}', _ra_target))
                    or restore_target_config.get('app', {}).get('config_path', '')
                    or (restore_target_config.get('app', {}).get('filestore_path', '')
                        | replace('{{ instance }}', _ra_target))
@@ -499,12 +505,20 @@
                    if hostvars['localhost']._ra_app == 'odoo'
                    else (hostvars['localhost'].restore_target_config
                          | combine({'app': {
-                             'config_path': (hostvars['localhost'].restore_target_config.app.config_path
-                                             | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
-                                                       '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
+                             'data_path': (hostvars['localhost'].restore_target_config.app.data_path
+                                           | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
+                                                     '/opt/' ~ hostvars['localhost']._ra_target ~ '/')
+                                           | replace('{{ instance }}', hostvars['localhost']._ra_target))
                            }}, recursive=True)
-                         if hostvars['localhost']._ra_app == 'home-assistant'
-                         else hostvars['localhost'].restore_target_config)) }}
+                         if hostvars['localhost']._ra_app == 'n8n'
+                         else (hostvars['localhost'].restore_target_config
+                               | combine({'app': {
+                                   'config_path': (hostvars['localhost'].restore_target_config.app.config_path
+                                                   | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
+                                                             '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
+                                 }}, recursive=True)
+                               if hostvars['localhost']._ra_app == 'home-assistant'
+                               else hostvars['localhost'].restore_target_config))) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
         homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
@@ -513,6 +527,7 @@
         restore_method: "{{ hostvars['localhost'].recovery_method_resolved }}"
         restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
         restore_source_database: "{{ hostvars['localhost'].restore_source_database | default({}) }}"
+        restore_source_encryption_key: "{{ hostvars['localhost'].restore_source_encryption_key | default('') }}"
         restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"

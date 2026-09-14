@@ -11,7 +11,10 @@
     - **Secrets:** the n8n encryption key and database password are generated or reused
       from Vaultwarden; credentials are never read from tracked configuration.
     - **Recovery:** the named PostgreSQL database and this instance's `/opt/<instance>/data`
-      directory are one recovery unit. The Docker guest backup includes the Compose project.
+      directory are one native application recovery unit. Use the generated Backup App and
+      Restore App paths for both isolated-new and exact-existing destinations; a shared
+      services guest snapshot is a whole-guest fallback, not an n8n-only archive. See
+      `docs/specs/n8n-recovery.md`. The Docker guest backup includes the Compose project.
     - **Rerun:** the same encryption key and database role are reused on every converge.
   loglevel: INFO
   executionEnabled: true
