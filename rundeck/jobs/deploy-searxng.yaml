@@ -24,6 +24,15 @@
 
     No persistent volume is created and no backup is scheduled — SearXNG's only generated
     credential (`secret_key`) is stored in Vaultwarden and reused on every run.
+
+    **Recovery:** SearXNG is **rebuild-only**. To create a recovery target, author a
+    distinct `config/apps/<target>.yml` (including a distinct route), select
+    `recovery_isolated=true`, and verify the target before any deliberate wiring. The
+    in-namespace limiter cache starts empty and is not recovery state. Re-running the
+    deploy for an existing target reapplies its declared configuration; it does not
+    delete the source, perform a cutover, or expose a SearXNG Backup/Restore action.
+    The Kubernetes cluster's whole-guest PBS route remains the shared fallback; see
+    `docs/specs/searxng-recovery.md`.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -36,6 +45,12 @@
       `app-<instance>` namespace, route, and Vaultwarden item.'
     required: true
     value: searxng
+  - name: recovery_isolated
+    description: 'Set `true` only for a new rebuild target that must remain unwired while
+      it is inspected. Default `false` preserves normal deployment wiring.'
+    required: true
+    value: 'false'
+    values: ['false', 'true']
   sequence:
     keepgoing: false
     strategy: node-first
@@ -45,4 +60,7 @@
           #!/bin/bash
           set -euo pipefail
           : "${RD_OPTION_INSTANCE:?instance is required}"
-          exec lab-run playbooks/apps/searxng.yml -e "instance=$RD_OPTION_INSTANCE"
+          : "${RD_OPTION_RECOVERY_ISOLATED:?recovery_isolated is required}"
+          exec lab-run playbooks/apps/searxng.yml \
+            -e "instance=$RD_OPTION_INSTANCE" \
+            -e "recovery_isolated=$RD_OPTION_RECOVERY_ISOLATED"

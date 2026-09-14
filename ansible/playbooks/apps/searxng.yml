@@ -93,6 +93,12 @@
     wiring_access: "{{ hostvars['localhost'].app_config.routing.access | default('internal') }}"
 
   tasks:
+    # A rebuild-only recovery target must be inspectable without publishing a route,
+    # changing SSO/DNS/monitoring, or recording itself on the shared cluster guests.
+    - name: Skip external wiring while the rebuild target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:

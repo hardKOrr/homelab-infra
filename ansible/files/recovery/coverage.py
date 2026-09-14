@@ -55,6 +55,10 @@ DOCUMENTED_REBUILD_ONLY = {
     "flaresolverr": "Stateless Kubernetes workload; redeploy reconstructs its state.",
     "homepage": "Generated dashboard data is reconstructed from platform topology.",
     "kometa": "Generated Kubernetes configuration is reconstructed from media wiring.",
+    "searxng": (
+        "Stateless Kubernetes configuration is rebuilt from tracked defaults and the "
+        "canonical application credential; its in-namespace limiter cache is disposable."
+    ),
     "unpackerr": "Stateless daemon configuration is reconstructed from the media registry.",
 }
 
@@ -198,6 +202,12 @@ def _shared_effects(slug: str, resolved: dict[str, dict[str, Any]], hosting: str
 
 def _recovery_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str) -> str:
     if hosting == "kubernetes":
+        if slug == "searxng":
+            return (
+                "the shared Kubernetes node/cluster guest and all workloads, including "
+                "SearXNG's stateless namespace and disposable limiter cache; not an "
+                "application-only restore"
+            )
         return (
             "application PVCs and named external backends; the Kubernetes node/cluster "
             "guest is a shared PBS recovery unit, not an application-only restore"
@@ -210,6 +220,11 @@ def _recovery_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str
 
 
 def _native_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str) -> str:
+    if slug == "searxng":
+        return (
+            "stateless SearXNG configuration and disposable in-namespace limiter cache "
+            "on the shared Kubernetes cluster"
+        )
     app = defaults.get("app") if isinstance(defaults.get("app"), dict) else {}
     database = app.get("database")
     if isinstance(database, dict) and database.get("provider") and database.get("instance"):

@@ -62,6 +62,18 @@ class CoverageTests(unittest.TestCase):
             ["shared lab Caddy LXC: every catalog application's HTTPS route, TLS and access policy"],
         )
 
+    def test_searxng_is_rebuild_only_with_a_shared_cluster_fallback(self):
+        searxng = self.products["searxng"]
+        self.assertEqual(searxng["fallback"]["disposition"], "rebuild-only")
+        self.assertIn("limiter cache is disposable", searxng["fallback"]["reason"])
+        self.assertEqual(searxng["methods"]["pbs_guest"]["availability"], "shared_guest_only")
+        self.assertIn("not an application-only restore", searxng["methods"]["pbs_guest"]["recovery_unit"])
+        self.assertIn("stateless SearXNG configuration", searxng["methods"]["native"]["recovery_unit"])
+        self.assertEqual(searxng["methods"]["native"]["availability"], "not_declared")
+        self.assertEqual(searxng["methods"]["project_managed"]["availability"], "not_declared")
+        self.assertEqual(searxng["credentials"]["disposition"], "not-required-for-rebuild")
+        self.assertEqual(searxng["external_data"][0]["status"], "unknown")
+
     def test_rebuild_only_cannot_conflict_with_declared_recovery_method(self):
         resolved, _, _ = coverage.load_inputs()
         for method in ("native", "project_managed"):
