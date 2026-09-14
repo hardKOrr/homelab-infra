@@ -16,7 +16,10 @@ routing:
   identity: catalog
 backup:
   enabled: true
+  application_consistent: true
   schedule: "0 3 * * *"
+  # datastore: REPLACE_WITH_PBS_DATASTORE
+  # backup_id: ""       # blank uses the instance name
 
 # Recovery boundary: restore the PostgreSQL-odoo database and this instance's
 # filestore from the same recovery point. The PostgreSQL backend is shared and

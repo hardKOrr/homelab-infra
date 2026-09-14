@@ -9,6 +9,9 @@ need "$repo/ansible/vars/app-defaults/odoo.yml" 'image: docker.io/odoo:18.0'
 need "$repo/ansible/vars/app-defaults/odoo.yml" 'instance: postgresql-odoo'
 need "$repo/ansible/vars/app-defaults/odoo.yml" 'version: "16"'
 need "$repo/ansible/vars/app-defaults/odoo.yml" 'modules: [crm]'
+need "$repo/ansible/vars/app-defaults/odoo.yml" 'methods: [native]'
+need "$repo/ansible/vars/app-defaults/odoo.yml" 'application_consistent: true'
+need "$repo/config.example/apps/odoo.example.yml" 'application_consistent: true'
 need "$repo/ansible/roles/odoo/tasks/main.yml" 'vault_item_name: "homelab-infra/apps/{{ instance }}"'
 need "$repo/ansible/roles/odoo/tasks/main.yml" 'vault_item_secret_fields: [admin_password, database_password]'
 need "$repo/ansible/roles/odoo/tasks/main.yml" 'include_tasks: ../../../tasks/mail/resolve-mail.yml'
@@ -24,5 +27,6 @@ need "$repo/ansible/roles/postgresql/tasks/main.yml" "app_config.app.version | d
 need "$repo/ansible/roles/postgresql/tasks/main.yml" "'service_name': 'postgresql@' ~ (app_config.app.version | string) ~ '-main'"
 need "$repo/ansible/playbooks/apps/postgresql.yml" 'version: "{{ _postgresql_host.app_config.app.version }}"'
 need "$repo/rundeck/jobs/deploy-odoo.yaml" 'Run playbooks/apps/odoo.yml'
+need "$repo/catalog/applications.yml" 'actions: [backup, configure, remove, restart, restore, rollback, tail]'
 
 echo "PASS: Odoo Community CRM baseline, named PostgreSQL 16 backend, secrets, mail, and surface"

@@ -12,6 +12,10 @@
     - **Credentials:** generated administrator and database credentials are stored in
       `homelab-infra/apps/<instance>` in Vaultwarden and reused on every run.
     - **Recovery:** PostgreSQL data and the Odoo filestore are treated as one recovery unit.
+      Use the generated **Backup Odoo Community CRM** and **Restore Odoo Community CRM** jobs
+      for the native paired snapshot; both isolated-new and exact-existing destinations are
+      supported. A shared services guest snapshot is a whole-guest fallback, not an
+      Odoo-only archive. See docs/specs/odoo-recovery.md.
     - **Mail:** SMTP is read from the platform mail contract when configured.
 
     Lead and opportunity workflow remains inside the Odoo Community CRM application.

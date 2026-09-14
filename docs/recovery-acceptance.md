@@ -57,7 +57,7 @@ protocol.
 
 ## Current repository rollup
 
-The current declarations exercise the native method for the ten products that expose
+The current declarations exercise the native method for every product that exposes
 `recovery.methods: [native]`, plus the shared `pbs_guest` VM and LXC routes. No
 `project_managed` method is declared. The generated report is authoritative for the
 exact set and for the remaining catalog disposition; it intentionally reports live

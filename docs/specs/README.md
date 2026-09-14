@@ -18,6 +18,7 @@ source. [`../architecture.md`](../architecture.md) maps the components that impl
 | [Caddy recovery](caddy-recovery.md) | PBS-only recovery unit, shared edge effects, and both destinations |
 | [ComfyUI recovery](comfyui-recovery.md) | Dedicated GPU ownership and model/config recovery |
 | [Ollama recovery](ollama-recovery.md) | Dedicated GPU ownership and model/config recovery |
+| [Odoo recovery](odoo-recovery.md) | PostgreSQL database plus filestore recovery and shared-guest fallback |
 
 When a specification and the authoritative variable schema differ, update the specification to
 match [`ansible/vars/CONTRACT.md`](../../ansible/vars/CONTRACT.md). Work state and historical

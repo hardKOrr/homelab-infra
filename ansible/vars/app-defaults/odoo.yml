@@ -1,6 +1,13 @@
 ---
 odoo_defaults:
   stack: services
+
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     image: docker.io/odoo:18.0
     port: 8069
@@ -21,7 +28,23 @@ odoo_defaults:
     identity: catalog
   backup:
     enabled: true
+    application_consistent: true
     schedule: "0 3 * * *"
     retention_days: 14
+    datastore: ""
+    backup_id: ""
+    timezone: "{{ homelabinfra_config.timezone | default('UTC') }}"
+    timeout_seconds: 3600
+    scratch_size: 2
+    encryption: none
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
+    # Odoo's tracked PostgreSQL major is 16. The dump client is separate from the
+    # shared PostgreSQL guest and is used only for the named application database.
+    postgres_client_image: "postgres:16-alpine"
   crm:
     modules: [crm]

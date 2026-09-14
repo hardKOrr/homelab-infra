@@ -1,0 +1,195 @@
+---
+# Application-consistent Odoo recovery artifact.
+#
+# Odoo keeps business records in the named PostgreSQL database and binary attachments,
+# reports and other files under its data_dir/filestore tree. The service is stopped while
+# one PBS snapshot receives both pieces, so a restore cannot pair a database from one point
+# with a filestore from another. The PostgreSQL guest remains a separately managed backend.
+
+- name: Odoo backup | Resolve the named PostgreSQL backend and credential
+  ansible.builtin.set_fact:
+    _odoo_backup_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           app_config.app.database.instance | default(''), {}) }}
+    _odoo_backup_database_user: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).database_user
+         | default(app_config.app.database_user
+           | default(app_config.app.database.role | default('')), true) }}
+    _odoo_backup_database_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}).database_password
+         | default(app_config.app.database_password | default(''), true) }}
+    _odoo_backup_database_name: "{{ app_config.app.database.name | default('') }}"
+    _odoo_backup_filestore_path: "{{ app_config.app.filestore_path | default('') }}"
+  no_log: true
+
+- name: Odoo backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _odoo_backup_database_backend.provider | default('') == 'postgresql'
+      - _odoo_backup_database_backend.host | default('') | length > 0
+      - _odoo_backup_database_backend.port | default(0) | int > 0
+      - _odoo_backup_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - _odoo_backup_database_user | length > 0
+      - _odoo_backup_database_password | length > 0
+      - _odoo_backup_filestore_path is match('^/[^/].*')
+      - _odoo_backup_filestore_path != '/'
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Odoo needs its named PostgreSQL backend, database credential, non-root filestore
+      path, and a configured PBS target before an application-consistent backup can run.
+  no_log: true
+
+- name: Odoo backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Odoo backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Odoo. Deploy PBS and re-run this backup; no local
+      archive is treated as a recovery point.
+
+- name: Odoo backup | Check the instance filestore root
+  ansible.builtin.stat:
+    path: "{{ _odoo_backup_filestore_path }}"
+  register: _odoo_backup_filestore
+  changed_when: false
+
+- name: Odoo backup | Require a complete filestore root
+  ansible.builtin.assert:
+    that:
+      - _odoo_backup_filestore.stat.exists
+      - _odoo_backup_filestore.stat.isdir
+    fail_msg: >-
+      Odoo filestore path {{ _odoo_backup_filestore_path }} is missing; refusing to create
+      an artifact that would omit attachments and binary fields.
+
+- name: Odoo backup | Allocate private scratch space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: odoo-backup-
+  register: _odoo_backup_scratch
+  changed_when: true
+
+- name: Odoo backup | Quiesce Odoo and archive database plus filestore
+  block:
+    - name: Odoo backup | Stop only the Odoo service
+      community.docker.docker_compose_v2:
+        project_src: "{{ odoo_project_dir }}"
+        state: stopped
+        services: [odoo]
+
+    - name: Odoo backup | Dump the named PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _odoo_backup_scratch.path }}:/backup"
+          - --env
+          - DB_HOST
+          - --env
+          - DB_PORT
+          - --env
+          - DB_NAME
+          - --env
+          - DB_USER
+          - --env
+          - DB_PASSWORD
+          - "{{ app_config.backup.postgres_client_image }}"
+          - /bin/sh
+          - -ceu
+          - >-
+            PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
+            --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
+            --dbname="$DB_NAME" --file=/backup/odoo.dump
+      environment:
+        DB_HOST: "{{ _odoo_backup_database_backend.host }}"
+        DB_PORT: "{{ _odoo_backup_database_backend.port }}"
+        DB_NAME: "{{ _odoo_backup_database_name }}"
+        DB_USER: "{{ _odoo_backup_database_user }}"
+        DB_PASSWORD: "{{ _odoo_backup_database_password }}"
+      no_log: true
+      changed_when: true
+
+    - name: Odoo backup | Push the paired database and filestore snapshot to PBS
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _odoo_backup_scratch.path }}:/backup:ro"
+          - --volume
+          - "{{ _odoo_backup_filestore_path }}:/filestore:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - RETENTION_DAYS
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup database.pxar:/backup filestore.pxar:/filestore \
+              --backup-id "$BACKUP_ID"
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
+            echo "backup complete: host/$BACKUP_ID (database plus filestore)"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: >-
+          {{ app_config.backup.client.repository }}
+          {{ app_config.backup.client.suite }}
+          {{ app_config.backup.client.component }}
+      no_log: true
+      changed_when: true
+
+    - name: Odoo backup | Mark the paired recovery artifact complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    # A failed PBS upload must not leave Odoo down. Only this instance's Compose service is
+    # restarted; the shared PostgreSQL guest and its other databases are never touched.
+    - name: Odoo backup | Start only the Odoo service after the attempt
+      community.docker.docker_compose_v2:
+        project_src: "{{ odoo_project_dir }}"
+        state: present
+        services: [odoo]
+
+- name: Odoo backup | Remove private scratch data
+  ansible.builtin.file:
+    path: "{{ _odoo_backup_scratch.path }}"
+    state: absent
+  when: _odoo_backup_scratch.path is defined

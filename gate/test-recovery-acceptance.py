@@ -44,6 +44,7 @@ class RecoveryAcceptanceTests(unittest.TestCase):
                 "mixpost",
                 "ollama",
                 "open-webui",
+                "odoo",
             },
         )
 
