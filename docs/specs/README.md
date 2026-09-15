@@ -20,6 +20,7 @@ source. [`../architecture.md`](../architecture.md) maps the components that impl
 | [Ollama recovery](ollama-recovery.md) | Dedicated GPU ownership and model/config recovery |
 | [Odoo recovery](odoo-recovery.md) | PostgreSQL database plus filestore recovery and shared-guest fallback |
 | [n8n recovery](n8n-recovery.md) | PostgreSQL database, workflow data and encryption-key recovery with shared-guest fallback |
+| [SearXNG recovery](searxng-recovery.md) | Rebuild-only stateless Kubernetes configuration, disposable limiter cache, and shared-guest fallback |
 
 When a specification and the authoritative variable schema differ, update the specification to
 match [`ansible/vars/CONTRACT.md`](../../ansible/vars/CONTRACT.md). Work state and historical

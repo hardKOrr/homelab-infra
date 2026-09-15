@@ -12,6 +12,8 @@ need "$repo/ansible/roles/searxng/tasks/main.yml" 'vault_item_name: "homelab-inf
 need "$repo/ansible/roles/searxng/tasks/main.yml" 'secret_key'
 need "$repo/ansible/roles/searxng/templates/settings.yml.j2" 'secret_key: "{{ _sx_secret_key }}"'
 need "$repo/ansible/roles/searxng/templates/settings.yml.j2" 'limiter: true'
+need "$repo/ansible/playbooks/apps/searxng.yml" 'recovery_isolated'
+need "$repo/docs/specs/searxng-recovery.md" 'rebuild-only'
 
 # No unexamined persistent state: this role must never declare a PersistentVolumeClaim,
 # and its app-defaults must never declare a backup contract there is nothing to run.

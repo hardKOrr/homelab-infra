@@ -67,7 +67,7 @@ products:
   ollama: {recovery_issue: 184, deployment_issue: 167}
   open-webui: {recovery_issue: 185, deployment_issue: 165}
   plane: {recovery_issue: 186, deployment_issue: 150}
-  searxng: {recovery_issue: 187, deployment_issue: 129}
+  searxng: {recovery_issue: 187, deployment_issue: 129, rebuild_only: true}
 
 # The PR #81 live note names one legacy source that was actually sampled. Its instance
 # identity and version were intentionally not committed. It is preserved as an explicit
