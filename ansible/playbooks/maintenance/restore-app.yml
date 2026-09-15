@@ -199,13 +199,65 @@
           {{ {
                'provider': app_config.get('app', {}).get('database', {}).get('provider', ''),
                'instance': app_config.get('app', {}).get('database', {}).get('instance', ''),
-               'name': app_config.get('app', {}).get('database', {}).get('name', '')
+               'name': app_config.get('app', {}).get('database', {}).get('name', ''),
+               'host': (homelabinfra_infra.databases | default({})).get(
+                 app_config.get('app', {}).get('database', {}).get('instance', ''), {}).host | default(''),
+               'port': (homelabinfra_infra.databases | default({})).get(
+                 app_config.get('app', {}).get('database', {}).get('instance', ''), {}).port | default(0)
              } }}
 
     - name: Resolve source n8n recovery key without exposing it in evidence
       ansible.builtin.set_fact:
         restore_source_encryption_key: "{{ app_config.app.encryption_key | default('') }}"
       no_log: true
+
+    # Plane's local RabbitMQ/MinIO credentials and application keys must follow the
+    # restored database and files to a new target. They never enter the recovery plan.
+    - name: Resolve source Plane recovery material without exposing it in evidence
+      ansible.builtin.set_fact:
+        restore_source_plane_secrets:
+          secret_key: "{{ app_config.app.secret_key | default('') }}"
+          live_server_secret_key: "{{ app_config.app.live_server_secret_key | default('') }}"
+          rabbitmq_password: "{{ app_config.app.rabbitmq_password | default('') }}"
+          object_storage_access_key: "{{ app_config.app.object_storage_access_key | default('') }}"
+          object_storage_secret_key: "{{ app_config.app.object_storage_secret_key | default('') }}"
+        restore_source_redis:
+          instance: "{{ app_config.app.redis.instance | default('') }}"
+          host: >-
+            {{ (homelabinfra_infra.databases | default({})).get(
+                 app_config.app.redis.instance | default(''), {}).host | default('') }}
+          port: >-
+            {{ (homelabinfra_infra.databases | default({})).get(
+                 app_config.app.redis.instance | default(''), {}).port | default(0) }}
+      no_log: true
+      when: _ra_app == 'plane'
+
+    # Plane stores its two owned paths below /opt/<instance>. Normalize those paths for
+    # a new target without changing the source config or putting secrets in the plan.
+    - name: Normalize the target Plane storage paths
+      ansible.builtin.set_fact:
+        plane_restore_target_config: >-
+          {{ restore_target_config | combine({'app': {
+               'data_path': (restore_target_config.app.data_path
+                             | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                       '/opt/' ~ _ra_target ~ '/')
+                             | replace('{{ instance }}', _ra_target)),
+               'object_storage_path': (restore_target_config.app.object_storage_path
+                                       | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                                 '/opt/' ~ _ra_target ~ '/')
+                                       | replace('{{ instance }}', _ra_target))
+             }}, recursive=True) }}
+      when: _ra_app == 'plane'
+
+    - name: Resolve Plane source and target owned storage paths
+      ansible.builtin.set_fact:
+        _ra_plane_source_storage_paths:
+          data: "{{ app_config.app.data_path | replace('{{ instance }}', _ra_source_instance) }}"
+          object_storage: "{{ app_config.app.object_storage_path | replace('{{ instance }}', _ra_source_instance) }}"
+        _ra_plane_target_storage_paths:
+          data: "{{ plane_restore_target_config.app.data_path }}"
+          object_storage: "{{ plane_restore_target_config.app.object_storage_path }}"
+      when: _ra_app == 'plane'
 
     - name: Resolve target identities before mutation
       ansible.builtin.set_fact:
@@ -227,23 +279,40 @@
         _ra_source_storage_key: >-
           {{ (_ra_kind ~ ':' ~ _ra_source_instance)
              if _ra_kind == 'kubernetes'
-             else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
-                   or (app_config.get('app', {}).get('data_path', '')
-                       | replace('{{ instance }}', _ra_source_instance))
-                   or app_config.get('app', {}).get('config_path', '')
-                   or (app_config.get('app', {}).get('filestore_path', '')
-                       | replace('{{ instance }}', _ra_source_instance))
-                   or (_ra_kind ~ ':' ~ _ra_source_instance)) | string }}
+             else (
+               (_ra_plane_source_storage_paths.data ~ '|' ~
+                _ra_plane_source_storage_paths.object_storage)
+               if _ra_app == 'plane'
+               else ((app_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
+                     or (app_config.get('app', {}).get('data_path', '')
+                         | replace('{{ instance }}', _ra_source_instance))
+                     or app_config.get('app', {}).get('config_path', '')
+                     or (app_config.get('app', {}).get('filestore_path', '')
+                         | replace('{{ instance }}', _ra_source_instance))
+                     or (_ra_kind ~ ':' ~ _ra_source_instance))) | string }}
         _ra_target_storage_key: >-
           {{ (_ra_kind ~ ':' ~ _ra_target)
              if _ra_kind == 'kubernetes'
-             else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
-                   or (restore_target_config.get('app', {}).get('data_path', '')
-                       | replace('{{ instance }}', _ra_target))
-                   or restore_target_config.get('app', {}).get('config_path', '')
-                   or (restore_target_config.get('app', {}).get('filestore_path', '')
-                       | replace('{{ instance }}', _ra_target))
-                   or (_ra_kind ~ ':' ~ _ra_target)) | string }}
+             else (
+               ((_ra_plane_source_storage_paths.data ~ '|' ~
+                 _ra_plane_source_storage_paths.object_storage)
+                if (_ra_plane_target_storage_paths.data in [
+                      _ra_plane_source_storage_paths.data,
+                      _ra_plane_source_storage_paths.object_storage
+                    ] or _ra_plane_target_storage_paths.object_storage in [
+                      _ra_plane_source_storage_paths.data,
+                      _ra_plane_source_storage_paths.object_storage
+                    ])
+                else (_ra_plane_target_storage_paths.data ~ '|' ~
+                      _ra_plane_target_storage_paths.object_storage))
+               if _ra_app == 'plane'
+               else ((restore_target_config.get('media_storage', {}).get('mounts', [{}]) | first).get('path', '')
+                     or (restore_target_config.get('app', {}).get('data_path', '')
+                         | replace('{{ instance }}', _ra_target))
+                     or restore_target_config.get('app', {}).get('config_path', '')
+                     or (restore_target_config.get('app', {}).get('filestore_path', '')
+                         | replace('{{ instance }}', _ra_target))
+                     or (_ra_kind ~ ':' ~ _ra_target))) | string }}
 
     - name: Refresh inventory before checking a new target's ownership
       ansible.builtin.meta: refresh_inventory
@@ -398,6 +467,96 @@
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
 
+    # Provisioning runs in a child ansible-playbook process. Its Vaultwarden writes do
+    # not update this controller process's localhost facts or the startup snapshot, so
+    # read the canonical vault again before passing target credentials to the Docker
+    # restore play. Missing or unreadable Vaultwarden state fails closed here.
+    - name: Verify the Vaultwarden session before refreshing target credentials
+      ansible.builtin.include_tasks: ../../tasks/bitwarden/authenticate.yml
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Synchronize Vaultwarden after isolated target provisioning
+      ansible.builtin.command:
+        argv: [bw, sync]
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      no_log: true
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Read the fresh Vaultwarden item snapshot
+      ansible.builtin.command:
+        argv: [bw, list, items]
+      register: _ra_refreshed_vault_items
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      no_log: true
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Parse the refreshed Vaultwarden runtime contract
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../scripts/vault-runtime.py"
+        stdin: "{{ _ra_refreshed_vault_items.stdout }}"
+      register: _ra_refreshed_vault_runtime
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      no_log: true
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Publish the fresh Vaultwarden runtime contract
+      ansible.builtin.set_fact:
+        homelabinfra_vault: "{{ _ra_refreshed_vault_runtime.stdout | from_json }}"
+        homelabinfra_infra: >-
+          {{ homelabinfra_infra
+             | combine(_ra_refreshed_vault_runtime.stdout | from_json, recursive=True) }}
+      no_log: true
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Re-merge the target config with provisioned Vaultwarden credentials
+      ansible.builtin.set_fact:
+        restore_target_config: >-
+          {{ (_app_defaults | default({})).get(_ra_defaults_key, {})
+             | combine(_target_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({})).get(_ra_target, {})},
+                       recursive=True) }}
+      vars:
+        _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Re-normalize Plane target storage paths after provisioning
+      ansible.builtin.set_fact:
+        plane_restore_target_config: >-
+          {{ restore_target_config | combine({'app': {
+               'data_path': (restore_target_config.app.data_path
+                             | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                       '/opt/' ~ _ra_target ~ '/')
+                             | replace('{{ instance }}', _ra_target)),
+               'object_storage_path': (restore_target_config.app.object_storage_path
+                                       | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                                 '/opt/' ~ _ra_target ~ '/')
+                                       | replace('{{ instance }}', _ra_target))
+             }}, recursive=True) }}
+      when:
+        - _ra_app == 'plane'
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
     - name: Resolve the Docker target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
@@ -488,7 +647,9 @@
         instance: "{{ hostvars['localhost']._ra_target }}"
         actual_budget_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         app_config: >-
-          {{ hostvars['localhost'].restore_target_config
+          {{ hostvars['localhost'].plane_restore_target_config
+             if hostvars['localhost']._ra_app == 'plane'
+             else (hostvars['localhost'].restore_target_config
              | combine({'app': {
                  'data_path': (hostvars['localhost'].restore_target_config.app.data_path
                                | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
@@ -518,7 +679,7 @@
                                                              '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
                                  }}, recursive=True)
                                if hostvars['localhost']._ra_app == 'home-assistant'
-                               else hostvars['localhost'].restore_target_config))) }}
+                               else hostvars['localhost'].restore_target_config)))) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
         homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
@@ -528,6 +689,8 @@
         restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
         restore_source_database: "{{ hostvars['localhost'].restore_source_database | default({}) }}"
         restore_source_encryption_key: "{{ hostvars['localhost'].restore_source_encryption_key | default('') }}"
+        restore_source_plane_secrets: "{{ hostvars['localhost'].restore_source_plane_secrets | default({}) }}"
+        restore_source_redis: "{{ hostvars['localhost'].restore_source_redis | default({}) }}"
         restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"

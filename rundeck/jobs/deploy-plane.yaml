@@ -12,8 +12,12 @@
       its persistent object-storage path is backed up with the Plane data directories.
     - **Secrets:** database, Redis, RabbitMQ, application, and object-storage credentials
       are generated or reused in Vaultwarden only.
-    - **Recovery:** restore the named PostgreSQL database and the complete `/opt/<instance>`
-      Compose data directory together. This job intentionally has no generic image rollback.
+    - **Recovery:** the named PostgreSQL database, Redis data, complete `/opt/<instance>/data`
+      tree and local MinIO object-storage path are one native recovery unit. A root-only
+      helper backs up at `0 3 * * *`; Backup App calls the same helper. Plane does not prune
+      existing PBS points. Use Restore App for isolated-new or exact-existing destinations;
+      a shared services guest snapshot is a whole-guest fallback, not a Plane-only archive.
+      See `docs/specs/plane-recovery.md`. This job has no generic image rollback.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

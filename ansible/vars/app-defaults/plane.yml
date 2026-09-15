@@ -4,6 +4,11 @@
 # remain independently managed platform backends; no credentials belong in this file.
 plane_defaults:
   stack: services
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
   app:
     release: v1.4.2
     port: 8093
@@ -22,6 +27,8 @@ plane_defaults:
     redis:
       provider: redis
       instance: redis-plane
+      service_name: redis-server
+      data_path: /var/lib/redis
     rabbitmq:
       host: plane-mq
       port: 5672
@@ -34,4 +41,15 @@ plane_defaults:
     identity: catalog
   backup:
     enabled: true
+    application_consistent: true
     schedule: "0 3 * * *"
+    datastore: ""
+    backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
+    postgres_client_image: "postgres:16-alpine"
+    redis_client_image: "redis:7-alpine"

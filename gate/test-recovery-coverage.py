@@ -47,6 +47,18 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(k8s["methods"]["native"]["evidence"]["schedule"]["status"], "configured")
         self.assertEqual(k8s["methods"]["native"]["evidence"]["artifact"]["status"], "unknown")
 
+    def test_plane_reports_versioned_native_unit_and_required_backend_state(self):
+        plane = self.products["plane"]
+        native = plane["methods"]["native"]
+        self.assertEqual(plane["version"], "v1.4.2")
+        self.assertIn("named PostgreSQL database", native["recovery_unit"])
+        self.assertIn("named Redis dataset", native["recovery_unit"])
+        self.assertIn("local MinIO object-storage path", native["recovery_unit"])
+        redis = next(item for item in plane["external_data"] if item["kind"] == "cache")
+        self.assertTrue(redis["required"])
+        self.assertEqual(redis["status"], "unknown")
+        self.assertEqual(native["evidence"]["artifact"]["status"], "unknown")
+
     def test_rebuild_only_is_explicit_and_undeclared_method_is_not_healthy(self):
         self.assertEqual(self.products["homepage"]["fallback"]["disposition"], "rebuild-only")
         self.assertEqual(self.products["caddy"]["methods"]["native"]["availability"], "not_declared")

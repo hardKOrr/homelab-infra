@@ -155,10 +155,14 @@ def _guest_kind(defaults: dict[str, Any], hosting: str) -> str:
 
 
 def _version(defaults: dict[str, Any]) -> str:
-    image = defaults.get("app", {}).get("image", "declared-without-image")
-    if not isinstance(image, str):
-        return "declared-without-image"
-    return image.rsplit(":", 1)[-1] if ":" in image else image
+    app = defaults.get("app") if isinstance(defaults.get("app"), dict) else {}
+    image = app.get("image")
+    if isinstance(image, str) and image:
+        return image.rsplit(":", 1)[-1] if ":" in image else image
+    release = app.get("release")
+    if isinstance(release, str) and release:
+        return release
+    return "declared-without-image"
 
 
 def _shared_guest_declared(defaults: dict[str, Any]) -> bool:
@@ -225,6 +229,11 @@ def _native_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str) 
             "stateless SearXNG configuration and disposable in-namespace limiter cache "
             "on the shared Kubernetes cluster"
         )
+    if slug == "plane":
+        return (
+            "Plane server/worker state, named PostgreSQL database, named Redis dataset and "
+            "local MinIO object-storage path in one application-consistent PBS point"
+        )
     app = defaults.get("app") if isinstance(defaults.get("app"), dict) else {}
     database = app.get("database")
     if isinstance(database, dict) and database.get("provider") and database.get("instance"):
@@ -270,7 +279,7 @@ def _external_requirements(
         )
     redis = app.get("redis")
     if isinstance(redis, dict) and redis.get("instance"):
-        add("cache", f"named Redis dependency {redis['instance']}", required=False)
+        add("cache", f"named Redis dependency {redis['instance']}", required=slug == "plane")
     if "media_storage" in defaults:
         add("mount", "operator-declared media/storage mount; guest audit cannot inspect its contents")
     if app.get("recordings_path"):

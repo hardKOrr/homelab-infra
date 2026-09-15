@@ -1,3 +1,6 @@
 ---
 plane_project_dir: "/opt/{{ instance }}"
 plane_env_file: "{{ plane_project_dir }}/plane.env"
+plane_recovery_config_dir: /etc/homelab-infra/plane
+plane_recovery_config: "{{ plane_recovery_config_dir }}/{{ instance }}.env"
+plane_recovery_script: /usr/local/sbin/homelab-infra-plane-recovery
