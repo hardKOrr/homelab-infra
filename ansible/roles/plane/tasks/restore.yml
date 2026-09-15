@@ -533,6 +533,10 @@
         plane_fqdn: >-
           {{ app_config.routing.subdomain | default(restore_target, true) }}
           .{{ homelabinfra_infra.domain }}
+        _plane_env_database_backend: "{{ _plane_restore_database_backend }}"
+        _plane_env_database_user: "{{ _plane_restore_database_user }}"
+        _plane_env_database_password: "{{ _plane_restore_database_password }}"
+        _plane_env_database_name: "{{ _plane_restore_database_name }}"
         _plane_redis_backend: "{{ _plane_restore_redis_backend }}"
         _plane_redis_password: "{{ _plane_restore_redis_password }}"
         _plane_secret_key: "{{ restore_source_plane_secrets.secret_key }}"

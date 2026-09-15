@@ -29,6 +29,7 @@ RECOVERY_HELPER = ROOT / "ansible/roles/plane/files/plane-recovery"
 RECOVERY_CONFIG = ROOT / "ansible/roles/plane/templates/plane-recovery.env.j2"
 PLAYBOOK = ROOT / "ansible/playbooks/apps/plane.yml"
 RESTORE_DISPATCH = ROOT / "ansible/playbooks/maintenance/restore-app.yml"
+ENV_TEMPLATE = ROOT / "ansible/roles/plane/templates/plane.env.j2"
 DEPLOY_JOB = ROOT / "rundeck/jobs/deploy-plane.yaml"
 SPEC = ROOT / "docs/specs/plane-recovery.md"
 
@@ -44,6 +45,7 @@ class PlaneRecoveryTests(unittest.TestCase):
         cls.recovery_config = RECOVERY_CONFIG.read_text(encoding="utf-8")
         cls.playbook = PLAYBOOK.read_text(encoding="utf-8")
         cls.restore_dispatch = RESTORE_DISPATCH.read_text(encoding="utf-8")
+        cls.env_template = ENV_TEMPLATE.read_text(encoding="utf-8")
         cls.deploy_job = DEPLOY_JOB.read_text(encoding="utf-8")
         cls.spec = SPEC.read_text(encoding="utf-8")
         cls.case = MethodCase(
@@ -140,6 +142,39 @@ class PlaneRecoveryTests(unittest.TestCase):
         self.assertIn("rebuild-only", self.spec)
         self.assertIn("host/<backup_id>", self.spec)
         self.assertEqual(self.case.version, "v1.4.2")
+
+    def test_new_target_refreshes_vault_and_renders_resolved_database(self):
+        provision = self.restore_dispatch.index(
+            "name: Provision the isolated new restore target"
+        )
+        refresh = self.restore_dispatch.index(
+            "name: Synchronize Vaultwarden after isolated target provisioning"
+        )
+        merge_target = self.restore_dispatch.index(
+            "name: Re-merge the target config with provisioned Vaultwarden credentials"
+        )
+        docker_restore = self.restore_dispatch.index(
+            'name: "Restore App | Restore Docker application data from PBS"'
+        )
+        self.assertLess(provision, refresh)
+        self.assertLess(refresh, merge_target)
+        self.assertLess(merge_target, docker_restore)
+        for marker in (
+            "../../tasks/bitwarden/authenticate.yml",
+            "argv: [bw, sync]",
+            "argv: [bw, list, items]",
+            "vault-runtime.py",
+            'homelabinfra_vault: "{{ _ra_refreshed_vault_runtime.stdout | from_json }}"',
+        ):
+            self.assertIn(marker, self.restore_dispatch)
+        for marker in (
+            '_plane_env_database_backend: "{{ _plane_restore_database_backend }}"',
+            '_plane_env_database_user: "{{ _plane_restore_database_user }}"',
+            '_plane_env_database_password: "{{ _plane_restore_database_password }}"',
+        ):
+            self.assertIn(marker, self.restore)
+            self.assertIn(marker.split(":")[0], self.env_template)
+        self.assertIn("_plane_env_database_backend | default({})", self.env_template)
 
     def test_new_restore_recovers_all_plane_state_without_source(self):
         source = new_fixture(self.case, "plane-source")
