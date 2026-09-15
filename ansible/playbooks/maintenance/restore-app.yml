@@ -211,6 +211,15 @@
         restore_source_encryption_key: "{{ app_config.app.encryption_key | default('') }}"
       no_log: true
 
+    # Open WebUI encrypts application-owned credential state with its generated key.
+    # Carry the source key through the protected Ansible variable path; the product role
+    # upserts it into the target Vaultwarden item and rendered env before starting restore.
+    - name: Resolve the source Open WebUI application key without exposing it
+      ansible.builtin.set_fact:
+        restore_source_open_webui_secret_key: "{{ app_config.app.secret_key | default('') }}"
+      no_log: true
+      when: _ra_app == 'open-webui'
+
     # Plane's local RabbitMQ/MinIO credentials and application keys must follow the
     # restored database and files to a new target. They never enter the recovery plan.
     - name: Resolve source Plane recovery material without exposing it in evidence
@@ -689,7 +698,11 @@
         restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
         restore_source_database: "{{ hostvars['localhost'].restore_source_database | default({}) }}"
         restore_source_encryption_key: "{{ hostvars['localhost'].restore_source_encryption_key | default('') }}"
+        restore_source_open_webui_secret_key: "{{ hostvars['localhost'].restore_source_open_webui_secret_key | default('') }}"
         restore_source_plane_secrets: "{{ hostvars['localhost'].restore_source_plane_secrets | default({}) }}"
+        restore_target_backup_id: >-
+          {{ hostvars['localhost'].restore_target_config.backup.backup_id | default('', true)
+             or hostvars['localhost']._ra_target }}
         restore_source_redis: "{{ hostvars['localhost'].restore_source_redis | default({}) }}"
         restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"

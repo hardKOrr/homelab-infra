@@ -31,6 +31,8 @@ paths = (
     "ansible/roles/open-webui/tasks/main.yml",
     "ansible/roles/open-webui/tasks/backup.yml",
     "ansible/roles/open-webui/tasks/restore.yml",
+    "ansible/roles/open-webui/defaults/main.yml",
+    "ansible/roles/open-webui/templates/open-webui-recovery.env.j2",
     "ansible/roles/open-webui/templates/docker-compose.yml.j2",
     "ansible/roles/open-webui/templates/open-webui.env.j2",
 )
@@ -107,13 +109,20 @@ for fragment in (
         raise SystemExit(f"Open WebUI environment is missing {fragment}")
 
 for path, fragments in {
-    "ansible/roles/open-webui/tasks/backup.yml": ("../../../tasks/backup/resolve-pbs-target.yml", "proxmox-backup-client backup", "data.pxar", "_application_backup_complete"),
-    "ansible/roles/open-webui/tasks/restore.yml": ("../../../tasks/backup/resolve-pbs-target.yml", "proxmox-backup-client restore", "overwrite", "_application_restore_complete", "service is intentionally left stopped"),
-    "ansible/roles/open-webui/tasks/main.yml": ("vault_item_name: \"homelab-infra/apps/{{ instance }}\"", "vault_item_secret_fields: [secret_key]", "no_log: true"),
+    "ansible/roles/open-webui/tasks/backup.yml": ("../../../tasks/backup/resolve-pbs-target.yml", "open_webui_recovery_script", "--backup", "_application_backup_complete"),
+    "ansible/roles/open-webui/tasks/restore.yml": ("../../../tasks/backup/resolve-pbs-target.yml", "proxmox-backup-client restore", "restore_pre_restore_point", "restore_source_open_webui_secret_key", "_application_restore_complete", "intentionally left stopped"),
+    "ansible/roles/open-webui/tasks/main.yml": ("vault_item_name: \"homelab-infra/apps/{{ instance }}\"", "vault_item_secret_fields: [secret_key]", "Schedule application-consistent backup", "recovery_isolated", "mode: \"0600\""),
     "ansible/playbooks/apps/open-webui.yml": ("open-webui-upstreams.yml", "find-or-create-host.yml", "write-generated-facts.yml", "recovery_isolated"),
 }.items():
     for fragment in fragments:
         require(path, fragment)
+
+helper = read("ansible/roles/open-webui/files/open-webui-recovery")
+for fragment in ("proxmox-backup-client backup", "data.pxar:/source", "PRAGMA integrity_check", "BACKUP_ID=\"$OPEN_WEBUI_BACKUP_ID\"", "--backup"):
+    if fragment not in helper:
+        raise SystemExit(f"Open WebUI recovery helper is missing {fragment!r}")
+if "proxmox-backup-client prune" in helper:
+    raise SystemExit("Open WebUI backup helper prunes existing PBS recovery points")
 
 catalog = parse("catalog/applications.yml")["applications"]["open-webui"]
 assert catalog["job"] == "deploy-open-webui.yaml"

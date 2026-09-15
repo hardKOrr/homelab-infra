@@ -40,7 +40,6 @@ open_webui_defaults:
     enabled: true
     application_consistent: true
     schedule: "0 3 * * *"
-    retention_days: 14
     datastore: ""
     backup_id: ""
     client:

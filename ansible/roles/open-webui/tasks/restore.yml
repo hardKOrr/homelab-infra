@@ -1,7 +1,8 @@
 ---
-# Restore one Open WebUI data.pxar archive. Plan mode lists snapshots without changing the
-# target. Overwrite mode validates the archive first, replaces only Open WebUI's data path,
-# and leaves the service stopped if anything after extraction fails.
+# Restore one Open WebUI data.pxar point. Plan mode is read-only. Overwrite mode verifies
+# the selected A artifact (and an independent existing-target B point) before replacing
+# anything, restores only this instance's persistent data path, and leaves a failed target
+# stopped or isolated for an explicit retry.
 
 - name: Open WebUI restore | Assert the recovery contract
   ansible.builtin.assert:
@@ -27,13 +28,25 @@
       No usable PBS is recorded for Open WebUI. Deploy PBS before listing or restoring
       application data.
 
-- name: Open WebUI restore | Resolve the source backup identity
+- name: Open WebUI restore | Resolve source and target backup groups
   ansible.builtin.set_fact:
     _open_webui_restore_backup_id: >-
       {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _open_webui_target_backup_id: >-
+      {{ restore_target_backup_id | default(
+           app_config.backup.backup_id | default('', true) or
+           (restore_target | default(instance, true)), true) }}
   no_log: true
 
-- name: Open WebUI restore | List available snapshots
+- name: Open WebUI restore | Validate backup group identifiers
+  ansible.builtin.assert:
+    that:
+      - _open_webui_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - _open_webui_target_backup_id is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: Open WebUI recovery requires safe source and target PBS backup IDs.
+  no_log: true
+
+- name: Open WebUI restore | List available source snapshots
   ansible.builtin.command:
     argv:
       - docker
@@ -79,7 +92,7 @@
   no_log: true
   when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
 
-- name: Open WebUI restore | Print available snapshots
+- name: Open WebUI restore | Print available source snapshots
   ansible.builtin.debug:
     msg: "PBS snapshots for host/{{ _open_webui_restore_backup_id }}:\n{{ _open_webui_restore_snapshots.stdout }}"
   when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
@@ -87,29 +100,98 @@
 - name: Open WebUI restore | Explain the read-only plan
   ansible.builtin.debug:
     msg: >-
-      No data was changed. Re-run with recovery_point=<PBS snapshot ID> and overwrite=true
-      to replace {{ app_config.app.data_path }} from one application-consistent data.pxar.
+      No data was changed. Re-run with recovery_point=host/{{ _open_webui_restore_backup_id }}/<snapshot>
+      and overwrite=true to replace {{ app_config.app.data_path }} from one
+      application-consistent data.pxar point.
   when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
 
-- name: Open WebUI restore | Create private staging space
-  ansible.builtin.tempfile:
+- name: Open WebUI restore | Require the source application key
+  ansible.builtin.assert:
+    that: restore_source_open_webui_secret_key | default('') | length > 0
+    fail_msg: >-
+      The source Open WebUI application key is missing or unreadable in Vaultwarden. Restore
+      that canonical key before retrying; no target data was replaced.
+  no_log: true
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Require the target environment file
+  ansible.builtin.stat:
+    path: "{{ open_webui_env_file }}"
+  register: _open_webui_restore_env
+  changed_when: false
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Require the target environment file to be readable
+  ansible.builtin.assert:
+    that:
+      - _open_webui_restore_env.stat.exists
+      - _open_webui_restore_env.stat.isreg
+      - _open_webui_restore_env.stat.readable
+    fail_msg: >-
+      The Open WebUI target environment file is missing or unreadable. Rebuild the isolated
+      target configuration before attempting recovery.
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Validate selected A and independent B identities
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot is match('^host/' ~ (_open_webui_restore_backup_id | regex_escape) ~ '/.+$')
+      - >-
+        restore_destination | default('existing') != 'existing'
+        or
+        (restore_pre_restore_point | default('') is match(
+          '^host/' ~ (_open_webui_target_backup_id | regex_escape) ~ '/.+$')
+         and restore_pre_restore_point != restore_snapshot)
+    fail_msg: >-
+      The selected A point must belong to the source backup group; an existing target also
+      requires a different, exact-target B point from its own backup group. No target data
+      was replaced.
+  no_log: true
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Ensure the lock directory exists
+  ansible.builtin.file:
+    path: /run/lock
     state: directory
-    prefix: "{{ instance }}-open-webui-restore-"
-  register: _open_webui_restore_tmp
-  changed_when: true
+    mode: "0755"
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Acquire the shared backup/restore lock
+  ansible.builtin.command:
+    argv:
+      - mkdir
+      - -m
+      - "0700"
+      - "/run/lock/homelab-infra-open-webui-{{ restore_target | default(instance, true) }}.lock"
+  register: _open_webui_restore_lock
+  changed_when: _open_webui_restore_lock.rc == 0
+  failed_when: _open_webui_restore_lock.rc != 0
+  when: restore_overwrite | bool
+
+- name: Open WebUI restore | Mark the lock as acquired
+  ansible.builtin.set_fact:
+    _open_webui_restore_lock_acquired: true
+    _open_webui_restore_stopped: false
   when: restore_overwrite | bool
 
 - name: Open WebUI restore | Replace application state
   when: restore_overwrite | bool
   block:
-    - name: Open WebUI restore | Stop only Open WebUI
-      community.docker.docker_compose_v2:
-        project_src: "{{ open_webui_project_dir }}"
-        state: stopped
-        services:
-          - "{{ app_config.app.service_name }}"
+    - name: Open WebUI restore | Create private staging space
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: "{{ restore_target | default(instance, true) }}-open-webui-restore-"
+      register: _open_webui_restore_tmp
+      changed_when: true
 
-    - name: Open WebUI restore | Extract and validate the selected archive
+    - name: Open WebUI restore | Create the B verification directory
+      ansible.builtin.file:
+        path: "{{ _open_webui_restore_tmp.path }}/pre-restore"
+        state: directory
+        mode: "0700"
+      when: restore_destination | default('existing') == 'existing'
+
+    - name: Open WebUI restore | Verify the independent existing-target B point
       ansible.builtin.command:
         argv:
           - docker
@@ -118,7 +200,7 @@
           - --network
           - host
           - --volume
-          - "{{ _open_webui_restore_tmp.path }}:/restore"
+          - "{{ _open_webui_restore_tmp.path }}/pre-restore:/pre-restore"
           - --env
           - PBS_REPOSITORY
           - --env
@@ -137,7 +219,62 @@
           - |
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/proxmox-backup-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore
+            test -s /pre-restore/webui.db
+            test "$(sqlite3 -readonly /pre-restore/webui.db "PRAGMA integrity_check;")" = ok
+      changed_when: false
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_pre_restore_point }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      no_log: true
+      when: restore_destination | default('existing') == 'existing'
+
+    - name: Open WebUI restore | Create selected A extraction directory
+      ansible.builtin.file:
+        path: "{{ _open_webui_restore_tmp.path }}/selected"
+        state: directory
+        mode: "0700"
+
+    - name: Open WebUI restore | Extract and validate selected A
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _open_webui_restore_tmp.path }}/selected:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null
             install -d -m 0755 /etc/apt/keyrings
             curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
             echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
@@ -145,7 +282,8 @@
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
             proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
-            test -d /restore
+            test -s /restore/webui.db
+            test "$(sqlite3 -readonly /restore/webui.db "PRAGMA integrity_check;")" = ok
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
@@ -156,7 +294,38 @@
       no_log: true
       changed_when: true
 
-    - name: Open WebUI restore | Replace the data directory after archive validation
+    - name: Open WebUI restore | Stop only Open WebUI after both points verify
+      community.docker.docker_compose_v2:
+        project_src: "{{ open_webui_project_dir }}"
+        state: stopped
+        services:
+          - "{{ app_config.app.service_name }}"
+
+    - name: Open WebUI restore | Record that the existing service is stopped
+      ansible.builtin.set_fact:
+        _open_webui_restore_stopped: true
+
+    - name: Open WebUI restore | Carry the source application key into the target Vaultwarden item
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ restore_target | default(instance, true) }}"
+        vault_item_merge: true
+        vault_item_fields:
+          provider: open-webui
+          instance: "{{ restore_target | default(instance, true) }}"
+          secret_key: "{{ restore_source_open_webui_secret_key }}"
+        vault_item_secret_fields: [secret_key]
+      no_log: true
+
+    - name: Open WebUI restore | Render the carried application key
+      ansible.builtin.lineinfile:
+        path: "{{ open_webui_env_file }}"
+        regexp: '^WEBUI_SECRET_KEY='
+        line: "WEBUI_SECRET_KEY={{ restore_source_open_webui_secret_key }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Open WebUI restore | Replace the data directory after artifact validation
       ansible.builtin.file:
         path: "{{ app_config.app.data_path }}"
         state: absent
@@ -169,9 +338,9 @@
         group: root
         mode: "0750"
 
-    - name: Open WebUI restore | Copy archived state into place
+    - name: Open WebUI restore | Copy archived state into the target path
       ansible.builtin.command:
-        argv: [cp, -a, "{{ _open_webui_restore_tmp.path }}/.", "{{ app_config.app.data_path }}/"]
+        argv: [cp, -a, "{{ _open_webui_restore_tmp.path }}/selected/.", "{{ app_config.app.data_path }}/"]
       changed_when: true
       no_log: true
 
@@ -195,8 +364,9 @@
     - name: Open WebUI restore | Mark the application restore complete
       ansible.builtin.set_fact:
         _application_restore_complete: true
+        _open_webui_restore_stopped: false
   rescue:
-    - name: Open WebUI restore | Leave the service stopped after a failed restore
+    - name: Open WebUI restore | Leave a failed target stopped or isolated
       ansible.builtin.command:
         argv:
           - docker
@@ -207,15 +377,24 @@
           - "{{ app_config.app.service_name }}"
       changed_when: false
       failed_when: false
+      when:
+        - (_open_webui_restore_stopped | default(false) | bool) or restore_destination | default('existing') == 'new'
 
     - name: Open WebUI restore | Report the failed restore
       ansible.builtin.fail:
         msg: >-
-          Open WebUI restore did not complete. The service is intentionally left stopped;
-          inspect the recovered data and retry after correcting the failure.
+          Open WebUI restore did not complete. A destination changed by replacement is
+          intentionally left stopped; an isolated new target remains isolated. Inspect the
+          selected A and retained B point and retry after correcting the failure.
   always:
     - name: Open WebUI restore | Remove private staging data
       ansible.builtin.file:
         path: "{{ _open_webui_restore_tmp.path }}"
         state: absent
       when: _open_webui_restore_tmp.path is defined
+
+    - name: Open WebUI restore | Release the shared backup/restore lock
+      ansible.builtin.file:
+        path: "/run/lock/homelab-infra-open-webui-{{ restore_target | default(instance, true) }}.lock"
+        state: absent
+      when: _open_webui_restore_lock_acquired | default(false) | bool

@@ -35,7 +35,7 @@ APPLICATION_ASSERTIONS = {
     "maintainerr": ("rule-record", "config-file", "user-login", "arr-connections"),
     "mixpost": ("post-record", "upload-file", "encryption-key", "database-connection"),
     "ollama": ("model-record", "model-file", "target-route", "gpu-rebind"),
-    "open-webui": ("chat-record", "upload-file", "user-login", "ollama-connection"),
+    "open-webui": ("chat-record", "upload-file", "user-login", "generated-key", "named-upstream-connections"),
     "odoo": ("crm-record", "filestore-document", "database-connection", "admin-login"),
     "n8n": ("workflow-state", "credential-state", "encryption-key", "database-connection"),
     "plane": ("project-record", "server-worker-state", "object-storage", "database-and-redis"),
@@ -96,6 +96,7 @@ class RecoveryPoint:
     affected_scope: tuple[str, ...]
     excluded_external: tuple[str, ...] = ()
     key_available: bool = True
+    complete: bool = True
     corrupt: bool = False
 
 
@@ -143,6 +144,7 @@ def _native_case(slug: str, config: dict[str, Any], source_file: Path) -> Method
         artifact_prefix=f"fixture/native/{slug}",
         assertions=APPLICATION_ASSERTIONS.get(slug, ("records", "files", "identities", "connections")),
         source_file=str(source_file.relative_to(ROOT)),
+        issue_reference=185 if slug == "open-webui" else None,
     )
 
 
@@ -274,6 +276,8 @@ def _preflight(
         raise ProtocolFailure("wrong target recovery point")
     if point.method != case.method or point.kind != target.kind:
         raise ProtocolFailure("wrong target kind or method")
+    if not point.complete:
+        raise ProtocolFailure("incomplete recovery artifact")
     if point.corrupt:
         raise ProtocolFailure("corrupt recovery artifact")
     if not point.key_available:
@@ -395,6 +399,7 @@ def run_negative_cases(case: MethodCase) -> list[str]:
         ("missing-key", replace(point, key_available=False), "missing recovery key"),
         ("incompatible-version", replace(point, version="incompatible"), "incompatible recovery version"),
         ("corrupt-artifact", replace(point, corrupt=True), "corrupt recovery artifact"),
+        ("incomplete-artifact", replace(point, complete=False), "incomplete recovery artifact"),
         ("excluded-external-data", capture(case, source, "A", exclude_external=("external-library",)), "required external data"),
     ):
         target = new_target()
