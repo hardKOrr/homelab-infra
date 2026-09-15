@@ -54,6 +54,7 @@ defect. Each has an open live-lab observation issue tracking the remaining evide
 | --- | --- | --- |
 | [#13](https://github.com/hardKOrr/homelab-infra/issues/13) | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | Observe a real scheduled window and complete Tier 2 live-lab acceptance |
 | [#14](https://github.com/hardKOrr/homelab-infra/issues/14) | [504 — Wire media stack](504-wire-media-stack/README.md) | The adoption path during a deliberately requested migration |
+| [#186](https://github.com/hardKOrr/homelab-infra/issues/186) | [186 — Plane recovery methods and both destinations](186-plane-recovery/README.md) | Live schedule, PBS artifact and authorized two-destination acceptance through #80 |
 
 Completed and unreachable slices are retained under [`done/`](done/) and
 [`no-target/`](no-target/). The slice format and lifecycle are defined in

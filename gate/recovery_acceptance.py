@@ -38,6 +38,7 @@ APPLICATION_ASSERTIONS = {
     "open-webui": ("chat-record", "upload-file", "user-login", "ollama-connection"),
     "odoo": ("crm-record", "filestore-document", "database-connection", "admin-login"),
     "n8n": ("workflow-state", "credential-state", "encryption-key", "database-connection"),
+    "plane": ("project-record", "server-worker-state", "object-storage", "database-and-redis"),
 }
 
 
@@ -109,11 +110,15 @@ def _app_mapping(path: Path) -> dict[str, Any] | None:
 
 
 def _image_version(config: dict[str, Any]) -> str:
-    image = config.get("app", {}).get("image", "declared-without-image")
-    if not isinstance(image, str):
-        return "declared-without-image"
-    # Keep evidence to a version label, not a rendered config value or an endpoint.
-    return image.rsplit(":", 1)[-1] if ":" in image else image
+    app = config.get("app") if isinstance(config.get("app"), dict) else {}
+    image = app.get("image")
+    if isinstance(image, str) and image:
+        # Keep evidence to a version label, not a rendered config value or an endpoint.
+        return image.rsplit(":", 1)[-1] if ":" in image else image
+    release = app.get("release")
+    if isinstance(release, str) and release:
+        return release
+    return "declared-without-image"
 
 
 def _native_case(slug: str, config: dict[str, Any], source_file: Path) -> MethodCase:

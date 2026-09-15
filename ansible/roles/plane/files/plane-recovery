@@ -1,0 +1,140 @@
+#!/bin/bash
+# Application-consistent Plane backup runner. Credentials are read only from the root-only
+# environment file rendered by the deployment role; this script contains no secret values.
+set -Eeuo pipefail
+umask 077
+
+INSTANCE=${PLANE_INSTANCE:-plane}
+CONFIG="/etc/homelab-infra/plane/${INSTANCE}.env"
+if [[ ! -r "$CONFIG" ]]; then
+  echo "Plane recovery is not configured: $CONFIG is absent. Deploy with backup enabled and a PBS target." >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$CONFIG"
+set +a
+
+for required in PLANE_PROJECT_DIR PLANE_DATA_PATH PLANE_OBJECT_STORAGE_PATH \
+  PLANE_DB_HOST PLANE_DB_PORT PLANE_DB_NAME PLANE_DB_USER PLANE_DB_PASSWORD \
+  PLANE_REDIS_HOST PLANE_REDIS_PORT PLANE_REDIS_PASSWORD PLANE_BACKUP_ID PLANE_RELEASE \
+  PLANE_PBS_IMAGE PLANE_POSTGRES_IMAGE PLANE_REDIS_IMAGE \
+  PBS_REPOSITORY PBS_FINGERPRINT PBS_PASSWORD PBS_KEY_URL PBS_APT_REPO; do
+  [[ -n "${!required:-}" ]] || { echo "Plane recovery configuration is incomplete: $required" >&2; exit 1; }
+done
+
+[[ "$PLANE_BACKUP_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Plane recovery backup id is unsafe" >&2
+  exit 1
+}
+[[ "$PLANE_DB_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+  echo "Plane recovery database name is unsafe" >&2
+  exit 1
+}
+[[ "$PLANE_RELEASE" =~ ^[A-Za-z0-9._+-]+$ ]] || {
+  echo "Plane recovery release label is unsafe" >&2
+  exit 1
+}
+[[ "$PLANE_DATA_PATH" == "$PLANE_PROJECT_DIR/"* &&
+   "$PLANE_OBJECT_STORAGE_PATH" == "$PLANE_PROJECT_DIR/"* &&
+   -d "$PLANE_DATA_PATH" && ! -L "$PLANE_DATA_PATH" &&
+   -d "$PLANE_OBJECT_STORAGE_PATH" && ! -L "$PLANE_OBJECT_STORAGE_PATH" ]] || {
+  echo "Plane recovery paths must be real directories beneath the owned project root" >&2
+  exit 1
+}
+case "$PLANE_OBJECT_STORAGE_PATH" in
+  "$PLANE_DATA_PATH"/*) echo "Plane recovery paths overlap" >&2; exit 1 ;;
+esac
+case "$PLANE_DATA_PATH" in
+  "$PLANE_OBJECT_STORAGE_PATH"/*) echo "Plane recovery paths overlap" >&2; exit 1 ;;
+esac
+
+compose=(docker compose --project-directory "$PLANE_PROJECT_DIR" -f "$PLANE_PROJECT_DIR/docker-compose.yml")
+work=$(mktemp -d /var/tmp/homelab-plane.XXXXXX)
+lock="/run/lock/homelab-infra-plane-${INSTANCE}.lock"
+lock_acquired=0
+stopped=0
+restart_on_failure=0
+
+finish() {
+  local rc=$?
+  rm -rf -- "$work"
+  if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+    "${compose[@]}" start >/dev/null 2>&1 || true
+  fi
+  if [[ "$lock_acquired" == 1 ]]; then
+    rmdir -- "$lock" 2>/dev/null || true
+  fi
+  exit "$rc"
+}
+trap finish EXIT
+
+backup() {
+  if ! mkdir -m 0700 -- "$lock"; then
+    echo "Plane recovery is already running for $INSTANCE; refusing overlapping backup/restore work" >&2
+    exit 1
+  fi
+  lock_acquired=1
+  mkdir -p "$work/database" "$work/redis"
+  # Stop the complete Plane project so its logical stores and host trees describe one point.
+  # The named PostgreSQL/Redis guests and unrelated shared-guest services remain untouched.
+  stopped=1
+  restart_on_failure=1
+  "${compose[@]}" stop
+
+  docker run --rm --network host \
+    --volume "$work/database:/backup" \
+    --env DB_HOST --env DB_PORT --env DB_NAME --env DB_USER --env DB_PASSWORD \
+    "$PLANE_POSTGRES_IMAGE" /bin/sh -ceu \
+    'PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl \
+      --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" \
+      --dbname="$DB_NAME" --file=/backup/plane.dump'
+  test -s "$work/database/plane.dump"
+  printf '%s\n' "$PLANE_RELEASE" > "$work/database/plane-release.txt"
+  docker run --rm --volume "$work/database:/backup:ro" "$PLANE_POSTGRES_IMAGE" \
+    pg_restore --list /backup/plane.dump >/dev/null
+
+  docker run --rm --network host \
+    --volume "$work/redis:/backup" \
+    --env REDIS_HOST --env REDIS_PORT --env REDISCLI_AUTH \
+    "$PLANE_REDIS_IMAGE" /bin/sh -ceu \
+    'redis-cli --no-auth-warning -h "$REDIS_HOST" -p "$REDIS_PORT" \
+      --rdb /backup/dump.rdb'
+  test -s "$work/redis/dump.rdb"
+  docker run --rm --volume "$work/redis:/backup:ro" "$PLANE_REDIS_IMAGE" \
+    redis-check-rdb /backup/dump.rdb >/dev/null
+
+  docker run --rm --network host \
+    --volume "$work/database:/database:ro" \
+    --volume "$work/redis:/redis:ro" \
+    --volume "$PLANE_DATA_PATH:/data:ro" \
+    --volume "$PLANE_OBJECT_STORAGE_PATH:/object-storage:ro" \
+    --env PBS_REPOSITORY --env PBS_FINGERPRINT --env PBS_PASSWORD \
+    --env PBS_KEY_URL --env PBS_APT_REPO --env PLANE_BACKUP_ID \
+    "$PLANE_PBS_IMAGE" /bin/sh -ceu '
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+      install -d -m 0755 /etc/apt/keyrings
+      curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+      printf "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] %s\\n" "$PBS_APT_REPO" \
+        > /etc/apt/sources.list.d/pbs-client.list
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+      proxmox-backup-client backup \
+        database.pxar:/database redis.pxar:/redis data.pxar:/data \
+        object-storage.pxar:/object-storage --backup-id "$PLANE_BACKUP_ID"
+      echo "Plane backup complete: host/$PLANE_BACKUP_ID (database, Redis, server/worker data and object storage)"
+    '
+
+  # Do not prune snapshots here. This recovery action preserves existing points; any PBS
+  # datastore-wide retention policy is independent and must be verified separately.
+  "${compose[@]}" start
+  stopped=0
+  restart_on_failure=0
+}
+
+case "${1:-}" in
+  --backup) backup ;;
+  *) echo "usage: $0 --backup" >&2; exit 2 ;;
+esac

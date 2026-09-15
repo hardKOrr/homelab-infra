@@ -1,0 +1,37 @@
+---
+# Backup App and the recurring timer call the same root-only helper, so there is one
+# application-consistent artifact definition and one recovery-point identity.
+
+- name: Plane backup | Require the managed recovery configuration
+  ansible.builtin.stat:
+    path: "{{ plane_recovery_config }}"
+  register: _plane_backup_config
+  changed_when: false
+
+- name: Plane backup | Refuse an unavailable or unreadable recovery configuration
+  ansible.builtin.assert:
+    that:
+      - _plane_backup_config.stat.exists
+      - _plane_backup_config.stat.isreg
+      - _plane_backup_config.stat.mode == '0600'
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+    fail_msg: >-
+      Plane's application-consistent recovery helper is not configured with a readable
+      root-only PBS/backend credential file. Re-deploy Plane with backup enabled and PBS
+      available; no partial or guest-only point is treated as healthy.
+  no_log: true
+
+- name: Plane backup | Capture one complete recovery point
+  ansible.builtin.command:
+    argv:
+      - "{{ plane_recovery_script }}"
+      - --backup
+  environment:
+    PLANE_INSTANCE: "{{ instance }}"
+  no_log: true
+  changed_when: true
+
+- name: Plane backup | Mark the complete application backup
+  ansible.builtin.set_fact:
+    _application_backup_complete: true

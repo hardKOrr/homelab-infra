@@ -13,8 +13,10 @@ routing:
   identity: catalog
 backup:
   enabled: true
+  application_consistent: true
   schedule: "0 3 * * *"
 
-# Object storage contract: Plane owns a named local MinIO service (`plane-minio`) as
-# part of this Compose recovery unit. Its object-storage path is recovered with Plane;
-# generated access keys are stored only in Vaultwarden, not in this example.
+# Recovery boundary: Plane's PostgreSQL database, named Redis data, server/worker Compose
+# state and the named local MinIO object-storage path are captured as one native PBS point.
+# Plane application keys and backend credentials remain in Vaultwarden and are required
+# independently during restore; this example deliberately contains no secret values.

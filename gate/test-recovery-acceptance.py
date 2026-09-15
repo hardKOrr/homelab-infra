@@ -29,6 +29,8 @@ class RecoveryAcceptanceTests(unittest.TestCase):
             identity = artifact_identity(case, "A")
             self.assertIn("fixture/pbs_guest/", identity)
             self.assertIn(f"/{case.product}/", identity)
+        plane = next(case for case in self.cases if case.product == "plane" and case.method == "native")
+        self.assertEqual(plane.version, "v1.4.2")
         native = {case.product for case in self.cases if case.method == "native"}
         self.assertEqual(
             native,
@@ -46,6 +48,7 @@ class RecoveryAcceptanceTests(unittest.TestCase):
                 "open-webui",
                 "odoo",
                 "n8n",
+                "plane",
             },
         )
 
