@@ -79,6 +79,7 @@ class RecoveryAcceptanceTests(unittest.TestCase):
                 "missing-key",
                 "incompatible-version",
                 "corrupt-artifact",
+                "incomplete-artifact",
                 "excluded-external-data",
                 "wrong-target",
                 "storage-boundary",

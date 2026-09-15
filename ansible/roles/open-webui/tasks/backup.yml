@@ -1,7 +1,6 @@
 ---
-# Open WebUI's database, users, chats, documents, uploads and cache all live below its
-# application data directory. Stop only this Compose service before archiving it so a
-# recovery point never pairs a live SQLite database with a partially copied data tree.
+# Manual Backup App and the installed recurring cron entry call the same helper, so they
+# share the Open WebUI quiesce/SQLite/PBS contract and artifact identity.
 
 - name: Open WebUI backup | Assert the backup contract
   ansible.builtin.assert:
@@ -36,79 +35,44 @@
     that:
       - _open_webui_backup_data.stat.exists
       - _open_webui_backup_data.stat.isdir
+      - not _open_webui_backup_data.stat.islnk | default(false)
     fail_msg: >-
-      Open WebUI data path {{ app_config.app.data_path }} is missing; refusing to create a
-      backup that would omit the application's persistent state.
+      Open WebUI data path {{ app_config.app.data_path }} is missing or not a real directory;
+      refusing to create a recovery point that omits application state.
 
-- name: Open WebUI backup | Stop only Open WebUI
-  community.docker.docker_compose_v2:
-    project_src: "{{ open_webui_project_dir }}"
-    state: stopped
-    services:
-      - "{{ app_config.app.service_name }}"
+- name: Open WebUI backup | Require the deployed shared recovery helper
+  ansible.builtin.stat:
+    path: "{{ open_webui_recovery_script }}"
+  register: _open_webui_backup_helper
+  changed_when: false
 
-- name: Open WebUI backup | Archive the quiesced data directory to PBS
-  block:
-    - name: Open WebUI backup | Push one application archive
-      ansible.builtin.command:
-        argv:
-          - docker
-          - run
-          - --rm
-          - --network
-          - host
-          - --volume
-          - "{{ app_config.app.data_path }}:/source:ro"
-          - --env
-          - PBS_REPOSITORY
-          - --env
-          - PBS_FINGERPRINT
-          - --env
-          - PBS_PASSWORD
-          - --env
-          - BACKUP_ID
-          - --env
-          - RETENTION_DAYS
-          - --env
-          - PBS_KEY_URL
-          - --env
-          - PBS_APT_REPO
-          - "{{ app_config.backup.client.image }}"
-          - /bin/sh
-          - -ceu
-          - |
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/proxmox-backup-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
-            echo "backup complete: host/$BACKUP_ID"
-      environment:
-        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-        PBS_PASSWORD: "{{ k8s_pbs_password }}"
-        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-        PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-      no_log: true
-      changed_when: true
+- name: Open WebUI backup | Require the deployed root-only recovery configuration
+  ansible.builtin.stat:
+    path: "{{ open_webui_recovery_config }}"
+  register: _open_webui_backup_config
+  changed_when: false
 
-    - name: Open WebUI backup | Mark the application backup complete
-      ansible.builtin.set_fact:
-        _application_backup_complete: true
-  always:
-    # A failed PBS upload must not leave the application down. The failure still
-    # propagates, while this service restart is limited to Open WebUI itself.
-    - name: Open WebUI backup | Start only Open WebUI after the attempt
-      community.docker.docker_compose_v2:
-        project_src: "{{ open_webui_project_dir }}"
-        state: present
-        services:
-          - "{{ app_config.app.service_name }}"
+- name: Open WebUI backup | Require a configured schedule helper
+  ansible.builtin.assert:
+    that:
+      - _open_webui_backup_helper.stat.exists
+      - _open_webui_backup_helper.stat.executable
+      - _open_webui_backup_config.stat.exists
+      - _open_webui_backup_config.stat.mode == '0600'
+    fail_msg: >-
+      Open WebUI's recurring recovery helper/config is missing. Re-run Deploy Open WebUI
+      with backup enabled and an available PBS before requesting Backup App.
+
+- name: Open WebUI backup | Capture the application-consistent data point
+  ansible.builtin.command:
+    argv:
+      - "{{ open_webui_recovery_script }}"
+      - --backup
+  environment:
+    OPEN_WEBUI_INSTANCE: "{{ instance }}"
+  register: _open_webui_backup_run
+  changed_when: true
+
+- name: Open WebUI backup | Mark the application backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true

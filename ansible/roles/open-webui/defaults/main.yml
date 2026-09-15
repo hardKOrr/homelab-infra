@@ -2,3 +2,6 @@
 open_webui_project_dir: "/opt/{{ instance }}"
 open_webui_compose_file: "{{ open_webui_project_dir }}/docker-compose.yml"
 open_webui_env_file: "{{ open_webui_project_dir }}/open-webui.env"
+open_webui_recovery_config_dir: /etc/homelab-infra/open-webui
+open_webui_recovery_config: "{{ open_webui_recovery_config_dir }}/{{ instance }}.env"
+open_webui_recovery_script: /usr/local/sbin/homelab-infra-open-webui-recovery

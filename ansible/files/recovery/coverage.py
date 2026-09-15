@@ -224,6 +224,12 @@ def _recovery_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str
 
 
 def _native_unit(slug: str, defaults: dict[str, Any], hosting: str, stack: str) -> str:
+    if slug == "open-webui":
+        return (
+            "the complete named Open WebUI data_path (SQLite database, chats, users, uploads, "
+            "vector/cache files); its generated application key and named Ollama/LiteLLM "
+            "connections are independent recovery material, and upstream model data is separate"
+        )
     if slug == "searxng":
         return (
             "stateless SearXNG configuration and disposable in-namespace limiter cache "
@@ -295,7 +301,13 @@ def _external_requirements(
     if isinstance(app.get("forgejo"), dict):
         add("upstream", "named Forgejo service and registration identity")
     if isinstance(app.get("upstreams"), dict):
-        add("upstream", "operator-selected inference upstream(s)")
+        if slug == "open-webui":
+            add(
+                "upstream",
+                "named Ollama and/or LiteLLM endpoints and their required credentials; model data is separate",
+            )
+        else:
+            add("upstream", "operator-selected inference upstream(s)")
     if isinstance(app.get("mqtt"), dict) and app["mqtt"].get("host"):
         add("upstream", "configured MQTT broker and camera state")
     if isinstance(app.get("cameras"), dict) and app["cameras"]:

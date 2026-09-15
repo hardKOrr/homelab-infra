@@ -1,0 +1,93 @@
+#!/bin/bash
+# Application-consistent Open WebUI capture runner. It uses the product's documented
+# stop-and-copy boundary for the complete persistent data directory and PBS's native pxar
+# member. Credentials are supplied only by the root-only config rendered by the role.
+set -Eeuo pipefail
+umask 077
+
+INSTANCE=${OPEN_WEBUI_INSTANCE:-open-webui}
+CONFIG="/etc/homelab-infra/open-webui/${INSTANCE}.env"
+if [[ ! -r "$CONFIG" ]]; then
+  echo "Open WebUI recovery is not configured: $CONFIG is absent. Deploy with backup enabled and a PBS target." >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$CONFIG"
+set +a
+
+for required in OPEN_WEBUI_PROJECT_DIR OPEN_WEBUI_SERVICE OPEN_WEBUI_DATA_PATH \
+  OPEN_WEBUI_CLIENT_IMAGE OPEN_WEBUI_PBS_KEY_URL OPEN_WEBUI_PBS_APT_REPO \
+  PBS_REPOSITORY PBS_FINGERPRINT PBS_PASSWORD OPEN_WEBUI_BACKUP_ID; do
+  [[ -n "${!required:-}" ]] || { echo "Open WebUI recovery configuration is incomplete: $required" >&2; exit 1; }
+done
+
+[[ "$OPEN_WEBUI_BACKUP_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Open WebUI recovery backup id is unsafe" >&2
+  exit 1
+}
+[[ -d "$OPEN_WEBUI_DATA_PATH" && ! -L "$OPEN_WEBUI_DATA_PATH" && -s "$OPEN_WEBUI_DATA_PATH/webui.db" ]] || {
+  echo "Open WebUI persistent data or webui.db is missing; refusing an incomplete recovery point" >&2
+  exit 1
+}
+
+compose=(docker compose --project-directory "$OPEN_WEBUI_PROJECT_DIR" -f "$OPEN_WEBUI_PROJECT_DIR/docker-compose.yml")
+lock="/run/lock/homelab-infra-open-webui-${INSTANCE}.lock"
+work=$(mktemp -d /var/tmp/homelab-open-webui.XXXXXX)
+lock_acquired=0
+stopped=0
+restart_on_failure=0
+
+finish() {
+  local rc=$?
+  rm -rf -- "$work"
+  if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+    "${compose[@]}" start "$OPEN_WEBUI_SERVICE" >/dev/null 2>&1 || true
+  fi
+  if [[ "$lock_acquired" == 1 ]]; then
+    rmdir -- "$lock" 2>/dev/null || true
+  fi
+  exit "$rc"
+}
+trap finish EXIT
+
+backup() {
+  if ! mkdir -m 0700 -- "$lock"; then
+    echo "Open WebUI recovery is already running for $INSTANCE; refusing overlapping backup/restore work" >&2
+    exit 1
+  fi
+  lock_acquired=1
+  export BACKUP_ID="$OPEN_WEBUI_BACKUP_ID"
+  # SQLite is single-instance state. Stop this Compose service before checking or reading
+  # the data tree; selected Ollama/LiteLLM services and their model stores stay untouched.
+  "${compose[@]}" stop "$OPEN_WEBUI_SERVICE" >/dev/null
+  stopped=1
+  restart_on_failure=1
+  docker run --rm --network host \
+    --volume "$OPEN_WEBUI_DATA_PATH:/source:ro" \
+    --env PBS_REPOSITORY --env PBS_FINGERPRINT --env PBS_PASSWORD \
+    --env BACKUP_ID --env PBS_KEY_URL --env PBS_APT_REPO \
+    "$OPEN_WEBUI_CLIENT_IMAGE" /bin/sh -ceu '
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null
+      install -d -m 0755 /etc/apt/keyrings
+      curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+      echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+        > /etc/apt/sources.list.d/proxmox-backup-client.list
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+      test -s /source/webui.db
+      test "$(sqlite3 -readonly /source/webui.db "PRAGMA integrity_check;")" = ok
+      proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
+      echo "Open WebUI backup complete: host/$BACKUP_ID (data.pxar; SQLite integrity verified)"
+    '
+  "${compose[@]}" start "$OPEN_WEBUI_SERVICE" >/dev/null
+  stopped=0
+  restart_on_failure=0
+}
+
+case "${1:-}" in
+  --backup) backup ;;
+  *) echo "usage: $0 --backup" >&2; exit 2 ;;
+esac

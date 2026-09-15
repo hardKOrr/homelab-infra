@@ -79,3 +79,126 @@
   retries: 60
   delay: 5
   changed_when: false
+
+# The scheduled timer and Backup App invoke one root-only helper so manual and recurring
+# points use the same quiesce, SQLite check and native PBS data.pxar member. An isolated
+# recovery target gets no active timer until its restore has completed.
+- name: Open WebUI | Resolve PBS for the recurring recovery timer
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (recovery_isolated | default(false) | bool)
+
+- name: Open WebUI | Resolve whether the recurring recovery timer is enabled
+  ansible.builtin.set_fact:
+    _open_webui_backup_timer_enabled: >-
+      {{ not (recovery_isolated | default(false) | bool)
+         and (app_config.backup.enabled | default(false) | bool)
+         and (k8s_pbs_available | default(false) | bool) }}
+
+- name: Open WebUI | Validate the recurring backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.application_consistent | default(false) | bool
+      - (app_config.backup.schedule | string).split() | length == 5
+      - app_config.backup.schedule is match('^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$')
+      - app_config.backup.client.image | length > 0
+      - app_config.backup.client.key_url | length > 0
+      - app_config.backup.client.repository | length > 0
+    fail_msg: >-
+      Open WebUI backup.schedule must be a five-field cron expression and its PBS client
+      image, signing key URL and repository must be configured.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (recovery_isolated | default(false) | bool)
+
+- name: Open WebUI | Report when no recurring backup can be configured
+  ansible.builtin.debug:
+    msg: >-
+      Open WebUI backup is enabled but no usable PBS target is recorded. No recurring
+      backup was scheduled; deploy PBS and re-run Open WebUI to enable its recovery timer.
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - not (recovery_isolated | default(false) | bool)
+    - not (k8s_pbs_available | default(false) | bool)
+
+- name: Open WebUI | Install the shared recovery helper
+  ansible.builtin.copy:
+    src: open-webui-recovery
+    dest: "{{ open_webui_recovery_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Create root-only recovery configuration directory
+  ansible.builtin.file:
+    path: "{{ open_webui_recovery_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Render root-only recovery configuration
+  ansible.builtin.template:
+    src: open-webui-recovery.env.j2
+    dest: "{{ open_webui_recovery_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Ensure cron is available for its recovery timer
+  ansible.builtin.apt:
+    name: cron
+    state: present
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Enable cron for its recovery timer
+  ansible.builtin.service:
+    name: cron
+    state: started
+    enabled: true
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Schedule application-consistent backup
+  ansible.builtin.cron:
+    name: "homelab-infra Open WebUI backup {{ instance }}"
+    cron_file: "homelab-infra-open-webui-{{ instance }}"
+    user: root
+    minute: "{{ app_config.backup.schedule.split()[0] }}"
+    hour: "{{ app_config.backup.schedule.split()[1] }}"
+    day: "{{ app_config.backup.schedule.split()[2] }}"
+    month: "{{ app_config.backup.schedule.split()[3] }}"
+    weekday: "{{ app_config.backup.schedule.split()[4] }}"
+    job: "OPEN_WEBUI_INSTANCE={{ instance | quote }} {{ open_webui_recovery_script }} --backup"
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Report the recurring recovery contract
+  ansible.builtin.debug:
+    msg:
+      - "Schedule: {{ app_config.backup.schedule }} using the AI guest's local timezone."
+      - "PBS group: host/{{ app_config.backup.backup_id | default('', true) or instance }}; no snapshots are pruned by Open WebUI."
+      - "Backup App and the recurring timer call {{ open_webui_recovery_script }}."
+  when: _open_webui_backup_timer_enabled | default(false) | bool
+
+- name: Open WebUI | Remove a stale recovery timer when backup is unavailable
+  ansible.builtin.cron:
+    name: "homelab-infra Open WebUI backup {{ instance }}"
+    cron_file: "homelab-infra-open-webui-{{ instance }}"
+    state: absent
+  when:
+    - not (recovery_isolated | default(false) | bool)
+    - not (_open_webui_backup_timer_enabled | default(false) | bool)
+
+- name: Open WebUI | Remove stale recovery configuration when backup is unavailable
+  ansible.builtin.file:
+    path: "{{ open_webui_recovery_config }}"
+    state: absent
+  when:
+    - not (recovery_isolated | default(false) | bool)
+    - not (_open_webui_backup_timer_enabled | default(false) | bool)
