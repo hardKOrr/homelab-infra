@@ -8,12 +8,25 @@ allowed PR **Live-lab status** values are enumerated in the
 uses a repository-owned Ansible playbook or Rundeck job. Do not use the API workflow here
 to bypass that boundary.
 
+This guide is the authoritative `rd` reference for this repository. Where a
+workstation-local copy of these commands disagrees with this file, this file wins.
+
 ## Before touching the lab
 
 1. Read the linked slice's acceptance criteria and identify the exact target, instance,
    and maintenance or recovery behavior that applies. Do not broaden a live observation
    into an unrelated fix.
-2. Load the user-owned credentials with export enabled:
+2. Confirm the CLI is present and record its version:
+
+   ```bash
+   rd --version
+   ```
+
+   The gotchas in this guide were verified against `rd` 2.2.1. Re-check them if the
+   workstation reports a different version. `rd` is an operator-installed tool, not a
+   repository dependency; this repository never vendors, installs, or pins it.
+
+3. Load the user-owned credentials with export enabled:
 
    ```bash
    set -a; source ~/.config/ai/rundeck-lab-access.env; set +a
@@ -24,7 +37,7 @@ to bypass that boundary.
    commit its token, its `RD_URL` value, or any other credential; do not copy it into
    `config/` or a captured evidence file.
 
-3. Confirm project access and discover the job by its name. Job discovery is read-only:
+4. Confirm project access and discover the job by its name. Job discovery is read-only:
 
    ```bash
    rd projects info -p homelab-infra
@@ -32,8 +45,27 @@ to bypass that boundary.
    RD_FORMAT=json rd jobs list -p homelab-infra -j 'Config Doctor' --verbose
    ```
 
-   Prefer the returned job ID for the run. `rd jobs info -i <JOB_ID> -v` shows the
-   complete definition and does **not** accept `-p`; the project is implied by the job ID.
+   Prefer the returned job ID for the run. `rd jobs info -i <JOB_ID> -v` reports only a
+   job's identity and description — id, name, group, project, links, schedule state. It
+   does **not** return the job's options, so it cannot tell you what to pass to a run. It
+   also does **not** accept `-p`; the project is implied by the job ID.
+
+5. Read the job's options from its definition, not from `jobs info`. Either source is
+   read-only:
+
+   ```bash
+   # Repository source — authoritative, and the one to change:
+   grep -A20 '^  options:' rundeck/jobs/<job>.yaml
+
+   # What the project currently has imported, exported through the API:
+   rd jobs list -p homelab-infra -i <JOB_ID> -F yaml -f /tmp/<job>.yaml
+   ```
+
+   Compare the two when a run rejects an option: a difference means the project is behind
+   the repository and needs **Reimport Jobs**. An exported definition carries the Key
+   Storage paths backing a job's secure options (`bw_clientid`, `bw_clientsecret`, and
+   similar). Those paths are not secret values, but do not paste a whole export into a PR;
+   quote only the option names and descriptions the evidence needs.
 
 ## Choose the owning job
 
@@ -73,8 +105,14 @@ rd run -j '<JOB_GROUP>/<JOB_NAME>' -p homelab-infra -f
 ```
 
 Pass documented job options after `--` in Rundeck's `-<OPTION> <VALUE>` form, for example
-`rd run -i <JOB_ID> -p homelab-infra -- -instance <INSTANCE>`. Keep the same option
-values for both runs when proving idempotence.
+`rd run -i <JOB_ID> -p homelab-infra -- -instance <INSTANCE>`. Option names differ per job
+and many jobs take none at all — take them from the job definition as in step 5 above,
+never by guessing from another job. Keep the same option values for both runs when proving
+idempotence.
+
+Prefer `-i <JOB_ID>` over `-j '<GROUP>/<NAME>'`. This project's groups contain spaces and
+`&` (for example `Applications/Media & Entertainment/Media Servers/Jellyfin`), so the
+group/name form has to be quoted exactly and is easy to get silently wrong.
 
 For a run whose ID must be recorded separately, ask `rd` to return only the execution ID,
 then inspect it through the execution API:
@@ -137,8 +175,12 @@ Keep these distinctions in every session:
 - `executions list` shows only currently running executions. Use `executions query` for
   completed execution history. For example, filter history by job with
   `RD_FORMAT=json rd executions query -p homelab-infra -i <JOB_ID>`.
-- Do **not** pass `--verbose` to `executions list` or `executions query`; on the verified
-  `rd` CLI it throws a `NullPointerException` when an execution has a null description.
+- Do **not** pass `--verbose` to `executions list` or `executions query`; on `rd` 2.2.1 it
+  throws a `NullPointerException` when an execution has a null description, which most
+  have. `--verbose` is safe on `jobs list`.
+- `jobs info` returns identity and description only, never options. Use
+  `rd jobs list -i <JOB_ID> -F yaml -f <path>` or `rundeck/jobs/*.yaml` for a full
+  definition.
 - `jobs info` and `executions info`, `executions state`, and `executions follow` do not
   accept `-p`. The job ID or execution ID supplies the project for those commands.
 - Read-only API inspection is allowed, but `rd run -F '<filter>' -- <command>` and
