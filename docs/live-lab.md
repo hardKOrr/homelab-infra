@@ -11,6 +11,21 @@ to bypass that boundary.
 This guide is the authoritative `rd` reference for this repository. Where a
 workstation-local copy of these commands disagrees with this file, this file wins.
 
+## Routing an agent here
+
+A worker only uses this workflow if something points at it. That pointer lives in the
+operator's agent configuration, outside this repository, because the agent runner is not
+a homelab-infra concern. This repository owns what the pointer must say:
+
+> For Rundeck lab access, source the operator's credential file, then use
+> `docs/live-lab.md` in the homelab-infra checkout for `rd` usage and the evidence
+> workflow.
+
+A pointer that sends an agent to a workstation-local command list instead is a defect.
+Such a list drifts out of review: it cannot be gate-checked, it does not travel to another
+workstation, and it will keep describing commands this guide has already corrected or
+prohibited. Point at this file and delete the duplicate.
+
 ## Before touching the lab
 
 1. Read the linked slice's acceptance criteria and identify the exact target, instance,
