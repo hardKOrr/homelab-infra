@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: navidrome
+  author: homelab-infra
+  description: Deploys Navidrome as a Docker container on the media stack
+  license: MIT
+  min_ansible_version: "2.15"
+dependencies: []

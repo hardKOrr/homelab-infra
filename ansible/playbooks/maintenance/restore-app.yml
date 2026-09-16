@@ -95,7 +95,7 @@
 #
 # Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
 # use their namespaced restore job; application-consistent Docker roles such as Actual Budget,
-# ComfyUI, Home Assistant, Immich, n8n, Odoo and Ollama own their recovery mechanism. Native
+# ComfyUI, Home Assistant, Immich, Navidrome, n8n, Odoo and Ollama own their recovery mechanism. Native
 # apps and Docker apps without one remain on whole-guest PBS recovery.
 
 # Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
@@ -266,6 +266,19 @@
                                          '/opt/' ~ _ra_target ~ '/'))
              }}, recursive=True) }}
       when: _ra_app == 'emby'
+
+    # Navidrome's application data lives below /opt/<instance>. Normalize the
+    # defaulted source path when restoring into a differently named target; the
+    # external music path is intentionally not part of this replacement.
+    - name: Normalize the target Navidrome data path
+      ansible.builtin.set_fact:
+        restore_target_config: >-
+          {{ restore_target_config | combine({'app': {
+               'data_path': (restore_target_config.app.data_path
+                             | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                       '/opt/' ~ _ra_target ~ '/'))
+             }}, recursive=True) }}
+      when: _ra_app == 'navidrome'
 
     # Plane stores its two owned paths below /opt/<instance>. Normalize those paths for
     # a new target without changing the source config or putting secrets in the plan.

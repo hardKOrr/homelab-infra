@@ -1,0 +1,235 @@
+---
+- name: Navidrome restore | Assert data stays inside its named project
+  ansible.builtin.assert:
+    that:
+      - app_config.app.data_path | default('') | length > 0
+      - app_config.app.data_path.startswith(navidrome_project_dir.rstrip('/') ~ '/')
+      - app_config.app.data_path is not search('(^|/)\.\.?(/|$)')
+    fail_msg: >-
+      Navidrome restore refuses a data path outside {{ navidrome_project_dir }};
+      destructive recovery must not replace the external music library.
+
+- name: Navidrome restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Navidrome restore needs PBS, an explicit snapshot for overwrite=true, and
+      overwrite=false for a read-only plan.
+
+- name: Navidrome restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Navidrome restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Navidrome. Deploy PBS before listing or restoring
+      application data.
+
+- name: Navidrome restore | Resolve the backup identity
+  ansible.builtin.set_fact:
+    _navidrome_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+  no_log: true
+
+- name: Navidrome restore | List snapshots in plan mode
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _navidrome_restore_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _navidrome_restore_backup_id }}"
+  no_log: true
+
+- name: Navidrome restore | Report the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. PBS snapshots for host/{{ _navidrome_restore_backup_id }}:
+      {{ _navidrome_restore_snapshots.stdout | default('provide snapshot=<id> to select one') }}
+  when: not (restore_overwrite | bool)
+
+- name: Navidrome restore | Create private staging space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-navidrome-restore-"
+  register: _navidrome_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Navidrome restore | Replace application data from PBS
+  when: restore_overwrite | bool
+  block:
+    - name: Navidrome restore | Stop the named service
+      community.docker.docker_compose_v2:
+        project_src: "{{ navidrome_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Navidrome restore | Extract the selected archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _navidrome_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    - name: Navidrome restore | Require a non-empty data archive
+      ansible.builtin.command:
+        argv: [find, "{{ _navidrome_restore_tmp.path }}", -mindepth, "1", -maxdepth, "1", -print, -quit]
+      register: _navidrome_restore_archive_entry
+      changed_when: false
+
+    - name: Navidrome restore | Assert the selected snapshot contains application state
+      ansible.builtin.assert:
+        that: _navidrome_restore_archive_entry.stdout | length > 0
+        fail_msg: >-
+          The selected PBS snapshot contains no Navidrome data; refusing to replace
+          the target. The external music library was not touched.
+
+    - name: Navidrome restore | Replace the data directory after validation
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: absent
+
+    - name: Navidrome restore | Recreate the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        mode: "0750"
+
+    - name: Navidrome restore | Copy the archived state into place
+      ansible.builtin.command:
+        argv: [cp, -a, "{{ _navidrome_restore_tmp.path }}/.", "{{ app_config.app.data_path }}/"]
+      changed_when: true
+      no_log: true
+
+    - name: Navidrome restore | Set data ownership for the container user
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        recurse: true
+
+    - name: Navidrome restore | Start the named service
+      community.docker.docker_compose_v2:
+        project_src: "{{ navidrome_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
+
+    - name: Navidrome restore | Wait for the restored service
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/ping"
+        status_code: 200
+      register: _navidrome_restore_health
+      until: _navidrome_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Navidrome restore | Assert the restored service is healthy
+      ansible.builtin.assert:
+        that: _navidrome_restore_health.status == 200
+        fail_msg: The restored Navidrome service did not answer /ping.
+
+    - name: Navidrome restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Navidrome restore | Stop the named service after a failed restore
+      community.docker.docker_compose_v2:
+        project_src: "{{ navidrome_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Navidrome restore | Report the failed restore
+      ansible.builtin.fail:
+        msg: >-
+          Navidrome restore did not complete. The named service is intentionally left
+          stopped; inspect the recovered data and retry after correcting the failure.
+          The external music library was not touched.
+  always:
+    - name: Navidrome restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _navidrome_restore_tmp.path }}"
+        state: absent
+      when: _navidrome_restore_tmp.path is defined

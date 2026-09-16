@@ -154,7 +154,7 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | owncloud | Docker | services_stack | owncloud/ocis | Ships alongside nextcloud, not instead of it (decided 2026-08-17). A lab deploys the one it wants; no default picks for it |
 | paperless-ngx | Docker | services_stack | paperless-ngx/paperless-ngx | Postgres + Redis; consumes a documents mount |
 | emby | Docker | media_stack | lscr.io/linuxserver/emby | Implemented by #134: independently deployable third media-server option, own auth, catalog identity, read-only shared libraries and app-native /config recovery. |
-| navidrome | Docker | media_stack | navidrome/navidrome | Reads the same music library lidarr writes — `library_subpath: music`, read-only |
+| navidrome | Docker | media_stack | deluan/navidrome | Implemented by #135: independently deployable music server reading Lidarr's `music` library subpath read-only; application state has native PBS recovery. |
 | audiobookshelf | Docker | media_stack | advplyr/audiobookshelf | Same shape: reads an audiobooks/podcasts subpath |
 | mealie | Docker | services_stack | mealie-recipes/mealie | Postgres |
 | bookstack | Docker | services_stack | BookStackApp/BookStack | MySQL/MariaDB — the one backend Batch B does not cover. See the open decision below |

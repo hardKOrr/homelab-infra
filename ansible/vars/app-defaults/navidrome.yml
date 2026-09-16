@@ -1,0 +1,55 @@
+---
+# Default configuration for Navidrome — the media stack's music player.
+# Navidrome reads one library subpath from the existing media storage. Its data
+# directory is application-owned; the music library remains operator-owned and
+# is never written by this role.
+navidrome_defaults:
+  stack: media
+  media_storage: {}
+
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
+  app:
+    image: "deluan/navidrome:latest"
+    port: 4533
+    container_port: 4533
+    data_path: "/opt/{{ instance }}/data"
+
+    # This is deliberately a subpath, not the media-storage mount root. The
+    # role maps only media_storage.library/<library_subpath> into /music:ro.
+    library_subpath: music
+
+    # Navidrome's image uses the Compose user directive, not PUID/PGID
+    # environment variables. These ids must match media_storage.owner so the
+    # unprivileged stack host can read the existing library.
+    puid: 1313
+    pgid: 1313
+
+  routing:
+    subdomain: navidrome
+    proxy: internal
+    access: internal
+    # Navidrome clients authenticate against Navidrome itself. Authentik is a
+    # catalog tile only; forward_auth would break Subsonic-compatible clients.
+    identity: catalog
+
+  # PBS archives only the quiesced application data directory. The external
+  # music library is not part of this recovery unit and is never deleted by
+  # the app's backup or restore tasks.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

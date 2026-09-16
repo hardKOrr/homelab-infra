@@ -1,0 +1,30 @@
+---
+# Navidrome instance config. Copy to config/apps/navidrome.yml.
+# The instance name identifies its Compose project, route and application-owned data.
+# Only the declared music library subpath is exposed to Navidrome, read-only.
+
+stack: media
+
+# app:
+#   library_subpath: music  # relative path below media_storage.library; do not use ..
+#   port: 4533              # change only when another Navidrome instance uses the stack
+#   # image: deluan/navidrome:latest
+#   # puid/pgid must match media_storage.owner.uid/gid; Navidrome uses user:, not PUID/PGID.
+
+# Navidrome creates its first administrator through its own web setup screen on first
+# launch. Its users, playlists, play counts and settings live in the application data
+# directory and are covered by the native PBS backup/restore action.
+
+# Shared storage is inherited from config/infrastructure.yml's media_storage block:
+#   library: /mnt/data/media
+#   mounts:
+#     - host: /mnt/media
+#       path: /mnt/data/media
+# The role binds only /mnt/data/media/music to /music:ro. It never creates, writes or
+# deletes the music directory. Remove App preserves it even with normal data removal;
+# delete_data only removes Navidrome's /opt/<instance> data.
+
+# routing:
+#   proxy: internal
+#   access: internal
+#   identity: catalog  # Navidrome clients authenticate with Navidrome itself.
