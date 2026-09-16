@@ -1,0 +1,193 @@
+#!/bin/bash
+# Application-consistent WordPress recovery helper.
+#
+# This file deliberately contains no credentials. The role writes one root-only env file
+# from the canonical Vaultwarden item. One PBS snapshot contains the named SQL dump and
+# wp-content (uploads, themes and operator-installed plugins), so a restore cannot pair
+# media with a different database point in time. WordPress core and wp-config.php come
+# from the target's pinned image and target environment rather than the source archive;
+# this is what makes a source-instance restore safe.
+set -Eeuo pipefail
+
+CONFIG=/etc/homelab-infra/wordpress/${WORDPRESS_INSTANCE:-wordpress}.env
+if [[ ! -r "$CONFIG" ]]; then
+  echo "WordPress recovery is not configured: $CONFIG is absent. Deploy with backup enabled and a PBS target." >&2
+  exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$CONFIG"
+set +a
+
+for required in WORDPRESS_PROJECT_DIR WORDPRESS_SERVICE WORDPRESS_DATA_PATH \
+  WORDPRESS_CONTENT_PATH WORDPRESS_FQDN WORDPRESS_CLI_IMAGE \
+  WORDPRESS_ADMIN_USER WORDPRESS_ADMIN_EMAIL WORDPRESS_ADMIN_NAME WORDPRESS_ADMIN_PASSWORD \
+  WORDPRESS_DB_HOST WORDPRESS_DB_PORT WORDPRESS_DB_NAME WORDPRESS_DB_USER \
+  WORDPRESS_DB_PASSWORD WORDPRESS_DB_CLIENT_IMAGE PBS_REPOSITORY PBS_FINGERPRINT \
+  PBS_PASSWORD PBS_BACKUP_ID PBS_RETENTION_DAYS; do
+  [[ -n "${!required:-}" ]] || { echo "WordPress recovery configuration is incomplete: $required" >&2; exit 1; }
+done
+
+for backup_id in "$PBS_BACKUP_ID" "${WORDPRESS_RESTORE_BACKUP_ID:-$PBS_BACKUP_ID}"; do
+  [[ "$backup_id" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+    echo "WordPress recovery backup id is unsafe" >&2
+    exit 1
+  }
+done
+
+restore_backup_id="${WORDPRESS_RESTORE_BACKUP_ID:-$PBS_BACKUP_ID}"
+compose=(docker compose --project-directory "$WORDPRESS_PROJECT_DIR" -f "$WORDPRESS_PROJECT_DIR/docker-compose.yml")
+work=$(mktemp -d /var/tmp/homelab-wordpress.XXXXXX)
+stopped=0
+restart_on_failure=0
+
+finish() {
+  local rc=$?
+  rm -rf -- "$work"
+  if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+    "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap finish EXIT
+
+mysql_client() {
+  local command=$1
+  shift
+  docker run --rm --network host -i \
+    -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
+    --entrypoint "$command" "$WORDPRESS_DB_CLIENT_IMAGE" "$@"
+}
+
+wp_cli() {
+  "${compose[@]}" run --rm --no-deps wordpress-cli "$@" --allow-root
+}
+
+write_client_config() {
+  umask 077
+  cat > "$work/my.cnf" <<CNF
+[client]
+user=$WORDPRESS_DB_USER
+password=$WORDPRESS_DB_PASSWORD
+CNF
+}
+
+pbs_env() {
+  env PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" PBS_FINGERPRINT="$PBS_FINGERPRINT" "$@"
+}
+
+backup() {
+  write_client_config
+  [[ -d "$WORDPRESS_CONTENT_PATH" ]] || {
+    echo "WordPress content path is absent: $WORDPRESS_CONTENT_PATH" >&2
+    exit 1
+  }
+  # WordPress is stopped before the dump and archive. The external backend remains
+  # available to every other application on it; only this application's writes pause.
+  "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
+  stopped=1
+  restart_on_failure=1
+  mkdir -p "$work/database"
+  mysql_client mysqldump \
+    --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
+    --single-transaction --routines --triggers --events --hex-blob \
+    --no-create-db --databases "$WORDPRESS_DB_NAME" > "$work/database/database.sql"
+  echo "dumped WordPress database $WORDPRESS_DB_NAME ($(wc -c < "$work/database/database.sql") bytes)"
+  pbs_env proxmox-backup-client backup \
+    database.pxar:"$work/database" content.pxar:"$WORDPRESS_CONTENT_PATH" \
+    --backup-id "$PBS_BACKUP_ID"
+  pbs_env proxmox-backup-client prune \
+    "host/$PBS_BACKUP_ID" --keep-daily "$PBS_RETENTION_DAYS"
+  echo "WordPress backup complete: host/$PBS_BACKUP_ID in ${PBS_REPOSITORY##*:}"
+  "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null
+  stopped=0
+}
+
+plan() {
+  # A plan never calls Docker and never writes the application data path.
+  pbs_env proxmox-backup-client snapshot list "host/$restore_backup_id"
+  if [[ -n "${SNAPSHOT:-}" ]]; then
+    case "$SNAPSHOT" in
+      host/$restore_backup_id/*) ;;
+      *) echo "snapshot is not in the WordPress backup group host/$restore_backup_id" >&2; exit 1 ;;
+    esac
+    pbs_env proxmox-backup-client snapshot files "$SNAPSHOT"
+  else
+    echo "No snapshot selected; nothing was changed."
+  fi
+}
+
+restore() {
+  [[ "${SNAPSHOT:-}" == host/$restore_backup_id/* ]] || {
+    echo "restore requires a snapshot from host/$restore_backup_id" >&2
+    exit 1
+  }
+  write_client_config
+  pbs_env proxmox-backup-client restore "$SNAPSHOT" database.pxar "$work/database"
+  pbs_env proxmox-backup-client restore "$SNAPSHOT" content.pxar "$work/content"
+
+  # A failed restore leaves the app stopped deliberately: serving half of a recovery
+  # point is worse than a plainly unavailable service. The shared backend is never
+  # stopped, dropped, or changed outside this database.
+  "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
+  stopped=1
+  mkdir -p "$WORDPRESS_CONTENT_PATH"
+  find "$WORDPRESS_CONTENT_PATH" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  cp -a "$work/content/." "$WORDPRESS_CONTENT_PATH/"
+
+  # The application role has ALL only on this named database. Clear its existing tables
+  # through that grant instead of requesting backend-admin credentials or touching any
+  # other database on the shared MariaDB guest.
+  table_sql=$(mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" --batch --skip-column-names \
+    --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', TABLE_NAME, ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$WORDPRESS_DB_NAME';")
+  if [[ -n "$table_sql" ]]; then
+    {
+      printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\nSET FOREIGN_KEY_CHECKS=1;\n' "$table_sql"
+    } | mysql_client mysql \
+      --defaults-extra-file=/run/secrets/my.cnf --host="$WORDPRESS_DB_HOST" \
+      --port="$WORDPRESS_DB_PORT" --database="$WORDPRESS_DB_NAME"
+  fi
+  # `mysqldump --databases` records the source database in a USE statement. Remove that
+  # statement before importing into the target name so an instance may use a different
+  # database name while retaining the same application role grant.
+  sed '/^USE `[^`]*`;/d' "$work/database/database.sql" | \
+    mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
+      --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
+      --database="$WORDPRESS_DB_NAME"
+
+  # The target's Compose env points wp-config.php at the target backend credentials.
+  # Repair site URLs and administrator access after a cross-instance database restore;
+  # these are target identity, not source-instance state.
+  target_url="https://$WORDPRESS_FQDN"
+  wp_cli option update home "$target_url" --skip-plugins --skip-themes >/dev/null
+  wp_cli option update siteurl "$target_url" --skip-plugins --skip-themes >/dev/null
+  if wp_cli user get "$WORDPRESS_ADMIN_USER" --field=ID --skip-plugins --skip-themes >/dev/null 2>&1; then
+    wp_cli user update "$WORDPRESS_ADMIN_USER" \
+      --user_pass="$WORDPRESS_ADMIN_PASSWORD" \
+      --user_email="$WORDPRESS_ADMIN_EMAIL" --display_name="$WORDPRESS_ADMIN_NAME" \
+      --skip-plugins --skip-themes >/dev/null
+  else
+    wp_cli user create "$WORDPRESS_ADMIN_USER" "$WORDPRESS_ADMIN_EMAIL" \
+      --role=administrator --user_pass="$WORDPRESS_ADMIN_PASSWORD" \
+      --display_name="$WORDPRESS_ADMIN_NAME" --skip-plugins --skip-themes >/dev/null
+  fi
+  echo "WordPress database and wp-content restored from $SNAPSHOT"
+  "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null
+  stopped=0
+}
+
+case "${1:-}" in
+  --backup) backup ;;
+  --plan)
+    [[ "${2:-}" == --snapshot ]] && SNAPSHOT="${3:-}" || SNAPSHOT=""
+    plan
+    ;;
+  --restore)
+    [[ "${2:-}" == --snapshot && -n "${3:-}" ]] || { echo "restore requires --snapshot" >&2; exit 1; }
+    SNAPSHOT="$3"
+    restore
+    ;;
+  *) echo "usage: $0 --backup | --plan [--snapshot PBS_SNAPSHOT] | --restore --snapshot PBS_SNAPSHOT" >&2; exit 2 ;;
+esac

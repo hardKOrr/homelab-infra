@@ -1,0 +1,40 @@
+---
+# Deploy WordPress. Rendered and imported by rundeck/render-job.py.
+- id: 6f2a4b76-4e54-4c35-8d1e-410000000001
+  uuid: 6f2a4b76-4e54-4c35-8d1e-410000000001
+  name: Deploy WordPress
+  group: Applications/Content & Publishing/Website/WordPress
+  description: |-
+    Deploy or converge an instanced WordPress site.
+
+    - Database: named external MariaDB backend mariadb-wordpress by default; no database
+      sidecar is created in the services stack.
+    - Credentials: the initial administrator password and named database role password
+      are generated or reused from homelab-infra/apps/<instance> in Vaultwarden.
+    - Durability: WordPress's /var/www/html/wp-content directory contains uploads, themes and
+      operator-installed plugins; the pinned image supplies core and wp-config.php.
+    - Recovery: the WordPress backup captures a quiesced database dump and wp-content in
+      one PBS snapshot. Use Backup WordPress and Restore WordPress; the shared backend and
+      other stack applications are not changed.
+
+    Re-running preserves the administrator credentials, theme choice and site content.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: 'Default: Keep the selected WordPress instance. Enter another name for a second deployment.'
+    required: true
+    value: wordpress
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/wordpress.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          exec lab-run playbooks/apps/wordpress.yml -e "instance=${RD_OPTION_INSTANCE}"

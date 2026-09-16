@@ -1,0 +1,10 @@
+---
+# Role-internal paths. User-facing settings live in vars/app-defaults/wordpress.yml.
+wordpress_project_dir: "/opt/{{ instance }}"
+wordpress_env_file: "{{ wordpress_project_dir }}/wordpress.env"
+wordpress_admin_marker: "{{ app_config.app.data_path }}/.homelab-infra-admin"
+wordpress_theme_marker: "{{ app_config.app.data_path }}/.homelab-infra-theme"
+wordpress_content_path: "{{ app_config.app.data_path }}/wp-content"
+wordpress_recovery_config_dir: /etc/homelab-infra/wordpress
+wordpress_recovery_config: "{{ wordpress_recovery_config_dir }}/{{ instance }}.env"
+wordpress_recovery_script: /usr/local/sbin/homelab-infra-wordpress-recovery

@@ -54,6 +54,7 @@ products:
   # folded into the deployment work.
   actual-budget: {recovery_issue: 171, deployment_issue: 154}
   bookstack: {recovery_issue: 172, deployment_issue: 153}
+  wordpress: {recovery_issue: 60}
   comfyui: {recovery_issue: 173, deployment_issue: 166}
   forgejo: {recovery_issue: 174, deployment_issue: 150}
   forgejo-runner: {recovery_issue: 175, deployment_issue: 150}

@@ -1,0 +1,124 @@
+---
+# Plan or perform a restore of one WordPress instance from a PBS snapshot, including a
+# snapshot produced by another WordPress instance.
+#
+# overwrite=false (the default) is read-only. overwrite=true stops only the named target
+# WordPress service, replaces wp-content and its named database, repairs the target URL and
+# administrator account, then starts it again. The shared backend and other applications
+# remain untouched. A failed restore deliberately leaves the target service stopped.
+
+- name: "WordPress Restore | Resolve"
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that:
+          - instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+          - source_instance | default(instance) is match('^[A-Za-z0-9_.-]+$')
+          - source_backup_id | default('') is match('^[A-Za-z0-9_.-]*$')
+          - snapshot | default('') is match('^$|^host/[A-Za-z0-9_.-]+/[A-Za-z0-9T:_.+Z-]+$')
+          - overwrite | default(false) | string in ['false', 'true', 'False', 'True']
+          - not (overwrite | default(false) | bool) or snapshot | default('') | length > 0
+        fail_msg: >-
+          Provide a WordPress target, optional source instance/backup id and PBS snapshot,
+          plus overwrite=false|true.
+    - ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/wordpress.yml
+        name: _app_defaults
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.wordpress_defaults | combine(_instance_config | default({}), recursive=True) }}"
+  tasks:
+    - name: Resolve the source backup group
+      ansible.builtin.set_fact:
+        wordpress_restore_backup_id: >-
+          {{ source_backup_id | default('', true)
+             or (app_config.backup.backup_id | default('', true)
+                 if (source_instance | default(instance)) == instance
+                 else (source_instance | default(instance))) }}
+
+    - name: Resolve the existing services stack host
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        resolve_stack_deploy_group: "wordpress_recovery_{{ instance }}"
+        resolve_stack_app_instance: "{{ instance }}"
+
+- name: "WordPress Restore | Run"
+  hosts: "wordpress_recovery_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+  vars:
+    wordpress_restore_port: "{{ hostvars['localhost'].app_config.app.port }}"
+  tasks:
+    - name: Run the WordPress restore plan
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/homelab-infra-wordpress-recovery
+          - --plan
+          - --snapshot
+          - "{{ snapshot | default('') }}"
+      environment:
+        WORDPRESS_INSTANCE: "{{ instance }}"
+        WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
+      register: wordpress_restore_result
+      changed_when: false
+      when: not (overwrite | default(false) | bool)
+
+    - name: Run the destructive WordPress restore
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/homelab-infra-wordpress-recovery
+          - --restore
+          - --snapshot
+          - "{{ snapshot }}"
+      environment:
+        WORDPRESS_INSTANCE: "{{ instance }}"
+        WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
+      register: wordpress_restore_result
+      changed_when: true
+      when: overwrite | default(false) | bool
+
+    - name: Verify restored WordPress is usable
+      ansible.builtin.uri:
+        url: "http://localhost:{{ wordpress_restore_port }}/wp-login.php"
+        status_code: 200
+      register: _wordpress_restore_health
+      until: _wordpress_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+      when: overwrite | default(false) | bool
+
+- name: "WordPress Restore | Notify"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Notify completed WordPress restore
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} restored"
+        notify_message: "WordPress {{ instance }} was restored from its application-consistent PBS snapshot."
+      when:
+        - overwrite | default(false) | bool
+        - hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
+    - name: Fail if WordPress restore did not complete
+      ansible.builtin.assert:
+        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
+        fail_msg: >-
+          WordPress restore failed; inspect the target service before starting it and no
+          success notification was sent.

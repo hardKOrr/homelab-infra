@@ -26,7 +26,7 @@ class CoverageTests(unittest.TestCase):
     def test_every_catalog_product_has_recovery_owner_and_priority_is_separate(self):
         catalog = yaml.safe_load((ROOT / "catalog/applications.yml").read_text())
         self.assertEqual(set(self.products), set(catalog["applications"]))
-        self.assertEqual(len(self.products), 55)
+        self.assertEqual(len(self.products), 56)
         for row in self.products.values():
             self.assertGreater(row["recovery_issue"]["number"], 0)
             self.assertEqual(row["priority"]["selection"], "pending_user_selection")
