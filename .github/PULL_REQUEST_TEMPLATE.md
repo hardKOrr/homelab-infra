@@ -4,9 +4,10 @@ See CONTRIBUTING.md for the full issue-to-PR lifecycle before filling this in.
 
 ## Linked issue
 
-Closes #<!-- issue number — required for implementation and defect issues so GitHub
-closes them on merge. Use "Refs #<issue>" instead if this PR only partially addresses
-the issue. -->
+Closes #<!-- issue number — use when this PR fully satisfies the issue's repository scope
+and synthetic/gate acceptance, even if live-lab observation is deferred. Record that
+deferral in Live-lab status and the slice's Remaining section. Use "Refs #<issue>" only
+when more repository work is still required on the same issue. -->
 
 ## Changed scope
 

@@ -2,7 +2,7 @@
 
 **Status:** built
 **Subject:** Navidrome as an independent music server on `media_stack`
-**Related:** 408 (application catalog), #35 (deferred isolated real-Proxmox acceptance)
+**Related:** 408 (application catalog), #198 (deferred isolated real-Proxmox acceptance)
 
 ## Goal
 
@@ -21,9 +21,9 @@ Compose project and its application data.
       fixture, checks the scoped read-only bind and application-data recovery boundary, and
       runs the provider-free recovery protocol. It does not claim a real Navidrome process
       or live PBS restore.
-- [ ] Live evidence is deferred to the existing #35 isolated acceptance lane. Proposed
+- [ ] Live evidence is deferred to the existing #198 isolated acceptance lane. Proposed
       disposable target: instance `navidrome-acceptance` on stack host
-      `stack-media-acceptance`. Before execution #35 must authorize and record the exact
+      `stack-media-acceptance`. Before execution #198 must authorize and record the exact
       existing fixture music mount and `media_storage.library` root; no real music path is
       approved or inferred here. On that target only, deploy, confirm the named music
       subpath is readable but not writable from the Navidrome container, rerun, take and
