@@ -1,0 +1,4 @@
+---
+navidrome_project_dir: "/opt/{{ instance }}"
+navidrome_http_retries: 30
+navidrome_http_delay: 5

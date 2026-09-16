@@ -28,6 +28,7 @@ products:
   mariadb: {recovery_issue: 104}
   mixpost: {recovery_issue: 105}
   mysql: {recovery_issue: 106}
+  navidrome: {recovery_issue: 135}
   ntfy: {recovery_issue: 107}
   observability: {recovery_issue: 108}
   opnsense: {recovery_issue: 109}

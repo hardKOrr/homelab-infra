@@ -1,0 +1,156 @@
+---
+# Navidrome is a standalone music server, not a Servarr registry member. It
+# reads the existing media storage and owns only its application data directory.
+
+- name: Resolve Navidrome storage paths
+  ansible.builtin.set_fact:
+    _navidrome_mounts: "{{ (app_config.media_storage | default({})).mounts | default([], true) }}"
+    _navidrome_library_root: >-
+      {{ ((app_config.media_storage | default({})).library | default('', true))
+         | regex_replace('/+$', '') }}
+    _navidrome_library_subpath: "{{ app_config.app.library_subpath | default('music', true) }}"
+    _navidrome_uid: "{{ app_config.app.puid | default(1313) | int }}"
+    _navidrome_gid: "{{ app_config.app.pgid | default(1313) | int }}"
+
+- name: Resolve Navidrome music path
+  ansible.builtin.set_fact:
+    _navidrome_music_path: >-
+      {{ _navidrome_library_root }}/{{ _navidrome_library_subpath }}
+
+- name: Assert Navidrome has a safe, non-empty music subpath
+  ansible.builtin.assert:
+    that:
+      - _navidrome_library_root | length > 0
+      - _navidrome_library_subpath | length > 0
+      - _navidrome_library_subpath is not match('^/')
+      - _navidrome_library_subpath is not match('.*/$')
+      - _navidrome_library_subpath is not search('(^|/)\.\.?(/|$)')
+    fail_msg: >-
+      Navidrome requires media_storage.library and a relative library_subpath without
+      dot-directory traversal; the music mount is not created or inferred.
+
+- name: Assert Navidrome storage owner matches its container user
+  ansible.builtin.assert:
+    that:
+      - ((app_config.media_storage | default({})).owner.uid | default(-1) | int) == _navidrome_uid
+      - ((app_config.media_storage | default({})).owner.gid | default(-1) | int) == _navidrome_gid
+    fail_msg: >-
+      Navidrome runs as {{ _navidrome_uid }}:{{ _navidrome_gid }}, which must match
+      media_storage.owner.uid/gid so it can read the existing music library.
+
+- name: Assert Navidrome music path is inside a declared media mount
+  ansible.builtin.assert:
+    that: >-
+      {% set target = _navidrome_music_path.rstrip('/') %}
+      {% set mounted = namespace(value=false) %}
+      {% for mount in _navidrome_mounts %}
+      {% set mount_path = mount.path.rstrip('/') %}
+      {% if target == mount_path or target.startswith(mount_path ~ '/') %}
+      {% set mounted.value = true %}
+      {% endif %}
+      {% endfor %}
+      {{ mounted.value }}
+    fail_msg: >-
+      Navidrome music path {{ _navidrome_music_path }} is not under a declared
+      media_storage.mounts path. Refusing to expose an arbitrary host directory.
+
+- name: Verify the declared media mounts are present on the stack host
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: _navidrome_mount_checks
+  loop: "{{ _navidrome_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Assert every declared media mount is present
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.path }} is not present on this stack host. The declared media
+      mount must be attached before Navidrome can read its music subpath.
+  loop: "{{ _navidrome_mount_checks.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: Assert Navidrome data stays inside its named project
+  ansible.builtin.assert:
+    that:
+      - app_config.app.data_path | default('') | length > 0
+      - app_config.app.data_path.startswith(navidrome_project_dir.rstrip('/') ~ '/')
+      - app_config.app.data_path is not search('(^|/)\.\.?(/|$)')
+      - _navidrome_music_path != navidrome_project_dir
+      - not _navidrome_music_path.startswith(navidrome_project_dir.rstrip('/') ~ '/')
+    fail_msg: >-
+      Navidrome data must be below {{ navidrome_project_dir }} and its music path
+      must remain external to that project. This protects the music library from
+      explicit delete-data removal.
+
+- name: Verify the Navidrome music path exists
+  ansible.builtin.stat:
+    path: "{{ _navidrome_music_path }}"
+  register: _navidrome_music_stat
+  changed_when: false
+
+- name: Assert the Navidrome music path is an existing directory
+  ansible.builtin.assert:
+    that: _navidrome_music_stat.stat.exists and _navidrome_music_stat.stat.isdir
+    fail_msg: >-
+      Navidrome music path {{ _navidrome_music_path }} is not present on the media
+      stack host. Create or mount the approved library subpath, then rerun; this
+      role never creates or writes the music library.
+
+- name: Create Navidrome project and data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ _navidrome_uid }}"
+    group: "{{ _navidrome_gid }}"
+    mode: "0750"
+  loop:
+    - "{{ navidrome_project_dir }}"
+    - "{{ app_config.app.data_path }}"
+
+- name: Write Navidrome Compose project
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ navidrome_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart navidrome
+
+- name: Pull Navidrome image
+  community.docker.docker_compose_v2_pull:
+    project_src: "{{ navidrome_project_dir }}"
+    policy: missing
+  changed_when: false
+
+- name: Start Navidrome
+  community.docker.docker_compose_v2:
+    project_src: "{{ navidrome_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending Navidrome restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Navidrome health endpoint
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/ping"
+    status_code: 200
+  register: _navidrome_health
+  until: _navidrome_health.status | default(0) == 200
+  retries: "{{ navidrome_http_retries }}"
+  delay: "{{ navidrome_http_delay }}"
+  changed_when: false
+
+- name: Assert Navidrome health endpoint answered
+  ansible.builtin.assert:
+    that: _navidrome_health.status == 200
+    fail_msg: >-
+      Navidrome did not answer /ping on port {{ app_config.app.port }}. Check the
+      image, the data directory ownership, and the read-only music mount.
+
+- name: Export Navidrome endpoint for platform wiring
+  ansible.builtin.set_fact:
+    navidrome_url: "http://{{ ansible_host | default(ansible_default_ipv4.address) }}:{{ app_config.app.port }}"

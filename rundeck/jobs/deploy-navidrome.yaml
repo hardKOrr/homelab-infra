@@ -1,0 +1,52 @@
+# Deploy Navidrome — source job definition; one job, one playbook.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects this job's Key Storage options and validates its group.
+#
+# The step calls `lab-run`, the single entry point installed by
+# rundeck/bootstrap-rundeck.sh. It refreshes the checkout, validates config/ and execs
+# ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
+
+- id: 4b40d65d-6f3f-4ba2-83f7-a6a7e6de3d4b
+  uuid: 4b40d65d-6f3f-4ba2-83f7-a6a7e6de3d4b
+  name: Deploy Navidrome
+  group: Applications/Media & Entertainment/Media Servers/Navidrome
+  description: |-
+    Deploy or converge **Navidrome**, the media stack's music server.
+
+    - **Hosting:** Docker on the `media` stack
+    - Reads only `media_storage.library/music`, mounted read-only as `/music`
+    - Owns persistent application state under `/opt/<instance>/data`
+    - Authentik provides a catalog tile; Navidrome authenticates its own clients
+
+    The existing music library is not created, changed, backed up or removed by this job.
+    Navidrome's first administrator is created through its own web setup screen on first
+    launch; subsequent deploys are idempotent.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected instance. Enter another name only to deploy
+      an additional Navidrome instance. The value identifies its config file, Compose
+      project and route.'
+    required: true
+    value: navidrome
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/navidrome.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          # Job options arrive as RD_OPTION_* environment variables — Rundeck's
+          # ${option.x} tokens would collide with shell expansion in a script step.
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+
+          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
+          exec lab-run playbooks/apps/navidrome.yml "${ARGS[@]}"

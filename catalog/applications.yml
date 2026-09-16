@@ -135,6 +135,17 @@ applications:
     # Emby owns its admin login and native /config recovery; shared media is external.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
 
+  navidrome:
+    name: Navidrome
+    job: deploy-navidrome.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Media Servers
+    scope: estate
+    # Only Navidrome application data is recoverable; its external music library is
+    # mounted read-only and remains outside the named Compose project.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
+
   immich:
     name: Immich
     job: deploy-immich.yaml

@@ -27,6 +27,7 @@ SUPPORTED_METHODS = ("pbs_guest", "native", "project_managed")
 
 APPLICATION_ASSERTIONS = {
     "actual-budget": ("budget-record", "budget-file", "application-login", "target-route"),
+    "navidrome": ("music-library-path", "read-only-mount", "target-route"),
     "emby": ("library-path", "app-owned-login", "read-only-mounts", "target-route"),
     "comfyui": ("workflow-record", "model-file", "target-route", "gpu-rebind"),
     "hi-events": ("event-record", "uploaded-asset", "organizer-login", "target-route"),
@@ -145,7 +146,7 @@ def _native_case(slug: str, config: dict[str, Any], source_file: Path) -> Method
         artifact_prefix=f"fixture/native/{slug}",
         assertions=APPLICATION_ASSERTIONS.get(slug, ("records", "files", "identities", "connections")),
         source_file=str(source_file.relative_to(ROOT)),
-        issue_reference=185 if slug == "open-webui" else None,
+        issue_reference=135 if slug == "navidrome" else (185 if slug == "open-webui" else None),
     )
 
 

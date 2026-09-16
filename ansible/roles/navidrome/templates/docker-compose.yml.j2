@@ -1,0 +1,24 @@
+# Managed by homelab-infra. Navidrome data is writable; the music library is read-only.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    user: "{{ app_config.app.puid | default(1313) }}:{{ app_config.app.pgid | default(1313) }}"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - ND_DATAFOLDER=/data
+      - ND_MUSICFOLDER=/music
+      - ND_PORT={{ app_config.app.container_port | default(4533) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.data_path }}:/data"
+      # Only the declared music subpath is visible to Navidrome, and Docker
+      # enforces that the application cannot write it.
+      - "{{ _navidrome_music_path }}:/music:ro"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(4533) }}"
