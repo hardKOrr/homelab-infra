@@ -1,8 +1,9 @@
 # Live-lab evidence for agents
 
 This is the operator how-to for collecting live-lab evidence from an agent session. The
-acceptance claims and the three allowed PR **Live-lab status** values remain in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md). The normative boundary is in
+acceptance claims remain in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The three
+allowed PR **Live-lab status** values are enumerated in the
+[`PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md). The normative boundary is in
 [`specs/one-click-idempotent.md`](specs/one-click-idempotent.md): every live-lab action
 uses a repository-owned Ansible playbook or Rundeck job. Do not use the API workflow here
 to bypass that boundary.
