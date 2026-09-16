@@ -21,7 +21,6 @@ products:
   influxdb: {recovery_issue: 97}
   jellyfin: {recovery_issue: 98}
   jellyseerr: {recovery_issue: 99}
-  navidrome: {recovery_issue: 135}
   k3s-cluster: {recovery_issue: 100}
   kometa: {recovery_issue: 101, rebuild_only: true}
   lidarr: {recovery_issue: 102}
@@ -29,6 +28,7 @@ products:
   mariadb: {recovery_issue: 104}
   mixpost: {recovery_issue: 105}
   mysql: {recovery_issue: 106}
+  navidrome: {recovery_issue: 135}
   ntfy: {recovery_issue: 107}
   observability: {recovery_issue: 108}
   opnsense: {recovery_issue: 109}
