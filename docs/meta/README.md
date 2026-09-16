@@ -73,16 +73,22 @@ leave it unticked forever.
 
 GitHub Issues owns current priority — see [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md).
 The issue and slice acceptance are different: the issue describes repository work; a slice's
-**Remaining** boxes can require live lab or third-party evidence. Do not turn an acceptance
-observation into an unplanned hardening sidequest.
+**Remaining** boxes can require live lab or third-party evidence. Once the repository scope
+and synthetic/gate acceptance are complete, the implementation PR closes the issue even if
+the slice remains `built` awaiting live-lab observation. That closure is not live-lab
+acceptance; carry the remaining evidence in a follow-up Live-lab observation issue under
+the existing `#35` acceptance lane. Do not turn an acceptance observation into an unplanned
+hardening sidequest.
 
 1. Implement the linked GitHub issue. If it references no `docs/meta/` slice and the work is
    more than trivial, create one and link it from the issue.
 2. Append discoveries to the `notes.md` of each affected slice.
 3. When code is complete and both gates are green, mark the slice `built`, update its
    **Remaining** evidence, and update the `INDEX.md` row for the issue in the same change.
-4. When all required acceptance is observed, mark the slice `done`, move it into `done/`, remove
-   its `INDEX.md` row, and close the issue per `CONTRIBUTING.md`.
+4. When all required acceptance is observed, mark the slice `done`, move it into `done/`, and
+   remove its `INDEX.md` row. The implementation issue was closed when its repository work
+   merged; close the follow-up Live-lab observation issue per `CONTRIBUTING.md` after its
+   evidence is recorded.
 5. Add a lesson to `LESSONS.md` only when it changes how another slice should be worked.
 
 `built` is the honest resting state for anything touching Proxmox: gate-green code whose

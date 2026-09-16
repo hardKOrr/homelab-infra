@@ -10,8 +10,8 @@ state, and evidence. Historical narrative belongs in slice `notes.md` files or
 ## Start here
 
 Open the linked issue, then read its slice. A `built` slice awaiting live observation is
-tracked by an observation issue and does not displace an open implementation issue. Run both
-gates before marking repository work built:
+tracked by an observation issue; its implementation issue is closed once the repository work
+is built and gate-green. Run both gates before marking repository work built:
 
 ```text
 bash gate/lint.sh

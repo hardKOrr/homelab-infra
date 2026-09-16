@@ -25,6 +25,13 @@ whose body says `Closes #<issue>`, or a human closing it directly on GitHub.** A
 session finishing its local checks does not close the issue by itself — the PR does, on
 merge.
 
+That closure is also required to prevent duplicate intake: an open issue that is still
+assigned to `hardKOrr` is eligible for AO tracker intake, so AO can pick it again after its
+implementation PR has merged and start a second worker for work that is already complete.
+The implementation PR must therefore close the issue when its repository scope and
+synthetic/gate acceptance are complete. This is not a claim that live-lab acceptance has
+already happened; that evidence belongs to the follow-up observation issue described below.
+
 ## Issue templates
 
 Filing an issue picks one of four forms under `.github/ISSUE_TEMPLATE/`:
@@ -59,12 +66,15 @@ guest, container, or Proxmox resource states that up front, not partway through 
 5. **Commit** in focused, conventional-style commits.
 6. **Push** the branch and **open a pull request** using the PR template. Fill in every
    section, especially Verification evidence and Live-lab status.
-7. **Link the issue.** The PR body includes `Closes #<issue>` for implementation and
-   defect issues whose acceptance criteria this PR fully satisfies, so GitHub closes the
-   issue on merge. Use `Refs #<issue>` instead when the PR only partially addresses it, or
-   when the issue's acceptance criteria needs live-lab evidence this PR cannot provide —
-   see *Gate-green vs. live-lab acceptance* below. Never close an issue by hand when a PR
-   is meant to close it; let the merge do it.
+7. **Link the issue.** The PR body includes `Closes #<issue>` when this PR fully satisfies
+   the issue's repository scope and synthetic/gate acceptance, so GitHub closes the issue
+   on merge. Use `Closes #<issue>` even when live-lab observation is deliberately deferred:
+   record that deferral in the PR's **Live-lab status** section and in the linked
+   `docs/meta/<NNN-slug>/README.md` **Remaining** section, then carry it forward in a
+   follow-up Live-lab observation issue under the existing `#35` acceptance lane.
+   Reserve `Refs #<issue>` for a PR that only partially implements the issue's repository
+   scope, when more repository work is still required on that same issue. Never close an
+   issue by hand when a PR is meant to close it; let the merge do it.
 8. **Claim before continuing.** If a session is picking up an existing PR rather than
    opening a new one, claim it first (`ao session claim-pr <pr-ref>`) so two sessions do
    not push conflicting fixes to the same branch.
@@ -84,10 +94,17 @@ These are different claims and this repository does not conflate them, per
 - **Live-lab acceptance** means the behavior was watched happening on the running lab —
   a scheduled window fired, a guest recovered, a job produced the expected result.
 
-A PR that is gate-green but whose issue also requires live-lab evidence should say so
-plainly in its Live-lab status section and use `Refs #<issue>`, not `Closes #<issue>`.
-Record what remains either in the issue itself or, for anything with a `docs/meta/`
-slice, in that slice's **Remaining** section — then close the issue with a follow-up
-Live-lab observation issue once the evidence exists. Do not expand an observation into
-unplanned implementation work to make an issue closeable; open a separate Defect issue for
-anything the observation reveals.
+A PR that is gate-green and fully satisfies the issue's repository scope should use
+`Closes #<issue>` even when live-lab evidence is deliberately deferred. Say so plainly in
+the PR's **Live-lab status** section, record what remains in the linked slice's
+`docs/meta/<NNN-slug>/README.md` **Remaining** section, and carry that evidence into a
+follow-up Live-lab observation issue under the existing `#35` acceptance lane. That
+observation issue, not the implementation PR's closure, carries live-lab acceptance.
+
+This preserves the `built` vs. `done` distinction in [`docs/meta/README.md`](docs/meta/README.md):
+closing the implementation issue means the repository work is built and gate-green, not
+that it has been accepted on the live lab. Mark the slice `done` only after the required
+observation is recorded. Use `Refs #<issue>` only when the PR leaves more repository
+implementation work for that same issue. Do not expand an observation into unplanned
+implementation work to make an issue closeable; open a separate Defect issue for anything
+the observation reveals.
