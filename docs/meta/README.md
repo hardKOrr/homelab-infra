@@ -77,7 +77,7 @@ The issue and slice acceptance are different: the issue describes repository wor
 and synthetic/gate acceptance are complete, the implementation PR closes the issue even if
 the slice remains `built` awaiting live-lab observation. That closure is not live-lab
 acceptance; carry the remaining evidence in a follow-up Live-lab observation issue under
-the existing `#35` acceptance lane. Do not turn an acceptance observation into an unplanned
+the existing `#198` acceptance lane. Do not turn an acceptance observation into an unplanned
 hardening sidequest.
 
 1. Implement the linked GitHub issue. If it references no `docs/meta/` slice and the work is

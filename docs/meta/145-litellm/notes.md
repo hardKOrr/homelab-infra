@@ -11,4 +11,4 @@ can clean and reload the named target database, while the archived ConfigMap is 
 the controller after a successful restore job.
 
 No provider account, Kubernetes target, PostgreSQL instance, or disposable namespace was
-named for live work. That evidence is intentionally deferred to #35 as required by #145.
+named for live work. That evidence is intentionally deferred to #198 as required by #145.

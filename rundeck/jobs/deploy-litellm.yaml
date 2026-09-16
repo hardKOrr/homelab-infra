@@ -25,7 +25,7 @@
 
     Before live work, name the LiteLLM instance, Kubernetes cluster, PostgreSQL instance and
     provider accounts. Repository and synthetic fixture verification is the closure scope for
-    #145; live execution is deferred to the isolated real-Proxmox acceptance lane under #35.
+    #145; live execution is deferred to the isolated real-Proxmox acceptance lane under #198.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

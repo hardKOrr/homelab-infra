@@ -2,7 +2,7 @@
 
 **Status:** built
 **Subject:** LiteLLM on the Kubernetes hosting backend with external durable state
-**Related:** 046 (shared Kubernetes storage), 408 (application catalog), #35 (deferred isolated real-Proxmox acceptance)
+**Related:** 046 (shared Kubernetes storage), 408 (application catalog), #198 (deferred isolated real-Proxmox acceptance)
 
 ## Goal
 
@@ -35,7 +35,7 @@ Upstream references: [LiteLLM proxy quick start](https://docs.litellm.ai/docs/pr
 - [ ] Live evidence remains deferred: name the LiteLLM instance, Kubernetes cluster,
       PostgreSQL backend, provider accounts and disposable target before execution; run the
       deploy, health check, rerun, recovery and removal scenario under the existing isolated
-      real-Proxmox acceptance lane (#35). Revoke any test provider keys after acceptance.
+      real-Proxmox acceptance lane (#198). Revoke any test provider keys after acceptance.
       No live target is authorized or changed by this repository slice.
 
 ## Links

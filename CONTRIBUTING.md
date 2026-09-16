@@ -71,7 +71,7 @@ guest, container, or Proxmox resource states that up front, not partway through 
    on merge. Use `Closes #<issue>` even when live-lab observation is deliberately deferred:
    record that deferral in the PR's **Live-lab status** section and in the linked
    `docs/meta/<NNN-slug>/README.md` **Remaining** section, then carry it forward in a
-   follow-up Live-lab observation issue under the existing `#35` acceptance lane.
+   follow-up Live-lab observation issue under the existing `#198` acceptance lane.
    Reserve `Refs #<issue>` for a PR that only partially implements the issue's repository
    scope, when more repository work is still required on that same issue. Never close an
    issue by hand when a PR is meant to close it; let the merge do it.
@@ -98,7 +98,7 @@ A PR that is gate-green and fully satisfies the issue's repository scope should 
 `Closes #<issue>` even when live-lab evidence is deliberately deferred. Say so plainly in
 the PR's **Live-lab status** section, record what remains in the linked slice's
 `docs/meta/<NNN-slug>/README.md` **Remaining** section, and carry that evidence into a
-follow-up Live-lab observation issue under the existing `#35` acceptance lane. That
+follow-up Live-lab observation issue under the existing `#198` acceptance lane. That
 observation issue, not the implementation PR's closure, carries live-lab acceptance.
 
 This preserves the `built` vs. `done` distinction in [`docs/meta/README.md`](docs/meta/README.md):
