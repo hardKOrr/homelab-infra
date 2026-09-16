@@ -1,0 +1,33 @@
+---
+# Emby instance config. Copy to config/apps/emby.yml (or emby-4k.yml).
+# This instance name identifies its Compose project, route and app-owned Vaultwarden
+# credential item homelab-infra/media/<instance>.
+stack: media
+
+# app:
+#   port: 8096
+#   admin_user: admin  # Emby names its initial administrator on first deployment. Its
+#                      # password is generated/stored by the role in Vaultwarden, not here.
+#   libraries:         # replaces the defaults; paths are under media_storage.library.
+#     - name: Movies
+#       collection_type: movies
+#       subpath: movies
+#     - name: TV
+#       collection_type: tvshows
+#       subpath: tv
+#     - name: Music
+#       collection_type: music
+#       subpath: music
+#   devices: []         # e.g. ["/dev/dri"] for hardware transcoding when present.
+#   # image: lscr.io/linuxserver/emby:latest
+#   # config_path: /opt/emby/config
+#
+# Shared library mounts are inherited from config/infrastructure.yml's
+# media_storage.mounts. Emby binds each of them read-only; it does not write media.
+# Do not define alternate writable media mounts here. Generic removal defaults to preserving
+# Emby config/data; an explicit delete-data confirmation still never deletes these libraries.
+
+# routing:
+#   proxy: internal
+#   access: internal
+#   identity: catalog  # Emby retains its own login; don't use forward_auth.

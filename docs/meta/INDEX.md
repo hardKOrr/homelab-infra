@@ -54,6 +54,7 @@ defect. Each has an open live-lab observation issue tracking the remaining evide
 | --- | --- | --- |
 | [#13](https://github.com/hardKOrr/homelab-infra/issues/13) | [205 — Maintenance schedules](205-maintenance-schedules/README.md) | Observe a real scheduled window and complete Tier 2 live-lab acceptance |
 | [#14](https://github.com/hardKOrr/homelab-infra/issues/14) | [504 — Wire media stack](504-wire-media-stack/README.md) | The adoption path during a deliberately requested migration |
+| [#134](https://github.com/hardKOrr/homelab-infra/issues/134) | [134 — Batch C: deploy Emby](134-emby/README.md) | Repository and synthetic verification are built; isolated media fixture scenario deferred to #35 |
 | [#185](https://github.com/hardKOrr/homelab-infra/issues/185) | [185 — Open WebUI recovery methods and both restore destinations](185-open-webui-recovery/README.md) | Live schedule, PBS artifact, installed version/key/upstream checks and authorized two-destination acceptance through #80 |
 | [#186](https://github.com/hardKOrr/homelab-infra/issues/186) | [186 — Plane recovery methods and both destinations](186-plane-recovery/README.md) | Live schedule, PBS artifact and authorized two-destination acceptance through #80 |
 

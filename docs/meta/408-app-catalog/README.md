@@ -153,7 +153,7 @@ Ordinary deploys once Batch B exists. Grouped by the stack they should land on.
 | nextcloud | Docker | services_stack | nextcloud/server | Postgres instance from Batch B |
 | owncloud | Docker | services_stack | owncloud/ocis | Ships alongside nextcloud, not instead of it (decided 2026-08-17). A lab deploys the one it wants; no default picks for it |
 | paperless-ngx | Docker | services_stack | paperless-ngx/paperless-ngx | Postgres + Redis; consumes a documents mount |
-| emby | Docker | media_stack | MediaBrowser/Emby | Third media server alongside jellyfin and plex — same shape, own auth, `routing.identity: catalog`. All three are options; a lab deploys one, or several |
+| emby | Docker | media_stack | lscr.io/linuxserver/emby | Implemented by #134: independently deployable third media-server option, own auth, catalog identity, read-only shared libraries and app-native /config recovery. |
 | navidrome | Docker | media_stack | navidrome/navidrome | Reads the same music library lidarr writes — `library_subpath: music`, read-only |
 | audiobookshelf | Docker | media_stack | advplyr/audiobookshelf | Same shape: reads an audiobooks/podcasts subpath |
 | mealie | Docker | services_stack | mealie-recipes/mealie | Postgres |

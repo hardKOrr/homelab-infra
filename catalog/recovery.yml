@@ -15,6 +15,7 @@ products:
   bazarr: {recovery_issue: 92}
   caddy: {recovery_issue: 93}
   deemix: {recovery_issue: 94}
+  emby: {recovery_issue: 134}
   flaresolverr: {recovery_issue: 95, rebuild_only: true}
   homepage: {recovery_issue: 96, rebuild_only: true}
   influxdb: {recovery_issue: 97}

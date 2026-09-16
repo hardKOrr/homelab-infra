@@ -1,0 +1,28 @@
+# Managed by homelab-infra. Emby state is in /config; media is read-only.
+services:
+  {{ instance }}:
+    image: "{{ app_config.app.image }}"
+    container_name: "{{ instance }}"
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - PUID={{ app_config.app.puid | default(1313) }}
+      - PGID={{ app_config.app.pgid | default(1313) }}
+      - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+{% for key, value in (app_config.app.extra_env | default({})).items() %}
+      - {{ key }}={{ value }}
+{% endfor %}
+    volumes:
+      - "{{ app_config.app.config_path }}:/config"
+{% for mount in _emby_mounts %}
+      - "{{ mount.path }}:{{ mount.path }}:ro"
+{% endfor %}
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
+{% if (app_config.app.devices | default([])) | length > 0 %}
+    devices:
+{% for device in app_config.app.devices %}
+      - "{{ device }}:{{ device }}"
+{% endfor %}
+{% endif %}

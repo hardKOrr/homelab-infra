@@ -102,6 +102,7 @@ bash gate/test-batch-c-contract.sh || rc=1
 bash gate/test-open-webui-contract.sh || rc=1
 bash gate/test-bookstack-contract.sh || rc=1
 bash gate/test-immich-contract.sh || rc=1
+bash gate/test-emby-contract.sh || rc=1
 bash gate/test-registry-handoff.sh || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-callback-output.py || rc=1
 bash gate/test-rundeck-job-tree.sh || rc=1

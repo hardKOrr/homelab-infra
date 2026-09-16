@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: emby
+  author: homelab-infra
+  description: Deploy and configure Emby on the media stack
+  license: MIT
+  min_ansible_version: "2.15"
+dependencies: []

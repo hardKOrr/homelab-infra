@@ -1,0 +1,108 @@
+---
+# Emby's first-run wizard names its pre-created first user; it does not accept a
+# password in Startup/User. After completing the wizard, authenticate that user
+# with its initial empty password and set the persistent app-owned password through
+# Emby's /Users/{Id}/Password API. No Authentik credentials are involved.
+- name: First run | Configure the Emby wizard
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/Configuration"
+    method: POST
+    body_format: json
+    body:
+      UICulture: "{{ app_config.app.ui_culture | default('en-US') }}"
+      MetadataCountryCode: "{{ app_config.app.metadata_country | default('US') }}"
+      PreferredMetadataLanguage: "{{ app_config.app.metadata_language | default('en') }}"
+    status_code: [200, 204]
+
+- name: First run | Open the account step
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/User"
+    status_code: 200
+  changed_when: false
+
+- name: First run | Name Emby's initial admin account
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/User"
+    method: POST
+    body_format: json
+    body:
+      Name: "{{ _emby_user }}"
+    status_code: [200, 204]
+
+- name: First run | Enable remote access without router port mapping
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/RemoteAccess"
+    method: POST
+    body_format: json
+    body:
+      EnableRemoteAccess: true
+      EnableAutomaticPortMapping: false
+    status_code: [200, 204]
+
+- name: First run | Complete the Emby wizard
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/Complete"
+    method: POST
+    status_code: [200, 204]
+
+- name: First run | Confirm the wizard is closed
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/System/Info/Public"
+    return_content: true
+    status_code: 200
+  register: _emby_public_after
+  until: _emby_public_after.json.StartupWizardCompleted | default(false) | bool
+  retries: 6
+  delay: 5
+  changed_when: true
+
+- name: First run | Assert Emby is out of setup
+  ansible.builtin.assert:
+    that: _emby_public_after.json.StartupWizardCompleted | default(false) | bool
+    fail_msg: "{{ instance }} is still in Emby's first-run setup wizard."
+
+# Startup/User only changes the existing first user's name. Emby leaves that
+# account passwordless until the password endpoint below is called, so bootstrap
+# can obtain its own admin token once and then install the credential persisted in
+# Vaultwarden before regular authenticated convergence continues.
+- name: First run | Authenticate the new Emby user without a password
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/AuthenticateByName"
+    method: POST
+    headers:
+      X-Emby-Authorization: >-
+        MediaBrowser Client="{{ emby_client_name }}", Device="{{ emby_device_name }}",
+        DeviceId="{{ emby_client_name }}-{{ instance }}", Version="1.0.0"
+    body_format: json
+    body:
+      Username: "{{ _emby_user }}"
+      Pw: ""
+    status_code: [200, 401]
+  register: _emby_bootstrap_auth
+  changed_when: false
+  no_log: true
+
+- name: First run | Assert Emby initial administrator account is ready
+  ansible.builtin.assert:
+    that:
+      - _emby_bootstrap_auth.status == 200
+      - (_emby_bootstrap_auth.json.AccessToken | default('')) | length > 0
+      - (_emby_bootstrap_auth.json.User.Id | default('')) | length > 0
+    fail_msg: >-
+      Emby completed its setup wizard but its initial passwordless admin account could not
+      authenticate. Its /config may not be a new instance or Startup/User did not apply.
+  no_log: true
+
+- name: First run | Set the Emby admin password through its API
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/{{ _emby_bootstrap_auth.json.User.Id }}/Password"
+    method: POST
+    headers:
+      X-Emby-Token: "{{ _emby_bootstrap_auth.json.AccessToken }}"
+    body_format: json
+    body:
+      Id: "{{ _emby_bootstrap_auth.json.User.Id }}"
+      NewPw: "{{ _emby_password }}"
+      ResetPassword: true
+    status_code: [200, 204]
+  no_log: true

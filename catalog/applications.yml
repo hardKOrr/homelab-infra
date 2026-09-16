@@ -125,6 +125,16 @@ applications:
     type: Media Servers
     scope: estate
 
+  emby:
+    name: Emby
+    job: deploy-emby.yaml
+    root: Applications
+    category: Media & Entertainment
+    type: Media Servers
+    scope: estate
+    # Emby owns its admin login and native /config recovery; shared media is external.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
+
   immich:
     name: Immich
     job: deploy-immich.yaml

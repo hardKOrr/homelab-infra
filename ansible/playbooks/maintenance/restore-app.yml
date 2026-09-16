@@ -241,6 +241,32 @@
       no_log: true
       when: _ra_app == 'plane'
 
+    # Emby's account database is part of its /config snapshot. Retain the source
+    # account only in the protected variable path so a new target can prove the restored
+    # user and keep Vaultwarden aligned with the restored app-owned database.
+    - name: Resolve source Emby credentials without exposing them
+      ansible.builtin.set_fact:
+        restore_source_emby_user: >-
+          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).username
+             | default('') }}
+        restore_source_emby_password: >-
+          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).password
+             | default('') }}
+      no_log: true
+      when: _ra_app == 'emby'
+
+    # Emby's config directory is target-owned. Rebind the defaulted source path when
+    # restoring to a differently named instance; external media paths are never changed.
+    - name: Normalize the target Emby config path
+      ansible.builtin.set_fact:
+        restore_target_config: >-
+          {{ restore_target_config | combine({'app': {
+               'config_path': (restore_target_config.app.config_path
+                               | replace('/opt/' ~ _ra_source_instance ~ '/',
+                                         '/opt/' ~ _ra_target ~ '/'))
+             }}, recursive=True) }}
+      when: _ra_app == 'emby'
+
     # Plane stores its two owned paths below /opt/<instance>. Normalize those paths for
     # a new target without changing the source config or putting secrets in the plan.
     - name: Normalize the target Plane storage paths
@@ -700,6 +726,8 @@
         restore_source_encryption_key: "{{ hostvars['localhost'].restore_source_encryption_key | default('') }}"
         restore_source_open_webui_secret_key: "{{ hostvars['localhost'].restore_source_open_webui_secret_key | default('') }}"
         restore_source_plane_secrets: "{{ hostvars['localhost'].restore_source_plane_secrets | default({}) }}"
+        restore_source_emby_user: "{{ hostvars['localhost'].restore_source_emby_user | default('') }}"
+        restore_source_emby_password: "{{ hostvars['localhost'].restore_source_emby_password | default('') }}"
         restore_target_backup_id: >-
           {{ hostvars['localhost'].restore_target_config.backup.backup_id | default('', true)
              or hostvars['localhost']._ra_target }}

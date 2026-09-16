@@ -37,6 +37,7 @@ class RecoveryAcceptanceTests(unittest.TestCase):
             {
                 "actual-budget",
                 "comfyui",
+                "emby",
                 "hi-events",
                 "home-assistant",
                 "immich",
