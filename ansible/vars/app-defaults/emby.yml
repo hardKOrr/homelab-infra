@@ -1,0 +1,54 @@
+---
+# Emby is an independent media-server option on the shared media stack. It does
+# not participate in the Servarr API registry and is never selected by default.
+emby_defaults:
+  stack: media
+  # Recovery is owned by this deployment slice: the complete Emby config
+  # database, including its own users and library definitions, is archived as
+  # one quiesced application-consistent unit. Media libraries remain external.
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+  media_storage: {}
+  app:
+    image: lscr.io/linuxserver/emby:latest
+    # Keep the host port distinct from Jellyfin (8096), so the alternatives can coexist.
+    port: 8097
+    container_port: 8096
+    config_path: "/opt/{{ instance }}/config"
+    admin_user: admin
+    puid: 1313
+    pgid: 1313
+    devices: []
+    libraries:
+      - name: Movies
+        collection_type: movies
+        subpath: movies
+      - name: TV
+        collection_type: tvshows
+        subpath: tv
+      - name: Music
+        collection_type: music
+        subpath: music
+  routing:
+    subdomain: emby
+    proxy: internal
+    access: internal
+    # Emby's users and clients authenticate with Emby's own API. Authentik is
+    # catalog-only and must not forward-auth/proxy-gate those clients.
+    identity: catalog
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

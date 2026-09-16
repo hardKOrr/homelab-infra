@@ -27,6 +27,7 @@ SUPPORTED_METHODS = ("pbs_guest", "native", "project_managed")
 
 APPLICATION_ASSERTIONS = {
     "actual-budget": ("budget-record", "budget-file", "application-login", "target-route"),
+    "emby": ("library-path", "app-owned-login", "read-only-mounts", "target-route"),
     "comfyui": ("workflow-record", "model-file", "target-route", "gpu-rebind"),
     "hi-events": ("event-record", "uploaded-asset", "organizer-login", "target-route"),
     "home-assistant": ("entity-state", "config-file", "user-login", "usb-rebind"),

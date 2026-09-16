@@ -26,12 +26,19 @@ class CoverageTests(unittest.TestCase):
     def test_every_catalog_product_has_recovery_owner_and_priority_is_separate(self):
         catalog = yaml.safe_load((ROOT / "catalog/applications.yml").read_text())
         self.assertEqual(set(self.products), set(catalog["applications"]))
-        self.assertEqual(len(self.products), 53)
+        self.assertEqual(len(self.products), 54)
         for row in self.products.values():
             self.assertGreater(row["recovery_issue"]["number"], 0)
             self.assertEqual(row["priority"]["selection"], "pending_user_selection")
             self.assertIn("pbs_guest", row["available_methods"])
             self.assertTrue(row["methods"]["pbs_guest"]["recovery_unit"])
+
+    def test_emby_declares_native_recovery_and_keeps_media_external(self):
+        emby = self.products["emby"]
+        self.assertEqual(emby["recovery_issue"]["number"], 134)
+        self.assertEqual(emby["methods"]["native"]["availability"], "declared")
+        self.assertEqual(emby["methods"]["native"]["evidence"]["schedule"]["status"], "configured")
+        self.assertEqual(emby["external_data"][0]["kind"], "mount")
 
     def test_shared_guest_and_external_dependencies_are_visible(self):
         services = self.products["n8n"]
