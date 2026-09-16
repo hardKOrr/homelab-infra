@@ -1,0 +1,6 @@
+---
+emby_project_dir: "/opt/{{ instance }}"
+emby_http_retries: 30
+emby_http_delay: 5
+emby_client_name: homelab-infra
+emby_device_name: homelab-infra Ansible
