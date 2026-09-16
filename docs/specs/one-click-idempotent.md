@@ -21,6 +21,20 @@ chains. Re-running any playbook is always safe.
   than duplicating it in Ansible. Project-owned automation is appropriate when orchestration or
   a repository contract has no existing owner.
 
+## Automation boundary
+
+Every agent action against the live lab goes through an Ansible playbook or a Rundeck job.
+An agent must not use Rundeck's ad-hoc node command paths, including
+`rd run -F '<filter>' -- <command>` or `rd run --script <path>`. An ad-hoc change is a
+lab mutation that no playbook can reproduce, re-converge, or roll back, which directly
+undermines this specification's idempotence guarantee. If the needed action has no job,
+add the playbook and job instead of reaching around the automation.
+
+Read-only inspection through the Rundeck API is allowed and is not a lab action. This
+includes `jobs list`/`info`, `executions query`/`info`/`state`/`follow`, `nodes list`, and
+`projects info`. The agent evidence workflow and its CLI details are in
+[`docs/live-lab.md`](../live-lab.md).
+
 ## Enforced by
 
 - inspection — cite this specification in findings

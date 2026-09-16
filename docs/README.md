@@ -4,6 +4,8 @@ This directory contains durable project design and implementation contracts.
 
 - [Architecture](architecture.md) maps the main modules, execution flows, and fragile seams.
 - [Specifications](specs/) define the repository's Ansible dialect and review contracts.
+- [Live-lab evidence](live-lab.md) explains the approved Rundeck API workflow for collecting
+  acceptance evidence without bypassing repository automation.
 - [`../ansible/README.md`](../ansible/README.md) routes implementation work to the relevant
   Ansible contract or subsystem guide.
 - [`../config.example/README.md`](../config.example/README.md) explains the tracked examples

@@ -108,3 +108,8 @@ observation is recorded. Use `Refs #<issue>` only when the PR leaves more reposi
 implementation work for that same issue. Do not expand an observation into unplanned
 implementation work to make an issue closeable; open a separate Defect issue for anything
 the observation reveals.
+
+Workers may gather that observation themselves through the approved Rundeck API workflow.
+See [`docs/live-lab.md`](docs/live-lab.md) for authentication, job selection, idempotence
+runs, output capture, and job-definition reimport. The guide is an evidence-collection
+how-to; the status choices and issue flow above remain the acceptance contract.

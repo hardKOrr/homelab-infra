@@ -36,6 +36,7 @@ when the task reaches their subject.
 | Configuration schema and `homelabinfra_*` variables | `ansible/vars/CONTRACT.md` |
 | User configuration examples | `config.example/README.md` |
 | Application catalog | `catalog/README.md` |
+| Live-lab evidence collection | `docs/live-lab.md` |
 | Architecture and documentation map | `docs/README.md`, then `docs/architecture.md` when needed |
 | Reviewable implementation contracts | `docs/specs/README.md`, then the applicable specification |
 | Verification commands and test selection | `gate/README.md` |
