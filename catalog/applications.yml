@@ -411,6 +411,15 @@ applications:
     scope: estate
     extra: [bookstack_backup, bookstack_restore]
 
+  wordpress:
+    name: WordPress
+    job: deploy-wordpress.yaml
+    root: Applications
+    category: Content & Publishing
+    type: Website
+    scope: estate
+    extra: [wordpress_backup, wordpress_restore]
+
   hi-events:
     name: Hi.Events
     job: deploy-hi-events.yaml

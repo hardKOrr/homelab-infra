@@ -1,0 +1,69 @@
+---
+# Run the installed WordPress application-consistent backup immediately.
+#
+# The scheduled and on-demand paths call the same root-owned helper on the services stack
+# host. It stops only WordPress, dumps only its named database, and sends the dump plus
+# wp-content to one PBS snapshot. It never stops or mutates the shared backend guest.
+
+- name: "WordPress Backup | Resolve"
+  hosts: localhost
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - ansible.builtin.assert:
+        that: instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "Provide the WordPress instance: -e instance=wordpress"
+    - ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/wordpress.yml
+        name: _app_defaults
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+    - ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - ansible.builtin.set_fact:
+        app_config: "{{ _app_defaults.wordpress_defaults | combine(_instance_config | default({}), recursive=True) }}"
+  tasks:
+    - name: Resolve the existing services stack host
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
+      vars:
+        stack_name: "{{ app_config.stack }}"
+        stack_estate: "{{ app_config.routing.estate | default('', true) }}"
+        resolve_stack_deploy_group: "wordpress_recovery_{{ instance }}"
+        resolve_stack_app_instance: "{{ instance }}"
+
+- name: "WordPress Backup | Run"
+  hosts: "wordpress_recovery_{{ instance | default('_instance_unset') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the WordPress recovery helper
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/homelab-infra-wordpress-recovery, --backup]
+      environment:
+        WORDPRESS_INSTANCE: "{{ instance }}"
+      register: wordpress_backup_result
+      changed_when: true
+
+- name: "WordPress Backup | Notify"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Notify completed WordPress backup
+      ansible.builtin.include_tasks: ../../tasks/notify.yml
+      vars:
+        notify_title: "{{ instance }} backed up"
+        notify_message: "Application-consistent WordPress backup for {{ instance }} was written to PBS."
+      when: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_backup_result.rc | default(1) == 0
+    - name: Fail if WordPress backup did not complete
+      ansible.builtin.assert:
+        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_backup_result.rc | default(1) == 0
+        fail_msg: "WordPress backup failed; no success notification was sent."

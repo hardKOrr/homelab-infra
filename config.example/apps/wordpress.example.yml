@@ -1,0 +1,31 @@
+---
+# WordPress site on the services Docker stack.
+# Deploy the named MariaDB backend first. The database role and initial administrator
+# password are generated and stored in Vaultwarden; do not add credentials
+# to this file.
+app:
+  database:
+    instance: mariadb-wordpress
+    name: wordpress
+    role: wordpress
+  data_path: /opt/wordpress/data
+  # Initial administrator only; changing these after deployment is rejected by the role.
+  admin_user: admin
+  admin_email: admin@example.invalid
+  admin_name: Homelab Admin
+  site_title: Homelab WordPress
+  # Installed and activated only on first boot; later deploys preserve theme edits.
+  default_theme: twentytwentyfive
+
+routing:
+  access: public
+  identity: catalog
+
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+  retention_days: 14
+
+# Recovery is one named PBS snapshot containing a quiesced SQL dump and WordPress's
+# wp-content (uploads, themes and optional plugins). Use the generated Backup WordPress and Restore WordPress jobs;
+# neither operation changes the shared backend guest or any other database.

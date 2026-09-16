@@ -59,6 +59,16 @@ actions:
     hosting: []
     opt_in: true
 
+  wordpress_backup:
+    template: wordpress-backup.yaml
+    hosting: []
+    opt_in: true
+
+  wordpress_restore:
+    template: wordpress-restore.yaml
+    hosting: []
+    opt_in: true
+
   migrate:
     template: migrate-servarr.yaml
     hosting: []

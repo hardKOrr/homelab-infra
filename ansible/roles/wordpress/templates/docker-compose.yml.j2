@@ -1,0 +1,32 @@
+{{ ansible_managed | comment }}
+services:
+  wordpress:
+    image: {{ app_config.app.image }}
+    container_name: "{{ instance }}-wordpress"
+    restart: unless-stopped
+    env_file:
+      - "{{ wordpress_env_file }}"
+    ports:
+      - "{{ app_config.app.port }}:{{ app_config.app.container_port }}"
+    volumes:
+      # The official image's /var/www/html contains the durable wp-content and generated
+      # wp-config.php alongside the core installed by the image.
+      - "{{ app_config.app.data_path }}:/var/www/html"
+    healthcheck:
+      test: ["CMD-SHELL", "php -r '$body=@file_get_contents(\"http://127.0.0.1:{{ app_config.app.container_port }}/wp-login.php\"); exit($body === false ? 1 : 0);'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # WP-CLI is a disposable administration tool, not a second application or database
+  # sidecar. The role invokes it with `docker compose run --rm --no-deps` for first boot,
+  # theme setup, and restore-time URL/admin repair.
+  wordpress-cli:
+    image: {{ app_config.app.cli_image }}
+    profiles: [tools]
+    env_file:
+      - "{{ wordpress_env_file }}"
+    volumes:
+      - "{{ app_config.app.data_path }}:/var/www/html"
+    entrypoint: ["wp"]

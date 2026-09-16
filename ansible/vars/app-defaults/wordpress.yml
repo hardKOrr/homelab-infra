@@ -1,0 +1,57 @@
+---
+# Default configuration for WordPress on the services Docker stack. The application
+# database is deliberately external: deploy the named MariaDB backend first.
+wordpress_defaults:
+  stack: services
+
+  app:
+    # The official Apache image keeps the WordPress core, wp-config.php, wp-content,
+    # uploads and installed themes in the durable /var/www/html bind mount. The version
+    # is pinned so an image update is an explicit, reviewable config change.
+    image: wordpress:6.9.4-php8.3-apache
+    cli_image: wordpress:cli-2.12.0-php8.3
+    port: 8080
+    container_port: 80
+    table_prefix: wp_
+    database:
+      provider: mariadb
+      instance: mariadb-wordpress
+      name: wordpress
+      role: wordpress
+    data_path: "/opt/{{ instance }}/data"
+    # Initial administrator only; the role records the login and email in /var/www/html
+    # and refuses an accidental change on a later deploy.
+    admin_user: admin
+    admin_email: admin@example.invalid
+    admin_name: Homelab Admin
+    site_title: Homelab WordPress
+    # Twenty Twenty-Five is a maintained block theme and enables the Site Editor. It is
+    # installed and activated only on first boot; later deploys preserve operator theme
+    # and content choices.
+    default_theme: twentytwentyfive
+
+  routing:
+    subdomain: wordpress
+    proxy: internal
+    access: public
+    identity: catalog
+
+  # The role stops only WordPress, dumps this named database, and archives wp-content
+  # before uploading both as one PBS snapshot. wp-content contains uploads, themes and
+  # operator-installed plugins; the core is recreated from the pinned image. The shared
+  # backend guest and its other databases are never stopped or removed. If the lab has no
+  # PBS, the recovery schedule is a safe no-op and the deploy says so; deploy PBS and rerun
+  # WordPress to enable it.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      # Client-only repository, not the PBS server's subscription repository.
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

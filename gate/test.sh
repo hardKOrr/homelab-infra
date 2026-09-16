@@ -101,6 +101,7 @@ bash gate/test-hi-events-contract.sh || rc=1
 bash gate/test-batch-c-contract.sh || rc=1
 bash gate/test-open-webui-contract.sh || rc=1
 bash gate/test-bookstack-contract.sh || rc=1
+bash gate/test-wordpress-contract.sh || rc=1
 bash gate/test-immich-contract.sh || rc=1
 bash gate/test-emby-contract.sh || rc=1
 bash gate/test-navidrome-contract.sh || rc=1
