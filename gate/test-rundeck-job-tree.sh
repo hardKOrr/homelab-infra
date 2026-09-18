@@ -165,7 +165,8 @@ PY
 
 # The option publisher must label every estate and reject an unnamed estate-scoped instance.
 "$python" - "$repo" "$work" <<'PY'
-import importlib.util, pathlib, sys, yaml
+import contextlib, importlib.util, io, pathlib, sys, yaml
+from unittest.mock import patch
 
 repo, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 spec = importlib.util.spec_from_file_location(
@@ -196,6 +197,16 @@ assert {entry["name"] for entry in instances["radarr"]} == {
 (fixture / "config" / "apps" / "radarr.yml").write_text("{}\n", encoding="utf-8")
 _, _, invalid = app_instances.collect(fixture, applications, estates)
 assert invalid and "radarr-personal" in invalid[0]
+
+# A stale runner can still have a root-owned cache from before the bootstrap ownership
+# contract. The publisher must report one useful error, not expose a Python traceback.
+error_target = work / "instances" / "radarr.json"
+error_output = io.StringIO()
+with patch.object(app_instances.Path, "write_text", side_effect=PermissionError(13, "Permission denied")), \
+        contextlib.redirect_stderr(error_output):
+    assert not app_instances.write_if_changed(error_target, "[\"radarr\"]\n")
+assert "app-instances: cannot write" in error_output.getvalue()
+assert "Traceback" not in error_output.getvalue()
 PY
 
 # Config validation must reject an order-dependent default before any job can run.
