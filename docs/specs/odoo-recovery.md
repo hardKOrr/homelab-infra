@@ -1,6 +1,6 @@
 # Odoo Community recovery
 
-This is the product-specific contract for [recovery acceptance #80](https://github.com/hardKOrr/homelab-infra/issues/80).
+This is the product-specific contract for [Odoo observation issue #244](https://github.com/hardKOrr/homelab-infra/issues/244).
 The repository fixture and role checks below are closure evidence for this slice. No live
 Odoo, PostgreSQL, PBS, route, credential, or target identity is claimed here.
 
@@ -92,7 +92,7 @@ and readable from PBS.
 
 This checkout has no authorized live source or artifact. Schedule firing, artifact age,
 PBS integrity, version, credential readability, database/filestore consistency and restore
-success therefore remain **unknown/deferred**, not healthy by declaration. #80 must record
+success therefore remain **unknown/deferred**, not healthy by declaration. Observation issue #244 must record
 the exact source instance, installed versions, provider snapshot identity, observed age,
 integrity result, credentials/key material availability, and application verification
 without attaching backup contents or secrets.

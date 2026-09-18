@@ -43,7 +43,7 @@ def main():
     assert catalog["type"] == "Media Servers"
     assert catalog["actions"] == ["backup", "configure", "remove", "restart", "restore", "rollback", "tail"]
     recovery = parse("catalog/recovery.yml")["products"]["emby"]
-    assert recovery["recovery_issue"] == 134
+    assert recovery["recovery_issue"] == 253
 
     compose_template = Environment(undefined=StrictUndefined).from_string(
         read("ansible/roles/emby/templates/docker-compose.yml.j2")
@@ -131,7 +131,7 @@ def main():
     assert "playbooks/apps/emby.yml" in job["sequence"]["commands"][0]["script"]
     assert "identity: catalog" in read("config.example/apps/emby.example.yml")
     meta = read("docs/meta/134-emby/README.md")
-    for fragment in ("#198", "emby-acceptance", "stack-media-acceptance", "no real media path is approved"):
+    for fragment in ("#253", "emby-acceptance", "stack-media-acceptance", "no real media path is approved"):
         assert fragment in meta, f"Deferred live acceptance record is missing {fragment!r}"
 
     print("Emby catalog, app-owned auth, read-only fixture mounts, PBS scope, wiring and deferred live plan: OK")

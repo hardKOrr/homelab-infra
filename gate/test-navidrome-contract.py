@@ -49,7 +49,7 @@ def main():
         "scope": "estate",
         "actions": ["backup", "configure", "remove", "restart", "restore", "rollback", "tail"],
     }
-    assert parse("catalog/recovery.yml")["products"]["navidrome"]["recovery_issue"] == 135
+    assert parse("catalog/recovery.yml")["products"]["navidrome"]["recovery_issue"] == 238
 
     compose_template = Environment(undefined=StrictUndefined).from_string(
         read("ansible/roles/navidrome/templates/docker-compose.yml.j2")
@@ -133,7 +133,7 @@ def main():
     assert "playbooks/apps/navidrome.yml" in job["sequence"]["commands"][0]["script"]
     assert "read-only" in read("config.example/apps/navidrome.example.yml")
     meta = read("docs/meta/135-navidrome/README.md")
-    for fragment in ("#198", "navidrome-acceptance", "stack-media-acceptance", "no real music path"):
+    for fragment in ("#238", "navidrome-acceptance", "stack-media-acceptance", "no real music path"):
         assert fragment in meta, f"Deferred live acceptance record is missing {fragment!r}"
 
     print("Navidrome catalog, scoped read-only music mount, PBS recovery, wiring and deferred live plan: OK")

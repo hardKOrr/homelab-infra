@@ -214,7 +214,7 @@ def report_guest(guest, jobs, config, artifacts, unreadable, now, max_age):
         'application_consistency': 'unverified', 'restore_test': 'unverified',
         'application_recoverability': 'unverified',
         # The top-level fields keep the per-guest report easy to consume. `evidence` is
-        # also collected at the document root for #76/#80 rollups.
+        # also collected at the document root for historical #76/#80 rollups.
         **evidence,
         'evidence': evidence,
     }

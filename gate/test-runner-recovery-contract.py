@@ -46,7 +46,7 @@ class RunnerRecoveryContractTests(unittest.TestCase):
         for excluded in ("BW_SESSION", "Bitwarden CLI app-data", "temporary SSH key"):
             self.assertIn(excluded, self.runbook, excluded)
         self.assertIn("not a usable runner recovery point", self.runbook)
-        for issue in ("77", "78", "80", "89", "110", "123", "93", "91", "112", "106", "104", "117"):
+        for issue in ("77", "78", "215", "206", "212", "214", "213", "210", "217", "218", "219", "220"):
             self.assertIn(
                 f"https://github.com/hardKOrr/homelab-infra/issues/{issue}",
                 self.runbook,

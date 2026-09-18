@@ -78,8 +78,7 @@ owned by the guest recovery evidence.
 
 The repository cannot read a live image digest, schedule, PBS point, Vaultwarden item,
 cluster state or external provider from fixtures. Those values remain **unknown/deferred**
-and must never be promoted to healthy by this specification. The authorized [recovery
-acceptance roll-up #80](https://github.com/hardKOrr/homelab-infra/issues/80) must record the
+and must never be promoted to healthy by this specification. The current [SearXNG observation issue #264](https://github.com/hardKOrr/homelab-infra/issues/264) must record the
 exact source, isolated target, installed versions, any shared PBS artifact identity, age,
 integrity and consistency result, credential/key availability, external dependency checks,
 and final application assertions without recording secrets or backup contents.

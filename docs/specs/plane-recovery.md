@@ -1,6 +1,6 @@
 # Plane recovery
 
-This is the product-specific contract for [recovery acceptance #80](https://github.com/hardKOrr/homelab-infra/issues/80).
+This is the product-specific contract for [Plane observation issue #245](https://github.com/hardKOrr/homelab-infra/issues/245).
 The repository adapter and fixture checks are closure evidence for this slice. They do not
 claim a live Plane restore, a live backup schedule, or production cutover.
 
@@ -112,13 +112,13 @@ targets do not receive an active timer until the selected point passes verificat
 normal deploy/wiring pass occurs. Both paths use PBS group `host/<backup_id>`, defaulting
 to `host/<instance>`, and upload all four members in one point. The helper does not prune
 or delete existing snapshots. Any datastore-wide PBS retention policy is independent and
-its identity/age must be verified during #80. A native point identity is the provider's
+its identity/age must be verified during observation issue #245. A native point identity is the provider's
 full `host/<instance>/<timestamp>` value, with all four members listed and readable from PBS.
 
 This checkout has no authorized live source, installed-version observation or artifact.
 Schedule firing, artifact age, PBS integrity, PostgreSQL/Redis readability, key availability,
 external dependencies, consistency and restore success therefore remain **unknown/deferred**,
-not healthy by declaration. #80 must record the exact source instance and Proxmox target,
+not healthy by declaration. Observation issue #245 must record the exact source instance and Proxmox target,
 installed versions, full provider artifact identity, age, integrity result, member list,
 credential/key checks, external dependency checks, both destination results and application
 assertions without attaching backup contents or secrets.
@@ -209,7 +209,7 @@ shared-scope boundaries. The focused contract test checks all four native artifa
 source-key handling, target Redis separation, isolated wiring and stopped-on-failure behavior.
 
 Repository/fixture evidence is the closure scope for this issue. Live Plane validation is
-deferred to the existing [recovery acceptance roll-up #80](https://github.com/hardKOrr/homelab-infra/issues/80)
+deferred to the current [Plane observation issue #245](https://github.com/hardKOrr/homelab-infra/issues/245)
 with an authorized isolated source/destination. It must record the installed Plane version,
 native PBS artifact identity, recurring schedule observation, all four member/integrity
 results, both destination results, independent PostgreSQL/Redis/key/object-storage checks,

@@ -1,6 +1,6 @@
 # Open WebUI recovery
 
-This is the product-specific recovery contract for [recovery acceptance #80](https://github.com/hardKOrr/homelab-infra/issues/80) and [issue #185](https://github.com/hardKOrr/homelab-infra/issues/185). Repository implementation and synthetic fixtures are evidence for this slice; they do not claim a live backup, restore or production cutover.
+This is the product-specific recovery contract for [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225) and [closed implementation issue #185](https://github.com/hardKOrr/homelab-infra/issues/185). Repository implementation and synthetic fixtures are evidence for this slice; they do not claim a live backup, restore or production cutover.
 
 ## Method decision
 
@@ -37,7 +37,7 @@ The generated `WEBUI_SECRET_KEY` lives in the hidden `secret_key` field of Vault
 
 The installed recurring timer and `Backup App` action call the same root-owned helper. The tracked schedule is `0 3 * * *` in the AI guest's local timezone and is installed only when backup is enabled and PBS is usable. Its root-only config contains PBS access material. If PBS is absent, deployment does not claim a recurring backup. The helper uses a per-instance lock, stops only Open WebUI, validates SQLite, pushes `data.pxar`, and restarts the service after a failed attempt where possible. It does not prune PBS points; datastore-wide retention remains an independent policy to verify.
 
-This checkout has no authorized live source, installed-version observation, schedule firing or PBS artifact. Schedule status, artifact identity/age, PBS integrity, key/credential readability, external upstream availability and live consistency are therefore **unknown/deferred**, not healthy by declaration. A live record on #80 must independently identify the authorized source and isolated destination; installed version/digest; recurring timer observation; full `host/<backup_id>/<timestamp>` identity and age; PBS verification result and `data.pxar` readability; source key; target storage; named upstream endpoints/credentials; SQLite integrity; login, chat, upload and vector checks; and both destination results. Do not attach backup contents, endpoint secrets or credentials.
+This checkout has no authorized live source, installed-version observation, schedule firing or PBS artifact. Schedule status, artifact identity/age, PBS integrity, key/credential readability, external upstream availability and live consistency are therefore **unknown/deferred**, not healthy by declaration. A live record on observation issue #225 must independently identify the authorized source and isolated destination; installed version/digest; recurring timer observation; full `host/<backup_id>/<timestamp>` identity and age; PBS verification result and `data.pxar` readability; source key; target storage; named upstream endpoints/credentials; SQLite integrity; login, chat, upload and vector checks; and both destination results. Do not attach backup contents, endpoint secrets or credentials.
 
 ## Destination protocol
 
@@ -76,4 +76,4 @@ Neither destination stops the source, publishes an isolated target route early, 
 
 `gate/test-open-webui-recovery.py` exercises both native destinations, source isolation, chats/uploads, key handling, named upstream boundaries, A → B → restore A, B recovery/retry and the shared wrong-target/missing-key/corrupt/version/external-data/partial-recovery matrix. `gate/test-open-webui-contract.sh` checks the role boundary and removal safety. The common report keeps schedule, artifact, integrity, external-data, credential and live restore states unknown unless independently supplied.
 
-Repository and fixture verification are the closure scope for #185. Authorized live acceptance is deferred to [#80](https://github.com/hardKOrr/homelab-infra/issues/80), with evidence linked from this spec and `docs/meta/185-open-webui-recovery/README.md`. No live source or destination was changed for this slice.
+Repository and fixture verification are the closure scope for #185. Authorized live acceptance is deferred to [observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225), with evidence linked from this spec and `docs/meta/185-open-webui-recovery/README.md`. No live source or destination was changed for this slice.

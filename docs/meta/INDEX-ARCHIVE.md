@@ -1,8 +1,8 @@
 # Archived meta index
 
 This is the superseded long-form index, preserved as historical evidence. It contains stale
-counts, priorities, implementation state, and live-lab observations. Do not use it as the work
-queue; use [`INDEX.md`](INDEX.md).
+counts, priorities, implementation state, and live-lab observations. Do not use it as the
+work queue; current work and status live in [GitHub Issues](https://github.com/hardKOrr/homelab-infra/issues).
 
 ## Former index
 

@@ -2,7 +2,7 @@
 
 **Status:** built
 **Subject:** estate-scoped outbound mail identity and optional SMTP credential
-**Related:** 008 (estate contract), 418 (platform mail contract), #267
+**Related:** 008 (estate contract), 418 (platform mail contract), [closed implementation issue #267](https://github.com/hardKOrr/homelab-infra/issues/267)
 
 ## Goal
 
@@ -24,7 +24,7 @@ renders SMTP settings, so estate applications send with the estate's From-domain
 - [x] 2026-09-18 — focused gate fixtures cover identity selection, global inheritance,
       scoped-credential isolation, and application SMTP rendering.
 - [ ] Observe a real estate application send through the configured relay and record the
-      From-domain and authentication result in a follow-up observation under #198.
+      From-domain and authentication result in a self-contained follow-up observation issue naming the closed implementation issue #267 and linking this criterion.
 
 ## Links
 

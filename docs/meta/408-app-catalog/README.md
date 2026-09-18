@@ -10,14 +10,16 @@ classification projected into Rundeck)
 
 One place that names every application this platform intends to deploy, its hosting kind,
 its stack, and the wiring it needs — so that "do we have X?" is answered by reading a table
-rather than by listing `ansible/roles/`. Each row becomes an implementation batch below;
+rather than by listing `ansible/roles/`. Each row describes a possible implementation scope;
 nothing in this slice is code.
 
 The catalog was entered on 2026-08-17 from the operator's own lab inventory. It is a
 declaration of intent, not a plan that has shipped.
 
 `catalog/applications.yml` is the separate machine-readable catalog of applications that are
-selectable now. This slice remains the future implementation queue; a row moves into that
+selectable now. This slice remains a catalog specification, not an implementation queue.
+Current work and status
+live in GitHub Issues; a row moves into that
 runtime catalog only when its playbook and Rundeck job ship.
 
 ### What this catalog is NOT
