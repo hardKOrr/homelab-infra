@@ -21,7 +21,10 @@ expect "$timer" 'if \[ ! -f /var/run/reboot-required \]; then'
 expect "$timer" 'systemctl restart -- "\$service"'
 expect "$timer" 'docker/containerd itself'
 expect "$status" '_st_stale_services'
-expect "$status" 'stale services \{\{ hostvars\[h\]._st_stale_services'
+expect "$status" 'stale services .*hostvars\[h\]._st_stale_services'
 expect "$docker_host" 'configure-unattended-upgrades.yml'
+expect "$status" '_st_stale_checked: true'
+expect "$status" "_st_stale_raw.rc | default\(1\) == 0"
+expect "$status" "else 'not checked'"
 
 echo "stale-service-detection: all cases passed."
