@@ -108,6 +108,10 @@ class RunnerRecoveryContractTests(unittest.TestCase):
         self.assertLess(refresh, fatal_guard)
 
     def test_runner_authorizes_platform_identity_for_self_status(self):
+        identity = self.bootstrap.index("# -- the platform's own SSH identity")
+        root_ssh = self.bootstrap.index("# -- root SSH")
+        self.assertLess(identity, root_ssh)
+        self.assertIn('PLATFORM_KEY_COMMENT="$PLATFORM_KEY_COMMENT"', self.bootstrap)
         self.assertIn('platform_ssh_pubkey="$(cat "' + '$' + '{LAB_SSH_KEY}.pub")', self.bootstrap)
         self.assertIn('including the platform identity for self-status', self.bootstrap)
         self.assertIn('$' + '{SSH_PUBKEY:-}', self.bootstrap)
