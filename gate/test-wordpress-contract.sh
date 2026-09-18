@@ -60,7 +60,7 @@ need "$repo/ansible/playbooks/apps/remove.yml" 'Remove WordPress recovery schedu
 need "$repo/ansible/playbooks/apps/remove.yml" 'Remove WordPress recovery configuration'
 
 need "$repo/catalog/applications.yml" 'job: deploy-wordpress.yaml'
-need "$repo/catalog/recovery.yml" 'wordpress: {recovery_issue: 60}'
+need "$repo/catalog/recovery.yml" 'wordpress: {recovery_issue: 246}'
 need "$repo/rundeck/app-actions.yml" 'wordpress_backup:'
 need "$repo/rundeck/app-actions.yml" 'wordpress_restore:'
 need "$repo/rundeck/jobs/deploy-wordpress.yaml" 'Run playbooks/apps/wordpress.yml'

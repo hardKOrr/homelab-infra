@@ -2,11 +2,11 @@
 
 **Status:** built
 **Subject:** Open WebUI application recovery
-**Related:** #74 (recovery program), #76 (inventory owner and must-keep order), #77 (method dispositions), #78 (destination orchestration), #80 (acceptance protocol), #89 (shared guest recovery), #149 (Open WebUI named upstreams)
+**Related:** historical #74 (recovery program), #76 (inventory owner and must-keep order), #77 (method dispositions), #78 (destination orchestration), #89 (shared guest recovery), #149 (Open WebUI named upstreams); current observation issue #225 (live acceptance)
 
 ## Goal
 
-Document Open WebUI's supported native `data.pxar` recovery unit, whole-`ai`-guest fallback, unsupported project-managed/rebuild-only dispositions, generated-key and named-upstream dependencies, and both restore destinations. Manual and recurring backup now share one guarded helper, and existing-target recovery verifies independent B before replacing data. Repository fixtures are closure evidence; live schedule, artifact, installed version, credential, external dependency and application validation remains with #80.
+Document Open WebUI's supported native `data.pxar` recovery unit, whole-`ai`-guest fallback, unsupported project-managed/rebuild-only dispositions, generated-key and named-upstream dependencies, and both restore destinations. Manual and recurring backup now share one guarded helper, and existing-target recovery verifies independent B before replacing data. Repository fixtures are closure evidence; live schedule, artifact, installed version, credential, external dependency and application validation remains with observation issue #225.
 
 ## Remaining
 
@@ -14,11 +14,11 @@ Document Open WebUI's supported native `data.pxar` recovery unit, whole-`ai`-gue
 - [x] Use one non-pruning manual/recurring `data.pxar` helper; check SQLite consistency and retain the generated application key securely for a new target.
 - [x] Verify an independent existing-target B point before replacement; cover isolated new restore, A → B → restore A, source isolation, failure and retry in fixtures.
 - [x] Run the repository lint and test gates before publishing this slice.
-- [ ] Live acceptance remains deferred to #80: observe the schedule, full PBS identity/age/integrity, installed source version/digest, key/upstream dependencies, consistency, and both authorized destination results. Do not infer health from a fixture or perform cutover/cleanup.
+- [ ] Live acceptance remains deferred to observation issue #225: observe the schedule, full PBS identity/age/integrity, installed source version/digest, key/upstream dependencies, consistency, and both authorized destination results. Do not infer health from a fixture or perform cutover/cleanup.
 
 ## Links
 
-- `docs/specs/open-webui-recovery.md` — normative product disposition, recovery unit, prerequisites, destinations and failure protocol; linked to #80 evidence.
+- `docs/specs/open-webui-recovery.md` — normative product disposition, recovery unit, prerequisites, destinations and failure protocol; linked to #225 evidence.
 - `notes.md` — safe repository fixture evidence; live verification remains explicitly false.
 - `ansible/roles/open-webui/tasks/main.yml` — recurring timer and root-only recovery configuration.
 - `ansible/roles/open-webui/files/open-webui-recovery` — shared manual/scheduled capture and SQLite consistency check.

@@ -1,7 +1,7 @@
 # Recovery acceptance protocol
 
-This is the repository and fixture side of [recovery acceptance #80](https://github.com/hardKOrr/homelab-infra/issues/80).
-It does not claim a live application restore. Product issues own the application-specific
+This is the repository and fixture side of the [repeatable recovery proof job #206](https://github.com/hardKOrr/homelab-infra/issues/206).
+It does not claim a live application restore. The current per-product observation issue owns the live evidence and application-specific
 assertions; this protocol gives each method the same two destination transitions and the
 same failure boundaries.
 
@@ -13,7 +13,7 @@ artifact identity (while `artifact_id` preserves the native provider identity), 
 identity/state and assertion names. It does not contain backup contents, keys,
 credentials, endpoint secrets or live configuration. `restore_tested` in a report means
 the synthetic fixture completed both routes; `live_verified` is a separate field and is
-false until an authorized isolated lab run is recorded on #80.
+false until an authorized isolated lab run is recorded in the applicable product observation issue.
 
 The report has three deliberately separate coverage sets:
 
@@ -66,7 +66,7 @@ add the installed product version, artifact identity and application-specific as
 without adding secrets or backup contents. Open WebUI's method decision and fixture
 record are detailed in [`docs/specs/open-webui-recovery.md`](specs/open-webui-recovery.md)
 and [`docs/meta/185-open-webui-recovery/README.md`](meta/185-open-webui-recovery/README.md),
-which remain the repository-side links for its #80 live evidence.
+which remain the repository-side links for the [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225).
 
 ## Fixture lifecycle and live work
 
@@ -74,4 +74,4 @@ The fixture protocol ends after verification and evidence creation. It does not 
 production cutover, source retirement, or automatic cleanup. A live rehearsal requires a
 separately authorized isolated source/destination, exact affected scope and data handling,
 and a recorded retry/recovery action for a failed target. Leave the final target identity
-and state in the #80 evidence record; handle cleanup as a separately scoped operation.
+and state in the applicable product observation issue; handle cleanup as a separately scoped operation.

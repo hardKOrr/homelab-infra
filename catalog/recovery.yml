@@ -1,76 +1,78 @@
 schema_version: 1
 
 # Product recovery ownership and inventory metadata. Method mechanics remain in product
-# defaults and roles; this file answers the separate question "which issue owns the
-# method decision and what was known when the inventory was made?" It contains no live
-# instance names, credentials, artifact contents, or claimed restore results.
+# defaults and roles; this file answers the separate question "which current observation
+# issue covers this product's recovery proof, and what was known when the inventory was
+# made?" It contains no live instance names, credentials, artifact contents, or claimed
+# restore results.
 #
 # Every catalog product must appear exactly once. The coverage collector derives hosting,
 # recovery units, shared-guest effects, and method declarations from this map plus the
-# catalog/defaults. `deployment_issue` points at the existing implementation issue for
-# products added after the original recovery queue; `recovery_issue` is the focused owner.
+# catalog/defaults. `recovery_issue` points at the current open per-product observation
+# issue in the GitHub Issues fan. `deployment_issue`, where present, is historical context
+# only and points at the already-closed implementation issue that introduced the product;
+# neither field is a queue or a priority signal.
 
 products:
-  authentik: {recovery_issue: 91}
-  bazarr: {recovery_issue: 92}
-  caddy: {recovery_issue: 93}
-  deemix: {recovery_issue: 94}
-  emby: {recovery_issue: 134}
-  flaresolverr: {recovery_issue: 95, rebuild_only: true}
-  homepage: {recovery_issue: 96, rebuild_only: true}
-  influxdb: {recovery_issue: 97}
-  jellyfin: {recovery_issue: 98}
-  jellyseerr: {recovery_issue: 99}
-  k3s-cluster: {recovery_issue: 100}
-  kometa: {recovery_issue: 101, rebuild_only: true}
-  lidarr: {recovery_issue: 102}
-  maintainerr: {recovery_issue: 103}
-  mariadb: {recovery_issue: 104}
-  mixpost: {recovery_issue: 105}
-  mysql: {recovery_issue: 106}
-  navidrome: {recovery_issue: 135}
-  ntfy: {recovery_issue: 107}
-  observability: {recovery_issue: 108}
-  opnsense: {recovery_issue: 109}
-  pbs: {recovery_issue: 110}
-  plex: {recovery_issue: 111}
-  postgresql: {recovery_issue: 112}
-  prowlarr: {recovery_issue: 113}
-  proxmox-datacenter-manager: {recovery_issue: 114}
-  qbittorrent: {recovery_issue: 115}
-  radarr: {recovery_issue: 116}
-  redis: {recovery_issue: 117}
-  sabnzbd: {recovery_issue: 118}
-  slskd: {recovery_issue: 119}
-  sonarr: {recovery_issue: 90}
-  tautulli: {recovery_issue: 120}
-  unpackerr: {recovery_issue: 121, rebuild_only: true}
-  uptime-kuma: {recovery_issue: 122}
-  vaultwarden: {recovery_issue: 123}
-  wireguard: {recovery_issue: 124}
+  authentik: {recovery_issue: 210}
+  bazarr: {recovery_issue: 230}
+  caddy: {recovery_issue: 213}
+  deemix: {recovery_issue: 247}
+  emby: {recovery_issue: 253}
+  flaresolverr: {recovery_issue: 222, rebuild_only: true}
+  homepage: {recovery_issue: 223, rebuild_only: true}
+  influxdb: {recovery_issue: 221}
+  jellyfin: {recovery_issue: 252}
+  jellyseerr: {recovery_issue: 236}
+  k3s-cluster: {recovery_issue: 211}
+  kometa: {recovery_issue: 234, rebuild_only: true}
+  lidarr: {recovery_issue: 229}
+  maintainerr: {recovery_issue: 235}
+  mariadb: {recovery_issue: 219}
+  mixpost: {recovery_issue: 242}
+  mysql: {recovery_issue: 218}
+  navidrome: {recovery_issue: 238}
+  ntfy: {recovery_issue: 207}
+  observability: {recovery_issue: 209}
+  opnsense: {recovery_issue: 260}
+  pbs: {recovery_issue: 212}
+  plex: {recovery_issue: 251}
+  postgresql: {recovery_issue: 217}
+  prowlarr: {recovery_issue: 226}
+  proxmox-datacenter-manager: {recovery_issue: 259}
+  qbittorrent: {recovery_issue: 232}
+  radarr: {recovery_issue: 228}
+  redis: {recovery_issue: 220}
+  sabnzbd: {recovery_issue: 231}
+  slskd: {recovery_issue: 248}
+  sonarr: {recovery_issue: 227}
+  tautulli: {recovery_issue: 237}
+  unpackerr: {recovery_issue: 233, rebuild_only: true}
+  uptime-kuma: {recovery_issue: 208}
+  vaultwarden: {recovery_issue: 214}
+  wireguard: {recovery_issue: 261}
 
   # Products added after the initial recovery queue retain their deployment issue as
-  # historical context, but get a dedicated recovery owner rather than being silently
-  # folded into the deployment work.
-  actual-budget: {recovery_issue: 171, deployment_issue: 154}
-  bookstack: {recovery_issue: 172, deployment_issue: 153}
-  wordpress: {recovery_issue: 60}
-  comfyui: {recovery_issue: 173, deployment_issue: 166}
-  forgejo: {recovery_issue: 174, deployment_issue: 150}
-  forgejo-runner: {recovery_issue: 175, deployment_issue: 150}
-  frigate: {recovery_issue: 176, deployment_issue: 156}
-  hi-events: {recovery_issue: 177, deployment_issue: 129}
-  home-assistant: {recovery_issue: 178, deployment_issue: 159}
-  immich: {recovery_issue: 170, deployment_issue: 155}
-  karakeep: {recovery_issue: 179, deployment_issue: 152}
-  litellm: {recovery_issue: 180, deployment_issue: 169}
-  mautic: {recovery_issue: 181, deployment_issue: 129}
-  n8n: {recovery_issue: 182, deployment_issue: 150}
-  odoo: {recovery_issue: 183, deployment_issue: 127}
-  ollama: {recovery_issue: 184, deployment_issue: 167}
-  open-webui: {recovery_issue: 185, deployment_issue: 165}
-  plane: {recovery_issue: 186, deployment_issue: 150}
-  searxng: {recovery_issue: 187, deployment_issue: 129, rebuild_only: true}
+  # historical context. Their recovery issue is the current per-product observation issue.
+  actual-budget: {recovery_issue: 262, deployment_issue: 154}
+  bookstack: {recovery_issue: 239, deployment_issue: 153}
+  wordpress: {recovery_issue: 246}
+  comfyui: {recovery_issue: 258, deployment_issue: 166}
+  forgejo: {recovery_issue: 240, deployment_issue: 150}
+  forgejo-runner: {recovery_issue: 241, deployment_issue: 150}
+  frigate: {recovery_issue: 255, deployment_issue: 156}
+  hi-events: {recovery_issue: 250, deployment_issue: 129}
+  home-assistant: {recovery_issue: 256, deployment_issue: 159}
+  immich: {recovery_issue: 254, deployment_issue: 155}
+  karakeep: {recovery_issue: 263, deployment_issue: 152}
+  litellm: {recovery_issue: 224, deployment_issue: 169}
+  mautic: {recovery_issue: 249, deployment_issue: 129}
+  n8n: {recovery_issue: 243, deployment_issue: 150}
+  odoo: {recovery_issue: 244, deployment_issue: 127}
+  ollama: {recovery_issue: 257, deployment_issue: 167}
+  open-webui: {recovery_issue: 225, deployment_issue: 165}
+  plane: {recovery_issue: 245, deployment_issue: 150}
+  searxng: {recovery_issue: 264, deployment_issue: 129, rebuild_only: true}
 
 # The PR #81 live note names one legacy source that was actually sampled. Its instance
 # identity and version were intentionally not committed. It is preserved as an explicit
@@ -79,5 +81,5 @@ legacy_sources:
   - id: legacy-sonarr-sample
     product: sonarr
     source: "legacy Sonarr sampled by the PR #81 audit; instance identity/version not recorded"
-    recovery_issue: 90
+    recovery_issue: 227
     disposition: "preserve source and its existing native backup; do not adopt or mutate until the user selects it"

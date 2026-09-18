@@ -2,7 +2,7 @@
 
 **Status:** built
 **Subject:** Emby as an independent media server on `media_stack`
-**Related:** 408 (application catalog), #198 (deferred isolated real-Proxmox acceptance)
+**Related:** [closed catalog issue #408](https://github.com/hardKOrr/homelab-infra/issues/408), [observation issue #253](https://github.com/hardKOrr/homelab-infra/issues/253)
 
 ## Goal
 
@@ -22,9 +22,9 @@ shared libraries are not removed.
       and generic named-project removal. The provider-free recovery acceptance fixture also
       runs Emby through its new/existing synthetic recovery protocol; neither fixture claims
       an actual Emby container or live PBS restore.
-- [ ] Live evidence is deferred to the existing #198 isolated acceptance lane. Proposed
+- [ ] Live evidence is deferred to the self-contained [observation issue #253](https://github.com/hardKOrr/homelab-infra/issues/253). Proposed
       disposable target: instance `emby-acceptance` on stack host `stack-media-acceptance`.
-      Before execution #198 must authorize and record the exact existing fixture library
+      Before execution #253 must authorize and record the exact existing fixture library
       mount paths and `media_storage.library` root; no real media path is approved or
       inferred here. On that target only, deploy, confirm the named fixture library is
       readable but not writable from the Emby container, rerun, take and restore a PBS

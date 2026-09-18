@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixture tests for the common recovery acceptance protocol (#80)."""
+"""Fixture tests for the common recovery acceptance protocol (#206)."""
 from __future__ import annotations
 
 import unittest

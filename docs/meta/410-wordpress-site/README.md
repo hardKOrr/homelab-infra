@@ -26,7 +26,7 @@ commerce or broad theme choice.
 - [x] Add synthetic verification for visual-editor-ready theme setup, media persistence,
       idempotent deployment, image update/redeploy, removal, and cross-instance restore.
 - [x] Pass both repository gates.
-- [ ] Live evidence is deferred to the existing #35 isolated real-Proxmox acceptance lane.
+- [ ] Live evidence is deferred to a self-contained observation issue after this slice is implemented; the former #35 lane is historical.
       Before execution, name and authorize the exact target: instance `wordpress-acceptance`,
       services-stack host `stack-services-acceptance`, MariaDB instance
       `mariadb-wordpress-acceptance`, and the DNS name

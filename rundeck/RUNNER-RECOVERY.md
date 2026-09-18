@@ -3,9 +3,9 @@
 This is the operator contract for recovering the Rundeck runner when the original runner
 or Vaultwarden is unavailable. It is deliberately separate from the product adapters:
 those own application data and assertions, while this document owns the control-plane
-prerequisites and order. The shared method and destination contracts are [#77](https://github.com/hardKOrr/homelab-infra/issues/77)
-and [#78](https://github.com/hardKOrr/homelab-infra/issues/78); the common acceptance
-roll-up is [#80](https://github.com/hardKOrr/homelab-infra/issues/80).
+prerequisites and order. The shared method and destination contracts are [historical #77](https://github.com/hardKOrr/homelab-infra/issues/77)
+and [historical #78](https://github.com/hardKOrr/homelab-infra/issues/78); the common acceptance
+roll-up is now represented by current per-product observation issues, including [#215](https://github.com/hardKOrr/homelab-infra/issues/215) for runner recovery.
 
 ## Recovery boundary
 
@@ -20,7 +20,7 @@ roll-up is [#80](https://github.com/hardKOrr/homelab-infra/issues/80).
   recovery point. Keep that point until the restored target has passed verification and
   the recovery evidence has been recorded.
 - Secrets and live authority belong in the separately controlled recovery record under
-  [#77](https://github.com/hardKOrr/homelab-infra/issues/77), not in Git, this runbook,
+  [historical #77](https://github.com/hardKOrr/homelab-infra/issues/77), not in Git, this runbook,
   an issue comment, a job log, or a test fixture.
 
 ## What must be retained
@@ -79,7 +79,7 @@ preserved until exact Vaultwarden readback succeeds. Never back up a secret-shap
 
 Do not rely on a runner backup alone for the PBS datastore. The PBS guest configuration
 and its datastore path, datastore encryption/recovery keys where configured, API token,
-retention and PVE registration are product-owned by [#110](https://github.com/hardKOrr/homelab-infra/issues/110).
+retention and PVE registration are product-owned by [PBS observation issue #212](https://github.com/hardKOrr/homelab-infra/issues/212).
 The datastore needs an independent copy, remote, or other recovery path that remains
 available when the PBS guest itself is lost. A PBS artifact that cannot be read from a
 recovered datastore is not a usable runner recovery point.
@@ -103,7 +103,7 @@ recovered datastore is not a usable runner recovery point.
 ### 1. Recover PBS before depending on it
 
 If PBS is the failed source, recover its VM/configuration and datastore through the
-independent path owned by [PBS #110](https://github.com/hardKOrr/homelab-infra/issues/110)
+independent path owned by [PBS observation issue #212](https://github.com/hardKOrr/homelab-infra/issues/212)
 first. Reattach or restore the datastore without formatting it, verify the PBS API and
 the datastore's native artifact listing, then verify the PBS token and required
 decryption material. Do not create a blank datastore with the same name and call it a
@@ -119,7 +119,7 @@ This is the source-independent route. It has two supported forms:
 1. **Shared `pbs_guest` restore.** Use [Restore Guest](jobs/restore-guest.yaml) with
    `destination=new` and the runner's exact artifact. This route is available when a
    working control plane can invoke it; otherwise use the native PVE/PBS operator
-   procedure from [#89](https://github.com/hardKOrr/homelab-infra/issues/89) from the
+   procedure from [recovery proof job #206](https://github.com/hardKOrr/homelab-infra/issues/206) from the
    independent recovery host. Select a free VMID, target storage and isolated address;
    restore stopped, and do not reuse the source address or start it on the production
    network.
@@ -147,7 +147,7 @@ Key Storage and converter password are readable. Then follow
 [VAULTWARDEN-RECOVERY.md](VAULTWARDEN-RECOVERY.md): enter explicit Seed recovery, restore
 the complete Vaultwarden guest/database rather than a blank replacement, verify HTTPS and
 the two-account organization, and run Cutover only after exact readback. Caddy is the
-edge prerequisite and its own state/route is owned by [Caddy #93](https://github.com/hardKOrr/homelab-infra/issues/93).
+edge prerequisite and its own state/route is owned by [Caddy observation issue #213](https://github.com/hardKOrr/homelab-infra/issues/213).
 
 The recovery runner may run only the explicit recovery/enrollment/cutover operations while
 Vaultwarden is unavailable. `lab-run.sh` must continue to fail closed for ordinary jobs;
@@ -160,15 +160,15 @@ After Vaultwarden Cutover succeeds, run a read-only status/config validation fir
 reconcile only the isolated target in this order, verifying each recorded endpoint and
 credential before the next dependent service:
 
-1. Caddy and Vaultwarden route/state — [#93](https://github.com/hardKOrr/homelab-infra/issues/93)
-   and [#123](https://github.com/hardKOrr/homelab-infra/issues/123).
+1. Caddy and Vaultwarden route/state — [Caddy observation issue #213](https://github.com/hardKOrr/homelab-infra/issues/213)
+   and [Vaultwarden observation issue #214](https://github.com/hardKOrr/homelab-infra/issues/214).
 2. Ntfy/notification delivery, then Authentik identity — Authentik state and assertions
-   are owned by [#91](https://github.com/hardKOrr/homelab-infra/issues/91).
+   are owned by [Authentik observation issue #210](https://github.com/hardKOrr/homelab-infra/issues/210).
 3. PostgreSQL, MariaDB, MySQL and Redis backends, each from its own retained state and
-   credentials — [#112](https://github.com/hardKOrr/homelab-infra/issues/112),
-   [#104](https://github.com/hardKOrr/homelab-infra/issues/104),
-   [#106](https://github.com/hardKOrr/homelab-infra/issues/106), and
-   [#117](https://github.com/hardKOrr/homelab-infra/issues/117).
+   credentials — [PostgreSQL observation issue #217](https://github.com/hardKOrr/homelab-infra/issues/217),
+   [MariaDB observation issue #219](https://github.com/hardKOrr/homelab-infra/issues/219),
+   [MySQL observation issue #218](https://github.com/hardKOrr/homelab-infra/issues/218), and
+   [Redis observation issue #220](https://github.com/hardKOrr/homelab-infra/issues/220).
 4. Uptime/metrics and then dependent applications, using each product issue's recovery
    adapter and assertions. A product's process health alone is not evidence that its
    identity, database, storage or backup dependency was restored.
@@ -224,7 +224,7 @@ Repository evidence consists of the gate tests for this contract, `lab-run`'s fa
 mode/cleanup behavior, the shared guest recovery contract, and the package/converter
 compatibility checks. Fixture evidence must name the synthetic source/target states and
 artifact identifiers without secrets or backup contents. Live evidence, when an authorized
-isolated destination exists, belongs in [#80](https://github.com/hardKOrr/homelab-infra/issues/80)
+isolated destination exists, belongs in the applicable current per-product observation issue
 and must report source isolation, target identity/state, data handling, exact recovery
 point, dependent identity/database/backup checks, and any failed-target retry action.
 

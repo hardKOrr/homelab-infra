@@ -10,5 +10,5 @@ administrator remains an app-owned web setup step because its documented CLI req
 existing admin before it can manage users.
 
 No provider account, live stack host, or real music mount was inspected or changed. The
-proposed disposable instance and stack names are recorded above, while #198 must authorize
+proposed disposable instance and stack names are recorded above, while the former #198 lane (now closed) had to authorize
 and name the exact fixture paths before live acceptance.

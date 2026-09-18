@@ -145,7 +145,8 @@ resolvable in DNS.
 | Know exactly what a config key does | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
 | Inspect the legacy Semaphore reference | [`semaphore/README.md`](semaphore/README.md) |
-| See what is built and what is planned | [`docs/meta/INDEX.md`](docs/meta/INDEX.md) |
+| See current work and status | [GitHub Issues](https://github.com/hardKOrr/homelab-infra/issues) |
+| Read detailed specifications and acceptance evidence | [`docs/meta/README.md`](docs/meta/README.md) |
 | File an issue or open a pull request | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 ---

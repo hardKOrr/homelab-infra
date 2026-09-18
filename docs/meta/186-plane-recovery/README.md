@@ -2,11 +2,11 @@
 
 **Status:** built
 **Subject:** Plane application-consistent recovery
-**Related:** #74 (recovery program), #76 (inventory owner and must-keep order), #77 (method dispositions), #78 (destination orchestration), #80 (acceptance protocol), #89 (shared guest recovery)
+**Related:** historical #74 (recovery program), #76 (inventory owner and must-keep order), #77 (method dispositions), #78 (destination orchestration), #89 (shared guest recovery); current observation issue #245 (live acceptance)
 
 ## Goal
 
-Implement Plane's native recovery path for the tracked Plane Community `v1.4.2` deployment. Keep the exact recovery unit—named PostgreSQL, named Redis, the complete server/worker and RabbitMQ Compose data tree, and local MinIO object storage—in one PBS point. Support plan/new-isolated and existing-target restore through the shared recovery dispatcher; describe whole-shared-guest recovery only as a fallback, and leave project-managed/rebuild-only unsupported. Repository fixtures and gates are closure evidence here; live schedule, artifact, credential, consistency and application acceptance remains with #80.
+Implement Plane's native recovery path for the tracked Plane Community `v1.4.2` deployment. Keep the exact recovery unit—named PostgreSQL, named Redis, the complete server/worker and RabbitMQ Compose data tree, and local MinIO object storage—in one PBS point. Support plan/new-isolated and existing-target restore through the shared recovery dispatcher; describe whole-shared-guest recovery only as a fallback, and leave project-managed/rebuild-only unsupported. Repository fixtures and gates are closure evidence here; live schedule, artifact, credential, consistency and application acceptance remains with observation issue #245.
 
 ## Remaining
 
@@ -16,7 +16,7 @@ Implement Plane's native recovery path for the tracked Plane Community `v1.4.2` 
 - [x] Restore an existing target only through the common pre-restore-point gate; validate all selected members before mutation, serialize backup/restore work, and leave Plane stopped on a failed replacement for explicit retry.
 - [x] Synthetic fixtures cover both destinations, source isolation, A → B → restore A with independently retained B, retry, missing keys/dependencies, corrupt/incomplete artifacts, wrong identity, storage overlap, version incompatibility and shared-guest scope.
 - [x] `bash gate/lint.sh` and `bash gate/test.sh` pass for this repository change.
-- [ ] Live acceptance remains deferred to #80: observe the schedule, exact PBS identity and age, artifact/member integrity, versions, external dependencies and credentials, then run both authorized isolated and existing-target restore scenarios. No live source or target was changed for this slice.
+- [ ] Live acceptance remains deferred to observation issue #245: observe the schedule, exact PBS identity and age, artifact/member integrity, versions, external dependencies and credentials, then run both authorized isolated and existing-target restore scenarios. No live source or target was changed for this slice.
 
 ## Links
 

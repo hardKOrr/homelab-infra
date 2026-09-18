@@ -1,15 +1,16 @@
 # Meta — specifications and acceptance evidence
 
-GitHub Issues is the live work queue: priority, assignment, and status live there — see
+GitHub Issues is the only live work queue: priority, assignment, and status live there — see
 [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) for the issue-to-PR lifecycle. This
 directory holds what an issue is too short-lived to carry: detailed specifications,
 decision records, and acceptance evidence. Git tracks the code; this directory records
-intent, scope, and what remains unverified for the slices that back an open issue.
+intent, scope, and what remains unverified for slices linked by an issue. It does not maintain
+a parallel issue table or priority list.
 
 ## Layout
 
 ```
-INDEX.md              # maps open issues to the slices that implement them
+INDEX.md              # pointer to GitHub Issues; not a queue
 INDEX-ARCHIVE.md      # superseded long-form index; historical evidence only
 LESSONS.md            # durable knowledge that outlived its slice. Prose lives here.
 README.md             # this file: slice shape and workflow
@@ -50,7 +51,7 @@ slices unreadable. Design discussion goes in `notes.md`, where its date is visib
 # NNN — Short title
 
 **Status:** open | built | done
-**Subject:** the thing this is about, matching INDEX's subject map
+**Subject:** the thing this is about, matching the linked issue
 **Related:** NNN (what that slice covers), ... or none
 
 ## Goal
@@ -73,21 +74,23 @@ leave it unticked forever.
 
 GitHub Issues owns current priority — see [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md).
 The issue and slice acceptance are different: the issue describes repository work; a slice's
-**Remaining** boxes can require live lab or third-party evidence. Once the repository scope
-and synthetic/gate acceptance are complete, the implementation PR closes the issue even if
-the slice remains `built` awaiting live-lab observation. That closure is not live-lab
-acceptance; carry the remaining evidence in a follow-up Live-lab observation issue under
-the existing `#198` acceptance lane. Do not turn an acceptance observation into an unplanned
-hardening sidequest.
+**Remaining** boxes record acceptance evidence, not priority. They can require live lab or
+third-party evidence. Once the repository scope and synthetic/gate acceptance are complete,
+the implementation PR closes the issue even if the slice remains `built` awaiting live-lab
+observation. That closure is not live-lab acceptance; carry each remaining criterion in a
+self-contained follow-up Live-lab observation issue that names its source implementation
+issue and links to the exact criterion. Do not turn an acceptance observation into an
+unplanned hardening sidequest.
 
 1. Implement the linked GitHub issue. If it references no `docs/meta/` slice and the work is
    more than trivial, create one and link it from the issue.
 2. Append discoveries to the `notes.md` of each affected slice.
-3. When code is complete and both gates are green, mark the slice `built`, update its
-   **Remaining** evidence, and update the `INDEX.md` row for the issue in the same change.
-4. When all required acceptance is observed, mark the slice `done`, move it into `done/`, and
-   remove its `INDEX.md` row. The implementation issue was closed when its repository work
-   merged; close the follow-up Live-lab observation issue per `CONTRIBUTING.md` after its
+3. When code is complete and both gates are green, mark the slice `built` and update its
+   **Remaining** evidence. The linked GitHub issue carries current status; there is no index
+   row to maintain.
+4. When all required acceptance is observed, mark the slice `done` and move it into `done/`.
+   The implementation issue was closed when its repository work merged; close the
+   self-contained follow-up Live-lab observation issue per `CONTRIBUTING.md` after its
    evidence is recorded.
 5. Add a lesson to `LESSONS.md` only when it changes how another slice should be worked.
 

@@ -1,8 +1,8 @@
 # Lessons and standing facts
 
-Durable knowledge that outlived the slice that produced it. [INDEX.md](INDEX.md) is the
-work queue and stays a table; this file is the prose. Per-session narrative belongs in a
-slice's own `notes.md`, not here.
+Durable knowledge that outlived the slice that produced it. [INDEX.md](INDEX.md) is retained
+only as a pointer to GitHub Issues; this file is the prose. Per-session narrative belongs in
+a slice's own `notes.md`, not here.
 
 Add to this file only when another slice would be wrong without the fact.
 

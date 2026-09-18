@@ -35,7 +35,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_emby_declares_native_recovery_and_keeps_media_external(self):
         emby = self.products["emby"]
-        self.assertEqual(emby["recovery_issue"]["number"], 134)
+        self.assertEqual(emby["recovery_issue"]["number"], 253)
         self.assertEqual(emby["methods"]["native"]["availability"], "declared")
         self.assertEqual(emby["methods"]["native"]["evidence"]["schedule"]["status"], "configured")
         self.assertEqual(emby["external_data"][0]["kind"], "mount")

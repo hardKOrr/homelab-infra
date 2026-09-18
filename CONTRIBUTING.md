@@ -14,8 +14,8 @@ specifications, decision records, and acceptance evidence — the "what exactly 
 mean and how do we know it shipped" that is too long-lived and too structured for an issue
 body. When work has a `docs/meta/NNN-slug/` slice, its issue links to that slice instead of
 restating it, per the one-fact-one-home rule in [`docs/meta/README.md`](docs/meta/README.md).
-[`docs/meta/INDEX.md`](docs/meta/INDEX.md) maps open issues to the slices they implement; it
-does not set priority.
+The meta directory does not maintain an issue table; use GitHub Issues for current work and
+status.
 
 ### AO tracker intake is read-only
 
@@ -71,7 +71,9 @@ guest, container, or Proxmox resource states that up front, not partway through 
    on merge. Use `Closes #<issue>` even when live-lab observation is deliberately deferred:
    record that deferral in the PR's **Live-lab status** section and in the linked
    `docs/meta/<NNN-slug>/README.md` **Remaining** section, then carry it forward in a
-   follow-up Live-lab observation issue under the existing `#198` acceptance lane.
+   follow-up Live-lab observation issue. That observation issue is self-contained: it names
+   the source implementation issue and links to the exact `docs/meta/...` **Remaining**
+   criterion when one exists. There is no umbrella acceptance lane.
    Reserve `Refs #<issue>` for a PR that only partially implements the issue's repository
    scope, when more repository work is still required on that same issue. Never close an
    issue by hand when a PR is meant to close it; let the merge do it.
@@ -98,8 +100,10 @@ A PR that is gate-green and fully satisfies the issue's repository scope should 
 `Closes #<issue>` even when live-lab evidence is deliberately deferred. Say so plainly in
 the PR's **Live-lab status** section, record what remains in the linked slice's
 `docs/meta/<NNN-slug>/README.md` **Remaining** section, and carry that evidence into a
-follow-up Live-lab observation issue under the existing `#198` acceptance lane. That
-observation issue, not the implementation PR's closure, carries live-lab acceptance.
+self-contained follow-up Live-lab observation issue. The observation issue names its source
+implementation issue and links to the exact **Remaining** criterion when one exists; it is
+not nested under an umbrella acceptance lane. That observation issue, not the implementation
+PR's closure, carries live-lab acceptance.
 
 This preserves the `built` vs. `done` distinction in [`docs/meta/README.md`](docs/meta/README.md):
 closing the implementation issue means the repository work is built and gate-green, not
