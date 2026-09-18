@@ -112,6 +112,7 @@ bash gate/test-allocate-ip.sh || rc=1
 bash gate/test-registry-forget.sh || rc=1
 bash gate/test-maintenance-schedule.sh || rc=1
 bash gate/test-stale-service-detection.sh || rc=1
+bash gate/test-recovery-status.sh || rc=1
 bash gate/test-plex-client-troubleshooter.sh || rc=1
 bash gate/test-proxmox-tags.sh || rc=1
 bash gate/test-proxmox-api-contract.sh || rc=1
