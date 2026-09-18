@@ -116,6 +116,9 @@ env.filters["combine"] = _combine
 env.filters["dict2items"] = lambda mapping: [
     {"key": k, "value": v} for k, v in dict(mapping).items()
 ]
+env.filters["items2dict"] = lambda items: {
+    item["key"]: item["value"] for item in list(items)
+}
 env.filters["bool"] = lambda value: (
     value if isinstance(value, bool)
     else str(value).strip().lower() in ("true", "yes", "on", "1")
@@ -317,6 +320,103 @@ homelabinfra_infra_with_estate_dns["estates"] = {
 overlaid_dns, _ = overlay_for(homelabinfra_infra_with_estate_dns, "foxglove", "personal")
 check("an estate with its own dns block replaces the global one whole",
       overlaid_dns["dns"], {"provider": "pihole", "host": "198.51.100.9"})
+
+# -- Part 2b: the REAL estate mail overlay and credential boundary -------------
+# Mail is intentionally tested as its own task: authored identity is overlaid onto the
+# shared relay, while an optional estates.<name>.mail.password is selected only for the
+# requested non-default estate. The unrecorded-estate case mirrors the lesson in
+# docs/meta/done/008-estate-contract/notes.md: no other estate's credential may appear.
+mail_task = find_task(estate_tasks, "Resolve estate | Overlay the estate's authored mail identity")
+mail_expr = module_body(mail_task, SET_FACT)["homelabinfra_infra"]
+mail_vars = mail_task["vars"]
+mail_when = mail_task["when"]
+
+mail_domains = {
+    "personal": {
+        "domain": "personal.fixture.invalid",
+        "default": True,
+        "mail": {"from_address": "personal@personal.fixture.invalid",
+                 "from_name": "Personal"},
+    },
+    "foxglove": {
+        "domain": "foxglove.fixture.invalid",
+        "mail": {"from_address": "hello@foxglove.fixture.invalid",
+                 "from_name": "Foxglove"},
+    },
+}
+mail_global = {
+    "provider": "smtp",
+    "host": "smtp.fixture.invalid",
+    "port": 587,
+    "encryption": "starttls",
+    "from_address": "default@personal.fixture.invalid",
+    "from_name": "Default",
+    "username": "shared-login",
+    "password": "shared-relay-secret",
+}
+mail_infra = {
+    "mail": mail_global,
+    "estates": {
+        # This deliberately must not be consulted for foxglove, and is not a shape the
+        # default estate reads either: the default uses top-level homelab-infra/mail.
+        "personal": {"mail": {"password": "default-estate-secret"}},
+        "foxglove": {},
+    },
+}
+
+
+def mail_overlay_for(infra, domains, selected, default):
+    ctx = {
+        "homelabinfra_infra": infra,
+        "_estate_domains": domains,
+        "_estate_selected": selected,
+        "_estate_default": default,
+    }
+    ctx = render_vars_in_order(mail_vars, ctx)
+    fires = all(render("{{ %s }}" % cond, **ctx) for cond in mail_when)
+    result = render(mail_expr, **ctx) if fires else infra
+    return result, fires
+
+
+mail_fox, mail_fox_fired = mail_overlay_for(mail_infra, mail_domains, "foxglove", "personal")
+check("mail overlay fires for an estate with an authored identity", mail_fox_fired, True)
+check("mail overlay selects the estate From address",
+      mail_fox["mail"]["from_address"], "hello@foxglove.fixture.invalid")
+check("mail overlay selects the estate From name",
+      mail_fox["mail"]["from_name"], "Foxglove")
+check("mail overlay retains the shared relay host and port",
+      (mail_fox["mail"]["host"], mail_fox["mail"]["port"]),
+      ("smtp.fixture.invalid", 587))
+check("an estate with no recorded mail credential uses the shared relay credential",
+      mail_fox["mail"]["password"], "shared-relay-secret")
+if mail_fox["mail"]["password"] == "default-estate-secret":
+    failures.append("an estate with no recorded mail credential inherited the default estate credential")
+
+mail_infra_scoped = {
+    "mail": mail_global,
+    "estates": {"personal": {"mail": {"password": "default-estate-secret"}},
+                 "foxglove": {"mail": {"password": "foxglove-relay-secret"}}},
+}
+mail_fox_scoped, _ = mail_overlay_for(mail_infra_scoped, mail_domains, "foxglove", "personal")
+check("a recorded estate credential overrides the shared relay credential",
+      mail_fox_scoped["mail"]["password"], "foxglove-relay-secret")
+if mail_fox_scoped["mail"]["password"] == "default-estate-secret":
+    failures.append("foxglove inherited the recorded default estate credential")
+
+mail_no_declaration_domains = {
+    "personal": {"domain": "personal.fixture.invalid", "default": True},
+    "foxglove": {"domain": "foxglove.fixture.invalid"},
+}
+mail_fox_unchanged, mail_unchanged_fired = mail_overlay_for(
+    mail_infra, mail_no_declaration_domains, "foxglove", "personal"
+)
+check("an estate with no mail block leaves the registry byte-for-byte unchanged",
+      mail_unchanged_fired, False)
+check("an estate with no mail block keeps the global From address",
+      mail_fox_unchanged["mail"]["from_address"], mail_global["from_address"])
+check("the default estate ignores an estate-scoped mail credential",
+      mail_overlay_for(mail_infra, mail_domains, "personal", "personal")[0]["mail"]["password"],
+      "shared-relay-secret")
 
 # -- Part 3: the REAL "exactly one default: true" assert condition -----------
 # Read straight out of resolve-estate.yml's "Compute estate names" set_fact and the

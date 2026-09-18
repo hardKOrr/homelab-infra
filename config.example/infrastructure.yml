@@ -62,6 +62,17 @@ domain: "homelab.example.com"
 #       # per estate, so a lab whose default estate already has hand-built records
 #       # can manage a second estate's zone without rewriting the first. It works
 #       # on the default estate too — `dns: {provider: none}` holds it out.
+#     mail:                         # optional — this estate's outbound identity
+#       from_address: "hello@second-domain.example.com"  # required when enabled
+#       from_name: "Second Estate"                       # optional display name
+#       # provider, host, port, encryption and username may also be overridden when
+#       # this estate uses a different relay. Omitted fields inherit the global mail
+#       # block below. Never put a password here.
+#       # A shared relay uses homelab-infra/mail. If this relay requires a separate
+#       # login, store only the password with Store Secret at:
+#       # homelab-infra/estates/foxglove/mail (field: password).
+#
+#     # An estate without `mail:` inherits the global mail identity unchanged.
 
 # ── Reverse Proxy ──────────────────────────────────────────────────────────────
 # provider: caddy | nginx | none
@@ -141,6 +152,8 @@ dns:
 
 # ── Mail ───────────────────────────────────────────────────────────────────────
 # provider: smtp | none
+# This is the default/shared relay contract. An estate may add domains.<name>.mail
+# above to replace its From identity while inheriting these relay settings.
 # This platform never runs its own SMTP server — mail is always an external relay
 # (your provider's own SMTP endpoint, a mail-sending service's SMTP gateway, or an
 # existing internal relay). A provider-specific extension (an API-based sender such

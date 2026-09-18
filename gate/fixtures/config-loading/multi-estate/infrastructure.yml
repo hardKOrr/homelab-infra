@@ -8,6 +8,9 @@ domains:
   foxglove:
     domain: "foxglove.fixture.invalid"
     network: "foxglove"
+    mail:
+      from_address: "hello@foxglove.fixture.invalid"
+      from_name: "Foxglove"
 
 reverse_proxy:
   provider: caddy
@@ -27,7 +30,10 @@ dns:
   provider: none
 
 mail:
-  provider: none
+  provider: smtp
+  host: "smtp.fixture.invalid"
+  port: 587
+  from_address: "default@personal.fixture.invalid"
 
 backups:
   datastore_path: "/mnt/backup"

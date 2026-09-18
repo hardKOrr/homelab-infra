@@ -12,6 +12,7 @@
 #    a code change.
 # 4. The registry-overlay and per-app injection seams exist and reference the
 #    documented contract (load-user-vars.yml, vaultwarden-cutover.yml, resolve-mail.yml).
+# 5. A representative SMTP consumer renders an estate's selected From identity.
 set -euo pipefail
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -64,6 +65,48 @@ replace_mail_block $'mail:\n  provider: smtp\n  host: "smtp.example.test"\n  por
 out="$(doctor)" || fail "complete smtp mail block must pass config-doctor.sh: $out"
 grep -q '^OK\|0 error(s)' <<<"$out" || fail "complete smtp mail block reported an error: $out"
 
+# An estate identity may omit shared relay settings, but must provide its own From address.
+estate_dir="$work/estate"
+cp -r "$base" "$estate_dir"
+# The base fixture has an unscoped application filename; remove it so this temporary
+# copy can exercise the domains map without also testing estate instance naming.
+rm -rf "$estate_dir/apps"
+mkdir -p "$estate_dir/apps"
+python3 - "$estate_dir/infrastructure.yml" <<'PYESTATE'
+import sys
+import yaml
+path = sys.argv[1]
+data = yaml.safe_load(open(path))
+data["domains"] = {
+    "personal": {"domain": "lab.example.test", "default": True},
+    "foxglove": {
+        "domain": "foxglove.example.test",
+        "mail": {"from_address": "hello@foxglove.example.test"},
+    },
+}
+with open(path, "w") as handle:
+    yaml.safe_dump(data, handle, sort_keys=False)
+PYESTATE
+out="$(bash "$repo/ansible/scripts/config-doctor.sh" "$estate_dir" 2>&1)" \
+  || fail "valid estate mail overlay must pass config-doctor.sh: $out"
+grep -q '^OK\|0 error(s)' <<<"$out" || fail "estate mail overlay reported an error: $out"
+python3 - "$estate_dir/infrastructure.yml" <<'PYESTATESECRET'
+import sys
+import yaml
+path = sys.argv[1]
+data = yaml.safe_load(open(path))
+data["domains"]["foxglove"]["mail"]["password"] = "must-not-be-authored"
+with open(path, "w") as handle:
+    yaml.safe_dump(data, handle, sort_keys=False)
+PYESTATESECRET
+set +e
+out="$(bash "$repo/ansible/scripts/config-doctor.sh" "$estate_dir" 2>&1)"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "estate mail password must fail config-doctor.sh"
+grep -qF 'domains.foxglove.mail.password' <<<"$out" \
+  || fail "estate mail password was not named by config-doctor.sh: $out"
+
 # Incomplete: provider smtp but no host/port/from_address.
 replace_mail_block $'mail:\n  provider: smtp\n'
 set +e
@@ -97,12 +140,13 @@ for secret_field in password api_key api_secret token; do
 done
 
 # ── 2. vault-runtime.py maps homelab-infra/mail like any other role key ───────
-printf '%s' '[{"name":"homelab-infra/mail","fields":[{"name":"password","value":"relay-secret"}]}]' \
+printf '%s' '[{"name":"homelab-infra/mail","fields":[{"name":"password","value":"relay-secret"}]},{"name":"homelab-infra/estates/foxglove/mail","fields":[{"name":"password","value":"foxglove-secret"}]}]' \
   | python3 "$repo/ansible/scripts/vault-runtime.py" > "$work/runtime.json"
 python3 - "$work/runtime.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["mail"]["password"] == "relay-secret", d
+assert d["estates"]["foxglove"]["mail"]["password"] == "foxglove-secret", d
 PY
 
 # ── 3. secret-shape.py rejects a mail password in generated facts ─────────────
@@ -129,5 +173,38 @@ grep -Fq "wiring_mail" "$repo/ansible/tasks/mail/resolve-mail.yml" \
   || fail "resolve-mail.yml does not set wiring_mail"
 grep -Fq "no_log: true" "$repo/ansible/tasks/mail/resolve-mail.yml" \
   || fail "resolve-mail.yml does not redact the resolved credential"
+
+# Render a real consumer template with the effective estate fact. This stays offline and
+# synthetic, but proves the value that reaches an application's SMTP configuration rather
+# than only proving that the resolver stores it in an intermediate mapping.
+python3 - "$repo" <<'PYTEST'
+import sys
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+
+repo = Path(sys.argv[1])
+env = Environment(loader=FileSystemLoader(repo / "ansible" / "roles" / "bookstack" / "templates"))
+env.filters["comment"] = lambda value: "# " + str(value)
+template = env.get_template("bookstack.env.j2")
+rendered = template.render(
+    ansible_managed="fixture",
+    bookstack_fqdn="bookstack.foxglove.fixture.invalid",
+    _bookstack_app_key="fixture-key",
+    homelabinfra_config={"timezone": "UTC"},
+    app_config={"app": {
+        "puid": 1000, "pgid": 1000, "database": {"name": "bookstack"},
+        "database_host": "db.fixture.invalid", "database_port": 3306,
+        "database_user": "bookstack", "database_password": "fixture-db-secret",
+    }},
+    wiring_mail={
+        "enabled": True, "from_address": "hello@foxglove.fixture.invalid",
+        "from_name": "Foxglove", "host": "smtp.fixture.invalid", "port": 587,
+        "username": "shared-login", "password": "fixture-mail-secret",
+        "encryption": "starttls",
+    },
+)
+assert "MAIL_FROM=hello@foxglove.fixture.invalid" in rendered, rendered
+assert "MAIL_FROM_NAME=Foxglove" in rendered, rendered
+PYTEST
 
 echo "OK: mail contract schema, validation, vault mapping, redaction and wiring seams"
