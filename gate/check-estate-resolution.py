@@ -28,7 +28,9 @@ CATALOG = Path(
 )
 RESOLVE_ESTATES = "tasks/resolve-estate.yml"
 INCLUDE_KEYS = {"include_tasks", "import_tasks"}
-WIRING_PATH = re.compile(r"(?:^|/)tasks/(?:un)?wiring(?:/|$)")
+# Wiring is directory-based today; also match a future single-file tasks/wiring.yml
+# rename so changing that layout cannot silently bypass the estate-resolution gate.
+WIRING_PATH = re.compile(r"(?:^|/)tasks/(?:un)?wiring(?:/|\.ya?ml$)")
 INFRA_REFERENCE = re.compile(r"homelabinfra_infra\.(domain|sso)")
 
 
@@ -164,6 +166,9 @@ def main() -> int:
             reasons.append("catalog scope is estate and the playbook wires external services")
 
         resolution_lines = _estate_resolution_lines(documents)
+        # Current playbooks put resolve-estate in pre_tasks before wiring vars/tasks. Ansible
+        # evaluates vars lazily, so this source-order comparison intentionally encodes that
+        # repository convention rather than claiming source order is execution order.
         resolves_before_wiring = resolution_lines and (
             not wiring_lines or min(resolution_lines) < min(wiring_lines)
         )
