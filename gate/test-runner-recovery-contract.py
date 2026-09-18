@@ -107,6 +107,13 @@ class RunnerRecoveryContractTests(unittest.TestCase):
         fatal_guard = self.lab_run.index("# EVERY FATAL CHECK BELONGS BELOW THE REFRESH")
         self.assertLess(refresh, fatal_guard)
 
+    def test_runner_authorizes_platform_identity_for_self_status(self):
+        self.assertIn('platform_ssh_pubkey="$(cat "' + '$' + '{LAB_SSH_KEY}.pub")', self.bootstrap)
+        self.assertIn('including the platform identity for self-status', self.bootstrap)
+        self.assertIn('$' + '{SSH_PUBKEY:-}', self.bootstrap)
+        self.assertIn('$platform_ssh_pubkey', self.bootstrap)
+        self.assertIn('grep -qxF "$key" /root/.ssh/authorized_keys', self.bootstrap)
+
     def test_bootstrap_playbook_keeps_vault_before_dependents_and_pbs_last(self):
         vault = self.bootstrap_playbook.index("import_playbook: apps/vaultwarden.yml")
         authentik = self.bootstrap_playbook.index("import_playbook: apps/authentik.yml")

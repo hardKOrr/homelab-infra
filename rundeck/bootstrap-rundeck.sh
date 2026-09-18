@@ -665,18 +665,25 @@ systemctl enable --now prometheus-node-exporter >/dev/null 2>&1 || true
 
 # -- root SSH ------------------------------------------------------------------
 # The Debian LXC template ships root with a locked password and no authorized_keys, so a
-# container built purely over `pct exec` is unreachable over SSH. Install keys rather than
-# setting a password: sshd's default is PermitRootLogin prohibit-password, which accepts a
-# key and rejects a password, so no config change is needed.
-if [ -n "${SSH_PUBKEY:-}" ]; then
-  say "authorising root SSH keys"
+# container built purely over pct exec is unreachable over SSH. Install keys rather than
+# setting a password: sshd's default is PermitRootLogin prohibit-password, which accepts
+# a key and rejects a password, so no config change is needed. The platform key is included
+# here as well as on every managed guest: Lab Status deliberately treats the runner as a
+# managed guest, and its Ansible connection comes back to this address with LAB_SSH_KEY.
+platform_ssh_pubkey=""
+if [ -r "${LAB_SSH_KEY}.pub" ]; then
+  platform_ssh_pubkey="$(cat "${LAB_SSH_KEY}.pub")"
+fi
+if [ -n "${SSH_PUBKEY:-}" ] || [ -n "$platform_ssh_pubkey" ]; then
+  say "authorising root SSH keys (including the platform identity for self-status)"
   install -d -m 0700 -o root -g root /root/.ssh
   touch /root/.ssh/authorized_keys
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     grep -qxF "$key" /root/.ssh/authorized_keys || echo "$key" >> /root/.ssh/authorized_keys
   done <<KEYS
-$SSH_PUBKEY
+${SSH_PUBKEY:-}
+$platform_ssh_pubkey
 KEYS
   chmod 0600 /root/.ssh/authorized_keys
   chown -R root:root /root/.ssh
@@ -684,7 +691,7 @@ KEYS
   systemctl enable ssh >/dev/null 2>&1 || true
   systemctl restart ssh
 else
-  say "no SSH key supplied — root SSH will not work; use 'pct exec'"
+  say "no SSH key supplied — root SSH will not work; use pct exec"
 fi
 
 # -- java 21 (Rundeck 6 requires 17+) -------------------------------------------
