@@ -230,6 +230,9 @@
         _rg_restore_tags: >-
           {{ _rg_target_tags if _rg_destination == 'new'
              else (_rg_existing_config.stdout | from_json).tags | default('_+lab', true) }}
+        _rg_restore_onboot: >-
+          {{ '0' if _rg_destination == 'new'
+             else ((_rg_existing_config.stdout | from_json).onboot | default(0, true) | int) }}
         _rg_restore_network: >-
           {{ [ {'key': 'net0', 'value': target_network} ]
              if _rg_destination == 'new' else
@@ -505,7 +508,7 @@
             argv: >-
               {{ ['pvesh', 'set', '/nodes/' ~ _rg_target_node ~ '/' ~ _rg_target_type ~ '/' ~ _rg_target_vmid ~ '/config']
                  + (['--name', _rg_restore_name] if _rg_target_type == 'qemu' else ['--hostname', _rg_restore_name])
-                 + ['--tags', _rg_restore_tags, '--onboot', '0']
+                 + ['--tags', _rg_restore_tags, '--onboot', _rg_restore_onboot]
                  + (item.key | ternary(['--' ~ item.key, item.value], [])) }}
           delegate_to: "{{ _rg_target_node }}"
           loop: "{{ _rg_restore_network }}"
@@ -539,10 +542,13 @@
               - >-
                 (_rg_restored_config.stdout | from_json) | dict2items
                 | selectattr('key', 'match', '^(rootfs|scsi|sata|virtio|ide)[0-9]*$') | list | length > 0
+              - >-
+                (_rg_restored_config.stdout | from_json).onboot | default(0, true) | int
+                == _rg_restore_onboot | int
             fail_msg: >-
               The guest restore completed but its target identity, network/data configuration,
-              or ownership could not be verified. The target remains stopped; retry from the
-              retained pre-restore point after inspection.
+              ownership, or autostart configuration could not be verified. The target remains
+              stopped; retry from the retained pre-restore point after inspection.
           when: _rg_execute | bool
 
         - name: Start an existing target that was running before restore
