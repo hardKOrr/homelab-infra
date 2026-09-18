@@ -3,6 +3,8 @@
 This directory contains durable project design and implementation contracts.
 
 - [Architecture](architecture.md) maps the main modules, execution flows, and fragile seams.
+- [Estate onboarding runbook](estate-onboarding.md) gives the ordered operator path for
+  adding a domain estate and proving it before workloads move onto it.
 - [Specifications](specs/) define the repository's Ansible dialect and review contracts.
 - [Live-lab evidence](live-lab.md) explains the approved Rundeck API workflow for collecting
   acceptance evidence without bypassing repository automation.
