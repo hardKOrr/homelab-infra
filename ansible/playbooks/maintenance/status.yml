@@ -139,7 +139,11 @@
     - name: Load product recovery coverage inventory
       ansible.builtin.command:
         argv:
-          - python3
+          # The runner's bare python3 is the Debian system interpreter and does not
+          # carry the PyYAML installed in the Ansible controller venv. Use the same
+          # interpreter that is running this playbook so the tracked inventory is
+          # readable on Rundeck as well as from a developer checkout.
+          - "{{ ansible_playbook_python }}"
           - "{{ playbook_dir }}/../../files/recovery/coverage.py"
       register: _st_recovery_raw
       changed_when: false
@@ -149,6 +153,13 @@
       ansible.builtin.set_fact:
         _st_recovery: "{{ _st_recovery_raw.stdout | from_json }}"
       when: _st_recovery_raw.rc | default(1) == 0
+
+    - name: Record product recovery coverage read failure
+      ansible.builtin.set_fact:
+        _st_recovery_error: >-
+          {{ (_st_recovery_raw.stderr_lines | default([]) | last | default('', true))
+             | default('collector exited with status ' ~ (_st_recovery_raw.rc | default('?') | string), true) }}
+      when: _st_recovery_raw.rc | default(1) != 0
 
   vars:
     _st_guests: "{{ groups['lab_managed'] | default([]) | sort }}"
@@ -554,7 +565,7 @@
 
           RECOVERY COVERAGE
           {% if _st_recovery.products is not defined %}
-            unavailable — the tracked product coverage inventory could not be read
+            unavailable — coverage collector failed: {{ _st_recovery_error | default('no diagnostic was returned') }}
           {% else %}
             {{ _st_recovery.products | length }} catalog products; priority remains pending the user's must-keep selection
             Declaration is not restore proof. PBS artifact identity, integrity, external-data protection and restore evidence are
