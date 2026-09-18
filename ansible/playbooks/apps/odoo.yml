@@ -86,7 +86,7 @@
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
       vars:
-        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+        resolve_estate_name: "{{ _odoo_host.app_config.routing.estate | default('') }}"
   vars:
     _odoo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
     wiring_app_name: "{{ instance }}"
