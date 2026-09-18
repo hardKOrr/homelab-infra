@@ -33,6 +33,11 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   `permissions`, a `secrets` reference in a `pull_request`-triggered job, or a
   self-hosted runner target with no `environment` approval gate. See
   `docs/specs/secrets-handling.md`.
+- `check-estate-resolution.py` — checks every application playbook that performs external
+  wiring, and every estate-scoped application that wires anything, for an explicit
+  `tasks/resolve-estate.yml` include. It prevents routing and SSO wiring from silently
+  using the default estate; non-wiring estate workers such as Kometa and Unpackerr are
+  intentionally not exempted, because they have no wiring task to trigger the check.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
   Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination

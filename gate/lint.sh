@@ -27,6 +27,12 @@ cd "$repo"
 . gate/lib-scope.sh
 gate_resolve_scope "${1:-}"
 
+# Estate-scoped application playbooks must resolve their estate before consuming routing
+# or identity facts for external wiring. This is static and independent of the narrowed
+# Ansible-lint target set, so a check run against a changed-only tree still protects all
+# application playbooks.
+"$HOME/.venvs/homelab-ansible/bin/python" gate/check-estate-resolution.py
+
 # Narrowed runs lint the changed files themselves. ansible-lint's rules are per-file, so a
 # file list is a faithful subset of the full run — unlike the target *directories* below,
 # which have to stay directories for the auto-detection reason documented there.
