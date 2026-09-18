@@ -65,6 +65,7 @@ estates:                             # optional — only when infrastructure.yml
   <estate-name>:                     # non-default estates only; the default estate uses
     sso: { provider, instance, host }          # the top-level keys above
     dns: { provider, host }                    # optional — global dns serves the estate if absent
+    mail: { password }                         # optional scoped SMTP credential only
 ```
 
 **`runner` — the host the platform runs from.** Written by
@@ -78,13 +79,17 @@ to before every job. Nothing wires against this key — it is descriptive.
 **Estate scoping.** `infrastructure.yml` may declare a `domains:` map of named
 estates (§5); apps pick one with `routing.estate`. Estate-bound role keys (`sso`,
 optionally `dns`) for a non-default estate are written under `estates.<name>` by
-`write-generated-facts.yml` (`generated_facts_estate`) and overlaid onto the
-top-level keys by `tasks/resolve-estate.yml` before wiring runs — replacement is
-whole-key, never a recursive merge, so a default-estate token can never leak into
-another estate's wiring. All other role keys (reverse_proxy, notifications,
-monitoring, metrics, backups, vaultwarden) are global: one instance serves every
-estate. The default estate (and every lab without a `domains:` map) reads and
-writes only the top-level keys — unchanged behavior.
+`write-generated-facts.yml` (`generated_facts_estate`) and overlaid onto the top-level
+keys by `tasks/resolve-estate.yml` before wiring runs — replacement is whole-key, never
+a recursive merge, so a default-estate token cannot leak into another estate's wiring.
+Mail is the one shared role with an estate-visible identity: the global relay and
+credential remain the fallback, while `domains.<estate>.mail` selects the effective
+From identity and may override non-secret relay fields. A separate relay login, when
+required, is stored as `homelab-infra/estates/<estate>/mail` and is selected only for
+that estate. All other role keys (reverse_proxy, notifications, monitoring, metrics,
+backups, vaultwarden) are global: one instance serves every estate. The default estate
+(and every lab without a `domains:` map) reads and writes only the top-level keys —
+unchanged behavior.
 
 Provider-specific optional fields are written by the application that deploys the provider
 and read only by that provider's wiring tasks:
@@ -106,7 +111,8 @@ and read only by that provider's wiring tasks:
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
-| `mail` | `password` | smtp | SMTP AUTH password for `mail.username`; Vaultwarden-only, never authored |
+| `mail` | `password` | smtp | Shared SMTP AUTH password for `mail.username`; Vaultwarden-only, never authored |
+| `estates.<estate>.mail` | `password` | smtp | Optional estate-specific SMTP AUTH password; selected only for that estate, never authored |
 
 `monitoring` is the role key for uptime monitoring. Do not use a provider-named
 `uptime_kuma` key.
@@ -192,16 +198,29 @@ resolved from the Proxmox inventory. `mail.provider` is `smtp` (a generic SMTP r
 only shape implemented so far) or `none`. A provider-specific extension (an API-based
 sending service such as Mailgun or SES) adds its own optional fields to this same block
 the way `dns` adds `api_secret` for OPNsense, rather than inventing a second mail role key.
+
+The global `infrastructure.mail` block is the default estate's complete relay and identity.
+A `domains.<estate>.mail` block is optional and non-secret: its `from_address` (required
+when the block enables SMTP) and optional `from_name`, `provider`, `host`, `port`,
+`encryption`, and `username` overlay the global block. The resolver assigns the resulting
+complete block as one whole `homelabinfra_infra.mail` key, so a public estate cannot keep
+the default estate's From-domain through a partial recursive fact merge. An estate with no
+`mail` block is a deliberate no-op and inherits the global block byte-for-byte.
+
 `mail.username` is the non-secret half of SMTP AUTH (often the same value as
-`from_address`); the password never appears in tracked config or generated facts — it
-lives only in `homelab-infra/mail`. Like `notifications`, mail has no per-record
-external resource to create, so there is no `tasks/wiring/<provider>.yml` pair — an app
-that sends mail includes the shared `ansible/tasks/mail/resolve-mail.yml`, which reads
-`homelabinfra_infra.mail` and sets one `wiring_mail` fact
-(`enabled, provider, host, port, encryption, from_address, from_name, username,
-password`) with `no_log: true`. `wiring_mail.enabled` is `false` whenever
-`mail.provider` is `none` or absent, and every consumer must check it before writing its
-own SMTP settings — `resolve-mail.yml` does not configure any application itself.
+`from_address`). The shared password lives only in `homelab-infra/mail`; if a relay requires
+an estate-specific login, only that estate's password lives in
+`homelab-infra/estates/<estate>/mail`, supplied after cutover with Store Secret. The
+selected estate item is never used for another estate, and an absent scoped item falls
+back to the shared global relay credential. Neither password appears in tracked config or
+generated facts. Like `notifications`, mail has no per-record external resource to create,
+so there is no `tasks/wiring/<provider>.yml` pair — an app that sends mail includes the
+shared `ansible/tasks/mail/resolve-mail.yml`, which resolves its estate and reads
+`homelabinfra_infra.mail` to set one `wiring_mail` fact (`enabled, provider, host, port,
+encryption, from_address, from_name, username, password`) with `no_log: true`.
+`wiring_mail.enabled` is `false` whenever `mail.provider` is `none` or absent, and every
+consumer must check it before writing its own SMTP settings — `resolve-mail.yml` does not
+configure any application itself.
 
 ## 4. Merge order (low → high precedence)
 
@@ -314,6 +333,15 @@ exists on the wire.
 | `mail.from_name` | optional | display name paired with `from_address` |
 | `mail.username` | optional | SMTP AUTH username, often equal to `from_address` |
 | `mail.password`, `mail.api_key`, `mail.api_secret`, `mail.token` | rejected | secret-shaped fields must never be authored here — `config-doctor.sh` fails the run; store the credential in `homelab-infra/mail` |
+| `domains.<estate>.mail` | optional | non-secret overlay; an enabled block requires its own `from_address`, while omitted relay fields inherit the global `mail` block |
+| `domains.<estate>.mail.provider` | optional | `smtp \| none`; overrides the global provider for that estate |
+| `domains.<estate>.mail.host` | optional | estate-specific external SMTP relay hostname |
+| `domains.<estate>.mail.port` | optional | estate-specific SMTP relay port |
+| `domains.<estate>.mail.encryption` | optional | `starttls \| tls \| none`; inherits the global value when omitted |
+| `domains.<estate>.mail.from_address` | required when the estate mail block enables SMTP | the estate's envelope/header From; this is what prevents the default estate's identity from leaking |
+| `domains.<estate>.mail.from_name` | optional | estate display name |
+| `domains.<estate>.mail.username` | optional | estate-specific SMTP AUTH username |
+| `domains.<estate>.mail.password`, `api_key`, `api_secret`, `token` | rejected | credentials never belong in authored config; store a password in `homelab-infra/estates/<estate>/mail` when the relay needs one |
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
 | `maintenance.schedule` | optional | when the lab may be DISRUPTED — `always`, `never`, or a window `{days, start, duration}`. Defaults to nightly 04:00 for 120 minutes. Update cadence is unaffected; only reboots and container restarts wait for it. `never` is notify-only |
@@ -500,7 +528,8 @@ The canonical top-level items are:
 | `homelab-infra/metrics` | `admin_password` |
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |
-| `homelab-infra/mail` | `password` |
+| `homelab-infra/mail` | `password` — shared relay credential used by every estate without a scoped override |
+| `homelab-infra/estates/<estate>/mail` | `password` — optional estate-specific relay credential; Store Secret is the post-cutover write path |
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | application-owned credentials. Database provisioning writes `database_provider`, `database_host`, `database_port`, `database_name`, `database_user`, and hidden `database_password` here; the backend never places an application password in generated facts. |

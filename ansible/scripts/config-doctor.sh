@@ -131,6 +131,41 @@ def enum(data, where, path, allowed, required=True):
     return value
 
 
+def validate_mail_block(block, where, path_prefix, inherited=None, require_identity=False):
+    """Validate a global mail block or an estate's non-secret mail overlay."""
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        report("ERROR", where, path_prefix, "must be a mapping")
+        return
+
+    effective = dict(inherited or {})
+    effective.update(block)
+    provider = effective.get("provider") or "none"
+    if "provider" in block and provider not in ("smtp", "none"):
+        report("ERROR", where, path_prefix + ".provider",
+               "%r is not recognised -- one of smtp | none" % provider)
+
+    if provider != "none":
+        for field in ("host", "port", "from_address"):
+            if effective.get(field) in (None, ""):
+                report("ERROR", where, path_prefix + "." + field, "required")
+        if require_identity and not block.get("from_address"):
+            report("ERROR", where, path_prefix + ".from_address",
+                   "required for an estate mail identity")
+
+    encryption = effective.get("encryption")
+    if encryption not in (None, "", "starttls", "tls", "none"):
+        report("ERROR", where, path_prefix + ".encryption",
+               "%r is not one of starttls, tls, none" % encryption)
+
+    for secret_field in ("password", "api_key", "api_secret", "token"):
+        if block.get(secret_field) not in (None, ""):
+            report("ERROR", where, path_prefix + "." + secret_field,
+                   "must not appear in tracked config -- store the credential in "
+                   "Vaultwarden homelab-infra/mail or homelab-infra/estates/<estate>/mail")
+
+
 # ── config/proxmox.yml ────────────────────────────────────────────────────────
 PROXMOX_FILE = os.path.join(CONFIG_DIR, "proxmox.yml")
 proxmox, found = load(PROXMOX_FILE)
@@ -259,6 +294,22 @@ else:
                                    "dns.host when the lab-wide block names one, and "
                                    "this lab's does not" % estate_provider)
 
+                # Mail identity is the one estate-visible part of the otherwise global
+                # relay. It overlays the global non-secret settings, so host/port and
+                # encryption may be omitted when estates share a relay. from_address is
+                # required when an estate opts into its own mail block; that prevents a
+                # block containing only a display name from silently retaining the
+                # default estate's From-domain.
+                estate_mail = estate.get("mail") if isinstance(estate, dict) else None
+                if estate_mail is not None:
+                    validate_mail_block(
+                        estate_mail,
+                        "infrastructure.yml",
+                        "domains.%s.mail" % name,
+                        inherited=infra.get("mail") if isinstance(infra.get("mail"), dict) else {},
+                        require_identity=True,
+                    )
+
     provider = enum(infra, "infrastructure.yml", "reverse_proxy.provider",
                     ["caddy", "nginx", "none"])
     if provider and provider != "none":
@@ -285,30 +336,15 @@ else:
 
     # Mail is always an external relay -- this platform never runs an SMTP server, so
     # unlike dns/pihole there is no in-lab instance option; a configured provider always
-    # needs an address. The credential (mail.password, or a provider-specific api_key/
-    # api_secret/token) must never be authored here at all -- it lives only in
-    # homelab-infra/mail, resolved by tasks/wiring/smtp.yml at run time.
+    # needs an address. The credential is never authored here at all -- it lives in
+    # homelab-infra/mail, or in homelab-infra/estates/<estate>/mail for a relay that
+    # requires a separate login.
     #
     # Optional and defaults to disabled: this key did not exist before this contract, so
     # every checkout without a mail: block must keep passing exactly as resolve-mail.yml
-    # already treats an absent provider as `enabled: false` -- required=True here would
-    # fail config-doctor.sh (and therefore every job, since lab-run.sh runs it first) for
-    # every existing lab that has not opted in yet.
-    provider = enum(infra, "infrastructure.yml", "mail.provider", ["smtp", "none"],
-                     required=False) or "none"
-    if provider and provider != "none":
-        need(infra, "infrastructure.yml", "mail.host")
-        need(infra, "infrastructure.yml", "mail.port")
-        need(infra, "infrastructure.yml", "mail.from_address")
-        encryption = dig(infra, "mail.encryption")
-        if encryption not in (None, "", "starttls", "tls", "none"):
-            report("ERROR", "infrastructure.yml", "mail.encryption",
-                   "%r is not one of starttls, tls, none" % encryption)
-    for secret_field in ("password", "api_key", "api_secret", "token"):
-        if dig(infra, "mail.%s" % secret_field) not in (None, ""):
-            report("ERROR", "infrastructure.yml", "mail.%s" % secret_field,
-                   "must not appear in tracked config -- store it in Vaultwarden "
-                   "homelab-infra/mail instead")
+    # already treats an absent provider as `enabled: false`.
+    global_mail = infra.get("mail")
+    validate_mail_block(global_mail, "infrastructure.yml", "mail")
 
     need(infra, "infrastructure.yml", "backups.datastore_path")
 

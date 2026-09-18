@@ -24,6 +24,9 @@
 #                               otherwise the global dns entry serves every estate,
 #                               with the estate's authored `dns:` block (provider,
 #                               host, validate_certs) overlaid on top of it
+#   homelabinfra_infra.mail   — the estate's authored mail identity and optional
+#                               relay overrides, with the shared global credential
+#                               or an explicitly stored estate credential selected
 #
 # Estate-scoped endpoints live in facts.yml under estates.<name>.<role_key>,
 # written by tasks/bootstrap/write-generated-facts.yml (generated_facts_estate).
@@ -150,3 +153,56 @@
     - _estate_selected | length > 0
     - _estate_selected in _estate_domains
     - _estate_dns_authored | length > 0
+
+# Mail follows the same boundary as DNS for its non-secret declaration, but its identity
+# is what must be isolated: a message sent by one estate must not use another estate's
+# From-domain. The authored block is an overlay on the global relay settings so one SMTP
+# relay and one shared Vaultwarden password remain the normal shape. The result is assigned
+# as one complete `mail` key, rather than leaving old fields beside a provider switch.
+#
+# A relay that requires a separate login can store only that estate's password in
+# homelab-infra/estates/<name>/mail (Store Secret), which vault-runtime.py exposes as
+# estates.<name>.mail. That scoped password wins for the selected non-default estate;
+# no other estate's scoped item is considered. In the ordinary shared-relay case the
+# global homelab-infra/mail password is intentionally reused — it is a lab-wide relay
+# credential, not the default estate's identity.
+- name: Resolve estate | Overlay the estate's authored mail identity
+  ansible.builtin.set_fact:
+    # The mail value is complete, including an explicit empty password when the
+    # estate disables mail, so recursive registry updates cannot retain an old
+    # credential while still preserving unrelated top-level role keys.
+    homelabinfra_infra: "{{ homelabinfra_infra | combine({'mail': _estate_mail}, recursive=True) }}"
+  vars:
+    _estate_authored_mail: >-
+      {{ (_estate_domains[_estate_selected] | default({})).mail | default({}) }}
+    _estate_global_mail: "{{ homelabinfra_infra.mail | default({}, true) }}"
+    _estate_global_mail_without_password: >-
+      {{ _estate_global_mail | dict2items
+         | rejectattr('key', 'equalto', 'password') | list | items2dict }}
+    _estate_scope: >-
+      {{ (homelabinfra_infra.estates | default({}))[_estate_selected]
+         | default({}) }}
+    _estate_recorded_mail: >-
+      {{ _estate_scope.mail | default({})
+         if _estate_selected != _estate_default else {} }}
+    _estate_mail_provider: >-
+      {{ _estate_authored_mail.provider
+         | default(_estate_global_mail.provider | default('none'), true) }}
+    _estate_mail_password: >-
+      {{ _estate_recorded_mail.password
+         | default(_estate_global_mail.password
+                   if _estate_mail_provider != 'none' else '', true) }}
+    _estate_mail_credentials: >-
+      {{ {'password': _estate_mail_password}
+         if _estate_mail_provider != 'none' and _estate_mail_password | length > 0
+         else {'password': ''} }}
+    _estate_mail: >-
+      {{ _estate_global_mail_without_password
+         | combine(_estate_authored_mail, recursive=True)
+         | combine(_estate_mail_credentials, recursive=True) }}
+  when:
+    - homelabinfra_infra is defined
+    - _estate_selected | length > 0
+    - _estate_selected in _estate_domains
+    - _estate_authored_mail | length > 0
+  no_log: true
