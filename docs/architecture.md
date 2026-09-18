@@ -8,6 +8,10 @@ wires it to the selected platform services.
 This file maps component relationships. Read the linked local README or specification for
 the contract of an individual area.
 
+When an operator adds another domain, follow the [estate onboarding runbook](estate-onboarding.md)
+for the configuration transition, identity and certificate order, LAN DNS, shared-service
+placement, and optional network segmentation.
+
 ## System shape
 
 ```text
