@@ -90,6 +90,42 @@ PYESTATE
 out="$(bash "$repo/ansible/scripts/config-doctor.sh" "$estate_dir" 2>&1)" \
   || fail "valid estate mail overlay must pass config-doctor.sh: $out"
 grep -q '^OK\|0 error(s)' <<<"$out" || fail "estate mail overlay reported an error: $out"
+
+# An active inherited SMTP relay still requires an estate-authored From address. This
+# exercises the require_identity guard rather than the global provider-none short-circuit.
+missing_identity_dir="$work/estate-missing-identity"
+cp -r "$base" "$missing_identity_dir"
+rm -rf "$missing_identity_dir/apps"
+mkdir -p "$missing_identity_dir/apps"
+python3 - "$missing_identity_dir/infrastructure.yml" <<'PYESTATEIDENTITY'
+import sys
+import yaml
+path = sys.argv[1]
+data = yaml.safe_load(open(path))
+data["domains"] = {
+    "personal": {"domain": "lab.example.test", "default": True},
+    "foxglove": {
+        "domain": "foxglove.example.test",
+        "mail": {"from_name": "Foxglove"},
+    },
+}
+data["mail"] = {
+    "provider": "smtp",
+    "host": "smtp.example.test",
+    "port": 587,
+    "from_address": "default@lab.example.test",
+}
+with open(path, "w") as handle:
+    yaml.safe_dump(data, handle, sort_keys=False)
+PYESTATEIDENTITY
+set +e
+out="$(bash "$repo/ansible/scripts/config-doctor.sh" "$missing_identity_dir" 2>&1)"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "estate mail identity must fail when only the inherited relay is active"
+grep -qF 'domains.foxglove.mail.from_address' <<<"$out" \
+  || fail "missing estate mail identity was not named by config-doctor.sh: $out"
+
 python3 - "$estate_dir/infrastructure.yml" <<'PYESTATESECRET'
 import sys
 import yaml
