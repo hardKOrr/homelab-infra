@@ -158,6 +158,19 @@ def collect(repo: Path, applications: dict[str, dict], estates: dict) \
     return rendered, unmatched, noncanonical
 
 
+def write_if_changed(target: Path, payload: str) -> bool:
+    """Write one option list, reporting filesystem failures without a traceback."""
+    try:
+        # Rewrite only on a real change: this runs before and after every job, and an
+        # untouched mtime is the cheap signal that nothing about the lab moved.
+        if not target.is_file() or target.read_text(encoding="utf-8") != payload:
+            target.write_text(payload, encoding="utf-8")
+    except OSError as error:
+        print(f"app-instances: cannot write {target}: {error}", file=sys.stderr)
+        return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, type=Path, help="repository checkout root")
@@ -173,14 +186,17 @@ def main() -> int:
     estates = load_estates(args.repo / "config" / "infrastructure.yml")
     instances, unmatched, noncanonical = collect(args.repo, applications, estates)
 
-    args.out.mkdir(parents=True, exist_ok=True)
+    try:
+        args.out.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print(f"app-instances: cannot create {args.out}: {error}", file=sys.stderr)
+        return 1
+
     for slug, names in instances.items():
         target = args.out / f"{slug}.json"
         payload = json.dumps(names, indent=2) + "\n"
-        # Rewrite only on a real change: this runs before and after every job, and an
-        # untouched mtime is the cheap signal that nothing about the lab moved.
-        if not target.is_file() or target.read_text(encoding="utf-8") != payload:
-            target.write_text(payload, encoding="utf-8")
+        if not write_if_changed(target, payload):
+            return 1
 
     estate_target = args.out / "estates.json"
     estate_names = (
@@ -189,8 +205,8 @@ def main() -> int:
         if estates["names"] else []
     )
     estate_payload = json.dumps(estate_names, indent=2) + "\n"
-    if not estate_target.is_file() or estate_target.read_text(encoding="utf-8") != estate_payload:
-        estate_target.write_text(estate_payload, encoding="utf-8")
+    if not write_if_changed(estate_target, estate_payload):
+        return 1
 
     if unmatched:
         print(
