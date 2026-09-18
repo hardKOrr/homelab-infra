@@ -77,6 +77,16 @@
 - name: "Odoo | Wire"
   hosts: localhost
   gather_facts: false
+  pre_tasks:
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+    - name: Resolve the estate this app belongs to
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _odoo_host.app_config.routing.estate | default('') }}"
   vars:
     _odoo_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
     wiring_app_name: "{{ instance }}"
