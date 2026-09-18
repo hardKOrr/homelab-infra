@@ -99,6 +99,31 @@ class GuestRecoveryContractTests(unittest.TestCase):
         self.assertIn("New targets remain stopped", self.restore)
         self.assertIn("production cutover is false", self.restore)
 
+    def test_restore_preserves_existing_onboot_and_disables_new_target(self):
+        compact = re.sub(r"\s+", " ", self.restore)
+        self.assertIn(
+            "_rg_restore_onboot: >- {{ '0' if _rg_destination == 'new' else "
+            "((_rg_existing_config.stdout | from_json).onboot | default(0, true) | int) }}",
+            compact,
+        )
+        self.assertIn(
+            "+ ['--tags', _rg_restore_tags, '--onboot', _rg_restore_onboot]",
+            self.restore,
+        )
+        self.assertNotIn(
+            "+ ['--tags', _rg_restore_tags, '--onboot', '0']",
+            self.restore,
+        )
+
+        # Exercise both destination outcomes represented by the playbook expression.
+        for destination, prior_onboot, expected_onboot in (
+            ('new', 1, '0'),
+            ('existing', 1, '1'),
+            ('existing', 0, '0'),
+        ):
+            restored_onboot = '0' if destination == 'new' else str(prior_onboot)
+            self.assertEqual(restored_onboot, expected_onboot)
+
     def test_rundeck_exposes_shared_contract_and_lab_group(self):
         backup = yaml.safe_load(BACKUP_JOB.read_text(encoding="utf-8"))[0]
         restore = yaml.safe_load(RESTORE_JOB.read_text(encoding="utf-8"))[0]
