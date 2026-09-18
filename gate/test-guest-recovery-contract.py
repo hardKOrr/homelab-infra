@@ -7,10 +7,12 @@ model for the two destination paths and an A -> B -> restore A replacement.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 import unittest
 
+from jinja2 import Environment, StrictUndefined
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +36,23 @@ def artifact_identity(volid: str) -> dict[str, str]:
     if not match["name"].startswith(expected + match["vmid"] + "-"):
         raise ValueError(volid)
     return match.groupdict()
+
+
+def find_yaml_value(node, key):
+    """Find a key in the parsed playbook without depending on task ordering."""
+    if isinstance(node, dict):
+        if key in node:
+            return node[key]
+        for value in node.values():
+            found = find_yaml_value(value, key)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = find_yaml_value(value, key)
+            if found is not None:
+                return found
+    return None
 
 
 class GuestRecoveryContractTests(unittest.TestCase):
@@ -100,12 +119,6 @@ class GuestRecoveryContractTests(unittest.TestCase):
         self.assertIn("production cutover is false", self.restore)
 
     def test_restore_preserves_existing_onboot_and_disables_new_target(self):
-        compact = re.sub(r"\s+", " ", self.restore)
-        self.assertIn(
-            "_rg_restore_onboot: >- {{ '0' if _rg_destination == 'new' else "
-            "((_rg_existing_config.stdout | from_json).onboot | default(0, true) | int) }}",
-            compact,
-        )
         self.assertIn(
             "+ ['--tags', _rg_restore_tags, '--onboot', _rg_restore_onboot]",
             self.restore,
@@ -115,14 +128,20 @@ class GuestRecoveryContractTests(unittest.TestCase):
             self.restore,
         )
 
-        # Exercise both destination outcomes represented by the playbook expression.
+        restore_onboot = find_yaml_value(yaml.safe_load(self.restore), "_rg_restore_onboot")
+        self.assertIsInstance(restore_onboot, str)
+        renderer = Environment(undefined=StrictUndefined)
+        renderer.filters["from_json"] = json.loads
         for destination, prior_onboot, expected_onboot in (
-            ('new', 1, '0'),
-            ('existing', 1, '1'),
-            ('existing', 0, '0'),
+            ("new", 1, "0"),
+            ("existing", 1, "1"),
+            ("existing", 0, "0"),
         ):
-            restored_onboot = '0' if destination == 'new' else str(prior_onboot)
-            self.assertEqual(restored_onboot, expected_onboot)
+            rendered = renderer.from_string(restore_onboot).render(
+                _rg_destination=destination,
+                _rg_existing_config={"stdout": json.dumps({"onboot": prior_onboot})},
+            )
+            self.assertEqual(rendered, expected_onboot)
 
     def test_rundeck_exposes_shared_contract_and_lab_group(self):
         backup = yaml.safe_load(BACKUP_JOB.read_text(encoding="utf-8"))[0]
