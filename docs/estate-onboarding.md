@@ -160,11 +160,14 @@ domains:
 
 The credential normally comes from the global DNS Vaultwarden item when one DNS
 server serves the lab. Use `homelab-infra/estates/cedar/dns` only when this estate
-uses a different DNS server, with the fields required by the contract. On an estate
-deploy, verify that the runtime estate overlay resolves its DNS entry as
-`estates.cedar.dns` and that the generated host records point at the shared reverse
-proxy. The authoritative distinction between authored `domains.<estate>.dns` and the
-runtime `estates.<estate>.dns` overlay is in [CONTRACT §3](../ansible/vars/CONTRACT.md#3-canonical-homelabinfra_infra-shape).
+uses a different DNS server, with the fields required by the contract. In that
+per-estate-credential case, verify that the runtime registry contains
+`estates.cedar.dns`; when the estate inherits the global DNS item, do not duplicate
+that credential just to create a second item — verify that the estate overlay combines
+the global credential with this authored provider block. In either case, verify that
+the generated host records point at the shared reverse proxy. The authoritative
+distinction between authored `domains.<estate>.dns` and the runtime estate overlay is
+in [CONTRACT §3](../ansible/vars/CONTRACT.md#3-canonical-homelabinfra_infra-shape).
 
 Do not skip this step just because the ACME check passed. Without a LAN DNS record,
 names such as `auth.cedar.example.com` and `app.cedar.example.com` return no usable
