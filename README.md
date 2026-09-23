@@ -146,7 +146,7 @@ resolvable in DNS.
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
 | Inspect the legacy Semaphore reference | [`semaphore/README.md`](semaphore/README.md) |
 | See current work and status | [GitHub Issues](https://github.com/hardKOrr/homelab-infra/issues) |
-| Read detailed specifications and acceptance evidence | [`docs/meta/README.md`](docs/meta/README.md) |
+| Read implementation contracts and lessons learned | [`docs/README.md`](docs/README.md) |
 | File an issue or open a pull request | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
 ---

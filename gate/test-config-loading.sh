@@ -325,7 +325,7 @@ check("an estate with its own dns block replaces the global one whole",
 # Mail is intentionally tested as its own task: authored identity is overlaid onto the
 # shared relay, while an optional estates.<name>.mail.password is selected only for the
 # requested non-default estate. The unrecorded-estate case mirrors the lesson in
-# docs/meta/done/008-estate-contract/notes.md: no other estate's credential may appear.
+# https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/done/008-estate-contract/notes.md: no other estate's credential may appear.
 mail_task = find_task(estate_tasks, "Resolve estate | Overlay the estate's authored mail identity")
 mail_expr = module_body(mail_task, SET_FACT)["homelabinfra_infra"]
 mail_vars = mail_task["vars"]

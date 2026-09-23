@@ -12,7 +12,7 @@
 # that would pin the gateway to one Kubernetes node. The database is backed up with the
 # rendered routing ConfigMap by this role's PBS CronJob.
 #
-# See docs/meta/145-litellm/README.md for the upstream validation and the recovery boundary.
+# See https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/145-litellm/README.md for the upstream validation and the recovery boundary.
 
 litellm_defaults:
 

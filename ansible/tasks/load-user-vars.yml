@@ -215,10 +215,10 @@
 # and a lab that declares mail.provider before cutover still needs a credential the
 # first time a mail-sending app deploys. Unlike LAB_DNS_API_KEY/LAB_DNS_API_SECRET,
 # rundeck/bootstrap-rundeck.sh does not yet prompt for this one or write a
-# secrets.d/mail.env sink -- that prompt is deferred (see docs/meta/
-# 418-platform-mail-contract/README.md). An operator sets LAB_MAIL_PASSWORD by hand
-# before a Seed-mode run that needs mail; vaultwarden-cutover.yml then imports whatever
-# value it finds on homelabinfra_infra.mail.password into homelab-infra/mail.
+# secrets.d/mail.env sink -- that prompt is tracked in issue #282. An operator sets
+# LAB_MAIL_PASSWORD by hand before a Seed-mode run that needs mail;
+# vaultwarden-cutover.yml then imports whatever value it finds on
+# homelabinfra_infra.mail.password into homelab-infra/mail.
 - name: Overlay the Seed-mode mail credential onto the registry
   ansible.builtin.set_fact:
     homelabinfra_infra: >-

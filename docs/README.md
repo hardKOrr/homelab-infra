@@ -16,10 +16,15 @@ This directory contains durable project design and implementation contracts.
   agent tools.
 - [`../gate/README.md`](../gate/README.md) documents the executable lint and test gate.
 - [Recovery acceptance](recovery-acceptance.md) defines the two-destination fixture protocol and evidence boundary.
+- [Lessons and standing facts](lessons.md) records failure shapes the gates cannot see and
+  structural facts that live nowhere else.
+- [Proxmox Datacenter Manager](pdm.md) documents the PDM appliance's deployment boundary and
+  day-2 jobs.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) defines the issue-to-PR lifecycle: GitHub
   Issues as the live work queue, issue and PR templates, and the AO worker lifecycle from
   intake to handoff.
 
-Specifications, decision records, and acceptance evidence for issues that need more detail
-than fits an issue body live in [`meta/`](meta/). They are not normative architecture or
-specification sources on their own — the specs under [`specs/`](specs/) remain that.
+Current work, its specification, and its acceptance evidence live in
+[GitHub Issues](https://github.com/hardKOrr/homelab-infra/issues). The former `docs/meta/`
+slice records are retired and preserved as history at
+[commit `056d836`](https://github.com/hardKOrr/homelab-infra/tree/056d836/docs/meta).

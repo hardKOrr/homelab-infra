@@ -412,7 +412,7 @@ for path, needle in selectors.items():
         failures.append("%s must select managed guests via %s" % (path, needle))
 
 # Nothing active may still depend on the tag forms this contract replaced. Scoped to the
-# code and the normative documents: docs/meta/ is history and is deliberately left alone.
+# code and the normative documents.
 retired = {
     "tag_homelab_infra": "the old ownership group",
     "app_<instance>": "the old application tag",
@@ -435,7 +435,6 @@ scanned = [
     for path in repo.glob(pattern)
     if path.is_file()
     and path.suffix in (".yml", ".yaml", ".py", ".sh", ".md", ".j2", ".json", "")
-    and "docs/meta/" not in path.as_posix()
     # This file names every retired form on purpose; it is the one exemption.
     and path.name != "test-proxmox-tags.sh"
 ]

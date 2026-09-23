@@ -34,7 +34,6 @@ need "$playbook" 'provider: litellm'
 need "$example" 'OPENAI_API_KEY: openai_api_key'
 need "$repo/catalog/applications.yml" 'job: deploy-litellm.yaml'
 need "$repo/rundeck/jobs/deploy-litellm.yaml" 'Run playbooks/apps/litellm.yml'
-need "$repo/docs/meta/145-litellm/README.md" 'Kubernetes'
 
 # No application PVC: the hosting decision is the external PostgreSQL + Vaultwarden path,
 # not a node-pinned Kubernetes volume.

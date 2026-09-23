@@ -6,13 +6,12 @@ See CONTRIBUTING.md for the full issue-to-PR lifecycle before filling this in.
 
 Closes #<!-- issue number — use when this PR fully satisfies the issue's repository scope
 and synthetic/gate acceptance, even if live-lab observation is deferred. Record that
-deferral in Live-lab status and the slice's Remaining section. Use "Refs #<issue>" only
+deferral in Live-lab status and a follow-up observation issue. Use "Refs #<issue>" only
 when more repository work is still required on the same issue. -->
 
 ## Changed scope
 
-<!-- Playbooks, roles, tasks, vars, docs, or jobs this PR touches. Link the
-docs/meta/<NNN-slug>/README.md spec if one owns this change instead of restating it. -->
+<!-- Playbooks, roles, tasks, vars, docs, or jobs this PR touches. -->
 
 ## Verification evidence
 
@@ -27,7 +26,7 @@ Name any additional manual check, and paste the relevant output or a summary of 
 - Not applicable — no live, running guest, container, or Proxmox resource is affected.
 - Gate-green only — code is verified but the change has not been observed running on
   the lab yet. Name what observation is still needed and where it is tracked
-  (a slice's Remaining section, or a follow-up Live-lab observation issue).
+  (a follow-up Live-lab observation issue).
 - Observed on the lab — describe what was watched happening and when. -->
 
 ## Security impact

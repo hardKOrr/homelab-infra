@@ -7,9 +7,8 @@ body:
     attributes:
       value: |
         See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle.
-        If this work already has a spec under `docs/meta/`, link it below instead of
-        restating its content here — this issue tracks priority and status; the spec
-        remains the detailed source.
+        This issue is the specification for the work: state it completely here. Link a
+        normative contract under `docs/specs/` rather than restating it.
   - type: textarea
     id: goal
     attributes:
@@ -22,8 +21,7 @@ body:
     attributes:
       label: Scope
       description: >-
-        What this touches — playbooks, roles, tasks, vars, docs, jobs. Link the
-        `docs/meta/<NNN-slug>/README.md` spec if one exists instead of repeating it.
+        What this touches — playbooks, roles, tasks, vars, docs, jobs.
     validations:
       required: true
   - type: textarea
@@ -47,7 +45,7 @@ body:
     id: dependencies
     attributes:
       label: Dependencies
-      description: Other issues, slices, or infrastructure this depends on or blocks.
+      description: Other issues or infrastructure this depends on or blocks.
     validations:
       required: false
   - type: textarea

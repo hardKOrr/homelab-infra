@@ -11,7 +11,7 @@
 # Caddy, Authentik, Uptime Kuma and DNS. FlareSolverr has none of that:
 # vars/app-defaults/flaresolverr.yml declares `routing.proxy: none` because there is no UI
 # for an operator to reach and no domain for Prowlarr's HTTP client to want — see that
-# file's header, and docs/meta/408-app-catalog/README.md's flaresolverr row. What remains
+# file's header, and https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's flaresolverr row. What remains
 # is asset bookkeeping (so the Proxmox guest tree still shows the cluster runs this
 # instance) and the notification every automated state change sends.
 #

@@ -1,7 +1,7 @@
 # Odoo Community recovery
 
 This is the product-specific contract for [Odoo observation issue #244](https://github.com/hardKOrr/homelab-infra/issues/244).
-The repository fixture and role checks below are closure evidence for this slice. No live
+The repository fixture and role checks below are closure evidence for the implementation issue. No live
 Odoo, PostgreSQL, PBS, route, credential, or target identity is claimed here.
 
 ## Disposition

@@ -7,8 +7,8 @@ reverse proxy and the other explicitly shared platform services remain shared.
 This is the operator path for adding an estate before placing real workloads on it.
 Use [`ansible/vars/CONTRACT.md`](../ansible/vars/CONTRACT.md) §3 and §5 for the
 schema and overlay rules; this runbook does not duplicate that contract. For the
-measured second-estate rollout and its defects, see
-[`docs/meta/done/008-estate-contract/`](meta/done/008-estate-contract/).
+measured second-estate rollout and its defects, see the archived
+[estate-contract record](https://github.com/hardKOrr/homelab-infra/tree/056d836/docs/meta/done/008-estate-contract).
 
 ## 1. Plan the cutover and the names
 

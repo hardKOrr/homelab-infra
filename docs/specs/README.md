@@ -25,5 +25,6 @@ source. [`../architecture.md`](../architecture.md) maps the components that impl
 | [SearXNG recovery](searxng-recovery.md) | Rebuild-only stateless Kubernetes configuration, disposable limiter cache, and shared-guest fallback |
 
 When a specification and the authoritative variable schema differ, update the specification to
-match [`ansible/vars/CONTRACT.md`](../../ansible/vars/CONTRACT.md). Work state and historical
-decisions belong in [`../meta/`](../meta/), not in these normative documents.
+match [`ansible/vars/CONTRACT.md`](../../ansible/vars/CONTRACT.md). Work state belongs in
+GitHub Issues and cross-cutting lessons in [`../lessons.md`](../lessons.md), not in these
+normative documents.

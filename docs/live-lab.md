@@ -28,7 +28,7 @@ prohibited. Point at this file and delete the duplicate.
 
 ## Before touching the lab
 
-1. Read the linked slice's acceptance criteria and identify the exact target, instance,
+1. Read the issue's acceptance criteria and identify the exact target, instance,
    and maintenance or recovery behavior that applies. Do not broaden a live observation
    into an unrelated fix.
 2. Confirm the CLI is present and record its version:

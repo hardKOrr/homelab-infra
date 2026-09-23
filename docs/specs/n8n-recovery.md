@@ -2,7 +2,7 @@
 
 This is the product-specific contract for [n8n observation issue #243](https://github.com/hardKOrr/homelab-infra/issues/243) and
 [closed implementation issue #182](https://github.com/hardKOrr/homelab-infra/issues/182). The repository fixture and role checks are
-closure evidence for this slice. No live n8n, PostgreSQL, PBS, route, credential, or target
+closure evidence for #182. No live n8n, PostgreSQL, PBS, route, credential, or target
 identity is claimed here; live acceptance is deferred to observation issue #243 while the lab is unavailable.
 
 ## Disposition

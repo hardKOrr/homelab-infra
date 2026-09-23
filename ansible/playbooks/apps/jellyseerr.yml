@@ -18,7 +18,7 @@
 # WHAT THIS PLAYBOOK DOES NOT DO
 #
 # It does not complete Jellyseerr's own first-run wizard. See roles/jellyseerr/tasks/main.yml
-# and docs/meta/408-app-catalog/README.md's jellyseerr row for why that step — connecting
+# and https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's jellyseerr row for why that step — connecting
 # it to a Jellyfin or Plex server and to Sonarr/Radarr — is left to the operator's first
 # sign-in rather than automated against an API contract this repo cannot verify against a
 # live instance.

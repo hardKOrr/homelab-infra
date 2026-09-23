@@ -229,7 +229,7 @@
 # every deploy that stores a secret down with it.
 #
 # What ships is organization-scoped Admin, and that is settled — see the decision in
-# docs/meta/done/016-vaultwarden-identity-bootstrap/notes.md. The grant is still
+# https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/done/016-vaultwarden-identity-bootstrap/notes.md. The grant is still
 # established and asserted on a Manager or User membership, because a lab that runs
 # one gets a working scoped account for free; an
 # Owner/Admin membership simply proceeds. Neither path asks anyone to change a role.

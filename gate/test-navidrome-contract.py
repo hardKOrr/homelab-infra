@@ -132,11 +132,8 @@ def main():
     assert job["name"] == "Deploy Navidrome"
     assert "playbooks/apps/navidrome.yml" in job["sequence"]["commands"][0]["script"]
     assert "read-only" in read("config.example/apps/navidrome.example.yml")
-    meta = read("docs/meta/135-navidrome/README.md")
-    for fragment in ("#238", "navidrome-acceptance", "stack-media-acceptance", "no real music path"):
-        assert fragment in meta, f"Deferred live acceptance record is missing {fragment!r}"
 
-    print("Navidrome catalog, scoped read-only music mount, PBS recovery, wiring and deferred live plan: OK")
+    print("Navidrome catalog, scoped read-only music mount, PBS recovery and wiring: OK")
 
 
 if __name__ == "__main__":

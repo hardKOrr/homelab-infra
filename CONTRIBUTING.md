@@ -9,13 +9,22 @@ request. It applies equally to a human contributor and to an AO worker session.
 in.** Priority, assignment, and status live on the issue — its labels, its open/closed
 state, and its comments — not in a Markdown table.
 
-[`docs/meta/`](docs/meta/README.md) is not the queue. It remains the home for detailed
-specifications, decision records, and acceptance evidence — the "what exactly does this
-mean and how do we know it shipped" that is too long-lived and too structured for an issue
-body. When work has a `docs/meta/NNN-slug/` slice, its issue links to that slice instead of
-restating it, per the one-fact-one-home rule in [`docs/meta/README.md`](docs/meta/README.md).
-The meta directory does not maintain an issue table; use GitHub Issues for current work and
-status.
+The repository keeps no parallel queue and no per-issue work records. The issue body is the
+specification for its work, and its comments carry progress, decisions, and acceptance
+evidence. When work produces something that must outlive the issue, it lands where it will be
+read again, not in a work log:
+
+| Durable outcome | Home |
+| --- | --- |
+| A reviewable implementation contract | [`docs/specs/`](docs/specs/README.md) |
+| Configuration schema and `homelabinfra_*` shapes | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
+| How a subsystem behaves and how to operate it | the nearest `README.md` |
+| A lesson that changes how future work should be done | [`docs/lessons.md`](docs/lessons.md) |
+
+The former `docs/meta/` slice records were retired in favour of GitHub Issues. They are
+preserved as history at
+[commit `056d836`](https://github.com/hardKOrr/homelab-infra/tree/056d836/docs/meta); do not
+recreate them.
 
 ### AO tracker intake is read-only
 
@@ -51,9 +60,8 @@ guest, container, or Proxmox resource states that up front, not partway through 
 
 ## Worker lifecycle
 
-1. **Intake.** Read the issue in full, including its labels and any linked
-   `docs/meta/<NNN-slug>/README.md` spec. Treat the spec, where one exists, as the detailed
-   source of truth; the issue is the scope and status pointer to it.
+1. **Intake.** Read the issue in full, including its labels, comments, linked issues, and
+   any normative contract it links. The issue is the source of truth for scope.
 2. **Confirm scope.** The issue's Goal, Scope, and Exclusions sections bound the work. If
    they are ambiguous or the linked spec disagrees with the issue, resolve that before
    writing code — ask rather than guess when only the issue author can decide.
@@ -69,11 +77,10 @@ guest, container, or Proxmox resource states that up front, not partway through 
 7. **Link the issue.** The PR body includes `Closes #<issue>` when this PR fully satisfies
    the issue's repository scope and synthetic/gate acceptance, so GitHub closes the issue
    on merge. Use `Closes #<issue>` even when live-lab observation is deliberately deferred:
-   record that deferral in the PR's **Live-lab status** section and in the linked
-   `docs/meta/<NNN-slug>/README.md` **Remaining** section, then carry it forward in a
+   record that deferral in the PR's **Live-lab status** section, then carry it forward in a
    follow-up Live-lab observation issue. That observation issue is self-contained: it names
-   the source implementation issue and links to the exact `docs/meta/...` **Remaining**
-   criterion when one exists. There is no umbrella acceptance lane.
+   the source implementation issue and states the exact live acceptance criteria it must
+   evidence. There is no umbrella acceptance lane.
    Reserve `Refs #<issue>` for a PR that only partially implements the issue's repository
    scope, when more repository work is still required on that same issue. Never close an
    issue by hand when a PR is meant to close it; let the merge do it.
@@ -86,8 +93,7 @@ guest, container, or Proxmox resource states that up front, not partway through 
 
 ## Gate-green vs. live-lab acceptance
 
-These are different claims and this repository does not conflate them, per
-[`docs/meta/README.md`](docs/meta/README.md)'s `built` vs. `done` distinction:
+These are different claims and this repository does not conflate them:
 
 - **Gate-green** means `bash gate/lint.sh` and `bash gate/test.sh` pass against the
   changed code. It confirms the repository is internally consistent. It does not confirm
@@ -98,17 +104,15 @@ These are different claims and this repository does not conflate them, per
 
 A PR that is gate-green and fully satisfies the issue's repository scope should use
 `Closes #<issue>` even when live-lab evidence is deliberately deferred. Say so plainly in
-the PR's **Live-lab status** section, record what remains in the linked slice's
-`docs/meta/<NNN-slug>/README.md` **Remaining** section, and carry that evidence into a
+the PR's **Live-lab status** section and carry the outstanding criteria into a
 self-contained follow-up Live-lab observation issue. The observation issue names its source
-implementation issue and links to the exact **Remaining** criterion when one exists; it is
-not nested under an umbrella acceptance lane. That observation issue, not the implementation
-PR's closure, carries live-lab acceptance.
+implementation issue and states each criterion in full; it is not nested under an umbrella
+acceptance lane. That observation issue, not the implementation PR's closure, carries
+live-lab acceptance.
 
-This preserves the `built` vs. `done` distinction in [`docs/meta/README.md`](docs/meta/README.md):
-closing the implementation issue means the repository work is built and gate-green, not
-that it has been accepted on the live lab. Mark the slice `done` only after the required
-observation is recorded. Use `Refs #<issue>` only when the PR leaves more repository
+Closing the implementation issue therefore means the repository work is built and
+gate-green, not that it has been accepted on the live lab. Close the observation issue only
+after its evidence is recorded on it. Use `Refs #<issue>` only when the PR leaves more repository
 implementation work for that same issue. Do not expand an observation into unplanned
 implementation work to make an issue closeable; open a separate Defect issue for anything
 the observation reveals.
