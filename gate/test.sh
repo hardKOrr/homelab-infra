@@ -139,6 +139,7 @@ python3 gate/test-recovery-contract.py || rc=1
 python3 gate/test-guest-recovery-contract.py || rc=1
 python3 gate/test-runner-recovery-contract.py || rc=1
 python3 gate/test-recovery-acceptance.py || rc=1
+"$HOME/.venvs/homelab-ansible/bin/python" gate/test-caddy-acme-ca.py || rc=1
 bash gate/test-config-fixtures.sh || rc=1
 bash gate/test-mail-contract.sh || rc=1
 bash gate/test-estate-resolution.sh || rc=1

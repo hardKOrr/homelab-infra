@@ -33,6 +33,11 @@
 #   tls_mode: internal
 #
 #   acme_email: "you@example.com"   # optional; the CA emails certificate expiry warnings here
+#   # Optional ACME directory, used only with tls_mode: acme. Empty/unset uses
+#   # Caddy's default (Let's Encrypt production). For repeated DNS-01 testing,
+#   # use the Let's Encrypt staging directory below. Staging certificates chain
+#   # to untrusted "(STAGING)" roots, so clients will warn.
+#   acme_ca: "https://acme-staging-v02.api.letsencrypt.org/directory"
 #
 #   # Optional DNS-01 challenge for the default domain — public certificates
 #   # without opening port 80 to the internet. The deploy installs the matching

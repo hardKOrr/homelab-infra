@@ -169,6 +169,10 @@
                            | combine(_caddy_challenge_options, recursive=True)}}
                         | combine({'email': app_config.app.acme_email}
                                   if app_config.app.acme_email | default('') | length > 0
+                                  else {})
+                        | combine({'ca': app_config.app.acme_ca}
+                                  if app_config.app.tls_mode | default('acme') != 'internal'
+                                     and app_config.app.acme_ca | default('') | length > 0
                                   else {}) ]
          } ] }}
   loop: "{{ _caddy_dns_domains }}"
@@ -269,7 +273,9 @@
          if app_config.app.tls_mode | default('acme') == 'internal'
          else ({'module': 'acme'}
                | combine({'email': app_config.app.acme_email}
-                         if app_config.app.acme_email | default('') | length > 0 else {})) }}
+                         if app_config.app.acme_email | default('') | length > 0 else {})
+               | combine({'ca': app_config.app.acme_ca}
+                         if app_config.app.acme_ca | default('') | length > 0 else {})) }}
 
 - name: Write the base configuration
   ansible.builtin.copy:

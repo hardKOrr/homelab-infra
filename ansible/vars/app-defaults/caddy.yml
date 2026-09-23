@@ -56,6 +56,11 @@ caddy_defaults:
     #              /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
     tls_mode: acme
     acme_email: ""              # optional; recommended for expiry notices from the CA
+    # Optional ACME directory URL; empty uses Caddy's default (Let's Encrypt production).
+    # For repeated DNS-01 testing, use Let's Encrypt staging:
+    # https://acme-staging-v02.api.letsencrypt.org/directory
+    # Staging certificates chain to untrusted "(STAGING)" roots, so clients will warn.
+    acme_ca: ""
 
     # Legacy location for DNS-01. New configurations declare the non-secret provider
     # in infrastructure.reverse_proxy.dns_challenge and keep dns_api_token in the
