@@ -3,11 +3,11 @@
 # services_stack Docker host. Users override specific values in config/apps/mautic.yml.
 # This file is git-managed — git pull may update these defaults.
 #
-# docs/meta/408-app-catalog/README.md's mautic row: "MariaDB. Sends mail — needs an SMTP
+# https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's mautic row: "MariaDB. Sends mail — needs an SMTP
 # contract this platform does not have." That contract shipped in #47
-# (docs/meta/418-platform-mail-contract); this is the first row that actually consumes it,
+# (https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/418-platform-mail-contract); this is the first row that actually consumes it,
 # alongside the named-backend database contract from #45
-# (docs/meta/408-app-catalog/README.md's Batch B preamble). Both are named instances, not
+# (https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's Batch B preamble). Both are named instances, not
 # private sidecars: roles/mautic/tasks/main.yml provisions its database on the named
 # MariaDB backend through tasks/database/provision.yml, and reads outbound mail through
 # tasks/mail/resolve-mail.yml — the same two seams roles/odoo/tasks/main.yml already

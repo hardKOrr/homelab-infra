@@ -6,7 +6,7 @@
 #
 # WHAT MAKES THIS ROW DIFFERENT FROM JELLYSEERR AND MIXPOST
 #
-# See docs/meta/408-app-catalog/README.md's flaresolverr row: "No UI, no route,
+# See https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's flaresolverr row: "No UI, no route,
 # routing.identity: none. Consumed by Prowlarr as an indexer proxy — the wiring is a
 # Prowlarr setting, not a reverse-proxy route." Two things follow from that:
 #

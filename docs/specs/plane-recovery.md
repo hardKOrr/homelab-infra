@@ -1,7 +1,7 @@
 # Plane recovery
 
 This is the product-specific contract for [Plane observation issue #245](https://github.com/hardKOrr/homelab-infra/issues/245).
-The repository adapter and fixture checks are closure evidence for this slice. They do not
+The repository adapter and fixture checks are closure evidence for the implementation issue. They do not
 claim a live Plane restore, a live backup schedule, or production cutover.
 
 ## Method decision

@@ -46,10 +46,9 @@ when the task reaches their subject.
 Some subdirectories have a more specific `README.md`. Read it before changing that
 subsystem.
 
-`docs/meta/` records specifications, decision records, and acceptance evidence for slices
-that back an open GitHub issue. GitHub Issues owns priority and status — see
-`CONTRIBUTING.md`. `docs/meta/` is not an implementation contract; verify historical
-statements against the current code and normative documents.
+GitHub Issues owns work specification, priority, status, and acceptance evidence — see
+`CONTRIBUTING.md`. The repository keeps no parallel work records; do not recreate the
+retired `docs/meta/` slice tree. Durable lessons belong in `docs/lessons.md`.
 
 ## Repository Areas
 

@@ -4,7 +4,7 @@
 # config/apps/hi-events.yml. This file is git-managed — git pull may update these
 # defaults.
 #
-# docs/meta/408-app-catalog/README.md's hi-events row: "The recorded second Kubernetes
+# https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's hi-events row: "The recorded second Kubernetes
 # consumer: Postgres-backed, and the first application that must prove the public access
 # class and SMTP contract." Three things follow directly from that sentence:
 #

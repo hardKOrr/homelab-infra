@@ -43,7 +43,6 @@ or wiring semantics.
 | `semaphore/` | Legacy, unverified reference integration | [`semaphore/README.md`](../semaphore/README.md) |
 | `docs/specs/` | Reviewable implementation contracts | [`specs/README.md`](specs/README.md) |
 | `gate/` | Static checks and focused regression tests | [`gate/README.md`](../gate/README.md) |
-| `docs/meta/` | Work state and historical evidence; not a current contract | [`meta/README.md`](meta/README.md) |
 
 ## Core flows
 

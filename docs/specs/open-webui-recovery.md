@@ -1,6 +1,6 @@
 # Open WebUI recovery
 
-This is the product-specific recovery contract for [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225) and [closed implementation issue #185](https://github.com/hardKOrr/homelab-infra/issues/185). Repository implementation and synthetic fixtures are evidence for this slice; they do not claim a live backup, restore or production cutover.
+This is the product-specific recovery contract for [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225) and [closed implementation issue #185](https://github.com/hardKOrr/homelab-infra/issues/185). Repository implementation and synthetic fixtures are evidence for #185; they do not claim a live backup, restore or production cutover.
 
 ## Method decision
 
@@ -76,4 +76,4 @@ Neither destination stops the source, publishes an isolated target route early, 
 
 `gate/test-open-webui-recovery.py` exercises both native destinations, source isolation, chats/uploads, key handling, named upstream boundaries, A → B → restore A, B recovery/retry and the shared wrong-target/missing-key/corrupt/version/external-data/partial-recovery matrix. `gate/test-open-webui-contract.sh` checks the role boundary and removal safety. The common report keeps schedule, artifact, integrity, external-data, credential and live restore states unknown unless independently supplied.
 
-Repository and fixture verification are the closure scope for #185. Authorized live acceptance is deferred to [observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225), with evidence linked from this spec and `docs/meta/185-open-webui-recovery/README.md`. No live source or destination was changed for this slice.
+Repository and fixture verification are the closure scope for #185. Authorized live acceptance is deferred to [observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225), with evidence recorded on that issue. No live source or destination was changed for this slice.

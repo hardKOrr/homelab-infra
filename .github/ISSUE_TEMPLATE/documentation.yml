@@ -6,9 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle,
-        and `docs/meta/README.md` for the one-fact-one-home rule this repository's
-        documentation follows.
+        See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the full issue-to-PR lifecycle
+        and where each kind of durable documentation belongs.
   - type: textarea
     id: goal
     attributes:

@@ -20,7 +20,7 @@
 # WHAT THIS ROW DOES NOT DO YET
 #
 # Maintainerr's own first-run wizard is how it is pointed at a Jellyfin or Plex server and
-# at Sonarr/Radarr — see docs/meta/408-app-catalog/README.md's maintainerr row and this
+# at Sonarr/Radarr — see https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's maintainerr row and this
 # app's own role for why that step is not automated here. The deploy brings up a
 # persisted, backed-up, reverse-proxied, monitored, empty Maintainerr; the operator signs
 # in once to connect it to the rest of the media stack.

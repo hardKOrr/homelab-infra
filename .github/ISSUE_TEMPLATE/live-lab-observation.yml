@@ -15,7 +15,7 @@ body:
     id: goal
     attributes:
       label: Goal
-      description: What did you observe, and against which slice or acceptance criterion?
+      description: What will be observed, and against which source issue?
     validations:
       required: true
   - type: textarea
@@ -23,8 +23,8 @@ body:
     attributes:
       label: Scope
       description: >-
-        Which `docs/meta/<NNN-slug>/README.md` **Remaining** item this evidences, or which
-        live component this concerns if no slice exists yet.
+        The source implementation issue this evidences, and the exact live target:
+        instance, guest, VMID, or job.
     validations:
       required: true
   - type: textarea
@@ -39,15 +39,15 @@ body:
     attributes:
       label: Acceptance criteria
       description: >-
-        The exact Remaining checkbox(es) this observation is meant to satisfy, quoted
-        from the slice README.
+        The exact live criteria this observation must satisfy, stated in full so the
+        issue stands on its own.
     validations:
       required: true
   - type: textarea
     id: dependencies
     attributes:
       label: Dependencies
-      description: The slice, maintenance window, or prior issue this observation depends on.
+      description: The maintenance window, credential, or prior issue this observation depends on.
     validations:
       required: false
   - type: textarea

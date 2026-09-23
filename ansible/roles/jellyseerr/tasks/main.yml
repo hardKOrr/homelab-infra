@@ -19,7 +19,7 @@
 # Plex server and to Sonarr/Radarr. That step signs an admin user in against a real media
 # server and mints Jellyseerr's own API key, and doing it unattended here would mean this
 # role guessing at an unverified API contract with no way to prove it against a live
-# instance before it ships. See docs/meta/408-app-catalog/README.md's jellyseerr row. The
+# instance before it ships. See https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's jellyseerr row. The
 # deploy below brings up a persisted, backed-up, reverse-proxied, monitored, empty
 # Jellyseerr; the operator finishes the connection once, in its own UI, the same as any
 # first-time Jellyseerr install.

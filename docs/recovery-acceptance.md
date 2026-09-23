@@ -64,9 +64,8 @@ exact set and for the remaining catalog disposition; it intentionally reports li
 coverage as deferred. Product issue records should attach their generated evidence and
 add the installed product version, artifact identity and application-specific assertions
 without adding secrets or backup contents. Open WebUI's method decision and fixture
-record are detailed in [`docs/specs/open-webui-recovery.md`](specs/open-webui-recovery.md)
-and [`docs/meta/185-open-webui-recovery/README.md`](meta/185-open-webui-recovery/README.md),
-which remain the repository-side links for the [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225).
+record are detailed in [`docs/specs/open-webui-recovery.md`](specs/open-webui-recovery.md),
+which remains the repository-side link for the [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225).
 
 ## Fixture lifecycle and live work
 

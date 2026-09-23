@@ -5,7 +5,7 @@
 #
 # WHY THIS IS A KUBERNETES CANDIDATE THAT SHIPPED, AND WHY IT STAYS INTERNAL-ONLY
 #
-# docs/meta/408-app-catalog/README.md's searxng row: "Mostly stateless metasearch
+# https://github.com/hardKOrr/homelab-infra/blob/056d836/docs/meta/408-app-catalog/README.md's searxng row: "Mostly stateless metasearch
 # workload; usually internal-only. Keep any cache disposable or external." SearXNG's own
 # state is exactly one thing: `secret_key`, the value it signs its own cookies and CSRF
 # tokens with. That is generated once and kept in Vaultwarden like every other

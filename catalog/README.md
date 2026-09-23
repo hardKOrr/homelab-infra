@@ -15,7 +15,7 @@ missing job, duplicate classification, mismatched name, or stale projected group
 services and operator actions are classified separately in `rundeck/job-groups.yml`.
 
 Add an entry when the application's playbook and Rundeck job become selectable. Future intent
-belongs in `docs/meta/`; it is not runtime catalog state.
+belongs in a GitHub issue; it is not runtime catalog state.
 
 Recovery ownership is kept separately in [`recovery.yml`](recovery.yml). It is a complete,
 non-secret map from catalog product to its focused recovery issue and preserves deployment
