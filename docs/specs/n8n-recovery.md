@@ -1,10 +1,5 @@
 # n8n recovery
 
-This is the product-specific contract for [n8n observation issue #243](https://github.com/hardKOrr/homelab-infra/issues/243) and
-[closed implementation issue #182](https://github.com/hardKOrr/homelab-infra/issues/182). The repository fixture and role checks are
-closure evidence for #182. No live n8n, PostgreSQL, PBS, route, credential, or target
-identity is claimed here; live acceptance is deferred to observation issue #243 while the lab is unavailable.
-
 ## Disposition
 
 | Method | Disposition | Recovery unit |
@@ -99,10 +94,10 @@ on-demand paths use the same role-owned archive definition and PBS group
 provider's full `host/<backup_id>/<timestamp>` value; its `database.pxar` and `data.pxar`
 members must both be listed and readable from PBS.
 
-This checkout has no authorized live source or artifact. Schedule firing, artifact age, PBS
+Schedule firing, artifact age, PBS
 integrity, installed version, key/database readability, provider credentials, consistency
-and restore success therefore remain **unknown/deferred**, not healthy by declaration. The observation issue #243
-must record the exact source instance, installed versions, provider snapshot identity,
+and restore success remain **unknown** until observed live, never healthy by declaration. A live acceptance record
+must include the exact source instance, installed versions, provider snapshot identity,
 observed age, integrity result, key and credential availability, external dependency checks,
 and application verification without attaching backup contents or secrets.
 

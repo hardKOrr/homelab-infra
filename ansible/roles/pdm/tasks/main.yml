@@ -27,4 +27,4 @@
     fail_msg: "Each PDM remote id must be declared exactly once."
 - name: PDM | Report fail-closed registration boundary
   ansible.builtin.debug:
-    msg: "Complete the official installer, then follow docs/pdm.md to add only declared remotes. This play never accesses a remote."
+    msg: "Complete the official installer, then follow ansible/roles/pdm/README.md to add only declared remotes. This play never accesses a remote."

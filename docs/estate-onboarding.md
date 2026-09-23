@@ -200,9 +200,11 @@ from multiple estates must declare `shared: true`; the declaration, not deployme
 order, determines the host identity and network. The [contract's stack section](../ansible/vars/CONTRACT.md#stack-identity-and-estate-isolation)
 has the identity and merge details.
 
-If the estate needs a distinct mail identity, keep that work separate and follow
-[the per-estate mail issue](https://github.com/hardKOrr/homelab-infra/issues/267)
-when it lands.
+If the estate sends mail under its own identity, add a `domains.<estate>.mail` block
+(non-secret; `from_address` is required) and, when the relay needs an estate-specific
+password, store it in `homelab-infra/estates/<estate>/mail` with Store Secret. Without the
+block the estate uses the global `mail` relay and identity. The overlay rules are in
+[`CONTRACT.md`](../ansible/vars/CONTRACT.md) §3 and §5.
 
 ## 8. Optionally segment the networks
 

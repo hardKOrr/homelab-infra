@@ -30,9 +30,9 @@ which remains authoritative for guest ownership and creation.
   mode or target node disagrees; a missing or ambiguous declaration is refused too. Current
   bindings never establish or change the mode.
 - **Every iGPU-mode node in a cluster uses one mode.** A device declaration's optional
-  `kind` defaults deliberately to `igpu` when `mode: shared`, so an unmarked shared #130
+  `kind` defaults deliberately to `igpu` when `mode: shared`, so an unmarked shared
   declaration cannot silently escape this check. A bare `mode: dedicated` declaration keeps
-  #130's dedicated-only GPU convention and defaults to `kind: gpu`; a dedicated declaration
+  the dedicated-only GPU convention and defaults to `kind: gpu`; a dedicated declaration
   for an iGPU must opt in explicitly with `kind: igpu`. Mark other dedicated-only devices
   `kind: usb` or `kind: other` as applicable. When two or more distinct nodes carry
   `kind: igpu` declarations, their modes MUST be uniform: the cluster may not mix `shared`
