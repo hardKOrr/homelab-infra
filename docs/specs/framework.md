@@ -65,8 +65,8 @@ Repo-typical defects the reviewer checks in every diff, each owned by a spec:
 - Empty-string/`0` values in example files that would override git-managed defaults in `combine` →
   [config-layering](config-layering.md)
 - Plays targeting `hosts: proxmox_nodes` with `run_once` facts — provisioning runs on
-  `localhost`, and only node-local `pct`/`qm` operations are delegated (architecture
-  "Proxmox boundary" seam).
+  `localhost`, and only node-local `pct`/`qm` operations are delegated (see
+  [`ansible/tasks/proxmox/README.md`](../../ansible/tasks/proxmox/README.md)).
 
 ## Enforced by
 

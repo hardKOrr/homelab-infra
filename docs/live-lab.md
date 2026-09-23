@@ -147,9 +147,9 @@ rd executions follow -e "$EXECUTION_ID" -t
 
 There is no `executions output` subcommand. Preserve the job name, execution ID, date,
 target/options, result, and the relevant output excerpt. Include warnings and ignored
-failures rather than presenting only a green summary. Put the resulting observation in
-the PR's **Live-lab status** section, using the status contract in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md).
+failures rather than presenting only a green summary. Put the resulting observation on
+the observation issue, or in the PR's **Live-lab status** section when the PR itself is
+being verified, using the status contract in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ### Idempotence
 
@@ -250,7 +250,5 @@ HOMELAB RESULT -----------------------------------------------------
   Changed    0 task(s) on 1 host(s)
 ```
 
-The captured Lab Status execution also reported three ignored SSH-unreachable messages
-for `homelab-rundeck` while checking optional stale services, although the job result was
-`SUCCEEDED`. That warning belongs in the evidence and should be investigated before
-claiming stronger health than the output supports.
+Record ignored failures and warnings from a run like this even when the job result is
+`SUCCEEDED`; they bound what health the evidence can claim.

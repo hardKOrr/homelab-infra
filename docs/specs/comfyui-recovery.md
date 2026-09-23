@@ -36,6 +36,4 @@ stop/remove/start sequence.
 
 After a VM restore or move, verify the PCI address on the target node, use the recorded
 console recovery path if the guest does not boot, re-run Deploy ComfyUI, and verify both
-`nvidia-smi` and the ComfyUI system-stats endpoint. Live execution is deferred to the
-isolated real-Proxmox acceptance lane; repository fixtures and synthetic checks are the
-closure evidence for this implementation.
+`nvidia-smi` and the ComfyUI system-stats endpoint.

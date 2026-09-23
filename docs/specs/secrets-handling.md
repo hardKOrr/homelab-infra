@@ -39,7 +39,7 @@ or Vaultwarden item.
 
 ## Hosted CI lane policy
 
-CI test infrastructure (see issue #29 and its children) is a second risk surface: a
+CI test infrastructure is a second risk surface: a
 fixture, workflow, or cleanup routine could leak a credential or target an unmanaged
 resource even though it never touches production config.
 
@@ -48,7 +48,7 @@ resource even though it never touches production config.
 - A `pull_request`-triggered job never references the `secrets` context. That trigger runs
   PR-branch code with the base repository's token; injecting a secret there hands it to
   untrusted code. `push`, `workflow_dispatch`, and other trusted triggers may use secrets.
-- A self-hosted runner (needed only for a future real-Proxmox observation issue) is
+- A self-hosted runner (needed only for a real-Proxmox lane) is
   never targeted without the job also declaring `environment:`, so a required-reviewer
   approval gate stands between the trigger and the runner. GitHub's environment approval
   controls *access* to the job; it does not isolate the runner process itself, so a

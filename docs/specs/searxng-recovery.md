@@ -77,8 +77,8 @@ implementation, and its schedule, age, integrity, credentials and restore result
 owned by the guest recovery evidence.
 
 The repository cannot read a live image digest, schedule, PBS point, Vaultwarden item,
-cluster state or external provider from fixtures. Those values remain **unknown/deferred**
-and must never be promoted to healthy by this specification. The current [SearXNG observation issue #264](https://github.com/hardKOrr/homelab-infra/issues/264) must record the
+cluster state or external provider from fixtures. Those values remain **unknown** until observed live
+and must never be promoted to healthy by this specification. A live acceptance record must include the
 exact source, isolated target, installed versions, any shared PBS artifact identity, age,
 integrity and consistency result, credential/key availability, external dependency checks,
 and final application assertions without recording secrets or backup contents.
@@ -157,5 +157,4 @@ protocol for both `new` and `existing`, including source isolation, target ident
 A → B → restore A, independent B retention, missing key, wrong target, storage boundary,
 corrupt/incomplete artifact, shared scope, and interrupted replacement retry. It separately
 models the rebuild-only new and existing paths and verifies that an empty limiter cache is
-not required state. This is repository evidence only; no live source, destination, schedule,
-credential, artifact or cluster was accessed.
+not required state.

@@ -177,9 +177,7 @@ There is no Caddy-specific scheduler in the role defaults. Until an authorized l
 audit supplies the exact current PVE job and recent artifact, schedule, integrity,
 credential and restore evidence remain **unknown**, not successful by declaration.
 
-Repository/fixture evidence is the closure scope for this issue. Live Caddy validation
-is deferred to the current [Caddy observation issue #213](https://github.com/hardKOrr/homelab-infra/issues/213)
-with an authorized isolated source/destination. It must record the installed Caddy
+Live Caddy validation uses an authorized isolated source/destination and must record the installed Caddy
 version, native PBS artifact identity, both destination results, route/access
 assertions, and final target state. No production cutover, source shutdown, or cleanup
 is implied.

@@ -10,7 +10,7 @@ Credentials, access keys, and secret keys are generated or read from the canonic
 Vaultwarden item `homelab-infra/apps/<instance>`. They do not belong in `config.example/`,
 tracked defaults, generated topology facts, Compose templates, or normal task output.
 
-For Plane Batch C, `plane-minio` is the named local storage owner and its persistent
+For Plane, `plane-minio` is the named local storage owner and its persistent
 `object_storage_path` is part of the Plane Compose recovery unit. The PostgreSQL and Redis
 backends remain independently managed named services; removing Plane must not remove either
 shared backend.

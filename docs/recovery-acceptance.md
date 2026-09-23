@@ -1,9 +1,9 @@
 # Recovery acceptance protocol
 
-This is the repository and fixture side of the [repeatable recovery proof job #206](https://github.com/hardKOrr/homelab-infra/issues/206).
-It does not claim a live application restore. The current per-product observation issue owns the live evidence and application-specific
-assertions; this protocol gives each method the same two destination transitions and the
-same failure boundaries.
+This protocol gives every recovery method the same two destination transitions (a new
+isolated target and an existing target) and the same failure boundaries, and defines where
+a synthetic fixture's claims stop. It never claims a live application restore: live evidence
+and application-specific assertions are recorded on the product's observation issue.
 
 ## Evidence boundary
 
@@ -55,17 +55,16 @@ changed seam. Container and Kind lanes remain the disposable hosting harnesses d
 in [`gate/README.md`](../gate/README.md); neither is promoted to restore evidence by this
 protocol.
 
-## Current repository rollup
+## Repository rollup
 
 The current declarations exercise the native method for every product that exposes
 `recovery.methods: [native]`, plus the shared `pbs_guest` VM and LXC routes. No
 `project_managed` method is declared. The generated report is authoritative for the
 exact set and for the remaining catalog disposition; it intentionally reports live
-coverage as deferred. Product issue records should attach their generated evidence and
+coverage as deferred. A product's observation issue should attach its generated evidence and
 add the installed product version, artifact identity and application-specific assertions
-without adding secrets or backup contents. Open WebUI's method decision and fixture
-record are detailed in [`docs/specs/open-webui-recovery.md`](specs/open-webui-recovery.md),
-which remains the repository-side link for the [Open WebUI observation issue #225](https://github.com/hardKOrr/homelab-infra/issues/225).
+without adding secrets or backup contents. Product-specific method decisions and failure
+matrices are in the recovery specifications listed in [`specs/README.md`](specs/README.md).
 
 ## Fixture lifecycle and live work
 
