@@ -157,8 +157,8 @@ means the same thing on both sides — an `lxc.idmap` passthrough plus a matchin
 `/etc/subuid` and `/etc/subgid` grant — never a `chown -R` across the lab's library.
 
 Two corollaries worth keeping. **A generic default uid will collide with a real account**:
-`puid: 1000` on a Debian node is whoever was created there first, which here silently made
-`civicfs` — the file server of a domain being decommissioned — the owner of the media
+`puid: 1000` on a Debian node is whoever was created there first, which here silently made a
+file-server account from an unrelated, decommissioning domain the owner of the media
 library. The platform now creates and owns `homelab-infra` at 1313 for exactly this reason.
 And **`pct set -mpN` hotplugs into a running container**, which has to re-apply an apparmor
 profile and fails outright; a stopped container takes the same command unconditionally, and
