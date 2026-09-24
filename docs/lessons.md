@@ -318,3 +318,17 @@ the Semaphore `project.json` are code-complete and gate-green, but this lab runs
 OPNsense with Unbound, and Rundeck, so none has ever been exercised live. Their validity rests
 on the gates alone. When one of those targets exists, file a Live-lab observation issue for
 it before relying on it.
+
+## The previous lab cluster was retired on 2026-09-23
+
+Every platform-owned guest, template, and Proxmox object on the previous lab cluster was
+destroyed on 2026-09-23. That includes the runner, Vaultwarden, PBS, and the k3s cluster,
+and no data was kept. Live-lab work now targets a new cluster. Execution IDs, addresses,
+and "observed on the lab" evidence recorded before that date describe a lab that no longer
+exists. An open Observation issue whose evidence came from it has to be re-run on the new
+cluster. Its old evidence does not carry over, and nothing at the old addresses will
+answer.
+
+`playbooks/apps/remove.yml` is not a teardown. It never destroys a guest, and it is
+withheld for essential apps. The retirement was therefore finished by hand, and the full
+inventory of what that took is recorded on #290, the issue for a supported teardown path.
