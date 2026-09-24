@@ -9,6 +9,9 @@ Semaphore files are retained as a reference and are not maintained at feature pa
 - Preserve unrelated work and live lab state.
 - Do not expose or commit credentials, tokens, private keys, generated secrets, or files
   under `/config/`.
+- The repository and its GitHub issues, PRs, and reviews are public. Write lab addresses,
+  domains, node names, and VMIDs as the placeholders in `docs/lab-placeholders.md`, and
+  run `gate/check-lab-leaks.py --stdin` on any issue, PR, or comment body before posting.
 - Treat `config.example/` as documentation and `/config/` as user-owned runtime state.
 - Inspect the relevant implementation and its nearest `README.md`, when one exists, before
   changing it.
@@ -37,6 +40,7 @@ when the task reaches their subject.
 | User configuration examples | `config.example/README.md` |
 | Application catalog | `catalog/README.md` |
 | Live-lab evidence collection | `docs/live-lab.md` |
+| Lab identifiers in public text | `docs/lab-placeholders.md` |
 | Architecture and documentation map | `docs/README.md`, then `docs/architecture.md` when needed |
 | Reviewable implementation contracts | `docs/specs/README.md`, then the applicable specification |
 | Verification commands and test selection | `gate/README.md` |

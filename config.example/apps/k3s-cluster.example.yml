@@ -35,7 +35,7 @@ cluster:
   # 168<third-octet><fourth-octet> rule.
   nodes:
     - name: k3s-1
-      proxmox_node: pve-host-1     # must match a key in config/proxmox.yml `nodes:`
+      proxmox_node: pve1           # must match a key in config/proxmox.yml `nodes:`
       ip_address: 192.168.0.21
       cores: 2
       memory: 2048                 # MB
@@ -51,7 +51,7 @@ cluster:
       # picks a free vmid in 9000-9099. Add `template_vmid:` only to demand one slot.
 
     - name: k3s-2
-      proxmox_node: pve-host-2
+      proxmox_node: pve2
       ip_address: 192.168.0.22
       cores: 4
       memory: 16384
@@ -59,7 +59,7 @@ cluster:
       taints: []
 
     - name: k3s-3
-      proxmox_node: pve-host-3
+      proxmox_node: pve3
       ip_address: 192.168.0.23
       cores: 4
       memory: 12288
@@ -144,8 +144,8 @@ shared_storage:
     # Name the physical Proxmox nodes or external failure domains that can take this
     # export down. Use at least two values only when the target is genuinely redundant.
     failure_domains:
-      - pve-host-2
-      - pve-host-3
+      - pve2
+      - pve3
   reclaim_policy: Retain
   mount_options:
     - nfsvers=4.1

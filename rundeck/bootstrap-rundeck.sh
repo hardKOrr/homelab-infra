@@ -6,7 +6,7 @@
 # ceremony and verified cutover, then click Bootstrap Platform for the baseline.
 #
 #   ./bootstrap-rundeck.sh
-#   CT_IP=192.168.13.228/20 CT_GW=192.168.13.1 ./bootstrap-rundeck.sh  # skip the prompts
+#   CT_IP=10.20.4.10/20 CT_GW=10.20.0.1 ./bootstrap-rundeck.sh  # skip the prompts
 #   LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 ./bootstrap-rundeck.sh
 #   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
 #
@@ -225,8 +225,8 @@ ask() {
 }
 
 # net_addr <a.b.c.d/nn> — the NETWORK address of that CIDR. Masking only the last octet
-# is wrong for every prefix shorter than /24: 192.168.13.228/20 is not 192.168.13.0/20,
-# it is 192.168.0.0/20, and the difference is what config/infrastructure.yml records as
+# is wrong for every prefix shorter than /24: 10.20.4.10/20 is not 10.20.4.0/20,
+# it is 10.20.0.0/20, and the difference is what config/infrastructure.yml records as
 # the lab's guest network.
 net_addr() {
   local __ip="${1%%/*}" __pfx="${1##*/}" __o1 __o2 __o3 __o4 __a __m __n
@@ -274,7 +274,7 @@ net_host() {
 #     prefix = second octet, or the first when the second is 0
 #     vmid   = prefix, then the third and fourth octets zero-padded to three digits
 #
-# so 192.168.13.228 -> 168013228 and 10.0.4.7 -> 10004007. Two implementations of one rule
+# so 10.20.4.10 -> 20004010 and 10.0.4.7 -> 10004007. Two implementations of one rule
 # is a drift risk, which is why gate/test-vmid-from-ip.sh evaluates the Jinja expression out
 # of that task file and this function over the same addresses and fails on any disagreement.
 #
@@ -408,7 +408,7 @@ ask CT_STORAGE  "Storage for the runner rootfs"              "$CT_STORAGE_DEFAUL
 
 case "$CT_IP" in
   */*) : ;;
-  *) die "CT_IP must carry a prefix length, as in 192.168.13.228/20 (got '$CT_IP')" ;;
+  *) die "CT_IP must carry a prefix length, as in 10.20.4.10/20 (got '$CT_IP')" ;;
 esac
 
 # ── The VMID, derived — never asked ───────────────────────────────────────────
@@ -1043,7 +1043,7 @@ else
   ask VAULTWARDEN_AUTOMATION_EMAIL "Dedicated automation account email"       "homelab-infra@$LAB_DOMAIN"
   ask LAB_NET_CIDR    "Guest network CIDR"                                    "$DEFAULT_CIDR"
   # Masked to its network address, because the answer is a SUBNET and an operator naturally
-  # types the address they are thinking of: '192.168.12.10/20' was answered live on
+  # types the address they are thinking of: a host address with its /20 was answered live on
   # 2026-08-24 and would have been written verbatim into networks.default.cidr and into
   # Caddy's internal_cidrs, the matcher that decides who may reach an internal app. The
   # allocator masks with strict=False and would not have noticed; the file would have been
@@ -1069,7 +1069,7 @@ else
   #
   # Asked as ADDRESSES, not as offsets. `ip_offset` is an index into the whole host range
   # and only coincides with the last octet at a /24: at a /20 an offset of 10 is
-  # <net>.0.10, so a runner at 192.168.11.10/20 produced a first guest at 192.168.0.10 —
+  # <net>.0.10, so a runner at <runner-ip>/20 produced a first guest at <net>.0.10 —
   # correct, documented in config.example/proxmox.yml, and still a surprise. An address is
   # unambiguous at any prefix length, and the offsets are derived from it below.
   DEFAULT_ESTATE="$(printf '%s' "$LAB_DOMAIN" | cut -d. -f1 | tr 'A-Z' 'a-z' \

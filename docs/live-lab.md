@@ -44,13 +44,14 @@ prohibited. Point at this file and delete the duplicate.
 3. Load the user-owned credentials with export enabled:
 
    ```bash
-   set -a; source ~/.config/ai/rundeck-lab-access.env; set +a
+   set -a; source ~/.config/ai/homelab-infra/rundeck-access.env; set +a
    ```
 
    Plain `source` leaves the variables unexported and `rd` fails with `RD_URL is
-   required`. The file under `~/.config/ai/` is outside this repository. Never print or
-   commit its token, its `RD_URL` value, or any other credential; do not copy it into
-   `config/` or a captured evidence file.
+   required`. The file under `~/.config/ai/homelab-infra/` is outside this repository. Never print
+   or commit its token, its `RD_URL` value, or any other credential; do not copy it into
+   `config/` or a captured evidence file. The real lab values behind every placeholder in
+   [`lab-placeholders.md`](lab-placeholders.md) sit beside it in `lab-values.yml`.
 
 4. Confirm project access and discover the job by its name. Job discovery is read-only:
 
@@ -146,7 +147,14 @@ rd executions follow -e "$EXECUTION_ID" -t
 ```
 
 There is no `executions output` subcommand. Preserve the job name, execution ID, date,
-target/options, result, and the relevant output excerpt. Include warnings and ignored
+target/options, result, and the relevant output excerpt. Replace every address, domain,
+node name, and VMID in that excerpt with its placeholder from
+[`lab-placeholders.md`](lab-placeholders.md), then check the result before posting:
+
+```bash
+python3 gate/check-lab-leaks.py --stdin < evidence.md
+```
+ Include warnings and ignored
 failures rather than presenting only a green summary. Put the resulting observation on
 the observation issue, or in the PR's **Live-lab status** section when the PR itself is
 being verified, using the status contract in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
