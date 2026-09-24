@@ -19,7 +19,7 @@
 # task skip, leaving app N+1 pointed at app N's container. community.proxmox then finds
 # that VMID, takes its UPDATE branch, and rewrites the earlier guest's config with the new
 # guest's hostname, sizing and network. Observed live in bootstrap run 10: the second
-# Docker stack host of the run inherited sso-stack's 168000013.
+# Docker stack host of the run inherited sso-stack's <sso-stack-vmid>.
 #
 # An operator-authored VMID carries no vmid_source_ip, so it is still honored untouched.
 - name: Set VMID from IP for {{ guest_type }}

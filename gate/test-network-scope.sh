@@ -209,9 +209,9 @@ if effective is None:
 else:
     BANDS = {
         "networks": {
-            "default": {"cidr": "192.168.0.0/20", "bridge": "vmbr1", "vlan": 0},
-            "shared": {"ip_offset": 2826, "max_hosts": 32},
-            "personal": {"ip_offset": 2858},
+            "default": {"cidr": "10.20.0.0/20", "bridge": "vmbr1", "vlan": 0},
+            "shared": {"ip_offset": 1034, "max_hosts": 32},
+            "personal": {"ip_offset": 1066},
         },
         "infrastructure": {"domains": {"personal": {"domain": "a.example", "default": True}}},
     }
@@ -223,12 +223,12 @@ else:
         )
 
     shared_band = effective_for(BANDS, app="caddy")
-    check("a band inherits the subnet", shared_band.get("cidr"), "192.168.0.0/20")
+    check("a band inherits the subnet", shared_band.get("cidr"), "10.20.0.0/20")
     check("a band inherits the bridge", shared_band.get("bridge"), "vmbr1")
-    check("a band keeps its own offset", shared_band.get("ip_offset"), 2826)
+    check("a band keeps its own offset", shared_band.get("ip_offset"), 1034)
     estate_band = effective_for(BANDS, app="sonarr")
-    check("the estate band inherits the same subnet", estate_band.get("cidr"), "192.168.0.0/20")
-    check("the estate band keeps its own offset", estate_band.get("ip_offset"), 2858)
+    check("the estate band inherits the same subnet", estate_band.get("cidr"), "10.20.0.0/20")
+    check("the estate band keeps its own offset", estate_band.get("ip_offset"), 1066)
     check("a band does not inherit its neighbour's cap", estate_band.get("max_hosts"), None)
 
 if failures:
