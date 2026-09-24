@@ -29,6 +29,11 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   reviewable placeholder. Reuses the exact key-shape regex
   `ansible/scripts/secret-shape.py` enforces on generated facts. See
   `docs/specs/secrets-handling.md`.
+- `check-lab-leaks.py` — rejects the operator's real lab identifiers in tracked files,
+  reading them from a private values file outside the repository and reporting only the
+  placeholder name. Also scans `--stdin` (an issue or PR body before posting) and
+  `--log <range>` (commit messages). Skips, and passes, where the values file is absent.
+  See [`../docs/lab-placeholders.md`](../docs/lab-placeholders.md).
 - `check-workflow-policy.py` — rejects a `.github/workflows/*.yml` job with no explicit
   `permissions`, a `secrets` reference in a `pull_request`-triggered job, or a
   self-hosted runner target with no `environment` approval gate. See

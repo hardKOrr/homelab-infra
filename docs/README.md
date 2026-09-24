@@ -15,6 +15,7 @@ specification, and its acceptance evidence live in
 | Change a product's backup or restore behaviour | [Recovery acceptance](recovery-acceptance.md) and that product's recovery spec in [`specs/`](specs/README.md) |
 | Add a domain estate | [Estate onboarding runbook](estate-onboarding.md) |
 | Run a Rundeck job on the live lab and record evidence | [Live-lab evidence](live-lab.md) |
+| Write a lab address, domain, node, or VMID in public text | [Lab placeholders](lab-placeholders.md) |
 | Avoid a failure the gates cannot see | [Lessons and standing facts](lessons.md) |
 | Run the lint and test gates | [`../gate/README.md`](../gate/README.md) |
 | Change a Rundeck job or the runner bootstrap | [`../rundeck/README.md`](../rundeck/README.md) |

@@ -27,7 +27,8 @@ Name any additional manual check, and paste the relevant output or a summary of 
 - Gate-green only — code is verified but the change has not been observed running on
   the lab yet. Name what observation is still needed and where it is tracked
   (a follow-up Live-lab observation issue).
-- Observed on the lab — describe what was watched happening and when. -->
+- Observed on the lab — describe what was watched happening and when.
+Write lab addresses, domains, nodes, and VMIDs as placeholders (docs/lab-placeholders.md). -->
 
 ## Security impact
 
