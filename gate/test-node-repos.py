@@ -89,6 +89,47 @@ class NodeRepoTests(unittest.TestCase):
         self.assertEqual(self.run_helper("disable_stale_proxmox_suites", "trixie").stdout, "")
         self.assertTrue(self.active(PVE, "trixie", "pve-no-subscription"))
 
+    def stanza_enabled(self, path: Path, uri_part: str) -> bool:
+        for stanza in re.split(r"\n\s*\n", path.read_text()):
+            if uri_part in stanza:
+                return not re.search(r"(?im)^enabled:\s*(no|false)\s*$", stanza)
+        raise AssertionError(f"no stanza for {uri_part}")
+
+    def test_enterprise_stanza_disabled_beside_a_disabled_stanza(self):
+        # The unrelated stanza's Enabled: false must not hide the enabled enterprise one.
+        path = self.write("multi.sources",
+                          "Types: deb\nURIs: http://download.proxmox.com/debian/ceph-squid\nSuites: trixie\n"
+                          "Components: no-subscription\nEnabled: false\n\n"
+                          "Types: deb\nURIs: https://enterprise.proxmox.com/debian/pve\nSuites: trixie\n"
+                          "Components: pve-enterprise\n")
+        self.run_helper("disable_enterprise_repos")
+        self.assertFalse(self.stanza_enabled(path, "enterprise.proxmox.com"))
+
+    def test_enterprise_stanza_disabled_not_its_neighbour(self):
+        # Enterprise first, no-subscription last: appending to the file would disable the
+        # wrong stanza and leave enterprise enabled.
+        path = self.write("pair.sources",
+                          "Types: deb\nURIs: https://enterprise.proxmox.com/debian/pve\nSuites: trixie\n"
+                          "Components: pve-enterprise\n\n"
+                          f"Types: deb\nURIs: {PVE}\nSuites: trixie\nComponents: pve-no-subscription\n")
+        self.run_helper("disable_enterprise_repos")
+        self.assertFalse(self.stanza_enabled(path, "enterprise.proxmox.com"))
+        self.assertTrue(self.stanza_enabled(path, "download.proxmox.com/debian/pve"))
+        self.assertTrue(self.active(PVE, "trixie", "pve-no-subscription"))
+        before = path.read_text()
+        self.assertEqual(self.run_helper("disable_enterprise_repos").stdout, "")
+        self.assertEqual(path.read_text(), before)
+
+    def test_enterprise_list_line_commented_debian_untouched(self):
+        path = self.write("pve-enterprise.list",
+                          "deb https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise\n"
+                          "deb http://deb.debian.org/debian bookworm main\n")
+        self.run_helper("disable_enterprise_repos")
+        self.assertEqual(path.read_text().splitlines(), [
+            "# deb https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise",
+            "deb http://deb.debian.org/debian bookworm main",
+        ])
+
     def test_inactive_entries_do_not_count(self):
         self.write("a.list", f"# deb {PVE} trixie pve-no-subscription\n")
         self.write("b.sources", f"Types: deb\nURIs: {PVE}\nSuites: trixie\n"

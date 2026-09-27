@@ -445,6 +445,49 @@ print("\n".join(sorted(found)))
 PY
 }
 
+# disable_enterprise_repos — disable every ENABLED enterprise.proxmox.com entry. A deb822
+# file can hold several stanzas, so each is judged and rewritten on its own: an unrelated
+# stanza's `Enabled: false` must not hide an enabled enterprise stanza beside it, and
+# `Enabled: false` belongs in the enterprise stanza, not at the end of the file.
+disable_enterprise_repos() {
+  python3 - <<'PY'
+import glob, re
+enterprise = re.compile(r"^https?://enterprise\.proxmox\.com/")
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8").read().split("\n")
+    except OSError:
+        continue
+    changed = False
+    for i, line in enumerate(lines):
+        words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
+        if len(words) >= 2 and words[0] == "deb" and enterprise.match(words[1]):
+            lines[i] = "# " + line
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
+        print(f"    disabled enterprise repo in {path}")
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    stanzas = re.split(r"(\n\s*\n)", open(path, encoding="utf-8").read())
+    changed = False
+    for i in range(0, len(stanzas), 2):
+        stanza, fields = stanzas[i], {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
+            continue
+        if any(enterprise.match(u) for u in fields.get("uris", [])):
+            body = "\n".join(l for l in stanza.split("\n") if not re.match(r"(?i)^enabled:", l))
+            stanzas[i] = body.rstrip("\n") + "\nEnabled: false" + ("\n" if stanza.endswith("\n") else "")
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("".join(stanzas))
+        print(f"    disabled enterprise repo in {path}")
+PY
+}
+
 # disable_stale_proxmox_suites <codename> — disable every ENABLED Proxmox entry (PVE, Ceph,
 # any download.proxmox.com/debian/* repository) whose suite is not this node's release.
 # A node upgraded from bookworm to trixie can keep its old entries enabled; apt would then
@@ -532,22 +575,7 @@ configure_node_repos() {
   # Disable every enterprise entry — pve-enterprise and the Ceph enterprise repo alike.
   # Files are disabled in place rather than deleted, so a package upgrade that ships them
   # again does not re-enable them, and a lab that buys a subscription can flip them back.
-  for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-    [ -f "$f" ] && grep -q 'enterprise\.proxmox\.com' "$f" || continue
-    case "$f" in
-      *.list)
-        if grep -q '^[[:space:]]*deb.*enterprise\.proxmox\.com' "$f"; then
-          sed -i 's|^\([[:space:]]*deb.*enterprise\.proxmox\.com\)|# \1|' "$f"
-          info "disabled enterprise repo in $f"
-        fi ;;
-      *.sources)
-        if ! grep -qi '^Enabled:[[:space:]]*\(no\|false\)' "$f"; then
-          sed -i '/^Enabled:/Id' "$f"
-          printf 'Enabled: false\n' >> "$f"
-          info "disabled enterprise repo in $f"
-        fi ;;
-    esac
-  done
+  disable_enterprise_repos
 
   disable_stale_proxmox_suites "$codename"
   ensure_no_subscription_repo "http://download.proxmox.com/debian/pve" pve-no-subscription \
