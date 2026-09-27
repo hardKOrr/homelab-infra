@@ -79,7 +79,8 @@ resource even though it never touches production config.
 
 - `ansible/scripts/lab-run.sh` — mode guard, preflight, private CLI state, cleanup
 - `ansible/scripts/secret-shape.py` and `ansible/tasks/bootstrap/write-generated-facts.yml`
-- `gate/test-vaultwarden.sh` — redaction, mapping, fail-closed and cleanup tests
+- `gate/test-vaultwarden.sh` — enrollment crypto and no-write retry coverage, plus redaction,
+  mapping, fail-closed and cleanup tests
 - `gate/check-fixture-secrets.py` and `gate/test-fixture-secrets.sh` — fixture/artifact
   secret-shape and tracked `config/` boundary
 - `gate/check-workflow-policy.py` and `gate/test-workflow-policy.sh` — hosted workflow

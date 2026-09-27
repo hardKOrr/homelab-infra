@@ -512,11 +512,15 @@ def render(job_path: Path) -> list[dict]:
             # These entries do not exist until enrollment. Caddy is also the
             # Seed-mode exception that must run before they can exist.
             additions.extend(BW_OPTIONAL)
-        elif "lab-run" in scripts and name not in {"Vaultwarden Enrollment", "Vaultwarden Recovery"}:
+        elif name == "Vaultwarden Enrollment":
+            # First enrollment creates these Key Storage values, then every re-run
+            # receives them as secure options to compare instead of rewriting.
+            additions.extend(BW_OPTIONAL)
+        elif "lab-run" in scripts and name not in {"Vaultwarden Recovery"}:
             additions.extend(BW_OPTIONS)
         if name in {"Vaultwarden Enrollment", "Vaultwarden Cutover"}:
             additions.append(ADMIN_OPTION)
-        if name in {"Reimport Jobs", "Vaultwarden Cutover"}:
+        if name in {"Reimport Jobs", "Vaultwarden Enrollment", "Vaultwarden Cutover"}:
             additions.append(RUNDECK_OPTION)
         if name in {"Deploy Caddy", "Vaultwarden Cutover"}:
             additions.append(CLOUDFLARE_OPTION)

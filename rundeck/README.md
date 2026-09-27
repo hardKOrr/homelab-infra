@@ -26,7 +26,7 @@ contracts.
 | **Config** | writes `config/proxmox.yml`, `config/infrastructure.yml` and `config/apps/rundeck.yml` |
 | **Rundeck** | random admin password, non-expiring API token, the `homelab-infra` project, every job in `jobs/` imported, Key Storage staged |
 | **Wiring** | `/etc/homelab-infra/lab-run.env` and a `/usr/local/bin/lab-run` symlink into the checkout |
-| **Vaultwarden** | deploys Caddy first, then Vaultwarden and its HTTPS route; invites the exact owner/automation addresses with public signups disabled |
+| **Vaultwarden** | deploys Caddy first, then Vaultwarden and its HTTPS route; the bootstrap runs Enrollment, verified Cutover, and Bootstrap Platform in sequence |
 
 Everything is idempotent — re-running converges an existing container, rotates no
 credential, and overwrites no answer you already gave. Override any default with an
@@ -53,9 +53,11 @@ original runner is unavailable.
 
 ### What it asks
 
-The script asks for the lab network, provider choices, and owner and automation identities.
-Each prompt also has an environment-variable form, so `NONINTERACTIVE=1` supports scripted
-bootstrap. The script header owns the current input list and defaults.
+The script asks for the lab network, provider choices, and owner identity. Each prompt also
+has an environment-variable form, so `NONINTERACTIVE=1` supports scripted bootstrap. The
+Vaultwarden owner and automation master passwords are generated on the runner and imported
+from Seed into the canonical vault item during Cutover. The script header owns the current
+input list and defaults.
 
 Everything else is discovered from the node it runs on: the node name, the API address,
 storages, bridges, template storage, the timezone.

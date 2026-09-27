@@ -34,6 +34,6 @@
       ansible.builtin.debug:
         msg: >-
           Explicit Seed recovery is active. Ordinary jobs remain disabled. Restore
-          or redeploy Caddy and Vaultwarden with LAB_SEED_MODE=1, complete enrollment
-          if required, then run Vaultwarden Cutover to verify imports and restore
+          or redeploy Caddy and Vaultwarden with LAB_SEED_MODE=1, run Vaultwarden
+          Enrollment if required, then run Vaultwarden Cutover to verify imports and restore
           the marker. Seed files are not created or populated by this job.

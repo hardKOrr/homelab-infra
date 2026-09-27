@@ -20,30 +20,33 @@ the rest of the documentation obvious.
 |---|---|---|
 | **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
 | **Where** | as root on a Proxmox node | in Rundeck |
-| **Builds** | the runner, Caddy, and Vaultwarden in temporary Seed mode | the remaining services in mandatory Vault mode |
-| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, and explicit enrollment/cutover jobs | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
-| **Run it** | once, by hand | once, by clicking |
+| **Builds** | the runner, Caddy, and Vaultwarden, then verifies Seed cutover | the remaining services in mandatory Vault mode |
+| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, generated credentials imported to the vault, and the complete baseline lab | the services deployed by the Bootstrap Platform job |
+| **Run it** | once, by hand or with the documented environment inputs | automatically at the end of Layer 1; re-runnable in Rundeck |
 
-Between them is one unavoidable human ceremony: choose the owner and automation-account
-master passwords inside Vaultwarden, create the automation API key, stage its three values
-as encrypted job secrets, and run the verified cutover. The initial script brings up every
-component needed to perform that ceremony; it never asks for those passwords.
+The script completes all three Rundeck steps itself: Vaultwarden Enrollment, Vaultwarden
+Cutover, then Bootstrap Platform. Enrollment generates account passwords, registers both
+accounts, creates the organization, confirms the automation Admin, and stages its API
+credentials in Key Storage. Generated passwords remain in the protected Seed file until
+Cutover imports them into `homelab-infra/vaultwarden` and removes the file.
 
 ### 0. Make the lab domain reach the lab Caddy
 
-One network prerequisite has to be true before the ceremony in the middle is possible, and
-it is the only thing this project cannot arrange for you.
+One network prerequisite is needed for client devices to open the web vault after bootstrap.
+The runner arranges its own Vaultwarden name resolution during enrollment.
 
-Layer 1 finishes by putting Vaultwarden behind an HTTPS route on the Caddy it just built,
-and the enrollment ceremony is performed in a browser at `https://vaultwarden.<your
-domain>`. That URL has to resolve — from the runner and from your workstation — to the new
-Caddy LXC, and the path to it on ports 80/443 has to be open. So:
+Layer 1 puts Vaultwarden behind an HTTPS route on the Caddy it just built. Bootstrap pins
+`vaultwarden.<your-domain>` to Caddy inside the runner while it performs enrollment, with
+normal HTTPS hostname verification. To open the web vault from your workstation later, its
+LAN resolver should also direct that name to the new Caddy LXC, and the path to it on ports
+80/443 has to be open. So:
 
-<!-- output-source:network-prerequisite sha=7cfe6710 -->
-- **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy
-  LXC in whatever resolver your LAN uses. Once `dns.provider` is configured and Vaultwarden
-  holds its API key, later app deploys create their own records automatically — this first
-  one is the exception, because it is what the cutover that unlocks that key depends on.
+<!-- output-source:network-prerequisite sha=d9eb5acf -->
+- **Resolution.** For client devices to open the web vault, create a record for
+  `vaultwarden.<your domain>` pointing at the Caddy LXC in whatever resolver your LAN uses.
+  Bootstrap resolves this name to Caddy inside the runner itself, so that first record is
+  not required to enroll or cut over. Once `dns.provider` is configured and Vaultwarden
+  holds its API key, later app deploys create their own records automatically.
 - **Reachability.** If clients and the Caddy LXC sit on different VLANs or subnets, the
   router has to permit that traffic to 80/443. Same-subnet labs have nothing to do.
 - **Source networks.** Caddy enforces `reverse_proxy.internal_cidrs` on every app whose
@@ -67,13 +70,18 @@ scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
 ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
 ```
 
-It asks for the lab domain, first-owner and automation-account email addresses, the guest network,
+It asks for the lab domain, owner and automation-account email addresses, the guest network,
 a timezone, and which reverse proxy / SSO / notification / DNS providers you want. Every
-answer has a default except the domain, and every answer can be supplied as an environment
-variable instead, so the whole thing scripts:
+non-secret answer has a default except the domain and owner email. Cloudflare's DNS-01 token
+must also be provided when using the default Caddy setup. Each answer has an environment
+variable form, so the whole thing scripts:
 
 ```sh
-LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 bash bootstrap-rundeck.sh
+NONINTERACTIVE=1 \
+  LAB_DOMAIN=lab.example.com \
+  VAULTWARDEN_OWNER_EMAIL=owner@example.net \
+  CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:?export a Zone Read + DNS Edit token}" \
+  bash bootstrap-rundeck.sh
 ```
 
 Everything else it works out for itself: the node name, the API address, storages,
@@ -83,7 +91,8 @@ Rundeck Key Storage, generates the SSH key the platform will use to reach its gu
 writes `config/proxmox.yml` and `config/infrastructure.yml`, creates the Rundeck project,
 imports every job, and tags its own container so the platform manages it like any other
 guest it created. Its last deployment sequence brings up Caddy first, then Vaultwarden and
-its HTTPS route, and sends the exact owner invitations while keeping public signups off.
+its HTTPS route, enrolls both accounts and cuts over into Vault mode, and runs Bootstrap
+Platform while keeping public signups off.
 Set `DEPLOY_VAULTWARDEN=0` only for deliberate runner-only recovery.
 
 Re-running it converges: it rotates no credential and overwrites no answer you already
@@ -91,40 +100,23 @@ gave.
 
 ### 2. Stand up the lab
 
-<!-- output-source:vault-enrollment-ceremony sha=ff0d76d0 -->
-Open the Rundeck URL it printed. Two jobs, with one browser session between them.
+<!-- output-source:vault-enrollment-ceremony sha=f0a9d364 -->
+The script waits for **Vaultwarden Enrollment**, **Vaultwarden Cutover**, and **Bootstrap
+Platform** to finish. The first job creates the two accounts and the `homelab-infra`
+organization, confirms the automation account as an Admin, and stages the API credentials.
+The second verifies the Seed credentials were imported into `homelab-infra/vaultwarden`
+before deleting the Seed file. The final job reconciles Caddy and Vaultwarden, then deploys
+Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, and PBS. The sequence is resumable: if a
+step fails, fix the cause and rerun the corresponding Rundeck job.
 
-Layer 1 already sent the owner and automation invitations itself. The **Vaultwarden
-Enrollment** job re-sends them, and you click it only if that attempt failed — which
-happens when `vaultwarden.<domain>` did not yet resolve to the Caddy LXC.
-
-In the web vault at `https://vaultwarden.<domain>`, register the owner address and the
-automation address. **You choose both master passwords here** — nothing in this project
-generates, stores or prints them, which is why the job output has no password in it. Then,
-as the owner, create the `homelab-infra` organization and invite the automation account
-into it as an **Admin**.
-
-That is the whole manual step. Do not create any collection or assign collection
-permissions: the platform creates `platform-secrets` on first write. The web vault's
-auto-created "Default Collection" is ignored. Admin membership gives the automation
-account organization-wide access, so Vaultwarden stores and displays no explicit
-permission for that account on `platform-secrets`.
-
-Signed in as the automation account, view its personal API key (Settings → Security → Keys).
-Stage that client ID and client secret, plus the automation master password you chose, in
-these encrypted Password entries:
-
-- `keys/project/homelab-infra/vaultwarden-machine/client-id`
-- `keys/project/homelab-infra/vaultwarden-machine/client-secret`
-- `keys/project/homelab-infra/vaultwarden-machine/master-password`
-
-Run **Vaultwarden Cutover**; it imports and reads back every
-seed secret before writing the marker and deleting seed files. Then run **Bootstrap
-Platform**.
-
-That reconciles the already-tagged Caddy and Vaultwarden LXCs, then deploys Ntfy, Authentik, Uptime Kuma,
-Prometheus + Grafana and PBS. Each step records its own connection details before the next
-one needs them, so the run is resumable: if something fails, fix it and run the job again.
+For an unattended first run, provide the required lab inputs in the environment, for
+example `NONINTERACTIVE=1 LAB_DOMAIN=<lab-domain>
+VAULTWARDEN_OWNER_EMAIL=owner@example.net CLOUDFLARE_API_TOKEN=...`; the bootstrap derives
+the automation address from the domain and discovers the Proxmox and network defaults.
+Cloudflare is used for Caddy's DNS-01 certificate challenge. The runner resolves the
+Vaultwarden hostname to Caddy locally during enrollment, so an existing LAN DNS record is
+not required for bootstrap. A LAN resolver record is still useful for opening the web vault
+from client devices after setup.
 <!-- /output-source:vault-enrollment-ceremony -->
 
 ### 3. Deploy things

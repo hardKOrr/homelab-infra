@@ -57,9 +57,23 @@
       ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
       vars:
         vault_item_name: homelab-infra/vaultwarden
-        vault_item_fields:
-          admin_token: "{{ homelabinfra_config.infrastructure.vaultwarden.admin_token }}"
-        vault_item_secret_fields: [admin_token]
+        vault_item_fields: >-
+          {{ {'admin_token': homelabinfra_config.infrastructure.vaultwarden.admin_token}
+             | combine({'owner_email': homelabinfra_config.infrastructure.vaultwarden.owner_email}
+                       if homelabinfra_config.infrastructure.vaultwarden.owner_email | default('') | length > 0 else {})
+             | combine({'owner_master_password': lookup('ansible.builtin.env', 'VAULTWARDEN_OWNER_MASTER_PASSWORD')}
+                       if lookup('ansible.builtin.env', 'VAULTWARDEN_OWNER_MASTER_PASSWORD') | length > 0 else {})
+             | combine({'automation_email': homelabinfra_config.infrastructure.vaultwarden.automation_email}
+                       if homelabinfra_config.infrastructure.vaultwarden.automation_email | default('') | length > 0 else {})
+             | combine({'automation_master_password': lookup('ansible.builtin.env', 'VAULTWARDEN_AUTOMATION_MASTER_PASSWORD')}
+                       if lookup('ansible.builtin.env', 'VAULTWARDEN_AUTOMATION_MASTER_PASSWORD') | length > 0 else {}) }}
+        vault_item_secret_fields: >-
+          {{ ['admin_token']
+             + (['owner_master_password'] if lookup('ansible.builtin.env', 'VAULTWARDEN_OWNER_MASTER_PASSWORD') | length > 0 else [])
+             + (['automation_master_password'] if lookup('ansible.builtin.env', 'VAULTWARDEN_AUTOMATION_MASTER_PASSWORD') | length > 0 else []) }}
+        # Older manually enrolled runners have no generated account-password seed. Merge
+        # keeps their existing item fields while new unattended enrollments add both.
+        vault_item_merge: true
 
     - name: Import and verify the reverse-proxy DNS credential
       ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml

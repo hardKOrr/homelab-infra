@@ -10,8 +10,8 @@ that interface.
   Native applications use their installed `lab-*` helpers; Docker applications act on the
   Compose project; Kubernetes operations use the owning namespace.
 - Configuration operations validate, read, or update user-owned runtime configuration.
-- Vaultwarden operations enrol accounts, perform the verified Seed-to-Vault cutover, store
-  secrets, or enter the explicit recovery path.
+- Vaultwarden operations generate and enroll the owner and automation accounts, perform the
+  verified Seed-to-Vault cutover, store secrets, or enter the explicit recovery path.
 - Backup and restore operations use the backend-specific data path rather than treating a
   VM snapshot as application-consistent data. Role-backed Docker apps such as Immich stop
   their Compose services and archive named PostgreSQL data with explicitly owned durable

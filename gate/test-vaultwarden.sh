@@ -7,6 +7,9 @@ trap 'rm -rf -- "$work"' EXIT
 
 fail() { echo "vault test failed: $*" >&2; exit 1; }
 
+python3 "$repo/gate/test-vaultwarden-enrollment.py" \
+  || fail "Vaultwarden enrollment crypto and convergence regression failed"
+
 # Canonical item mapping, including application and estate scopes.
 printf '%s' '[
  {"name":"homelab-infra/proxmox","fields":[{"name":"api_token_secret","value":"pve-value"}]},
@@ -110,22 +113,57 @@ python3 "$repo/rundeck/render-job.py" \
 grep -q 'storagePath: keys/project/homelab-infra/bootstrap/cloudflare-api-token' \
   "$work/cutover-job.yml" || fail "cutover cannot migrate the Cloudflare token"
 
-# The operator handoff must identify both configured accounts, use the actual
-# Rundeck Key Storage paths, and leave collection creation to the platform.
+# Enrollment must run the automated helper and remain safe to rerun; its credentials are
+# resolved from Rundeck's secure options rather than printed as operator instructions.
 enrollment="$repo/ansible/playbooks/maintenance/vaultwarden-enroll.yml"
 grep -Fq '{{ _vault_owner_email }}' "$enrollment" \
-  || fail "enrollment output does not identify the configured owner account"
+  || fail "enrollment does not pass the configured owner address to the helper"
 grep -Fq '{{ _vault_automation_email }}' "$enrollment" \
-  || fail "enrollment output does not identify the configured automation account"
-for key in client-id client-secret master-password; do
-  grep -Fq "keys/project/homelab-infra/vaultwarden-machine/$key" "$enrollment" \
-    || fail "enrollment output omits the Rundeck $key path"
-done
-grep -Fq 'Do not create a collection or assign collection permissions' "$enrollment" \
-  || fail "enrollment output does not state the platform-owned collection boundary"
+  || fail "enrollment does not pass the configured automation address to the helper"
+grep -Fq 'vaultwarden-enroll.py' "$enrollment" \
+  || fail "enrollment playbook does not run the crypto/flow helper"
+grep -Fq 'no_log: true' "$enrollment" \
+  || fail "enrollment can write account material to the Ansible log"
+grep -Fq 'RUNDECK_API_TOKEN' "$enrollment" \
+  || fail "enrollment cannot stage secrets in Rundeck Key Storage"
+grep -Fq 'cryptography==50.0.1' "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "the runner does not install the enrollment crypto dependency"
+python3 "$repo/rundeck/render-job.py" \
+  "$repo/rundeck/jobs/vaultwarden-enrollment.yaml" > "$work/enrollment-job.yml"
+python3 - "$work/enrollment-job.yml" <<'PY'
+import sys, yaml
+job = yaml.safe_load(open(sys.argv[1]))[0]
+options = {item["name"]: item for item in job["options"]}
+expected = {
+    "bw_clientid": ("keys/project/homelab-infra/vaultwarden-machine/client-id", False),
+    "bw_clientsecret": ("keys/project/homelab-infra/vaultwarden-machine/client-secret", False),
+    "bw_password": ("keys/project/homelab-infra/vaultwarden-machine/master-password", False),
+    "vaultwarden_admin_token": ("keys/project/homelab-infra/vaultwarden-machine/admin-token", True),
+    "rundeck_api_token": ("keys/project/homelab-infra/rundeck/api-token", True),
+}
+for name, (path, required) in expected.items():
+    assert options[name]["storagePath"] == path, name
+    assert options[name]["required"] is required, name
+PY
 ! grep -Fq "and the collection 'platform-secrets'" \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap still tells the operator to create platform-secrets"
+for job in 9fa6c03f-72db-5baf-8d8d-3b98774e4f74 e04bfd76-e7c9-5bec-979e-7335b76b460d f4ff3c34-28da-5509-92fa-6e5c60c70f3d; do
+  grep -Fq "rd_run_job $job" "$repo/rundeck/bootstrap-rundeck.sh" \
+    || fail "bootstrap does not chain job $job"
+done
+for key in owner_master_password automation_master_password; do
+  grep -Fq "$key" "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+    || fail "cutover does not import the generated $key into the canonical item"
+done
+grep -Fq 'VAULTWARDEN_OWNER_MASTER_PASSWORD|VAULTWARDEN_AUTOMATION_MASTER_PASSWORD' \
+  "$repo/ansible/scripts/lab-run.sh" \
+  || fail "Seed mode does not expose generated Vaultwarden passwords to Cutover"
+grep -Fq 'LAB_STATE_DIR LAB_SECRETS_DIR LAB_BRANCH' "$repo/ansible/scripts/lab-run.sh" \
+  || fail "the enrollment helper cannot see the configured Seed directory"
+grep -Fq '/etc/homelab-infra/secrets.d/vaultwarden.env' \
+  "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  || fail "Cutover does not remove the generated Vaultwarden Seed file"
 
 # Layer 1 deploys Vaultwarden before generated facts necessarily contain `domain`.
 # The role must use authored infrastructure config then, or full bootstrap adds DOMAIN,

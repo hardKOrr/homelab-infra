@@ -14,3 +14,4 @@ yamllint==1.35.1
 # mock, so the gate venv needs them even though the syntax-check gates never did.
 proxmoxer==2.3.0
 requests==2.34.2
+cryptography==50.0.1

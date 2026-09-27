@@ -47,6 +47,8 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
   Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination
   protocol and coverage rollup described in [`../docs/recovery-acceptance.md`](../docs/recovery-acceptance.md).
+  The Vaultwarden lane also tests the enrollment crypto protocol and a mocked full enrollment,
+  including a retry that performs no persistent writes.
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
 - `container.sh` — runs the Molecule container role integration harness at
   `ansible/molecule/docker-app` (converge, idempotence, verify, teardown) against a
