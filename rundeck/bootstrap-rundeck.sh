@@ -403,9 +403,45 @@ for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
         if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
             continue
         if (any(uri_ok(u) for u in fields.get("uris", []))
-                and suite in fields.get("suites", []) and component in fields.get("components", [])):
+                and fields.get("suites") and all(s == suite for s in fields["suites"])
+                and component in fields.get("components", [])):
             sys.exit(0)
 sys.exit(1)
+PY
+}
+
+# ceph_enterprise_releases <codename> — the Ceph releases (squid, quincy, ...) named by
+# enterprise entries FOR THIS RELEASE, enabled or already disabled by an earlier run. An
+# entry for another Debian release names a Ceph release that may not exist for this one
+# (quincy has no trixie build), so converting it would add a broken source; those are
+# left to the stale-suite pass and the missing-Ceph warning instead.
+ceph_enterprise_releases() {
+  python3 - "$1" <<'PY'
+import glob, re, sys
+codename = sys.argv[1]
+ceph = re.compile(r"^https?://enterprise\.proxmox\.com/debian/ceph-([a-z]+)/?$")
+found = set()
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        words = re.sub(r"\[[^]]*\]", "", line.lstrip("# \t").split("#", 1)[0]).split()
+        if len(words) >= 3 and words[0] == "deb" and words[2] == codename and ceph.match(words[1]):
+            found.add(ceph.match(words[1]).group(1))
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    for stanza in re.split(r"\n\s*\n", open(path, encoding="utf-8", errors="replace").read()):
+        fields = {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if fields.get("suites") and all(s == codename for s in fields["suites"]):
+            for uri in fields.get("uris", []):
+                if ceph.match(uri):
+                    found.add(ceph.match(uri).group(1))
+print("\n".join(sorted(found)))
 PY
 }
 
@@ -445,7 +481,9 @@ for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
                 fields[key.strip().lower()] = value.split()
         if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
             continue
-        if any(proxmox.match(u) for u in fields.get("uris", [])) and codename not in fields.get("suites", []):
+        # Every suite must be this release: `Suites: bookworm trixie` still serves bookworm.
+        if any(proxmox.match(u) for u in fields.get("uris", [])) and any(
+                s != codename for s in fields.get("suites", [])):
             body = "\n".join(l for l in stanza.split("\n") if not re.match(r"(?i)^enabled:", l))
             stanzas[i] = body.rstrip("\n") + "\nEnabled: false" + ("\n" if stanza.endswith("\n") else "")
             changed = True
@@ -486,11 +524,10 @@ configure_node_repos() {
   { [ -f /etc/apt/sources.list.d/pve-enterprise.sources ] || [ "$codename" != bookworm ]; } && deb822=1
 
   # Ceph is its own repository per release (ceph-squid, ceph-quincy, ...), not part of the
-  # PVE one. Record which release the enterprise entries name — enabled or already
-  # disabled by an earlier run — so its no-subscription channel replaces it below instead
-  # of leaving installed Ceph packages without any source.
-  ceph_releases="$(grep -rhoE 'enterprise\.proxmox\.com/debian/ceph-[a-z]+' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sed 's|.*/ceph-||' | sort -u || true)"
+  # PVE one. Record which Ceph release this Debian release's enterprise entries name, so
+  # its no-subscription channel replaces it below instead of leaving installed Ceph
+  # packages without any source. Entries for another Debian release are not converted.
+  ceph_releases="$(ceph_enterprise_releases "$codename")"
 
   # Disable every enterprise entry — pve-enterprise and the Ceph enterprise repo alike.
   # Files are disabled in place rather than deleted, so a package upgrade that ships them

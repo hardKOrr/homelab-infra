@@ -6,8 +6,9 @@ Deploying an app creates its guest, installs it, publishes it through your rever
 registers it with your SSO, adds an uptime monitor and creates its DNS record — in one
 job, with no follow-up steps. Removing it unwires all four again.
 
-You clone this repo, run one command on a Proxmox node, and click one button. That is the
-whole path.
+You clone this repo and run one command on a Proxmox node. That is the whole path: the
+command builds the automation runner, enrolls its secret store and deploys the baseline
+services without asking for anything after it starts.
 
 ---
 
