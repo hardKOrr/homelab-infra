@@ -15,7 +15,7 @@
 #              -> the controller-side token sink (tasks/vaultwarden/token-sink.yml)
 #              -> hash already present on the guest (token continuity across re-runs)
 #              -> first bootstrap: generate and WRITE TO THE TEMPORARY SEED SINK
-#                 before the human account-enrollment ceremony (slice 013).
+#                 before Vaultwarden Enrollment registers the accounts.
 # Only the hash ever touches the guest filesystem; the plaintext goes to the sink on
 # the controller and nowhere else. A failed sink write stops before Vaultwarden is
 # configured, so a generated token is never exposed in a job log or silently lost.

@@ -516,7 +516,7 @@ def render(job_path: Path) -> list[dict]:
             additions.extend(BW_OPTIONS)
         if name in {"Vaultwarden Enrollment", "Vaultwarden Cutover"}:
             additions.append(ADMIN_OPTION)
-        if name in {"Reimport Jobs", "Vaultwarden Cutover"}:
+        if name in {"Reimport Jobs", "Vaultwarden Enrollment", "Vaultwarden Cutover"}:
             additions.append(RUNDECK_OPTION)
         if name in {"Deploy Caddy", "Vaultwarden Cutover"}:
             additions.append(CLOUDFLARE_OPTION)

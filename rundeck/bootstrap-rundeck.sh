@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # bootstrap-rundeck.sh — stand up the whole homelab-infra runner from nothing.
 #
-# Run this ON a Proxmox node, as root. By default it returns a working automation
-# runner, Caddy, and HTTPS Vaultwarden. Open Rundeck, complete the human enrollment
-# ceremony and verified cutover, then click Bootstrap Platform for the baseline.
+# Run this ON a Proxmox node, as root. By default it builds the automation runner, Caddy
+# and HTTPS Vaultwarden, enrolls Vaultwarden, cuts over to Vault mode and runs Bootstrap
+# Platform — the whole baseline lab from one command, with no step needing a human.
 #
 #   ./bootstrap-rundeck.sh
 #   CT_IP=10.20.4.10/20 CT_GW=10.20.0.1 ./bootstrap-rundeck.sh  # skip the prompts
 #   LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 ./bootstrap-rundeck.sh
+#   # fully unattended, first run to finished lab:
+#   LAB_DOMAIN=lab.example.com VAULTWARDEN_OWNER_EMAIL=owner@example.com \
+#     CLOUDFLARE_API_TOKEN=... NONINTERACTIVE=1 ./bootstrap-rundeck.sh
 #   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
 #
 # This is the first of the platform's two bootstrap layers:
@@ -16,14 +19,18 @@
 #      exist: the LXC, Java, Rundeck, an ansible venv, the repo clone, the platform's
 #      Proxmox credential, the authored config, Key Storage, the project and the jobs.
 #      It invokes normal playbooks to deploy Caddy and then Vaultwarden in Seed mode.
-#   2. ENROLLMENT/CUTOVER, in the UI — the owner chooses passwords in Vaultwarden,
-#      stages the automation API credentials, and verifies every imported seed secret.
-#   3. BOOTSTRAP PLATFORM, in the UI — reconciles Caddy/Vaultwarden, then builds Ntfy, Authentik, Uptime Kuma,
-#      Prometheus + Grafana and PBS.
+#   2. ENROLLMENT/CUTOVER — Vaultwarden Enrollment registers the owner and automation
+#      accounts with generated master passwords and stages the automation API key;
+#      Vaultwarden Cutover imports and verifies every seed secret, those passwords included.
+#   3. BOOTSTRAP PLATFORM — reconciles Caddy/Vaultwarden, then builds Ntfy, Authentik,
+#      Uptime Kuma, Prometheus + Grafana and PBS.
 #
-# One command produces the enrollment surface; the explicit cutover establishes Vault mode.
+# Layers 2 and 3 are ordinary Rundeck jobs. This script runs them through the Rundeck API
+# once Vaultwarden answers at its HTTPS name; otherwise run them from the UI, in order.
 #
 # What it produces:
+#   - This node's apt switched from the enterprise repos to pve-no-subscription, and the
+#     subscription dialog removed (NODE_REPOS=0 skips; NODE_REPOS_ONLY=1 does only this)
 #   - Unprivileged Debian 13 LXC, tagged _+lab so the platform manages it like
 #     any other guest it created — PBS backs it up, Lab Status reports it
 #   - OpenJDK 21 + Rundeck 6.x, a random admin password, a non-expiring API token
@@ -110,6 +117,15 @@ MANAGED_TAGS="${MANAGED_TAGS:-_+lab;_-debian;_rundeck}"
 PVE_USER="${PVE_USER:-homelab-infra@pve}"
 PVE_ROLE="${PVE_ROLE:-HomelabInfra}"
 PVE_TOKEN_NAME="${PVE_TOKEN_NAME:-automation}"
+
+# Node package repositories. A fresh Proxmox install points apt at the subscription-only
+# enterprise repositories, which answer 401 without a subscription, so the node cannot
+# update. NODE_REPOS=1 (default) switches THIS node to pve-no-subscription and removes the
+# web UI's "No valid subscription" dialog; set 0 for a lab that holds a subscription.
+# NODE_REPOS_ONLY=1 does just that step and exits — copy the script to each other node in
+# the cluster and run it there, since the rest of this script only touches one node.
+NODE_REPOS="${NODE_REPOS:-1}"
+NODE_REPOS_ONLY="${NODE_REPOS_ONLY:-0}"
 # A Proxmox token secret can be captured only at creation. It is never printed; re-runs
 # keep the existing token unless deliberate rotation is requested.
 ROTATE_PROXMOX_TOKEN="${ROTATE_PROXMOX_TOKEN:-0}"
@@ -349,6 +365,263 @@ log "Preflight"
 command -v pct >/dev/null    || die "pct not found — run this on a Proxmox node, not inside a container"
 command -v pveam >/dev/null  || die "pveam not found"
 command -v pveum >/dev/null  || die "pveum not found"
+
+# ── Node package repositories ──────────────────────────────────────────────────
+# Before anything else, so a fresh node can update at all. Idempotent: every change is
+# conditional on the node still being in its stock state. Handles both the one-line
+# `.list` files of PVE 8 (bookworm) and the deb822 `.sources` files of PVE 9 (trixie).
+# repo_active <uri> <suite> <component> — true when an ENABLED apt entry serves
+# <component> of <suite> from <uri>. A commented `.list` line, a deb822 stanza with
+# `Enabled: no|false`, or an entry for another release (a bookworm line left behind on a
+# node upgraded to trixie) does not count; a bare grep for the component accepts all three.
+# A <uri> ending in `*` matches as a prefix (any Ceph release: .../debian/ceph-*).
+repo_active() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import glob, re, sys
+uri, suite, component = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
+def uri_ok(candidate):
+    candidate = candidate.rstrip("/")
+    return candidate.startswith(uri[:-1]) if uri.endswith("*") else candidate == uri
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
+        if (len(words) >= 4 and words[0] == "deb" and uri_ok(words[1])
+                and words[2] == suite and component in words[3:]):
+            sys.exit(0)
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for stanza in re.split(r"\n\s*\n", text):
+        fields = {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
+            continue
+        if (any(uri_ok(u) for u in fields.get("uris", []))
+                and fields.get("suites") and all(s == suite for s in fields["suites"])
+                and component in fields.get("components", [])):
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# ceph_enterprise_releases <codename> — the Ceph releases (squid, quincy, ...) named by
+# enterprise entries FOR THIS RELEASE, enabled or already disabled by an earlier run. An
+# entry for another Debian release names a Ceph release that may not exist for this one
+# (quincy has no trixie build), so converting it would add a broken source; those are
+# left to the stale-suite pass and the missing-Ceph warning instead.
+ceph_enterprise_releases() {
+  python3 - "$1" <<'PY'
+import glob, re, sys
+codename = sys.argv[1]
+ceph = re.compile(r"^https?://enterprise\.proxmox\.com/debian/ceph-([a-z]+)/?$")
+found = set()
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        words = re.sub(r"\[[^]]*\]", "", line.lstrip("# \t").split("#", 1)[0]).split()
+        if len(words) >= 3 and words[0] == "deb" and words[2] == codename and ceph.match(words[1]):
+            found.add(ceph.match(words[1]).group(1))
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    for stanza in re.split(r"\n\s*\n", open(path, encoding="utf-8", errors="replace").read()):
+        fields = {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if fields.get("suites") and all(s == codename for s in fields["suites"]):
+            for uri in fields.get("uris", []):
+                if ceph.match(uri):
+                    found.add(ceph.match(uri).group(1))
+print("\n".join(sorted(found)))
+PY
+}
+
+# disable_enterprise_repos — disable every ENABLED enterprise.proxmox.com entry. A deb822
+# file can hold several stanzas, so each is judged and rewritten on its own: an unrelated
+# stanza's `Enabled: false` must not hide an enabled enterprise stanza beside it, and
+# `Enabled: false` belongs in the enterprise stanza, not at the end of the file.
+disable_enterprise_repos() {
+  python3 - <<'PY'
+import glob, re
+enterprise = re.compile(r"^https?://enterprise\.proxmox\.com/")
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8").read().split("\n")
+    except OSError:
+        continue
+    changed = False
+    for i, line in enumerate(lines):
+        words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
+        if len(words) >= 2 and words[0] == "deb" and enterprise.match(words[1]):
+            lines[i] = "# " + line
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
+        print(f"    disabled enterprise repo in {path}")
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    stanzas = re.split(r"(\n\s*\n)", open(path, encoding="utf-8").read())
+    changed = False
+    for i in range(0, len(stanzas), 2):
+        stanza, fields = stanzas[i], {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
+            continue
+        if any(enterprise.match(u) for u in fields.get("uris", [])):
+            body = "\n".join(l for l in stanza.split("\n") if not re.match(r"(?i)^enabled:", l))
+            stanzas[i] = body.rstrip("\n") + "\nEnabled: false" + ("\n" if stanza.endswith("\n") else "")
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("".join(stanzas))
+        print(f"    disabled enterprise repo in {path}")
+PY
+}
+
+# disable_stale_proxmox_suites <codename> — disable every ENABLED Proxmox entry (PVE, Ceph,
+# any download.proxmox.com/debian/* repository) whose suite is not this node's release.
+# A node upgraded from bookworm to trixie can keep its old entries enabled; apt would then
+# mix two Debian releases even after the correct entry is added. Disabled in place, like
+# the enterprise entries: `.list` lines are commented, deb822 stanzas get `Enabled: false`.
+disable_stale_proxmox_suites() {
+  python3 - "$1" <<'PY'
+import glob, re, sys
+codename = sys.argv[1]
+proxmox = re.compile(r"^https?://(download|enterprise)\.proxmox\.com/debian/")
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8").read().split("\n")
+    except OSError:
+        continue
+    changed = False
+    for i, line in enumerate(lines):
+        words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
+        if len(words) >= 3 and words[0] == "deb" and proxmox.match(words[1]) and words[2] != codename:
+            lines[i] = "# " + line
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
+        print(f"    disabled {path}: Proxmox entry for another release than {codename}")
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    text = open(path, encoding="utf-8").read()
+    stanzas = re.split(r"(\n\s*\n)", text)
+    changed = False
+    for i in range(0, len(stanzas), 2):
+        stanza, fields = stanzas[i], {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
+            continue
+        # Every suite must be this release: `Suites: bookworm trixie` still serves bookworm.
+        if any(proxmox.match(u) for u in fields.get("uris", [])) and any(
+                s != codename for s in fields.get("suites", [])):
+            body = "\n".join(l for l in stanza.split("\n") if not re.match(r"(?i)^enabled:", l))
+            stanzas[i] = body.rstrip("\n") + "\nEnabled: false" + ("\n" if stanza.endswith("\n") else "")
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("".join(stanzas))
+        print(f"    disabled {path}: Proxmox stanza for another release than {codename}")
+PY
+}
+
+# ensure_no_subscription_repo <uri> <component> <sources-basename> <list-basename> — add
+# an enabled entry in the node's own format unless one is already active. Reads the
+# caller's $codename and $deb822.
+ensure_no_subscription_repo() {
+  local uri="$1" component="$2" sources="$3" list="$4"
+  if repo_active "$uri" "$codename" "$component"; then
+    info "$component from $uri already enabled"
+  elif [ "$deb822" = 1 ]; then
+    cat > "/etc/apt/sources.list.d/$sources.sources" <<EOF
+Types: deb
+URIs: $uri
+Suites: $codename
+Components: $component
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+    info "added $component ($codename) from $uri in $sources.sources"
+  else
+    echo "deb $uri $codename $component" > "/etc/apt/sources.list.d/$list.list"
+    info "added $component ($codename) from $uri in $list.list"
+  fi
+}
+
+configure_node_repos() {
+  local codename f nag hook deb822 ceph_releases rel
+  codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+  [ -n "$codename" ] || die "cannot read VERSION_CODENAME from /etc/os-release"
+  # PVE 9 ships deb822 `.sources`; PVE 8 ships one-line `.list`. Match the node's style.
+  deb822=0
+  { [ -f /etc/apt/sources.list.d/pve-enterprise.sources ] || [ "$codename" != bookworm ]; } && deb822=1
+
+  # Ceph is its own repository per release (ceph-squid, ceph-quincy, ...), not part of the
+  # PVE one. Record which Ceph release this Debian release's enterprise entries name, so
+  # its no-subscription channel replaces it below instead of leaving installed Ceph
+  # packages without any source. Entries for another Debian release are not converted.
+  ceph_releases="$(ceph_enterprise_releases "$codename")"
+
+  # Disable every enterprise entry — pve-enterprise and the Ceph enterprise repo alike.
+  # Files are disabled in place rather than deleted, so a package upgrade that ships them
+  # again does not re-enable them, and a lab that buys a subscription can flip them back.
+  disable_enterprise_repos
+
+  disable_stale_proxmox_suites "$codename"
+  ensure_no_subscription_repo "http://download.proxmox.com/debian/pve" pve-no-subscription \
+    proxmox pve-no-subscription
+  for rel in $ceph_releases; do
+    ensure_no_subscription_repo "http://download.proxmox.com/debian/ceph-$rel" no-subscription \
+      "ceph-$rel-no-subscription" "ceph-$rel-no-subscription"
+  done
+  # Ceph releases are per Debian release (quincy/reef on bookworm, squid on trixie), so a
+  # stale entry disabled above has no mechanical replacement. Say so rather than guess.
+  if dpkg-query -W -f='${Status}' ceph-common 2>/dev/null | grep -q 'install ok installed' \
+     && ! repo_active "http://download.proxmox.com/debian/ceph-*" "$codename" no-subscription; then
+    warn "Ceph is installed but no Ceph repository is enabled for $codename — add the Ceph release Proxmox documents for $codename (for example ceph-squid on trixie) before upgrading"
+  fi
+
+  # The subscription dialog is a client-side check in proxmoxlib.js. The package rewrites
+  # that file on every upgrade, so the patch is re-applied from a dpkg hook as well as now.
+  # If a future release changes the check, the sed matches nothing and the dialog returns;
+  # it never breaks the UI. Only the FIRST `!== 'active'` is changed — that is the dialog;
+  # PVE 9 has a later one that drives the node's subscription-state display, left alone.
+  # The condition becomes `=== 'NoMoreNagging'`, always false, and doubles as the marker.
+  # (\x27 is a single quote, so the same sed survives inside the hook's quoting.)
+  nag=/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+  hook=/etc/apt/apt.conf.d/no-nag-script
+  cat > "$hook" <<'EOF'
+DPkg::Post-Invoke { "if [ -s /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js ] && ! grep -q -F 'NoMoreNagging' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; then sed -i '0,/toLowerCase() !== .active./s//toLowerCase() === \x27NoMoreNagging\x27/' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; fi"; };
+EOF
+  if [ -s "$nag" ] && ! grep -qF NoMoreNagging "$nag"; then
+    sed -i '0,/toLowerCase() !== .active./s//toLowerCase() === \x27NoMoreNagging\x27/' "$nag"
+    systemctl restart pveproxy.service
+    info "subscription dialog removed (hard-refresh the browser)"
+  fi
+
+  apt-get update -qq || die "apt-get update failed after switching repositories"
+  info "apt sources refresh cleanly"
+}
+
+case "$NODE_REPOS" in
+  1) log "Node package repositories"; configure_node_repos ;;
+  0) : ;;
+  *) die "NODE_REPOS must be 0 or 1 (got '$NODE_REPOS')" ;;
+esac
+if [ "$NODE_REPOS_ONLY" = 1 ]; then
+  log "NODE_REPOS_ONLY=1 — node repositories done; run 'apt full-upgrade' when ready"
+  exit 0
+fi
 case "$DEPLOY_VAULTWARDEN" in
   0|1) : ;;
   *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
@@ -1352,8 +1625,9 @@ EOF
   info "wrote config/proxmox.yml and config/infrastructure.yml"
 fi
 
-# Resolve the enrollment metadata on both fresh and converged runs. These values
-# are identifiers, not credentials; master passwords never enter this script.
+# Resolve the enrollment metadata on both fresh and converged runs. These values are
+# identifiers, not credentials. The master passwords are generated later, in the Seed
+# phase, and recorded in $CRED_FILE; see "Vaultwarden master passwords" below.
 LAB_DOMAIN="$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])) or {}).get("domain", ""))' "$CONFIG_INFRA")"
 VAULTWARDEN_OWNER_EMAIL="${VAULTWARDEN_OWNER_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("owner_email", ""))' "$CONFIG_INFRA")}"
 VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("automation_email", ""))' "$CONFIG_INFRA")}"
@@ -1674,6 +1948,39 @@ rd_api() {
   fi
 }
 
+# rd_run_job <name> <job-id> — run an imported job with no options, stream nothing,
+# wait for it to finish, and print its log tail on failure. Returns the job's success.
+rd_run_job() {
+  local name="$1" id="$2" exec_id status
+  log "$name"
+  local stage
+  stage="$(newtmp)"
+  printf '{}' > "$stage/run.json"
+  # jq is installed in the container, not guaranteed on the node; python3 always is.
+  exec_id="$(rd_api POST "job/$id/run" application/json "$stage/run.json" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+  [ -n "$exec_id" ] || { warn "could not start $name"; return 1; }
+  info "execution $exec_id — $RD_URL/project/$RD_PROJECT/execution/show/$exec_id"
+  local misses=0
+  while :; do
+    status="$(rd_api GET "execution/$exec_id" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+    case "$status" in
+      running) misses=0; sleep 15 ;;
+      "")
+        misses=$((misses + 1))
+        [ "$misses" -lt 20 ] || { warn "lost track of $name (execution $exec_id)"; return 1; }
+        sleep 15 ;;
+      succeeded) info "$name succeeded"; return 0 ;;
+      *)
+        warn "$name finished with status '$status'; log tail:"
+        curl -s -m 60 -H "X-Rundeck-Auth-Token: $RD_TOKEN" -H "Accept: text/plain" \
+          "$RD_URL/api/$RD_API/execution/$exec_id/output" | tail -n 40 | sed 's/^/      /'
+        return 1 ;;
+    esac
+  done
+}
+
 if [ -z "$RD_TOKEN" ]; then
   warn "no Rundeck API token — skipping project creation, Key Storage and job import"
   warn "re-run this script once a token exists to finish the handover"
@@ -1922,8 +2229,8 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     /usr/local/bin/lab-run playbooks/apps/vaultwarden.yml -e instance=vaultwarden
   info "Vaultwarden and Caddy are online; the HTTPS route is configured"
 
-  # Preserve the generated admin token in encrypted Key Storage before asking a
-  # human to enroll. The temporary sink remains until verified Vault cutover.
+  # Preserve the generated admin token in encrypted Key Storage before enrollment
+  # needs it. The temporary sink remains until verified Vault cutover.
   if [ -n "$RD_TOKEN" ] && declare -F ks_put >/dev/null 2>&1; then
     STAGE8="$(newtmp)"
     in_ct sed -n 's/^VAULTWARDEN_ADMIN_TOKEN=//p' "$LAB_ETC/secrets.d/vaultwarden.env" > "$STAGE8/admin-token"
@@ -1934,31 +2241,110 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     fi
   fi
 
-  if [ -n "$VAULTWARDEN_OWNER_EMAIL" ]; then
-    info "attempting first-owner invitations through the HTTPS admin facility"
-    if in_ct curl -fsS --max-time 15 "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
-      in_ct sudo -u rundeck env \
-        HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
-        VAULTWARDEN_OWNER_EMAIL="$VAULTWARDEN_OWNER_EMAIL" \
-        VAULTWARDEN_AUTOMATION_EMAIL="$VAULTWARDEN_AUTOMATION_EMAIL" \
-        /usr/local/bin/lab-run playbooks/maintenance/vaultwarden-enroll.yml
-    else
-      warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
-      info "Caddy is up${CADDY_ADDR:+ at $CADDY_ADDR} — the name has to resolve there and"
-      info "the path to it on 443 has to be open before enrollment can run. Point"
-      info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
-      info "allow client subnets to reach it, then run the Vaultwarden Enrollment job."
-      info "Certificate issuance uses DNS-01, so getting the certificate needs no public"
-      info "record and no inbound WAN port. Publishing an app to the internet later is a"
-      info "separate choice that does require inbound 443."
+  # Both Vaultwarden master passwords are generated HERE, as root, and recorded in the
+  # root-only handover file beside the Rundeck admin password. That copy is the owner's
+  # way in: cutover later seals both passwords inside the vault, which they unlock, so
+  # the vault copy alone would be circular. The job user gets its own Seed copy in
+  # secrets.d/, which enrollment reads and cutover deletes. Re-runs reuse the recorded
+  # values — an account that already exists only accepts the password it was made with.
+  log "Vaultwarden master passwords"
+  for key in VAULTWARDEN_OWNER_PASSWORD VAULTWARDEN_AUTOMATION_PASSWORD; do
+    value="$(in_ct sh -c "sed -n 's/^$key=//p' $CRED_FILE 2>/dev/null" || true)"
+    if [ -z "$value" ]; then
+      value="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40 || true)"
+      printf '%s\n' "$value" | in_ct sh -c '
+        IFS= read -r value; tmp="$(mktemp)"
+        grep -v "^$1=" "$2" > "$tmp" 2>/dev/null || true
+        printf "%s=%s\n" "$1" "$value" >> "$tmp"
+        install -m 0600 -o root -g root "$tmp" "$2"; rm -f "$tmp"
+      ' _ "$key" "$CRED_FILE"
+      info "generated $key (recorded in $CRED_FILE)"
     fi
-  else
+    printf -v "$key" '%s' "$value"
+  done
+  printf '{"VAULTWARDEN_OWNER_PASSWORD": "%s", "VAULTWARDEN_AUTOMATION_PASSWORD": "%s"}\n' \
+      "$VAULTWARDEN_OWNER_PASSWORD" "$VAULTWARDEN_AUTOMATION_PASSWORD" \
+    | in_ct sh -c 'umask 077; cat > "$1.tmp" && chown rundeck:rundeck "$1.tmp" && mv "$1.tmp" "$1"' \
+        _ "$LAB_ETC/secrets.d/vaultwarden-accounts.json"
+  info "Seed copy staged for enrollment in $LAB_ETC/secrets.d/vaultwarden-accounts.json"
+
+  # Enrollment registers both accounts, builds the organization and stages the automation
+  # API key in Key Storage. The Rundeck token travels on stdin.
+  VAULT_ENROLLED=0
+  if [ -z "$VAULTWARDEN_OWNER_EMAIL" ]; then
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
+  elif [ -z "$RD_TOKEN" ]; then
+    warn "no Rundeck API token — re-run this script to enroll Vaultwarden"
+  elif ! in_ct curl -fsS --max-time 15 "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
+    warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
+    info "Caddy is up${CADDY_ADDR:+ at $CADDY_ADDR} — the name has to resolve there and"
+    info "the path to it on 443 has to be open before enrollment can run. Point"
+    info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
+    info "allow client subnets to reach it, then re-run this script."
+    info "Certificate issuance uses DNS-01, so getting the certificate needs no public"
+    info "record and no inbound WAN port. Publishing an app to the internet later is a"
+    info "separate choice that does require inbound 443."
+  else
+    log "Vaultwarden enrollment"
+    if printf '%s\n' "$RD_TOKEN" | in_ct sudo -u rundeck env \
+         HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+         VAULTWARDEN_OWNER_EMAIL="$VAULTWARDEN_OWNER_EMAIL" \
+         VAULTWARDEN_AUTOMATION_EMAIL="$VAULTWARDEN_AUTOMATION_EMAIL" bash -c '
+           IFS= read -r RUNDECK_API_TOKEN
+           export RUNDECK_API_TOKEN
+           exec /usr/local/bin/lab-run playbooks/maintenance/vaultwarden-enroll.yml
+         '; then
+      VAULT_ENROLLED=1
+    else
+      warn "Vaultwarden enrollment failed — fix the error above, then re-run this script"
+    fi
+  fi
+
+  if [ "$VAULT_ENROLLED" = 1 ]; then
+    rd_run_job "Vaultwarden Cutover" e04bfd76-e7c9-5bec-979e-7335b76b460d \
+      || die "Vaultwarden Cutover failed; the job log is above and in Rundeck at $RD_URL. Fix it and re-run this script."
   fi
 elif [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
-  info "Vault mode is already active — skipping the preliminary Seed-only app phase"
+  info "Vault mode is already active — skipping the Seed phase, enrollment and cutover"
 else
   warn "DEPLOY_VAULTWARDEN=0 — runner created without the preliminary secret store"
+fi
+
+# Phase-aware, so a re-run resumes wherever the last one stopped. Cutover writes the
+# vault-mode marker before its final cleanup, so the marker — not this run's history — is
+# what says enrollment and cutover are behind us. Bootstrap Platform runs on EVERY run in
+# Vault mode: it is idempotent and resumable, so a run that failed or was interrupted is
+# finished simply by running this script again.
+VAULT_MODE=0
+PLATFORM_DONE=0
+if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ct_file_exists "$LAB_ETC/state/vault-mode"; then
+  VAULT_MODE=1
+  # vault-mode is written only after every seed secret passed exact readback, so the seed
+  # copies are redundant by then. If cutover's cleanup failed after writing it, Seed mode
+  # is closed and cutover cannot run again — finish the removal here, as root, which can
+  # unlink what the job user could not. The list mirrors "Remove temporary seed files" in
+  # vaultwarden-cutover.yml; gate/test-vaultwarden.sh keeps the two identical.
+  if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then
+    log "Finishing Vaultwarden cutover cleanup"
+    for f in "$LAB_ETC/secrets.d/proxmox.env" "$LAB_ETC/secrets.env" \
+             "$LAB_ETC/secrets.d/vaultwarden.env" "$LAB_ETC/secrets.d/vaultwarden-accounts.json" \
+             "$LAB_SSH_KEY"; do
+      if ct_file_exists "$f"; then
+        in_ct rm -f "$f"
+        info "removed leftover seed file $f"
+      fi
+    done
+    in_ct sh -c "umask 077; printf 'version=1\n' > '$LAB_ETC/state/cutover-complete' && chown rundeck:rundeck '$LAB_ETC/state/cutover-complete'"
+    info "cutover complete"
+  fi
+  # The automation master password lives on in Key Storage and the vault; the root copy
+  # existed only to re-seed enrollment, which can never run again.
+  in_ct sh -c "sed -i '/^VAULTWARDEN_AUTOMATION_PASSWORD=/d' $CRED_FILE 2>/dev/null || true"
+  if [ -n "$RD_TOKEN" ]; then
+    rd_run_job "Bootstrap Platform" f4ff3c34-28da-5509-92fa-6e5c60c70f3d \
+      || die "Bootstrap Platform failed; the job log is above and in Rundeck at $RD_URL. Fix it and re-run this script."
+    PLATFORM_DONE=1
+  fi
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
@@ -1974,7 +2360,7 @@ cat <<EOF
     Ansible    $VENV_DIR/bin/ansible
     Config     $REPO_DIR/config/{proxmox.yml,infrastructure.yml,apps/rundeck.yml}
     Proxmox    $PVE_USER (role $PVE_ROLE), token secret in Key Storage
-    Vaultwarden $([ "$DEPLOY_VAULTWARDEN" = "1" ] && printf '%s' 'deployed with Caddy; enrollment/cutover required' || printf '%s' 'skipped (runner-only mode)')
+    Vaultwarden $(if [ "$DEPLOY_VAULTWARDEN" != "1" ]; then printf '%s' 'skipped (runner-only mode)'; elif [ "$PLATFORM_DONE" = 1 ]; then printf '%s' 'Vault mode; Bootstrap Platform completed'; elif [ "$VAULT_MODE" = 1 ]; then printf '%s' 'Vault mode; Bootstrap Platform not yet run'; else printf '%s' 'Seed mode; enrollment and cutover pending'; fi)
     Creds      pct exec $VMID -- cat $CRED_FILE
 
     NETWORK: every lab hostname is served by Caddy${CADDY_ADDR:+ at $CADDY_ADDR}. Lab
@@ -1984,38 +2370,26 @@ cat <<EOF
     a separate and deliberate choice (routing.access: public) and does require inbound
     443 forwarded here. An existing internet-facing proxy keeps its own ports either way.
 
-    NEXT: complete the two-account Vaultwarden setup, then run two Rundeck jobs.
-    Open $RD_URL.
+$(if [ "$DEPLOY_VAULTWARDEN" != "1" ]; then
+  printf '    NEXT: re-run without DEPLOY_VAULTWARDEN=0 to build the secret store and the lab.\n'
+elif [ "$PLATFORM_DONE" = 1 ]; then
+  printf '    NEXT: nothing to run — the baseline lab is up.\n'
+elif [ "$VAULT_MODE" = 1 ]; then
+  printf '    NEXT: re-run this script, or run Setup > Platform > Bootstrap Platform at %s.\n' "$RD_URL"
+else
+  printf '    NEXT: finish the Vaultwarden handover; no step needs input.\n'
+  printf '      1. DNS FIRST. Point vaultwarden.%s at %s in your LAN resolver.\n' "$LAB_DOMAIN" "${CADDY_ADDR:-the Caddy LXC}"
+  printf '      2. Re-run this script. It resumes at enrollment, then cutover, then Bootstrap\n'
+  printf '         Platform. From the UI, run those three jobs in that order instead.\n'
+fi)
 
-      1. DNS FIRST. Point vaultwarden.$LAB_DOMAIN at ${CADDY_ADDR:-the Caddy LXC} in your
-         LAN resolver. Nothing below works until that name resolves.
-      2. The invitations are for these two separate Vaultwarden accounts:
-           owner:      $VAULTWARDEN_OWNER_EMAIL
-           automation: $VAULTWARDEN_AUTOMATION_EMAIL
-         If this bootstrap did not send them successfully, run
-         Setup > Credentials > Vaultwarden Enrollment. That job loads its admin token
-         from encrypted Key Storage and needs no input.
-      3. Open https://vaultwarden.$LAB_DOMAIN/#/register. Register the owner account
-         $VAULTWARDEN_OWNER_EMAIL. Create its master password in the registration form;
-         the platform never receives or stores it. Sign out, open the same registration
-         URL again, and register the separate automation account
-         $VAULTWARDEN_AUTOMATION_EMAIL with a different master password.
-      4. Sign in as the owner. Create organization 'homelab-infra'. Invite
-         $VAULTWARDEN_AUTOMATION_EMAIL as an Admin, then accept and confirm the membership
-         until the Members page shows it as a confirmed Admin.
-         DO NOT CREATE A COLLECTION OR ASSIGN COLLECTION PERMISSIONS. Vaultwarden Cutover
-         creates 'platform-secrets' on its first write. An Admin reaches it through
-         organization-wide access, so no explicit collection permission appears. The
-         auto-created 'Default Collection' is ignored.
-      5. Sign in as $VAULTWARDEN_AUTOMATION_EMAIL. Open Settings > Security > Keys and
-         select View API key. In Rundeck Key Storage, create these encrypted Password
-         entries with the corresponding values:
-           keys/project/$RD_PROJECT/vaultwarden-machine/client-id       <- client_id
-           keys/project/$RD_PROJECT/vaultwarden-machine/client-secret   <- client_secret
-           keys/project/$RD_PROJECT/vaultwarden-machine/master-password <- automation master password
-      6. Run Setup > Credentials > Vaultwarden Cutover. After it succeeds, run
-         Setup > Platform > Bootstrap Platform. Bootstrap Platform reuses Caddy and
-         Vaultwarden and deploys the remaining services.
+    OWNER LOGIN: Vaultwarden owner $VAULTWARDEN_OWNER_EMAIL signs in at
+    https://vaultwarden.$LAB_DOMAIN with the generated password recorded as
+    VAULTWARDEN_OWNER_PASSWORD in $CRED_FILE (root-only; read it with the Creds command
+    above). Sign in and change the master password to one of your own. Still signed
+    in, set the owner_master_password field of the vault item homelab-infra/vaultwarden
+    to the new password, then delete the line from $CRED_FILE. That vault item keeps the
+    only other copy, and it can be read only once you are signed in.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

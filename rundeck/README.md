@@ -26,7 +26,7 @@ contracts.
 | **Config** | writes `config/proxmox.yml`, `config/infrastructure.yml` and `config/apps/rundeck.yml` |
 | **Rundeck** | random admin password, non-expiring API token, the `homelab-infra` project, every job in `jobs/` imported, Key Storage staged |
 | **Wiring** | `/etc/homelab-infra/lab-run.env` and a `/usr/local/bin/lab-run` symlink into the checkout |
-| **Vaultwarden** | deploys Caddy first, then Vaultwarden and its HTTPS route; invites the exact owner/automation addresses with public signups disabled |
+| **Vaultwarden** | deploys Caddy first, then Vaultwarden and its HTTPS route; generates both master passwords (owner's handed to root in `/root/.rundeck-bootstrap`), runs Vaultwarden Enrollment and Vaultwarden Cutover, then Bootstrap Platform — resuming from the `vault-mode` / `cutover-complete` markers on a re-run |
 
 Everything is idempotent — re-running converges an existing container, rotates no
 credential, and overwrites no answer you already gave. Override any default with an

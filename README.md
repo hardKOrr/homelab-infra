@@ -6,8 +6,9 @@ Deploying an app creates its guest, installs it, publishes it through your rever
 registers it with your SSO, adds an uptime monitor and creates its DNS record — in one
 job, with no follow-up steps. Removing it unwires all four again.
 
-You clone this repo, run one command on a Proxmox node, and click one button. That is the
-whole path.
+You clone this repo and run one command on a Proxmox node. That is the whole path: the
+command builds the automation runner, enrolls its secret store and deploys the baseline
+services without asking for anything after it starts.
 
 ---
 
@@ -21,23 +22,24 @@ the rest of the documentation obvious.
 | **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
 | **Where** | as root on a Proxmox node | in Rundeck |
 | **Builds** | the runner, Caddy, and Vaultwarden in temporary Seed mode | the remaining services in mandatory Vault mode |
-| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, and explicit enrollment/cutover jobs | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
-| **Run it** | once, by hand | once, by clicking |
+| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, enrolled and cut over to Vault mode | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
+| **Run it** | once, by hand | by the script when it finishes, or by clicking |
 
-Between them is one unavoidable human ceremony: choose the owner and automation-account
-master passwords inside Vaultwarden, create the automation API key, stage its three values
-as encrypted job secrets, and run the verified cutover. The initial script brings up every
-component needed to perform that ceremony; it never asks for those passwords.
+Between them sit Vaultwarden enrollment and cutover, and the script does both itself. It
+generates the owner and automation master passwords and hands the owner's to root. It
+registers both accounts, stages the automation API key as encrypted job secrets, and runs
+the verified cutover. Then it runs Bootstrap Platform. Nothing needs a human, and a re-run
+resumes wherever the last one stopped.
 
 ### 0. Make the lab domain reach the lab Caddy
 
-One network prerequisite has to be true before the ceremony in the middle is possible, and
-it is the only thing this project cannot arrange for you.
+One network prerequisite has to be true before enrollment in the middle is possible, and it
+is the only thing this project cannot arrange for you.
 
-Layer 1 finishes by putting Vaultwarden behind an HTTPS route on the Caddy it just built,
-and the enrollment ceremony is performed in a browser at `https://vaultwarden.<your
-domain>`. That URL has to resolve — from the runner and from your workstation — to the new
-Caddy LXC, and the path to it on ports 80/443 has to be open. So:
+Layer 1 puts Vaultwarden behind an HTTPS route on the Caddy it just built and enrolls it
+through `https://vaultwarden.<your domain>`. That URL has to resolve to the new Caddy LXC
+from the runner, and from your workstation for you to sign in later. The path to it on
+ports 80/443 also has to be open. So:
 
 <!-- output-source:network-prerequisite sha=7cfe6710 -->
 - **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy
@@ -91,40 +93,48 @@ gave.
 
 ### 2. Stand up the lab
 
-<!-- output-source:vault-enrollment-ceremony sha=ff0d76d0 -->
-Open the Rundeck URL it printed. Two jobs, with one browser session between them.
+<!-- output-source:vault-enrollment-ceremony sha=f06d4084 -->
+Layer 1 does this itself when `vaultwarden.<domain>` already resolves to the Caddy LXC.
+Otherwise point that name at Caddy and re-run the script. Each run resumes from the phase
+the last one reached: before cutover it runs enrollment, then cutover; once the runner is
+in Vault mode it skips both and runs Bootstrap Platform. The same three jobs can be run in
+order from the Rundeck UI instead. None of them asks for input.
 
-Layer 1 already sent the owner and automation invitations itself. The **Vaultwarden
-Enrollment** job re-sends them, and you click it only if that attempt failed — which
-happens when `vaultwarden.<domain>` did not yet resolve to the Caddy LXC.
+The script generates both Vaultwarden master passwords as root. It records them in the
+runner's root-only handover file, `/root/.rundeck-bootstrap`, beside the Rundeck admin
+password, and stages a copy for the job user.
 
-In the web vault at `https://vaultwarden.<domain>`, register the owner address and the
-automation address. **You choose both master passwords here** — nothing in this project
-generates, stores or prints them, which is why the job output has no password in it. Then,
-as the owner, create the `homelab-infra` organization and invite the automation account
-into it as an **Admin**.
-
-That is the whole manual step. Do not create any collection or assign collection
-permissions: the platform creates `platform-secrets` on first write. The web vault's
-auto-created "Default Collection" is ignored. Admin membership gives the automation
-account organization-wide access, so Vaultwarden stores and displays no explicit
-permission for that account on `platform-secrets`.
-
-Signed in as the automation account, view its personal API key (Settings → Security → Keys).
-Stage that client ID and client secret, plus the automation master password you chose, in
-these encrypted Password entries:
+**Vaultwarden Enrollment** invites the owner and automation addresses, registers both with
+those passwords, creates the `homelab-infra` organization, confirms the automation account
+in it as an **Admin**, and creates these encrypted Key Storage entries when they are
+missing:
 
 - `keys/project/homelab-infra/vaultwarden-machine/client-id`
 - `keys/project/homelab-infra/vaultwarden-machine/client-secret`
 - `keys/project/homelab-infra/vaultwarden-machine/master-password`
 
-Run **Vaultwarden Cutover**; it imports and reads back every
-seed secret before writing the marker and deleting seed files. Then run **Bootstrap
-Platform**.
+A re-run writes nothing. Rundeck cannot return a stored password, so a wrong entry is not
+detected: delete it in Key Storage and run Enrollment again.
 
-That reconciles the already-tagged Caddy and Vaultwarden LXCs, then deploys Ntfy, Authentik, Uptime Kuma,
-Prometheus + Grafana and PBS. Each step records its own connection details before the next
-one needs them, so the run is resumable: if something fails, fix it and run the job again.
+**Vaultwarden Cutover** imports every seed secret, the two master passwords included, into
+the vault, reads each one back, writes the marker and deletes the job user's seed files.
+
+To sign in as the owner, read `VAULTWARDEN_OWNER_PASSWORD` from `/root/.rundeck-bootstrap`
+on the runner. Change the master password in the web vault, then, still signed in as the owner,
+edit the `owner_master_password` field of the `homelab-infra/vaultwarden` item to the new
+password so the vault copy stays correct. The password never passes through a job. Then
+delete that line from `/root/.rundeck-bootstrap`. The automation
+password's root copy is removed by the script once cutover is complete.
+
+Cutover writes two markers under `state/`: `vault-mode` once every secret has been read
+back from the vault, and `cutover-complete` once the seed files are gone. If cleanup fails
+between the two, the next script run removes the leftover seed files as root and writes
+`cutover-complete` before it runs Bootstrap Platform.
+
+**Bootstrap Platform** then reconciles the already-tagged Caddy and Vaultwarden LXCs and
+deploys Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS. Each step records its
+own connection details before the next one needs them, so the run is resumable: if
+something fails, fix it and re-run the script or the job.
 <!-- /output-source:vault-enrollment-ceremony -->
 
 ### 3. Deploy things
@@ -191,7 +201,8 @@ one per application, and three under **Manage > Configuration**:
 
 | Secret | Home |
 |---|---|
-| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage |
+| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage; the master password also in `homelab-infra/vaultwarden` (`automation_master_password`) |
+| Vaultwarden owner master password (generated) | root-only `/root/.rundeck-bootstrap` on the runner until you change it and delete the line; also `homelab-infra/vaultwarden` (`owner_master_password`), which you edit in the web vault when you change it |
 | Vaultwarden admin token | AES-GCM-encrypted external runner storage; it administers the server but cannot decrypt vault items |
 | Cloudflare DNS-01 token | temporary AES-GCM runner storage during Seed mode, then `homelab-infra/reverse_proxy` in Vaultwarden |
 | Proxmox, runner SSH, and generated service credentials | canonical organization-owned Vaultwarden items after verified cutover |

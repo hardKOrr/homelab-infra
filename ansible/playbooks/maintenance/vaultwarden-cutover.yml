@@ -37,6 +37,19 @@
       no_log: true
 
   tasks:
+    - name: Read the enrollment-generated master passwords
+      ansible.builtin.slurp:
+        src: /etc/homelab-infra/secrets.d/vaultwarden-accounts.json
+      register: _cutover_accounts_raw
+      failed_when: false
+      no_log: true
+
+    - name: Parse the enrollment-generated master passwords
+      ansible.builtin.set_fact:
+        _cutover_account_passwords: >-
+          {{ _cutover_accounts_raw.content | default('e30=') | b64decode | from_json }}
+      no_log: true
+
     - name: Import and verify the Proxmox credential
       ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
       vars:
@@ -57,9 +70,12 @@
       ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
       vars:
         vault_item_name: homelab-infra/vaultwarden
-        vault_item_fields:
-          admin_token: "{{ homelabinfra_config.infrastructure.vaultwarden.admin_token }}"
-        vault_item_secret_fields: [admin_token]
+        vault_item_fields: >-
+          {{ {'admin_token': homelabinfra_config.infrastructure.vaultwarden.admin_token,
+              'owner_master_password': _cutover_account_passwords.VAULTWARDEN_OWNER_PASSWORD | default(''),
+              'automation_master_password': _cutover_account_passwords.VAULTWARDEN_AUTOMATION_PASSWORD | default('')}
+             | dict2items | rejectattr('value', 'equalto', '') | items2dict }}
+        vault_item_secret_fields: [admin_token, owner_master_password, automation_master_password]
 
     - name: Import and verify the reverse-proxy DNS credential
       ansible.builtin.include_tasks: ../../tasks/bitwarden/upsert-item.yml
@@ -286,6 +302,7 @@
         - /etc/homelab-infra/secrets.d/proxmox.env
         - /etc/homelab-infra/secrets.env
         - /etc/homelab-infra/secrets.d/vaultwarden.env
+        - /etc/homelab-infra/secrets.d/vaultwarden-accounts.json
         - "{{ _cutover_ssh_file }}"
       register: _cutover_seed_removal
       failed_when: false
@@ -336,3 +353,14 @@
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the Vaultwarden cutover"
+
+    # vault-mode above means "every secret is in the vault"; this one means "and the seed
+    # copies are gone". A cleanup failure leaves vault-mode without it, and because Seed
+    # mode is closed from then on, bootstrap-rundeck.sh finishes the removal as root and
+    # writes it — Bootstrap Platform does not run until it exists.
+    - name: Write the cutover-complete marker after seed cleanup succeeded
+      ansible.builtin.copy:
+        dest: "{{ _cutover_state_dir }}/cutover-complete"
+        mode: "0600"
+        content: |
+          version=1

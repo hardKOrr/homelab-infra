@@ -25,10 +25,17 @@
         fail_msg: >-
           The runner is already in Seed mode; no marker was changed.
 
-    - name: Remove the marker only after explicit confirmation
+    # Both markers go. cutover-complete is what lets bootstrap-rundeck.sh skip cleanup and
+    # run Bootstrap Platform; left behind, it would vouch for the NEXT cutover's cleanup
+    # before that cutover ran. Removed first, so an interruption between the two leaves
+    # vault-mode without it — the state bootstrap already treats as "finish cleanup".
+    - name: Remove the markers only after explicit confirmation
       ansible.builtin.file:
-        path: "{{ _recovery_state_dir }}/vault-mode"
+        path: "{{ _recovery_state_dir }}/{{ item }}"
         state: absent
+      loop:
+        - cutover-complete
+        - vault-mode
 
     - name: Report the bounded recovery state
       ansible.builtin.debug:

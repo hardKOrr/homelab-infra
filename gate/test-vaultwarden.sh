@@ -110,19 +110,83 @@ python3 "$repo/rundeck/render-job.py" \
 grep -q 'storagePath: keys/project/homelab-infra/bootstrap/cloudflare-api-token' \
   "$work/cutover-job.yml" || fail "cutover cannot migrate the Cloudflare token"
 
-# The operator handoff must identify both configured accounts, use the actual
-# Rundeck Key Storage paths, and leave collection creation to the platform.
+# Enrollment performs the whole two-account ceremony and stages the automation
+# credentials itself, so it needs the Rundeck token and must write every Key Storage
+# path cutover reads. Collection creation stays with cutover's first write.
 enrollment="$repo/ansible/playbooks/maintenance/vaultwarden-enroll.yml"
 grep -Fq '{{ _vault_owner_email }}' "$enrollment" \
   || fail "enrollment output does not identify the configured owner account"
 grep -Fq '{{ _vault_automation_email }}' "$enrollment" \
   || fail "enrollment output does not identify the configured automation account"
+grep -Fq 'scripts/vaultwarden-enroll.py' "$enrollment" \
+  || fail "enrollment no longer runs the automated account ceremony"
 for key in client-id client-secret master-password; do
-  grep -Fq "keys/project/homelab-infra/vaultwarden-machine/$key" "$enrollment" \
-    || fail "enrollment output omits the Rundeck $key path"
+  grep -Fq "'$key'" "$enrollment" \
+    || fail "enrollment does not stage the Rundeck $key entry"
 done
-grep -Fq 'Do not create a collection or assign collection permissions' "$enrollment" \
-  || fail "enrollment output does not state the platform-owned collection boundary"
+! grep -Fq 'platform-secrets' "$repo/ansible/scripts/vaultwarden-enroll.py" \
+  || fail "enrollment creates the platform-owned collection instead of leaving it to cutover"
+python3 "$repo/rundeck/render-job.py" \
+  "$repo/rundeck/jobs/vaultwarden-enrollment.yaml" > "$work/enrollment-job.yml"
+grep -q 'storagePath: keys/project/homelab-infra/rundeck/api-token' \
+  "$work/enrollment-job.yml" || fail "enrollment cannot stage Key Storage without the Rundeck token"
+grep -Fq 'vaultwarden-accounts.json' "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  || fail "cutover does not absorb and remove the generated master passwords"
+# A password only the job user can read is lost when cutover deletes the Seed copy, so
+# only the root bootstrap generates them, and it records the owner's in the handover file.
+! grep -Fq "ansible.builtin.password" "$enrollment" \
+  || fail "enrollment generates a master password the operator could never read"
+grep -Fq 'VAULTWARDEN_OWNER_PASSWORD' "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not hand the owner's master password to root"
+# Re-running enrollment must not rewrite Key Storage: create missing entries only.
+grep -Fq 'when: item.2 == 404' "$enrollment" \
+  || fail "enrollment stages Key Storage entries that already exist"
+! grep -Eq "method: .*PUT" "$enrollment" \
+  || fail "enrollment overwrites existing Key Storage entries"
+# Resume after a partial run: Bootstrap Platform must be reachable once the vault-mode
+# marker exists, i.e. outside the Seed-only branch that the marker skips.
+python3 - "$repo/rundeck/bootstrap-rundeck.sh" <<'PY' || fail "bootstrap cannot resume Bootstrap Platform in Vault mode"
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+seed = text.index('if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ! ct_file_exists "$LAB_ETC/state/vault-mode"; then')
+end = text.index("\nfi\n", seed)
+platform = text.index('rd_run_job "Bootstrap Platform"')
+assert platform > end, "Bootstrap Platform only runs inside the Seed-only branch"
+PY
+# vault-mode is written before cleanup, so it cannot mean "cutover finished". Cutover
+# writes cutover-complete only after its degradation check, and bootstrap finishes a
+# failed cleanup as root before Bootstrap Platform may run — over the same seed files.
+python3 - "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  "$repo/rundeck/bootstrap-rundeck.sh" <<'PY' || fail "cutover cleanup is not resumable"
+import re, sys
+import yaml
+cutover_text = open(sys.argv[1], encoding="utf-8").read()
+bootstrap = open(sys.argv[2], encoding="utf-8").read()
+tasks = yaml.safe_load(cutover_text)[0]["tasks"]
+names = [t.get("name", "") for t in tasks]
+complete = names.index("Write the cutover-complete marker after seed cleanup succeeded")
+assert complete > names.index("Fail if the cutover left anything undone"), "marker precedes degradation check"
+assert complete == len(names) - 1, "cutover-complete must be the last step"
+removal = next(t for t in tasks if t.get("name") == "Remove temporary seed files")
+cutover_files = {p.replace("/etc/homelab-infra", "$LAB_ETC").replace("{{ _cutover_ssh_file }}", "$LAB_SSH_KEY")
+                 for p in removal["loop"]}
+resume = bootstrap[bootstrap.index('if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then'):]
+loop = resume[resume.index("for f in"):resume.index("; do")]
+bootstrap_files = set(re.findall(r'"([^"]+)"', loop))
+assert cutover_files == bootstrap_files, (cutover_files ^ bootstrap_files)
+assert bootstrap.index('state/cutover-complete"; then') < bootstrap.index('rd_run_job "Bootstrap Platform"')
+PY
+# Recovery reopens Seed mode for a new cutover. A cutover-complete left from the previous
+# one would vouch for the new cutover's cleanup before it ran, so both markers go —
+# cutover-complete first, so an interruption leaves the "finish cleanup" state.
+python3 - "$repo/ansible/playbooks/maintenance/vaultwarden-recovery.yml" <<'PY' || fail "recovery leaves a stale cutover-complete marker"
+import sys
+import yaml
+tasks = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))[0]["tasks"]
+removals = [t for t in tasks if t.get("ansible.builtin.file", {}).get("state") == "absent"]
+assert len(removals) == 1, "expected one marker-removal task"
+assert removals[0]["loop"] == ["cutover-complete", "vault-mode"], removals[0]["loop"]
+PY
 ! grep -Fq "and the collection 'platform-secrets'" \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap still tells the operator to create platform-secrets"

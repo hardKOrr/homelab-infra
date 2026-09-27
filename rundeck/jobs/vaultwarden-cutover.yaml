@@ -10,8 +10,7 @@
     - Writes the durable Vault-mode marker
     - Deletes temporary seed files
 
-    > Run only after both human and automation accounts are enrolled and the automation API
-    > key is staged in Rundeck Key Storage.
+    > Run after Vaultwarden Enrollment has succeeded.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

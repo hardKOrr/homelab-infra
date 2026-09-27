@@ -37,7 +37,7 @@ consistent point-in-time set when execution history or an in-place restore is re
 | Converter key | `/etc/rundeck/.storage-password`, as `root:rundeck` mode `0440` and an `EnvironmentFile` assignment | AES-256-GCM decryption for both `keys` and `projects`; one namespace without the other is not a recovery |
 | Rundeck service config | `/etc/rundeck/rundeck-config.properties`, `/etc/rundeck/framework.properties`, `/etc/rundeck/realm.properties`, and `systemd` drop-ins | URL, converter declarations, authentication and service environment |
 | Bootstrap handover | `/root/.rundeck-bootstrap` mode `0600` | package/version metadata, admin/API handoff and the non-secret recovery pointers; it is sensitive and root-only |
-| Runner runtime | `/etc/homelab-infra/lab-run.env`, `state/vault-mode`, and the `config/` tree including `.backups/`, `.generated/` and `artifacts/` | checkout location/branch, mode, user configuration, topology, point-in-time config recovery and Get Config archives |
+| Runner runtime | `/etc/homelab-infra/lab-run.env`, `state/vault-mode`, `state/cutover-complete`, and the `config/` tree including `.backups/`, `.generated/` and `artifacts/` | checkout location/branch, mode, user configuration, topology, point-in-time config recovery and Get Config archives |
 | Runner identity | `/var/lib/rundeck/.ssh/homelab-infra.pub`, the matching canonical `homelab-infra/runner` private key, and the tagged line in the PVE node's root `authorized_keys` | preserves the identity trusted by managed guests without putting the private half in ordinary runner state |
 | Job option state | `/var/lib/rundeck/app-instances/` | current instance dropdowns; reproducible from `config/apps/*.yml`, but retain it when preserving the exact UI state |
 | Evidence/logs | `/var/lib/rundeck/logs/` and the relevant `artifacts/` entries | execution evidence and operator records; do not treat logs as a secret store |
@@ -52,8 +52,9 @@ The Key Storage tree and encrypted project configuration use the same
 `RUNDECK_STORAGE_PASSWORD` value. The converter password is **not** a Vaultwarden item and
 must not be stored in Key Storage: that would create the exact circular dependency this
 procedure is meant to avoid. The independent recovery record must also contain the
-automation account's `client-id`, `client-secret`, and `master-password`, the
-Vaultwarden admin token, and the Proxmox/PBS access needed to reach the recovery point.
+automation account's `client-id`, `client-secret`, and `master-password`, the owner's
+current master password (the vault's `owner_master_password` copy is unreadable while the
+vault is down), the Vaultwarden admin token, and the Proxmox/PBS access needed to reach the recovery point.
 Keep the one-time Rundeck API token only if preserving the existing control-plane API
 workflow; it is not needed to unlock Vaultwarden.
 
