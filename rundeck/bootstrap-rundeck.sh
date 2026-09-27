@@ -24,6 +24,8 @@
 # One command produces the enrollment surface; the explicit cutover establishes Vault mode.
 #
 # What it produces:
+#   - This node's apt switched from the enterprise repos to pve-no-subscription, and the
+#     subscription dialog removed (NODE_REPOS=0 skips; NODE_REPOS_ONLY=1 does only this)
 #   - Unprivileged Debian 13 LXC, tagged _+lab so the platform manages it like
 #     any other guest it created — PBS backs it up, Lab Status reports it
 #   - OpenJDK 21 + Rundeck 6.x, a random admin password, a non-expiring API token
@@ -110,6 +112,15 @@ MANAGED_TAGS="${MANAGED_TAGS:-_+lab;_-debian;_rundeck}"
 PVE_USER="${PVE_USER:-homelab-infra@pve}"
 PVE_ROLE="${PVE_ROLE:-HomelabInfra}"
 PVE_TOKEN_NAME="${PVE_TOKEN_NAME:-automation}"
+
+# Node package repositories. A fresh Proxmox install points apt at the subscription-only
+# enterprise repositories, which answer 401 without a subscription, so the node cannot
+# update. NODE_REPOS=1 (default) switches THIS node to pve-no-subscription and removes the
+# web UI's "No valid subscription" dialog; set 0 for a lab that holds a subscription.
+# NODE_REPOS_ONLY=1 does just that step and exits — copy the script to each other node in
+# the cluster and run it there, since the rest of this script only touches one node.
+NODE_REPOS="${NODE_REPOS:-1}"
+NODE_REPOS_ONLY="${NODE_REPOS_ONLY:-0}"
 # A Proxmox token secret can be captured only at creation. It is never printed; re-runs
 # keep the existing token unless deliberate rotation is requested.
 ROTATE_PROXMOX_TOKEN="${ROTATE_PROXMOX_TOKEN:-0}"
@@ -349,6 +360,86 @@ log "Preflight"
 command -v pct >/dev/null    || die "pct not found — run this on a Proxmox node, not inside a container"
 command -v pveam >/dev/null  || die "pveam not found"
 command -v pveum >/dev/null  || die "pveum not found"
+
+# ── Node package repositories ──────────────────────────────────────────────────
+# Before anything else, so a fresh node can update at all. Idempotent: every change is
+# conditional on the node still being in its stock state. Handles both the one-line
+# `.list` files of PVE 8 (bookworm) and the deb822 `.sources` files of PVE 9 (trixie).
+configure_node_repos() {
+  local codename f nag hook
+  codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+  [ -n "$codename" ] || die "cannot read VERSION_CODENAME from /etc/os-release"
+
+  # Disable every enterprise entry — pve-enterprise and the Ceph enterprise repo alike.
+  # Files are disabled in place rather than deleted, so a package upgrade that ships them
+  # again does not re-enable them, and a lab that buys a subscription can flip them back.
+  for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    [ -f "$f" ] && grep -q 'enterprise\.proxmox\.com' "$f" || continue
+    case "$f" in
+      *.list)
+        if grep -q '^[[:space:]]*deb.*enterprise\.proxmox\.com' "$f"; then
+          sed -i 's|^\([[:space:]]*deb.*enterprise\.proxmox\.com\)|# \1|' "$f"
+          info "disabled enterprise repo in $f"
+        fi ;;
+      *.sources)
+        if ! grep -qi '^Enabled:[[:space:]]*\(no\|false\)' "$f"; then
+          sed -i '/^Enabled:/Id' "$f"
+          printf 'Enabled: false\n' >> "$f"
+          info "disabled enterprise repo in $f"
+        fi ;;
+    esac
+  done
+
+  if ! grep -rqs 'pve-no-subscription' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+    if [ -f /etc/apt/sources.list.d/pve-enterprise.sources ] || [ "$codename" != bookworm ]; then
+      cat > /etc/apt/sources.list.d/proxmox.sources <<EOF
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: $codename
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+      info "added pve-no-subscription ($codename) in proxmox.sources"
+    else
+      echo "deb http://download.proxmox.com/debian/pve $codename pve-no-subscription" \
+        > /etc/apt/sources.list.d/pve-no-subscription.list
+      info "added pve-no-subscription ($codename) in pve-no-subscription.list"
+    fi
+  else
+    info "pve-no-subscription already configured"
+  fi
+
+  # The subscription dialog is a client-side check in proxmoxlib.js. The package rewrites
+  # that file on every upgrade, so the patch is re-applied from a dpkg hook as well as now.
+  # If a future release changes the check, the sed matches nothing and the dialog returns;
+  # it never breaks the UI. Only the FIRST `!== 'active'` is changed — that is the dialog;
+  # PVE 9 has a later one that drives the node's subscription-state display, left alone.
+  # The condition becomes `=== 'NoMoreNagging'`, always false, and doubles as the marker.
+  # (\x27 is a single quote, so the same sed survives inside the hook's quoting.)
+  nag=/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+  hook=/etc/apt/apt.conf.d/no-nag-script
+  cat > "$hook" <<'EOF'
+DPkg::Post-Invoke { "if [ -s /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js ] && ! grep -q -F 'NoMoreNagging' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; then sed -i '0,/toLowerCase() !== .active./s//toLowerCase() === \x27NoMoreNagging\x27/' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; fi"; };
+EOF
+  if [ -s "$nag" ] && ! grep -qF NoMoreNagging "$nag"; then
+    sed -i '0,/toLowerCase() !== .active./s//toLowerCase() === \x27NoMoreNagging\x27/' "$nag"
+    systemctl restart pveproxy.service
+    info "subscription dialog removed (hard-refresh the browser)"
+  fi
+
+  apt-get update -qq || die "apt-get update failed after switching repositories"
+  info "apt sources refresh cleanly"
+}
+
+case "$NODE_REPOS" in
+  1) log "Node package repositories"; configure_node_repos ;;
+  0) : ;;
+  *) die "NODE_REPOS must be 0 or 1 (got '$NODE_REPOS')" ;;
+esac
+if [ "$NODE_REPOS_ONLY" = 1 ]; then
+  log "NODE_REPOS_ONLY=1 — node repositories done; run 'apt full-upgrade' when ready"
+  exit 0
+fi
 case "$DEPLOY_VAULTWARDEN" in
   0|1) : ;;
   *) die "DEPLOY_VAULTWARDEN must be 0 or 1 (got '$DEPLOY_VAULTWARDEN')" ;;
