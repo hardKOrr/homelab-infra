@@ -52,8 +52,9 @@ The Key Storage tree and encrypted project configuration use the same
 `RUNDECK_STORAGE_PASSWORD` value. The converter password is **not** a Vaultwarden item and
 must not be stored in Key Storage: that would create the exact circular dependency this
 procedure is meant to avoid. The independent recovery record must also contain the
-automation account's `client-id`, `client-secret`, and `master-password`, the
-Vaultwarden admin token, and the Proxmox/PBS access needed to reach the recovery point.
+automation account's `client-id`, `client-secret`, and `master-password`, the owner's
+current master password (the vault's `owner_master_password` copy is unreadable while the
+vault is down), the Vaultwarden admin token, and the Proxmox/PBS access needed to reach the recovery point.
 Keep the one-time Rundeck API token only if preserving the existing control-plane API
 workflow; it is not needed to unlock Vaultwarden.
 

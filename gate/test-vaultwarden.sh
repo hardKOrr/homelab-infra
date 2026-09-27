@@ -153,6 +153,29 @@ end = text.index("\nfi\n", seed)
 platform = text.index('rd_run_job "Bootstrap Platform"')
 assert platform > end, "Bootstrap Platform only runs inside the Seed-only branch"
 PY
+# vault-mode is written before cleanup, so it cannot mean "cutover finished". Cutover
+# writes cutover-complete only after its degradation check, and bootstrap finishes a
+# failed cleanup as root before Bootstrap Platform may run — over the same seed files.
+python3 - "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  "$repo/rundeck/bootstrap-rundeck.sh" <<'PY' || fail "cutover cleanup is not resumable"
+import re, sys
+import yaml
+cutover_text = open(sys.argv[1], encoding="utf-8").read()
+bootstrap = open(sys.argv[2], encoding="utf-8").read()
+tasks = yaml.safe_load(cutover_text)[0]["tasks"]
+names = [t.get("name", "") for t in tasks]
+complete = names.index("Write the cutover-complete marker after seed cleanup succeeded")
+assert complete > names.index("Fail if the cutover left anything undone"), "marker precedes degradation check"
+assert complete == len(names) - 1, "cutover-complete must be the last step"
+removal = next(t for t in tasks if t.get("name") == "Remove temporary seed files")
+cutover_files = {p.replace("/etc/homelab-infra", "$LAB_ETC").replace("{{ _cutover_ssh_file }}", "$LAB_SSH_KEY")
+                 for p in removal["loop"]}
+resume = bootstrap[bootstrap.index('if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then'):]
+loop = resume[resume.index("for f in"):resume.index("; do")]
+bootstrap_files = set(re.findall(r'"([^"]+)"', loop))
+assert cutover_files == bootstrap_files, (cutover_files ^ bootstrap_files)
+assert bootstrap.index('state/cutover-complete"; then') < bootstrap.index('rd_run_job "Bootstrap Platform"')
+PY
 ! grep -Fq "and the collection 'platform-secrets'" \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap still tells the operator to create platform-secrets"

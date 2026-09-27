@@ -353,3 +353,14 @@
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the Vaultwarden cutover"
+
+    # vault-mode above means "every secret is in the vault"; this one means "and the seed
+    # copies are gone". A cleanup failure leaves vault-mode without it, and because Seed
+    # mode is closed from then on, bootstrap-rundeck.sh finishes the removal as root and
+    # writes it — Bootstrap Platform does not run until it exists.
+    - name: Write the cutover-complete marker after seed cleanup succeeded
+      ansible.builtin.copy:
+        dest: "{{ _cutover_state_dir }}/cutover-complete"
+        mode: "0600"
+        content: |
+          version=1

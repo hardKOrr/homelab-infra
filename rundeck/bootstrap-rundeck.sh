@@ -370,13 +370,14 @@ command -v pveum >/dev/null  || die "pveum not found"
 # Before anything else, so a fresh node can update at all. Idempotent: every change is
 # conditional on the node still being in its stock state. Handles both the one-line
 # `.list` files of PVE 8 (bookworm) and the deb822 `.sources` files of PVE 9 (trixie).
-# repo_active <uri> <component> — true when an ENABLED apt entry serves <component> from
-# <uri>. A commented `.list` line or a deb822 stanza with `Enabled: no|false` does not
-# count; a bare grep for the component name would accept both.
+# repo_active <uri> <suite> <component> — true when an ENABLED apt entry serves
+# <component> of <suite> from <uri>. A commented `.list` line, a deb822 stanza with
+# `Enabled: no|false`, or an entry for another release (a bookworm line left behind on a
+# node upgraded to trixie) does not count; a bare grep for the component accepts all three.
 repo_active() {
-  python3 - "$1" "$2" <<'PY'
+  python3 - "$1" "$2" "$3" <<'PY'
 import glob, re, sys
-uri, component = sys.argv[1].rstrip("/"), sys.argv[2]
+uri, suite, component = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
     try:
         lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
@@ -384,7 +385,8 @@ for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.lis
         continue
     for line in lines:
         words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
-        if len(words) >= 4 and words[0] == "deb" and words[1].rstrip("/") == uri and component in words[3:]:
+        if (len(words) >= 4 and words[0] == "deb" and words[1].rstrip("/") == uri
+                and words[2] == suite and component in words[3:]):
             sys.exit(0)
 for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
     text = open(path, encoding="utf-8", errors="replace").read()
@@ -396,7 +398,8 @@ for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
                 fields[key.strip().lower()] = value.split()
         if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
             continue
-        if uri in [u.rstrip("/") for u in fields.get("uris", [])] and component in fields.get("components", []):
+        if (uri in [u.rstrip("/") for u in fields.get("uris", [])]
+                and suite in fields.get("suites", []) and component in fields.get("components", [])):
             sys.exit(0)
 sys.exit(1)
 PY
@@ -407,7 +410,7 @@ PY
 # caller's $codename and $deb822.
 ensure_no_subscription_repo() {
   local uri="$1" component="$2" sources="$3" list="$4"
-  if repo_active "$uri" "$component"; then
+  if repo_active "$uri" "$codename" "$component"; then
     info "$component from $uri already enabled"
   elif [ "$deb822" = 1 ]; then
     cat > "/etc/apt/sources.list.d/$sources.sources" <<EOF
@@ -1500,8 +1503,9 @@ EOF
   info "wrote config/proxmox.yml and config/infrastructure.yml"
 fi
 
-# Resolve the enrollment metadata on both fresh and converged runs. These values
-# are identifiers, not credentials; master passwords never enter this script.
+# Resolve the enrollment metadata on both fresh and converged runs. These values are
+# identifiers, not credentials. The master passwords are generated later, in the Seed
+# phase, and recorded in $CRED_FILE; see "Vaultwarden master passwords" below.
 LAB_DOMAIN="$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])) or {}).get("domain", ""))' "$CONFIG_INFRA")"
 VAULTWARDEN_OWNER_EMAIL="${VAULTWARDEN_OWNER_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("owner_email", ""))' "$CONFIG_INFRA")}"
 VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("automation_email", ""))' "$CONFIG_INFRA")}"
@@ -2193,6 +2197,27 @@ VAULT_MODE=0
 PLATFORM_DONE=0
 if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ct_file_exists "$LAB_ETC/state/vault-mode"; then
   VAULT_MODE=1
+  # vault-mode is written only after every seed secret passed exact readback, so the seed
+  # copies are redundant by then. If cutover's cleanup failed after writing it, Seed mode
+  # is closed and cutover cannot run again — finish the removal here, as root, which can
+  # unlink what the job user could not. The list mirrors "Remove temporary seed files" in
+  # vaultwarden-cutover.yml; gate/test-vaultwarden.sh keeps the two identical.
+  if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then
+    log "Finishing Vaultwarden cutover cleanup"
+    for f in "$LAB_ETC/secrets.d/proxmox.env" "$LAB_ETC/secrets.env" \
+             "$LAB_ETC/secrets.d/vaultwarden.env" "$LAB_ETC/secrets.d/vaultwarden-accounts.json" \
+             "$LAB_SSH_KEY"; do
+      if ct_file_exists "$f"; then
+        in_ct rm -f "$f"
+        info "removed leftover seed file $f"
+      fi
+    done
+    in_ct sh -c "umask 077; printf 'version=1\n' > '$LAB_ETC/state/cutover-complete' && chown rundeck:rundeck '$LAB_ETC/state/cutover-complete'"
+    info "cutover complete"
+  fi
+  # The automation master password lives on in Key Storage and the vault; the root copy
+  # existed only to re-seed enrollment, which can never run again.
+  in_ct sh -c "sed -i '/^VAULTWARDEN_AUTOMATION_PASSWORD=/d' $CRED_FILE 2>/dev/null || true"
   if [ -n "$RD_TOKEN" ]; then
     rd_run_job "Bootstrap Platform" f4ff3c34-28da-5509-92fa-6e5c60c70f3d \
       || die "Bootstrap Platform failed; the job log is above and in Rundeck at $RD_URL. Fix it and re-run this script."
@@ -2239,10 +2264,10 @@ fi)
     OWNER LOGIN: Vaultwarden owner $VAULTWARDEN_OWNER_EMAIL signs in at
     https://vaultwarden.$LAB_DOMAIN with the generated password recorded as
     VAULTWARDEN_OWNER_PASSWORD in $CRED_FILE (root-only; read it with the Creds command
-    above). Sign in, change the master password to one of your own, then delete that
-    line from $CRED_FILE. That file is the only copy readable from outside the vault:
-    cutover also stores it in the vault item homelab-infra/vaultwarden, which can only be
-    read once you are already signed in.
+    above). Sign in and change the master password to one of your own. Still signed
+    in, set the owner_master_password field of the vault item homelab-infra/vaultwarden
+    to the new password, then delete the line from $CRED_FILE. That vault item keeps the
+    only other copy, and it can be read only once you are signed in.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

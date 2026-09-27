@@ -91,7 +91,7 @@ gave.
 
 ### 2. Stand up the lab
 
-<!-- output-source:vault-enrollment-ceremony sha=d431ce62 -->
+<!-- output-source:vault-enrollment-ceremony sha=f06d4084 -->
 Layer 1 does this itself when `vaultwarden.<domain>` already resolves to the Caddy LXC.
 Otherwise point that name at Caddy and re-run the script. Each run resumes from the phase
 the last one reached: before cutover it runs enrollment, then cutover; once the runner is
@@ -118,8 +118,16 @@ detected: delete it in Key Storage and run Enrollment again.
 the vault, reads each one back, writes the marker and deletes the job user's seed files.
 
 To sign in as the owner, read `VAULTWARDEN_OWNER_PASSWORD` from `/root/.rundeck-bootstrap`
-on the runner. Change the master password in the web vault, then delete that line. The
-vault's own copy in `homelab-infra/vaultwarden` is readable only after you have signed in.
+on the runner. Change the master password in the web vault, then, still signed in as the owner,
+edit the `owner_master_password` field of the `homelab-infra/vaultwarden` item to the new
+password so the vault copy stays correct. The password never passes through a job. Then
+delete that line from `/root/.rundeck-bootstrap`. The automation
+password's root copy is removed by the script once cutover is complete.
+
+Cutover writes two markers under `state/`: `vault-mode` once every secret has been read
+back from the vault, and `cutover-complete` once the seed files are gone. If cleanup fails
+between the two, the next script run removes the leftover seed files as root and writes
+`cutover-complete` before it runs Bootstrap Platform.
 
 **Bootstrap Platform** then reconciles the already-tagged Caddy and Vaultwarden LXCs and
 deploys Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS. Each step records its
@@ -191,7 +199,8 @@ one per application, and three under **Manage > Configuration**:
 
 | Secret | Home |
 |---|---|
-| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage |
+| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage; the master password also in `homelab-infra/vaultwarden` (`automation_master_password`) |
+| Vaultwarden owner master password (generated) | root-only `/root/.rundeck-bootstrap` on the runner until you change it and delete the line; also `homelab-infra/vaultwarden` (`owner_master_password`), which you edit in the web vault when you change it |
 | Vaultwarden admin token | AES-GCM-encrypted external runner storage; it administers the server but cannot decrypt vault items |
 | Cloudflare DNS-01 token | temporary AES-GCM runner storage during Seed mode, then `homelab-infra/reverse_proxy` in Vaultwarden |
 | Proxmox, runner SSH, and generated service credentials | canonical organization-owned Vaultwarden items after verified cutover |

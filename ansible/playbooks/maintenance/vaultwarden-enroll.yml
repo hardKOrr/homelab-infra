@@ -174,5 +174,5 @@
         msg:
           - "Enrollment is complete for owner {{ _vault_owner_email }} and automation account {{ _vault_automation_email }}."
           - "The automation API key and master password are staged in Key Storage under keys/project/{{ _rundeck_project }}/vaultwarden-machine/."
-          - "The owner's master password is VAULTWARDEN_OWNER_PASSWORD in the runner's root-only /root/.rundeck-bootstrap. Vaultwarden Cutover also imports both passwords into the vault item homelab-infra/vaultwarden and deletes {{ _vault_accounts_file }}."
+          - "The owner's master password is VAULTWARDEN_OWNER_PASSWORD in the runner's root-only /root/.rundeck-bootstrap. After changing it in the web vault, set the owner_master_password field of the homelab-infra/vaultwarden item to the new one there, and delete that line. Vaultwarden Cutover imports both passwords into homelab-infra/vaultwarden and deletes {{ _vault_accounts_file }}."
           - "Next: run Setup > Credentials > Vaultwarden Cutover, then Setup > Platform > Bootstrap Platform."
