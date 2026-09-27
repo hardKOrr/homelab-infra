@@ -2,8 +2,10 @@
 # Seed-only enrollment. Invites both accounts through the admin facility, then performs
 # the whole two-account ceremony with scripts/vaultwarden-enroll.py: registration with
 # generated master passwords, organization, Admin membership, and the automation API key,
-# which is staged in Rundeck Key Storage for Vaultwarden Cutover. The generated passwords
-# live in secrets.d/vaultwarden-accounts.json until cutover imports them into the vault.
+# which is staged in Rundeck Key Storage for Vaultwarden Cutover. bootstrap-rundeck.sh
+# generates the passwords as root, records them in the root-only handover file (the
+# owner's way in), and stages this job's Seed copy in secrets.d/vaultwarden-accounts.json,
+# which cutover imports into the vault and deletes.
 - name: Vaultwarden | Enroll the owner and automation accounts
   hosts: localhost
   gather_facts: false
@@ -79,28 +81,30 @@
         - "{{ _vault_automation_email }}"
       no_log: true
 
-    # Generated once and never rotated here: an account that already exists only accepts
-    # the password it was registered with, so a regenerated one would lock enrollment out.
-    - name: Read generated master passwords
+    # Never generated here. A password only this job user could read would leave the owner
+    # locked out once cutover deletes the Seed copy; bootstrap-rundeck.sh is the one place
+    # that generates them, because it also hands the owner's to root.
+    - name: Read the master passwords staged by bootstrap-rundeck.sh
       ansible.builtin.slurp:
         src: "{{ _vault_accounts_file }}"
       register: _vault_accounts_raw
       failed_when: false
       no_log: true
 
-    - name: Resolve master passwords, generating any that are missing
+    - name: Resolve the staged master passwords
       ansible.builtin.set_fact:
-        _vault_passwords: >-
-          {{ {'VAULTWARDEN_OWNER_PASSWORD': lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits'),
-              'VAULTWARDEN_AUTOMATION_PASSWORD': lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits')}
-             | combine(_vault_accounts_raw.content | default('e30=') | b64decode | from_json) }}
+        _vault_passwords: "{{ _vault_accounts_raw.content | default('e30=') | b64decode | from_json }}"
       no_log: true
 
-    - name: Persist generated master passwords as Seed material
-      ansible.builtin.copy:
-        dest: "{{ _vault_accounts_file }}"
-        mode: "0600"
-        content: "{{ _vault_passwords | to_nice_json }}\n"
+    - name: Assert both master passwords are staged
+      ansible.builtin.assert:
+        that:
+          - _vault_passwords.VAULTWARDEN_OWNER_PASSWORD | default('') | length > 0
+          - _vault_passwords.VAULTWARDEN_AUTOMATION_PASSWORD | default('') | length > 0
+        fail_msg: >-
+          {{ _vault_accounts_file }} is missing or incomplete. Re-run bootstrap-rundeck.sh on
+          the Proxmox node: it generates the master passwords, records the owner's for you,
+          and stages them for this job.
       no_log: true
 
     - name: Register accounts, create the organization, and confirm the automation Admin
@@ -142,15 +146,19 @@
       register: _vault_ks_existing
       no_log: true
 
-    - name: Stage the automation credentials in Rundeck Key Storage
+    # Create-only: a re-run writes nothing. Rundeck never returns a stored password's
+    # contents, so an existing entry cannot be compared; if one is wrong, delete it in Key
+    # Storage and re-run this job to stage it again.
+    - name: Stage missing automation credentials in Rundeck Key Storage
       ansible.builtin.uri:
         url: "{{ _rundeck_url }}/api/58/storage/keys/project/{{ _rundeck_project }}/vaultwarden-machine/{{ item.0 }}"
-        method: "{{ 'PUT' if item.2 == 200 else 'POST' }}"
+        method: POST
         headers:
           X-Rundeck-Auth-Token: "{{ _rundeck_token }}"
           Content-Type: application/x-rundeck-data-password
         body: "{{ item.1 }}"
         status_code: [200, 201]
+      when: item.2 == 404
       loop: >-
         {{ ['client-id', 'client-secret', 'master-password']
            | zip([_vault_api_key.client_id, _vault_api_key.client_secret,
@@ -166,5 +174,5 @@
         msg:
           - "Enrollment is complete for owner {{ _vault_owner_email }} and automation account {{ _vault_automation_email }}."
           - "The automation API key and master password are staged in Key Storage under keys/project/{{ _rundeck_project }}/vaultwarden-machine/."
-          - "Both generated master passwords stay in {{ _vault_accounts_file }} until Vaultwarden Cutover imports them into the vault item homelab-infra/vaultwarden."
+          - "The owner's master password is VAULTWARDEN_OWNER_PASSWORD in the runner's root-only /root/.rundeck-bootstrap. Vaultwarden Cutover also imports both passwords into the vault item homelab-infra/vaultwarden and deletes {{ _vault_accounts_file }}."
           - "Next: run Setup > Credentials > Vaultwarden Cutover, then Setup > Platform > Bootstrap Platform."

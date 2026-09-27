@@ -132,6 +132,27 @@ grep -q 'storagePath: keys/project/homelab-infra/rundeck/api-token' \
   "$work/enrollment-job.yml" || fail "enrollment cannot stage Key Storage without the Rundeck token"
 grep -Fq 'vaultwarden-accounts.json' "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
   || fail "cutover does not absorb and remove the generated master passwords"
+# A password only the job user can read is lost when cutover deletes the Seed copy, so
+# only the root bootstrap generates them, and it records the owner's in the handover file.
+! grep -Fq "ansible.builtin.password" "$enrollment" \
+  || fail "enrollment generates a master password the operator could never read"
+grep -Fq 'VAULTWARDEN_OWNER_PASSWORD' "$repo/rundeck/bootstrap-rundeck.sh" \
+  || fail "bootstrap does not hand the owner's master password to root"
+# Re-running enrollment must not rewrite Key Storage: create missing entries only.
+grep -Fq 'when: item.2 == 404' "$enrollment" \
+  || fail "enrollment stages Key Storage entries that already exist"
+! grep -Eq "method: .*PUT" "$enrollment" \
+  || fail "enrollment overwrites existing Key Storage entries"
+# Resume after a partial run: Bootstrap Platform must be reachable once the vault-mode
+# marker exists, i.e. outside the Seed-only branch that the marker skips.
+python3 - "$repo/rundeck/bootstrap-rundeck.sh" <<'PY' || fail "bootstrap cannot resume Bootstrap Platform in Vault mode"
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+seed = text.index('if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ! ct_file_exists "$LAB_ETC/state/vault-mode"; then')
+end = text.index("\nfi\n", seed)
+platform = text.index('rd_run_job "Bootstrap Platform"')
+assert platform > end, "Bootstrap Platform only runs inside the Seed-only branch"
+PY
 ! grep -Fq "and the collection 'platform-secrets'" \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap still tells the operator to create platform-secrets"

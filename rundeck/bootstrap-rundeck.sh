@@ -370,10 +370,74 @@ command -v pveum >/dev/null  || die "pveum not found"
 # Before anything else, so a fresh node can update at all. Idempotent: every change is
 # conditional on the node still being in its stock state. Handles both the one-line
 # `.list` files of PVE 8 (bookworm) and the deb822 `.sources` files of PVE 9 (trixie).
+# repo_active <uri> <component> — true when an ENABLED apt entry serves <component> from
+# <uri>. A commented `.list` line or a deb822 stanza with `Enabled: no|false` does not
+# count; a bare grep for the component name would accept both.
+repo_active() {
+  python3 - "$1" "$2" <<'PY'
+import glob, re, sys
+uri, component = sys.argv[1].rstrip("/"), sys.argv[2]
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
+        if len(words) >= 4 and words[0] == "deb" and words[1].rstrip("/") == uri and component in words[3:]:
+            sys.exit(0)
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for stanza in re.split(r"\n\s*\n", text):
+        fields = {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
+            continue
+        if uri in [u.rstrip("/") for u in fields.get("uris", [])] and component in fields.get("components", []):
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# ensure_no_subscription_repo <uri> <component> <sources-basename> <list-basename> — add
+# an enabled entry in the node's own format unless one is already active. Reads the
+# caller's $codename and $deb822.
+ensure_no_subscription_repo() {
+  local uri="$1" component="$2" sources="$3" list="$4"
+  if repo_active "$uri" "$component"; then
+    info "$component from $uri already enabled"
+  elif [ "$deb822" = 1 ]; then
+    cat > "/etc/apt/sources.list.d/$sources.sources" <<EOF
+Types: deb
+URIs: $uri
+Suites: $codename
+Components: $component
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+    info "added $component ($codename) from $uri in $sources.sources"
+  else
+    echo "deb $uri $codename $component" > "/etc/apt/sources.list.d/$list.list"
+    info "added $component ($codename) from $uri in $list.list"
+  fi
+}
+
 configure_node_repos() {
-  local codename f nag hook
+  local codename f nag hook deb822 ceph_releases rel
   codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
   [ -n "$codename" ] || die "cannot read VERSION_CODENAME from /etc/os-release"
+  # PVE 9 ships deb822 `.sources`; PVE 8 ships one-line `.list`. Match the node's style.
+  deb822=0
+  { [ -f /etc/apt/sources.list.d/pve-enterprise.sources ] || [ "$codename" != bookworm ]; } && deb822=1
+
+  # Ceph is its own repository per release (ceph-squid, ceph-quincy, ...), not part of the
+  # PVE one. Record which release the enterprise entries name — enabled or already
+  # disabled by an earlier run — so its no-subscription channel replaces it below instead
+  # of leaving installed Ceph packages without any source.
+  ceph_releases="$(grep -rhoE 'enterprise\.proxmox\.com/debian/ceph-[a-z]+' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sed 's|.*/ceph-||' | sort -u || true)"
 
   # Disable every enterprise entry — pve-enterprise and the Ceph enterprise repo alike.
   # Files are disabled in place rather than deleted, so a package upgrade that ships them
@@ -395,24 +459,12 @@ configure_node_repos() {
     esac
   done
 
-  if ! grep -rqs 'pve-no-subscription' /etc/apt/sources.list /etc/apt/sources.list.d/; then
-    if [ -f /etc/apt/sources.list.d/pve-enterprise.sources ] || [ "$codename" != bookworm ]; then
-      cat > /etc/apt/sources.list.d/proxmox.sources <<EOF
-Types: deb
-URIs: http://download.proxmox.com/debian/pve
-Suites: $codename
-Components: pve-no-subscription
-Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
-EOF
-      info "added pve-no-subscription ($codename) in proxmox.sources"
-    else
-      echo "deb http://download.proxmox.com/debian/pve $codename pve-no-subscription" \
-        > /etc/apt/sources.list.d/pve-no-subscription.list
-      info "added pve-no-subscription ($codename) in pve-no-subscription.list"
-    fi
-  else
-    info "pve-no-subscription already configured"
-  fi
+  ensure_no_subscription_repo "http://download.proxmox.com/debian/pve" pve-no-subscription \
+    proxmox pve-no-subscription
+  for rel in $ceph_releases; do
+    ensure_no_subscription_repo "http://download.proxmox.com/debian/ceph-$rel" no-subscription \
+      "ceph-$rel-no-subscription" "ceph-$rel-no-subscription"
+  done
 
   # The subscription dialog is a client-side check in proxmoxlib.js. The package rewrites
   # that file on every upgrade, so the patch is re-applied from a dpkg hook as well as now.
@@ -2063,10 +2115,35 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     fi
   fi
 
-  # Enrollment is fully automated: vaultwarden-enroll.yml registers both accounts with
-  # generated master passwords, builds the organization and stages the automation API
-  # key in Key Storage. Cutover and Bootstrap Platform then run as ordinary Rundeck jobs,
-  # so the whole lab comes up from this one command. The Rundeck token travels on stdin.
+  # Both Vaultwarden master passwords are generated HERE, as root, and recorded in the
+  # root-only handover file beside the Rundeck admin password. That copy is the owner's
+  # way in: cutover later seals both passwords inside the vault, which they unlock, so
+  # the vault copy alone would be circular. The job user gets its own Seed copy in
+  # secrets.d/, which enrollment reads and cutover deletes. Re-runs reuse the recorded
+  # values — an account that already exists only accepts the password it was made with.
+  log "Vaultwarden master passwords"
+  for key in VAULTWARDEN_OWNER_PASSWORD VAULTWARDEN_AUTOMATION_PASSWORD; do
+    value="$(in_ct sh -c "sed -n 's/^$key=//p' $CRED_FILE 2>/dev/null" || true)"
+    if [ -z "$value" ]; then
+      value="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40 || true)"
+      printf '%s\n' "$value" | in_ct sh -c '
+        IFS= read -r value; tmp="$(mktemp)"
+        grep -v "^$1=" "$2" > "$tmp" 2>/dev/null || true
+        printf "%s=%s\n" "$1" "$value" >> "$tmp"
+        install -m 0600 -o root -g root "$tmp" "$2"; rm -f "$tmp"
+      ' _ "$key" "$CRED_FILE"
+      info "generated $key (recorded in $CRED_FILE)"
+    fi
+    printf -v "$key" '%s' "$value"
+  done
+  printf '{"VAULTWARDEN_OWNER_PASSWORD": "%s", "VAULTWARDEN_AUTOMATION_PASSWORD": "%s"}\n' \
+      "$VAULTWARDEN_OWNER_PASSWORD" "$VAULTWARDEN_AUTOMATION_PASSWORD" \
+    | in_ct sh -c 'umask 077; cat > "$1.tmp" && chown rundeck:rundeck "$1.tmp" && mv "$1.tmp" "$1"' \
+        _ "$LAB_ETC/secrets.d/vaultwarden-accounts.json"
+  info "Seed copy staged for enrollment in $LAB_ETC/secrets.d/vaultwarden-accounts.json"
+
+  # Enrollment registers both accounts, builds the organization and stages the automation
+  # API key in Key Storage. The Rundeck token travels on stdin.
   VAULT_ENROLLED=0
   if [ -z "$VAULTWARDEN_OWNER_EMAIL" ]; then
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
@@ -2099,13 +2176,28 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
 
   if [ "$VAULT_ENROLLED" = 1 ]; then
     rd_run_job "Vaultwarden Cutover" e04bfd76-e7c9-5bec-979e-7335b76b460d \
-      && rd_run_job "Bootstrap Platform" f4ff3c34-28da-5509-92fa-6e5c60c70f3d \
-      || die "platform bootstrap stopped; the job log is above and in Rundeck at $RD_URL"
+      || die "Vaultwarden Cutover failed; the job log is above and in Rundeck at $RD_URL. Fix it and re-run this script."
   fi
 elif [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
-  info "Vault mode is already active — skipping the preliminary Seed-only app phase"
+  info "Vault mode is already active — skipping the Seed phase, enrollment and cutover"
 else
   warn "DEPLOY_VAULTWARDEN=0 — runner created without the preliminary secret store"
+fi
+
+# Phase-aware, so a re-run resumes wherever the last one stopped. Cutover writes the
+# vault-mode marker before its final cleanup, so the marker — not this run's history — is
+# what says enrollment and cutover are behind us. Bootstrap Platform runs on EVERY run in
+# Vault mode: it is idempotent and resumable, so a run that failed or was interrupted is
+# finished simply by running this script again.
+VAULT_MODE=0
+PLATFORM_DONE=0
+if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ct_file_exists "$LAB_ETC/state/vault-mode"; then
+  VAULT_MODE=1
+  if [ -n "$RD_TOKEN" ]; then
+    rd_run_job "Bootstrap Platform" f4ff3c34-28da-5509-92fa-6e5c60c70f3d \
+      || die "Bootstrap Platform failed; the job log is above and in Rundeck at $RD_URL. Fix it and re-run this script."
+    PLATFORM_DONE=1
+  fi
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
@@ -2121,7 +2213,7 @@ cat <<EOF
     Ansible    $VENV_DIR/bin/ansible
     Config     $REPO_DIR/config/{proxmox.yml,infrastructure.yml,apps/rundeck.yml}
     Proxmox    $PVE_USER (role $PVE_ROLE), token secret in Key Storage
-    Vaultwarden $([ "$DEPLOY_VAULTWARDEN" = "1" ] && printf '%s' 'deployed with Caddy; enrollment/cutover required' || printf '%s' 'skipped (runner-only mode)')
+    Vaultwarden $(if [ "$DEPLOY_VAULTWARDEN" != "1" ]; then printf '%s' 'skipped (runner-only mode)'; elif [ "$PLATFORM_DONE" = 1 ]; then printf '%s' 'Vault mode; Bootstrap Platform completed'; elif [ "$VAULT_MODE" = 1 ]; then printf '%s' 'Vault mode; Bootstrap Platform not yet run'; else printf '%s' 'Seed mode; enrollment and cutover pending'; fi)
     Creds      pct exec $VMID -- cat $CRED_FILE
 
     NETWORK: every lab hostname is served by Caddy${CADDY_ADDR:+ at $CADDY_ADDR}. Lab
@@ -2131,18 +2223,26 @@ cat <<EOF
     a separate and deliberate choice (routing.access: public) and does require inbound
     443 forwarded here. An existing internet-facing proxy keeps its own ports either way.
 
-    NEXT: $([ "${VAULT_ENROLLED:-0}" = 1 ] && printf '%s' 'nothing — enrollment, cutover and Bootstrap Platform completed above.' || printf '%s' 'finish the Vaultwarden handover (no input needed at any step).')
-      1. DNS FIRST. Point vaultwarden.$LAB_DOMAIN at ${CADDY_ADDR:-the Caddy LXC} in your
-         LAN resolver. Nothing below works until that name resolves.
-      2. Re-run this script, or run these jobs in order at $RD_URL:
-           Setup > Credentials > Vaultwarden Enrollment — registers
-             $VAULTWARDEN_OWNER_EMAIL (owner) and $VAULTWARDEN_AUTOMATION_EMAIL
-             (automation) with generated master passwords, creates organization
-             'homelab-infra', confirms the automation Admin, stages its API key
-           Setup > Credentials > Vaultwarden Cutover
-           Setup > Platform > Bootstrap Platform
-      3. The owner's master password is owner_master_password in the vault item
-         homelab-infra/vaultwarden once cutover has run.
+$(if [ "$DEPLOY_VAULTWARDEN" != "1" ]; then
+  printf '    NEXT: re-run without DEPLOY_VAULTWARDEN=0 to build the secret store and the lab.\n'
+elif [ "$PLATFORM_DONE" = 1 ]; then
+  printf '    NEXT: nothing to run — the baseline lab is up.\n'
+elif [ "$VAULT_MODE" = 1 ]; then
+  printf '    NEXT: re-run this script, or run Setup > Platform > Bootstrap Platform at %s.\n' "$RD_URL"
+else
+  printf '    NEXT: finish the Vaultwarden handover; no step needs input.\n'
+  printf '      1. DNS FIRST. Point vaultwarden.%s at %s in your LAN resolver.\n' "$LAB_DOMAIN" "${CADDY_ADDR:-the Caddy LXC}"
+  printf '      2. Re-run this script. It resumes at enrollment, then cutover, then Bootstrap\n'
+  printf '         Platform. From the UI, run those three jobs in that order instead.\n'
+fi)
+
+    OWNER LOGIN: Vaultwarden owner $VAULTWARDEN_OWNER_EMAIL signs in at
+    https://vaultwarden.$LAB_DOMAIN with the generated password recorded as
+    VAULTWARDEN_OWNER_PASSWORD in $CRED_FILE (root-only; read it with the Creds command
+    above). Sign in, change the master password to one of your own, then delete that
+    line from $CRED_FILE. That file is the only copy readable from outside the vault:
+    cutover also stores it in the vault item homelab-infra/vaultwarden, which can only be
+    read once you are already signed in.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,
