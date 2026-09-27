@@ -21,23 +21,24 @@ the rest of the documentation obvious.
 | **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
 | **Where** | as root on a Proxmox node | in Rundeck |
 | **Builds** | the runner, Caddy, and Vaultwarden in temporary Seed mode | the remaining services in mandatory Vault mode |
-| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, and explicit enrollment/cutover jobs | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
-| **Run it** | once, by hand | once, by clicking |
+| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, enrolled and cut over to Vault mode | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
+| **Run it** | once, by hand | by the script when it finishes, or by clicking |
 
-Between them is one unavoidable human ceremony: choose the owner and automation-account
-master passwords inside Vaultwarden, create the automation API key, stage its three values
-as encrypted job secrets, and run the verified cutover. The initial script brings up every
-component needed to perform that ceremony; it never asks for those passwords.
+Between them sit Vaultwarden enrollment and cutover, and the script does both itself. It
+generates the owner and automation master passwords and hands the owner's to root. It
+registers both accounts, stages the automation API key as encrypted job secrets, and runs
+the verified cutover. Then it runs Bootstrap Platform. Nothing needs a human, and a re-run
+resumes wherever the last one stopped.
 
 ### 0. Make the lab domain reach the lab Caddy
 
-One network prerequisite has to be true before the ceremony in the middle is possible, and
-it is the only thing this project cannot arrange for you.
+One network prerequisite has to be true before enrollment in the middle is possible, and it
+is the only thing this project cannot arrange for you.
 
-Layer 1 finishes by putting Vaultwarden behind an HTTPS route on the Caddy it just built,
-and the enrollment ceremony is performed in a browser at `https://vaultwarden.<your
-domain>`. That URL has to resolve — from the runner and from your workstation — to the new
-Caddy LXC, and the path to it on ports 80/443 has to be open. So:
+Layer 1 puts Vaultwarden behind an HTTPS route on the Caddy it just built and enrolls it
+through `https://vaultwarden.<your domain>`. That URL has to resolve to the new Caddy LXC
+from the runner, and from your workstation for you to sign in later. The path to it on
+ports 80/443 also has to be open. So:
 
 <!-- output-source:network-prerequisite sha=7cfe6710 -->
 - **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy

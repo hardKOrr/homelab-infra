@@ -176,6 +176,17 @@ bootstrap_files = set(re.findall(r'"([^"]+)"', loop))
 assert cutover_files == bootstrap_files, (cutover_files ^ bootstrap_files)
 assert bootstrap.index('state/cutover-complete"; then') < bootstrap.index('rd_run_job "Bootstrap Platform"')
 PY
+# Recovery reopens Seed mode for a new cutover. A cutover-complete left from the previous
+# one would vouch for the new cutover's cleanup before it ran, so both markers go —
+# cutover-complete first, so an interruption leaves the "finish cleanup" state.
+python3 - "$repo/ansible/playbooks/maintenance/vaultwarden-recovery.yml" <<'PY' || fail "recovery leaves a stale cutover-complete marker"
+import sys
+import yaml
+tasks = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))[0]["tasks"]
+removals = [t for t in tasks if t.get("ansible.builtin.file", {}).get("state") == "absent"]
+assert len(removals) == 1, "expected one marker-removal task"
+assert removals[0]["loop"] == ["cutover-complete", "vault-mode"], removals[0]["loop"]
+PY
 ! grep -Fq "and the collection 'platform-secrets'" \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap still tells the operator to create platform-secrets"

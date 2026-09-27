@@ -374,10 +374,14 @@ command -v pveum >/dev/null  || die "pveum not found"
 # <component> of <suite> from <uri>. A commented `.list` line, a deb822 stanza with
 # `Enabled: no|false`, or an entry for another release (a bookworm line left behind on a
 # node upgraded to trixie) does not count; a bare grep for the component accepts all three.
+# A <uri> ending in `*` matches as a prefix (any Ceph release: .../debian/ceph-*).
 repo_active() {
   python3 - "$1" "$2" "$3" <<'PY'
 import glob, re, sys
 uri, suite, component = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
+def uri_ok(candidate):
+    candidate = candidate.rstrip("/")
+    return candidate.startswith(uri[:-1]) if uri.endswith("*") else candidate == uri
 for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
     try:
         lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
@@ -385,7 +389,7 @@ for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.lis
         continue
     for line in lines:
         words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
-        if (len(words) >= 4 and words[0] == "deb" and words[1].rstrip("/") == uri
+        if (len(words) >= 4 and words[0] == "deb" and uri_ok(words[1])
                 and words[2] == suite and component in words[3:]):
             sys.exit(0)
 for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
@@ -398,10 +402,56 @@ for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
                 fields[key.strip().lower()] = value.split()
         if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
             continue
-        if (uri in [u.rstrip("/") for u in fields.get("uris", [])]
+        if (any(uri_ok(u) for u in fields.get("uris", []))
                 and suite in fields.get("suites", []) and component in fields.get("components", [])):
             sys.exit(0)
 sys.exit(1)
+PY
+}
+
+# disable_stale_proxmox_suites <codename> — disable every ENABLED Proxmox entry (PVE, Ceph,
+# any download.proxmox.com/debian/* repository) whose suite is not this node's release.
+# A node upgraded from bookworm to trixie can keep its old entries enabled; apt would then
+# mix two Debian releases even after the correct entry is added. Disabled in place, like
+# the enterprise entries: `.list` lines are commented, deb822 stanzas get `Enabled: false`.
+disable_stale_proxmox_suites() {
+  python3 - "$1" <<'PY'
+import glob, re, sys
+codename = sys.argv[1]
+proxmox = re.compile(r"^https?://(download|enterprise)\.proxmox\.com/debian/")
+for path in ["/etc/apt/sources.list"] + glob.glob("/etc/apt/sources.list.d/*.list"):
+    try:
+        lines = open(path, encoding="utf-8").read().split("\n")
+    except OSError:
+        continue
+    changed = False
+    for i, line in enumerate(lines):
+        words = re.sub(r"\[[^]]*\]", "", line.split("#", 1)[0]).split()
+        if len(words) >= 3 and words[0] == "deb" and proxmox.match(words[1]) and words[2] != codename:
+            lines[i] = "# " + line
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
+        print(f"    disabled {path}: Proxmox entry for another release than {codename}")
+for path in glob.glob("/etc/apt/sources.list.d/*.sources"):
+    text = open(path, encoding="utf-8").read()
+    stanzas = re.split(r"(\n\s*\n)", text)
+    changed = False
+    for i in range(0, len(stanzas), 2):
+        stanza, fields = stanzas[i], {}
+        for line in stanza.splitlines():
+            if ":" in line and not line.lstrip().startswith("#"):
+                key, _, value = line.partition(":")
+                fields[key.strip().lower()] = value.split()
+        if [v.lower() for v in fields.get("enabled", ["yes"])][:1] in (["no"], ["false"]):
+            continue
+        if any(proxmox.match(u) for u in fields.get("uris", [])) and codename not in fields.get("suites", []):
+            body = "\n".join(l for l in stanza.split("\n") if not re.match(r"(?i)^enabled:", l))
+            stanzas[i] = body.rstrip("\n") + "\nEnabled: false" + ("\n" if stanza.endswith("\n") else "")
+            changed = True
+    if changed:
+        open(path, "w", encoding="utf-8").write("".join(stanzas))
+        print(f"    disabled {path}: Proxmox stanza for another release than {codename}")
 PY
 }
 
@@ -462,12 +512,19 @@ configure_node_repos() {
     esac
   done
 
+  disable_stale_proxmox_suites "$codename"
   ensure_no_subscription_repo "http://download.proxmox.com/debian/pve" pve-no-subscription \
     proxmox pve-no-subscription
   for rel in $ceph_releases; do
     ensure_no_subscription_repo "http://download.proxmox.com/debian/ceph-$rel" no-subscription \
       "ceph-$rel-no-subscription" "ceph-$rel-no-subscription"
   done
+  # Ceph releases are per Debian release (quincy/reef on bookworm, squid on trixie), so a
+  # stale entry disabled above has no mechanical replacement. Say so rather than guess.
+  if dpkg-query -W -f='${Status}' ceph-common 2>/dev/null | grep -q 'install ok installed' \
+     && ! repo_active "http://download.proxmox.com/debian/ceph-*" "$codename" no-subscription; then
+    warn "Ceph is installed but no Ceph repository is enabled for $codename — add the Ceph release Proxmox documents for $codename (for example ceph-squid on trixie) before upgrading"
+  fi
 
   # The subscription dialog is a client-side check in proxmoxlib.js. The package rewrites
   # that file on every upgrade, so the patch is re-applied from a dpkg hook as well as now.
@@ -2107,8 +2164,8 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     /usr/local/bin/lab-run playbooks/apps/vaultwarden.yml -e instance=vaultwarden
   info "Vaultwarden and Caddy are online; the HTTPS route is configured"
 
-  # Preserve the generated admin token in encrypted Key Storage before asking a
-  # human to enroll. The temporary sink remains until verified Vault cutover.
+  # Preserve the generated admin token in encrypted Key Storage before enrollment
+  # needs it. The temporary sink remains until verified Vault cutover.
   if [ -n "$RD_TOKEN" ] && declare -F ks_put >/dev/null 2>&1; then
     STAGE8="$(newtmp)"
     in_ct sed -n 's/^VAULTWARDEN_ADMIN_TOKEN=//p' "$LAB_ETC/secrets.d/vaultwarden.env" > "$STAGE8/admin-token"
