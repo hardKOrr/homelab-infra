@@ -247,6 +247,33 @@ class FakeVaultwarden:
 
 
 class EnrollmentCryptoAndFlowTest(unittest.TestCase):
+    def test_malformed_prelogin_and_public_key_payloads_are_controlled_errors(self):
+        class EmptyPrelogin:
+            def json(self, method, url, **kwargs):
+                del method, url, kwargs
+                return None
+
+        with self.assertRaisesRegex(enroll.EnrollmentError, "prelogin returned an unexpected response"):
+            enroll.kdf_settings(EmptyPrelogin(), "https://vault.example", "owner@example.net")
+
+        class MissingPublicKey:
+            def json(self, method, url, **kwargs):
+                del kwargs
+                if url.endswith("/users"):
+                    return {"data": [{
+                        "id": "member-id",
+                        "email": "automation@example.net",
+                        "type": 1,
+                        "status": 1,
+                    }]}
+                return None
+
+        with self.assertRaisesRegex(enroll.EnrollmentError, "unexpected automation public-key response"):
+            enroll.ensure_admin_membership(
+                MissingPublicKey(), "https://vault.example", "org-id", "owner-token",
+                "automation@example.net", "automation-user-id", b"k" * 64,
+            )
+
     def test_bitwarden_crypto_vectors_and_wrapping(self):
         master_key = enroll.derive_master_key("Nobody@Example.com", "p4ssw0rd", 5000)
         self.assertEqual(

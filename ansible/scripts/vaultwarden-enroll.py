@@ -255,7 +255,9 @@ class HTTPClient:
 
 def kdf_settings(server: HTTPClient, base_url: str, email: str) -> tuple[int, dict[str, Any]]:
     result = server.json("POST", f"{base_url}/api/accounts/prelogin", data={"email": email})
-    settings = result.get("kdfSettings") if isinstance(result, dict) else None
+    if not isinstance(result, dict):
+        raise EnrollmentError("Vaultwarden prelogin returned an unexpected response")
+    settings = result.get("kdfSettings")
     if not isinstance(settings, dict):
         settings = {
             "kdfType": result.get("kdf"),
@@ -510,11 +512,16 @@ def ensure_admin_membership(
         raise EnrollmentError(
             "The automation invitation is not accepted; Vaultwarden must have mail disabled for unattended enrollment"
         )
-    public_key = server.json(
+    public_key_response = server.json(
         "GET",
         f"{base_url}/api/users/{urllib.parse.quote(automation_user_id, safe='')}/public-key",
         headers=headers,
-    ).get("publicKey", "")
+    )
+    if not isinstance(public_key_response, dict):
+        raise EnrollmentError("Vaultwarden returned an unexpected automation public-key response")
+    public_key = public_key_response.get("publicKey")
+    if not isinstance(public_key, str) or not public_key:
+        raise EnrollmentError("Vaultwarden did not return the automation account public key")
     encrypted_key = organization_key_for_user(org_key, public_key)
     server.json(
         "POST",

@@ -52,8 +52,15 @@
         BW_CLIENTSECRET: "{{ lookup('ansible.builtin.env', 'BW_CLIENTSECRET') }}"
         BW_PASSWORD: "{{ lookup('ansible.builtin.env', 'BW_PASSWORD') }}"
       register: _vault_enrollment
-      changed_when: (_vault_enrollment.stdout | from_json).changed
+      failed_when: false
+      changed_when: >-
+        _vault_enrollment.rc == 0 and (_vault_enrollment.stdout | from_json).changed
       no_log: true
+
+    - name: Report a safe Vaultwarden enrollment failure
+      ansible.builtin.fail:
+        msg: "{{ (_vault_enrollment.stderr | default('', true) | trim) or 'Vaultwarden enrollment failed without a safe diagnostic.' }}"
+      when: _vault_enrollment.rc != 0
 
     - name: Report enrollment convergence
       ansible.builtin.debug:

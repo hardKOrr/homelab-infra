@@ -122,8 +122,25 @@ grep -Fq '{{ _vault_automation_email }}' "$enrollment" \
   || fail "enrollment does not pass the configured automation address to the helper"
 grep -Fq 'vaultwarden-enroll.py' "$enrollment" \
   || fail "enrollment playbook does not run the crypto/flow helper"
-grep -Fq 'no_log: true' "$enrollment" \
-  || fail "enrollment can write account material to the Ansible log"
+python3 - "$enrollment" <<'PY'
+import sys
+import yaml
+
+tasks = yaml.safe_load(open(sys.argv[1]))[0]["tasks"]
+runner = next(task for task in tasks
+              if task.get("name") == "Run the resumable Vaultwarden registration and organization flow")
+failure = next(task for task in tasks
+               if task.get("name") == "Report a safe Vaultwarden enrollment failure")
+changed_when = runner.get("changed_when", "")
+assert runner.get("no_log") is True, "enrollment helper output must remain hidden"
+assert runner.get("failed_when") is False, "helper errors must reach the safe reporting task"
+assert "_vault_enrollment.rc == 0" in changed_when, "non-zero helper exits must not parse empty stdout"
+assert "_vault_enrollment.stderr" in failure.get("ansible.builtin.fail", {}).get("msg", ""), \
+    "safe helper stderr must be included in the visible failure"
+assert "_vault_enrollment.rc != 0" in failure.get("when", ""), \
+    "the visible failure must run when enrollment fails"
+assert failure.get("no_log") is not True, "safe failure diagnostics must reach the Ansible log"
+PY
 grep -Fq 'RUNDECK_API_TOKEN' "$enrollment" \
   || fail "enrollment cannot stage secrets in Rundeck Key Storage"
 grep -Fq 'cryptography==50.0.1' "$repo/rundeck/bootstrap-rundeck.sh" \
