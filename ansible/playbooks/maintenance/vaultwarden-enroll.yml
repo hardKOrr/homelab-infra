@@ -1,13 +1,21 @@
 ---
-# Seed-only invitation step. Account registration, master-password choice and
-# organization membership remain deliberately human actions. The platform owns
-# creation and grants for its canonical collection.
-- name: Vaultwarden | Invite first owner and automation principal
+# Seed-only enrollment. Invites both accounts through the admin facility, then performs
+# the whole two-account ceremony with scripts/vaultwarden-enroll.py: registration with
+# generated master passwords, organization, Admin membership, and the automation API key,
+# which is staged in Rundeck Key Storage for Vaultwarden Cutover. The generated passwords
+# live in secrets.d/vaultwarden-accounts.json until cutover imports them into the vault.
+- name: Vaultwarden | Enroll the owner and automation accounts
   hosts: localhost
   gather_facts: false
   vars:
     _vault_public_url: "{{ lookup('ansible.builtin.env', 'BW_SERVER') | trim }}"
     _vault_admin_token: "{{ lookup('ansible.builtin.env', 'VAULTWARDEN_ADMIN_TOKEN') }}"
+    _vault_accounts_file: >-
+      {{ lookup('ansible.builtin.env', 'LAB_SECRETS_DIR')
+         | default('/etc/homelab-infra/secrets.d', true) }}/vaultwarden-accounts.json
+    _rundeck_url: "{{ lookup('ansible.builtin.env', 'RUNDECK_URL') }}"
+    _rundeck_token: "{{ lookup('ansible.builtin.env', 'RUNDECK_API_TOKEN') }}"
+    _rundeck_project: "{{ lookup('ansible.builtin.env', 'RUNDECK_PROJECT') | default('homelab-infra', true) }}"
   pre_tasks:
     - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
@@ -71,16 +79,92 @@
         - "{{ _vault_automation_email }}"
       no_log: true
 
-    - name: Publish the human enrollment ceremony
+    # Generated once and never rotated here: an account that already exists only accepts
+    # the password it was registered with, so a regenerated one would lock enrollment out.
+    - name: Read generated master passwords
+      ansible.builtin.slurp:
+        src: "{{ _vault_accounts_file }}"
+      register: _vault_accounts_raw
+      failed_when: false
+      no_log: true
+
+    - name: Resolve master passwords, generating any that are missing
+      ansible.builtin.set_fact:
+        _vault_passwords: >-
+          {{ {'VAULTWARDEN_OWNER_PASSWORD': lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits'),
+              'VAULTWARDEN_AUTOMATION_PASSWORD': lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_letters,digits')}
+             | combine(_vault_accounts_raw.content | default('e30=') | b64decode | from_json) }}
+      no_log: true
+
+    - name: Persist generated master passwords as Seed material
+      ansible.builtin.copy:
+        dest: "{{ _vault_accounts_file }}"
+        mode: "0600"
+        content: "{{ _vault_passwords | to_nice_json }}\n"
+      no_log: true
+
+    - name: Register accounts, create the organization, and confirm the automation Admin
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../scripts/vaultwarden-enroll.py"
+      environment:
+        BW_SERVER: "{{ _vault_public_url }}"
+        VAULTWARDEN_OWNER_EMAIL: "{{ _vault_owner_email }}"
+        VAULTWARDEN_OWNER_PASSWORD: "{{ _vault_passwords.VAULTWARDEN_OWNER_PASSWORD }}"
+        VAULTWARDEN_AUTOMATION_EMAIL: "{{ _vault_automation_email }}"
+        VAULTWARDEN_AUTOMATION_PASSWORD: "{{ _vault_passwords.VAULTWARDEN_AUTOMATION_PASSWORD }}"
+      register: _vault_enrolled
+      changed_when: "'registered' in _vault_enrolled.stderr or 'created' in _vault_enrolled.stderr or 'invited' in _vault_enrolled.stderr"
+      no_log: true
+
+    - name: Report enrollment progress
+      ansible.builtin.debug:
+        msg: "{{ _vault_enrolled.stderr_lines }}"
+
+    - name: Assert the Rundeck API is available for staging
+      ansible.builtin.assert:
+        that:
+          - _rundeck_url | length > 0
+          - _rundeck_token | length > 0
+        fail_msg: >-
+          Accounts are enrolled, but RUNDECK_URL or the Rundeck API token is missing, so the
+          automation credentials cannot be staged in Key Storage. Re-run Vaultwarden Enrollment.
+      no_log: true
+
+    - name: Check which automation credentials are already staged
+      ansible.builtin.uri:
+        url: "{{ _rundeck_url }}/api/58/storage/keys/project/{{ _rundeck_project }}/vaultwarden-machine/{{ item }}"
+        headers:
+          X-Rundeck-Auth-Token: "{{ _rundeck_token }}"
+        status_code: [200, 404]
+      loop: [client-id, client-secret, master-password]
+      register: _vault_ks_existing
+      no_log: true
+
+    - name: Stage the automation credentials in Rundeck Key Storage
+      ansible.builtin.uri:
+        url: "{{ _rundeck_url }}/api/58/storage/keys/project/{{ _rundeck_project }}/vaultwarden-machine/{{ item.0 }}"
+        method: "{{ 'PUT' if item.2 == 200 else 'POST' }}"
+        headers:
+          X-Rundeck-Auth-Token: "{{ _rundeck_token }}"
+          Content-Type: application/x-rundeck-data-password
+        body: "{{ item.1 }}"
+        status_code: [200, 201]
+      loop: >-
+        {{ ['client-id', 'client-secret', 'master-password']
+           | zip([_vault_api_key.client_id, _vault_api_key.client_secret,
+                  _vault_passwords.VAULTWARDEN_AUTOMATION_PASSWORD],
+                 _vault_ks_existing.results | map(attribute='status'))
+           | list }}
+      vars:
+        _vault_api_key: "{{ _vault_enrolled.stdout | from_json }}"
+      no_log: true
+
+    - name: Report the next step
       ansible.builtin.debug:
         msg:
-          - "Invitations are ready for owner account {{ _vault_owner_email }} and dedicated automation account {{ _vault_automation_email }}."
-          - "1. Open {{ _vault_public_url }}/#/register. Register {{ _vault_owner_email }}. In the registration form, create the owner account's master password. The platform never receives or stores this password."
-          - "2. Sign out. Open {{ _vault_public_url }}/#/register again. Register the separate automation account {{ _vault_automation_email }} and create a different master password for it. Keep that automation master password for step 5."
-          - "3. Sign in as {{ _vault_owner_email }}. Create the organization 'homelab-infra'. Invite {{ _vault_automation_email }} as an Admin. Accept and confirm the membership until the organization's Members page shows the automation account as a confirmed Admin."
-          - "4. Do not create a collection or assign collection permissions. The Vaultwarden Cutover job creates 'platform-secrets' on its first write. An Admin reaches it through organization-wide access, so Vaultwarden shows no explicit collection permission for that account. The platform ignores the auto-created 'Default Collection'."
-          - "5. Sign in as {{ _vault_automation_email }}. Open Settings > Security > Keys, select View API key, and put the three values into Rundeck Key Storage as encrypted Password entries:"
-          - "   client_id -> keys/project/homelab-infra/vaultwarden-machine/client-id"
-          - "   client_secret -> keys/project/homelab-infra/vaultwarden-machine/client-secret"
-          - "   automation master password -> keys/project/homelab-infra/vaultwarden-machine/master-password"
-          - "6. Run Setup > Credentials > Vaultwarden Cutover. After it succeeds, run Setup > Platform > Bootstrap Platform. Ordinary deploys remain disabled until cutover succeeds."
+          - "Enrollment is complete for owner {{ _vault_owner_email }} and automation account {{ _vault_automation_email }}."
+          - "The automation API key and master password are staged in Key Storage under keys/project/{{ _rundeck_project }}/vaultwarden-machine/."
+          - "Both generated master passwords stay in {{ _vault_accounts_file }} until Vaultwarden Cutover imports them into the vault item homelab-infra/vaultwarden."
+          - "Next: run Setup > Credentials > Vaultwarden Cutover, then Setup > Platform > Bootstrap Platform."

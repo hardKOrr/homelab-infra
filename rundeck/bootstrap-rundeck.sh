@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # bootstrap-rundeck.sh — stand up the whole homelab-infra runner from nothing.
 #
-# Run this ON a Proxmox node, as root. By default it returns a working automation
-# runner, Caddy, and HTTPS Vaultwarden. Open Rundeck, complete the human enrollment
-# ceremony and verified cutover, then click Bootstrap Platform for the baseline.
+# Run this ON a Proxmox node, as root. By default it builds the automation runner, Caddy
+# and HTTPS Vaultwarden, enrolls Vaultwarden, cuts over to Vault mode and runs Bootstrap
+# Platform — the whole baseline lab from one command, with no step needing a human.
 #
 #   ./bootstrap-rundeck.sh
 #   CT_IP=10.20.4.10/20 CT_GW=10.20.0.1 ./bootstrap-rundeck.sh  # skip the prompts
 #   LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 ./bootstrap-rundeck.sh
+#   # fully unattended, first run to finished lab:
+#   LAB_DOMAIN=lab.example.com VAULTWARDEN_OWNER_EMAIL=owner@example.com \
+#     CLOUDFLARE_API_TOKEN=... NONINTERACTIVE=1 ./bootstrap-rundeck.sh
 #   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
 #
 # This is the first of the platform's two bootstrap layers:
@@ -16,12 +19,14 @@
 #      exist: the LXC, Java, Rundeck, an ansible venv, the repo clone, the platform's
 #      Proxmox credential, the authored config, Key Storage, the project and the jobs.
 #      It invokes normal playbooks to deploy Caddy and then Vaultwarden in Seed mode.
-#   2. ENROLLMENT/CUTOVER, in the UI — the owner chooses passwords in Vaultwarden,
-#      stages the automation API credentials, and verifies every imported seed secret.
-#   3. BOOTSTRAP PLATFORM, in the UI — reconciles Caddy/Vaultwarden, then builds Ntfy, Authentik, Uptime Kuma,
-#      Prometheus + Grafana and PBS.
+#   2. ENROLLMENT/CUTOVER — Vaultwarden Enrollment registers the owner and automation
+#      accounts with generated master passwords and stages the automation API key;
+#      Vaultwarden Cutover imports and verifies every seed secret, those passwords included.
+#   3. BOOTSTRAP PLATFORM — reconciles Caddy/Vaultwarden, then builds Ntfy, Authentik,
+#      Uptime Kuma, Prometheus + Grafana and PBS.
 #
-# One command produces the enrollment surface; the explicit cutover establishes Vault mode.
+# Layers 2 and 3 are ordinary Rundeck jobs. This script runs them through the Rundeck API
+# once Vaultwarden answers at its HTTPS name; otherwise run them from the UI, in order.
 #
 # What it produces:
 #   - This node's apt switched from the enterprise repos to pve-no-subscription, and the
@@ -1765,6 +1770,39 @@ rd_api() {
   fi
 }
 
+# rd_run_job <name> <job-id> — run an imported job with no options, stream nothing,
+# wait for it to finish, and print its log tail on failure. Returns the job's success.
+rd_run_job() {
+  local name="$1" id="$2" exec_id status
+  log "$name"
+  local stage
+  stage="$(newtmp)"
+  printf '{}' > "$stage/run.json"
+  # jq is installed in the container, not guaranteed on the node; python3 always is.
+  exec_id="$(rd_api POST "job/$id/run" application/json "$stage/run.json" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+  [ -n "$exec_id" ] || { warn "could not start $name"; return 1; }
+  info "execution $exec_id — $RD_URL/project/$RD_PROJECT/execution/show/$exec_id"
+  local misses=0
+  while :; do
+    status="$(rd_api GET "execution/$exec_id" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+    case "$status" in
+      running) misses=0; sleep 15 ;;
+      "")
+        misses=$((misses + 1))
+        [ "$misses" -lt 20 ] || { warn "lost track of $name (execution $exec_id)"; return 1; }
+        sleep 15 ;;
+      succeeded) info "$name succeeded"; return 0 ;;
+      *)
+        warn "$name finished with status '$status'; log tail:"
+        curl -s -m 60 -H "X-Rundeck-Auth-Token: $RD_TOKEN" -H "Accept: text/plain" \
+          "$RD_URL/api/$RD_API/execution/$exec_id/output" | tail -n 40 | sed 's/^/      /'
+        return 1 ;;
+    esac
+  done
+}
+
 if [ -z "$RD_TOKEN" ]; then
   warn "no Rundeck API token — skipping project creation, Key Storage and job import"
   warn "re-run this script once a token exists to finish the handover"
@@ -2025,26 +2063,44 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     fi
   fi
 
-  if [ -n "$VAULTWARDEN_OWNER_EMAIL" ]; then
-    info "attempting first-owner invitations through the HTTPS admin facility"
-    if in_ct curl -fsS --max-time 15 "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
-      in_ct sudo -u rundeck env \
-        HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
-        VAULTWARDEN_OWNER_EMAIL="$VAULTWARDEN_OWNER_EMAIL" \
-        VAULTWARDEN_AUTOMATION_EMAIL="$VAULTWARDEN_AUTOMATION_EMAIL" \
-        /usr/local/bin/lab-run playbooks/maintenance/vaultwarden-enroll.yml
-    else
-      warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
-      info "Caddy is up${CADDY_ADDR:+ at $CADDY_ADDR} — the name has to resolve there and"
-      info "the path to it on 443 has to be open before enrollment can run. Point"
-      info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
-      info "allow client subnets to reach it, then run the Vaultwarden Enrollment job."
-      info "Certificate issuance uses DNS-01, so getting the certificate needs no public"
-      info "record and no inbound WAN port. Publishing an app to the internet later is a"
-      info "separate choice that does require inbound 443."
-    fi
-  else
+  # Enrollment is fully automated: vaultwarden-enroll.yml registers both accounts with
+  # generated master passwords, builds the organization and stages the automation API
+  # key in Key Storage. Cutover and Bootstrap Platform then run as ordinary Rundeck jobs,
+  # so the whole lab comes up from this one command. The Rundeck token travels on stdin.
+  VAULT_ENROLLED=0
+  if [ -z "$VAULTWARDEN_OWNER_EMAIL" ]; then
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
+  elif [ -z "$RD_TOKEN" ]; then
+    warn "no Rundeck API token — re-run this script to enroll Vaultwarden"
+  elif ! in_ct curl -fsS --max-time 15 "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
+    warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
+    info "Caddy is up${CADDY_ADDR:+ at $CADDY_ADDR} — the name has to resolve there and"
+    info "the path to it on 443 has to be open before enrollment can run. Point"
+    info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
+    info "allow client subnets to reach it, then re-run this script."
+    info "Certificate issuance uses DNS-01, so getting the certificate needs no public"
+    info "record and no inbound WAN port. Publishing an app to the internet later is a"
+    info "separate choice that does require inbound 443."
+  else
+    log "Vaultwarden enrollment"
+    if printf '%s\n' "$RD_TOKEN" | in_ct sudo -u rundeck env \
+         HOME=/var/lib/rundeck LAB_SEED_MODE=1 LAB_REFRESH=0 LAB_DOCTOR=1 \
+         VAULTWARDEN_OWNER_EMAIL="$VAULTWARDEN_OWNER_EMAIL" \
+         VAULTWARDEN_AUTOMATION_EMAIL="$VAULTWARDEN_AUTOMATION_EMAIL" bash -c '
+           IFS= read -r RUNDECK_API_TOKEN
+           export RUNDECK_API_TOKEN
+           exec /usr/local/bin/lab-run playbooks/maintenance/vaultwarden-enroll.yml
+         '; then
+      VAULT_ENROLLED=1
+    else
+      warn "Vaultwarden enrollment failed — fix the error above, then re-run this script"
+    fi
+  fi
+
+  if [ "$VAULT_ENROLLED" = 1 ]; then
+    rd_run_job "Vaultwarden Cutover" e04bfd76-e7c9-5bec-979e-7335b76b460d \
+      && rd_run_job "Bootstrap Platform" f4ff3c34-28da-5509-92fa-6e5c60c70f3d \
+      || die "platform bootstrap stopped; the job log is above and in Rundeck at $RD_URL"
   fi
 elif [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
   info "Vault mode is already active — skipping the preliminary Seed-only app phase"
@@ -2075,38 +2131,18 @@ cat <<EOF
     a separate and deliberate choice (routing.access: public) and does require inbound
     443 forwarded here. An existing internet-facing proxy keeps its own ports either way.
 
-    NEXT: complete the two-account Vaultwarden setup, then run two Rundeck jobs.
-    Open $RD_URL.
-
+    NEXT: $([ "${VAULT_ENROLLED:-0}" = 1 ] && printf '%s' 'nothing — enrollment, cutover and Bootstrap Platform completed above.' || printf '%s' 'finish the Vaultwarden handover (no input needed at any step).')
       1. DNS FIRST. Point vaultwarden.$LAB_DOMAIN at ${CADDY_ADDR:-the Caddy LXC} in your
          LAN resolver. Nothing below works until that name resolves.
-      2. The invitations are for these two separate Vaultwarden accounts:
-           owner:      $VAULTWARDEN_OWNER_EMAIL
-           automation: $VAULTWARDEN_AUTOMATION_EMAIL
-         If this bootstrap did not send them successfully, run
-         Setup > Credentials > Vaultwarden Enrollment. That job loads its admin token
-         from encrypted Key Storage and needs no input.
-      3. Open https://vaultwarden.$LAB_DOMAIN/#/register. Register the owner account
-         $VAULTWARDEN_OWNER_EMAIL. Create its master password in the registration form;
-         the platform never receives or stores it. Sign out, open the same registration
-         URL again, and register the separate automation account
-         $VAULTWARDEN_AUTOMATION_EMAIL with a different master password.
-      4. Sign in as the owner. Create organization 'homelab-infra'. Invite
-         $VAULTWARDEN_AUTOMATION_EMAIL as an Admin, then accept and confirm the membership
-         until the Members page shows it as a confirmed Admin.
-         DO NOT CREATE A COLLECTION OR ASSIGN COLLECTION PERMISSIONS. Vaultwarden Cutover
-         creates 'platform-secrets' on its first write. An Admin reaches it through
-         organization-wide access, so no explicit collection permission appears. The
-         auto-created 'Default Collection' is ignored.
-      5. Sign in as $VAULTWARDEN_AUTOMATION_EMAIL. Open Settings > Security > Keys and
-         select View API key. In Rundeck Key Storage, create these encrypted Password
-         entries with the corresponding values:
-           keys/project/$RD_PROJECT/vaultwarden-machine/client-id       <- client_id
-           keys/project/$RD_PROJECT/vaultwarden-machine/client-secret   <- client_secret
-           keys/project/$RD_PROJECT/vaultwarden-machine/master-password <- automation master password
-      6. Run Setup > Credentials > Vaultwarden Cutover. After it succeeds, run
-         Setup > Platform > Bootstrap Platform. Bootstrap Platform reuses Caddy and
-         Vaultwarden and deploys the remaining services.
+      2. Re-run this script, or run these jobs in order at $RD_URL:
+           Setup > Credentials > Vaultwarden Enrollment — registers
+             $VAULTWARDEN_OWNER_EMAIL (owner) and $VAULTWARDEN_AUTOMATION_EMAIL
+             (automation) with generated master passwords, creates organization
+             'homelab-infra', confirms the automation Admin, stages its API key
+           Setup > Credentials > Vaultwarden Cutover
+           Setup > Platform > Bootstrap Platform
+      3. The owner's master password is owner_master_password in the vault item
+         homelab-infra/vaultwarden once cutover has run.
 
     Config lives on this runner and is reachable from the UI in both directions —
     Configure App writes an instance file, Get Config reads the set back out,

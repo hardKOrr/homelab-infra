@@ -3,11 +3,14 @@
   name: Vaultwarden Enrollment
   group: Setup/Credentials
   description: |-
-    Re-send the configured Vaultwarden invitations for the owner and automation accounts.
+    Enroll the Vaultwarden owner and automation accounts with no operator input.
 
-    The job reads the server admin token from encrypted Rundeck Key Storage and needs no
-    operator input. Its output identifies both accounts and lists the remaining web-vault
-    enrollment steps.
+    - Invites both accounts and registers them with generated master passwords
+    - Creates organization `homelab-infra` and confirms the automation account as Admin
+    - Stages the automation API key and master password in Key Storage
+
+    Safe to re-run. The generated passwords are imported into the vault by
+    Vaultwarden Cutover, which runs next.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -17,7 +20,7 @@
     keepgoing: false
     strategy: node-first
     commands:
-    - description: Invite enrollment identities
+    - description: Enroll both accounts and stage the automation credentials
       script: |-
           #!/bin/bash
           set -euo pipefail

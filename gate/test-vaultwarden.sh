@@ -110,19 +110,28 @@ python3 "$repo/rundeck/render-job.py" \
 grep -q 'storagePath: keys/project/homelab-infra/bootstrap/cloudflare-api-token' \
   "$work/cutover-job.yml" || fail "cutover cannot migrate the Cloudflare token"
 
-# The operator handoff must identify both configured accounts, use the actual
-# Rundeck Key Storage paths, and leave collection creation to the platform.
+# Enrollment performs the whole two-account ceremony and stages the automation
+# credentials itself, so it needs the Rundeck token and must write every Key Storage
+# path cutover reads. Collection creation stays with cutover's first write.
 enrollment="$repo/ansible/playbooks/maintenance/vaultwarden-enroll.yml"
 grep -Fq '{{ _vault_owner_email }}' "$enrollment" \
   || fail "enrollment output does not identify the configured owner account"
 grep -Fq '{{ _vault_automation_email }}' "$enrollment" \
   || fail "enrollment output does not identify the configured automation account"
+grep -Fq 'scripts/vaultwarden-enroll.py' "$enrollment" \
+  || fail "enrollment no longer runs the automated account ceremony"
 for key in client-id client-secret master-password; do
-  grep -Fq "keys/project/homelab-infra/vaultwarden-machine/$key" "$enrollment" \
-    || fail "enrollment output omits the Rundeck $key path"
+  grep -Fq "'$key'" "$enrollment" \
+    || fail "enrollment does not stage the Rundeck $key entry"
 done
-grep -Fq 'Do not create a collection or assign collection permissions' "$enrollment" \
-  || fail "enrollment output does not state the platform-owned collection boundary"
+! grep -Fq 'platform-secrets' "$repo/ansible/scripts/vaultwarden-enroll.py" \
+  || fail "enrollment creates the platform-owned collection instead of leaving it to cutover"
+python3 "$repo/rundeck/render-job.py" \
+  "$repo/rundeck/jobs/vaultwarden-enrollment.yaml" > "$work/enrollment-job.yml"
+grep -q 'storagePath: keys/project/homelab-infra/rundeck/api-token' \
+  "$work/enrollment-job.yml" || fail "enrollment cannot stage Key Storage without the Rundeck token"
+grep -Fq 'vaultwarden-accounts.json' "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
+  || fail "cutover does not absorb and remove the generated master passwords"
 ! grep -Fq "and the collection 'platform-secrets'" \
   "$repo/rundeck/bootstrap-rundeck.sh" \
   || fail "bootstrap still tells the operator to create platform-secrets"

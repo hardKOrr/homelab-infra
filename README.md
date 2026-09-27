@@ -91,40 +91,30 @@ gave.
 
 ### 2. Stand up the lab
 
-<!-- output-source:vault-enrollment-ceremony sha=ff0d76d0 -->
-Open the Rundeck URL it printed. Two jobs, with one browser session between them.
+<!-- output-source:vault-enrollment-ceremony sha=55f9a2f9 -->
+Layer 1 does this itself when `vaultwarden.<domain>` already resolves to the Caddy LXC.
+Otherwise point that name at Caddy and re-run the script, or open the Rundeck URL it
+printed and run the same three jobs in order. None of them asks for input.
 
-Layer 1 already sent the owner and automation invitations itself. The **Vaultwarden
-Enrollment** job re-sends them, and you click it only if that attempt failed — which
-happens when `vaultwarden.<domain>` did not yet resolve to the Caddy LXC.
-
-In the web vault at `https://vaultwarden.<domain>`, register the owner address and the
-automation address. **You choose both master passwords here** — nothing in this project
-generates, stores or prints them, which is why the job output has no password in it. Then,
-as the owner, create the `homelab-infra` organization and invite the automation account
-into it as an **Admin**.
-
-That is the whole manual step. Do not create any collection or assign collection
-permissions: the platform creates `platform-secrets` on first write. The web vault's
-auto-created "Default Collection" is ignored. Admin membership gives the automation
-account organization-wide access, so Vaultwarden stores and displays no explicit
-permission for that account on `platform-secrets`.
-
-Signed in as the automation account, view its personal API key (Settings → Security → Keys).
-Stage that client ID and client secret, plus the automation master password you chose, in
-these encrypted Password entries:
+**Vaultwarden Enrollment** invites the owner and automation addresses, registers both with
+generated master passwords, creates the `homelab-infra` organization, confirms the
+automation account in it as an **Admin**, and stages that account's API client ID, client
+secret and master password in these encrypted Key Storage entries:
 
 - `keys/project/homelab-infra/vaultwarden-machine/client-id`
 - `keys/project/homelab-infra/vaultwarden-machine/client-secret`
 - `keys/project/homelab-infra/vaultwarden-machine/master-password`
 
-Run **Vaultwarden Cutover**; it imports and reads back every
-seed secret before writing the marker and deleting seed files. Then run **Bootstrap
-Platform**.
+It is safe to re-run. The generated passwords wait in the runner's seed directory until
+**Vaultwarden Cutover** imports them, with every other seed secret, into the vault item
+`homelab-infra/vaultwarden`, reads each one back, writes the marker and deletes the seed
+files. Sign in to the web vault as the owner with `owner_master_password` from that item,
+and change it there if you want a password of your own choosing.
 
-That reconciles the already-tagged Caddy and Vaultwarden LXCs, then deploys Ntfy, Authentik, Uptime Kuma,
-Prometheus + Grafana and PBS. Each step records its own connection details before the next
-one needs them, so the run is resumable: if something fails, fix it and run the job again.
+**Bootstrap Platform** then reconciles the already-tagged Caddy and Vaultwarden LXCs and
+deploys Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS. Each step records its
+own connection details before the next one needs them, so the run is resumable: if
+something fails, fix it and run the job again.
 <!-- /output-source:vault-enrollment-ceremony -->
 
 ### 3. Deploy things
