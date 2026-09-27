@@ -23,15 +23,15 @@
 # matters, and it costs three edits rather than a role.
 
 proxmox:
-  vmid: 13228
-  hostname: "pve-rundeck-4"
-  node: "pve-host-3"
+  vmid: 20004010        # derived from ip by the platform's VMID rule
+  hostname: "homelab-rundeck"
+  node: "pve1"
   cores: 4
   memory: 8192          # MB — Rundeck is a JVM; 8 GB is comfortable, 4 GB works
   disk: 16              # GB
   storage: "local-zfs"
-  ip: "192.168.13.228/20"
-  gateway: "192.168.13.1"
+  ip: "10.20.4.10/20"
+  gateway: "10.20.0.1"
   bridge: "vmbr0"
 
 app:

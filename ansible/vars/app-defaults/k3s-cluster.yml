@@ -54,19 +54,19 @@ k3s_cluster_defaults:
     # cluster and never re-inits.
     nodes:
       - name: k3s-1
-        proxmox_node: pve-host-1
+        proxmox_node: pve1
         ip_address: 192.168.0.21
         cores: 2
         memory: 2048
         disk_size: 20
-        # Quorum only. pve-host-1 also carries the CARP BACKUP firewall peer, so no
+        # Quorum only. pve1 also carries the CARP BACKUP firewall peer, so no
         # workload may schedule beside it. The taint is applied by the role and
         # asserted on every re-run.
         taints:
           - "homelab-infra.io/quorum-only=true:NoSchedule"
 
       - name: k3s-2
-        proxmox_node: pve-host-2
+        proxmox_node: pve2
         ip_address: 192.168.0.22
         cores: 4
         memory: 16384
@@ -74,7 +74,7 @@ k3s_cluster_defaults:
         taints: []
 
       - name: k3s-3
-        proxmox_node: pve-host-3
+        proxmox_node: pve3
         ip_address: 192.168.0.23
         cores: 4
         memory: 12288

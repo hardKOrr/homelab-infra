@@ -3,11 +3,11 @@
 
 Reads a JSON request on stdin and writes a JSON decision on stdout:
 
-    {"ip_address": "192.168.0.66", "source": "pool", "pool": "apps"}
+    {"ip_address": "10.20.0.66", "source": "pool", "pool": "apps"}
 
 Request keys:
 
-    cidr        required — the network's subnet, e.g. "192.168.0.0/20"
+    cidr        required — the network's subnet, e.g. "10.20.0.0/20"
     pool        optional — {"name": str, "range": "a-b"} or {"name": str, "cidr": str};
                 allocation walks this span only, and it must sit inside `cidr`
     pin         optional — an address the caller demands; honoured exactly or refused
@@ -19,7 +19,7 @@ Request keys:
 
 Why a script and not Jinja: the allocator has to compare addresses across four
 sources and explain which one refused a request. A template can compute the answer
-but cannot say why there is none, and "No available IPs found in 192.168.0.0/20" is
+but cannot say why there is none, and "No available IPs found in 10.20.0.0/20" is
 the message that made the flat allocator hard to operate.
 
 Failure is an error, never a silent fallback. Handing back an address from outside

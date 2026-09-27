@@ -98,8 +98,8 @@
 # one account, one uid, owning the storage on the node, mapped straight through to
 # the same number inside the guest. The account is the platform's own rather than
 # a borrowed one, because a borrowed uid belongs to somebody — this library was
-# owned by `civicfs`, an unrelated file-server account of a domain being
-# decommissioned, purely because both defaulted to 1000.
+# owned by an unrelated file-server account of a domain being decommissioned,
+# purely because both defaulted to 1000.
 - name: Host mounts | Ensure the storage owner's group exists on the node
   ansible.builtin.group:
     name: "{{ attach_mounts_owner.user }}"

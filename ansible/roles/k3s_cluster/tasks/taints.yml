@@ -3,9 +3,9 @@
 #
 # The taint is declared in config.yaml as `node-taint`, which k3s applies when the node
 # REGISTERS. That covers a fresh node and nothing else: a taint removed by hand, or by a
-# tool, is not restored by a restart, because the node is already registered. On
-# pve-host-1 that matters — its node exists to hold an etcd vote beside the CARP BACKUP
-# firewall peer, and an untainted one silently becomes a workload target.
+# tool, is not restored by a restart, because the node is already registered. On a
+# quorum-only node that matters — it exists to hold an etcd vote beside a firewall
+# failover peer, and an untainted one silently becomes a workload target.
 #
 # So the declared set is reconciled here. Taints this platform did not declare are left
 # alone: an operator cordoning a node for maintenance must not be undone by a deploy.

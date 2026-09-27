@@ -109,7 +109,7 @@
 # Proxmox refuses `qm clone --target` outright in that case.
 #
 # ensure-cloud-template.yml adopts an existing tagged template of the right name on the
-# target node, so this is a no-op everywhere it has already run — including pve-host-3,
+# target node, so this is a no-op everywhere it has already run — including a node
 # whose template PBS built. It picks a free vmid itself when there is nothing to adopt;
 # a node declaration only carries template_vmid when the operator wants a specific slot.
 #

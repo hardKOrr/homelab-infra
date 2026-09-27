@@ -19,9 +19,9 @@
 #         parent: staff                  # optional, name of another group
 #         attributes: {}                 # optional
 #     users:
-#       - username: kevin                # required
-#         name: Kevin Orr                # default: username
-#         email: kevin@example.com       # default: empty
+#       - username: alex                 # required
+#         name: Alex Example             # default: username
+#         email: alex@example.com        # default: empty
 #         groups: [homelab-users]        # names; every one must exist or be declared
 #         type: internal                 # internal | service_account
 #         is_active: true                # default true

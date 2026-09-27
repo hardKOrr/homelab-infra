@@ -90,6 +90,11 @@ cd ..
 # (non-placeholder) value, fails here before it ever reaches a hosted PR run.
 "$HOME/.venvs/homelab-ansible/bin/python" gate/check-fixture-secrets.py
 
+# Public-text boundary: the operator's real lab identifiers (docs/lab-placeholders.md) live
+# in a private values file outside the repository. Skipped, and passing, where that file is
+# absent — CI and contributors have nothing to compare against.
+"$HOME/.venvs/homelab-ansible/bin/python" gate/check-lab-leaks.py
+
 # GitHub Actions workflow policy (#34): hosted PR workflows keep minimal permissions,
 # never reference repository/environment secrets in a pull_request-triggered job, and
 # never target a self-hosted runner without the environment-approval gate that policy

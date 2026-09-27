@@ -24,7 +24,8 @@ body:
       label: Scope
       description: >-
         The source implementation issue this evidences, and the exact live target:
-        instance, guest, VMID, or job.
+        instance, guest, VMID, or job. This issue is public: write a VMID or address as
+        its placeholder (`<caddy-vmid>`, `<runner-ip>`) from docs/lab-placeholders.md.
     validations:
       required: true
   - type: textarea

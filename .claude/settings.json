@@ -23,8 +23,6 @@
       "Bash(git commit *)",
       "Bash(git checkout *)",
       "Bash(git merge *)",
-      "Bash(ssh -o ConnectTimeout=* root@192.168.13.24* 'pct list*')",
-      "Bash(ssh -o ConnectTimeout=* root@192.168.13.24* 'hostname*')",
       "PowerShell(Get-ChildItem *)",
       "PowerShell(Get-Content *)",
       "PowerShell(Test-Path *)"

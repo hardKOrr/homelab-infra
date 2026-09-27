@@ -20,10 +20,10 @@ set -euo pipefail
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 # Addresses chosen for what each one exercises, not for coverage arithmetic:
-#   the live lab's own shape, zero-padding in both variable octets, a 10/8 lab where the
+#   a /20 runner address, zero-padding in both variable octets, a 10/8 lab where the
 #   second octet is 0 and the FIRST becomes the prefix, and both ends of an octet's range.
 cases=(
-  192.168.13.228
+  10.20.4.10
   192.168.0.3
   192.168.2.20
   192.168.0.200
