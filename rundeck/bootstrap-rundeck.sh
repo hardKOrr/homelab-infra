@@ -1715,41 +1715,61 @@ push_file "$STAGE2/rundeck.yml" "$CONFIG_RUNNER" 0640
 in_ct chown rundeck:rundeck "$CONFIG_RUNNER"
 info "wrote config/apps/rundeck.yml"
 
-# The provisioning tasks use the Proxmox API for create/update, then delegate
-# node-local `pct`/`qm` readiness checks to the PVE node. Authorize the platform's
-# dedicated runner identity for that existing contract. Only the current key is left
-# authorized, and no password or host key is copied.
-log "Authorize the automation runner on this Proxmox node"
+# The provisioning tasks delegate node-local pct/qm waits over SSH. Authorize
+# the current platform key on every online member, preserving PVE's shared-file
+# symlink and every unrelated authorized key.
+log "Authorize the automation runner on the Proxmox cluster"
 LAB_SSH_PUBKEY="$(in_ct cat "${LAB_SSH_KEY}.pub" 2>/dev/null || true)"
 [ -n "$LAB_SSH_PUBKEY" ] || die "the platform SSH key was not generated at ${LAB_SSH_KEY}.pub"
-install -d -m 0700 /root/.ssh
-touch /root/.ssh/authorized_keys
-chmod 0600 /root/.ssh/authorized_keys
-# Read-modify-write over the platform lane ONLY. A teardown takes the runner's private
-# half with it, so the next bootstrap generates a different identity; appending that one
-# and leaving the previous behind accumulated one dead root-authorized key per rebuild.
-# Every line whose comment is not ours - operator keys, other nodes' root keys - comes
-# back byte-identical, and a re-run that changes nothing rewrites nothing.
-WITHDRAWN="$(grep -cF " $PLATFORM_KEY_COMMENT" /root/.ssh/authorized_keys || true)"
-AUTH_KEYS_TMP="$(mktemp)"
-awk -v want="$PLATFORM_KEY_COMMENT" '
-  {
-    comment = ""
-    if (NF >= 3) { comment = $3; for (i = 4; i <= NF; i++) comment = comment " " $i }
-    if (comment != want) print
-  }
-' /root/.ssh/authorized_keys > "$AUTH_KEYS_TMP"
-printf '%s\n' "$LAB_SSH_PUBKEY" >> "$AUTH_KEYS_TMP"
-if cmp -s "$AUTH_KEYS_TMP" /root/.ssh/authorized_keys; then
-  info "platform runner key is already the only platform key on this node"
-else
-  install -m 0600 -o root -g root "$AUTH_KEYS_TMP" /root/.ssh/authorized_keys
-  if [ "$WITHDRAWN" -gt 1 ]; then
-    info "withdrew $(( WITHDRAWN - 1 )) superseded platform key(s) from this node"
+
+authorize_pve_key() {
+  local pubkey="$1" comment="$2" requested="${3:-/root/.ssh/authorized_keys}"
+  local auth_file tmp
+  install -d -m 0700 "$(dirname "$requested")"
+  if [ -L "$requested" ]; then auth_file="$(readlink -f "$requested")"; else auth_file="$requested"; fi
+  [ -n "$auth_file" ] || return 1
+  if [ ! -e "$auth_file" ]; then touch "$auth_file"; fi
+  tmp="$(mktemp)"
+  awk -v want="$comment" '
+    {
+      comment = ""
+      if (NF >= 3) { comment = $3; for (i = 4; i <= NF; i++) comment = comment " " $i }
+      if (comment != want) print
+    }
+  ' "$auth_file" > "$tmp"
+  printf '%s\n' "$pubkey" >> "$tmp"
+  if cmp -s "$tmp" "$auth_file"; then
+    printf '    platform key already current\n'
+  else
+    # pmxcfs owns permissions on /etc/pve/priv; write through the existing
+    # symlink rather than replacing it with a node-local file.
+    case "$auth_file" in
+      */etc/pve/priv/authorized_keys) cat "$tmp" > "$auth_file" ;;
+      *) install -m 0600 -o root -g root "$tmp" "$auth_file" ;;
+    esac
+    printf '    platform key authorized; unrelated keys preserved\n'
   fi
-  info "platform runner key is authorized for node-local pct/qm waits"
-fi
-rm -f "$AUTH_KEYS_TMP"
+  rm -f "$tmp"
+}
+
+authorize_pve_key "$LAB_SSH_PUBKEY" "$PLATFORM_KEY_COMMENT"
+PVE_SSH_MEMBERS="$(pvesh get /cluster/status --output-format json | python3 -c '
+import json,sys
+for row in json.load(sys.stdin):
+    if row.get("type") == "node" and row.get("online") and row.get("ip"):
+        print(row["name"], row["ip"])
+')"
+[ -n "$PVE_SSH_MEMBERS" ] || die "no online cluster nodes discovered for runner SSH"
+while read -r member address; do
+  [ "$member" != "$PVE_NODE" ] || continue
+  info "authorize runner on $member"
+  {
+    declare -f authorize_pve_key
+    printf '\nauthorize_pve_key %q %q\n' "$LAB_SSH_PUBKEY" "$PLATFORM_KEY_COMMENT"
+  } | ssh -o BatchMode=yes -o ConnectTimeout=10 -o HostKeyAlias="$member" \
+    -o UserKnownHostsFile="/etc/pve/nodes/$member/ssh_known_hosts" "root@$address" bash -s
+done <<< "$PVE_SSH_MEMBERS"
+
 
 # ── Proxmox credential ─────────────────────────────────────────────────────────
 # Node root can issue the platform's credential, so nothing here asks a human for one.
