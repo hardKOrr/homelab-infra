@@ -547,7 +547,13 @@ def main() -> int:
     except (OSError, ValueError, yaml.YAMLError) as error:
         raise SystemExit(f"ERROR: {error}")
 
-    yaml.safe_dump(jobs, sys.stdout, sort_keys=False, width=1000)
+    # Expanded jobs share option dictionaries. Emit independent YAML values so
+    # large catalogs remain within Rundeck/SnakeYAML's alias protection limit.
+    class JobDumper(yaml.SafeDumper):
+        def ignore_aliases(self, data):
+            return True
+
+    yaml.dump(jobs, sys.stdout, Dumper=JobDumper, sort_keys=False, width=1000)
     return 0
 
 
