@@ -145,6 +145,7 @@ python3 gate/test-recovery-acceptance.py || rc=1
 python3 gate/test-node-repos.py || rc=1
 python3 gate/test-runner-dns.py || rc=1
 python3 gate/test-runner-ssh.py || rc=1
+python3 gate/test-runner-tls.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-rundeck-yaml.py || rc=1
 bash gate/test-config-fixtures.sh || rc=1
 bash gate/test-mail-contract.sh || rc=1

@@ -1251,6 +1251,8 @@ fi
 # only ever happen on a runner this script built.
 say "lab-run wiring at $LAB_ETC"
 install -d -m 0755 "$LAB_ETC"
+tls_env="$(mktemp)"
+"$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/preserve-tls-env.py" "$LAB_ETC/lab-run.env" > "$tls_env"
 cat > "$LAB_ETC/lab-run.env" <<EOF
 # Written by rundeck/bootstrap-rundeck.sh. Read by ansible/scripts/lab-run.sh.
 # These are the only paths that live on this host; everything else comes from the repo.
@@ -1268,6 +1270,8 @@ LAB_DOCTOR=1
 # ANSIBLE_PRIVATE_KEY_FILE for guest SSH and node-delegated pct/qm waits.
 LAB_SSH_KEY=$LAB_SSH_KEY
 EOF
+cat "$tls_env" >> "$LAB_ETC/lab-run.env"
+rm -f "$tls_env"
 chmod 0644 "$LAB_ETC/lab-run.env"
 install -d -m 0700 -o rundeck -g rundeck "$LAB_ETC/state"
 ln -sfn "$REPO_DIR/ansible/scripts/lab-run.sh" /usr/local/bin/lab-run
