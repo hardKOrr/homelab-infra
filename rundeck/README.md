@@ -31,7 +31,7 @@ contracts.
 Everything is idempotent — re-running converges an existing container, rotates no
 credential, and overwrites no answer you already gave. Override any default with an
 environment variable (`VMID`, `CT_IP`, `CT_GW`, `CT_STORAGE`, `TEMPLATE`, `REPO_URL`,
-`REPO_BRANCH`, `DEPLOY_VAULTWARDEN`, `RUNDECK_PACKAGE_VERSION_PIN`,
+`REPO_BRANCH`, `CT_DNS`, `DEPLOY_VAULTWARDEN`, `RUNDECK_PACKAGE_VERSION_PIN`,
 `PLATFORM_SSH_KEY_FILE`, `ANSIBLE_CORE_SPEC`, …); see the header of the script.
 
 `DEPLOY_VAULTWARDEN=1` is the default. Set `DEPLOY_VAULTWARDEN=0` only for a
@@ -50,6 +50,11 @@ evidence are not reproducible from this checkout. The independent retention and 
 contract is [RUNNER-RECOVERY.md](RUNNER-RECOVERY.md); it also covers the shared
 [new/existing guest restore](jobs/restore-guest.yaml) route and the offline route when the
 original runner is unavailable.
+
+The new runner's resolver is set explicitly before its first boot: `CT_DNS`, then
+`LAB_NET_DNS`, then `CT_GW`. This prevents a runner on a service VLAN from inheriting
+a management-only resolver from the Proxmox host. Existing containers keep their DNS
+configuration; Proxmox stages DNS changes to a running container for its next restart.
 
 ### What it asks
 

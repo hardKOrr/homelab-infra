@@ -75,6 +75,10 @@ VMID="${VMID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-}"
 CT_IP="${CT_IP:-}"
 CT_GW="${CT_GW:-}"
+# The runner must resolve before config/ exists. In a segmented lab, inherit
+# no management-only resolver from the PVE host. CT_DNS overrides LAB_NET_DNS;
+# otherwise use the runner gateway, which hosts DNS in the default setup.
+CT_DNS="${CT_DNS:-}"
 CT_BRIDGE="${CT_BRIDGE:-vmbr0}"
 # VLAN tag for the runner's own interface, and the tag written into the authored
 # `networks.default`. 0 means untagged, which is every flat lab. A segmented lab puts the
@@ -795,6 +799,7 @@ if [ "$CT_EXISTS" -eq 0 ]; then
   log "Create container $VMID"
   pct create "$VMID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
     --hostname "$CT_HOSTNAME" \
+    --nameserver "${CT_DNS:-${LAB_NET_DNS:-$CT_GW}}" \
     --cores "$CT_CORES" --memory "$CT_MEMORY" --swap "$CT_SWAP" \
     --rootfs "${CT_STORAGE}:${CT_DISK}" \
     --net0 "name=eth0,bridge=${CT_BRIDGE},firewall=1,gw=${CT_GW},ip=${CT_IP},type=veth${CT_VLAN_TAG}" \
