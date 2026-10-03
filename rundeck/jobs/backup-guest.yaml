@@ -4,10 +4,21 @@
   uuid: 50fbeff3-6d5c-4f92-a4de-8c3c342fe7e1
   name: Backup Guest
   group: Recover/Guests
-  description: >-
+  description: |-
     Create one native PBS backup for an owned Proxmox VM or LXC. The output discloses
     shared-guest workload scope and data outside the PBS artifact. Scheduled coverage is
     inspected, but this button starts an on-demand vzdump task.
+
+    Select the exact owned VMID and PBS storage after reviewing Lab Status and Audit
+    Backups. Include every application sharing the guest in the maintenance scope. Wait
+    for the Proxmox worker to finish successfully and retain the returned native PBS
+    artifact identity for Restore Guest.
+
+    External bind/device mounts and application databases/files requiring a coordinated
+    dump are separate coverage. Use the application's Backup action when it provides that
+    contract. A completed guest backup is a recovery candidate; prove it by restoring and
+    checking service behavior plus known fixture data. Record the artifact, execution ID,
+    exclusions and restore result in the issue body without credentials or backup contents.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

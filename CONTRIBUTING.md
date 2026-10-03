@@ -7,11 +7,14 @@ request. It applies equally to a human contributor and to an AO worker session.
 
 **GitHub Issues is the authoritative source for what to work on next and what state it is
 in.** Priority, assignment, and status live on the issue — its labels, its open/closed
-state, and its comments — not in a Markdown table.
+state, and its current body — not in a Markdown table.
 
-The repository keeps no parallel queue and no per-issue work records. The issue body is the
-specification for its work, and its comments carry progress, decisions, and acceptance
-evidence. When work produces something that must outlive the issue, it lands where it will be
+The repository keeps no parallel queue and no per-issue work records. The issue body owns
+the current specification, dependencies, operating authority, progress, and acceptance
+evidence. Fold decisions and evidence from comments into the relevant body sections;
+replace superseded instructions rather than appending a retrospective correction. An
+agent must be able to operate from the body without reconstructing a comment thread.
+When work produces something that must outlive the issue, it lands where it will be
 read again, not in a work log:
 
 | Durable outcome | Home |
@@ -88,8 +91,9 @@ guest, container, or Proxmox resource states that up front, not partway through 
    opening a new one, claim it first (`ao session claim-pr <pr-ref>`) so two sessions do
    not push conflicting fixes to the same branch.
 9. **Handoff.** If a session ends before an issue's acceptance criteria are fully met,
-   leave state on the PR or issue itself — a comment naming what verified, what remains,
-   and why — rather than in a chat transcript the next session cannot see.
+   update the issue body's current state, evidence, and remaining prerequisites. Update
+   the PR when repository work is involved. Keep the issue executable without a comment
+   thread, and do not leave the handoff only in a chat transcript.
 
 ## Gate-green vs. live-lab acceptance
 

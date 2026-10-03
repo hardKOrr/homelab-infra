@@ -12,6 +12,30 @@
     Plan mode is read-only. Existing replacement captures an independent target recovery
     point before stopping or replacing anything. New targets require target-specific name,
     ownership and network values and are never started or cut over automatically.
+
+    **Before running:** inspect Lab Status and Audit Backups. Verify the exact source
+    artifact is complete and readable, the destination storage is active, and the selected
+    VM/LXC is the intended recovery unit. Record every workload sharing it. External bind
+    mounts, physical devices and application-consistent database/file backups need their
+    own recovery path; a guest snapshot does not prove those data survived.
+
+    **Plan first:** set `overwrite=false` with the exact source, recovery point and target
+    options. Review the plan before selecting `overwrite=true`. For `destination=new`,
+    use an unused VMID and target-owned name, tags, MAC/address and bridge; the restored
+    guest stays stopped, with no automatic route or writer cutover. For
+    `destination=existing`, select the exact owned target and retain the independent
+    pre-restore point captured before replacement. Preserve that point until verification.
+
+    **After running:** verify the reported guest identity, networks, data volumes and
+    onboot setting, then test the application and known fixture data through its own
+    interface. A failed existing restore leaves the guest stopped and reports the retained
+    recovery point: inspect the failure, correct the cause and retry the supported restore
+    path. Keep both artifacts. Record the execution and final state in the issue body.
+
+    A runner cannot supervise its own replacement, and PBS cannot recover from an
+    unavailable datastore it hosts. Follow the independent
+    [runner recovery procedure](https://github.com/hardKOrr/homelab-infra/blob/master/rundeck/RUNNER-RECOVERY.md)
+    for those control-plane prerequisites.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
