@@ -64,11 +64,10 @@ homelabinfra_defaults:
     # the operator declares the node's hardware in config/proxmox.yml.
     devices: {}
     lxc:
-      # The OS image every container this platform creates starts from. It lives here, in
-      # the GLOBAL defaults, because a Docker stack host has no app-defaults file to carry
-      # it — the three native app-defaults each pinned their own copy and nothing supplied
-      # one for tasks/stack/find-or-create-host.yml, so creating a stack host failed its
-      # ostemplate assert and no Docker app could be deployed at all.
+      # Repository fallback for native LXC and Docker stack hosts. The lab overrides it
+      # in config/proxmox.yml; a native instance may override it with proxmox.ostemplate
+      # in config/apps/<instance>.yml. App defaults must not pin a competing template.
+      # The selected template must already exist on storage available to the target node.
       ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
       disk_volume:
         size: 8

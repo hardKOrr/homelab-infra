@@ -14,7 +14,7 @@ APP_NAME_defaults:
   # DOCKER apps: replace with a single `stack:` key (see Docker section below).
   proxmox:
     type: lxc
-    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    # Inherit the lab's proxmox.lxc.ostemplate; only instance config may override it.
     cores: 1             # increase if app is CPU-bound (check Grafana after deploy)
     memory: 512          # MB — increase if app logs OOM or slows under load
     disk_volume:
