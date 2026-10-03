@@ -233,6 +233,12 @@ topology only; secret-shaped fields are rejected.
   `168<third octet><fourth octet>` rule, so no VMID is asked for
 - A domain you control (it does not need to be public; internal-only labs work)
 - A Cloudflare API token scoped to Zone Read plus DNS Edit for that domain when using the default Caddy DNS-01 setup; no public app records or inbound WAN ports are required
+- A supported DNS path from Caddy over UDP/TCP 53 that returns the public zone's
+  SOA. DNS-01 defaults to the guest's configured DNS servers, seeded from its selected
+  network's `dns_servers` (`LAB_NET_DNS` during guided bootstrap). `CT_DNS` changes
+  only the runner's resolver. SOA/zone discovery still runs when TXT propagation
+  checking is disabled; split DNS must not substitute a different zone. See the
+  [resolver configuration example](config.example/infrastructure.yml) for overrides.
 - A LAN resolver entry pointing the domain tree at the Caddy LXC, and router rules allowing your clients to reach it on 80/443 — see [step 0](#0-make-the-lab-domain-reach-the-lab-caddy)
 
 Debian 13 for the runner is not incidental: `community.proxmox` needs ansible-core ≥ 2.17,

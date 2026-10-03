@@ -1641,6 +1641,9 @@ EOF
     if [ "$LAB_REVERSE_PROXY" = "caddy" ]; then
       echo "  dns_challenge:"
       echo "    provider: $LAB_ACME_DNS_PROVIDER"
+      echo "    # Resolvers default to the Caddy guest's configured DNS servers."
+      echo "    # SOA discovery still needs the public zone's SOA with propagation checks off."
+      echo "    # Override resolvers only through a supported, reachable DNS path."
     fi
     cat <<EOF
 

@@ -74,11 +74,11 @@ caddy_defaults:
     #   api_token: ""           # provider-specific fields retain native names;
     #                           # legacy Seed/recovery input only; never commit it
     #   propagation_delay: 30s  # how long to wait after writing the TXT record
-    #   propagation_timeout: -1 # -1 disables the "can I see my own record?" check,
-    #                           # which a split-horizon lab resolver cannot answer for
-    #                           # the lab domain. Set a positive value to restore it,
-    #                           # with resolvers your network does not intercept.
-    #   resolvers: []           # only consulted when the check above is enabled
+    #   propagation_timeout: -1 # disables TXT visibility checking, NOT SOA discovery
+    #   # When omitted, resolvers use the Caddy guest's configured DNS servers.
+    #   # Override with a reachable resolver that returns the public zone's SOA.
+    #   # Empty lists are rejected; positive propagation timeouts need TXT visibility.
+    #   resolvers: ["192.0.2.53:53"]
 
   update:
     github_repo: caddyserver/caddy   # used by lab-update-check for the release notes link

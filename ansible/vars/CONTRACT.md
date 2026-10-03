@@ -314,7 +314,9 @@ exists on the wire.
 | `reverse_proxy.instance` | required unless provider `none` | |
 | `reverse_proxy.internal_cidrs` | required for Caddy internal routes | source CIDRs allowed to reach apps with `routing.access: internal` |
 | `reverse_proxy.dns_challenge.provider` | recommended for Caddy ACME | `cloudflare` enables DNS-01 without public app records or WAN port forwarding; the token is external/Vaultwarden material |
-| `reverse_proxy.dns_challenge.resolvers` | optional | public resolvers used for DNS-01 propagation checks; defaults to Cloudflare's public resolvers so split-horizon Unbound cannot mask the temporary TXT record |
+| `reverse_proxy.dns_challenge.resolvers` | optional | non-empty list for SOA/zone discovery even with propagation_timeout=-1; defaults to the Caddy guest's gathered DNS servers, seeded from its selected network's dns_servers; explicit values must be reachable and return the public zone's SOA |
+| `reverse_proxy.dns_challenge.propagation_timeout` | optional, default `-1` | disables only TXT propagation checking, not SOA discovery or CA validation; a positive timeout requires public TXT visibility and the authoritative-DNS access used by Caddy |
+| `reverse_proxy.dns_challenge.propagation_delay` | optional, default `30s` | settling delay after TXT presentation; not proof of propagation |
 | `sso.provider` | required | `authentik \| none` |
 | `sso.instance` | required if provider `authentik`, else optional | |
 | `notifications.provider` | required | `ntfy \| gotify \| discord \| none` |
@@ -645,6 +647,14 @@ domains:
       provider: opnsense           # pihole | adguard | opnsense | none
       host: 192.168.1.1            # non-secret half only; see below
 ```
+
+Caddy resolver precedence is policy-local: `domains.<estate>.dns_challenge` uses
+its own options over guest-DNS defaults, without inheriting another estate's
+options or the legacy instance block. For the single/default-domain policy,
+`reverse_proxy.dns_challenge` recursively overrides legacy
+`config/apps/<instance>.yml` `app.dns_challenge`; provider-specific fields retain
+their native names. Explicit resolver lists replace defaults, not append to them.
+Empty lists are rejected rather than permitting an implicit external fallback.
 
 A `domains:` map with two or more entries must declare exactly one `default: true`.
 Declaration order never decides identity. Estate-scoped instances use
