@@ -9,7 +9,7 @@ vaultwarden_defaults:
     # Boot tier 20 — every deploy and every service credential resolves through here,
     # so it precedes everything except the edge.
     boot_order: 20
-    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    # Inherit the lab's proxmox.lxc.ostemplate; only instance config may override it.
     cores: 1
     memory: 512                 # MB — Vaultwarden is very lightweight
     disk_volume:

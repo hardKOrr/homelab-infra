@@ -697,6 +697,19 @@ The per-app merge (`vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml
 described here for completeness but governed by its own precedence; do not conflate it with the
 four-layer `homelabinfra_config` merge in Section 4.
 
+**Native LXC template precedence.** Lowest to highest: the repository fallback at
+`homelabinfra_defaults.proxmox.lxc.ostemplate`, the authored lab value at
+`config/proxmox.yml` → `proxmox.lxc.ostemplate`, then an explicit instance value at
+`config/apps/<instance>.yml` → `proxmox.ostemplate`. App defaults deliberately omit
+`ostemplate`: the recursive provisioning overlay preserves the platform value when
+the instance has not set it. This applies to Caddy, Vaultwarden, Ntfy and the other
+native LXC consumers; app resource sizing still overlays the lab's LXC defaults.
+The repository fallback is `local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst`;
+it is not a download instruction or a claim that this image exists on every node.
+The selected volume must already exist on a template store available to the target
+node. An authored value may name a shared store and a different Debian release.
+Template resolution does not migrate or recreate an existing instance guest.
+
 **Instance-file schema.** `config/apps/<instance>.yml` is loaded whole by
 filename. The filename is the instance name (`-e instance=<name>`) and identifies the
 guest, application record, and provider objects. Routing uses `routing.subdomain` as

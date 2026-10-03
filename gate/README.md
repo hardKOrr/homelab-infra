@@ -45,6 +45,9 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   intentionally not exempted, because they have no wiring task to trigger the check.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
   inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
+  `test-native-lxc-template.py` renders the real platform/app/provisioning expressions
+  and shared LXC module arguments to check repository fallback, authored shared-store
+  templates, explicit instance precedence and sibling preservation without Proxmox.
   Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination
   protocol and coverage rollup described in [`../docs/recovery-acceptance.md`](../docs/recovery-acceptance.md).
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
