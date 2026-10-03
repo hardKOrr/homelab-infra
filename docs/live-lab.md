@@ -26,6 +26,128 @@ Such a list drifts out of review: it cannot be gate-checked, it does not travel 
 workstation, and it will keep describing commands this guide has already corrected or
 prohibited. Point at this file and delete the duplicate.
 
+## Agent operating context
+
+AO project configuration owns the private access pointers and standing rules for both
+workers and orchestrators. Forward `HOMELAB_LAB_DIR` (the private operator directory) and
+`HOMELAB_LAB_VALUES` (its `lab-values.yml`) into both roles. Point their rules at this
+guide, `AGENTS.md`, and the current GitHub issue body. Store paths in AO configuration,
+not token values or copies of lab configuration. Updating project rules affects newly
+created sessions; provide the same instruction to an existing session before lab work.
+
+The private inputs and their owners are:
+
+| Input | Owner and location |
+| --- | --- |
+| Current node addresses/names, runner identity, domain, network and storage placeholders | Operator's `lab-values.yml`, under `current:`; `retired:` is leak-check input only |
+| Rundeck API access | Operator's `rundeck-access.env`, with `RD_URL` and `RD_TOKEN`, mode `0600` |
+| Proxmox root access for bootstrap and offline recovery | Operator's SSH identity and SSH configuration; use its configured relay when present |
+| Desired networks, placement, storage and application instances | Runner's user-owned `config/` tree; inspect via Get Config and validate with Config Doctor |
+| Ordinary automation credentials | Canonical Vaultwarden items and encrypted Rundeck Key Storage, established by bootstrap/cutover |
+| Recovery while the runner or vault is unavailable | Independent operator recovery record, as specified by [runner recovery](../rundeck/RUNNER-RECOVERY.md) and [vault recovery](../rundeck/VAULTWARDEN-RECOVERY.md) |
+
+Never substitute a retired endpoint for a missing current value. A root SSH connection
+to a Proxmox node proves node access, not Rundeck API access, runner-to-node access, or
+service routing. Verify those separately. Read-only Proxmox API/SSH inspection is
+appropriate for inventory, tags, storage, worker tasks and recovery-point checks.
+Mutations use repository-owned playbooks, jobs or the documented node-side bootstrap and
+offline recovery entry points. Do not create an ad-hoc API/SSH implementation of an action.
+
+### Unattended bootstrap inputs
+
+Read the current `bootstrap-rundeck.sh` tunables and [bootstrap guide](../README.md) before
+running on a named node. Supply `NONINTERACTIVE=1` and the unresolved inputs through a
+root-private environment file: `LAB_DOMAIN`, `VAULTWARDEN_OWNER_EMAIL`, the dedicated
+automation account if overriding its default, and `CLOUDFLARE_API_TOKEN` when using the
+Cloudflare DNS-01 provider. The token needs Zone Read and DNS Edit for the lab zone.
+The DNS-record wiring provider and the ACME DNS-01 provider are separate concerns; one
+provider's credential does not satisfy the other.
+
+Declare or verify the runner's free address/prefix, gateway, bridge/VLAN, DNS server and
+storage (`CT_IP`, `CT_GW`, `CT_BRIDGE`, `CT_VLAN`, `CT_DNS`, `CT_STORAGE`), the guest network,
+address allocation bands, internal client CIDRs, timezone, domain estates and node
+placement. Existing runtime configuration is the authority on a rerun; do not assume
+that supplying a new environment value rewrites an already answered configuration key.
+Use the supported configuration path and verify the result. The Vaultwarden HTTPS name
+must resolve to Caddy from the runner and operator, with 80/443 reachable and declared CA
+trust usable. Verify Enrollment, Cutover, both durable markers and Bootstrap Platform
+separately. Do not fabricate markers or bypass ordinary jobs' Vault-mode guard.
+
+Do not put a bootstrap credential in a shell command, GitHub body, job option or captured
+log. Load it from its private file without tracing, and retain recovery material outside
+the components it unlocks. Name unresolved inputs in the issue body instead of prompting
+halfway through an unattended run.
+
+### Serial live operations and disposable fixtures
+
+One worker owns live operations across this lab at a time, including read-only Rundeck
+jobs. Every execution refreshes one shared runner checkout; concurrent jobs can replace
+the files another execution is using. Coordinate across AO project registrations, not
+only within one orchestrator. Hold a common workstation lock for the complete observation:
+
+```bash
+exec 9>"$HOMELAB_LAB_DIR/operation.lock"
+flock -n 9 || exit 75
+# Keep this shell and descriptor alive through all jobs and final verification.
+```
+
+Check running executions and the current issue body before starting. If a previous
+execution or node-side operation continues, keep the lab occupied until its final state
+is known. A lock on one workstation does not exclude a human or another workstation;
+coordinate those actors as well. Repository implementation and offline checks can
+proceed independently. Confirm the runner's `LAB_BRANCH` and execution revision before
+each observation; import changed job definitions through Reimport Jobs.
+
+The issue states whether the target is a disposable pre-production environment and
+which operations are authorized. Record the exact instance, namespace/guest, shared
+workloads, selected storage paths, recovery method and cleanup boundary before mutation.
+Public text uses placeholders; resolve them privately against current inventory.
+Repeated install, restore and removal cycles are appropriate for owned disposable
+targets with the required recovery path. Pre-production does not authorize formatting
+an external export, changing a management firewall or destroying an untagged resource.
+
+Group test services by their declared dependencies and shared recovery units. Keep
+application Deploy jobs individually callable. Start with small applications requiring
+no external account or hardware; add a named database or media fixture when required.
+Use generated, non-sensitive files with checksums to verify reads, writes, permissions,
+mounts and links. External NFS/storage needs its owner's exact export/path, capacity,
+failure-domain and recovery declaration before use. Retain fixtures until every dependent
+issue has finished. Keep GPUs, USB devices, provider accounts and appliance installation
+as explicit prerequisites only for the products that require them.
+
+## Recovery observation
+
+Read the product defaults, catalog recovery declaration, rendered maintenance actions
+and [recovery acceptance](recovery-acceptance.md) before choosing a method. A PBS guest
+restore affects the whole VM/LXC, including all applications sharing it. External bind
+mounts, provider state and devices require their own recovery evidence. Application-native
+archives must cover the declared database and durable files together. Kubernetes
+application recovery acts on the namespace/PVC or native dump, not a cluster-node restore.
+Rebuild-only products prove reconstruction and service behavior without a durable-data
+claim. Runner, Vaultwarden and PBS recovery must have independent unlock/datastore access;
+the target cannot supervise or unlock its own recovery.
+
+Install, functional checks and a convergent second deployment may run before a new drill
+dispatcher exists. Mark restore acceptance pending until the applicable supported method
+has actually been exercised. Never dispatch a product through an unsupported method to
+clear a checkbox. Missing automation or a wrong Rundeck description is separate repository
+work, linked from the observation body.
+
+For a stateful proof, create distinguishable fixture state A, capture and verify its
+artifact, then change the disposable target to B. Plan the restore first. Before existing
+replacement, verify the independent B recovery point; after restoring A, assert A survives,
+B-only state is absent, the service and its dependents work, and guest identity/`onboot`
+are preserved when guest recovery is used. Exercise a stopped/isolated new destination
+when the method supports it, with no duplicate address or writer. Record failure/retry
+behavior and retain recovery points through acceptance. A green job or a listed snapshot
+alone is not data-recovery evidence.
+
+Operator instructions belong in the applicable Rundeck Backup/Restore job descriptions:
+recovery unit, source artifact, target selection, plan/execute options, independent point,
+expected end state and retry path. Verify the imported UI instructions against the source
+as part of the observation. Keep current results, prerequisites and redacted execution
+evidence in the issue body; replace stale instructions rather than appending corrections.
+
 ## Before touching the lab
 
 1. Read the issue's acceptance criteria and identify the exact target, instance,
