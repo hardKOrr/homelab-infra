@@ -34,6 +34,23 @@ environment variable (`VMID`, `CT_IP`, `CT_GW`, `CT_STORAGE`, `TEMPLATE`, `REPO_
 `REPO_BRANCH`, `CT_DNS`, `DEPLOY_VAULTWARDEN`, `RUNDECK_PACKAGE_VERSION_PIN`,
 `PLATFORM_SSH_KEY_FILE`, `ANSIBLE_CORE_SPEC`, …); see the header of the script.
 
+Runner sizing inputs (`CT_CORES`, `CT_MEMORY`, `CT_SWAP`, `CT_DISK`) apply to a
+**new** guest: defaults are 4 cores, 8192 MB RAM, 512 MB swap and 16 GiB rootfs.
+On a rerun, bootstrap reads the selected guest's current PVE sizing. An explicit
+sizing input must match that sizing or bootstrap stops before container convergence;
+it never resizes an existing runner or describes an unapplied resize. Pending PVE
+changes are not treated as current resources. A guest with unrestricted cores or
+an undiscoverable rootfs size is rejected rather than assigned fictitious sizing.
+
+`config/apps/rundeck.yml` is a self-description, not a resize request. Bootstrap
+refreshes its guest identity, sizing, rootfs storage and `net0` fields from current
+PVE, including bridge/VLAN rather than fresh defaults. It preserves unrelated
+`proxmox` keys, existing `app`/`routing` answers and other user-owned sections;
+missing application/routing defaults are filled in. An unchanged declaration is
+not rewritten. When guest facts need correction, YAML formatting/comments may be
+normalized, but unrelated authored values remain. Bootstrap does not move an
+existing guest by changing identity/network/storage environment inputs.
+
 Bootstrap reruns preserve `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
 and `NODE_EXTRA_CA_CERTS` already declared in `/etc/homelab-infra/lab-run.env`.
 Each must name an existing absolute CA file; unrelated environment entries are not
