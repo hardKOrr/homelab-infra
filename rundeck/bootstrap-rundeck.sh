@@ -86,10 +86,12 @@ CT_BRIDGE="${CT_BRIDGE:-vmbr0}"
 # lab-scoped: it drives Caddy, the vault, PBS and both estates' apps. See the network block
 # this script authors for how the shared and per-estate networks are declared.
 CT_VLAN="${CT_VLAN:-0}"
-CT_CORES="${CT_CORES:-4}"
-CT_MEMORY="${CT_MEMORY:-8192}"
-CT_SWAP="${CT_SWAP:-512}"
-CT_DISK="${CT_DISK:-16}"
+# Sizing defaults apply only to creation. Existing guests are discovered below;
+# an override on a rerun must match reality (bootstrap never resizes the runner).
+CT_CORES="${CT_CORES:-}"
+CT_MEMORY="${CT_MEMORY:-}"
+CT_SWAP="${CT_SWAP:-}"
+CT_DISK="${CT_DISK:-}"
 # Left empty on purpose: resolved below from what this node can actually hold a container
 # rootfs on. Hardcoding a pool name here would name one lab's storage in everyone's script.
 CT_STORAGE="${CT_STORAGE:-}"
@@ -200,6 +202,36 @@ warn() { printf '    \033[1;33mWARNING: %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 in_ct() { pct exec "$VMID" -- "$@"; }
+
+# runner_sizing <current-pct-config> <cores> <memory> <swap> <disk>
+# Return effective resources, checking any requested overrides before convergence.
+# pct's --current excludes pending changes that the guest has not adopted yet.
+runner_sizing() {
+  python3 - "$@" <<'PY'
+from decimal import Decimal
+import re
+import sys
+
+try:
+    conf = dict(line.split(': ', 1) for line in sys.argv[1].splitlines() if ': ' in line)
+    # No cores key means unrestricted CPUs, not the fresh runner's four cores.
+    if 'cores' not in conf:
+        raise ValueError('runner has unrestricted cores; cannot author a fixed cores declaration')
+    rootfs = dict(item.split('=', 1) for item in conf['rootfs'].split(',')[1:] if '=' in item)
+    size = re.fullmatch(r'([0-9]+(?:\.[0-9]+)?)([KMGT])', rootfs['size'])
+    if not size:
+        raise ValueError('rootfs size must be discoverable in K/M/G/T units')
+    disk = Decimal(size[1]) * (Decimal(1024) ** ('KMGT'.index(size[2]) - 2))
+    # PVE's effective memory/swap defaults are 512 MB when absent.
+    actual = [conf['cores'], conf.get('memory', '512'), conf.get('swap', '512'), str(disk)]
+    for name, requested, value in zip(('CT_CORES', 'CT_MEMORY', 'CT_SWAP', 'CT_DISK'), sys.argv[2:], actual):
+        if requested and Decimal(requested) != Decimal(value):
+            raise ValueError(f'{name} override differs from current guest sizing; bootstrap does not resize existing runners')
+    print('\t'.join(actual))
+except (KeyError, ValueError, ArithmeticError) as error:
+    sys.exit(f'cannot describe runner sizing: {error}')
+PY
+}
 
 # One temp root for everything this script stages, removed however we exit. Secrets pass
 # through here on their way into the container and into Key Storage, so it is 0700 and it
@@ -670,7 +702,7 @@ fi
 CT_GW_DEFAULT="$NODE_GW_DEFAULT"
 if [ -n "$RUNNER_EXISTING_VMID" ]; then
   info "this node already holds runner $RUNNER_EXISTING_VMID - its settings become the defaults"
-  CT_CONF="$(pct config "$RUNNER_EXISTING_VMID")"
+  CT_CONF="$(pct config "$RUNNER_EXISTING_VMID" --current 1)"
   CT_HOSTNAME_DEFAULT="$(sed -n 's/^hostname: //p'            <<<"$CT_CONF")"
   CT_IP_DEFAULT="$(sed -n 's/^net0: .*,ip=\([^,]*\).*/\1/p'   <<<"$CT_CONF")"
   CT_GW_DEFAULT="$(sed -n 's/^net0: .*,gw=\([^,]*\).*/\1/p'   <<<"$CT_CONF")"
@@ -748,6 +780,19 @@ else
     die "$RD_HOST already answers ping but VMID $VMID does not exist — pick a free IP/VMID"
   fi
   info "container $VMID does not exist - creating it"
+fi
+
+# Resolve sizing for the selected VMID, including an explicitly selected existing
+# guest, rather than trusting the first tagged runner or fresh-container defaults.
+if [ "$CT_EXISTS" -eq 1 ]; then
+  RESOLVED_SIZING="$(runner_sizing "$(pct config "$VMID" --current 1)" \
+    "$CT_CORES" "$CT_MEMORY" "$CT_SWAP" "$CT_DISK")"
+  IFS=$'\t' read -r CT_CORES CT_MEMORY CT_SWAP CT_DISK <<<"$RESOLVED_SIZING"
+else
+  CT_CORES="${CT_CORES:-4}"
+  CT_MEMORY="${CT_MEMORY:-8192}"
+  CT_SWAP="${CT_SWAP:-512}"
+  CT_DISK="${CT_DISK:-16}"
 fi
 
 # A Proxmox token secret is readable exactly once, at creation. If the token already
@@ -1675,49 +1720,62 @@ fi
 # exist only as a comment in a backlog document.
 log "Describe the runner"
 CONFIG_RUNNER="$REPO_DIR/config/apps/rundeck.yml"
-STAGE2="$(newtmp)"
-cat > "$STAGE2/rundeck.yml" <<EOF
----
-# The runner describing itself.
-#
-# Written by rundeck/bootstrap-rundeck.sh on $(date -Is). This host was created
-# by that script, not by an app playbook — there is no roles/rundeck/ and no Deploy
-# Rundeck job, because the script has to run before any of that exists.
-#
-# It is here so the platform can name the host it is running on: the guest is tagged
-# $MANAGED_TAGS, so PBS backs it up and Lab Status reports it, and this file is
-# where its vmid, address and paths are recorded.
+# Refresh actual resources after creation/convergence. Identity and network fields
+# also come from current PVE, never from unapplied environment overrides or pending
+# settings. Retain every unrelated user-owned instance answer.
+RUNNER_CONF="$(pct config "$VMID" --current 1)"
+RESOLVED_SIZING="$(runner_sizing "$RUNNER_CONF" "" "" "" "")"
+IFS=$'\t' read -r CT_CORES CT_MEMORY CT_SWAP CT_DISK <<<"$RESOLVED_SIZING"
+in_ct "$VENV_DIR/bin/python3" - "$CONFIG_RUNNER" "$VMID" "$PVE_NODE" \
+  "$CT_CORES" "$CT_MEMORY" "$CT_DISK" "$RD_PORT" "$REPO_DIR" "$VENV_DIR" "$RUNNER_CONF" <<'PY'
+import os
+from pathlib import Path
+import sys
+import tempfile
+import yaml
 
-proxmox:
-  vmid: $VMID
-  hostname: "$CT_HOSTNAME"
-  node: "$PVE_NODE"
-  cores: $CT_CORES
-  memory: $CT_MEMORY
-  disk: $CT_DISK
-  storage: "$CT_STORAGE"
-  ip: "$CT_IP"
-  gateway: "$CT_GW"
-  bridge: "$CT_BRIDGE"
-  vlan: $CT_VLAN
-  # The runner is lab-scoped, so once this lab is segmented it belongs on the SHARED
-  # network - the one that reaches every estate - not on any one estate's. Moving it is
-  # CT_VLAN plus a new address on the next bootstrap; the vmid follows the address.
-
-app:
-  port: $RD_PORT
-  service_name: rundeckd
-  checkout_path: "$REPO_DIR"
-  venv_path: "$VENV_DIR"
-
-routing:
-  # The runner is not published through the reverse proxy by default — it is the thing
-  # that operates the lab, not part of it. Set proxy/identity here if you want it routed.
-  identity: none
-EOF
-push_file "$STAGE2/rundeck.yml" "$CONFIG_RUNNER" 0640
+path, vmid, node, cores, memory, disk, port, checkout, venv, raw = sys.argv[1:]
+conf = dict(line.split(': ', 1) for line in raw.splitlines() if ': ' in line)
+net = dict(item.split('=', 1) for item in conf['net0'].split(',') if '=' in item)
+observed = {
+    'vmid': int(vmid), 'hostname': conf['hostname'], 'node': node,
+    'cores': int(cores), 'memory': int(memory), 'disk': float(disk),
+    'storage': conf['rootfs'].split(':', 1)[0],
+    'ip': net['ip'], 'gateway': net.get('gw', ''),
+    'bridge': net['bridge'], 'vlan': int(net.get('tag', 0)),
+}
+path = Path(path)
+existing = yaml.safe_load(path.read_text()) if path.exists() else None
+config = {} if existing is None else existing
+if not isinstance(config, dict):
+    sys.exit('runner instance must be a mapping; refusing to overwrite it')
+for section in ('proxmox', 'app', 'routing'):
+    if section not in config:
+        config[section] = {}
+    if not isinstance(config[section], dict):
+        sys.exit(f'runner instance {section} must be a mapping; refusing to overwrite it')
+config['proxmox'].update(observed)
+for key, value in {'port': int(port), 'service_name': 'rundeckd',
+                   'checkout_path': checkout, 'venv_path': venv}.items():
+    config['app'].setdefault(key, value)
+config['routing'].setdefault('identity', 'none')
+# Do not rewrite a semantically unchanged file, including its comments/formatting.
+if path.exists() and yaml.safe_load(path.read_text()) == config:
+    sys.exit(0)
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.rundeck-')
+try:
+    with os.fdopen(fd, 'w') as stream:
+        stream.write('# Runner self-description; guest facts are refreshed by bootstrap.\n')
+        yaml.safe_dump(config, stream, sort_keys=False)
+    os.chmod(temporary, 0o640)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
 in_ct chown rundeck:rundeck "$CONFIG_RUNNER"
-info "wrote config/apps/rundeck.yml"
+info "verified config/apps/rundeck.yml against the current guest"
 
 # The provisioning tasks delegate node-local pct/qm waits over SSH. Authorize
 # the current platform key on every online member, preserving PVE's shared-file
