@@ -9,7 +9,7 @@ ntfy_defaults:
     # Boot tier 30 — notifications come up before the things that report to them, so
     # an ascent that goes wrong is able to say so.
     boot_order: 30
-    ostemplate: "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+    # Inherit the lab's proxmox.lxc.ostemplate; only instance config may override it.
     cores: 1
     memory: 512                 # MB — Ntfy is very lightweight
     disk_volume:
