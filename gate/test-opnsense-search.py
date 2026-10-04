@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import os
 from pathlib import Path
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -19,6 +22,10 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar
 from ansible.utils.unsafe_proxy import wrap_var
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,11 +102,24 @@ class SearchTests(unittest.TestCase):
         cls.thread.start()
         cls.tls_dir = tempfile.TemporaryDirectory(prefix="opnsense-tls-")
         cert, key = Path(cls.tls_dir.name) / "fixture.crt", Path(cls.tls_dir.name) / "fixture.key"
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                        "-keyout", str(key), "-out", str(cert), "-days", "1",
-                        "-subj", "/CN=fixture-protected-provider-detail",
-                        "-addext", "subjectAltName=IP:127.0.0.1"],
-                       capture_output=True, check=True)
+        # cryptography is part of the configured Ansible venv; no optional CLI
+        # dependency should prevent even the HTTP-only tests from starting.
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, PRIVATE_MARKER)])
+        now = datetime.now(timezone.utc)
+        certificate = (x509.CertificateBuilder()
+                       .subject_name(subject).issuer_name(subject)
+                       .public_key(private_key.public_key()).serial_number(x509.random_serial_number())
+                       .not_valid_before(now - timedelta(minutes=1))
+                       .not_valid_after(now + timedelta(days=1))
+                       .add_extension(x509.SubjectAlternativeName([
+                           x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), critical=False)
+                       .sign(private_key, hashes.SHA256()))
+        key.write_bytes(private_key.private_bytes(serialization.Encoding.PEM,
+                        serialization.PrivateFormat.TraditionalOpenSSL,
+                        serialization.NoEncryption()))
+        key.chmod(0o600)
+        cert.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
         cls.tls_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cert, key)
@@ -277,15 +297,16 @@ class SearchTests(unittest.TestCase):
         self.setUp()
         # URI urllib honours a proxy route inherited by its module process. An
         # independent helper with a different environment can still return 200.
-        # Reserve a closed local port without contacting an external proxy.
-        closed = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
-        port = closed.server_port
-        closed.server_close()
-        code, output = self.run_wiring(environment={
-            "http_proxy": f"http://127.0.0.1:{port}", "no_proxy": "", "NO_PROXY": ""})
-        self.assertNotEqual(code, 0, output)
-        self.assertIn("transport_signature=connection-refused.", output)
-        self.assertEqual(self.state["requests"], [])
+        # Keep the port exclusively bound but not listening throughout the probe:
+        # connects are refused, and another process cannot take the selected port.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as closed:
+            closed.bind(("127.0.0.1", 0))
+            port = closed.getsockname()[1]
+            code, output = self.run_wiring(environment={
+                "http_proxy": f"http://127.0.0.1:{port}", "no_proxy": "", "NO_PROXY": ""})
+            self.assertNotEqual(code, 0, output)
+            self.assertIn("transport_signature=connection-refused.", output)
+            self.assertEqual(self.state["requests"], [])
         self.setUp()
         code, output = self.run_wiring(
             host=f"https://127.0.0.1:{self.tls_server.server_port}",
