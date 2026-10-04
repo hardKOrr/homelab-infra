@@ -37,6 +37,8 @@
 #   LAB_SECRETS_DIR   temporary generated Seed data (default: <env dir>/secrets.d)
 #   LAB_STATE_DIR     durable non-secret state      (default: <env dir>/state)
 #   BW_SERVER         public HTTPS Vaultwarden URL
+#   SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, NODE_EXTRA_CA_CERTS
+#                     CA bundle paths; exported from the env file when not already set
 #   BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD — secure runner inputs for Vault mode
 
 set -euo pipefail
@@ -60,6 +62,21 @@ if [ -r "$LAB_ENV_FILE" ]; then
         [ -n "${!_key:-}" ] || printf -v "$_key" '%s' "$_value" ;;
     esac
   done < <(grep -E '^(LAB_[A-Z_]+|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)=' "$LAB_ENV_FILE" || true)
+
+  # CA bundle paths bootstrap preserves in the env file (rundeck/preserve-tls-env.py).
+  # Export them so verified HTTPS — the DNS provider API, Vaultwarden behind a
+  # private or staging CA — trusts what the operator declared. bootstrap reaches here
+  # through sudo, which drops the caller's environment, so the file is the only source.
+  # The helper validates each path and shell-quotes its value, so eval sees one literal
+  # assignment per line. An unusable setting only warns: this runs above the refresh,
+  # where a fatal check could never be repaired by pushing a fix (see below).
+  _lab_tls_env="$(python3 "$(dirname -- "${BASH_SOURCE[0]}")/../../rundeck/preserve-tls-env.py" "$LAB_ENV_FILE")" \
+    || { log "WARNING: ignoring unusable CA settings in $LAB_ENV_FILE"; _lab_tls_env=""; }
+  while IFS= read -r _line; do
+    [ -n "$_line" ] || continue
+    _key="${_line%%=*}"
+    [ -n "${!_key:-}" ] || eval "export $_line"
+  done <<< "$_lab_tls_env"
 fi
 
 # These files are a bounded Seed-mode bridge only. After the marker exists they are never

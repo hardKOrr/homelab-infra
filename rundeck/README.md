@@ -54,8 +54,10 @@ existing guest by changing identity/network/storage environment inputs.
 Bootstrap reruns preserve `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
 and `NODE_EXTRA_CA_CERTS` already declared in `/etc/homelab-infra/lab-run.env`.
 Each must name an existing absolute CA file; unrelated environment entries are not
-copied. This supports private or staging certificate authorities without disabling
-TLS verification or changing system trust.
+copied. `lab-run` exports them to every run unless the caller already set them (bootstrap's
+Seed steps reach it through `sudo`, which drops the caller's environment), and warns and
+skips them if one is unusable. This supports private or staging certificate authorities
+without disabling TLS verification or changing system trust.
 
 `DEPLOY_VAULTWARDEN=1` is the default. Set `DEPLOY_VAULTWARDEN=0` only for a
 runner-only recovery or diagnostic run. The shell script does not contain a second
