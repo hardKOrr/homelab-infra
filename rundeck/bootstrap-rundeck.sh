@@ -12,6 +12,11 @@
 #   LAB_DOMAIN=lab.example.com VAULTWARDEN_OWNER_EMAIL=owner@example.com \
 #     CLOUDFLARE_API_TOKEN=... NONINTERACTIVE=1 ./bootstrap-rundeck.sh
 #   DEPLOY_VAULTWARDEN=0 ./bootstrap-rundeck.sh  # runner-only recovery
+#   Optional outbound mail: LAB_MAIL_PROVIDER=none (default) or smtp.
+#   smtp inputs: LAB_MAIL_HOST, LAB_MAIL_PORT=587, LAB_MAIL_ENCRYPTION=starttls,
+#   LAB_MAIL_FROM_ADDRESS, LAB_MAIL_FROM_NAME=Homelab, LAB_MAIL_USERNAME (From default).
+#   LAB_MAIL_PASSWORD: hidden prompt or root-private env file, never command arguments.
+#   Synthetic owner identities do not require working mail. See README.md input guide.
 #
 # This is the first of the platform's two bootstrap layers:
 #
@@ -49,6 +54,8 @@
 # Credentials are written inside the container to /root/.rundeck-bootstrap (0600) and
 # summarised at the end. Re-runs read that file back rather than issuing new secrets.
 
+# Private intake must remain quiet even when invoked with bash -x.
+set +x
 set -euo pipefail
 
 # ── Tunables ───────────────────────────────────────────────────────────────────
@@ -174,6 +181,8 @@ LAB_LEGACY_SEED_ENV="$LAB_ETC/secrets.env"
 # here, sourced by lab-run.sh only while the vault-mode marker is absent, and imported
 # into the canonical `homelab-infra/dns` item by the cutover.
 LAB_DNS_ENV="$LAB_ETC/secrets.d/dns.env"
+# Optional external relay password; same existing Seed/cutover contract as DNS.
+LAB_MAIL_ENV="$LAB_ETC/secrets.d/mail.env"
 # The platform's own SSH identity, generated in the container. Its public half goes into
 # config/proxmox.yml (deployed to every guest this platform creates). Cutover moves the
 # private half into Vaultwarden; lab-run materializes it only for one job session.
@@ -393,6 +402,73 @@ ask_dns_credential() {
       ask_secret LAB_DNS_API_KEY "AdGuard Home API password"
       ;;
   esac
+}
+
+# Optional mail intake. Owner identities (including synthetic addresses) never imply
+# a mail requirement. Only an explicitly selected smtp provider enables this path.
+ask_mail_config() {
+  ask LAB_MAIL_PROVIDER "Outbound mail (smtp | none)" "none"
+  case "$LAB_MAIL_PROVIDER" in
+    none) return 0 ;;
+    smtp) ;;
+    *) die "LAB_MAIL_PROVIDER must be smtp or none" ;;
+  esac
+  ask LAB_MAIL_HOST "SMTP relay hostname" ""
+  ask LAB_MAIL_PORT "SMTP relay port" "587"
+  [[ "$LAB_MAIL_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$LAB_MAIL_PORT >= 1 && 10#$LAB_MAIL_PORT <= 65535 )) \
+    || die "LAB_MAIL_PORT must be between 1 and 65535"
+  ask LAB_MAIL_ENCRYPTION "SMTP encryption (starttls | tls | none)" "starttls"
+  case "$LAB_MAIL_ENCRYPTION" in
+    starttls|tls|none) ;;
+    *) die "LAB_MAIL_ENCRYPTION must be starttls, tls or none" ;;
+  esac
+  ask LAB_MAIL_FROM_ADDRESS "Outbound From address" ""
+  ask LAB_MAIL_FROM_NAME "Outbound display name" "Homelab"
+  ask LAB_MAIL_USERNAME "SMTP AUTH username" "$LAB_MAIL_FROM_ADDRESS"
+}
+
+# JSON scalars are valid YAML and keep quotes/newlines in nonsecret input inert.
+# Password is deliberately absent from this allowlist and from process arguments.
+write_mail_config() {
+  LAB_MAIL_PROVIDER="$LAB_MAIL_PROVIDER" LAB_MAIL_HOST="${LAB_MAIL_HOST:-}" \
+  LAB_MAIL_PORT="${LAB_MAIL_PORT:-587}" LAB_MAIL_ENCRYPTION="${LAB_MAIL_ENCRYPTION:-starttls}" \
+  LAB_MAIL_FROM_ADDRESS="${LAB_MAIL_FROM_ADDRESS:-}" LAB_MAIL_FROM_NAME="${LAB_MAIL_FROM_NAME:-}" \
+  LAB_MAIL_USERNAME="${LAB_MAIL_USERNAME:-}" python3 - <<'PY'
+import json, os
+print("\nmail:")
+print("  provider: " + json.dumps(os.environ["LAB_MAIL_PROVIDER"]))
+if os.environ["LAB_MAIL_PROVIDER"] == "smtp":
+    for field in ("host", "port", "encryption", "from_address", "from_name", "username"):
+        value = os.environ["LAB_MAIL_" + field.upper()]
+        print("  " + field + ": " + json.dumps(int(value) if field == "port" else value))
+PY
+}
+
+stage_mail_credential() {
+  # Read the authored answer, not a new environment override on a converged rerun.
+  local provider stage
+  provider="$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("mail") or {}).get("provider", "none"))' "$CONFIG_INFRA")"
+  if [ "$provider" != "smtp" ] || ct_file_exists "$LAB_ETC/state/vault-mode"; then
+    return 0
+  fi
+  if ct_file_exists "$LAB_MAIL_ENV"; then
+    in_ct chown rundeck:rundeck "$LAB_MAIL_ENV"
+    in_ct chmod 0600 "$LAB_MAIL_ENV"
+    info "existing mail credential preserved"
+    return 0
+  fi
+  ask_secret LAB_MAIL_PASSWORD "SMTP AUTH password (private Seed input)"
+  stage="$(newtmp)"
+  # lab-run reads literal single-line values without sourcing/evaluating them.
+  # Reject line breaks without echoing the input. printf is a builtin, so the
+  # password never becomes an external command argument.
+  case "$LAB_MAIL_PASSWORD" in
+    *$'\n'*|*$'\r'*) die "LAB_MAIL_PASSWORD must be a single-line value" ;;
+  esac
+  (umask 077; printf 'LAB_MAIL_PASSWORD=%s\n' "$LAB_MAIL_PASSWORD" > "$stage/mail.env")
+  push_file "$stage/mail.env" "$LAB_MAIL_ENV" 0600
+  in_ct chown rundeck:rundeck "$LAB_MAIL_ENV"
+  info "staged private mail credential (0600 rundeck:rundeck)"
 }
 
 # ── Preflight ──────────────────────────────────────────────────────────────────
@@ -1459,6 +1535,7 @@ else
     ask_dns_credential
   fi
   ask LAB_BACKUP_PATH   "PBS datastore path"                                  "/mnt/backup"
+  ask_mail_config
 
   # The platform's public key, read back out of the container it was generated in.
   LAB_SSH_PUBKEY="$(in_ct cat "${LAB_SSH_KEY}.pub" 2>/dev/null || true)"
@@ -1674,6 +1751,7 @@ vaultwarden:
   owner_email: "$VAULTWARDEN_OWNER_EMAIL"
   automation_email: "$VAULTWARDEN_AUTOMATION_EMAIL"
 EOF
+    write_mail_config
   } > "$STAGE/infrastructure.yml"
 
   push_file "$STAGE/proxmox.yml"        "$CONFIG_PROXMOX" 0640
@@ -2236,6 +2314,8 @@ if [ -n "${LAB_DNS_API_KEY:-}" ]; then
   in_ct chown rundeck:rundeck "$LAB_DNS_ENV"
   info "wrote $LAB_DNS_ENV (0600 rundeck:rundeck)"
 fi
+
+stage_mail_credential
 
 # ── Record the runner in the service registry ──────────────────────────────────
 # So playbooks and Lab Status can name the host they are running on.

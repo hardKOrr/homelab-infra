@@ -7,6 +7,14 @@ track. The resulting `config/` directory is runtime state and must remain untrac
 Rundeck bootstrap writes the initial configuration. Use these examples when reviewing the
 available settings or when preparing configuration manually.
 
+Initial outbound mail is optional (`LAB_MAIL_PROVIDER=none` by default). For `smtp`,
+bootstrap writes only the nonsecret relay fields shown in `infrastructure.yml`. Supply
+`LAB_MAIL_PASSWORD` through a hidden prompt or a root-private environment file; it goes
+only to `secrets.d/mail.env` outside the checkout. Existing answers and the sink survive
+reruns. After cutover use **Store Secret**, item `homelab-infra/mail`, field `password`.
+The [bootstrap input guide](../rundeck/README.md#what-it-asks) describes unattended loading.
+Synthetic owner addresses do not require working mail.
+
 ## Files
 
 - `proxmox.yml` documents the Proxmox connection, placement, storage, and network shape.

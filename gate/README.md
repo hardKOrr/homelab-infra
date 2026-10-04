@@ -50,6 +50,10 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   templates, explicit instance precedence and sibling preservation without Proxmox.
   `test-caddy-acme-ca.py` covers guest-DNS defaults with propagation disabled,
   resolver validation/override precedence, estate/provider isolation and staging ACME.
+  `test-bootstrap-mail.py` runs real bootstrap authoring/intake against recording local
+  container fixtures: no-mail, private literal password loading, validation, preserved
+  answers/sink on rerun, and refusal to restage after cutover. Run it with
+  `python3 gate/test-bootstrap-mail.py`; no provider or live target is involved.
   `test-opnsense-search.py` executes the source-owned DNS wiring tasks against a loopback
   API fixture: search/auth request shape, add/update/no-op convergence, provider no-op,
   protected failure diagnostics and refusal to mutate after an invalid search response.

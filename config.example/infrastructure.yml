@@ -177,11 +177,11 @@ mail:
   # The AUTH password (and any provider-specific api_key/api_secret/token) MUST NOT be
   # authored here — config-doctor.sh rejects the run if it finds one. After Vaultwarden
   # cutover it is read from homelab-infra/mail (see the Store Secret job,
-  # playbooks/maintenance/store-secret.yml). Before cutover, set it by hand:
-  # export LAB_MAIL_PASSWORD before running a playbook that needs mail —
-  # rundeck/bootstrap-rundeck.sh does not yet prompt for it (no automated Seed-mode
-  # provisioning exists for this credential today). A configured provider with no
-  # credential fails the next app deploy that needs mail, by contract.
+  # playbooks/maintenance/store-secret.yml, item: homelab-infra/mail, field: password).
+  # Initial bootstrap asks privately when LAB_MAIL_PROVIDER=smtp, or accepts
+  # LAB_MAIL_PASSWORD from a root-private environment file. It stages only
+  # /etc/homelab-infra/secrets.d/mail.env (0600 rundeck:rundeck), never config.
+  # Existing config and the private sink survive rerun without rotation.
   #
   # ansible/tasks/mail/resolve-mail.yml is the one seam a mail-sending app consumes; it
   # does not configure any application's mail settings by itself. Set provider: none to
