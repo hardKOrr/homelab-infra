@@ -64,21 +64,59 @@
           (wiring_ip, a configured reverse proxy, or wiring_upstream_host), and
           dns.api_key + dns.api_secret in config/.generated/facts.yml.
 
-    - name: Wire OPNsense | Search existing host overrides
-      ansible.builtin.uri:
-        url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
-        method: POST
-        url_username: "{{ homelabinfra_infra.dns.api_key }}"
-        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
-        force_basic_auth: true
-        validate_certs: "{{ _opn_validate | bool }}"
-        body_format: json
-        body: >-
-          {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_hostname} }}
-        status_code: 200
-      register: _opn_search
-      changed_when: false
-      no_log: true
+    - name: Wire OPNsense | Read and validate host override search
+      block:
+        - name: Wire OPNsense | Search existing host overrides
+          ansible.builtin.uri:
+            url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
+            method: POST
+            url_username: "{{ homelabinfra_infra.dns.api_key }}"
+            url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+            force_basic_auth: true
+            validate_certs: "{{ _opn_validate | bool }}"
+            body_format: json
+            body: >-
+              {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_hostname} }}
+            status_code: 200
+          register: _opn_search
+          changed_when: false
+          no_log: true
+
+        # A login page or malformed JSON must not mean "no existing record": that
+        # would let a failed read proceed to addHostOverride and create duplicates.
+        - name: Wire OPNsense | Validate host override search response
+          ansible.builtin.assert:
+            that:
+              - _opn_search.json is defined
+              - _opn_search.json is mapping
+              - _opn_search.json.rows is defined
+              - _opn_search.json.rows | type_debug == 'list'
+              - _opn_search.json.rows | select('mapping') | list | length == _opn_search.json.rows | length
+          no_log: true
+      rescue:
+        # Never interpolate msg, exception, URL, headers, body or invocation from
+        # the protected result. Only emit fixed categories and a coerced integer.
+        - name: Wire OPNsense | Report sanitized search failure
+          ansible.builtin.fail:
+            msg: >-
+              OPNsense host-override search failed:
+              category={{ 'response-shape' if ansible_failed_task.name ==
+                'Wire OPNsense | Validate host override search response'
+                else 'authentication-or-authorization' if _opn_failure_status | int in [401, 403]
+                else 'transport' if _opn_failure_status | int == -1
+                else 'http-status' if _opn_failure_status | int > 0
+                else 'pre-request-or-module' }};
+              status={{ _opn_failure_status | int }}.
+              No provider details were logged. For transport failures check the
+              executing Ansible user's connectivity, proxy environment and CA trust;
+              for HTTP failures check API access; for pre-request/module failures
+              check effective dns.host, validate_certs and wiring inputs locally;
+              for response-shape failures check the settings/searchHostOverride JSON contract.
+          vars:
+            _opn_failure_status: >-
+              {{ (_opn_search.status | default(0) if ansible_failed_task.name ==
+                  'Wire OPNsense | Validate host override search response'
+                  else ansible_failed_result.status | default(0)) | int }}
 
     - name: Wire OPNsense | Select existing override and build payload
       ansible.builtin.set_fact:
