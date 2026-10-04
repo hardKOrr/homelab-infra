@@ -50,6 +50,9 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   templates, explicit instance precedence and sibling preservation without Proxmox.
   `test-caddy-acme-ca.py` covers guest-DNS defaults with propagation disabled,
   resolver validation/override precedence, estate/provider isolation and staging ACME.
+  `test-opnsense-search.py` executes the source-owned DNS wiring tasks against a loopback
+  API fixture: search/auth request shape, add/update/no-op convergence, provider no-op,
+  protected failure diagnostics and refusal to mutate after an invalid search response.
   Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination
   protocol and coverage rollup described in [`../docs/recovery-acceptance.md`](../docs/recovery-acceptance.md).
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
