@@ -28,13 +28,13 @@
               | map(attribute='key') | list) | first)
          or (_resolve_stack_estates | list | first | default('')) }}
 
+- name: Resolve existing stack host | Refresh inventory
+  ansible.builtin.meta: refresh_inventory
+
 - name: Resolve existing stack host | Translate ownership tag
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
     tag_group_tag: "_.stack+{{ _resolve_stack_id }}"
-
-- name: Resolve existing stack host | Refresh inventory
-  ansible.builtin.meta: refresh_inventory
 
 - name: Resolve existing stack host | Find owned host
   ansible.builtin.set_fact:

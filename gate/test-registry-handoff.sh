@@ -61,10 +61,9 @@ cat > "$work/ansible/handoff.yml" <<YAML
 YAML
 
 ( cd "$work/ansible" \
-  && ANSIBLE_INVENTORY=localhost, \
-     ANSIBLE_LOCALHOST_WARNING=False \
+  && ANSIBLE_LOCALHOST_WARNING=False \
      ANSIBLE_INVENTORY_UNPARSED_WARNING=False \
-     "$playbook" handoff.yml ) >"$work/run.log" 2>&1 \
+     "$playbook" -i "$repo/gate/fixtures/localhost.ini" handoff.yml ) >"$work/run.log" 2>&1 \
   || { sed -n '1,60p' "$work/run.log" >&2; fail "handoff playbook did not complete"; }
 
 python3 - "$work/consumed.json" "$work/config/.generated/facts.yml" <<'PY'

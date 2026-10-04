@@ -6,7 +6,7 @@
 # scripts/with-proxmox-env.sh (bare CLI / fresh clone) or export them in the Rundeck job
 # step. Playbooks still receive homelabinfra_config via -e @user-vars.yml for task-time vars; only
 # this inventory file is env-driven.
-plugin: community.proxmox.proxmox
+plugin: homelab_proxmox
 # Derive a full URL (scheme + host + port) from the same bare host the provisioning modules consume,
 # so users configure the host in exactly one place. community.proxmox's inventory `url` option
 # expects a scheme (its default is http://localhost:8006); port falls back to 8006.

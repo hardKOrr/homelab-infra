@@ -16,6 +16,15 @@ files. Inspection rules that protect these shapes are in `docs/specs/config-laye
 (input layer), and those choices plus bootstrap-written endpoints/tokens land in `homelabinfra_infra`
 (the registry).
 
+`homelabinfra_proxmox_inventory_complete` is a controller inventory boolean, outside
+these three mappings. The supported inventory plugin resets it before parsing and sets
+it true only after successful enumeration, with no offline or unknown nodes.
+`homelabinfra_proxmox_inventory_offline_nodes` lists offline or unknown node names for
+diagnostics. Guest lookup and allocation require
+`homelabinfra_proxmox_inventory_complete: true`. Neither variable is user-authored
+configuration, a cached fact or a service-registry field; see
+[`Proxmox inventory safety`](../tasks/proxmox/README.md#inventory-availability-and-trust).
+
 ## 2. Load map: file → wrapper → target key
 
 | File | Wrapper in file | Loaded into | Notes |

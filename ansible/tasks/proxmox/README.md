@@ -46,6 +46,32 @@ Proxmox templates are filtered out before inventory groups are built, including 
 templates. Template tasks locate them through the Proxmox node instead of dynamic guest
 inventory.
 
+## Inventory availability and trust
+
+The supported inventory source uses the local `homelab_proxmox` plugin, extending the
+pinned `community.proxmox` parser. It binds `validate_certs` explicitly on each inventory
+request. Requests otherwise lets `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` override a
+session's `verify=false` when the request omits `verify`. Explicit `false` preserves the
+independent Proxmox policy; `true` still consumes declared CA environment trust. This does
+not change the wrapper's shared CA exports or other providers' verification settings.
+
+Inventory parse failures are fatal, including when another inventory source parses and
+when a refresh fails after a successful initial read. The completion marker is published
+only after the entire parse succeeds and every node's guests can be enumerated. Offline or unknown
+nodes remain in a successfully parsed diagnostic inventory, with the completion marker
+false and `homelabinfra_proxmox_inventory_offline_nodes` identifying the missing coverage.
+Status reports that incomplete view; ascent verification reports it and fails its final
+acceptance check. Malformed responses remain fatal. Neither case proves guest absence.
+A healthy inventory with no guests does establish absence and may allocate.
+`assert-inventory.yml` guards address allocation and the shared tag lookup even when an
+unsupported static inventory would otherwise supply an empty group. Tag lookup requires
+each matching guest's exact ownership tag, node, VMID and type; instance and stack tags
+must select at most one guest. Cluster tags may select multiple owned guests.
+
+`gate/test-proxmox-inventory-safety.py` executes the actual parser and selection/allocation
+tasks with a recording requests transport, without sockets or provider access. Its
+requests differential proves library/source semantics, not a captured live TLS cause.
+
 ## Device passthrough
 
 `attach-shared-device.yml` binds a host device node (an iGPU) into one or more LXC guests —

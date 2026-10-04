@@ -41,6 +41,9 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
+    - name: Report inventory availability
+      ansible.builtin.import_tasks: ../../tasks/proxmox/report-inventory.yml
+
     # Proxmox's own view first: a guest that is not `running` never got as far as needing
     # an SSH check, and separating the two tells the operator whether the problem is the
     # hypervisor's or the guest's.
@@ -130,13 +133,16 @@
     - name: Decide whether the ascent is clean
       ansible.builtin.set_fact:
         _va_clean: >-
-          {{ (_va_down | length) == 0 and (_va_unreachable | length) == 0
+          {{ (homelabinfra_proxmox_inventory_complete | default(false) | bool)
+             and (_va_down | length) == 0 and (_va_unreachable | length) == 0
              and (_va_notready | length) == 0 }}
 
     - name: Report the ascent
       ansible.builtin.debug:
         msg: >-
           {{ (groups['lab_managed'] | default([]) | length) }} tagged guest(s).
+          Inventory complete: {{ homelabinfra_proxmox_inventory_complete | default(false) | bool }}.
+          Offline or unknown Proxmox nodes: {{ homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true) }}.
           Not running: {{ _va_down | join(', ') | default('none', true) }}.
           Running but unreachable:
           {{ _va_unreachable | join(', ') | default('none', true) }}.
@@ -152,7 +158,11 @@
         notify_message: >-
           {{ 'Every tagged guest is running and answering, and every cluster node is Ready.'
              if _va_clean
-             else ('Did not come back — stopped: '
+             else ('Inventory complete: '
+                   ~ (homelabinfra_proxmox_inventory_complete | default(false) | bool | string)
+                   ~ '; offline or unknown Proxmox nodes: '
+                   ~ (homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true))
+                   ~ '; stopped: '
                    ~ (_va_down | join(', ') | default('none', true))
                    ~ '; unreachable: '
                    ~ (_va_unreachable | join(', ') | default('none', true))
@@ -162,7 +172,9 @@
     - name: Fail when the lab did not fully come back
       ansible.builtin.fail:
         msg: >-
-          The ascent is incomplete. Stopped: {{ _va_down | join(', ') | default('none', true) }}.
+          The ascent is incomplete. Offline or unknown Proxmox nodes:
+          {{ homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true) }}.
+          Stopped: {{ _va_down | join(', ') | default('none', true) }}.
           Running but unreachable: {{ _va_unreachable | join(', ') | default('none', true) }}.
           Cluster nodes not Ready: {{ _va_notready | join(' / ') | default('none', true) }}.
       when: not _va_clean

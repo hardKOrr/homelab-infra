@@ -23,6 +23,9 @@
 # the gate cannot judge it. Zero-width lookahead plus a literal prefix means the same thing
 # in both. inventory/proxmox.yml carries the identical chain and the same constraint.
 
+- name: Tag group | Require completed inventory
+  ansible.builtin.import_tasks: assert-inventory.yml
+
 - name: Tag group | Translate one platform tag into its inventory group name
   ansible.builtin.set_fact:
     tag_group_name: >-
@@ -39,3 +42,20 @@
          | reject('eq', '')
          | list
          | first | default('', true)) }}
+
+- name: Tag group | Require owned guest identity for every matching host
+  ansible.builtin.assert:
+    that:
+      - "'_+lab' in (hostvars[item].proxmox_tags_parsed | default([]))"
+      - hostvars[item].proxmox_node | default('') | length > 0
+      - hostvars[item].proxmox_vmid | default(0) | int > 0
+      - hostvars[item].proxmox_vmtype | default('') in ['lxc', 'qemu']
+    fail_msg: "Matching inventory host lacks established project-owned guest identity. Refusing reuse."
+  loop: "{{ groups[tag_group_name] | default([]) }}"
+
+- name: Tag group | Require unambiguous instance or stack identity
+  ansible.builtin.assert:
+    that:
+      - groups[tag_group_name] | default([]) | length <= 1
+    fail_msg: "Multiple guests match the instance or stack tag. Refusing to select an arbitrary guest."
+  when: tag_group_name is match('^lab_(app|stack)_')

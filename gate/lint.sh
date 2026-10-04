@@ -55,7 +55,8 @@ export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 # Neutralise the Proxmox dynamic inventory: ansible.cfg sets inventory = inventory/, which
 # points at the templated community.proxmox plugin needing Proxmox creds. This override
 # means the plugin is never invoked and no credentials are required.
-export ANSIBLE_INVENTORY=localhost,
+# This setting is list-valued: localhost, loses its comma and becomes a missing file.
+export ANSIBLE_INVENTORY="$repo/gate/fixtures/localhost.ini"
 
 # Lint targets the explicit playbooks/roles/tasks/vars dirs, not ".": ansible-lint auto-detects
 # a bare "." target as a single *role* here (ansible/ has top-level tasks/, vars/, roles/ dirs,
