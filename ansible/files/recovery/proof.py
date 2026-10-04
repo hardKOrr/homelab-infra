@@ -277,18 +277,23 @@ def identity(observation):
 
 
 def fresh_artifact(before, after, vmid, kind):
-    old = {row["volid"] for row in before["artifacts"]}
-    prefix = f"backup/{'vm' if kind == 'qemu' else 'ct'}/{vmid}/vzdump-{'qemu' if kind == 'qemu' else 'lxc'}-{vmid}-"
+    def native(volid):
+        # Remove only an optional storage identifier, never timestamp colons.
+        return re.sub(r"^[A-Za-z0-9][A-Za-z0-9_.-]*:", "", volid)
+
+    old = {native(row["volid"]) for row in before["artifacts"]}
+    pattern = rf"backup/{'vm' if kind == 'qemu' else 'ct'}/{re.escape(str(vmid))}/[^/]+"
     candidates = [
-        row["volid"]
+        native(row["volid"])
         for row in after["artifacts"]
-        if row["volid"] not in old and row["volid"].split(":", 1)[-1].startswith(prefix)
+        if native(row["volid"]) not in old
+        and re.fullmatch(pattern, native(row["volid"]))
     ]
     require(
         len(candidates) == 1,
         "Backup must expose exactly one newly completed native artifact; retain points and retry after inventory review.",
     )
-    return candidates[0].split(":", 1)[-1]
+    return candidates[0]
 
 
 class Ansible:

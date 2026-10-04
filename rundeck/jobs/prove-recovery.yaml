@@ -29,7 +29,9 @@
     B point. Use Recover/Guests/Restore Guest with B and overwrite=false to plan recovery,
     then execute only with the exact reviewed target; retry A after inspection. Do not remove
     partial targets or artifacts automatically. Fixture topics and both points are retained;
-    cleanup is separately scoped. Record redacted execution evidence on the product observation
+    Ntfy uses minimum-priority messages on the existing authorized operator topic; subscribers
+    can receive them and the shared cache retains them. Cleanup is separately scoped.
+    Record redacted execution evidence on the product observation
     issue. This dispatcher is not required for ordinary install/function/convergence checks.
   loglevel: INFO
   executionEnabled: true

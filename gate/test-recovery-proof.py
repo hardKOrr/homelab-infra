@@ -76,7 +76,7 @@ class RecordingSeams:
     def inspect(self, **values):
         self.calls.append(("inspect", values))
         result = copy.deepcopy(self.observation)
-        result["artifacts"] = [{"volid": name} for name in self.points]
+        result["artifacts"] = [{"volid": "pbs-fixture:" + name} for name in self.points]
         if "vmid" in values:
             result["guest"].update(vmid=int(values["vmid"]), status="stopped")
             result["config"].update(
@@ -110,8 +110,7 @@ class RecordingSeams:
         if playbook.endswith("backup-guest.yml"):
             self.next += 1
             kind = "vm" if self.observation["guest"]["type"] == "qemu" else "ct"
-            tool = "qemu" if kind == "vm" else "lxc"
-            self.points[f"backup/{kind}/420/vzdump-{tool}-420-{self.next}"] = set(
+            self.points[f"backup/{kind}/420/2026-10-04T12:00:{self.next:02d}Z"] = set(
                 self.state
             )
         if playbook.endswith("restore-guest.yml") and values["overwrite"]:
@@ -168,7 +167,7 @@ class DispatcherTests(unittest.TestCase):
         report, status = self.dispatch()
         self.assertEqual(status, 0, report)
         self.assertTrue(
-            report["artifacts"]["A"].startswith("backup/vm/420/vzdump-qemu-420-")
+            report["artifacts"]["A"].startswith("backup/vm/420/2026-10-04T12:00:")
         )
         restores = [v for p, v in self.backend.calls if p.endswith("restore-guest.yml")]
         self.assertEqual(len(restores), 2)
@@ -388,14 +387,33 @@ class DispatcherTests(unittest.TestCase):
             proof.interface("link_down=1,hwaddr=aa:bb:cc:dd:ee:ff,name=eth0"),
         )
 
+    def test_native_pbs_artifacts_preserve_timestamp_and_optional_storage(self):
+        for kind, guest in [("ct", "lxc"), ("vm", "qemu")]:
+            point = f"backup/{kind}/420/2026-10-04T12:00:01Z"
+            for qualified in [point, "pbs-fixture:" + point]:
+                self.assertEqual(
+                    proof.fresh_artifact(
+                        {"artifacts": []},
+                        {"artifacts": [{"volid": qualified}]},
+                        "420",
+                        guest,
+                    ),
+                    point,
+                )
+
     def test_artifact_freshness_rejects_stale_and_ambiguous_points(self):
-        before = {"artifacts": [{"volid": "backup/ct/420/vzdump-lxc-420-old"}]}
+        old = "backup/ct/420/2026-10-04T12:00:00Z"
+        before = {"artifacts": [{"volid": old}]}
         for points in [
             before["artifacts"],
-            [{"volid": "backup/ct/421/vzdump-lxc-421-A"}],
+            [{"volid": "pbs-fixture:" + old}],
+            [{"volid": "backup/ct/421/2026-10-04T12:00:01Z"}],
+            [{"volid": "backup/vm/420/2026-10-04T12:00:01Z"}],
+            [{"volid": "backup/ct/420/2026-10-04T12:00:01Z/extra"}],
+            [{"volid": "backup/ct/420/"}],
             [
-                {"volid": "backup/ct/420/vzdump-lxc-420-A"},
-                {"volid": "backup/ct/420/vzdump-lxc-420-B"},
+                {"volid": "backup/ct/420/2026-10-04T12:00:01Z"},
+                {"volid": "backup/ct/420/2026-10-04T12:00:02Z"},
             ],
         ]:
             with self.assertRaises(proof.Refused):
@@ -470,12 +488,14 @@ class AdapterTests(unittest.TestCase):
 
     def test_real_ntfy_tasks_assert_a_survives_and_b_disappears(self):
         records = []
+        priorities = []
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
 
             def do_POST(self):
+                priorities.append(self.headers.get("Priority"))
                 records.append(
                     {
                         "event": "message",
@@ -532,6 +552,7 @@ class AdapterTests(unittest.TestCase):
 
                 self.assertEqual(phase("A"), 0)
                 self.assertEqual(phase("B"), 0)
+                self.assertEqual(priorities, ["min", "min"])
                 self.assertNotEqual(
                     phase("verify"), 0
                 )  # A green service with B present is insufficient.

@@ -16,6 +16,7 @@
         headers:
           Authorization: "Bearer {{ homelabinfra_infra.notifications.token }}"
           Cache: 'yes'
+          Priority: min
       no_log: true
       when: proof_phase in ['A', 'B']
     - name: Poll durable cached messages through the application
