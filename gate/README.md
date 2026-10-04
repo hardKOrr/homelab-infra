@@ -53,6 +53,10 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   `test-opnsense-search.py` executes the source-owned DNS wiring tasks against a loopback
   API fixture: search/auth request shape, add/update/no-op convergence, provider no-op,
   protected failure diagnostics and refusal to mutate after an invalid search response.
+  Its transport fixtures compare the actual URI with an independent stdlib urllib
+  search over disposable HTTPS and exercise certificate, protocol, timeout, peer-close
+  and proxy-path failures. Transport signatures are fixed allowlisted observations,
+  not root-cause claims; unknown text stays `unclassified` and is never echoed.
   Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination
   protocol and coverage rollup described in [`../docs/recovery-acceptance.md`](../docs/recovery-acceptance.md).
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.
