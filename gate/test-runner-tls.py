@@ -39,8 +39,17 @@ with tempfile.TemporaryDirectory() as directory:
     # The explicit Vaultwarden recovery path reaches ansible-playbook without a vault
     # preflight or Proxmox environment, so a stub playbook binary can record the env.
     (root / 'repo/ansible').mkdir(parents=True)
-    for part in ('scripts', 'playbooks'):
-        (root / 'repo/ansible' / part).symlink_to(ROOT / 'ansible' / part)
+    (root / 'repo/ansible/scripts').mkdir()
+    shutil.copy2(LAB_RUN, root / 'repo/ansible/scripts/lab-run.sh')
+    (root / 'repo/ansible/scripts/app-instances.py').symlink_to(ROOT / 'ansible/scripts/app-instances.py')
+    (root / 'repo/ansible/playbooks').symlink_to(ROOT / 'ansible/playbooks')
+    (root / 'repo/rundeck').mkdir()
+    shutil.copy2(HELPER, root / 'repo/rundeck/preserve-tls-env.py')
+    installed = root / 'installed/usr/local/bin/lab-run'
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(root / 'repo/ansible/scripts/lab-run.sh')
+    chained = installed.parent / 'lab-run-chain'
+    chained.symlink_to('lab-run')
     (root / 'state').mkdir()
     (root / 'state/vault-mode').touch()
     (root / 'venv/bin').mkdir(parents=True)
@@ -57,9 +66,12 @@ with tempfile.TemporaryDirectory() as directory:
             'LAB_REPO': str(root / 'repo'), 'LAB_VENV': str(root / 'venv'), 'LAB_DOCTOR': '0',
             'LAB_STATE_DIR': str(root / 'state'), 'PROBE_OUT': str(root / 'env.out')}
 
-    def run(extra):
-        result = subprocess.run(['bash', str(LAB_RUN), 'playbooks/maintenance/vaultwarden-recovery.yml'],
-                                env={**base, **extra}, capture_output=True, text=True)
+    def run(extra, entry=installed, fallback=False):
+        env = {**base, **extra}
+        if fallback:
+            env.pop('LAB_REPO')
+        result = subprocess.run(['bash', str(entry), 'playbooks/maintenance/vaultwarden-recovery.yml'],
+                                env=env, capture_output=True, text=True)
         seen = {}
         if (root / 'env.out').exists():
             seen = dict(line.split('=', 1) for line in (root / 'env.out').read_text().splitlines()
@@ -67,18 +79,24 @@ with tempfile.TemporaryDirectory() as directory:
             (root / 'env.out').unlink()
         return result, seen
 
-    result, seen = run({'LAB_SEED_MODE': '1'})
-    for key in ('SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS'):
-        assert seen.get(key) == str(certificate), (key, result.stderr)
-    assert 'TOKEN' not in seen
-    _, seen = run({'LAB_SEED_MODE': '1', 'SSL_CERT_FILE': str(other)})
-    assert seen['SSL_CERT_FILE'] == str(other) and seen['NODE_EXTRA_CA_CERTS'] == str(certificate)
+    for entry in (root / 'repo/ansible/scripts/lab-run.sh', installed, chained):
+        for fallback in (False, True):
+            result, seen = run({'LAB_SEED_MODE': '1'}, entry, fallback)
+            assert result.returncode == 0, result.stderr
+            assert 'unusable CA settings' not in result.stdout + result.stderr
+            for key in ('SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE', 'NODE_EXTRA_CA_CERTS'):
+                assert seen.get(key) == str(certificate), (key, result.stderr)
+            assert 'TOKEN' not in seen
+            result, seen = run({'LAB_SEED_MODE': '1', 'SSL_CERT_FILE': str(other)}, entry, fallback)
+            assert result.returncode == 0, result.stderr
+            assert seen['SSL_CERT_FILE'] == str(other) and seen['NODE_EXTRA_CA_CERTS'] == str(certificate)
     certificate.unlink()
     result, seen = run({'LAB_SEED_MODE': '1'})
+    assert result.returncode == 0, result.stderr
     assert 'unusable CA settings' in result.stdout + result.stderr
     assert 'SSL_CERT_FILE' not in seen and seen, result.stderr
 
 bootstrap = (ROOT / 'rundeck/bootstrap-rundeck.sh').read_text()
 assert bootstrap.index('preserve-tls-env.py') < bootstrap.index('cat > "$LAB_ETC/lab-run.env"')
 assert 'cat "$tls_env" >> "$LAB_ETC/lab-run.env"' in bootstrap
-print('runner TLS: CA paths, quoted filenames, rerun continuity, private-value exclusion and lab-run export passed')
+print('runner TLS: CA paths, quoted filenames, rerun continuity, private-value exclusion and direct/installed/chained lab-run child export passed')
