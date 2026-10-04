@@ -55,14 +55,20 @@ class InventoryModule(ProxmoxInventory):
             not isinstance(node, dict)
             or not node.get("node")
             or node.get("type") != "node"
-            or node.get("status") != "online"
+            or node.get("status") not in ("online", "offline")
             for node in nodes
         ):
-            raise AnsibleError("Proxmox inventory cannot establish all node guest inventories")
+            raise AnsibleError("Proxmox inventory received an invalid node list")
+        self._offline_nodes = sorted(node["node"] for node in nodes if node["status"] == "offline")
         return nodes
 
     def parse(self, inventory, loader, path, cache=True):
         # A partial parse, or a failed refresh after a successful parse, is unavailable.
         inventory.set_variable("all", "homelabinfra_proxmox_inventory_complete", False)
+        inventory.set_variable("all", "homelabinfra_proxmox_inventory_offline_nodes", [])
+        self._offline_nodes = []
         super().parse(inventory, loader, path, cache=cache)
-        inventory.set_variable("all", "homelabinfra_proxmox_inventory_complete", True)
+        # The upstream parser retains offline nodes but cannot enumerate their guests.
+        # Diagnostics may use that partial view; selection/allocation must refuse it.
+        inventory.set_variable("all", "homelabinfra_proxmox_inventory_offline_nodes", self._offline_nodes)
+        inventory.set_variable("all", "homelabinfra_proxmox_inventory_complete", not self._offline_nodes)

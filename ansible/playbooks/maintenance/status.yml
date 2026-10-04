@@ -38,6 +38,9 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
+    - name: Report inventory availability
+      ansible.builtin.import_tasks: ../../tasks/proxmox/report-inventory.yml
+
 
 # ── Play 2: Per-guest state ────────────────────────────────────────────────────
 # Runs against every tagged guest. Unreachable guests are recorded as such by

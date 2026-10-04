@@ -57,8 +57,12 @@ not change the wrapper's shared CA exports or other providers' verification sett
 
 Inventory parse failures are fatal, including when another inventory source parses and
 when a refresh fails after a successful initial read. The completion marker is published
-only after the entire parse succeeds. Offline nodes and malformed responses cannot prove
-guest absence. A healthy inventory with no guests does establish absence and may allocate.
+only after the entire parse succeeds and every node's guests can be enumerated. Offline
+nodes remain in a successfully parsed diagnostic inventory, with the completion marker
+false and `homelabinfra_proxmox_inventory_offline_nodes` identifying the missing coverage.
+Status reports that incomplete view; ascent verification reports it and fails its final
+acceptance check. Malformed responses remain fatal. Neither case proves guest absence.
+A healthy inventory with no guests does establish absence and may allocate.
 `assert-inventory.yml` guards address allocation and the shared tag lookup even when an
 unsupported static inventory would otherwise supply an empty group. Tag lookup requires
 each matching guest's exact ownership tag, node, VMID and type; instance and stack tags

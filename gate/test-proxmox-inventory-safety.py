@@ -42,6 +42,10 @@ def install_transport():
                 raise requests.exceptions.SSLError('provider-free inventory failure')
             data = [{'node': 'fixture-node', 'type': 'node',
                      'status': 'offline' if fixture.get('offline') else 'online'}]
+            if fixture.get('mixed'):
+                data.append({'node': 'fixture-online', 'type': 'node', 'status': 'online'})
+            if fixture.get('malformed_node'):
+                data[0]['status'] = 'unknown'
         elif path.endswith('/pools') or path.endswith('/qemu') or path.endswith('/snapshot'):
             data = []
             if path.endswith('/pools') and fixture.get('partial_failure'):
@@ -140,6 +144,45 @@ def main():
             assert calls and all(call['verify'] is False for call in calls)
         print('PASS: real inventory healthy empty/tagged identity and explicit independent TLS policy')
 
+        for state in ({'offline': True}, {'offline': True, 'mixed': True}):
+            result, calls = run(['ansible-inventory', '-i', source, '--list'], state)
+            assert result.returncode == 0, result.stderr
+            inventory = json.loads(result.stdout)
+            node = inventory['_meta']['hostvars']['fixture-node']
+            assert node['homelabinfra_proxmox_inventory_complete'] is False
+            assert node['homelabinfra_proxmox_inventory_offline_nodes'] == ['fixture-node']
+            assert inventory.get('lab_app_caddy', {}).get('hosts', []) == (['caddy'] if state.get('mixed') else [])
+        result, _ = run(['ansible-inventory', '-i', source, '--list'], {'malformed_node': True})
+        assert result.returncode != 0, 'malformed node state must stay fatal'
+
+        # Execute actual diagnostic refresh/report tasks, without platform credential
+        # loading or guest/provider probes. Offline coverage must be explicit in output.
+        status = yaml.safe_load((REPO / 'ansible/playbooks/maintenance/status.yml').read_text())[0]
+        status.pop('pre_tasks')
+        for task in status['tasks']:
+            if 'ansible.builtin.import_tasks' in task:
+                task['ansible.builtin.import_tasks'] = str(REPO / 'ansible/tasks/proxmox/report-inventory.yml')
+        status_file = work / 'status.yml'
+        status_file.write_text(yaml.safe_dump([status]))
+        result, _ = run(['ansible-playbook', '-i', source, str(status_file)], {'offline': True})
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'fixture-node' in result.stdout and 'their state is unknown' in result.stdout
+
+        ascent = yaml.safe_load((REPO / 'ansible/playbooks/maintenance/verify-ascent.yml').read_text())
+        decision = {'hosts': 'localhost', 'gather_facts': False,
+                    'vars': {'_va_down': [], '_va_unreachable': [], '_va_notready': []},
+                    'tasks': [task for task in ascent[-1]['tasks'] if task.get('name') in (
+                        'Decide whether the ascent is clean', 'Report the ascent',
+                        'Fail when the lab did not fully come back')]}
+        ascent_file = work / 'ascent.yml'
+        ascent_file.write_text(yaml.safe_dump([status, decision]))
+        for state in ({'empty': True}, {'offline': True}):
+            result, _ = run(['ansible-playbook', '-i', source, str(ascent_file)], state)
+            assert (result.returncode == 0) is (not state.get('offline', False)), result.stdout + result.stderr
+            if state.get('offline'):
+                assert 'The ascent is incomplete' in result.stdout and 'fixture-node' in result.stdout
+        print('PASS: offline inventory/status diagnostics run; ascent reports incomplete, malformed nodes stay fatal')
+
         # True keeps declared environment trust. Upstream and local clients are tested
         # with the same request transport and repository options.
         configured = yaml.safe_load(Path(source).read_text())
@@ -183,13 +226,14 @@ def main():
         playbook = work / 'ansible/playbooks/apps/selection.yml'
         playbook.write_text(yaml.safe_dump([play]))
         for state in ({}, {'empty': True}, {'failure': True}, {'partial_failure': True},
-                      {'refresh_failure': True}, {'offline': True}, {'unowned': True}, {'malformed': True},
+                      {'refresh_failure': True}, {'offline': True}, {'offline': True, 'mixed': True},
+                      {'malformed_node': True}, {'unowned': True}, {'malformed': True},
                       {'ambiguous': True}, {'invalid_identity': True}):
             result, calls = run(['ansible-playbook', '-i', source, str(playbook),
                                  '-e', json.dumps({'expect_existing': not state.get('empty')})], state)
             success = not any(state.get(key) for key in (
                 'failure', 'partial_failure', 'refresh_failure', 'offline', 'unowned', 'malformed',
-                'ambiguous', 'invalid_identity'))
+                'ambiguous', 'invalid_identity', 'malformed_node'))
             assert (result.returncode == 0) is success, result.stdout + result.stderr
             assert ('SELECTION_AND_ALLOCATION_COMPLETE' in result.stdout) is success
             if not success:
