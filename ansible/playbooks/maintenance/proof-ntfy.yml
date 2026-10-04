@@ -1,0 +1,49 @@
+---
+# Application cache adapter: HTTP publishing and polling prove cached A survives and
+# B-only publication disappears. Generated non-sensitive messages use a unique identity
+# on the declared authorized topic.
+- name: Recovery Proof | Ntfy cached-message fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Publish a disposable distinguishable message
+      ansible.builtin.uri:
+        url: "{{ proof_url }}/{{ proof_topic }}"
+        method: POST
+        body: "{{ proof_phase }}-{{ proof_run }}"
+        headers:
+          Authorization: "Bearer {{ homelabinfra_infra.notifications.token }}"
+          Cache: 'yes'
+          Priority: min
+      no_log: true
+      when: proof_phase in ['A', 'B']
+    - name: Poll durable cached messages through the application
+      ansible.builtin.uri:
+        url: "{{ proof_url }}/{{ proof_topic }}/json?poll=1&since=all"
+        return_content: true
+        headers:
+          Authorization: "Bearer {{ homelabinfra_infra.notifications.token }}"
+      register: _proof_messages
+      no_log: true
+      changed_when: false
+    - name: Decode message records privately
+      ansible.builtin.set_fact:
+        _proof_records: "{{ _proof_messages.content.splitlines() | map('from_json') | selectattr('event', 'equalto', 'message') | map(attribute='message') | list }}"
+      no_log: true
+    - name: Assert distinguishable A and B fixture semantics
+      ansible.builtin.assert:
+        that:
+          - "('A-' ~ proof_run) in _proof_records"
+          - "proof_phase != 'B' or ('B-' ~ proof_run) in _proof_records"
+          - "proof_phase != 'verify' or ('B-' ~ proof_run) not in _proof_records"
+      no_log: true
+    - name: Publish assertion names without fixture contents
+      ansible.builtin.debug:
+        msg:
+          proof_observation:
+            serving: true
+            a_present: true
+            b_present: "{{ proof_phase == 'B' }}"
+            b_absent: "{{ proof_phase == 'verify' }}"
