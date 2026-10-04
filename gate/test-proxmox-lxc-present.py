@@ -111,11 +111,11 @@ class PresentTests(unittest.TestCase):
         print('REPRODUCED upstream 2.0.0: POST omits cmode; existing PUT forwards default')
 
     def test_repository_console_and_creation_behavior(self):
+        self.assertFalse(repository_args(update=True)['update'])
+        self.assertEqual(repository_args(state='absent')['state'], 'present')
         for mode in (None, 'default', 'tty', 'console', 'shell'):
             args = repository_args(**({} if mode is None else {'cmode': mode}))
             self.assertNotIn('cmode', args)  # Public allowlist does not support cmode.
-            self.assertFalse(repository_args(update=True)['update'])
-            self.assertEqual(repository_args(state='absent')['state'], 'present')
             records, result = run(upstream.ProxmoxLxcAnsible, False, args=args)
             self.assertTrue(result['changed'])
             sent = records[0][2]

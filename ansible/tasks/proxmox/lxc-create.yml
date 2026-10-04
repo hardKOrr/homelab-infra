@@ -230,6 +230,7 @@
 # Never let present silently become an update or pct mutate a colliding guest.
 - name: Refuse existing identity at the LXC creation seam
   ansible.builtin.assert:
+    quiet: true
     that:
       - lxc_module_args.vmid | int > 0
       - lxc_module_args.hostname | length > 0
@@ -239,7 +240,9 @@
         and (hostvars[item].proxmox_hostname | default(item)) != lxc_module_args.hostname
     fail_msg: >-
       LXC creation requires a new project-owned identity. An existing VMID or hostname
-      must use the supported inventory reuse path; refusing mutation.
+      must use the supported inventory reuse path; refusing mutation while checking
+      inventory host {{ item }} against requested VMID {{ lxc_module_args.vmid }}
+      and hostname {{ lxc_module_args.hostname }}.
   loop: "{{ groups['all'] | default([]) }}"
 
 - name: Create LXC container
