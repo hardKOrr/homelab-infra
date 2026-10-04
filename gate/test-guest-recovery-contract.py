@@ -2,17 +2,21 @@
 """Fixture contract checks for the shared PBS VM/LXC recovery route.
 
 These tests intentionally do not contact Proxmox or PBS. They assert the mutation ordering
-and native artifact boundaries in the production playbooks, then run a tiny VM/LXC state
-model for the two destination paths and an A -> B -> restore A replacement.
+and execute the production identity assertions and restore-command arguments with a
+recording action plugin. This bounded seam coverage is not full restore execution.
 """
 from __future__ import annotations
 
 import json
-import re
+import os
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 import unittest
 
 from jinja2 import Environment, StrictUndefined
+from ansible.plugins.filter.core import FilterModule
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,18 +28,14 @@ RESTORE_JOB = ROOT / "rundeck/jobs/restore-guest.yaml"
 GROUPS = ROOT / "rundeck/job-groups.yml"
 
 
-_ARTIFACT = re.compile(r"^backup/(?P<kind>vm|ct)/(?P<vmid>[1-9][0-9]*)/(?P<name>[^/]+)$")
-
-
-def artifact_identity(volid: str) -> dict[str, str]:
-    """Parse native PBS identity without repackaging the artifact."""
-    match = _ARTIFACT.fullmatch(volid.split(":", 1)[-1])
-    if not match:
-        raise ValueError(volid)
-    expected = "vzdump-qemu-" if match["kind"] == "vm" else "vzdump-lxc-"
-    if not match["name"].startswith(expected + match["vmid"] + "-"):
-        raise ValueError(volid)
-    return match.groupdict()
+def fixture_command(argv, fixture_path):
+    """Record restore arguments without executing a provider command."""
+    assert argv[:2] == ["pvesh", "create"]
+    assert argv[2] in ("/nodes/fixture-node/qemu", "/nodes/fixture-node/lxc")
+    state = json.loads(Path(fixture_path).read_text())
+    state["calls"].append(argv)
+    Path(fixture_path).write_text(json.dumps(state))
+    return {"rc": 0, "stdout": "UPID:fixture", "stderr": "", "changed": True}
 
 
 def find_yaml_value(node, key):
@@ -61,14 +61,6 @@ class GuestRecoveryContractTests(unittest.TestCase):
         cls.backup = BACKUP.read_text(encoding="utf-8")
         cls.restore = RESTORE.read_text(encoding="utf-8")
         cls.wait = WAIT.read_text(encoding="utf-8")
-
-    def test_native_vm_and_lxc_artifacts_keep_identity(self):
-        vm = artifact_identity("pbs-homelab:backup/vm/101/vzdump-qemu-101-2026_09_10-00_00_00.vma.zst")
-        ct = artifact_identity("backup/ct/202/vzdump-lxc-202-2026_09_10-00_00_00.tar.zst")
-        self.assertEqual(vm, {"kind": "vm", "vmid": "101", "name": "vzdump-qemu-101-2026_09_10-00_00_00.vma.zst"})
-        self.assertEqual(ct["kind"], "ct")
-        with self.assertRaises(ValueError):
-            artifact_identity("backup/vm/101/vzdump-lxc-101-wrong")
 
     def test_backup_checks_schedule_storage_and_waits_for_vzdump(self):
         self.assertIn("/cluster/backup", self.backup)
@@ -159,19 +151,150 @@ class GuestRecoveryContractTests(unittest.TestCase):
         self.assertIn("overwrite=", script)
         self.assertIn("target_name=", script)
 
-    def test_fixture_vm_lxc_new_and_existing_transitions(self):
-        """Exercise fixture outcomes without pretending they are live-lab evidence."""
-        for kind, source, target in (("vm", "101", "501"), ("ct", "202", "502")):
-            source_point = f"backup/{kind}/{source}/vzdump-{'qemu' if kind == 'vm' else 'lxc'}-{source}-A"
-            pre_point = f"backup/{kind}/{target}/vzdump-{'qemu' if kind == 'vm' else 'lxc'}-{target}-B"
-            self.assertNotEqual(source_point, pre_point)
-            new_target = {"vmid": target, "kind": kind, "started": False, "unique": True}
-            self.assertFalse(new_target["started"])
-            self.assertTrue(new_target["unique"])
-            existing_target = {"vmid": target, "kind": kind, "point": pre_point, "started": True}
-            existing_target.update({"point": source_point, "identity": "target", "started": True})
-            self.assertEqual(existing_target["point"], source_point)
-            self.assertTrue(existing_target["started"])
+class RestoreGuestSourceTests(unittest.TestCase):
+    """Run owning identity tasks only, without claiming full-path recovery acceptance."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = yaml.safe_load(RESTORE.read_text())[0]
+        cls.renderer = Environment(undefined=StrictUndefined)
+        cls.renderer.filters.update(FilterModule().filters())
+        cls.work = tempfile.TemporaryDirectory(prefix="restore-guest-source-")
+        cls.directory = Path(cls.work.name)
+        plugins = cls.directory / "plugins"
+        plugins.mkdir()
+        (cls.directory / "guest_recovery_fixture.py").write_text(Path(__file__).read_text())
+        (plugins / "fixture_command.py").write_text(
+            "import os\nfrom ansible.plugins.action import ActionBase\n"
+            "from guest_recovery_fixture import fixture_command\n"
+            "class ActionModule(ActionBase):\n"
+            "    def run(self, tmp=None, task_vars=None):\n"
+            "        return fixture_command(self._task.args['argv'], os.environ['RESTORE_FIXTURE'])\n"
+        )
+        cls.inventory = cls.directory / "inventory.ini"
+        cls.inventory.write_text("[proxmox_delegates]\nfixture-node ansible_connection=local\n")
+        cls.env = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("ANSIBLE_", "PROXMOX_", "RD_"))}
+        cls.env.update(ANSIBLE_CONFIG=str(ROOT / "ansible/ansible.cfg"),
+                       ANSIBLE_STDOUT_CALLBACK="default",
+                       ANSIBLE_ACTION_PLUGINS=str(plugins),
+                       ANSIBLE_LOCAL_TEMP=str(cls.directory / "tmp"),
+                       PYTHONPATH=str(cls.directory),
+                       RESTORE_FIXTURE=str(cls.directory / "state.json"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.work.cleanup()
+
+    def render(self, value, **variables):
+        return self.renderer.from_string(value).render(**variables)
+
+    def test_normalization_preserves_native_timestamps_at_every_source_site(self):
+        selected = self.source["vars"]["_rg_artifact"]
+        capture = next(t for t in self.source["pre_tasks"] if "block" in t)["block"]
+        supplied = capture[0]["ansible.builtin.set_fact"]["_rg_pre_restore_point"]
+        newest = next(t for t in capture if t["name"].startswith("Select the newest"))[
+            "ansible.builtin.set_fact"]["_rg_pre_restore_point"]
+        for kind in ("vm", "ct"):
+            native = f"backup/{kind}/501/2026-10-04T12:34:56Z"
+            for prefix in ("", "pbs-fixture:"):
+                with self.subTest(kind=kind, prefix=prefix):
+                    point = prefix + native
+                    self.assertEqual(self.render(selected, recovery_point=point), native)
+                    self.assertEqual(self.render(supplied, pre_restore_point=point), native)
+                    self.assertEqual(self.render(newest, _rg_pre_artifacts={
+                        "stdout": json.dumps([{"volid": point, "ctime": 1}])}), native)
+
+    def run_source(self, kind="ct", destination="existing", point=None, pre=None,
+                   qualified=True, captured=False):
+        import copy
+        native = f"backup/{kind}/501/2026-10-04T12:34:56Z"
+        target = "502" if destination == "new" else "501"
+        independent = f"backup/{kind}/{target}/2026-10-04T13:45:57Z"
+        prefix = "pbs-fixture:" if qualified else ""
+        point = prefix + native if point is None else point
+        pre = prefix + independent if pre is None else pre
+        play = copy.deepcopy(self.source)
+        production = play["pre_tasks"]
+        capture = next(task for task in production if "block" in task)["block"]
+        supplied = capture[0]
+        selected = next(task for task in capture if task["name"].startswith("Select the newest"))
+        identity = next(task for task in capture if task["name"] == "Require an independent readable pre-restore point")
+        selected.pop("when", None)
+        # No credential loading, provider inventory, or full destination validation here.
+        # Keep the actual identity assertions followed by actual VM/LXC restore arguments,
+        # so a rejected input must fail before either mutation can be recorded.
+        play["pre_tasks"] = production[2:4] + [selected if captured else supplied, identity]
+        commands = play["tasks"][0]["block"]
+        play["tasks"] = [task for task in commands if task["name"] in (
+            "Restore a VM from the native PBS artifact", "Restore an LXC from the native PBS artifact")]
+        for task in play["tasks"]:
+            task["fixture_command"] = task.pop("ansible.builtin.command")
+        play["vars"].update(homelabinfra_config={"proxmox": {"node": "fixture-node"}},
+                            backup_storage="pbs-fixture", source_vmid="501",
+                            target_vmid=target, target_storage="local",
+                            _rg_target_node="fixture-node",
+                            _rg_target_type="qemu" if kind == "vm" else "lxc",
+                            _rg_pre_artifacts={"stdout": json.dumps([
+                                {"volid": pre, "ctime": 1}])},
+                            destination=destination, recovery_point=point,
+                            pre_restore_point=pre, overwrite=True)
+        path = self.directory / "play.yml"
+        path.write_text(yaml.safe_dump([play], sort_keys=False))
+        fixture = Path(self.env["RESTORE_FIXTURE"])
+        fixture.write_text(json.dumps(dict(calls=[], status="stopped", config={})))
+        result = subprocess.run([str(Path(sys.executable).parent / "ansible-playbook"),
+                                 "-i", str(self.inventory), str(path)], env=self.env,
+                                cwd=ROOT, text=True, capture_output=True, timeout=60)
+        return result, json.loads(fixture.read_text())
+
+    def assert_refused(self, expected_task, **values):
+        result, state = self.run_source(**values)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(expected_task, result.stdout.split("fatal:")[0].split("TASK [")[-1])
+        self.assertFalse(any(call[1] in ("create", "set") for call in state["calls"]), state["calls"])
+
+    def test_native_identities_reach_restore_arguments_without_timestamp_loss(self):
+        for kind in ("vm", "ct"):
+            for qualified in (False, True):
+                for destination in ("existing", "new"):
+                    with self.subTest(kind=kind, qualified=qualified, destination=destination):
+                        result, state = self.run_source(kind=kind, qualified=qualified, destination=destination)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertEqual(len(state["calls"]), 1)
+                        restore = state["calls"][0]
+                        self.assertIn(f"pbs-fixture:backup/{kind}/501/2026-10-04T12:34:56Z", restore)
+                        self.assertEqual(restore[restore.index("--unique") + 1], "1" if destination == "new" else "0")
+                        self.assertEqual(restore[restore.index("--start") + 1], "0")
+
+    def test_existing_filename_identities_remain_kind_and_source_bound(self):
+        for kind, backend in (("vm", "qemu"), ("ct", "lxc")):
+            point = f"pbs-fixture:backup/{kind}/501/vzdump-{backend}-501-2026_10_04-12_34_56"
+            pre = f"backup/{kind}/501/vzdump-{backend}-501-2026_10_04-13_45_57"
+            result, _ = self.run_source(kind=kind, point=point, pre=pre)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_refused("Validate artifact identity", point="backup/vm/501/vzdump-lxc-501-wrong")
+        self.assert_refused("Validate artifact identity", point="backup/ct/501/vzdump-lxc-502-wrong")
+
+    def test_source_identity_refuses_wrong_source_malformed_and_nested(self):
+        for point in ("backup/ct/502/2026-10-04T12:34:56Z", "backup/ct/501/not-a-time",
+                      "backup/ct/501/2026-10-04T12:34:56Z/nested",
+                      "pbs-fixture:other:backup/ct/501/2026-10-04T12:34:56Z"):
+            with self.subTest(point=point):
+                self.assert_refused("Validate", point=point)
+
+    def test_independent_point_refuses_wrong_source_kind_malformed_nested_and_same(self):
+        for pre in ("backup/ct/502/2026-10-04T13:45:57Z", "backup/vm/501/2026-10-04T13:45:57Z",
+                    "backup/ct/501/not-a-time", "backup/ct/501/2026-10-04T13:45:57Z/nested",
+                    "backup/ct/501/2026-10-04T12:34:56Z"):
+            with self.subTest(pre=pre):
+                self.assert_refused("Require an independent readable pre-restore point", pre=pre)
+
+    def test_selected_native_independent_point_preserves_timestamp(self):
+        for kind in ("vm", "ct"):
+            for qualified in (False, True):
+                result, _ = self.run_source(kind=kind, captured=True, qualified=qualified)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
