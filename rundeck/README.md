@@ -89,6 +89,39 @@ The script asks for the lab network, provider choices, and owner and automation 
 Each prompt also has an environment-variable form, so `NONINTERACTIVE=1` supports scripted
 bootstrap. The script header owns the current input list and defaults.
 
+Outbound mail is optional: `LAB_MAIL_PROVIDER` defaults to `none`. Owner and automation
+addresses may be synthetic; enrollment does not require a monitored mailbox or working
+mail. Selecting `smtp` asks for `LAB_MAIL_HOST`, `LAB_MAIL_PORT` (default `587`),
+`LAB_MAIL_ENCRYPTION` (default `starttls`), `LAB_MAIL_FROM_ADDRESS`,
+`LAB_MAIL_FROM_NAME` (default `Homelab`), and `LAB_MAIL_USERNAME` (default From address).
+Only these nonsecret fields enter `config/infrastructure.yml`.
+Bootstrap SMTP intake requires an AUTH username and password. Unauthenticated internal
+relays are outside this intake; keep `LAB_MAIL_PROVIDER=none` rather than inventing a
+credential.
+
+The SMTP password is a hidden prompt, or `LAB_MAIL_PASSWORD` for unattended input. Load
+it from a root-owned `0600` environment file rather than putting a credential in command
+arguments, shell history or job options. Run without shell tracing:
+
+```sh
+set +x
+set -a
+source /root/bootstrap-private.env
+set +a
+NONINTERACTIVE=1 bash /root/bootstrap-rundeck.sh
+```
+
+Bootstrap stages the single-line password only in
+`/etc/homelab-infra/secrets.d/mail.env` (`0600 rundeck:rundeck`, directory `0700` with the
+same owner). The Seed wrapper reads it literally, without executing its contents; the
+existing cutover imports it into `homelab-infra/mail` (`password`). Reruns preserve authored
+config and an existing sink, even if different environment answers are supplied. A
+missing sink for an already configured SMTP provider can be supplied before cutover;
+after the vault-mode marker exists bootstrap neither prompts nor restages it. After
+cutover use **Store Secret** with item `homelab-infra/mail`, field `password` for new or
+rotated input, and the supported configuration path for nonsecret changes. No mail is
+sent or provider account validated by this intake.
+
 Everything else is discovered from the node it runs on: the node name, the API address,
 storages, bridges, template storage, the timezone.
 

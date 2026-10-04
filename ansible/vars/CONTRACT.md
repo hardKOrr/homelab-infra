@@ -567,6 +567,13 @@ imports it into `homelab-infra/dns`, after which the vault is the only source. D
 `dns.provider` without the credential is not a partial configuration — the wiring asserts
 it, so the next app deploy fails.
 
+Optional `LAB_MAIL_PROVIDER=smtp` bootstrap intake authors only the nonsecret mail fields
+and privately stages `LAB_MAIL_PASSWORD` in `/etc/homelab-infra/secrets.d/mail.env`
+(`0600 rundeck:rundeck`). The Seed wrapper reads literal single-line values; existing
+config and sink are preserved on rerun. No-mail is the default and synthetic owner
+identities do not enable mail. After cutover, Store Secret writes `homelab-infra/mail`
+field `password`; bootstrap never restages mail in Vault mode.
+
 In Seed mode, the Proxmox and administration environment variables remain temporary inputs. Once
 `/etc/homelab-infra/state/vault-mode` exists, `lab-run.sh` will not source seed files even
 if they are recreated. It obtains Proxmox and SSH material from Vaultwarden and cleans the
