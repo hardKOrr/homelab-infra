@@ -48,6 +48,11 @@ die() { printf '\033[1;31m[lab-run] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$#" -ge 1 ] || die "usage: lab-run <playbook> [ansible-playbook args...]"
 
+# Bootstrap installs lab-run as a symlink. Resolve the running source before
+# loading helpers, including Seed runs with refresh/re-exec disabled.
+_lab_source="$(readlink -f -- "${BASH_SOURCE[0]}")"
+_self_repo="$(cd -- "$(dirname -- "$_lab_source")/../.." && pwd -P)"
+
 # ── Resolve configuration ─────────────────────────────────────────────────────
 # The env file is written once at bootstrap and is the only place a path lives on
 # the host. Values already in the environment win, so a job or an operator can
@@ -70,7 +75,7 @@ if [ -r "$LAB_ENV_FILE" ]; then
   # The helper validates each path and shell-quotes its value, so eval sees one literal
   # assignment per line. An unusable setting only warns: this runs above the refresh,
   # where a fatal check could never be repaired by pushing a fix (see below).
-  _lab_tls_env="$(python3 "$(dirname -- "${BASH_SOURCE[0]}")/../../rundeck/preserve-tls-env.py" "$LAB_ENV_FILE")" \
+  _lab_tls_env="$(python3 "$_self_repo/rundeck/preserve-tls-env.py" "$LAB_ENV_FILE")" \
     || { log "WARNING: ignoring unusable CA settings in $LAB_ENV_FILE"; _lab_tls_env=""; }
   while IFS= read -r _line; do
     [ -n "$_line" ] || continue
@@ -115,7 +120,6 @@ fi
 [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || export CLOUDFLARE_API_TOKEN="${RD_OPTION_CLOUDFLARE_API_TOKEN:-}"
 
 # Fall back to this script's own location: ansible/scripts/lab-run.sh -> repo root.
-_self_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 LAB_REPO="${LAB_REPO:-$_self_repo}"
 LAB_VENV="${LAB_VENV:-/opt/homelab-ansible}"
 LAB_BRANCH="${LAB_BRANCH:-master}"

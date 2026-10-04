@@ -58,6 +58,8 @@ copied. `lab-run` exports them to every run unless the caller already set them (
 Seed steps reach it through `sudo`, which drops the caller's environment), and warns and
 skips them if one is unusable. This supports private or staging certificate authorities
 without disabling TLS verification or changing system trust.
+The installed `lab-run` symlink resolves its source checkout before loading the CA
+helper, including Seed runs with checkout refresh disabled.
 
 `DEPLOY_VAULTWARDEN=1` is the default. Set `DEPLOY_VAULTWARDEN=0` only for a
 runner-only recovery or diagnostic run. The shell script does not contain a second
