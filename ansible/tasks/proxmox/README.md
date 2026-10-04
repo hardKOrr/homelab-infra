@@ -57,7 +57,7 @@ not change the wrapper's shared CA exports or other providers' verification sett
 
 Inventory parse failures are fatal, including when another inventory source parses and
 when a refresh fails after a successful initial read. The completion marker is published
-only after the entire parse succeeds and every node's guests can be enumerated. Offline
+only after the entire parse succeeds and every node's guests can be enumerated. Offline or unknown
 nodes remain in a successfully parsed diagnostic inventory, with the completion marker
 false and `homelabinfra_proxmox_inventory_offline_nodes` identifying the missing coverage.
 Status reports that incomplete view; ascent verification reports it and fails its final

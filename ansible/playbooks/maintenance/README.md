@@ -18,8 +18,8 @@ that interface.
   media mounts; a restore is plan-only until an operator supplies a snapshot and overwrite.
 - Status and ascent verification read state without enforcing drift.
 
-Offline Proxmox nodes leave guest enumeration incomplete. Status reports that diagnostic
-view without stopping at inventory parsing; ascent verification reports the offline nodes
+Offline or unknown Proxmox nodes leave guest enumeration incomplete. Status reports that diagnostic
+view without stopping at inventory parsing; ascent verification reports the offline or unknown nodes
 and cannot declare a clean ascent. Guest selection and allocation still refuse incomplete
 inventory. Malformed or failed API inventory reads remain fatal.
 

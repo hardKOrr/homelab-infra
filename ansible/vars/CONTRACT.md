@@ -18,9 +18,10 @@ files. Inspection rules that protect these shapes are in `docs/specs/config-laye
 
 `homelabinfra_proxmox_inventory_complete` is a controller inventory boolean, outside
 these three mappings. The supported inventory plugin resets it before parsing and sets
-it true only after successful enumeration, with no offline nodes.
-`homelabinfra_proxmox_inventory_offline_nodes` lists offline node names for diagnostics. Guest lookup and allocation require it. It is
-not user-authored configuration, a cached fact or a service-registry field; see
+it true only after successful enumeration, with no offline or unknown nodes.
+`homelabinfra_proxmox_inventory_offline_nodes` lists offline or unknown node names for
+diagnostics. Guest lookup and allocation require the completion marker. Neither is
+user-authored configuration, a cached fact or a service-registry field; see
 [`Proxmox inventory safety`](../tasks/proxmox/README.md#inventory-availability-and-trust).
 
 ## 2. Load map: file → wrapper → target key

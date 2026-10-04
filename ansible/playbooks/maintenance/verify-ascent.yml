@@ -142,7 +142,7 @@
         msg: >-
           {{ (groups['lab_managed'] | default([]) | length) }} tagged guest(s).
           Inventory complete: {{ homelabinfra_proxmox_inventory_complete | default(false) | bool }}.
-          Offline Proxmox nodes: {{ homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true) }}.
+          Offline or unknown Proxmox nodes: {{ homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true) }}.
           Not running: {{ _va_down | join(', ') | default('none', true) }}.
           Running but unreachable:
           {{ _va_unreachable | join(', ') | default('none', true) }}.
@@ -160,7 +160,7 @@
              if _va_clean
              else ('Inventory complete: '
                    ~ (homelabinfra_proxmox_inventory_complete | default(false) | bool | string)
-                   ~ '; offline Proxmox nodes: '
+                   ~ '; offline or unknown Proxmox nodes: '
                    ~ (homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true))
                    ~ '; stopped: '
                    ~ (_va_down | join(', ') | default('none', true))
@@ -172,7 +172,7 @@
     - name: Fail when the lab did not fully come back
       ansible.builtin.fail:
         msg: >-
-          The ascent is incomplete. Offline Proxmox nodes:
+          The ascent is incomplete. Offline or unknown Proxmox nodes:
           {{ homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('none', true) }}.
           Stopped: {{ _va_down | join(', ') | default('none', true) }}.
           Running but unreachable: {{ _va_unreachable | join(', ') | default('none', true) }}.

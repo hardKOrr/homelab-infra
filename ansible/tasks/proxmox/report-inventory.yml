@@ -1,9 +1,9 @@
 ---
-# Diagnostic-only callers may report a parsed inventory with offline nodes.
+# Diagnostic-only callers may report a parsed inventory with offline or unknown nodes.
 - name: Report incomplete Proxmox guest inventory
   ansible.builtin.debug:
     msg: >-
-      Proxmox inventory incomplete. Offline nodes:
+      Proxmox inventory incomplete. Offline or unknown nodes:
       {{ homelabinfra_proxmox_inventory_offline_nodes | default([]) | join(', ') | default('unknown', true) }}.
-      Guests on offline nodes were not enumerated; their state is unknown.
+      Guests on offline or unknown nodes were not enumerated; their state is unknown.
   when: not (homelabinfra_proxmox_inventory_complete | default(false) | bool)

@@ -41,11 +41,11 @@ def install_transport():
             if fixture.get('failure') or (fixture.get('refresh_failure') and node_reads > 1):
                 raise requests.exceptions.SSLError('provider-free inventory failure')
             data = [{'node': 'fixture-node', 'type': 'node',
-                     'status': 'offline' if fixture.get('offline') else 'online'}]
+                     'status': 'unknown' if fixture.get('unknown') else ('offline' if fixture.get('offline') else 'online')}]
             if fixture.get('mixed'):
                 data.append({'node': 'fixture-online', 'type': 'node', 'status': 'online'})
             if fixture.get('malformed_node'):
-                data[0]['status'] = 'unknown'
+                data[0]['status'] = 'invalid-status'
         elif path.endswith('/pools') or path.endswith('/qemu') or path.endswith('/snapshot'):
             data = []
             if path.endswith('/pools') and fixture.get('partial_failure'):
@@ -144,13 +144,15 @@ def main():
             assert calls and all(call['verify'] is False for call in calls)
         print('PASS: real inventory healthy empty/tagged identity and explicit independent TLS policy')
 
-        for state in ({'offline': True}, {'offline': True, 'mixed': True}):
+        for state in ({'offline': True}, {'offline': True, 'mixed': True},
+                      {'unknown': True}, {'unknown': True, 'mixed': True}):
             result, calls = run(['ansible-inventory', '-i', source, '--list'], state)
             assert result.returncode == 0, result.stderr
             inventory = json.loads(result.stdout)
             node = inventory['_meta']['hostvars']['fixture-node']
             assert node['homelabinfra_proxmox_inventory_complete'] is False
             assert node['homelabinfra_proxmox_inventory_offline_nodes'] == ['fixture-node']
+            assert not any('/nodes/fixture-node/' in call['path'] for call in calls), calls
             assert inventory.get('lab_app_caddy', {}).get('hosts', []) == (['caddy'] if state.get('mixed') else [])
         result, _ = run(['ansible-inventory', '-i', source, '--list'], {'malformed_node': True})
         assert result.returncode != 0, 'malformed node state must stay fatal'
@@ -164,9 +166,10 @@ def main():
                 task['ansible.builtin.import_tasks'] = str(REPO / 'ansible/tasks/proxmox/report-inventory.yml')
         status_file = work / 'status.yml'
         status_file.write_text(yaml.safe_dump([status]))
-        result, _ = run(['ansible-playbook', '-i', source, str(status_file)], {'offline': True})
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert 'fixture-node' in result.stdout and 'their state is unknown' in result.stdout
+        for state in ({'offline': True}, {'unknown': True}, {'unknown': True, 'mixed': True}):
+            result, _ = run(['ansible-playbook', '-i', source, str(status_file)], state)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert 'fixture-node' in result.stdout and 'their state is unknown' in result.stdout
 
         ascent = yaml.safe_load((REPO / 'ansible/playbooks/maintenance/verify-ascent.yml').read_text())
         decision = {'hosts': 'localhost', 'gather_facts': False,
@@ -176,12 +179,12 @@ def main():
                         'Fail when the lab did not fully come back')]}
         ascent_file = work / 'ascent.yml'
         ascent_file.write_text(yaml.safe_dump([status, decision]))
-        for state in ({'empty': True}, {'offline': True}):
+        for state in ({'empty': True}, {'offline': True}, {'unknown': True}, {'unknown': True, 'mixed': True}):
             result, _ = run(['ansible-playbook', '-i', source, str(ascent_file)], state)
-            assert (result.returncode == 0) is (not state.get('offline', False)), result.stdout + result.stderr
-            if state.get('offline'):
+            assert (result.returncode == 0) is (not (state.get('offline') or state.get('unknown'))), result.stdout + result.stderr
+            if state.get('offline') or state.get('unknown'):
                 assert 'The ascent is incomplete' in result.stdout and 'fixture-node' in result.stdout
-        print('PASS: offline inventory/status diagnostics run; ascent reports incomplete, malformed nodes stay fatal')
+        print('PASS: offline/unknown inventory/status diagnostics run; ascent reports incomplete, malformed nodes stay fatal')
 
         # True keeps declared environment trust. Upstream and local clients are tested
         # with the same request transport and repository options.
@@ -227,12 +230,13 @@ def main():
         playbook.write_text(yaml.safe_dump([play]))
         for state in ({}, {'empty': True}, {'failure': True}, {'partial_failure': True},
                       {'refresh_failure': True}, {'offline': True}, {'offline': True, 'mixed': True},
+                      {'unknown': True}, {'unknown': True, 'mixed': True},
                       {'malformed_node': True}, {'unowned': True}, {'malformed': True},
                       {'ambiguous': True}, {'invalid_identity': True}):
             result, calls = run(['ansible-playbook', '-i', source, str(playbook),
                                  '-e', json.dumps({'expect_existing': not state.get('empty')})], state)
             success = not any(state.get(key) for key in (
-                'failure', 'partial_failure', 'refresh_failure', 'offline', 'unowned', 'malformed',
+                'failure', 'partial_failure', 'refresh_failure', 'offline', 'unknown', 'unowned', 'malformed',
                 'ambiguous', 'invalid_identity', 'malformed_node'))
             assert (result.returncode == 0) is success, result.stdout + result.stderr
             assert ('SELECTION_AND_ALLOCATION_COMPLETE' in result.stdout) is success
@@ -249,7 +253,7 @@ def main():
         # Static inventory alone cannot authorize absence-based allocation/reuse.
         result, _ = run(['ansible-playbook', '-i', 'localhost,', str(playbook)], {})
         assert result.returncode != 0 and 'TASK [Set network selector]' not in result.stdout
-        print('PASS: real Caddy reuse/allocation tasks reject failed, partial, refresh, offline,')
+        print('PASS: real Caddy reuse/allocation tasks reject failed, partial, refresh, offline/unknown,')
         print('      unowned and unsupported inventory; healthy empty allocation remains supported')
 
         # Execute each supported native/stack caller's actual refresh, tag lookup and
