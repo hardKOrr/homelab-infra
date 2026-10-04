@@ -177,3 +177,8 @@ The same workflow also runs `gate / container` (`bash gate/container.sh`) and
 evidence, not production live-lab acceptance: `container` converges a disposable Docker
 target, `kind` converges a disposable single-node Kind cluster, and neither reaches a real
 Proxmox endpoint, a real Kubernetes cluster, or any repository secret.
+
+`python3 gate/test-recovery-proof.py` exercises the production dispatcher with recording
+provider-free seams: refusal before mutation, deployment convergence, artifact freshness,
+A/B semantics, shared scope, stopped new destinations, degraded evidence and stage failures.
+The callback and Ntfy adapter are also exercised locally without a lab or credentials.

@@ -105,3 +105,46 @@ node with Python 3 and read permission: `python3 audit.py --node <node> --includ
 The source is [`../../files/recovery/audit.py`](../../files/recovery/audit.py). Only
 `pvesh get` requests run; no credentials, full guest configurations or raw command errors
 appear in the report.
+
+## Bounded recovery proof
+
+`prove-recovery.yml` is the **Recover / Drills / Prove Recovery** dispatcher. It resolves
+product defaults and catalog recovery ownership, refusing native/project-managed,
+rebuild-only, Kubernetes, appliance and out-of-band runner/vault/PBS units. It requires
+an exact owned, running disposable guest, complete comma-separated workload acknowledgement,
+and explicit active PBS/destination storage. Plan can discover workload tags with a blank
+acknowledgement; execution requires the exact disclosed list. Application tags and
+shared-stack membership must match the selected instance. Device/excluded disk and bind-mount coverage are refused; guest-mounted remote
+filesystems and independently hosted dependencies remain unverified.
+
+Plan is read-only and reports the sequence/scope; it creates no fixture or recovery point.
+Execute invokes the owning deploy twice, requires zero second-run changes, writes and reads
+A using an optional repository-owned adapter, invokes `backup-guest.yml`, identifies a newly
+completed A artifact, writes/reads B and captures a distinct B artifact. It invokes unchanged
+`restore-guest.yml` for plan and execution with that independent B point. Existing restores
+verify running state, original identity/interfaces/onboot and serving plus A-present/B-absent.
+A product without an adapter reports serving-only evidence, incomplete for durable data.
+
+The child-playbook callback transports only explicit observations and counters to the
+controller helper. Raw task diagnostics, no-log results and backup contents never become
+proof output. Warnings and ignored/rescued failures prevent an unqualified evidence claim.
+Failures report the stage and any captured A/B identities; artifacts and partial targets
+remain for inspection and the owning Restore Guest retry route. No automatic retry or
+cleanup runs. The Ntfy adapter retains uniquely identified, non-sensitive cached messages
+on the application's already-authorized topic; it does not change access policy.
+
+New destinations use the same restore seam, require an unused VMID, distinct explicit
+address/MAC/name with target-only tags (no source application/stack/cluster selectors)
+and one target-owned LXC `net0` with `link_down=1`, and are inspected stopped with
+`onboot=0`. Multiple interfaces and VM cloud-init address layouts are refused because
+the owning route cannot replace their full connectivity. Only destination inspection
+follows new restore; it does not read source configuration or serving state. Serving
+and fixture verification remain pending until separately authorized isolated activation; the dispatcher never claims a complete new-target data
+proof. No routing or writer cutover is provided.
+
+Optional `recovery.drill.fixture_playbook` is declared beside application defaults and
+names a committed maintenance playbook, never a second product registry. Its A/B phases
+write and read through the application; verify emits `serving`, `a_present`, `b_absent`
+booleans after assertions without contents. Runtime instance config cannot replace method
+or adapter declarations. This dispatcher is not a prerequisite for ordinary deployment,
+function/convergence checks or supported Backup/Restore observations.

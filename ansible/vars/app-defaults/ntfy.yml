@@ -4,6 +4,9 @@
 # This file is git-managed — git pull may update these defaults.
 
 ntfy_defaults:
+  recovery:
+    drill:
+      fixture_playbook: playbooks/maintenance/proof-ntfy.yml
   proxmox:
     type: lxc                   # native LXC — single Go binary, no Docker needed
     # Boot tier 30 — notifications come up before the things that report to them, so

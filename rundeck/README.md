@@ -189,7 +189,7 @@ The top-level tree is:
 | `Platform` | Deploy access, identity, monitoring, backup, and hosting capabilities |
 | `Manage` | Lab-wide configuration, integration, health, and storage actions |
 | `Operate` | Read-only diagnosis and operator troubleshooting actions |
-| `Recover` | Recover credentials |
+| `Recover` | Recover guests and credentials; run bounded recovery proofs |
 | `Setup` | Establish credentials, bootstrap the platform, and reload automation definitions |
 
 Run `python3 rundeck/render-job.py --check rundeck/jobs` to validate the complete tree.
@@ -421,3 +421,10 @@ interactive SSH session:
 Every write first copies the current file to `<dir>/.backups/<file>.<timestamp>`, prunes
 that file's backups to the newest 20, and writes the diff to the job log. This is
 point-in-time recovery, not a commit history.
+
+**Recover / Drills / Prove Recovery** owns the bounded PBS guest dispatcher. Its default
+plan is read-only; execution requires explicit disposable whole-guest authority and every
+workload acknowledgement. Existing and stopped/isolated new destinations use Restore Guest;
+new activation/data checks remain pending. Serving-only results cannot claim durable data.
+Artifact retention and failed-target retry instructions live in the job description. This
+job is not required for ordinary install/function/convergence checks.
