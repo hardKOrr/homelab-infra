@@ -141,6 +141,7 @@ class PresentTests(unittest.TestCase):
             self.assertFalse(result['changed'])
 
     def test_actual_guards_refuse_collisions_failed_inventory_and_races(self):
+        inputs = next(t for t in TASKS if t['name'] == 'Require project-owned LXC creation inputs')
         guard = next(t for t in TASKS if t['name'] == 'Refuse existing identity at the LXC creation seam')
         post = next(t for t in TASKS if t['name'] == 'Require a newly created LXC before node-local configuration')
         inventory_guard = yaml.safe_load((ROOT / 'ansible/tasks/proxmox/assert-inventory.yml').read_text())
@@ -156,29 +157,38 @@ class PresentTests(unittest.TestCase):
             ('unrelated guest', True, {'proxmox_vmid': 502, 'proxmox_hostname': 'unrelated'}, True, True),
             ('resource appeared after inventory', True, {}, False, False),
         ]
+        cases = [(*case, {}) for case in cases] + [
+            ('missing ownership', True, {}, True, False, {'tags': []}),
+            ('invalid VMID', True, {}, True, False, {'vmid': 0}),
+            ('missing hostname', True, {}, True, False, {'hostname': None}),
+        ]
         self.assertEqual(TASKS[0]['ansible.builtin.import_tasks'], 'assert-inventory.yml')
         create_index = next(i for i,t in enumerate(TASKS) if t['name'] == 'Create LXC container')
         self.assertLess(TASKS.index(guard), create_index)
+        self.assertLess(TASKS.index(inputs), TASKS.index(guard))
         self.assertEqual(TASKS[create_index + 1], post)
         with tempfile.TemporaryDirectory(prefix='lxc-present-') as directory:
             work = Path(directory)
             env = {k:v for k,v in os.environ.items() if not k.startswith(('ANSIBLE_', 'PROXMOX_'))}
             env.update(ANSIBLE_CONFIG=str(ROOT / 'ansible/ansible.cfg'), ANSIBLE_STDOUT_CALLBACK='default')
-            for label, complete, guest, created, succeeds in cases:
+            for label, complete, guest, created, succeeds, overrides in cases:
                 with self.subTest(label=label):
                     inventory = {'all': {'hosts': {'localhost': {'ansible_connection': 'local'},
                                                   'fixture-host': guest}}}
                     (work / 'inventory.yml').write_text(yaml.safe_dump(inventory))
                     play = [{'hosts': 'localhost', 'gather_facts': False,
                              'vars': {'homelabinfra_proxmox_inventory_complete': complete,
-                                      'lxc_module_args': repository_args(),
+                                      'lxc_module_args': dict(repository_args(), **overrides),
                                       'create_lxc_result': {'changed': created}},
-                             'tasks': inventory_guard + [guard, post]}]
+                             'tasks': inventory_guard + [inputs, guard, post]}]
                     (work / 'play.yml').write_text(yaml.safe_dump(play))
                     result = subprocess.run([str(Path(sys.executable).parent / 'ansible-playbook'),
                                              '-i', str(work / 'inventory.yml'), str(work / 'play.yml')],
                                             env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+                    if overrides:
+                        self.assertIn('Refusing creation with invalid inputs.', result.stdout)
+                        self.assertNotIn('TASK [Refuse existing identity', result.stdout)
 
 
 

@@ -228,13 +228,21 @@
 
 # This seam creates new guests; application/stack reuse is selected before it.
 # Never let present silently become an update or pct mutate a colliding guest.
+- name: Require project-owned LXC creation inputs
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - lxc_module_args.vmid | default(0, true) | int > 0
+      - lxc_module_args.hostname | default('', true) | length > 0
+      - "'_+lab' in (lxc_module_args.tags | default([], true))"
+    fail_msg: >-
+      LXC creation requires a positive VMID, a non-empty hostname and the exact
+      _+lab ownership tag. Refusing creation with invalid inputs.
+
 - name: Refuse existing identity at the LXC creation seam
   ansible.builtin.assert:
     quiet: true
     that:
-      - lxc_module_args.vmid | int > 0
-      - lxc_module_args.hostname | length > 0
-      - "'_+lab' in (lxc_module_args.tags | default([]))"
       - >-
         (hostvars[item].proxmox_vmid | default(0) | int) != (lxc_module_args.vmid | int)
         and (hostvars[item].proxmox_hostname | default(item)) != lxc_module_args.hostname
