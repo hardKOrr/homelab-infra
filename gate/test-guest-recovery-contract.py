@@ -216,6 +216,10 @@ class RestoreGuestSourceTests(unittest.TestCase):
         pre = prefix + independent if pre is None else pre
         play = copy.deepcopy(self.source)
         production = play["pre_tasks"]
+        shared_contract = next(task for task in production
+                               if task["name"] == "Validate the shared restore contract")
+        artifact_identity = next(task for task in production
+                                 if task["name"] == "Validate artifact identity before touching a target")
         capture = next(task for task in production if "block" in task)["block"]
         supplied = capture[0]
         selected = next(task for task in capture if task["name"].startswith("Select the newest"))
@@ -224,7 +228,8 @@ class RestoreGuestSourceTests(unittest.TestCase):
         # No credential loading, provider inventory, or full destination validation here.
         # Keep the actual identity assertions followed by actual VM/LXC restore arguments,
         # so a rejected input must fail before either mutation can be recorded.
-        play["pre_tasks"] = production[2:4] + [selected if captured else supplied, identity]
+        play["pre_tasks"] = [shared_contract, artifact_identity,
+                             selected if captured else supplied, identity]
         commands = play["tasks"][0]["block"]
         play["tasks"] = [task for task in commands if task["name"] in (
             "Restore a VM from the native PBS artifact", "Restore an LXC from the native PBS artifact")]
