@@ -106,6 +106,14 @@ def resolve(request, inputs):
     return row, fixture, defaults
 
 
+def interface(value):
+    """PVE property strings may reorder fields and normalize MAC case on write."""
+    fields = dict(part.split("=", 1) for part in value.split(",") if "=" in part)
+    if "hwaddr" in fields:
+        fields["hwaddr"] = fields["hwaddr"].lower()
+    return fields
+
+
 def validate_guest(request, observation, defaults):
     guest, config = observation["guest"], observation["config"]
     tags = set(guest.get("tags", "").split(";"))
@@ -221,13 +229,12 @@ def validate_guest(request, observation, defaults):
             and not any(re.fullmatch(r"ipconfig\d+", k) for k in config),
             "Owning new route cannot isolate multiple interfaces or replace VM cloud-init addresses; refuse this source layout.",
         )
-        source_parts = dict(
-            part.split("=", 1) for part in interfaces[0].split(",") if "=" in part
-        )
-        target_parts = dict(
-            part.split("=", 1)
-            for part in request["target_network"].split(",")
-            if "=" in part
+        source_parts = interface(interfaces[0])
+        target_parts = interface(request["target_network"])
+        require(
+            SAFE.fullmatch(target_parts.get("name", ""))
+            and SAFE.fullmatch(target_parts.get("bridge", "")),
+            "New LXC interface needs explicit safe name and bridge fields.",
         )
         require(
             target_parts.get("link_down") == "1",
@@ -514,7 +521,8 @@ def dispatch(request, inputs, backend):
                 and int(new["config"].get("onboot", 0)) == 0
                 and new["config"].get("name", new["config"].get("hostname"))
                 == request["target_name"]
-                and new["config"].get("net0") == request["target_network"]
+                and interface(new["config"].get("net0", ""))
+                == interface(request["target_network"])
                 and set(new["config"].get("tags", "").split(";"))
                 == set(request["target_tags"].split(";")),
                 "New target isolation/identity/onboot verification failed; inspect retained artifacts.",
@@ -562,7 +570,15 @@ def dispatch(request, inputs, backend):
             + (["A-present", "B-absent"] if fixture else []),
         )
         return evidence, 0
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError, OSError, subprocess.TimeoutExpired) as error:
+    except (
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        AttributeError,
+        OSError,
+        subprocess.TimeoutExpired,
+    ) as error:
         # Unexpected/provider diagnostics may contain secrets. Only our fixed refusals escape.
         evidence["failure"] = (
             str(error)

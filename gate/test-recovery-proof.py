@@ -83,7 +83,7 @@ class RecordingSeams:
                 hostname="new-fixture",
                 tags="_+lab;_new-fixture",
                 onboot=0,
-                net0="bridge=isolated,link_down=1,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
+                net0="name=eth0,bridge=isolated,link_down=1,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
             )
         return result
 
@@ -290,7 +290,7 @@ class DispatcherTests(unittest.TestCase):
             target_node="fixture",
             target_name="new-fixture",
             target_tags="_+lab;_new-fixture",
-            target_network="bridge=isolated,link_down=1,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
+            target_network="name=eth0,bridge=isolated,link_down=1,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
         )
         report, status = self.dispatch(data)
         self.assertEqual(status, 0, report)
@@ -370,17 +370,23 @@ class DispatcherTests(unittest.TestCase):
             target_node="fixture",
             target_name="new-fixture",
             target_tags="_+lab;_new-fixture",
-            target_network="bridge=isolated,link_down=1,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
+            target_network="name=eth0,bridge=isolated,link_down=1,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
         )
         for network in [
-            "bridge=isolated,link_down=10,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
-            "bridge=isolated,link_down=1,ip=192.0.2.2/25,hwaddr=02:00:00:00:00:03",
-            "bridge=isolated,link_down=1,ip=dhcp,hwaddr=02:00:00:00:00:03",
+            "name=eth0,bridge=isolated,link_down=10,ip=192.0.2.3/24,hwaddr=02:00:00:00:00:03",
+            "name=eth0,bridge=isolated,link_down=1,ip=192.0.2.2/25,hwaddr=02:00:00:00:00:03",
+            "name=eth0,bridge=isolated,link_down=1,ip=dhcp,hwaddr=02:00:00:00:00:03",
         ]:
             self.backend = RecordingSeams()
             data["target_network"] = network
             self.assertEqual(self.dispatch(data)[1], 1)
             self.assertEqual(len(self.backend.calls), 1)
+
+    def test_interface_normalization_accepts_pve_order_and_mac_case(self):
+        self.assertEqual(
+            proof.interface("name=eth0,hwaddr=AA:BB:CC:DD:EE:FF,link_down=1"),
+            proof.interface("link_down=1,hwaddr=aa:bb:cc:dd:ee:ff,name=eth0"),
+        )
 
     def test_artifact_freshness_rejects_stale_and_ambiguous_points(self):
         before = {"artifacts": [{"volid": "backup/ct/420/vzdump-lxc-420-old"}]}
