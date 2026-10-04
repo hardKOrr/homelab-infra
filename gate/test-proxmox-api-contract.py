@@ -17,8 +17,7 @@ pvesh, or pveam:
      `filters` contract documented in ansible/inventory/proxmox.yml).
   2. Idempotent reconciliation: the real `community.proxmox.proxmox` module, called with
      `state: present` (the module's `update` parameter set to its documented `false`, the
-     supported no-op path a caller takes to avoid an unconditional re-apply — see the
-     note below on why production's own default differs), creates the guest on the first
+     supported no-op path used by the production creation seam), creates the guest on the first
      run and issues no POST/PUT to the mock at all on an identical second run, verified
      from the mock's own request log rather than the module's self-reported `changed`.
   3. A controlled failure: one injected 500 on `GET /version` (the module's own
@@ -26,17 +25,9 @@ pvesh, or pveam:
      and the mock accepts ordinary requests again immediately afterward.
   4. No leaked fixture material in the request log.
 
-Note on `update: false`: ansible/tasks/proxmox/lxc-create.yml does not set `update` at
-all, so a real deploy inherits the module's own default of `true`, which always issues an
-update PUT (community.proxmox 2.0.0 computes its update diff against the *stored* guest
-config, and a create call never stores connection-only fields like `cmode` in the first
-place, so that field reads as "changed" on every subsequent run — a pre-existing quirk in
-the collection, not something this test suite should paper over by re-deriving its own
-notion of "no-op"). Using the module's other supported idempotent path here still proves
-the exact thing #32 asks for — a real production consumer deciding "nothing to do"
-without this suite inventing that decision itself — without asserting a request count
-this collection version does not actually guarantee. The quirk itself is worth a
-dedicated follow-up against community.proxmox, not a workaround baked into this contract.
+The production creation seam now fixes update=false. The actual-source/stub
+regression in test-proxmox-lxc-present.py records the upstream default hazard,
+renders the production arguments and verifies create/no-op behavior and refusals.
 
 Needs proxmoxer + requests (see gate/requirements-dev.txt) in addition to the base gate
 venv, since this drives the real module and inventory plugin rather than urllib against

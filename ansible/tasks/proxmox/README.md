@@ -15,6 +15,32 @@ The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.y
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path.
 
+## LXC creation and existing guests
+
+`lxc-create.yml` is a creation seam. Application and stack callers select existing
+owned guests through the inventory reuse path before calling it. It requires complete
+inventory and refuses a VMID or hostname collision, including an owned existing guest;
+use the supported reuse path instead of re-entering creation. Its module arguments fix
+`state: present` and `update: false` after the allowlist. If a resource appears after
+inventory selection, the module returns without mutation and the seam refuses all
+subsequent node-local configuration.
+
+The direct [`create-lxc.yml`](../../playbooks/proxmox/create-lxc.yml) entry point and
+the LXC path of [`create-docker-host.yml`](../../playbooks/docker/create-docker-host.yml)
+have no inventory reuse branch and are create-only. Re-running either against an
+existing pinned address/VMID now refuses creation instead of updating that guest in
+place. Use the application or stack deployment path for existing-guest reuse.
+
+Pinned `community.proxmox` 2.0.0 defaults to `update: true` and `cmode: default`.
+Creation strips that sentinel, while existing updates can forward it to PVE. Disabling
+updates at this creation boundary preserves existing console, network and storage
+settings without choosing a replacement enum. `cmode` remains outside the repository
+allowlist; upstream explicit `shell`, `console` and `tty` behavior is tested separately.
+Creation arguments and recursive configuration merges retain their existing behavior.
+`gate/test-proxmox-lxc-present.py` executes the actual pinned dispatch/create/update
+code against a stub API and the actual refusal tasks through Ansible, without sockets.
+This proves source semantics, not the method or target of a prior live request.
+
 ## Asynchronous task completion
 
 `wait-for-task.yml` is the common completion boundary for asynchronous PVE and PBS

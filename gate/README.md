@@ -116,6 +116,13 @@ python3 gate/check-output-anchors.py --update
 Use a new id when new output starts restating a documented passage. Do not run `--update`
 to clear a failure you have not read.
 
+`test-proxmox-lxc-present.py` reproduces the pinned 2.0.0 default console sentinel
+on the actual existing-update path, then renders repository creation arguments and
+executes upstream create/no-op behavior with a stub API. Actual Ansible guard tasks
+cover complete/failed inventory, existing owned and unowned identity collisions,
+unrelated guests and a resource appearing after inventory selection. It opens no sockets
+and makes no live-method or live-target claim.
+
 ## Scope
 
 A full sweep starts a separate `ansible-playbook` process for every playbook and lints the whole

@@ -13,6 +13,9 @@
 
 # Node names are not resolvable on their own — see the file's header. Every delegate_to
 # below depends on this having run.
+- name: Require completed inventory before LXC provisioning
+  ansible.builtin.import_tasks: assert-inventory.yml
+
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
@@ -177,7 +180,7 @@
          | selectattr('key', 'in', lxc_module_keys)
          | list
          | items2dict
-         | combine({'api_user': homelabinfra_config.proxmox.api_user}) }}
+         | combine({'api_user': homelabinfra_config.proxmox.api_user, 'state': 'present', 'update': false}) }}
   vars:
     # community.proxmox.proxmox parameters only. User/bookkeeping keys (network, ip_address)
     # are absent by design so they can never reach the module. Every key here is verified
@@ -223,9 +226,44 @@
       - hookscript
       - startup
 
+# This seam creates new guests; application/stack reuse is selected before it.
+# Never let present silently become an update or pct mutate a colliding guest.
+- name: Require project-owned LXC creation inputs
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - lxc_module_args.vmid | default(0, true) | int > 0
+      - lxc_module_args.hostname | default('', true) | length > 0
+      - "'_+lab' in (lxc_module_args.tags | default([], true))"
+    fail_msg: >-
+      LXC creation requires a positive VMID, a non-empty hostname and the exact
+      _+lab ownership tag. Refusing creation with invalid inputs.
+
+- name: Refuse existing identity at the LXC creation seam
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - >-
+        (hostvars[item].proxmox_vmid | default(0) | int) != (lxc_module_args.vmid | int)
+        and (hostvars[item].proxmox_hostname | default(item)) != lxc_module_args.hostname
+    fail_msg: >-
+      LXC creation requires a new project-owned identity. An existing VMID or hostname
+      must use the supported inventory reuse path; refusing mutation while checking
+      inventory host {{ item }} against requested VMID {{ lxc_module_args.vmid }}
+      and hostname {{ lxc_module_args.hostname }}.
+  loop: "{{ groups['all'] | default([]) }}"
+
 - name: Create LXC container
   community.proxmox.proxmox: "{{ lxc_module_args }}"
   register: create_lxc_result
+
+# A resource may appear after inventory selection. update=false makes that lookup a
+# no-op; stop before any delegated feature/start/metadata operation on that resource.
+- name: Require a newly created LXC before node-local configuration
+  ansible.builtin.assert:
+    that:
+      - create_lxc_result.changed | bool
+    fail_msg: "LXC identity appeared after inventory selection. Refusing node-local mutation; refresh inventory and use reuse."
 
 # Applied while the container is still STOPPED — pct refuses a feature change on a running
 # container, and `present` above left it stopped, so this sits between create and start by
