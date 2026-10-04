@@ -100,11 +100,13 @@ fi
                                 cwd=directory, capture_output=True, text=True)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         public = result.stdout + result.stderr + (directory / 'args').read_text()
-        for value in (secret, 'replacement-fixture-password'):
-            assert value not in public, 'credential leaked to output/argv'
+        passwords = (secret, 'replacement-fixture-password', env.get('LAB_MAIL_PASSWORD', ''))
+        for value in passwords:
+            assert not value or value not in public, 'credential leaked to output/argv'
         for config in (directory / 'repo/config').glob('*.yml'):
             text = config.read_text()
-            assert secret not in text and 'LAB_MAIL_PASSWORD' not in text
+            assert all(not value or value not in text for value in passwords)
+            assert 'LAB_MAIL_PASSWORD' not in text
             data = yaml.safe_load(text)
             assert not any(key in data.get('mail', {}) for key in ('password', 'token', 'api_key'))
         assert not (directory / 'SHOULD_NOT_EXIST').exists(), 'credential executed'
@@ -131,6 +133,14 @@ fi
     recorded = (directory / 'args').read_text()
     assert 'chown rundeck:rundeck ' + str(sink) in recorded
     assert 'chown rundeck:rundeck ' + str(sink.parent) in recorded
+
+    # read with IFS='=' silently strips a single trailing delimiter. Verify the
+    # real Seed reader preserves padding, internal equals and surrounding spaces.
+    for index, password in enumerate(('fixture-padding=', 'fixture-double==',
+                                      'fixture=middle', ' fixture-spaces= ')):
+        padded, _ = run(f'literal-{index}', dict(inputs, LAB_MAIL_PASSWORD=password))
+        assert (padded / 'etc/secrets.d/mail.env').read_text() == 'LAB_MAIL_PASSWORD=' + password + '\n'
+        assert (padded / 'loaded').read_text() == password, 'Seed reader changed literal password'
 
     before = config.read_bytes(), sink.read_bytes()
     run('smtp', dict(LAB_MAIL_PROVIDER='none', LAB_MAIL_PASSWORD='replacement-fixture-password'))

@@ -95,6 +95,9 @@ mail. Selecting `smtp` asks for `LAB_MAIL_HOST`, `LAB_MAIL_PORT` (default `587`)
 `LAB_MAIL_ENCRYPTION` (default `starttls`), `LAB_MAIL_FROM_ADDRESS`,
 `LAB_MAIL_FROM_NAME` (default `Homelab`), and `LAB_MAIL_USERNAME` (default From address).
 Only these nonsecret fields enter `config/infrastructure.yml`.
+Bootstrap SMTP intake requires an AUTH username and password. Unauthenticated internal
+relays are outside this intake; keep `LAB_MAIL_PROVIDER=none` rather than inventing a
+credential.
 
 The SMTP password is a hidden prompt, or `LAB_MAIL_PASSWORD` for unattended input. Load
 it from a root-owned `0600` environment file rather than putting a credential in command
