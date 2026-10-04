@@ -42,6 +42,9 @@
 # would leave the caller's ORIGINAL value in force below this task. That was invisible while
 # every caller passed an already-resolved name, and is wrong the moment one passes an empty
 # one and expects the hint to decide.
+- name: Require completed inventory before address allocation
+  ansible.builtin.import_tasks: ../proxmox/assert-inventory.yml
+
 - name: Set network selector
   ansible.builtin.set_fact:
     _network_selected: >-

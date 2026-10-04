@@ -95,11 +95,11 @@ with tempfile.TemporaryDirectory(prefix="homelab-deemix-arl-test.") as work:
     def run(arl: str) -> None:
         result = subprocess.run(
             [
-                str(ansible_playbook), str(playbook_file),
+                str(ansible_playbook), "-i", "localhost,", "-c", "local", str(playbook_file),
                 "-e", f"dmx_test_arl={arl}",
             ],
             cwd=work_path,
-            env={"ANSIBLE_INVENTORY": "localhost,", "ANSIBLE_LOCALHOST_WARNING": "False",
+            env={"ANSIBLE_LOCALHOST_WARNING": "False",
                  "ANSIBLE_INVENTORY_UNPARSED_WARNING": "False", "HOME": str(Path.home()),
                  "PATH": "/usr/bin:/bin"},
             capture_output=True, text=True,

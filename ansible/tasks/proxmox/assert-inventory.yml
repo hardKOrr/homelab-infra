@@ -1,0 +1,8 @@
+---
+- name: Require completed Proxmox inventory before guest selection or allocation
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_proxmox_inventory_complete | default(false) | bool
+    fail_msg: >-
+      Proxmox inventory is unavailable. Refusing guest selection, allocation and mutation.
+      Use the supported inventory source and resolve its failure before retrying.

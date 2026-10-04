@@ -28,7 +28,7 @@ cd ansible
 export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 
 # Neutralise the Proxmox dynamic inventory (see lint.sh) so no live inventory is touched.
-export ANSIBLE_INVENTORY=localhost,
+export ANSIBLE_INVENTORY="$repo/gate/fixtures/localhost.ini"
 
 if [ "$gate_scope" = "changed" ]; then
     mapfile -t playbooks < <(cd "$repo" && gate_changed_playbooks)
@@ -116,6 +116,7 @@ bash gate/test-recovery-status.sh || rc=1
 bash gate/test-plex-client-troubleshooter.sh || rc=1
 bash gate/test-proxmox-tags.sh || rc=1
 bash gate/test-proxmox-api-contract.sh || rc=1
+"$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-inventory-safety.py || rc=1
 bash gate/test-device-passthrough-contract.sh || rc=1
 bash gate/test-frigate-contract.sh || rc=1
 bash gate/test-home-assistant-contract.sh || rc=1

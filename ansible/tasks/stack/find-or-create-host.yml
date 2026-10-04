@@ -138,13 +138,13 @@
 
 # The tag is the identity; the group name is what Ansible sanitised it into. One seam does
 # that conversion for the whole repository — see tasks/proxmox/tag-group.yml.
+- name: Refresh inventory to get current Proxmox state
+  ansible.builtin.meta: refresh_inventory
+
 - name: Resolve the inventory group for this stack
   ansible.builtin.include_tasks: ../proxmox/tag-group.yml
   vars:
     tag_group_tag: "_.stack+{{ _stack_id }}"
-
-- name: Refresh inventory to get current Proxmox state
-  ansible.builtin.meta: refresh_inventory
 
 - name: Check for existing stack host
   ansible.builtin.set_fact:

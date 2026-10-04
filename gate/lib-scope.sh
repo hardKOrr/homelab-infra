@@ -20,7 +20,7 @@
 # Force a full sweep with `--all` as the first argument, or GATE_SCOPE=all.
 
 # Paths whose change invalidates every playbook.
-gate_fanout_re='^ansible/(roles|tasks|vars|group_vars|host_vars|inventory|files)/|^ansible/(ansible\.cfg|requirements\.yml)$|^gate/'
+gate_fanout_re='^ansible/(roles|tasks|vars|group_vars|host_vars|inventory|inventory_plugins|files)/|^ansible/(ansible\.cfg|requirements\.yml)$|^gate/'
 
 # Sets: gate_scope (full|changed), gate_scope_reason, gate_changed[]
 gate_resolve_scope() {

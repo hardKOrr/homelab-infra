@@ -166,7 +166,9 @@ inventory_expr = env.from_string("{{ %s }}" % inventory["compose"]["homelabinfra
 lookup_doc = yaml.safe_load(
     (repo / "ansible" / "tasks" / "proxmox" / "tag-group.yml").read_text(encoding="utf-8")
 )
-lookup_expr = env.from_string(lookup_doc[0]["ansible.builtin.set_fact"]["tag_group_name"])
+lookup_task = next(task for task in lookup_doc
+                   if "tag_group_name" in task.get("ansible.builtin.set_fact", {}))
+lookup_expr = env.from_string(lookup_task["ansible.builtin.set_fact"]["tag_group_name"])
 
 # Punctuation produces exactly these group names, and a tag outside the platform lane
 # produces none at all.
@@ -214,7 +216,7 @@ check(
 # back, and the two engines cannot disagree.
 for label, source in (
     ("inventory expression", inventory["compose"]["homelabinfra_groups"]),
-    ("lookup seam", lookup_doc[0]["ansible.builtin.set_fact"]["tag_group_name"]),
+    ("lookup seam", lookup_task["ansible.builtin.set_fact"]["tag_group_name"]),
 ):
     if "\\" in source:
         failures.append(

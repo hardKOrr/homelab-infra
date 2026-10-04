@@ -67,7 +67,7 @@ def check(label, got, want):
 
 
 _BASE_ENV = {
-    "ANSIBLE_INVENTORY": "localhost,",
+    "ANSIBLE_INVENTORY": str(repo / "gate/fixtures/localhost.ini"),
     "ANSIBLE_LOCALHOST_WARNING": "False",
     "ANSIBLE_INVENTORY_UNPARSED_WARNING": "False",
     "HOME": str(Path.home()),
@@ -128,6 +128,7 @@ def scenario_ownership(mock):
     env.update(
         {
             "PROXMOX_API_HOST": "127.0.0.1",
+            "ANSIBLE_CONFIG": str(repo / "ansible/ansible.cfg"),
             "PROXMOX_API_PORT": str(mock.port),
             "PROXMOX_API_USER": "contract-test@pve",
             "PROXMOX_API_TOKEN_ID": "contract-test",

@@ -44,7 +44,12 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   using the default estate; non-wiring estate workers such as Kometa and Unpackerr are
   intentionally not exempted, because they have no wiring task to trigger the check.
 - `test.sh` — `ansible-playbook --syntax-check` over every playbook, with the Proxmox dynamic
-  inventory neutralized (`ANSIBLE_INVENTORY=localhost,`) so no credentials are needed.
+  inventory neutralized (`ANSIBLE_INVENTORY=gate/fixtures/localhost.ini`, using an absolute
+  path) so no credentials are needed and failed parsing is never hidden by localhost fallback.
+  `test-proxmox-inventory-safety.py` drives actual inventory and guest selection/allocation
+  tasks with a recording requests transport and no sockets. It covers CA environment/session
+  precedence, explicit Proxmox policy, verified CA consumption, healthy empty inventory,
+  owned identity reuse, initial/partial/refresh failures and unsupported static inventory.
   `test-native-lxc-template.py` renders the real platform/app/provisioning expressions
   and shared LXC module arguments to check repository fallback, authored shared-store
   templates, explicit instance precedence and sibling preservation without Proxmox.
@@ -169,7 +174,7 @@ It repeats the bootstrap above on a clean `ubuntu-latest` runner — same venv p
 (`~/.venvs/homelab-ansible`), same requirements files, `PATH`-prepended the same way — so a
 green run there means the bootstrap above still works from scratch. The workflow needs no
 secrets and never touches `config/`: both gates already neutralize the Proxmox inventory
-(`ANSIBLE_INVENTORY=localhost,`), and `--all` forces the full sweep regardless of the
+(`ANSIBLE_INVENTORY=gate/fixtures/localhost.ini`, using an absolute path), and `--all` forces the full sweep regardless of the
 runner's (always clean) working tree.
 
 The same workflow also runs `gate / container` (`bash gate/container.sh`) and
