@@ -1,0 +1,88 @@
+---
+# Whole-lab cleanup does not stop providers or prune the registry. Every consumer
+# uses the deployment estate resolution and the existing inverse wiring seams.
+- name: Decommission | Reset estate context from full platform inputs
+  ansible.builtin.include_tasks: ../load-user-vars.yml
+
+- name: Decommission | Load declared defaults
+  ansible.builtin.include_vars:
+    file: "../../vars/app-defaults/{{ decommission_app.app }}.yml"
+    name: _dc_defaults
+  when: decommission_app.app != 'rundeck'
+
+- name: Decommission | Load declared instance
+  ansible.builtin.include_vars:
+    file: "{{ _luv_config_dir }}/apps/{{ decommission_app.instance }}.yml"
+    name: _dc_instance
+
+- name: Decommission | Merge declared application
+  ansible.builtin.set_fact:
+    app_config: "{{ ({} if decommission_app.app == 'rundeck' else _dc_defaults[decommission_app.app | replace('-', '_') ~ '_defaults']) | combine(_dc_instance, recursive=True) }}"
+    instance: "{{ decommission_app.instance }}"
+    _caddy_existing: {}
+    _ak_probe: {}
+    kuma_session_ready: false
+    kuma_call_ok: false
+
+- name: Decommission | Resolve deployment estate
+  ansible.builtin.include_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+- name: Decommission | Unwire consumers with providers still available
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+  block:
+    - name: Decommission | Require known provider cleanup routes
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_infra.reverse_proxy.provider | default('none') in ['none', 'caddy', 'nginx']
+          - homelabinfra_infra.sso.provider | default('none') in ['none', 'authentik']
+          - homelabinfra_infra.monitoring.provider | default('none') in ['none', 'uptime_kuma']
+          - homelabinfra_infra.dns.provider | default('none') in ['none', 'opnsense', 'pihole']
+        fail_msg: A declared provider has no supported inverse wiring route; handoff refused.
+
+    - name: Decommission | Unwire reverse proxy
+      ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Decommission | Require proxy unwiring observation
+      ansible.builtin.assert:
+        that: _caddy_existing.status | default(0) in [200, 404]
+        fail_msg: Caddy unwiring degraded; final teardown handoff refused.
+      when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
+
+    - name: Decommission | Unwire Authentik
+      ansible.builtin.include_tasks: ../unwiring/authentik.yml
+      when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
+
+    - name: Decommission | Require SSO unwiring observation
+      ansible.builtin.assert:
+        that: _ak_probe.status | default(0) == 200
+        fail_msg: Authentik unwiring degraded; final teardown handoff refused.
+      when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
+
+    - name: Decommission | Unwire monitoring
+      ansible.builtin.include_tasks: ../unwiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+
+    - name: Decommission | Require monitoring unwiring observation
+      ansible.builtin.assert:
+        that:
+          - kuma_session_ready | bool
+          - kuma_call_ok | bool
+        fail_msg: Monitoring unwiring degraded; final teardown handoff refused.
+      when: homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+
+    - name: Decommission | Unwire DNS
+      ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Decommission | Deregister Forgejo consumer before Forgejo destruction
+      ansible.builtin.include_tasks: ../app-wiring/forgejo-runner-remove.yml
+      vars:
+        runner_remove_instance: "{{ instance }}"
+        runner_remove_forgejo_instance: "{{ app_config.app.forgejo.instance }}"
+      when: decommission_app.app == 'forgejo-runner'

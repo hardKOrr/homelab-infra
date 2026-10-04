@@ -1,0 +1,30 @@
+---
+# This second pass starts only after all provider unwiring has succeeded.
+- name: Decommission | Load Kubernetes instance defaults
+  ansible.builtin.include_vars:
+    file: "../../vars/app-defaults/{{ decommission_app.app }}.yml"
+    name: _dc_k8s_defaults
+  when: decommission_app.app != 'rundeck'
+
+- name: Decommission | Load Kubernetes instance configuration
+  ansible.builtin.include_vars:
+    file: "{{ _luv_config_dir }}/apps/{{ decommission_app.instance }}.yml"
+    name: _dc_k8s_instance
+
+- name: Decommission | Resolve declared Kubernetes hosting
+  ansible.builtin.set_fact:
+    app_config: "{{ ({} if decommission_app.app == 'rundeck' else _dc_k8s_defaults[decommission_app.app | replace('-', '_') ~ '_defaults']) | combine(_dc_k8s_instance, recursive=True) }}"
+    instance: "{{ decommission_app.instance }}"
+
+- name: Decommission | Preserve independently retained Kubernetes volumes
+  when: app_config.hosting | default('') == 'kubernetes'
+  block:
+    - name: Decommission | Remove owned namespace through existing retention seam
+      ansible.builtin.include_tasks: ../unwiring/kubernetes.yml
+      vars:
+        unwire_delete_data: false
+
+    - name: Decommission | Refuse unknown namespace observation
+      ansible.builtin.assert:
+        that: _k8s_rm_owner.rc == 0 or 'NotFound' in _k8s_rm_owner.stderr | default('')
+        fail_msg: Kubernetes namespace absence was not established; handoff refused.

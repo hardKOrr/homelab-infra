@@ -161,3 +161,34 @@ or real credentials, and `gate/test-device-passthrough-contract.sh` proves the o
 guard, the dedicated-device conflict check, and the provenance-tag gate on every detach
 seam in the device-passthrough task files above against fixture guest configurations, also
 without a lab.
+
+## Creation provenance for decommission
+
+Future PBS registrations and dedicated bootstrap API roles/users/tokens/ACL edges are
+recorded only after successful **new creation** by their owning seam. Existing resources
+retain bootstrap reuse behavior and never acquire a retrospective ownership record.
+[`lab.py`](../../files/decommission/lab.py) records schema 1 in the creation node's
+`/var/lib/homelab-infra/decommission-ownership.json`: `node`, and an `objects` mapping
+keyed by `kind:identity`, each containing `source`, `identity`, and `signature`.
+The allowed sources are `bootstrap-rundeck` for credentials and `configure-pbs` for the
+PBS registration. Resource identity is storage/role/user ID, `user!token`, or the exact
+ACL tuple `path|type|principal|role`. Signatures hash the actual resource's non-secret
+identity/security/registration fields; no token secret or storage password is recorded.
+Backup jobs use their exact repository-authored comment marker; guests use exact `_+lab`
+and templates also require `_.template`.
+
+The root-owned regular 0600 node-local record is the authoritative creation linkage.
+Root and the reviewed creation seam are the trust boundary: this is not a signed receipt
+and cannot establish ownership against a malicious node root or distinguish an identical
+replacement root has made under the same resource identity. Do not hand-author records,
+copy them between nodes or use names to recover missing stamps. Record failure leaves the
+new object unowned for automatic decommission; rerun must not adopt it. Mismatched node,
+schema, source, identity or fingerprint refuses ownership; an existing differing stamp
+cannot be overwritten. Role privilege changes or registration changes invalidate the
+stamp rather than silently widening teardown authority. User group membership, unowned
+tokens/ACLs, and roles referenced by foreign principals prevent dependent deletion.
+ACL and token withdrawal still require their own provenance. Shared/adopted credentials,
+unstamped PBS registrations and independent data remain explicit plan exclusions.
+
+See the [maintenance entry point](../../playbooks/maintenance/README.md#whole-lab-decommission)
+for operator handoff, volume checks and interrupted-execution recovery.

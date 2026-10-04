@@ -153,3 +153,100 @@ write and read through the application; verify emits `serving`, `a_present`, `b_
 booleans after assertions without contents. Runtime instance config cannot replace method
 or adapter declarations. This dispatcher is not a prerequisite for ordinary deployment,
 function/convergence checks or supported Backup/Restore observations.
+
+## Whole-lab decommission
+
+[`decommission.yml`](decommission.yml) is the supported plan/unwire entry point. It is
+separate from ordinary Remove App, which keeps its guest. The Rundeck **Decommission Lab
+Preflight** job owns the operator instructions and final authority handoff. This operation
+is irreversible; bootstrap reconstructs a platform, not deleted application data.
+
+Prepare a private request file containing the creation node, exact runner VMID, and an
+explicit mapping for **every** `config/apps/*.yml` instance (including `rundeck`) and every
+recorded workload. Do not guess a renamed instance's product. For example:
+
+```yaml
+decommission_phase: plan
+decommission_node: <pve-node>
+decommission_runner_vmid: <runner-vmid>
+decommission_apps:
+  - {app: ntfy, instance: ntfy}
+  - {app: rundeck, instance: rundeck}
+```
+
+The list is illustrative, not a lab inventory. Use a root-owned directory and a regular
+0600 request file readable by the runner's operator account. The Rundeck path is
+`/var/lib/rundeck/decommission/<request>.yml`. The Ansible interface is
+`ansible-playbook playbooks/maintenance/decommission.yml -e @<private-request>` through
+the supported environment wrapper. Plan performs no mutation: it lists exact guest
+identities, configuration hashes, managed disk identities, bind/device exclusions,
+created Proxmox objects and unstamped/changed/shared exclusions. The confirmation hash
+binds the consumer declarations as well as the node plan. Offline nodes, unreadable
+storage, unknown/orphan volumes and incomplete workload declarations refuse a clean plan.
+
+Before unwiring, export the full user configuration and required native/PBS artifacts,
+vault contents, unlock material and independent operator access **outside** every guest
+being removed. Verify independent datastore capacity, identity, recoverability and
+retention; a datastore inside the PBS guest's managed disk disappears with that disk.
+A registration is a PVE pointer, not a datastore: withdrawing it never issues a PBS delete,
+prune or format. Guest-mounted remote filesystems cannot be discovered from PVE config;
+verify them independently. Bind paths, physical disks, hardware/resource mappings,
+shared physical storage and independently retained archives/keys remain outside erasure
+authority. Review all plan exclusions; names confer no authority to clear them.
+
+To unwire, set `decommission_phase: unwire` and add the exact displayed
+`decommission_confirmation: 'DECOMMISSION <plan hash>'` and
+`decommission_retention: 'INDEPENDENT RETENTION VERIFIED'`. Preserve all provider services,
+databases, vault and the registry until this phase completes. The playbook uses the
+existing estate-aware inverse wiring tasks, deregisters Forgejo consumers, then removes
+owned Kubernetes namespaces through the existing **retain data** seam. Retained PV paths
+and remote storage require independent retention verification before cluster guests are
+removed. It stops no guest and prunes no provider registry. Degraded Caddy, Authentik,
+monitoring or namespace observations refuse the final handoff. Unsupported provider cleanup
+is a refusal, not silent success. A partial unwiring pass can be rerun with the same
+request after resolving the failure; providers remain available.
+
+After **ALL CONSUMERS UNWIRED**, final authority moves to the independent operator on
+the recorded creation PVE node. Save the displayed **plan object** (not its wrapper) in
+a root-owned 0600 JSON file on that node. Preserve the exact reviewed repository revision
+and copy its [`lab.py`](../../files/decommission/lab.py) there using the supported
+operator access path. Verify no other Rundeck execution or node operation is running and
+hold the workstation-wide live-operation lock throughout final observation. Run as node
+root, using independent operator access rather than the platform SSH key being withdrawn:
+
+```text
+python3 lab.py --node <pve-node> --execute <private-plan.json> \
+  --confirmation 'DECOMMISSION <plan hash>' \
+  --retention 'INDEPENDENT RETENTION VERIFIED' \
+  --unwired 'ALL CONSUMERS UNWIRED' \
+  --journal <private-journal.json>
+```
+
+The helper requires PVE node/root identity, the creation node, literal acknowledgements,
+a node-local operation lock, online node coverage and no active PVE tasks before each
+step. It withdraws owned backup schedules before stamped PBS registration, rechecks and
+stops/destroys owned guests/templates with **purge disabled** and **unreferenced-disk
+sweeping disabled**, and waits for successful task completion. Exact configuration,
+ownership and disk inventory are read again before destruction. It verifies guest absence
+and all VMID-associated volumes on every applicable active store. A successful task with
+remaining disks fails the operation; unknown leftovers require their owning storage
+maintenance path and a new reviewed plan, never automatic cleanup. The runner is the last
+guest removed. Dedicated token, exact user ACL, unshared user/role and canonical
+cluster-shared platform keys are withdrawn afterwards. A non-cluster-shared key file
+requires explicit per-node operator handoff and refuses automated final execution.
+
+Retain the private plan, creation record and journal for retry. Rerunning the **same** plan
+re-verifies completed steps, accepts already absent objects, checks their disk absence,
+and refuses reused VMIDs, changed ownership, drift or reappearing keys. Do not erase the
+journal or create a fresh plan merely to bypass a failure. An interrupted runner-last
+phase resumes node-side even when Rundeck is gone. Newly discovered owned guests block
+credential withdrawal. Unrelated guest configurations and excluded objects are compared
+with the plan at completion. External changes require investigation rather than a clean
+result. Excluded unstamped/adopted/shared objects remain explicitly reported afterwards;
+only planned, proven-owned objects have an absence claim.
+
+Finally revoke external provider/Vaultwarden credentials through their owning authority
+and retire workstation/private runner credential files after retention review. Their
+names and stored copies do not authorize automatic revocation or retained-key deletion.
+Keep the independent recovery records needed to read retained artifacts. No bare-metal
+wipe, storage formatting, device-mapping deletion or retained backup pruning is provided.
