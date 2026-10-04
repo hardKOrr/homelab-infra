@@ -48,6 +48,8 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   `test-native-lxc-template.py` renders the real platform/app/provisioning expressions
   and shared LXC module arguments to check repository fallback, authored shared-store
   templates, explicit instance precedence and sibling preservation without Proxmox.
+  `test-caddy-acme-ca.py` covers guest-DNS defaults with propagation disabled,
+  resolver validation/override precedence, estate/provider isolation and staging ACME.
   Its focused checks include `test-recovery-acceptance.py`, the provider-free two-destination
   protocol and coverage rollup described in [`../docs/recovery-acceptance.md`](../docs/recovery-acceptance.md).
 - `lib-scope.sh` — sourced by both; decides full sweep vs. changed-only.

@@ -103,13 +103,18 @@ reverse_proxy:
     # Provider-specific fields stay flat beside provider. The guided Cloudflare
     # path injects api_token; other caddy-dns modules keep their native field names.
     #
-    # Caddy's propagation check ("can I see the TXT record I just wrote?") is
-    # disabled by default, because a split-horizon lab cannot answer it: the local
-    # resolver is authoritative for the lab domain and never learns the ACME record,
-    # and a firewall that redirects outbound :53 makes naming a public resolver
-    # cosmetic. Let's Encrypt validates from the public internet, where the record
-    # really is, so nothing is lost. Restore the check with a positive
-    # propagation_timeout plus resolvers your network does not intercept.
+    # Resolvers default to the Caddy guest's configured DNS servers, seeded from
+    # its selected network's dns_servers (not the runner-only CT_DNS setting).
+    # SOA/zone discovery still needs these servers when propagation_timeout=-1.
+    # They must return the public zone's SOA, not a synthetic split-horizon zone.
+    # A reachable resolver or an NXDOMAIN response alone does not prove this.
+    # Override only with a resolver reachable through your supported DNS path.
+    # resolvers: ["192.0.2.53:53"]   # non-empty list; IPv6 is also supported
+    #
+    # -1 disables TXT propagation checking, not zone discovery or CA validation.
+    # 30s is a settling delay, not a guarantee. A positive timeout also requires
+    # visibility of the public TXT record and any authoritative-DNS access Caddy
+    # needs for that check; do not enable it merely to fix zone discovery.
     propagation_delay: 30s
     propagation_timeout: -1
 

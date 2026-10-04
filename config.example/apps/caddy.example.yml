@@ -46,6 +46,12 @@
 #   dns_challenge:
 #     provider: cloudflare    # any github.com/caddy-dns/<provider> module
 #     api_token: ""           # legacy token: Zone Read + DNS Edit on this domain only
+#     # Used for SOA discovery even with propagation_timeout: -1. Omit to use
+#     # the guest's configured DNS servers; explicit empty lists are rejected.
+#     resolvers: ["192.0.2.53:53"]
+#     propagation_timeout: -1
+#   # infrastructure.reverse_proxy.dns_challenge overrides this legacy block.
+#   # Named estates use their own blocks, without inheriting these options.
 
 # ── Routing overrides ──────────────────────────────────────────────────────────
 # routing:
