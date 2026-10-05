@@ -16,6 +16,13 @@ effective network. Absent VLAN and `0` mean untagged. A mismatch reports actual 
 fields, preserves NIC/MAC, disks and data, and stops before guest readiness or deployment.
 This applies to running guests too. Matching guests retain their identity and converge.
 
+Deploy PBS requires a nonempty bridge after network inheritance, as specified by the
+[`networks` contract](../../vars/CONTRACT.md#configproxmoxyml) and enforced by Config Doctor.
+A selected network may omit `bridge` when it inherits `networks.default.bridge`.
+If neither declares one, both creation and reuse refuse before template creation,
+guest start or deployment. The shared cloud template's `vmbr0` fallback does not supply
+a declared guest bridge; Deploy PBS passes the effective bridge explicitly.
+
 Both reads are necessary: [`qm config`](https://github.com/proxmox/pve-docs/blob/master/generated/qm.1-synopsis.adoc)
 includes pending configuration unless `--current` is set. A pending correct NIC cannot
 prove the currently running guest matches, and a pending incorrect NIC must not be started.

@@ -135,15 +135,16 @@ class PbsSourceTests(unittest.TestCase):
                     status=status, calls=[], mutations=[], deployed=False,
                     datastore_data={'fixture-A': 'sha256:retained-fixture-A'}, datastores=[])
 
-    def run_play(self, play, state, relative='ansible/playbooks/apps/pbs.yml'):
+    def run_play(self, play, state, relative='ansible/playbooks/apps/pbs.yml', tagged_guest=True):
         target = self.repo / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(yaml.safe_dump([play], sort_keys=False))
         state_path = self.directory / 'state.json'
         state_path.write_text(json.dumps(state))
         inventory = self.directory / 'inventory.ini'
+        group = 'lab_app_pbs_fixture' if tagged_guest else 'fixture_unselected'
         inventory.write_text(
-            '[lab_app_pbs_fixture]\nfixture-pbs-host\n'
+            '[' + group + ']\nfixture-pbs-host\n'
             '[all:vars]\nansible_connection=local\n'
             'ansible_python_interpreter=' + sys.executable + '\n')
         ansible = str(Path(sys.executable).with_name('ansible-playbook'))
@@ -151,7 +152,8 @@ class PbsSourceTests(unittest.TestCase):
                                 cwd=ROOT, text=True, capture_output=True, timeout=45)
         return result, json.loads(state_path.read_text())
 
-    def run_provision(self, state=None, networks=None, requested='', inventory_tags=None, vmtype='qemu'):
+    def run_provision(self, state=None, networks=None, requested='', inventory_tags=None,
+                      vmtype='qemu', tagged_guest=True):
         state = deepcopy(state) if state is not None else self.initial_state()
         play = deepcopy(load('ansible/playbooks/apps/pbs.yml')[0])
         fixture_modules(play)
@@ -179,7 +181,7 @@ class PbsSourceTests(unittest.TestCase):
                 "hostvars['fixture-pbs-host'].app_config.app.port == 8007"]}},
             {'name': 'Record guest deployment continuation',
              'pbs_fixture_command': {'argv': ['fixture', 'deployment']}}]
-        return self.run_play(play, state)
+        return self.run_play(play, state, tagged_guest=tagged_guest)
 
     def assert_preserved(self, before, after):
         self.assertEqual(after['guest'], before['guest'])
@@ -254,6 +256,24 @@ class PbsSourceTests(unittest.TestCase):
                 self.assertEqual(after['pending'], before['pending'])
                 self.assert_preserved(before, after)
                 self.assertFalse(after['deployed'])
+
+    def test_missing_effective_bridge_refuses_creation_and_reuse_before_mutation(self):
+        for default in ({}, {'bridge': ''}, {'bridge': None}):
+            for tagged_guest, status in ((True, 'running'), (True, 'stopped'), (False, 'stopped')):
+                with self.subTest(default=default, tagged_guest=tagged_guest, status=status):
+                    before = self.initial_state(status=status)
+                    networks = {'default': default, 'shared': {'ip_offset': 10}}
+                    result, after = self.run_provision(before, networks, tagged_guest=tagged_guest)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    diagnostic = ' '.join(result.stdout.split())
+                    self.assertIn('must declare a bridge for network shared', diagnostic)
+                    self.assertIn('networks.default.bridge', diagnostic)
+                    self.assertIn('before template creation, guest start or deployment', diagnostic)
+                    self.assertFalse(after['deployed'])
+                    self.assertEqual(after['calls'], [])
+                    self.assertEqual(after['mutations'], [])
+                    self.assertEqual(after['status'], before['status'])
+                    self.assert_preserved(before, after)
 
     def test_invalid_declaration_or_actual_guest_identity_refuses_before_start(self):
         for values in ({'requested': 'missing'}, {'inventory_tags': ['_' + INSTANCE]}, {'vmtype': 'lxc'}):
