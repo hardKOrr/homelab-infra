@@ -79,17 +79,22 @@
       - _pbs_registered | length <= 1
       - >-
         _pbs_registered | length == 0
-        or (_pbs_registered | first).path | default('')
-           == homelabinfra_config.infrastructure.backups.datastore_path
+        or (((_pbs_registered | first).path | default(''))
+            | regex_replace('(?<=.)/+$', ''))
+           == (homelabinfra_config.infrastructure.backups.datastore_path
+               | regex_replace('(?<=.)/+$', ''))
       - pbs_datastore_mode | default('create') != 'reuse' or _pbs_registered | length == 1
     fail_msg: >-
       PBS datastore {{ _pbs_datastore }} does not have the expected retained registration
       at {{ homelabinfra_config.infrastructure.backups.datastore_path }}
       (mode={{ pbs_datastore_mode | default('create') }}).
-      Recovery reuse requires the existing datastore and its original path; refusing
-      datastore creation or initialisation. Recover the datastore/configuration through
+      Both create and reuse require any same-name registration to match the declared path,
+      ignoring trailing slashes. Recovery reuse also requires an existing datastore;
+      refusing datastore creation or initialisation. Recover the datastore/configuration through
       its independently verified owner path before retrying. No datastore data was changed.
   vars:
+    # Compare trailing-slash spelling only, preserving '/' and a missing/empty path
+    # as distinct values. Do not resolve symlinks, mount identity, '.' or '..'.
     _pbs_registered: >-
       {{ _pbs_datastores.json.data | selectattr('name', 'equalto', _pbs_datastore) | list }}
 

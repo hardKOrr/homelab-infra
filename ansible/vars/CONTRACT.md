@@ -447,9 +447,14 @@ the resolved answer (`mode`, `due`, `text`, `cron`, `oncalendar`, `monitor_only`
 ### PBS datastore recovery mode
 
 PBS instance configuration accepts `app.datastore_mode: create|reuse` (default `create`).
-`reuse` requires the recovered datastore registration at the exact
+`reuse` requires the recovered datastore registration at the declared
 `infrastructure.backups.datastore_path`, waits for serving readiness and never requests
-creation/initialisation. Both modes refuse a same-name registration at another path.
+creation/initialisation. Both modes compare registered and declared paths ignoring trailing
+slashes, without changing either path. Other differences, including `.`/`..` or symlink
+aliases, are not resolved. A missing/empty registered path does not equal `/`.
+Default `create` also refuses a same-name registration at a genuinely different path;
+earlier deployments silently skipped creation in that case. Check the declaration and
+storage-owner evidence before retrying; this guard never relocates or recreates the store.
 This is a configuration guard, not a recovery capability declaration or independent
 recovery proof. It does not attach or format external storage. See the
 [PBS guide](../roles/pbs/README.md) for supported whole-guest recovery and fail-closed

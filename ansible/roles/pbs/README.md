@@ -70,11 +70,14 @@ intact. A new guest is not an automatic address, route, writer or service cutove
 
 After a supported restore has recovered the registered datastore and its backing data,
 declare `app.datastore_mode: reuse` in the PBS instance configuration before an authorized
-Deploy PBS run. It requires exactly one existing datastore registration whose path equals
-`infrastructure.backups.datastore_path`, waits for that store to serve, and uses the retained
-registration. It never sends the datastore creation/initialisation request in this mode.
+Deploy PBS run. It requires exactly one existing datastore registration whose path matches
+`infrastructure.backups.datastore_path` ignoring trailing slashes, waits for that store to
+serve, and uses the retained registration. It never sends the datastore
+creation/initialisation request in this mode.
 Neither mode formats disks. Default `create` remains the first-install path; it also refuses
-a same-name datastore at a different path. Recovery mode is not proof that a backing mount
+a same-name datastore at a genuinely different path instead of silently skipping creation.
+Path comparison changes neither the registration nor the declaration and does not resolve
+`.`/`..`, symlinks or mount identity. Recovery mode is not proof that a backing mount
 or artifacts are correct: verify their identity and reads through the storage owner first.
 
 A fresh PBS server with only retained external chunks has no recovered registration.

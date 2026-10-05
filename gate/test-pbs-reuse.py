@@ -294,7 +294,7 @@ class PbsSourceTests(unittest.TestCase):
                 self.assertFalse(after['deployed'])
                 self.assert_preserved(before, after)
 
-    def run_datastore(self, mode='reuse', datastores=None):
+    def run_datastore(self, mode='reuse', datastores=None, declared_path='/mnt/fixture-backup'):
         state = self.initial_state()
         state['datastores'] = datastores if datastores is not None else [dict(name='homelab', path='/mnt/fixture-backup')]
         source = load('ansible/tasks/bootstrap/configure-pbs.yml')
@@ -304,7 +304,7 @@ class PbsSourceTests(unittest.TestCase):
         variables = dict(pbs_api_host='https://pbs.example.test:8007', pbs_api_token_id='fixture-id',
                          pbs_api_token_secret='fixture-secret', pbs_datastore_mode=mode,
                          homelabinfra_config=dict(
-                             infrastructure={'backups': {'datastore_path': '/mnt/fixture-backup'}},
+                             infrastructure={'backups': {'datastore_path': declared_path}},
                              proxmox=dict(api_host='192.0.2.10', api_user='fixture@pve',
                                           api_token_id='fixture-id', api_token_secret='fixture-secret')))
         play = dict(name='Offline source datastore configuration', hosts='localhost', connection='local',
@@ -330,6 +330,40 @@ class PbsSourceTests(unittest.TestCase):
                 self.assertIn('refusing datastore creation or initialisation', result.stdout)
                 self.assertEqual(state['mutations'], [])
                 self.assertEqual(state['datastores'], datastores)
+
+    def test_trailing_slash_paths_match_in_both_modes_without_rewriting_registration(self):
+        for mode in ('create', 'reuse'):
+            for registered, declared in (
+                ('/mnt/fixture-backup/', '/mnt/fixture-backup'),
+                ('/mnt/fixture-backup', '/mnt/fixture-backup///'),
+                ('/mnt/fixture-backup///', '/mnt/fixture-backup/'),
+                ('/', '///'),
+            ):
+                with self.subTest(mode=mode, registered=registered, declared=declared):
+                    stores = [dict(name='homelab', path=registered)]
+                    result, state = self.run_datastore(mode=mode, datastores=stores, declared_path=declared)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(state['mutations'], [])
+                    self.assertEqual(state['datastores'], stores)
+                    self.assertIn('changed=0', result.stdout)
+                    self.assertIn(['GET', '/admin/datastore'], state['calls'])
+
+    def test_genuine_or_missing_path_in_both_modes_refuses_before_mutation(self):
+        for mode in ('create', 'reuse'):
+            for registration, declared in (
+                (dict(name='homelab', path='/mnt/wrong/'), '/mnt/fixture-backup'),
+                (dict(name='homelab', path='/mnt/fixture-backup/../fixture-backup/'), '/mnt/fixture-backup'),
+                (dict(name='homelab'), '/'),
+                (dict(name='homelab', path=''), '/'),
+            ):
+                with self.subTest(mode=mode, registration=registration, declared=declared):
+                    stores = [registration]
+                    result, state = self.run_datastore(mode=mode, datastores=stores, declared_path=declared)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('mode=' + mode, result.stdout)
+                    self.assertEqual(state['mutations'], [])
+                    self.assertEqual(state['datastores'], stores)
+                    self.assertEqual(state['calls'], [['GET', '/config/datastore']])
 
     def test_first_install_creation_and_existing_store_convergence_remain_callable(self):
         result, state = self.run_datastore(mode='create', datastores=[])
