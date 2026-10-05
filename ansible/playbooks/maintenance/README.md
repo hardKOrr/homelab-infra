@@ -245,6 +245,13 @@ exact user ACL (PUT with the delete flag), unshared user/role and canonical
 cluster-shared platform keys are withdrawn afterwards. A non-cluster-shared key file
 requires explicit per-node operator handoff and refuses automated final execution.
 
+PVE always removes a destroyed guest's `/vms/<VMID>` ACL subtree and pool membership,
+even with purge disabled. Plans therefore refuse any ACL at or below a target guest's
+path and any target guest in a pool. Reconcile those access relationships through their
+owning authority before requesting a new plan; guest tags do not authorize their removal.
+The executor rechecks this boundary before destruction, including after stopping the
+guest. ACLs and pool membership for unrelated guests remain outside teardown authority.
+
 Retain the private plan, creation record and journal for retry. Rerunning the **same** plan
 re-verifies completed steps, accepts already absent objects, checks their disk absence,
 and refuses reused VMIDs, recreated completed objects, changed ownership, drift or reappearing keys.

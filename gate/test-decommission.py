@@ -43,6 +43,8 @@ class Fixture:
             return [dict(type='node', name='fixture-node', online=1)]
         if endpoint == '/cluster/resources':
             return copy.deepcopy(self.guests)
+        if endpoint == '/access/acl' and method == 'get':
+            return copy.deepcopy(self.state['acl'])
         if endpoint.endswith('/tasks'):
             return self.active
         if '/tasks/' in endpoint:
@@ -65,6 +67,10 @@ class Fixture:
             if vmid == self.fail_destroy:
                 raise lab.Refused('injected interruption')
             self.guests = [g for g in self.guests if g['vmid'] != vmid]
+            # PVE remove_vm_access() runs independently of purge.
+            path = '/vms/' + str(vmid)
+            self.state['acl'] = [a for a in self.state['acl']
+                                 if a['path'] != path and not a['path'].startswith(path + '/')]
             if not self.keep_volume:
                 self.volumes[vmid] = []
             return 'UPID:fixture'
@@ -137,6 +143,76 @@ class DecommissionTests(unittest.TestCase):
         self.fixture.state['storage'][0]['server'] = '192.0.2.21'
         with self.assertRaises(lab.Refused):
             lab.record('storage', 'pbs-homelab', 'configure-pbs', 'fixture-node', self.fixture.state)
+
+    def test_target_guest_acl_refuses_read_only_plan(self):
+        self.fixture.guests[2].update(tags='_+lab;_.template', template=1)
+        self.fixture.configs[903]['tags'] = '_+lab;_.template'
+        for vmid in [901, 902, 903]:
+            for principal in ['user', 'group', 'token']:
+                for suffix in ['', '/nested']:
+                    with self.subTest(vmid=vmid, principal=principal, suffix=suffix):
+                        self.fixture.state['acl'].append(dict(path='/vms/' + str(vmid) + suffix,
+                            type=principal, ugid='foreign', roleid='PVEAuditor', propagate=1))
+                        with self.assertRaisesRegex(lab.Refused, 'Guest access ACL.*owning authority and re-plan'):
+                            self.plan()
+                        self.fixture.state['acl'].pop()
+        self.assertTrue(all(c[0] == 'get' for c in self.fixture.calls))
+
+    def test_target_guest_pool_refuses_read_only_plan(self):
+        for row in self.fixture.guests[:2]:
+            row['pool'] = 'operator-pool'
+            with self.assertRaisesRegex(lab.Refused, 'pool membership.*owning authority and re-plan'):
+                self.plan()
+            del row['pool']
+        self.assertTrue(all(c[0] == 'get' for c in self.fixture.calls))
+
+    def test_guest_access_added_after_plan_refuses_before_any_mutation(self):
+        for change in ['acl', 'pool']:
+            with self.subTest(change=change):
+                p = self.plan()
+                if change == 'acl':
+                    self.fixture.state['acl'].append(dict(path='/vms/902', type='user',
+                        ugid='foreign@pve', roleid='PVEAuditor', propagate=1))
+                else:
+                    self.fixture.guests[1]['pool'] = 'operator-pool'
+                before = len(self.fixture.calls)
+                with self.assertRaisesRegex(lab.Refused, 'PVE destruction'):
+                    self.execute(p)
+                self.assertTrue(all(c[0] == 'get' for c in self.fixture.calls[before:]))
+                if change == 'acl':
+                    self.fixture.state['acl'].pop()
+                else:
+                    del self.fixture.guests[1]['pool']
+
+    def test_guest_acl_added_during_stop_refuses_destruction(self):
+        p = self.plan()
+        original_api = self.fixture.api
+        def add_acl(method, endpoint, **params):
+            result = original_api(method, endpoint, **params)
+            if endpoint == '/nodes/fixture-node/lxc/901/status/stop':
+                self.fixture.state['acl'].append(dict(path='/vms/901', type='user',
+                    ugid='foreign@pve', roleid='PVEAuditor', propagate=1))
+            return result
+        with patch.object(lab, 'api', add_acl):
+            with self.assertRaisesRegex(lab.Refused, 'Guest access ACL'):
+                self.execute(p)
+        self.assertFalse(any(c[0] == 'delete' and c[1].startswith('/nodes/') for c in self.fixture.calls))
+
+    def test_foreign_guest_acl_and_similar_path_preserved_through_retry(self):
+        for path in ['/vms', '/vms/903', '/vms/9010', '/pool/operator-pool']:
+            self.fixture.state['acl'].append(dict(path=path, type='user', ugid='foreign@pve',
+                                                roleid='PVEAuditor', propagate=1))
+        self.fixture.guests[2]['pool'] = 'operator-pool'
+        before = copy.deepcopy(self.fixture.state['acl'])
+        p = self.plan()
+        self.fixture.fail_destroy = 902
+        with self.assertRaisesRegex(lab.Refused, 'injected interruption'):
+            self.execute(p)
+        self.fixture.fail_destroy = None
+        self.execute(p)
+        self.execute(p)
+        self.assertEqual(self.fixture.state['acl'], before)
+        self.assertEqual(self.fixture.guests[0]['pool'], 'operator-pool')
 
     def test_stale_missing_forged_and_shared_provenance_refused(self):
         for kind in lab.SOURCES:

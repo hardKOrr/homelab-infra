@@ -205,6 +205,17 @@ def key_owned(line):
                                           'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'] and parts[2] == KEY_COMMENT
 
 
+def verify_guest_access(row, acl=None):
+    # PVE removes this ACL subtree and pool membership even with purge=0.
+    # Neither is guest-tag ownership: require an independent owning handoff.
+    path = '/vms/' + str(row['vmid'])
+    require(not row.get('pool'),
+            'Guest ' + path + ' has pool membership that PVE destruction would remove; reconcile through its owning authority and re-plan.')
+    acl = api('get', '/access/acl') if acl is None else acl
+    require(not any(a['path'] == path or a['path'].startswith(path + '/') for a in acl),
+            'Guest access ACL under ' + path + ' would be removed by PVE destruction; reconcile through its owning authority and re-plan.')
+
+
 def plan(node, runner):
     require(SAFE.fullmatch(node) and str(runner).isdigit(), 'Exact node and runner VMID required.')
     nodes = api('get', '/cluster/status')
@@ -228,6 +239,9 @@ def plan(node, runner):
     runners = [g for g in guests if str(g['identity']['vmid']) == str(runner)]
     require(len(runners) == 1 and '_rundeck' in runners[0]['tags'], 'Exact owned runner identity/tag required.')
     state = objects()
+    for row in resources:
+        if OWNER in tags(row):
+            verify_guest_access(row, state['acl'])
     records = read_private(RECORD, {'schema': 1, 'node': node, 'objects': {}})
     require(records.get('schema') == 1 and records.get('node') == node, 'Ownership record node/schema mismatch.')
     selected, excluded = [], []
@@ -293,6 +307,7 @@ def current_guest(target):
     require(all(row.get(k) == v for k, v in target['identity'].items()), 'Guest identity moved or reused; re-plan.')
     cfg = config(row)
     require(OWNER in tags(row) and OWNER in tags(cfg) and digest(cfg) == target['config_hash'], 'Guest ownership/config changed; re-plan.')
+    verify_guest_access(row)
     require(not row.get('template') or '_.template' in tags(cfg), 'Owned template lacks template provenance.')
     require(set(volume_inventory(row)) == set(target['volumes']), 'Guest volume inventory changed; re-plan.')
     verify_volume_consumers(target, rows)
