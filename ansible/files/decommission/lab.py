@@ -105,8 +105,10 @@ def identity(kind, row):
 
 
 def signature(kind, row):
+    # Bootstrap updates role privileges on reuse. The create-time role identity
+    # is its roleid; foreign ACL references are checked separately before deletion.
     fields = {'storage': ['storage', 'type', 'server', 'datastore', 'username', 'fingerprint', 'content'],
-              'role': ['roleid', 'privs'], 'user': ['userid', 'comment', 'enable', 'expire'],
+              'role': ['roleid'], 'user': ['userid', 'comment', 'enable', 'expire'],
               'token': ['userid', 'tokenid', 'privsep', 'expire', 'comment'],
               'acl': ['path', 'type', 'ugid', 'roleid', 'propagate']}[kind]
     return digest({field: row.get(field) for field in fields})

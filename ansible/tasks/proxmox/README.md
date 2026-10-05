@@ -184,8 +184,9 @@ replacement root has made under the same resource identity. Do not hand-author r
 copy them between nodes or use names to recover missing stamps. Record failure leaves the
 new object unowned for automatic decommission; rerun must not adopt it. Mismatched node,
 schema, source, identity or fingerprint refuses ownership; an existing differing stamp
-cannot be overwritten. Role privilege changes or registration changes invalidate the
-stamp rather than silently widening teardown authority. User group membership, unowned
+cannot be overwritten. A role signature binds its role ID, excluding privileges that
+bootstrap updates on reuse; the original creation stamp remains unchanged. Registration
+changes invalidate their stamp. User group membership, unowned
 tokens/ACLs, and roles referenced by foreign principals prevent dependent deletion.
 ACL and token withdrawal still require their own provenance. Shared/adopted credentials,
 unstamped PBS registrations and independent data remain explicit plan exclusions.

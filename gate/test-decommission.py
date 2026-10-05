@@ -144,7 +144,7 @@ class DecommissionTests(unittest.TestCase):
         p = self.plan()
         self.assertEqual(len(p['objects']), 6)
         self.fixture.records['objects']['storage:pbs-homelab']['source'] = 'invented'
-        self.fixture.state['role'][0]['privs'] = 'Administrator'
+        self.fixture.records['objects']['role:HomelabInfra']['signature'] = 'forged'
         self.fixture.state['token'].append(dict(userid='homelab-infra@pve', tokenid='foreign', privsep=1))
         p = self.plan()
         selected = {o['kind'] for o in p['objects']}
@@ -152,6 +152,25 @@ class DecommissionTests(unittest.TestCase):
         self.assertNotIn('role', selected)
         self.assertNotIn('user', selected)
         self.assertNotIn('token', selected)
+
+    def test_created_role_privilege_update_preserves_ownership_and_teardown(self):
+        role = self.fixture.state['role'][0]
+        self.assertFalse(lab.owned_object('role', role, self.fixture.records))
+        for kind in lab.SOURCES:
+            if kind != 'role':
+                self.fixture.stamp(kind)
+        lab.record('role', role['roleid'], 'bootstrap-rundeck', 'fixture-node', self.fixture.state)
+        self.fixture.records = copy.deepcopy(self.saved[str(lab.RECORD)])
+        original_stamp = copy.deepcopy(self.fixture.records['objects']['role:HomelabInfra'])
+        role['privs'] = 'VM.Allocate VM.Audit'
+        self.assertTrue(lab.owned_object('role', role, self.fixture.records))
+        self.assertEqual(self.fixture.records['objects']['role:HomelabInfra'], original_stamp)
+        p = self.plan()
+        self.assertIn('role', {o['kind'] for o in p['objects']})
+        self.assertFalse(any(o['kind'] == 'role' for o in p['excluded_objects']))
+        self.execute(p)
+        self.assertEqual(self.fixture.state['role'], [])
+        self.assertIn(('delete', '/access/roles/HomelabInfra', {}), self.fixture.calls)
 
     def test_shared_role_and_foreign_backup_selection_are_excluded(self):
         for kind in lab.SOURCES:
