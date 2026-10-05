@@ -60,6 +60,11 @@ marker. If it succeeds, recreated seed files no longer bypass the vault.
 
 ## Recovery acceptance
 
+For an enrolled account whose Cutover preflight cannot unlock, read the **Vaultwarden
+Recovery** job description before changing state. The supported CLI pin can recover the
+known client migration incompatibility without reconstructing accounts or changing
+credentials or markers.
+
 The repository gate exercises the marker transition, fail-closed runtime, recreated-seed
 rejection, private CLI state cleanup, both Rundeck converter namespaces, and child failure
 propagation with fake credentials.

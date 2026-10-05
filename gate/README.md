@@ -177,6 +177,14 @@ Python that does not.
 
 ## Continuous integration
 
+`python3 gate/test-vaultwarden-cli.py` exercises the bootstrap-pinned Bitwarden CLI
+against a disposable Vaultwarden 1.37.3 container over locally trusted HTTPS. It requires
+Docker, Node/npm, OpenSSL and Python cryptography; the container CI lane runs it using its
+venv. It installs the CLI only in a temporary directory, enrolls generated disposable
+accounts, checks API-key login/unlock/sync and rejects wrong passwords and API keys.
+Its container, certificate, credentials and CLI state are removed on exit. This is client
+compatibility evidence, not a live-lab observation.
+
 `.github/workflows/gate.yml` runs `bash gate/lint.sh --all` and `bash gate/test.sh --all`
 as separate checks (`gate / lint`, `gate / test`) on every pull request targeting `master`.
 It repeats the bootstrap above on a clean `ubuntu-latest` runner — same venv path

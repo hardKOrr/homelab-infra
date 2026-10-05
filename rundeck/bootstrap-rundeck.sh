@@ -1111,12 +1111,18 @@ cred_set RUNDECK_KEY_STORAGE_FORMAT "aes-256-gcm-v1"
 # Official Bitwarden CLI. Vault mode cannot start without it, so install it as
 # runner infrastructure rather than lazily during the first deploy.
 say "Bitwarden CLI"
-npm install -g --silent @bitwarden/cli >/dev/null
+# 2026.9.1 unlock attempts a user-key-ID backfill API absent in Vaultwarden 1.37.3.
+# Keep the verified client boundary pinned; gate/test-vaultwarden-cli.py exercises it.
+npm install -g --silent @bitwarden/cli@2026.8.0 >/dev/null
 # Verify explicitly. `say "bw $(bw --version)"` would swallow a missing binary: command
 # substitution failing inside an argument leaves `say` itself returning 0, so set -e never
 # fires and the run continues to fail much later, at cutover, for no visible reason.
 command -v bw >/dev/null || { echo "bitwarden CLI not on PATH after install" >&2; exit 1; }
-say "bw $(bw --version 2>/dev/null)"
+BW_CLI_VERSION="$(bw --version 2>/dev/null)" \
+  || { echo "bitwarden CLI version check failed after install" >&2; exit 1; }
+[ "$BW_CLI_VERSION" = "2026.8.0" ] \
+  || { echo "bitwarden CLI on PATH does not match the required version 2026.8.0" >&2; exit 1; }
+say "bw $BW_CLI_VERSION"
 
 # -- rundeck config -------------------------------------------------------------
 say "configuring $RD_URL"

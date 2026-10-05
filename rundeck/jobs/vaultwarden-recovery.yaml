@@ -7,6 +7,17 @@
     > inputs.
 
     Complete `rundeck/VAULTWARDEN-RECOVERY.md` before running this job.
+
+    **Enrollment succeeded but Cutover cannot unlock:** retain the staged machine
+    credentials, Seed inputs, runtime configuration, external recovery material and
+    Vaultwarden data. A failed preflight changes neither marker. Bitwarden CLI 2026.9.1
+    fails its user-key-ID migration against Vaultwarden 1.37.3 after decrypting the
+    account; this does not require account reconstruction. Use the supported bootstrap
+    rerun with unchanged inputs to install the repository-pinned CLI 2026.8.0, then
+    retry Cutover through its owning job. Coordinate any live rerun and verify its
+    target/recovery scope first. Do not run this marker-removal job solely for that
+    client incompatibility, replace credentials, or fabricate markers. If the verified
+    client still fails, retain state and investigate before any account reconstruction.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
