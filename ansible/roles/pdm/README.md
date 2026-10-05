@@ -27,6 +27,4 @@ read-only inventory, then retrieve or rotate remote tokens from Vaultwarden.
 
 **Remove PDM** requires the literal confirmation `REMOVE-PDM`. It stops and destroys only the
 doubly tagged PDM VM and withdraws its project guest record. It retains
-`config/apps/<instance>.yml` and all Vaultwarden items as the restore point. It never alters,
-unregisters, adopts, reconfigures, or otherwise contacts remote PVE, PBS, OPNsense, or other
-guests.
+`config/apps/<instance>.yml` and all Vaultwarden items for recovery. Remote systems are untouched.

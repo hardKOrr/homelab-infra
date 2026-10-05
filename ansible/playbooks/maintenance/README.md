@@ -75,10 +75,9 @@ controller or writer cutover. Existing restores require the exact `_+lab` target
 capture an independent target recovery point before stopping it; a failed or partial
 restore leaves the target stopped and the point accessible for retry. Bind/device mounts,
 physical or disabled disks, passthrough, hook resources, and external filesystems are
-outside PBS guest coverage and remain explicit review items. Guest restore correctness is
-not application-specific acceptance.
+outside PBS guest coverage; recover them through their storage owner.
 
-## Backup evidence audit
+## Backup audit
 
 `audit-backups.yml` powers **Audit Backups** under **Manage / Lab / Health**. It reads
 Proxmox guest configurations, backup jobs and backup storage visible to the configured
@@ -87,7 +86,7 @@ changing them. `max_age_hours` defaults to 36; `audit_node` optionally selects a
 configured delegation node.
 
 The report distinguishes missing, stale, future-dated and fresh snapshot candidates;
-unreadable evidence remains unknown. It flags LXC bind/device mounts, omitted volume
+unreadable inventory remains unknown. It flags LXC bind/device mounts, omitted volume
 mounts, excluded VM disks and external devices. A snapshot candidate does not prove the
 application's identity, database consistency, artifact integrity or successful restore.
 Those fields remain explicitly unverified. The audit does not discover guest-mounted
@@ -167,7 +166,7 @@ the recorded creation PVE node. Save the displayed **plan object** (not its wrap
 a root-owned 0600 JSON file on that node. Preserve the exact reviewed repository revision
 and copy its [`lab.py`](../../files/decommission/lab.py) there using the supported
 operator access path. Verify no other Rundeck execution or node operation is running and
-hold the workstation-wide live-operation lock throughout final observation. Run as node
+hold the workstation-wide live-operation lock throughout execution. Run as node
 root, using independent operator access rather than the platform SSH key being withdrawn:
 
 ```text
@@ -209,7 +208,7 @@ phase resumes node-side even when Rundeck is gone. Newly discovered owned guests
 credential withdrawal. Unrelated guest configurations and excluded objects are compared
 with the plan at completion. External changes require investigation rather than a clean
 result. Excluded unstamped/adopted/shared objects remain explicitly reported afterwards;
-only planned, proven-owned objects have an absence claim.
+only planned, owned objects are checked for absence.
 
 Finally revoke external provider/Vaultwarden credentials through their owning authority
 and retire workstation/private runner credential files after retention review. Their

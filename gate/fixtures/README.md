@@ -6,5 +6,3 @@ Synthetic configuration for offline checks; addresses and credentials are placeh
 `config-loading/valid/` passes Config Doctor and exercises recursive layering.
 `config-loading/invalid/` exercises missing keys and malformed application values.
 `config-loading/multi-estate/` exercises estate defaults and isolation.
-
-`localhost.ini` supplies the local inventory used by lint and syntax checks.
