@@ -436,13 +436,6 @@ Every write first copies the current file to `<dir>/.backups/<file>.<timestamp>`
 that file's backups to the newest 20, and writes the diff to the job log. This is
 point-in-time recovery, not a commit history.
 
-**Recover / Drills / Prove Recovery** owns the bounded PBS guest dispatcher. Its default
-plan is read-only; execution requires explicit disposable whole-guest authority and every
-workload acknowledgement. Existing and stopped/isolated new destinations use Restore Guest;
-new activation/data checks remain pending. Serving-only results cannot claim durable data.
-Artifact retention and failed-target retry instructions live in the job description. This
-job is not required for ordinary install/function/convergence checks.
-
 ### Decommission handoff
 
 **Manage / Lab / Maintenance / Decommission Lab Preflight** projects the repository-owned

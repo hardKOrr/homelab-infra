@@ -18,7 +18,6 @@ jobs:
   lab-status.yaml: Manage/Lab/Health
   reclaim-volume.yaml: Manage/Storage/Volumes
   reimport-jobs.yaml: Setup/Automation
-  prove-recovery.yaml: Recover/Drills
   restore-guest.yaml: Recover/Guests
   store-secret.yaml: Manage/Configuration/Secrets
   troubleshoot-plex-client.yaml: Operate/Troubleshooting
