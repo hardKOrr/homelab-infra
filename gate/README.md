@@ -59,6 +59,9 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   container fixtures: no-mail, private literal password loading, validation, preserved
   answers/sink on rerun, and refusal to restage after cutover. Run it with
   `python3 gate/test-bootstrap-mail.py`; no provider or live target is involved.
+  `test-bootstrap-readiness.py` executes the source readiness predicate through a
+  scrubbed root `pct` fixture against disposable local HTTPS, covering declared CA
+  trust, caller precedence, invalid material, literal paths and unchanged credentials.
   `test-opnsense-search.py` executes the source-owned DNS wiring tasks against a loopback
   API fixture: search/auth request shape, add/update/no-op convergence, provider no-op,
   protected failure diagnostics and refusal to mutate after an invalid search response.
