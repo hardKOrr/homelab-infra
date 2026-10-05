@@ -1,7 +1,7 @@
 ---
 # Bind a host device node into an LXC guest, shared: several guests may bind the same
 # device at once (an iGPU used by both Immich and Frigate, for example). This is the
-# SHARED half of the device-passthrough contract — see docs/specs/device-passthrough.md.
+# SHARED half of the device-passthrough contract.
 # The DEDICATED half (a PCI or USB device leaving the host for one VM) is
 # attach-pci-passthrough.yml / attach-usb-passthrough.yml, and does not share this file,
 # because a shared bind and an exclusive one have opposite conflict rules.

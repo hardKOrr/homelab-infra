@@ -1,5 +1,42 @@
 # Rundeck
 
+## Driving jobs with rd
+
+Load the operator-owned environment file containing `RD_URL` and `RD_TOKEN` with
+export enabled, then check project access and running executions:
+
+```sh
+set -a; . "<operator-home>/.config/ai/homelab-infra/rundeck-access.env"; set +a
+rd projects info -p homelab-infra
+rd executions list -p homelab-infra
+```
+
+An empty execution list means no jobs are running. Run a job by group/name, or by ID
+with its documented options after `--`; follow an existing execution by ID:
+
+```sh
+rd run -j '<group>/<name>' -p homelab-infra -f
+rd run -i <id> -- -<option> <value>
+rd executions follow -e <id> -f
+```
+
+Read option names from `jobs/*.yaml`. After changing job definitions, run
+**Setup / Automation / Reimport Jobs** to update jobs by UUID and preserve history:
+
+```sh
+rd run -j 'Setup/Automation/Reimport Jobs' -p homelab-infra -f
+```
+
+To test a branch, re-run the node-side bootstrap with `REPO_BRANCH=<branch>`, using
+the same private bootstrap inputs. This rewrites `LAB_BRANCH` in
+`/etc/homelab-infra/lab-run.env`. Reimport Jobs once that branch is configured if its
+job definitions changed; restore the usual branch through bootstrap afterward.
+
+Run jobs serially across the whole lab. Every job resets one shared runner checkout
+to `origin/$LAB_BRANCH`, so concurrent jobs can replace files another run is using.
+Do not change `LAB_BRANCH` while a job is running; wait for completion before changing
+branches or starting the next job.
+
 ## Bootstrap
 
 `bootstrap-rundeck.sh` is the whole of layer 1 (see the [root README](../README.md)). Copy

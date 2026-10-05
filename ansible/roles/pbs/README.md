@@ -90,6 +90,5 @@ After recovery, list the pre-existing artifacts, restore at least one to an isol
 target, verify service and fixture checksums, and verify dependent PVE registrations and
 credentials. Keep recovery points through acceptance. On failure, leave the target inactive,
 inspect the owning job's result and retry from the independent point; never discard the
-retained datastore. [#212](https://github.com/hardKOrr/homelab-infra/issues/212) owns PBS
-live recovery/reattachment and artifact restore acceptance. Repository tests and #337 do
-not grant lab authority or establish that acceptance.
+retained datastore. Repository tests do not grant lab authority or establish live
+recovery/reattachment and artifact restore acceptance.

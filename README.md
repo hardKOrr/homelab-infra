@@ -150,8 +150,6 @@ resolvable in DNS.
 | Change an app's configuration | that app's **Configure** job, or [`config.example/README.md`](config.example/README.md) |
 | Know exactly what a config key does | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
 | Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
-| Inspect the legacy Semaphore reference | [`semaphore/README.md`](semaphore/README.md) |
-| Read implementation contracts and lessons learned | [`docs/README.md`](docs/README.md) |
 
 ---
 

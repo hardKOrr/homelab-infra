@@ -131,7 +131,7 @@ must agree with the seam. A declaration's optional `node` statically scopes it t
 automatically. Put every identifier for one physical device (such as an iGPU's render node
 and PCI address) in that entry; the declaration, not current bindings, is what keeps shared
 and dedicated mutually exclusive. `kind` defaults to `igpu` for shared declarations
-and to `gpu` for a bare dedicated declaration, preserving #130's dedicated-only GPU shape;
+and to `gpu` for a bare dedicated declaration, preserving the dedicated-only GPU shape;
 a dedicated iGPU must opt in with `kind: igpu`, while dedicated USB or other entries use
 `kind: usb` or `kind: other`.
 
@@ -142,9 +142,6 @@ first, then removes a binding only when its content matches the caller's input A
 in place and reported, never deleted. Every other `devN`/`hostpciN`/`usbN` entry, every
 other tag, and the guest itself are always untouched.
 
-See [`../../../docs/specs/device-passthrough.md`](../../../docs/specs/device-passthrough.md)
-for the full contract, including why the shared and dedicated modes are not interchangeable
-and why USB devices are identified by resource mapping rather than vendor:product.
 
 ## Guest application records
 

@@ -1,6 +1,6 @@
 ---
 # Remove a shared device bind from an LXC guest — the recovery half of
-# attach-shared-device.yml. See docs/specs/device-passthrough.md.
+# attach-shared-device.yml.
 #
 # A devN entry is removed only when BOTH are true: its host path is in
 # shared_device_list, AND the guest carries the `_.dev+<slug>` provenance tag

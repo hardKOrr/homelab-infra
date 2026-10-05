@@ -13,11 +13,30 @@ playbooks; they do not define Ansible behavior.
 | Change Proxmox ownership, inventory, or provisioning | [`tasks/proxmox/README.md`](tasks/proxmox/README.md) |
 | Change the Kubernetes backend | [`tasks/kubernetes/README.md`](tasks/kubernetes/README.md) |
 | Change configuration shape or a `homelabinfra_*` variable | [`vars/CONTRACT.md`](vars/CONTRACT.md) |
-| Change module boundaries or execution flow | [`../docs/architecture.md`](../docs/architecture.md) |
-| Change configuration loading or dictionary updates | [`../docs/specs/config-layering.md`](../docs/specs/config-layering.md) and [`../docs/specs/namespace-merge-discipline.md`](../docs/specs/namespace-merge-discipline.md) |
-| Change platform wiring | [`../docs/specs/provider-noop-wiring.md`](../docs/specs/provider-noop-wiring.md) |
-| Change secret handling | [`../docs/specs/secrets-handling.md`](../docs/specs/secrets-handling.md) |
 | Select and run verification | [`../gate/README.md`](../gate/README.md) |
+
+## How a run executes
+
+A Rundeck job calls `lab-run`, the installed entry point for
+`ansible/scripts/lab-run.sh`. The wrapper reads its runner environment from
+`/etc/homelab-infra/lab-run.env` (or `LAB_ENV_FILE`). With `LAB_REFRESH=1`, it
+refreshes the checkout to `origin/$LAB_BRANCH` and re-executes the refreshed wrapper;
+refresh defaults on for a configured runner and off for a local checkout. `LAB_DOCTOR`
+defaults to `1`, validating configuration before the selected playbook runs; set it to
+`0` to disable that check. The playbook orchestrates reusable roles and task files.
+
+Before cutover, explicitly allowed Seed-mode runs (`LAB_SEED_MODE=1`) consume the
+bootstrap secrets. After the vault-mode marker exists, ordinary runs must unlock
+Vaultwarden, and Seed mode cannot bypass that guard. The explicit vault recovery
+playbook has its own guarded recovery path.
+
+Platform defaults merge recursively with `config/proxmox.yml` and
+`config/infrastructure.yml`; application defaults merge with `config/apps/<instance>.yml`.
+Generated topology and the in-memory secret overlay complete the runtime view. See
+[`vars/CONTRACT.md`](vars/CONTRACT.md) for the namespaces and exact precedence.
+
+Proxmox guests are owned by the `_+lab` tag. Provisioning and maintenance must preserve
+that ownership boundary and leave untagged guests alone.
 
 ## Areas
 

@@ -40,7 +40,7 @@
 #
 # PASSWORDS. Generated here, 28 characters, stored in the estate's canonical
 # Vaultwarden item as `user_<username>_password` BEFORE they are applied
-# (generate-before-apply, docs/specs/secrets-handling.md), and set exactly once —
+# (generate-before-apply), and set exactly once —
 # at creation, or when the declaration says `rotate_password: true`. A re-deploy
 # never overwrites a password its owner changed in the UI.
 #

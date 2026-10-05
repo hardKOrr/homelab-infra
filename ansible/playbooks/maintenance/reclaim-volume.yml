@@ -69,7 +69,7 @@
 #     pointed at a path this platform did not recognise.
 #
 # UNLIKE Lab Status, THIS JOB FAILS LOUDLY. The provider no-op rule
-# (docs/specs/provider-noop-wiring.md) makes an absent provider a silent skip during a
+# makes an absent provider a silent skip during a
 # deploy, because the deploy was not about that provider. Here the operator asked for one
 # named volume on the Kubernetes backend: a lab with no cluster, an unreachable cluster or
 # an unknown volume name is a question this job cannot answer, and answering "fine" would
@@ -409,7 +409,7 @@
               {{ ('The ' ~ _rv.instance ~ ' restore point that volume held no longer exists.')
                  if (_rv.instance | length) > 0 else '' }}
 
-    # A state change notifies, a read does not — docs/specs/one-click-idempotent.md. The
+    # A state change notifies, a read does not. The
     # message says which of the two happened, because "reclaimed" on its own does not
     # distinguish a volume made reusable from one destroyed. A release of a volume that was
     # already Available changed nothing and says nothing: a notification for a no-op is how

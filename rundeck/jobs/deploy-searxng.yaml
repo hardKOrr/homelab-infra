@@ -31,8 +31,7 @@
     in-namespace limiter cache starts empty and is not recovery state. Re-running the
     deploy for an existing target reapplies its declared configuration; it does not
     delete the source, perform a cutover, or expose a SearXNG Backup/Restore action.
-    The Kubernetes cluster's whole-guest PBS route remains the shared fallback; see
-    `docs/specs/searxng-recovery.md`.
+    The Kubernetes cluster's whole-guest PBS route remains the shared fallback.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
