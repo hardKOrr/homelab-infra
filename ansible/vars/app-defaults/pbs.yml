@@ -62,6 +62,7 @@ pbs_defaults:
   app:
     port: 8007                  # PBS web UI and REST API (HTTPS, self-signed by default)
     datastore_name: homelab
+    datastore_mode: create     # reuse requires a recovered registration; never initialises
     api_token_name: ansible     # token id becomes root@pam!ansible
     service_name: proxmox-backup-proxy   # systemd unit — the unit name is not the app
                                          # name; playbooks/apps/remove.yml stops this

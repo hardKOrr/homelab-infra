@@ -444,6 +444,17 @@ top of itself and would miss any window that opened while the control plane was 
 the resolved answer (`mode`, `due`, `text`, `cron`, `oncalendar`, `monitor_only`,
 `next_open`, `conflict`) and never re-derive it.
 
+### PBS datastore recovery mode
+
+PBS instance configuration accepts `app.datastore_mode: create|reuse` (default `create`).
+`reuse` requires the recovered datastore registration at the exact
+`infrastructure.backups.datastore_path`, waits for serving readiness and never requests
+creation/initialisation. Both modes refuse a same-name registration at another path.
+This is a configuration guard, not a recovery capability declaration or independent
+recovery proof. It does not attach or format external storage. See the
+[PBS guide](../roles/pbs/README.md) for supported whole-guest recovery and fail-closed
+fresh-recreation limits.
+
 ### Recovery contract
 
 `recovery:` is an explicit capability declaration in each app's defaults block. It is

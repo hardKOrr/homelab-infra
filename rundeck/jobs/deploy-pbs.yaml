@@ -17,6 +17,19 @@
     - **Hosting:** Dedicated VM
     - Configures the datastore and lab backup schedule
     - Re-running applies configuration and application updates
+
+    Existing owned guests are checked against the effective declared NIC model, bridge
+    and VLAN before start/deployment, including current and pending configuration.
+    A mismatch preserves NIC/MAC, disks and data and stops the run; do not edit the NIC
+    or delete the guest to bypass it.
+
+    Recovery needs independently retained datastore/configuration, readable artifacts,
+    keys and working PVE/recovery-PBS access outside the failed guest. After a supported
+    whole-guest restore, set `app.datastore_mode: reuse` in the instance config to require
+    the existing datastore registration and original path without initialisation.
+    A missing registration fails closed. This job does not attach external storage or
+    recreate a failed guest. See the
+    [PBS recovery contract](https://github.com/hardKOrr/homelab-infra/blob/master/ansible/roles/pbs/README.md).
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

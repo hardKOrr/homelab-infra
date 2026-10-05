@@ -1,0 +1,94 @@
+---
+# Read-only preflight for an existing owned VM, including a running VM. The caller
+# resolves the effective network through network/resolve-network.yml; this seam
+# never allocates an address or writes a NIC, MAC, disk or guest configuration.
+# Inputs: validate_vm_host (inventory hostname), validate_vm_tag (instance tag),
+#         validate_vm_network {model, bridge, vlan}; absent/zero VLAN is untagged.
+
+- name: VM network | Require an owned VM and effective declaration
+  ansible.builtin.assert:
+    that:
+      - "'_+lab' in (hostvars[validate_vm_host].proxmox_tags_parsed | default([]))"
+      - validate_vm_tag in (hostvars[validate_vm_host].proxmox_tags_parsed | default([]))
+      - hostvars[validate_vm_host].proxmox_vmtype | default('') == 'qemu'
+      - hostvars[validate_vm_host].proxmox_vmid | default(0) | int > 0
+      - hostvars[validate_vm_host].proxmox_node | default('') | length > 0
+      - validate_vm_network.model | default('') | length > 0
+      - validate_vm_network.bridge | default('') | length > 0
+      - validate_vm_network.vlan | default(0) | string is match('^[0-9]+$')
+    fail_msg: >-
+      Cannot validate {{ validate_vm_host }}: require an exact project-owned VM,
+      instance tag and declared NIC model/bridge/VLAN. Refusing reuse before start or deployment.
+
+- name: VM network | Register node delegation
+  ansible.builtin.import_tasks: register-nodes.yml
+
+- name: VM network | Require the inventory node to be a configured delegate
+  ansible.builtin.assert:
+    that: hostvars[validate_vm_host].proxmox_node in groups['proxmox_delegates']
+    fail_msg: "The reused VM's node is not a configured delegation target. Refusing reuse."
+
+- name: VM network | Read current and next-boot VM configurations
+  ansible.builtin.command:
+    argv: [qm, config, "{{ hostvars[validate_vm_host].proxmox_vmid }}", --current, "{{ item }}"]
+  delegate_to: "{{ hostvars[validate_vm_host].proxmox_node }}"
+  loop: [1, 0]
+  register: _vm_network_config
+  changed_when: false
+  # Keep unrelated guest configuration private; only extracted fields are diagnostics.
+  no_log: true
+
+- name: VM network | Reset readback observations
+  ansible.builtin.set_fact:
+    _vm_network_observations: []
+
+- name: VM network | Extract identity and NIC fields from readback
+  ansible.builtin.set_fact:
+    _vm_network_observations: >-
+      {{ _vm_network_observations + [{
+        'view': 'current' if item.item == 1 else 'next boot',
+        'owned': '_+lab' in _tags and validate_vm_tag in _tags,
+        'template': item.stdout is search('(?m)^template:\s*1\s*$'),
+        'model': _net0 | regex_findall('^([^=,]+)(?:=|,|$)') | first | default(''),
+        'bridges': _net0 | regex_findall('(?:^|,)bridge=([^,]+)'),
+        'vlans': _net0 | regex_findall('(?:^|,)tag=([^,]*)')
+      }] }}
+  vars:
+    _tags: "{{ ((item.stdout | regex_findall('(?m)^tags:\\s*(.+)$') | first | default('')) | trim).split(';') }}"
+    _net0: "{{ (item.stdout | regex_findall('(?m)^net0:\\s*(.+)$') | first | default('')) | trim }}"
+  loop: "{{ _vm_network_config.results }}"
+  no_log: true
+
+- name: VM network | Verify ownership again from current configuration
+  ansible.builtin.assert:
+    that:
+      - item.owned
+      - not item.template
+    fail_msg: "The actual VM no longer has the expected ownership/instance tags, or is a template. Refusing reuse."
+  loop: "{{ _vm_network_observations }}"
+  loop_control:
+    label: "{{ item.view }}"
+
+- name: VM network | Compare actual and expected NIC fields
+  ansible.builtin.assert:
+    that:
+      - item.model == validate_vm_network.model
+      - item.bridges == [validate_vm_network.bridge]
+      - item.vlans | length <= 1
+      - _vm_network_vlan is match('^[0-9]+$')
+      - _vm_network_vlan | int == validate_vm_network.vlan | default(0) | int
+    fail_msg: >-
+      Reused VM {{ validate_vm_host }} ({{ hostvars[validate_vm_host].proxmox_vmid }}) on
+      {{ hostvars[validate_vm_host].proxmox_node }} has a NIC declaration mismatch ({{ item.view }}).
+      Actual model={{ item.model | default('(missing)', true) }},
+      bridge={{ item.bridges | join(',') | default('(missing)', true) }},
+      vlan={{ item.vlans | join(',') | default('0 (untagged)', true) }};
+      expected model={{ validate_vm_network.model }}, bridge={{ validate_vm_network.bridge }},
+      vlan={{ validate_vm_network.vlan | default(0) }}.
+      Refusing start and deployment. Existing NIC/MAC, disks and data are unchanged.
+      Use the owning PBS recovery contract; do not edit the NIC or remove the guest to bypass this check.
+  vars:
+    _vm_network_vlan: "{{ item.vlans | first | default('0') }}"
+  loop: "{{ _vm_network_observations }}"
+  loop_control:
+    label: "{{ item.view }}"

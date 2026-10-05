@@ -29,6 +29,14 @@ recording API and the actual SSH refusal task locally, without a provider or con
 It proves the source behavior, not live guest readiness. A mismatched existing clone
 requires the owning observation's supported recovery/recreation decision.
 
+PBS's separate existing-tag branch calls `validate-vm-network.yml` before adding its
+guest to the deploy group or starting it. It reads current and pending NIC fields for
+running and stopped guests, verifies current ownership, and compares model/bridge/VLAN
+against the scope-resolved effective declaration. It performs no guest writes. Matching
+reuse retains NIC/MAC, disks and data. The [PBS guide](../../roles/pbs/README.md) owns its
+independent recovery prerequisites and supported-path limits; a NIC refusal is not
+authority to recreate the guest.
+
 ## LXC creation and existing guests
 
 `lxc-create.yml` is a creation seam. Application and stack callers select existing

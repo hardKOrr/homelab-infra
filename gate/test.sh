@@ -119,6 +119,7 @@ bash gate/test-proxmox-tags.sh || rc=1
 bash gate/test-proxmox-api-contract.sh || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-lxc-present.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-vm-clone.py || rc=1
+"$HOME/.venvs/homelab-ansible/bin/python" gate/test-pbs-reuse.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-inventory-safety.py || rc=1
 bash gate/test-device-passthrough-contract.sh || rc=1
 bash gate/test-frigate-contract.sh || rc=1

@@ -19,6 +19,12 @@
     contract. A completed guest backup is a recovery candidate; prove it by restoring and
     checking service behavior plus known fixture data. Record the artifact, execution ID,
     exclusions and restore result in the issue body without credentials or backup contents.
+
+    **PBS server prerequisite:** its own datastore is not independent recovery storage
+    for that server. Retain datastore/configuration, artifacts, encryption keys and access
+    outside the PBS guest before replacement. This job does not supply external datastore
+    reattachment. Follow the
+    [PBS recovery contract](https://github.com/hardKOrr/homelab-infra/blob/master/ansible/roles/pbs/README.md).
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

@@ -36,6 +36,16 @@
     unavailable datastore it hosts. Follow the independent
     [runner recovery procedure](https://github.com/hardKOrr/homelab-infra/blob/master/rundeck/RUNNER-RECOVERY.md)
     for those control-plane prerequisites.
+
+    **PBS server recovery:** independently verify ownership, retained datastore/configuration,
+    source and pre-replacement artifacts, encryption keys and working PVE/recovery-PBS
+    access before any existing replacement. This job retains an existing target's NIC;
+    it does not repair a NIC mismatch or attach external datastore storage. A recovered
+    registered datastore can be used by Deploy PBS with `app.datastore_mode: reuse`,
+    which refuses a missing registration or changed path without initialisation. Missing
+    independent proof or an unsupported storage-owner path blocks replacement. Keep the
+    original data and recovery points; see the
+    [PBS recovery contract](https://github.com/hardKOrr/homelab-infra/blob/master/ansible/roles/pbs/README.md).
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

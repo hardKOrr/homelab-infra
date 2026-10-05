@@ -78,6 +78,32 @@
       ansible.builtin.set_fact:
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
+    # Resolve without allocating, for both reuse and creation. The same effective
+    # network (including default inheritance) must guard a reused running VM too.
+    - name: Resolve the network this guest belongs on
+      ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+      vars:
+        resolve_network_app: "pbs"
+        resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
+        resolve_network_requested: "{{ app_config.proxmox.network | default('', true) }}"
+
+    - name: Require the selected network declaration
+      ansible.builtin.assert:
+        that: network_selected in (homelabinfra_config.networks | default({}))
+        fail_msg: "config/proxmox.yml declares no network named {{ network_selected }}. Refusing PBS provisioning."
+
+    - name: Validate the existing PBS VM network before reuse
+      ansible.builtin.include_tasks: ../../tasks/proxmox/validate-vm-network.yml
+      vars:
+        validate_vm_host: "{{ _existing_hosts[0] }}"
+        validate_vm_tag: "_{{ instance }}"
+        validate_vm_network:
+          # vm-clone.yml creates virtio net0; vm.net is not a clone model override.
+          model: virtio
+          bridge: "{{ network_effective.bridge | default('') }}"
+          vlan: "{{ network_effective.vlan | default(0) }}"
+      when: _existing_hosts | length > 0
+
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"
@@ -105,16 +131,6 @@
     - name: Provision new VM
       when: _existing_hosts | length == 0
       block:
-        # Which network this guest is addressed on follows from its SCOPE — `scope: lab`
-        # in catalog/applications.yml puts it on the shared network, an estate-scoped app
-        # on its estate's. Advisory: a lab that declares no such network is unaffected.
-        - name: Resolve the network this guest belongs on
-          ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
-          vars:
-            resolve_network_app: "pbs"
-            resolve_network_estate: "{{ app_config.routing.estate | default('', true) }}"
-            resolve_network_requested: "{{ app_config.proxmox.network | default('', true) }}"
-
         # Built once and reused by every VM app afterwards; a no-op when it exists.
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
@@ -274,6 +290,7 @@
         pbs_api_token_secret: "{{ _pbs_deploy_host.pbs_token_secret }}"
         pbs_instance: "{{ instance }}"
         pbs_datastore_name: "{{ _pbs_deploy_host.app_config.app.datastore_name }}"
+        pbs_datastore_mode: "{{ _pbs_deploy_host.app_config.app.datastore_mode | default('create') }}"
 
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:
