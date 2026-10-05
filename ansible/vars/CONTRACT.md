@@ -811,17 +811,3 @@ When `infrastructure.yml` declares two or more estates, an estate-scoped catalog
 must use `<app>-<estate>[-<variant>]` as its instance name and must author the same estate in
 `routing.estate`. There is no unsuffixed default estate. Lab-scoped platform services keep
 their ordinary instance names because one deployment serves the whole lab.
-
-### Optional recovery drill declaration
-
-Product defaults may declare `recovery.drill.fixture_playbook`, a repository-owned
-`playbooks/maintenance/*.yml` adapter used by the bounded PBS proof dispatcher. It receives
-`proof_phase` (`A`, `B`, `verify`), a unique `proof_run`, `proof_topic` and `proof_url`.
-A emits `a_present`; B emits `a_present` and `b_present` after readback assertions.
-A/B must write and read distinguishable non-sensitive application state; verify must assert
-A-present and B-absent and publish only assertion booleans. Credentials remain in the
-existing in-memory vault contract and `no_log` tasks. This declaration does not select or
-broaden a recovery method. Method selection remains with existing defaults/catalog;
-instance files cannot replace recovery/drill declarations. An absent adapter means
-serving-only, incomplete durable-data evidence. See the
-[maintenance guide](../playbooks/maintenance/README.md#bounded-recovery-proof).

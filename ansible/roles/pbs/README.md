@@ -31,7 +31,7 @@ Do not change the NIC, remove its tag or delete the guest to bypass the refusal.
 ## Recovery boundary and prerequisites
 
 PBS has no declared application-native or project-managed recovery method and no guest
-recreation/storage attachment adapter. **Prove Recovery** excludes PBS. **Remove App**
+recreation/storage attachment adapter. **Remove App**
 does not destroy a guest and is not a recreation path. Whole-lab decommission is also not
 a PBS repair action. Installing an empty PBS is not recovery evidence.
 
