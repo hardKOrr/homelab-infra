@@ -76,10 +76,17 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(self.before, self.config_file.read_bytes())
         return result
 
-    def playbook(self, server, cert, **inputs):
+    def playbook(self, server, cert, check_identities=False, **inputs):
         play = yaml.safe_load((ROOT / 'ansible/playbooks/maintenance/vaultwarden-enroll.yml').read_text())[0]
         play['pre_tasks'][0] = {'name': 'Use isolated infrastructure declaration',
                                'ansible.builtin.set_fact': {'homelabinfra_config': {'infrastructure': self.config}}}
+        if check_identities:
+            # Check only the read-only input boundary; the enrollment ceremony has
+            # no check-mode implementation and must never be forced to execute.
+            play['tasks'] = [{'name': 'Verify effective identities in check mode',
+                             'ansible.builtin.assert': {'that': [
+                                 '_vault_owner_email == "' + OWNER + '"',
+                                 '_vault_automation_email == "' + AUTOMATION + '"']}}]
         # Relocate committed helpers for this temporary playbook; keep policy, assertions,
         # ceremony and Key Storage conditions exactly as shipped.
         for task in play['pre_tasks'] + play['tasks']:
@@ -99,7 +106,8 @@ class IdentityTests(unittest.TestCase):
                'VAULTWARDEN_ADMIN_TOKEN': 'fixture-admin', 'LAB_SECRETS_DIR': str(self.directory),
                'RUNDECK_URL': url, 'RUNDECK_API_TOKEN': 'fixture-token', **inputs}
         result = subprocess.run([str(Path(sys.executable).with_name('ansible-playbook')),
-                                 '-i', 'localhost,', '-c', 'local', str(filename)],
+                                 '-i', 'localhost,', '-c', 'local', str(filename)] +
+                                (['--check'] if check_identities else []),
                                 env=env, capture_output=True, text=True)
         self.assertEqual(self.before, self.config_file.read_bytes())
         return result
@@ -143,6 +151,15 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(state, (fake.users, fake.orgs, fake.members, fake.machine))
         self.assertEqual(writes, (fake.writes, fake.machine_writes))
         requests = fake.requests
+        checked = self.playbook(server, cert, check_identities=True)
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        self.assertIn('changed=0', checked.stdout)
+        checked_conflict = self.playbook(server, cert, check_identities=True,
+                                        VAULTWARDEN_OWNER_EMAIL='another@example.com')
+        self.assertNotEqual(checked_conflict.returncode, 0)
+        self.assertIn('conflicts with config/infrastructure.yml',
+                      checked_conflict.stdout + checked_conflict.stderr)
+        self.assertEqual(requests, fake.requests)
         conflict = self.playbook(server, cert, VAULTWARDEN_OWNER_EMAIL='another@example.com')
         self.assertNotEqual(conflict.returncode, 0)
         self.assertIn('conflicts with config/infrastructure.yml', conflict.stdout + conflict.stderr)
