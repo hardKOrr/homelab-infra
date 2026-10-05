@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run actual creation guards and preflight/refusal/handoff assertions offline."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path.home() / '.venvs/homelab-ansible/bin/python'
 ANSIBLE = PYTHON.with_name('ansible-playbook')
+spec = importlib.util.spec_from_file_location('decommission', ROOT / 'ansible/files/decommission/lab.py')
+lab = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lab)
 source = (ROOT / 'rundeck/bootstrap-rundeck.sh').read_text()
 start = source.index('if pveum role list --output-format json', source.index('record_created_pve_object()'))
 end = source.index('\n#', source.index('token ${PVE_USER}!${PVE_TOKEN_NAME} already exists', start))
@@ -146,6 +150,36 @@ with tempfile.TemporaryDirectory() as temp:
     replan = dict(orchestration, loop=['plan'])
     bind = {'ansible.builtin.set_fact': {'_dc_manifest': {'wiring': '{{ _dc_wiring_plan }}'}}}
     fixture = dict(base, decommission_phase='unwire', homelabinfra_infra=providers, app_config={'routing': {}})
+    # Cross the real Ansible-to-node handoff: derive effects, bind both manifest
+    # additions and render the authored confirmation, then hash the exported
+    # object with the executor's implementation. Keep the port numeric so a
+    # string coercion cannot silently pass this contract check.
+    confirmation_path = temp / 'confirmation.json'
+    numeric_providers = dict(providers, reverse_proxy={'provider': 'caddy', 'port': 2019})
+    contract_plan = dict(plan, schema=1, exclusions={'external': ['retained café'], 'shared': False})
+    contract_fixture = dict(fixture, homelabinfra_infra=numeric_providers,
+                            _dc_plan={'stdout': json.dumps({'plan': contract_plan})})
+    run([by_name['Decommission | Bind consumer declarations to the private plan'], replan,
+         by_name['Decommission | Bind exact wiring effects to the private plan'],
+         by_name['Decommission | Resolve literal plan confirmation'],
+         {'ansible.builtin.copy': {
+             'dest': str(confirmation_path), 'mode': '0600',
+             'content': "{{ {'manifest': _dc_manifest, 'confirmation': _dc_confirmation} | to_json(sort_keys=True) }}"}}],
+        contract_fixture)
+    rendered = json.loads(confirmation_path.read_text())
+    expected_wiring = [dict(
+        app=consumer['app'], instance=consumer['instance'], domain=consumer['instance'] + '.example.test',
+        reverse_proxy='caddy', sso='authentik', monitoring='uptime_kuma', dns='opnsense',
+        targets={'reverse_proxy': '', 'reverse_proxy_port': 2019, 'sso': '', 'monitoring': '',
+                 'dns': 'https://192.0.2.53'}, namespace='', forgejo='', forgejo_endpoint='',
+        effect='remove only the instance route/SSO/monitor/DNS records and owned namespace; preserve dependencies and external data'
+    ) for consumer in contract_fixture['decommission_apps']]
+    expected_manifest = dict(contract_plan, consumers=contract_fixture['decommission_apps'], wiring=expected_wiring)
+    assert rendered['manifest'] == expected_manifest, rendered
+    assert type(rendered['manifest']['wiring'][0]['targets']['reverse_proxy_port']) is int, rendered
+    assert rendered['confirmation'] == 'DECOMMISSION ' + lab.digest(rendered['manifest']), rendered
+    assert rendered['confirmation'] == 'DECOMMISSION ' + lab.digest(expected_manifest), rendered
+    print('decommission source: actual Ansible manifest/confirmation matches node digest with integer port')
     out = run([replan, bind, orchestration], fixture)
     events = re.findall(r'RECORD (integrations|proxy|dns) ([A-Za-z0-9_-]+)', out)
     assert len(events) == 8, out  # two integrations, one proxy and one DNS, for each consumer
