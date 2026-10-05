@@ -262,12 +262,20 @@ printf '%s\n' 'proxmox:' '  api_host: 127.0.0.1' '  api_port: 8006' \
   '  api_user: homelab@pve' '  api_token_id: automation' > "$work/config/proxmox.yml"
 cat > "$work/venv/bin/ansible-playbook" <<'SH'
 #!/bin/sh
+if [ -n "${FAKE_ANSIBLE_LOG:-}" ]; then
+  echo invoked >> "$FAKE_ANSIBLE_LOG"
+fi
 exit 9
 SH
 chmod +x "$work/venv/bin/ansible-playbook"
 cat > "$work/fake-bin/bw" <<'SH'
 #!/bin/sh
 echo "$1 ${BITWARDENCLI_APPDATA_DIR:-}" >> "$FAKE_BW_LOG"
+if [ "$1" = "${FAKE_BW_FAILURE:-}" ]; then
+  echo 'rejected-credential-session-probe'
+  echo 'rejected-credential-session-probe' >&2
+  exit 1
+fi
 case "$1 $2" in
   'unlock --passwordenv') printf '%s\n' 'session-value' ;;
   'list items') printf '%s' '[
@@ -310,6 +318,47 @@ grep -q '^lock ' "$work/bw.log" || fail "bw lock was not called"
 grep -q '^logout ' "$work/bw.log" || fail "bw logout was not called"
 appdata="$(awk 'NR==1 {print $2}' "$work/bw.log")"
 [ -n "$appdata" ] && [ ! -e "$appdata" ] || fail "private CLI state survived cleanup"
+
+# Failed API authentication/unlock must leave Seed inputs, staged credentials and
+# both markers exactly as they were, before Cutover's import playbook can start.
+mkdir -p "$work/preflight-state" "$work/staged"
+printf '%s\n' 'PROXMOX_API_TOKEN=retained-seed-probe' > "$work/seed.env"
+printf '%s\n' 'retained-machine-probe' > "$work/staged/machine"
+for mode in seed vault; do
+  if [ "$mode" = vault ]; then
+    printf '%s\n' 'vault-marker-probe' > "$work/preflight-state/vault-mode"
+    printf '%s\n' 'complete-marker-probe' > "$work/preflight-state/cutover-complete"
+  fi
+  before="$(find "$work/preflight-state" "$work/staged" -type f -exec sha256sum {} \;)"
+  for rejected in login unlock; do
+    : > "$work/bw.log"
+    : > "$work/ansible.log"
+    seed_mode=0
+    [ "$mode" = seed ] && seed_mode=1
+    set +e
+    rejected_output="$(PATH="$work/fake-bin:$PATH" FAKE_BW_LOG="$work/bw.log" \
+      FAKE_BW_FAILURE="$rejected" FAKE_ANSIBLE_LOG="$work/ansible.log" \
+      LAB_REPO="$work/repo" LAB_VENV="$work/venv" LAB_REFRESH=0 LAB_DOCTOR=0 \
+      LAB_STATE_DIR="$work/preflight-state" LAB_ENV_FILE="$work/missing.env" \
+      LAB_SECRETS_FILE="$work/seed.env" LAB_SEED_MODE="$seed_mode" LAB_VAULT_PREFLIGHT=1 \
+      BW_SERVER=https://vault.example BW_CLIENTID=id BW_CLIENTSECRET=secret BW_PASSWORD=password \
+      bash "$repo/ansible/scripts/lab-run.sh" playbooks/maintenance/vaultwarden-cutover.yml 2>&1)"
+    rejected_rc=$?
+    set -e
+    [ "$rejected_rc" -ne 0 ] || fail "failed $rejected preflight continued"
+    [ ! -s "$work/ansible.log" ] || fail "failed $rejected started Cutover"
+    ! grep -q 'rejected-credential-session-probe' <<< "$rejected_output" \
+      || fail "failed $rejected exposed CLI output"
+    [ "$before" = "$(find "$work/preflight-state" "$work/staged" -type f -exec sha256sum {} \;)" ] \
+      || fail "failed $rejected changed markers or staged credentials"
+    [ "$(cat "$work/seed.env")" = 'PROXMOX_API_TOKEN=retained-seed-probe' ] \
+      || fail "failed $rejected changed Seed inputs"
+    grep -q '^lock ' "$work/bw.log" || fail "failed $rejected did not lock"
+    grep -q '^logout ' "$work/bw.log" || fail "failed $rejected did not logout"
+    appdata="$(awk 'NR==1 {print $2}' "$work/bw.log")"
+    [ -n "$appdata" ] && [ ! -e "$appdata" ] || fail "failed $rejected retained private CLI state"
+  done
+done
 
 # The collection grant rewrites the collection object wholesale, so the payload it
 # sends is exercised here rather than trusted: the shipped shell block is lifted out

@@ -114,6 +114,13 @@ jobs:
       # changes its global configuration.
       - run: bash gate/container.sh
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify enrolled accounts with the supported Bitwarden CLI
+        run: '"$CONTAINER_VENV/bin/python" gate/test-vaultwarden-cli.py'
+
   kind:
     name: gate / kind
     runs-on: ubuntu-latest
