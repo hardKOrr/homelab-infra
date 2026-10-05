@@ -1965,6 +1965,15 @@ else
 fi
 [ -n "$PVE_PRIVS" ] || die "no usable privileges resolved for role $PVE_ROLE"
 
+# Creation provenance is node-root-private and records identities, never secrets.
+# The helper is the source from the same checkout used by this bootstrap.
+DC_HELPER="$TMPROOT/decommission-lab.py"
+in_ct cat "$REPO_DIR/ansible/files/decommission/lab.py" > "$DC_HELPER"
+record_created_pve_object() {
+  python3 "$DC_HELPER" --node "$PVE_NODE" --record "$1" --identity "$2" \
+    --source bootstrap-rundeck || die "could not record new Proxmox object provenance"
+}
+
 if pveum role list --output-format json 2>/dev/null | grep -q "\"roleid\":\"${PVE_ROLE}\""; then
   info "role $PVE_ROLE exists — updating its privileges"
   pveum role modify "$PVE_ROLE" --privs "$PVE_PRIVS" >/dev/null \
@@ -1973,6 +1982,7 @@ else
   info "creating role $PVE_ROLE"
   pveum role add "$PVE_ROLE" --privs "$PVE_PRIVS" >/dev/null \
     || die "could not create role $PVE_ROLE"
+  record_created_pve_object role "$PVE_ROLE"
 fi
 
 if pveum user list --output-format json 2>/dev/null | grep -q "\"userid\":\"${PVE_USER}\""; then
@@ -1980,11 +1990,22 @@ if pveum user list --output-format json 2>/dev/null | grep -q "\"userid\":\"${PV
 else
   info "creating user $PVE_USER"
   pveum user add "$PVE_USER" --comment "homelab-infra platform automation" >/dev/null
+  record_created_pve_object user "$PVE_USER"
 fi
 
 # Propagating from / is what lets the platform create guests on any node and allocate on
 # any storage without this script having to enumerate them.
+# Record only a newly created exact ACL edge; rerun never adopts an existing edge.
+ACL_WAS_PRESENT="$(pvesh get /access/acl --output-format json | python3 -c '
+import json,sys
+user,role=sys.argv[1:]
+print(int(any(r.get("path")=="/" and r.get("type")=="user" and
+              r.get("ugid")==user and r.get("roleid")==role for r in json.load(sys.stdin))))
+' "$PVE_USER" "$PVE_ROLE")"
 pveum acl modify / --users "$PVE_USER" --roles "$PVE_ROLE" >/dev/null
+if [ "$ACL_WAS_PRESENT" = 0 ]; then
+  record_created_pve_object acl "/|user|$PVE_USER|$PVE_ROLE"
+fi
 info "granted $PVE_ROLE on / to $PVE_USER"
 
 PVE_TOKEN_SECRET=""
@@ -2007,6 +2028,7 @@ if [ "$TOKEN_EXISTS" -eq 0 ]; then
   TOKEN_JSON="$(pveum user token add "$PVE_USER" "$PVE_TOKEN_NAME" --privsep 0 --output-format json)"
   PVE_TOKEN_SECRET="$(printf '%s' "$TOKEN_JSON" | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   [ -n "$PVE_TOKEN_SECRET" ] || die "could not read the token secret out of the pveum response"
+  record_created_pve_object token "$PVE_USER!$PVE_TOKEN_NAME"
   info "minted — the secret is displayed once and is now held only in this process"
 else
   info "token ${PVE_USER}!${PVE_TOKEN_NAME} already exists — keeping it"

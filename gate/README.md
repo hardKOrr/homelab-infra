@@ -196,3 +196,11 @@ Proxmox endpoint, a real Kubernetes cluster, or any repository secret.
 provider-free seams: refusal before mutation, deployment convergence, artifact freshness,
 A/B semantics, shared scope, stopped new destinations, degraded evidence and stage failures.
 The callback and Ntfy adapter are also exercised locally without a lab or credentials.
+
+`test-decommission.py` runs the actual node plan/executor against a recording, socket-free
+PVE transport. `test-decommission-source.py` executes the authored bootstrap creation
+guards and actual Ansible preflight/refusal/handoff assertions: future creation, no
+existing-object adoption, PBS stamp gating, exact confirmation, complete workloads,
+degraded providers, global integration/proxy/DNS order, runner-last retry, changed
+provenance, shared disks, cloud-init/template order and leftover-volume refusal.
+Neither test loads credentials or contacts a provider.

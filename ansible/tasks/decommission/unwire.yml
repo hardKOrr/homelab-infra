@@ -1,0 +1,170 @@
+---
+# Whole-lab cleanup does not stop providers or prune the registry. Every consumer
+# uses the deployment estate resolution and the existing inverse wiring seams.
+- name: Decommission | Reset estate context from full platform inputs
+  ansible.builtin.include_tasks: ../load-user-vars.yml
+
+- name: Decommission | Load declared defaults
+  ansible.builtin.include_vars:
+    file: "../../vars/app-defaults/{{ decommission_app.app }}.yml"
+    name: _dc_defaults
+  when: decommission_app.app != 'rundeck'
+
+- name: Decommission | Load declared instance
+  ansible.builtin.include_vars:
+    file: "{{ _luv_config_dir }}/apps/{{ decommission_app.instance }}.yml"
+    name: _dc_instance
+  no_log: true
+
+- name: Decommission | Merge declared application
+  ansible.builtin.set_fact:
+    app_config: "{{ ({} if decommission_app.app == 'rundeck' else _dc_defaults[decommission_app.app | replace('-', '_') ~ '_defaults']) | combine(_dc_instance, recursive=True) }}"
+    instance: "{{ decommission_app.instance }}"
+    _caddy_existing: {}
+    _ak_probe: {}
+    kuma_session_ready: false
+    kuma_call_ok: false
+  no_log: true
+
+- name: Decommission | Resolve deployment estate
+  ansible.builtin.include_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
+- name: Decommission | Unwire consumers with providers still available
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    _dc_forgejo_endpoint: >-
+      {{ (homelabinfra_infra.apps | default({})).get(app_config.app.forgejo.instance, {}).url | default('')
+         if decommission_app.app == 'forgejo-runner' else '' }}
+  block:
+    - name: Decommission | Require known provider cleanup routes
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_infra.reverse_proxy.provider | default('none') in ['none', 'caddy', 'nginx']
+          - homelabinfra_infra.sso.provider | default('none') in ['none', 'authentik']
+          - homelabinfra_infra.monitoring.provider | default('none') in ['none', 'uptime_kuma']
+          - homelabinfra_infra.dns.provider | default('none') in ['none', 'opnsense', 'pihole']
+        fail_msg: A declared provider has no supported inverse wiring route; handoff refused.
+
+    - name: Decommission | Require provider endpoints without embedded credentials
+      ansible.builtin.assert:
+        that:
+          - (_dc_endpoint | urlsplit('username') | default('', true)) | length == 0
+          - (_dc_endpoint | urlsplit('password') | default('', true)) | length == 0
+          - (_dc_endpoint | urlsplit('query') | default('', true)) | length == 0
+          - (_dc_endpoint | urlsplit('fragment') | default('', true)) | length == 0
+        fail_msg: Provider endpoints must be base URLs with credentials supplied by the existing secret contract.
+      vars:
+        _dc_endpoint: "{{ _dc_forgejo_endpoint if item == 'forgejo' else homelabinfra_infra.get(item, {}).host | default('') }}"
+      loop: ['reverse_proxy', 'sso', 'monitoring', 'dns', 'forgejo']
+      no_log: true
+
+    - name: Decommission | Derive planned Kubernetes namespace through the owning seam
+      ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml
+      vars:
+        k8s_namespace_for: "{{ instance }}"
+      when: app_config.hosting | default('') == 'kubernetes'
+
+    - name: Decommission | Resolve exact consumer wiring effects without secrets
+      ansible.builtin.set_fact:
+        _dc_effect: >-
+          {{ {
+               'app': decommission_app.app, 'instance': instance, 'domain': wiring_domain,
+               'reverse_proxy': homelabinfra_infra.reverse_proxy.provider | default('none'),
+               'sso': homelabinfra_infra.sso.provider | default('none'),
+               'monitoring': homelabinfra_infra.monitoring.provider | default('none'),
+               'dns': homelabinfra_infra.dns.provider | default('none'),
+               'targets': {
+                 'reverse_proxy': homelabinfra_infra.reverse_proxy.host | default(''),
+                 'reverse_proxy_port': homelabinfra_infra.reverse_proxy.port | default(''),
+                 'sso': homelabinfra_infra.sso.host | default(''),
+                 'monitoring': homelabinfra_infra.monitoring.host | default(''),
+                 'dns': homelabinfra_infra.dns.host | default('')},
+               'namespace': k8s_namespace if app_config.hosting | default('') == 'kubernetes' else '',
+               'forgejo': app_config.app.forgejo.instance if decommission_app.app == 'forgejo-runner' else '',
+               'forgejo_endpoint': _dc_forgejo_endpoint,
+               'effect': 'remove only the instance route/SSO/monitor/DNS records and owned namespace; preserve dependencies and external data'
+             } }}
+
+    - name: Decommission | Refuse changed consumer effects before provider mutation
+      ansible.builtin.assert:
+        that: _dc_effect in _dc_manifest.wiring
+        fail_msg: Consumer routing, provider endpoint or namespace changed after confirmation. Re-plan before unwiring.
+      when: decommission_unwire_phase != 'plan'
+
+    - name: Decommission | Unwire reverse proxy
+      ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - decommission_unwire_phase == 'proxy'
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+
+    - name: Decommission | Require proxy unwiring observation
+      ansible.builtin.assert:
+        that: _caddy_existing.status | default(0) in [200, 404]
+        fail_msg: Caddy unwiring degraded; final teardown handoff refused.
+      when:
+        - decommission_unwire_phase == 'proxy'
+        - homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
+
+    - name: Decommission | Unwire Authentik
+      ansible.builtin.include_tasks: ../unwiring/authentik.yml
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+
+    - name: Decommission | Require SSO unwiring observation
+      ansible.builtin.assert:
+        that: _ak_probe.status | default(0) == 200
+        fail_msg: Authentik unwiring degraded; final teardown handoff refused.
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+
+    - name: Decommission | Unwire monitoring
+      ansible.builtin.include_tasks: ../unwiring/uptime-kuma.yml
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+
+    - name: Decommission | Require monitoring unwiring observation
+      ansible.builtin.assert:
+        that:
+          - kuma_session_ready | bool
+          - kuma_call_ok | bool
+        fail_msg: Monitoring unwiring degraded; final teardown handoff refused.
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+
+    - name: Decommission | Require independent DNS provider access
+      ansible.builtin.assert:
+        that: >-
+          (homelabinfra_infra.dns.host | default('') | urlsplit('hostname') | default('', true))
+          is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$|^[0-9A-Fa-f]*:[0-9A-Fa-f:]+$')
+        fail_msg: DNS cleanup requires a direct provider IP endpoint independent of records being removed. Configure it through the owning configuration path before retrying.
+      when:
+        - decommission_unwire_phase in ['plan', 'dns']
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Decommission | Unwire DNS
+      ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - decommission_unwire_phase == 'dns'
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Decommission | Deregister Forgejo consumer before Forgejo destruction
+      ansible.builtin.include_tasks: ../app-wiring/forgejo-runner-remove.yml
+      vars:
+        runner_remove_instance: "{{ instance }}"
+        runner_remove_forgejo_instance: "{{ app_config.app.forgejo.instance }}"
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - decommission_app.app == 'forgejo-runner'
+
+    - name: Decommission | Record exact consumer wiring effects without secrets
+      ansible.builtin.set_fact:
+        _dc_wiring_plan: "{{ (_dc_wiring_plan | default([])) + [_dc_effect] }}"
+      when: decommission_unwire_phase == 'plan'

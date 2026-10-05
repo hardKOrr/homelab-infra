@@ -1,0 +1,7 @@
+---
+# Global passes keep every provider's ingress intact until its consumers finish.
+- name: Decommission | Unwire each consumer for the current phase
+  ansible.builtin.include_tasks: unwire.yml
+  loop: "{{ decommission_apps }}"
+  loop_control:
+    loop_var: decommission_app

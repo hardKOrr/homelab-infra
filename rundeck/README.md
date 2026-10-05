@@ -432,3 +432,17 @@ workload acknowledgement. Existing and stopped/isolated new destinations use Res
 new activation/data checks remain pending. Serving-only results cannot claim durable data.
 Artifact retention and failed-target retry instructions live in the job description. This
 job is not required for ordinary install/function/convergence checks.
+
+### Decommission handoff
+
+**Manage / Lab / Maintenance / Decommission Lab Preflight** projects the repository-owned
+[`decommission.yml`](../ansible/playbooks/maintenance/decommission.yml) plan/unwire route.
+Its description contains the recovery/export prerequisites, literal confirmation,
+provider availability requirements and precise outside-runner authority transfer.
+Final execution is never a runner job: independent node root supervises the runner's last
+destruction and subsequent credential withdrawal. Existing unstamped/adopted/shared
+objects and independent datastores/artifacts remain outside automatic erasure authority.
+The [maintenance guide](../ansible/playbooks/maintenance/README.md#whole-lab-decommission)
+documents the private request/plan/journal formats, exact node helper options and partial
+retry. Reimport Jobs is needed to project this definition after the implementation is
+available to `LAB_BRANCH`; implementation itself performs no import or lab operation.

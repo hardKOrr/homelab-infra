@@ -250,6 +250,27 @@
     | map(attribute='storage') | list
     is not contains('pbs-homelab')
 
+# Existing named registrations are not adopted. The owning POST condition above
+# also gates the node-root-private creation record (no password crosses this path).
+- name: PBS | Register provenance delegation
+  ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
+  when: >-
+    _pve_storages.json.data | map(attribute='storage') | list
+    is not contains('pbs-homelab')
+
+- name: PBS | Record newly created registration identity
+  ansible.builtin.script:
+    cmd: >-
+      {{ (_luv_vars_file | dirname | dirname) ~ "/files/decommission/lab.py" | quote }}
+      --node {{ homelabinfra_config.proxmox.node | quote }}
+      --record storage --identity pbs-homelab --source configure-pbs
+    executable: python3
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  when: >-
+    _pve_storages.json.data | map(attribute='storage') | list
+    is not contains('pbs-homelab')
+
 - name: PBS | Collect vmids of guests tagged _+lab
   ansible.builtin.uri:
     url: "{{ _pve_url }}/cluster/resources?type=vm"

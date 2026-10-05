@@ -1,0 +1,129 @@
+---
+# Only plan/unwire are available in the runner. Node-side final execution is
+# ansible/files/decommission/lab.py, run independently with a private plan.
+- name: Decommission | Preflight and operator handoff
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Decommission | Load platform configuration
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Decommission | Register node delegation
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+
+    - name: Decommission | Require exact bounded phase and declarations
+      ansible.builtin.assert:
+        that:
+          - decommission_phase | default('plan') in ['plan', 'unwire']
+          - decommission_node is defined
+          - decommission_node in groups['proxmox_delegates']
+          - decommission_node is match('^[A-Za-z0-9][A-Za-z0-9.-]*$')
+          - decommission_runner_vmid is defined
+          - decommission_runner_vmid | string is match('^[1-9][0-9]*$')
+          - decommission_apps is defined
+          - decommission_apps is sequence
+          - decommission_apps is not string
+          - decommission_apps is not mapping
+        fail_msg: Supply the creation node, exact runner VMID, and complete app/instance declaration in a private extra-vars file.
+
+  tasks:
+    - name: Decommission | Collect read-only ownership plan
+      ansible.builtin.script:
+        cmd: >-
+          ../../files/decommission/lab.py
+          --node {{ decommission_node | quote }}
+          --runner {{ decommission_runner_vmid | string | quote }}
+        executable: python3
+      delegate_to: "{{ decommission_node }}"
+      register: _dc_plan
+      changed_when: false
+      check_mode: false
+
+    - name: Decommission | Bind consumer declarations to the private plan
+      ansible.builtin.set_fact:
+        _dc_manifest: "{{ (_dc_plan.stdout | from_json).plan | combine({'consumers': decommission_apps}, recursive=True) }}"
+
+    - name: Decommission | Validate consumer coverage before any unwiring
+      ansible.builtin.assert:
+        that:
+          - item.instance is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+          - item.app is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      loop: "{{ decommission_apps }}"
+
+    - name: Decommission | Require every recorded workload to have an explicit declaration
+      ansible.builtin.assert:
+        that: >-
+          _dc_workloads | difference(decommission_apps | map(attribute='instance') | list) | length == 0
+        fail_msg: A guest workload has no declared unwiring route. Resolve its ownership/configuration before proceeding.
+      vars:
+        _dc_workloads: >-
+          {{ (_dc_plan.stdout | from_json).plan.guests | map(attribute='tags') | flatten
+             | select('match', '^_[A-Za-z0-9]') | map('regex_replace', '^_', '') | unique | list }}
+
+    - name: Decommission | Require complete user configuration coverage
+      ansible.builtin.assert:
+        that:
+          - _dc_config_instances | difference(decommission_apps | map(attribute='instance') | list) | length == 0
+          - decommission_apps | map(attribute='instance') | list | unique | length == decommission_apps | length
+          - "'rundeck' in (decommission_apps | map(attribute='instance') | list)"
+        fail_msg: Declare each config/apps instance exactly once, including the runner, before handoff.
+      vars:
+        _dc_config_instances: >-
+          {{ lookup('ansible.builtin.fileglob', _luv_config_dir ~ '/apps/*.yml', wantlist=True)
+             | map('basename') | map('regex_replace', '[.]yml$', '') | list }}
+
+    - name: Decommission | Resolve read-only consumer effects and provider prerequisites
+      ansible.builtin.include_tasks: ../../tasks/decommission/unwire.yml
+      vars:
+        decommission_unwire_phase: plan
+      loop: "{{ decommission_apps }}"
+      loop_control:
+        loop_var: decommission_app
+
+    - name: Decommission | Bind exact wiring effects to the private plan
+      ansible.builtin.set_fact:
+        _dc_manifest: "{{ _dc_manifest | combine({'wiring': _dc_wiring_plan}, recursive=True) }}"
+
+    - name: Decommission | Resolve literal plan confirmation
+      ansible.builtin.set_fact:
+        _dc_confirmation: "DECOMMISSION {{ (_dc_manifest | to_json(sort_keys=True)) | hash('sha256') }}"
+
+    - name: Decommission | Report exact plan and outside-runner authority boundary
+      ansible.builtin.debug:
+        msg:
+          - "{{ {'plan': _dc_manifest, 'confirmation': _dc_confirmation} }}"
+          - "Consumers: {{ decommission_apps }}. Their providers, vault and guest services remain available throughout unwiring."
+          - Save the plan privately outside the runner, export config and recovery/unlock material, and verify independent datastore retention before proceeding. Runner destruction is never dispatched by this job.
+
+    - name: Decommission | Require plan-bound literal confirmation and retention handoff
+      ansible.builtin.assert:
+        that:
+          - decommission_confirmation | default('') == _dc_confirmation
+          - decommission_retention | default('') == 'INDEPENDENT RETENTION VERIFIED'
+        fail_msg: Unwiring requires the exact displayed DECOMMISSION hash and independent retention verification.
+      when: decommission_phase | default('plan') == 'unwire'
+
+    - name: Decommission | Unwire integrations before proxy routes and DNS
+      ansible.builtin.include_tasks: ../../tasks/decommission/phase.yml
+      loop: ['integrations', 'proxy', 'dns']
+      loop_control:
+        loop_var: decommission_unwire_phase
+      when: decommission_phase | default('plan') == 'unwire'
+
+    - name: Decommission | Remove owned Kubernetes namespaces after provider unwiring
+      ansible.builtin.include_tasks: ../../tasks/decommission/kubernetes.yml
+      loop: "{{ decommission_apps }}"
+      loop_control:
+        loop_var: decommission_app
+      when: decommission_phase | default('plan') == 'unwire'
+
+    - name: Decommission | Handoff successful unwiring to independent operator
+      ansible.builtin.debug:
+        msg: >-
+          ALL CONSUMERS UNWIRED. No guests or credentials were destroyed. Final authority
+          moves to root on the recorded creation PVE node using the private saved plan and
+          repository-owned lab.py. Reconfirm the plan hash and retention there. Runner is
+          destroyed last; credentials follow it. Retained artifacts and excluded objects
+          require their separate owning authority. Preserve the journal for retries.
+      when: decommission_phase | default('plan') == 'unwire'

@@ -1,0 +1,56 @@
+- id: 95540bde-5fbc-49e7-bad8-535d021e9bac
+  uuid: 95540bde-5fbc-49e7-bad8-535d021e9bac
+  name: Decommission Lab Preflight
+  group: Manage/Lab/Maintenance
+  description: |-
+    Plan whole-lab decommission and hand off final authority to an independent operator.
+
+    **Default: read-only plan.** Supply a private extra-vars file owned by the job user with
+    the exact creation node, runner VMID and complete app/instance list. Review every
+    guest, disk, external mount/device, stamped object and excluded/shared object.
+    Export configuration, vault/unlock material and required backups outside the runner;
+    verify independent PBS/datastore retention. Registration withdrawal never erases data.
+
+    **Unwire:** pass the exact `DECOMMISSION <plan hash>` and
+    `INDEPENDENT RETENTION VERIFIED` in that file. Existing provider cleanup runs while
+    proxy, SSO, DNS, monitoring, databases and vault remain available. Degraded cleanup
+    prevents the final handoff; rerun after resolving it. No guest is stopped or destroyed.
+    Global passes remove integrations before proxy routes, and DNS last. DNS provider
+    endpoints must use direct IP addresses independent of records being removed.
+
+    **Final authority moves to root on the creation PVE node, outside this runner.**
+    Save the displayed plan object in a root-owned 0600 file there, inspect it independently,
+    then run the repository-owned `ansible/files/decommission/lab.py` with `--execute`,
+    the literal confirmation, retention acknowledgement and `ALL CONSUMERS UNWIRED`.
+    See the maintenance README for exact options. The runner is destroyed last and
+    credential withdrawal follows it; this UI never dispatches its own destruction.
+    Every destructive step rechecks actual identity/provenance and resulting volumes.
+    Preserve plan/journal for partial retry; unknown leftovers fail rather than being swept.
+    Existing unstamped/adopted/shared objects and independent artifacts remain excluded.
+    Withdraw external provider/vault credentials through their owner after the handoff.
+    Ordinary Remove App continues to keep its guest.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+    - name: request_file
+      required: true
+      regex: '^/var/lib/rundeck/decommission/[A-Za-z0-9_-]+[.]yml$'
+      description: Private request file prepared and reviewed by the operator; never a credential value in an option.
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+      - description: Plan or unwire, then hand off outside runner
+        script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_REQUEST_FILE:?private request file is required}"
+          [[ "$RD_OPTION_REQUEST_FILE" =~ ^/var/lib/rundeck/decommission/[A-Za-z0-9_-]+\.yml$ ]]
+          test -f "$RD_OPTION_REQUEST_FILE"
+          test ! -L "$RD_OPTION_REQUEST_FILE"
+          test "$(stat -c %a "$RD_OPTION_REQUEST_FILE")" = 600
+          test "$(stat -c %u "$RD_OPTION_REQUEST_FILE")" = "$(id -u)"
+          exec lab-run playbooks/maintenance/decommission.yml -e "@$RD_OPTION_REQUEST_FILE"
