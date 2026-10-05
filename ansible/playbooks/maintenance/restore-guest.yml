@@ -410,7 +410,7 @@
         recovery_target_instance: "{{ _rg_restore_name | default(_rg_target_vmid, true) }}"
         recovery_destination: "{{ _rg_destination }}"
         recovery_overwrite: "{{ _rg_execute }}"
-        recovery_point: "{{ _rg_validation_artifact }}"
+        recovery_validation_point: "{{ _rg_validation_artifact }}"
         recovery_pre_restore_point: "{{ _rg_pre_restore_point | default('', true) }}"
         recovery_artifact_available: "{{ _rg_artifacts.rc == 0 and (_rg_artifacts.stdout | default('') | length > 0) if _rg_execute | bool else true }}"
         recovery_pre_restore_available: "{{ _rg_pre_restore_config.rc == 0 and (_rg_pre_restore_config.stdout | default('') | length > 0) if _rg_destination == 'existing' and _rg_execute | bool else true }}"

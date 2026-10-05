@@ -42,6 +42,11 @@ def fixture_command(argv, fixture_path):
 
 def restore_owning_path_command(argv, fixture_path, state):
     """Emulate the read-only inventory and recording endpoints used by Restore Guest."""
+    if argv[:2] == ["fixture", "record-plan"]:
+        state["shared_validation_point"] = argv[2]
+        Path(fixture_path).write_text(json.dumps(state))
+        return {"rc": 0, "stdout": "", "stderr": "", "changed": False}
+
     state["calls"].append({"argv": argv})
     command, action = argv[0], argv[1]
     target = state["target"]
@@ -392,30 +397,39 @@ class RestoreGuestSourceTests(unittest.TestCase):
             if task.get("name") not in ("Load platform vars", "Register Proxmox delegation targets")
         ]
         replace_command_modules(play)
-        play["vars"].update(
-            homelabinfra_config={"proxmox": {"node": "fixture-node"}},
-            backup_storage="pbs-fixture",
-            source_vmid="501",
-            target_vmid=target_vmid,
-            target_storage="local",
-            target_node="fixture-node",
-            destination=destination,
-            recovery_point=selected,
-            pre_restore_point=independent if destination == "existing" else "",
-            overwrite=True,
-            target_name=target_name,
-            target_network="name=eth0,bridge=vmbr0,link_down=1,tag=27",
-            target_tags="_+lab;_restore-fixture",
-            restore_timeout=60,
-        )
+        play["vars"]["homelabinfra_config"] = {"proxmox": {"node": "fixture-node"}}
+        play["tasks"].insert(0, {
+            "name": "Record the shared recovery plan for the fixture",
+            "fixture_command": {
+                "argv": ["fixture", "record-plan", "{{ recovery_plan.recovery_point }}"],
+            },
+        })
+        operator_inputs = {
+            "method": "pbs_guest",
+            "backup_storage": "pbs-fixture",
+            "source_vmid": "501",
+            "target_vmid": target_vmid,
+            "target_storage": "local",
+            "target_node": "fixture-node",
+            "destination": destination,
+            "recovery_point": selected,
+            "pre_restore_point": independent if destination == "existing" else "",
+            "overwrite": True,
+            "target_name": target_name,
+            "target_network": "name=eth0,bridge=vmbr0,link_down=1,tag=27",
+            "target_tags": "_+lab;_restore-fixture",
+            "restore_timeout": 60,
+        }
         play_path = self.fixture_repo / "ansible/playbooks/maintenance/restore-guest.yml"
         play_path.parent.mkdir(parents=True, exist_ok=True)
         play_path.write_text(yaml.safe_dump([play], sort_keys=False), encoding="utf-8")
+        inputs_path = self.directory / "operator-inputs.json"
+        inputs_path.write_text(json.dumps(operator_inputs), encoding="utf-8")
         fixture = Path(self.env["RESTORE_FIXTURE"])
         fixture.write_text(json.dumps(state), encoding="utf-8")
         ansible = str(Path(sys.executable).parent / "ansible-playbook")
         result = subprocess.run(
-            [ansible, "-i", str(self.inventory), str(play_path)],
+            [ansible, "-i", str(self.inventory), str(play_path), "-e", "@" + str(inputs_path)],
             env=self.env,
             cwd=ROOT,
             text=True,
@@ -500,6 +514,7 @@ class RestoreGuestSourceTests(unittest.TestCase):
     def test_actual_existing_restore_reads_independent_point_and_preserves_onboot(self):
         result, state = self.run_owning_path()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(state["shared_validation_point"], state["source_artifact"])
         self.assertEqual(state["target"]["status"], "running")
         self.assertEqual(state["target"]["config"]["onboot"], "1")
         extracted = [
@@ -543,6 +558,47 @@ class RestoreGuestSourceTests(unittest.TestCase):
         self.assertNotEqual(aliased_name.returncode, 0, aliased_name.stdout + aliased_name.stderr)
         self.assertIn("Require a different target for a new destination", aliased_name.stdout)
         self.assertEqual(new_state["mutations"], [])
+
+    def test_shared_validator_compares_normalized_point_under_extra_vars(self):
+        selected = "backup/ct/501/2026-10-04T12:34:56Z"
+        play = [{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "tasks": [{
+                "name": "Validate normalized restore artifact with provider-free fixture",
+                "ansible.builtin.include_tasks": str(
+                    self.fixture_repo / "ansible/tasks/recovery/validate-restore.yml"
+                ),
+                "vars": {
+                    "recovery_source_instance": "501",
+                    "recovery_target_instance": "501",
+                    "recovery_destination": "existing",
+                    "recovery_overwrite": True,
+                    "recovery_validation_point": selected,
+                    "recovery_pre_restore_point": selected,
+                    "recovery_artifact_available": True,
+                    "recovery_pre_restore_available": True,
+                    "recovery_affected_scope": ["501"],
+                },
+            }],
+        }]
+        play_path = self.directory / "shared-validator-precedence.yml"
+        play_path.write_text(yaml.safe_dump(play, sort_keys=False), encoding="utf-8")
+        inputs_path = self.directory / "shared-validator-inputs.json"
+        inputs_path.write_text(
+            json.dumps({"recovery_point": f"pbs-fixture:{selected}"}), encoding="utf-8"
+        )
+        ansible = str(Path(sys.executable).parent / "ansible-playbook")
+        result = subprocess.run(
+            [ansible, "-i", "localhost,", str(play_path), "-e", "@" + str(inputs_path)],
+            env=self.env,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Recovery | Require an independent pre-restore recovery point", result.stdout)
 
     def test_actual_restore_failure_retains_point_and_retry_succeeds(self):
         failed, state = self.run_owning_path(fail_restore_once=True)
