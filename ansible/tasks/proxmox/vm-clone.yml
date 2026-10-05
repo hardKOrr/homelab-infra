@@ -125,6 +125,49 @@
   register: _vmc_clone
   when: _vmc_existing.rc != 0
 
+# An interrupted run can leave a clone behind before its NIC was configured. A
+# stopped guest does not prove it has never booted, so do not replace its NIC/MAC
+# on retry. Read back reused/no-op clones and refuse to boot a mismatched network.
+- name: VM clone | Read the reused VM configuration
+  ansible.builtin.command:
+    cmd: "qm config {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_reused_config
+  changed_when: false
+  when: not (_vmc_clone.changed | default(false))
+
+- name: VM clone | Read the reused VM status
+  ansible.builtin.command:
+    cmd: "qm status {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_reused_status
+  changed_when: false
+  when: not (_vmc_clone.changed | default(false))
+
+- name: VM clone | Assert the reused VM network before starting
+  ansible.builtin.assert:
+    that:
+      - _vmc_reused_net0 is match('^virtio(?:=|,|$)')
+      - >-
+        (_vmc_reused_net0 | regex_findall('(?:^|,)bridge=([^,]+)'))
+        == (_vmc_net0 | regex_findall('(?:^|,)bridge=([^,]+)'))
+      - >-
+        (_vmc_reused_net0 | regex_findall('(?:^|,)tag=([0-9]+)(?:,|$)') | first | default('0') | int)
+        == (_vmc_net0 | regex_findall('(?:^|,)tag=([0-9]+)(?:,|$)') | first | default('0') | int)
+    fail_msg: >-
+      Reused VM {{ homelabinfra_config.proxmox.vm.name }} ({{ _vmc_vmid }}) on
+      {{ _vmc_api.node }} is not running and its net0 does not match the declared network.
+      Actual net0={{ _vmc_reused_net0 }}; expected net0={{ _vmc_net0 }}.
+      Refusing configuration and start; use the owning deployment/recovery workflow
+      to reconcile this guest. Existing NIC/MAC and disks have not been replaced.
+  vars:
+    _vmc_reused_net0: >-
+      {{ (_vmc_reused_config.stdout | regex_findall('(?m)^net0:\s*(.+)$')
+          | first | default('')) | trim }}
+  when:
+    - not (_vmc_clone.changed | default(false))
+    - "_vmc_reused_status.stdout | trim != 'status: running'"
+
 # Boot order (slice 205) — a cloned VM is created from an explicit argument list rather
 # than the create tasks' allowlist, so it resolves `startup` the same way by hand.
 - name: VM clone | Resolve the boot order

@@ -176,6 +176,97 @@ class VmCloneTests(unittest.TestCase):
                 for key in ('net0', 'scsi0', 'ide2'):
                     self.assertEqual(config[key], original[key])
 
+    def run_reused_guard(self, nic, status='stopped', existing=True, vlan=317, clone_changed=False):
+        args, variables = repository_args(existing=existing, vlan=vlan, clone_changed=clone_changed)
+        # A retry/no-op has provider readback, not proof that the guest has never booted.
+        guards = [deepcopy(task(name)) for name in (
+            'Read the reused VM configuration', 'Read the reused VM status',
+            'Assert the reused VM network before starting',
+        )]
+        for guard in guards:
+            self.assertLess(TASKS.index(guard), TASKS.index(task('Apply per-VM configuration')))
+            self.assertLess(TASKS.index(guard), TASKS.index(task('Start the VM')))
+        with tempfile.TemporaryDirectory(prefix='homelab-vm-clone-retry-') as directory:
+            work = Path(directory)
+            marker = work / 'configuration-and-start'
+            # Only delegate/command resolution is local: execute the source readback
+            # tasks against this qm fixture, never a node, socket or Proxmox program.
+            (work / 'qm').write_text(
+                '#!' + sys.executable + '\nimport sys\n'
+                'assert sys.argv[2:] == ["501"]\n'
+                'outputs = ' + repr({'config': 'net0: ' + nic, 'status': 'status: ' + status}) + '\n'
+                'print(outputs[sys.argv[1]])\n')
+            (work / 'qm').chmod(0o755)
+            for guard in guards:
+                if 'ansible.builtin.command' in guard:
+                    guard['delegate_to'] = 'localhost'
+                    guard['environment'] = {'PATH': str(work) + os.pathsep + os.environ['PATH']}
+            play = [{'name': 'Offline partial-clone retry', 'hosts': 'localhost',
+                     'connection': 'local', 'gather_facts': False, 'vars': variables,
+                     'tasks': guards + [{'name': 'Record configuration/start continuation',
+                                        'ansible.builtin.copy': {'dest': str(marker),
+                                                                'content': 'continued', 'mode': '0600'}}]}]
+            (work / 'play.yml').write_text(yaml.safe_dump(play))
+            env = dict(os.environ, ANSIBLE_CONFIG=str(ROOT / 'ansible/ansible.cfg'),
+                       ANSIBLE_INVENTORY=str(ROOT / 'gate/fixtures/localhost.ini'),
+                       ANSIBLE_STDOUT_CALLBACK='default', ANSIBLE_NOCOLOR='1')
+            result = subprocess.run([str(Path(sys.executable).with_name('ansible-playbook')),
+                                     str(work / 'play.yml')], cwd=ROOT, env=env,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+            return result, marker.exists(), args
+
+    def test_partial_clone_retry_refuses_before_configuration_or_start(self):
+        # The earlier invocation cloned successfully but never applied the declared NIC.
+        nic = self.template_config()['net0']
+        args, _ = repository_args(existing=True, clone_changed=False)
+        config = self.template_config()
+        _, payload = apply_update(args, config)
+        self.assertNotIn('net0', payload)
+        self.assertEqual(config['net0'], nic)  # Safe update alone still reproduces the gap.
+        for existing in (True, False):
+            with self.subTest(existing_at_lookup=existing):
+                result, continued, _ = self.run_reused_guard(nic, existing=existing)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(continued, result.stdout)
+                self.assertIn('Refusing configuration and start', result.stdout)
+                self.assertIn('pbs-fixture', result.stdout)
+                self.assertNotIn('fixture-secret', result.stdout)
+
+    def test_legitimate_reused_guests_keep_nic_options_and_can_continue(self):
+        for nic, status, vlan in (
+            ('virtio=02:00:00:00:00:01,tag=317,firewall=1,bridge=fixturebr7,queues=2', 'stopped', 317),
+            ('virtio=02:00:00:00:00:01,bridge=fixturebr7,tag=0,firewall=1', 'stopped', 0),
+            ('virtio=02:00:00:00:00:01,bridge=fixturebr7,firewall=1', 'stopped', None),
+            ('virtio=02:00:00:00:00:01,bridge=fixturebr8,tag=318,firewall=1', 'running', 317),
+        ):
+            with self.subTest(status=status, vlan=vlan):
+                result, continued, args = self.run_reused_guard(nic, status, vlan=vlan)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertTrue(continued, result.stdout)
+                config = dict(net0=nic, scsi0='fixture:vm-501-disk-0',
+                              ide2='fixture:vm-501-cloudinit,media=cdrom')
+                original = deepcopy(config)
+                _, payload = apply_update(args, config)
+                self.assertNotIn('net0', payload)
+                for key in original:
+                    self.assertEqual(config[key], original[key])
+
+    def test_stopped_reused_guest_refuses_model_bridge_or_missing_nic(self):
+        for nic in ('virtio=02:00:00:00:00:01,bridge=fixturebr8,tag=317',
+                    'e1000=02:00:00:00:00:01,bridge=fixturebr7,tag=317', ''):
+            with self.subTest(nic=nic):
+                result, continued, _ = self.run_reused_guard(nic)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(continued, result.stdout)
+                self.assertIn('Refusing configuration and start', result.stdout)
+
+    def test_fresh_clone_skips_reuse_guard(self):
+        result, continued, args = self.run_reused_guard(self.template_config()['net0'],
+                                                      existing=False, clone_changed=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(continued, result.stdout)
+        self.assertTrue(args['update_unsafe'])
+
     def test_ssh_timeout_is_contextual_and_stops_address_publication(self):
         _, variables = repository_args()
         readiness = deepcopy(task('Wait for SSH on the configured address'))

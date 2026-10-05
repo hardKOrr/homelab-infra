@@ -19,11 +19,15 @@ The pinned VM module omits NIC changes on safe updates. `vm-clone.yml` enables N
 configuration only after that invocation successfully creates a clone, before its first
 boot, so the declared guest network reaches the VM alongside cloud-init addressing.
 Existing guests and clone no-ops retain their NIC/MAC; this update supplies no disk
-attachments. SSH timeout remains fatal and names the guest and expected NIC/cloud-init
+attachments. Before configuration or start, a reused non-running VM must already have
+the declared NIC model, bridge and VLAN tag. A mismatch fails without mutation, including
+a clone left unconfigured by an interrupted earlier run. The comparison preserves MACs
+and other NIC options; stopped state alone does not establish that a VM has never booted.
+SSH timeout remains fatal and names the guest and expected NIC/cloud-init
 configuration. `gate/test-proxmox-vm-clone.py` exercises the pinned update code with a
 recording API and the actual SSH refusal task locally, without a provider or connection.
-It proves the source behavior, not live guest readiness. A previously booted failed clone
-still requires the owning observation's supported recovery/recreation decision.
+It proves the source behavior, not live guest readiness. A mismatched existing clone
+requires the owning observation's supported recovery/recreation decision.
 
 ## LXC creation and existing guests
 
