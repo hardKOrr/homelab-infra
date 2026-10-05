@@ -1112,7 +1112,7 @@ cred_set RUNDECK_KEY_STORAGE_FORMAT "aes-256-gcm-v1"
 # runner infrastructure rather than lazily during the first deploy.
 say "Bitwarden CLI"
 # 2026.9.1 unlock attempts a user-key-ID backfill API absent in Vaultwarden 1.37.3.
-# Keep the verified client boundary pinned; gate/test-vaultwarden-cli.py exercises it.
+# Keep the verified client boundary pinned.
 npm install -g --silent @bitwarden/cli@2026.8.0 >/dev/null
 # Verify explicitly. `say "bw $(bw --version)"` would swallow a missing binary: command
 # substitution failing inside an argument leaves `say` itself returning 0, so set -e never
@@ -2527,7 +2527,7 @@ if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ct_file_exists "$LAB_ETC/state/vault-mode"
   # copies are redundant by then. If cutover's cleanup failed after writing it, Seed mode
   # is closed and cutover cannot run again — finish the removal here, as root, which can
   # unlink what the job user could not. The list mirrors "Remove temporary seed files" in
-  # vaultwarden-cutover.yml; gate/test-vaultwarden.sh keeps the two identical.
+  # vaultwarden-cutover.yml.
   if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then
     log "Finishing Vaultwarden cutover cleanup"
     for f in "$LAB_ETC/secrets.d/proxmox.env" "$LAB_ETC/secrets.env" \
@@ -2552,9 +2552,6 @@ if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ct_file_exists "$LAB_ETC/state/vault-mode"
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
-# The NETWORK paragraph restates output-source:network-prerequisite and the NEXT list
-# restates output-source:vault-enrollment-ceremony, both canonical in README.md. Change
-# the passage there first, then this text; gate/check-output-anchors.py links the two.
 log "Done"
 cat <<EOF
     Rundeck    $RD_URL   (project: $RD_PROJECT)

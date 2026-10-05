@@ -93,12 +93,3 @@ inspect the owning job's result and retry from the independent point; never disc
 retained datastore. [#212](https://github.com/hardKOrr/homelab-infra/issues/212) owns PBS
 live recovery/reattachment and artifact restore acceptance. Repository tests and #337 do
 not grant lab authority or establish that acceptance.
-
-## Verification
-
-`python3 gate/test-pbs-reuse.py` executes the provision/preflight and datastore configuration
-tasks with local recording fixtures. It covers network mismatches before mutation, matching
-reuse/convergence, preserved NIC/MAC/disks/data, missing recovery capability and refusal to
-initialise a retained or missing datastore in recovery mode.
-`python3 gate/test-guest-recovery-contract.py` checks the supported whole-guest route's
-ownership, readable artifact and independent-point guards. Neither contacts the lab.

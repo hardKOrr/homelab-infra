@@ -18,9 +18,6 @@
   uuid: f3acdc9f-1104-5df0-add8-5cc5f5f7481b
   name: Reimport Jobs
   group: Setup/Automation
-  # The description restates output-source:job-import-contract, canonical in
-  # rundeck/README.md. Change that passage first; gate/check-output-anchors.py
-  # links the two.
   description: |-
     Refresh Rundeck from the repository-owned job definitions.
 

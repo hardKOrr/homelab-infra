@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the hosted-lane workflow policy issue #34's second acceptance criterion needs.
+"""Enforce hosted workflow permissions, secret isolation and runner approval.
 
 Every `.github/workflows/*.yml` file must:
 
@@ -9,16 +9,15 @@ Every `.github/workflows/*.yml` file must:
   - Never reference the `secrets` context in a job that a `pull_request` trigger can run.
     A `pull_request`-triggered job runs untrusted PR-branch code with the base
     repository's permissions; injecting a secret into that job is the exact hosted-lane
-    secret-injection risk #34 exists to close off. `pull_request_target` and other
-    triggers are unaffected — see docs/specs/secrets-handling.md for the self-hosted/
-    approval policy that governs those.
+    secret-injection risk this policy prevents. `pull_request_target` and other
+    triggers are unaffected.
   - Never target a self-hosted runner (`runs-on: self-hosted`, a label list or mapping
     containing it, or a dynamic `${{ ... }}` selector that could resolve to it — e.g. one
     built from PR-controlled `github` context values) without that job also declaring
     `environment:`, so GitHub's required-reviewer approval gate stands between an
     untrusted trigger and the runner.
-  - Never use `actions/upload-artifact` (issue #34's fourth acceptance criterion: logs and
-    uploaded diagnostics must be redacted/minimized). No hosted job today redacts test
+  - Never use `actions/upload-artifact`: logs and uploaded diagnostics must be
+    redacted/minimized. No hosted job today redacts test
     output before uploading it, so an uploaded artifact could carry a fixture value, a
     stack trace with a local path, or other diagnostic this repository has not reviewed
     for that purpose. Adding a redaction/minimization step is a prerequisite for
@@ -34,7 +33,7 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent
-# Overridable so gate/test-workflow-policy.sh can point this at a throwaway fixture
+# Overridable to select a throwaway fixture
 # directory instead of the repository's own (currently compliant) workflow.
 WORKFLOWS = Path(os.environ.get("GATE_WORKFLOWS_DIR", REPO / ".github" / "workflows"))
 
@@ -167,7 +166,7 @@ def check_workflow(path: Path) -> list[str]:
         if _uses_upload_artifact(job):
             findings.append(
                 f"{path.name}: job '{job_name}' uses actions/upload-artifact — no "
-                "redaction/minimization step exists yet, see docs/specs/secrets-handling.md"
+                "redaction/minimization step exists yet"
             )
 
     return findings
