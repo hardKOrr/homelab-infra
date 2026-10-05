@@ -10,8 +10,7 @@ Semaphore files are retained as a reference and are not maintained at feature pa
 - Do not expose or commit credentials, tokens, private keys, generated secrets, or files
   under `/config/`.
 - The repository and its GitHub issues, PRs, and reviews are public. Write lab addresses,
-  domains, node names, and VMIDs as the placeholders in `docs/lab-placeholders.md`, and
-  run `gate/check-lab-leaks.py --stdin` on any issue, PR, or comment body before posting.
+  domains, node names, and VMIDs as the placeholders in `docs/lab-placeholders.md`.
 - Treat `config.example/` as documentation and `/config/` as user-owned runtime state.
 - Inspect the relevant implementation and its nearest `README.md`, when one exists, before
   changing it.
@@ -71,13 +70,10 @@ in this file.
 
 ## Verification
 
-Run the checks selected by `gate/README.md` from the repository root. The standard
-commands are:
-
-```text
-bash gate/lint.sh
-bash gate/test.sh
-```
+Before committing, run `bash gate/lint.sh` on the dirty tree and only the `gate/test-*`
+scripts for the area changed, from the repository root (see `gate/README.md`), and list
+each in the PR body. The Gate workflow (lint, test, container, kind) runs the full suite
+on the PR, and CI failures come back to the author.
 
 On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`
 (see `gate/README.md`). Do not start a second gate while an earlier gate process is still

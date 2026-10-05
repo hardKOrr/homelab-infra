@@ -15,10 +15,9 @@ when more repository work is still required on the same issue. -->
 
 ## Verification evidence
 
-<!-- Exact commands run and their result. Default:
-bash gate/lint.sh
-bash gate/test.sh
-Name any additional manual check, and paste the relevant output or a summary of it. -->
+<!-- The focused tests run and their result: `bash gate/lint.sh` on the dirty tree and the
+gate/test-* scripts for the area changed. The full suite runs in the Gate workflow on this
+PR. Name any additional manual check, and paste the relevant output or a summary of it. -->
 
 ## Live-lab status
 

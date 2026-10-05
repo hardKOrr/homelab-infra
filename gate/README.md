@@ -29,11 +29,6 @@ On a Windows checkout accessed through WSL, prefix each command with `wsl bash -
   reviewable placeholder. Reuses the exact key-shape regex
   `ansible/scripts/secret-shape.py` enforces on generated facts. See
   `docs/specs/secrets-handling.md`.
-- `check-lab-leaks.py` — rejects the operator's real lab identifiers in tracked files,
-  reading them from a private values file outside the repository and reporting only the
-  placeholder name. Also scans `--stdin` (an issue or PR body before posting) and
-  `--log <range>` (commit messages). Skips, and passes, where the values file is absent.
-  See [`../docs/lab-placeholders.md`](../docs/lab-placeholders.md).
 - `check-workflow-policy.py` — rejects a `.github/workflows/*.yml` job with no explicit
   `permissions`, a `secrets` reference in a `pull_request`-triggered job, or a
   self-hosted runner target with no `environment` approval gate. See
@@ -127,6 +122,10 @@ unrelated guests and a resource appearing after inventory selection. It opens no
 and makes no live-method or live-target claim.
 
 ## Scope
+
+`test.sh` and `lint.sh` narrow to changed files only while the tree is dirty. A clean tree
+(right after a commit) runs the full sweep by design, so use a specific `gate/test-*` script
+for isolated runs.
 
 A full sweep starts a separate `ansible-playbook` process for every playbook and lints the whole
 Ansible tree. Both gates therefore narrow by default to what the working tree changed. Ambiguous
