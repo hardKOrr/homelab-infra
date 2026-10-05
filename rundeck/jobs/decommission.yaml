@@ -5,7 +5,7 @@
   description: |-
     Plan whole-lab decommission and hand off final authority to an independent operator.
 
-    **Default: read-only plan.** Supply a root-private extra-vars file on the runner with
+    **Default: read-only plan.** Supply a private extra-vars file owned by the job user with
     the exact creation node, runner VMID and complete app/instance list. Review every
     guest, disk, external mount/device, stamped object and excluded/shared object.
     Export configuration, vault/unlock material and required backups outside the runner;
@@ -15,6 +15,8 @@
     `INDEPENDENT RETENTION VERIFIED` in that file. Existing provider cleanup runs while
     proxy, SSO, DNS, monitoring, databases and vault remain available. Degraded cleanup
     prevents the final handoff; rerun after resolving it. No guest is stopped or destroyed.
+    Global passes remove integrations before proxy routes, and DNS last. DNS provider
+    endpoints must use direct IP addresses independent of records being removed.
 
     **Final authority moves to root on the creation PVE node, outside this runner.**
     Save the displayed plan object in a root-owned 0600 file there, inspect it independently,
@@ -50,4 +52,5 @@
           test -f "$RD_OPTION_REQUEST_FILE"
           test ! -L "$RD_OPTION_REQUEST_FILE"
           test "$(stat -c %a "$RD_OPTION_REQUEST_FILE")" = 600
+          test "$(stat -c %u "$RD_OPTION_REQUEST_FILE")" = "$(id -u)"
           exec lab-run playbooks/maintenance/decommission.yml -e "@$RD_OPTION_REQUEST_FILE"

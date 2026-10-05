@@ -10,11 +10,13 @@
   ansible.builtin.include_vars:
     file: "{{ _luv_config_dir }}/apps/{{ decommission_app.instance }}.yml"
     name: _dc_k8s_instance
+  no_log: true
 
 - name: Decommission | Resolve declared Kubernetes hosting
   ansible.builtin.set_fact:
     app_config: "{{ ({} if decommission_app.app == 'rundeck' else _dc_k8s_defaults[decommission_app.app | replace('-', '_') ~ '_defaults']) | combine(_dc_k8s_instance, recursive=True) }}"
     instance: "{{ decommission_app.instance }}"
+  no_log: true
 
 - name: Decommission | Preserve independently retained Kubernetes volumes
   when: app_config.hosting | default('') == 'kubernetes'

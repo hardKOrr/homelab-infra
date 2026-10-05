@@ -68,7 +68,12 @@ class Fixture:
             if not self.keep_volume:
                 self.volumes[vmid] = []
             return 'UPID:fixture'
+        if method == 'set' and endpoint == '/access/acl':
+            assert params == dict(path='/', users='homelab-infra@pve', roles='HomelabInfra', delete=1)
+            self.state['acl'] = [r for r in self.state['acl'] if r['ugid'] != params['users']]
+            return None
         if method == 'delete':
+            assert endpoint != '/access/acl', 'Proxmox ACL withdrawal is PUT with delete=1'
             for kind, rows in self.state.items():
                 for row in list(rows):
                     ident = lab.identity(kind, row)
@@ -100,6 +105,9 @@ class DecommissionTests(unittest.TestCase):
             patcher = patch.object(lab, target, value)
             patcher.start()
             self.stack.append(patcher)
+        patcher = patch.object(lab, 'foreign_keys', lambda path=lab.KEYS: [])
+        patcher.start()
+        self.stack.append(patcher)
         self.addCleanup(lambda: [p.stop() for p in reversed(self.stack)])
 
     def plan(self):
@@ -213,6 +221,63 @@ class DecommissionTests(unittest.TestCase):
             self.execute(p)
         self.assertTrue(self.fixture.state['storage'])
 
+    def test_cloudinit_disks_and_iso_reference_are_distinguished(self):
+        row = self.fixture.guests[2]
+        row.update(tags='_+lab;_.template', template=1)
+        self.fixture.configs[903] = dict(tags=row['tags'], scsi0='fixture:base-903-disk-0',
+                                        ide2='fixture:vm-903-cloudinit,media=cdrom',
+                                        ide0='local:iso/fixture.iso,media=cdrom')
+        self.fixture.volumes[903] = ['fixture:base-903-disk-0', 'fixture:vm-903-cloudinit']
+        p = self.plan()
+        self.assertEqual(p['guests'][2]['volumes'], self.fixture.volumes[903])
+        self.assertIn('ISO reference', p['guests'][2]['external'][0]['effect'])
+        self.execute(p)
+        destroys = [c[1] for c in self.fixture.calls if c[0] == 'delete' and c[1].startswith('/nodes/')]
+        self.assertEqual(destroys, ['/nodes/fixture-node/lxc/901', '/nodes/fixture-node/qemu/903', '/nodes/fixture-node/lxc/902'])
+
+    def test_foreign_disk_reference_refuses_plan_and_changed_consumer_refuses_execute(self):
+        p = self.plan()
+        self.fixture.configs[903]['scsi1'] = 'fixture:vm-901-disk-0'
+        with self.assertRaisesRegex(lab.Refused, 'referenced by another guest'):
+            self.plan()
+        with self.assertRaises(lab.Refused):
+            self.execute(p)
+        self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+
+    def test_shared_registration_and_token_acl_exclude_credentials(self):
+        for kind in lab.SOURCES:
+            self.fixture.stamp(kind)
+        self.fixture.state['backup'].append(dict(id='foreign-backup', vmid='903', storage='pbs-homelab'))
+        self.fixture.state['acl'].append(dict(path='/vms', type='token', ugid='homelab-infra@pve!automation',
+                                              roleid='HomelabInfra', propagate=1))
+        selected = {o['kind'] for o in self.plan()['objects']}
+        self.assertFalse(selected & {'storage', 'user', 'role', 'token', 'acl'})
+
+    def test_foreign_guest_drift_blocks_before_any_mutation(self):
+        p = self.plan()
+        self.fixture.configs[903]['description'] = 'operator changed'
+        with self.assertRaisesRegex(lab.Refused, 'Unrelated guest changed'):
+            self.execute(p)
+        self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+
+    def test_recreated_completed_object_refuses_retry(self):
+        for kind in lab.SOURCES:
+            self.fixture.stamp(kind)
+        p = self.plan()
+        storage = copy.deepcopy(self.fixture.state['storage'])
+        self.execute(p)
+        self.fixture.state['storage'] = storage
+        with self.assertRaisesRegex(lab.Refused, 'Completed object reappeared'):
+            self.execute(p)
+        self.assertEqual(self.fixture.state['storage'], storage)
+
+    def test_unrelated_key_drift_refuses_before_mutation(self):
+        p = self.plan()
+        with patch.object(lab, 'foreign_keys', return_value=['ssh-ed25519 FOREIGN operator key\n']):
+            with self.assertRaisesRegex(lab.Refused, 'Unrelated authorized keys changed'):
+                self.execute(p)
+        self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+
 
 class KeyTests(unittest.TestCase):
     def test_exact_comment_and_symlink_preserve_foreign_keys(self):
@@ -226,6 +291,8 @@ class KeyTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertEqual(target.read_text(), unrelated)
             lab.withdraw_keys(lab.digest([]), link)
+            # An interruption after withdrawal but before journal commit is resumable.
+            lab.withdraw_keys(lab.digest(['ssh-ed25519 PLATFORM homelab-infra platform key\n']), link)
 
     def test_key_rotation_refuses_and_retains_all_lines(self):
         with tempfile.TemporaryDirectory() as tmp:

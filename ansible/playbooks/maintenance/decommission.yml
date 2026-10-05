@@ -23,6 +23,8 @@
           - decommission_runner_vmid | string is match('^[1-9][0-9]*$')
           - decommission_apps is defined
           - decommission_apps is sequence
+          - decommission_apps is not string
+          - decommission_apps is not mapping
         fail_msg: Supply the creation node, exact runner VMID, and complete app/instance declaration in a private extra-vars file.
 
   tasks:
@@ -41,10 +43,6 @@
     - name: Decommission | Bind consumer declarations to the private plan
       ansible.builtin.set_fact:
         _dc_manifest: "{{ (_dc_plan.stdout | from_json).plan | combine({'consumers': decommission_apps}, recursive=True) }}"
-
-    - name: Decommission | Resolve literal plan confirmation
-      ansible.builtin.set_fact:
-        _dc_confirmation: "DECOMMISSION {{ (_dc_manifest | to_json(sort_keys=True)) | hash('sha256') }}"
 
     - name: Decommission | Validate consumer coverage before any unwiring
       ansible.builtin.assert:
@@ -75,6 +73,22 @@
           {{ lookup('ansible.builtin.fileglob', _luv_config_dir ~ '/apps/*.yml', wantlist=True)
              | map('basename') | map('regex_replace', '[.]yml$', '') | list }}
 
+    - name: Decommission | Resolve read-only consumer effects and provider prerequisites
+      ansible.builtin.include_tasks: ../../tasks/decommission/unwire.yml
+      vars:
+        decommission_unwire_phase: plan
+      loop: "{{ decommission_apps }}"
+      loop_control:
+        loop_var: decommission_app
+
+    - name: Decommission | Bind exact wiring effects to the private plan
+      ansible.builtin.set_fact:
+        _dc_manifest: "{{ _dc_manifest | combine({'wiring': _dc_wiring_plan}, recursive=True) }}"
+
+    - name: Decommission | Resolve literal plan confirmation
+      ansible.builtin.set_fact:
+        _dc_confirmation: "DECOMMISSION {{ (_dc_manifest | to_json(sort_keys=True)) | hash('sha256') }}"
+
     - name: Decommission | Report exact plan and outside-runner authority boundary
       ansible.builtin.debug:
         msg:
@@ -90,11 +104,11 @@
         fail_msg: Unwiring requires the exact displayed DECOMMISSION hash and independent retention verification.
       when: decommission_phase | default('plan') == 'unwire'
 
-    - name: Decommission | Unwire all declared consumers without stopping dependencies
-      ansible.builtin.include_tasks: ../../tasks/decommission/unwire.yml
-      loop: "{{ decommission_apps }}"
+    - name: Decommission | Unwire integrations before proxy routes and DNS
+      ansible.builtin.include_tasks: ../../tasks/decommission/phase.yml
+      loop: ['integrations', 'proxy', 'dns']
       loop_control:
-        loop_var: decommission_app
+        loop_var: decommission_unwire_phase
       when: decommission_phase | default('plan') == 'unwire'
 
     - name: Decommission | Remove owned Kubernetes namespaces after provider unwiring

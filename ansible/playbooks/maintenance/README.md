@@ -174,13 +174,17 @@ decommission_apps:
   - {app: rundeck, instance: rundeck}
 ```
 
-The list is illustrative, not a lab inventory. Use a root-owned directory and a regular
-0600 request file readable by the runner's operator account. The Rundeck path is
+The list is illustrative, not a lab inventory. Use a private 0700 directory and a regular
+0600 request file owned by the runner's job account. The Rundeck path is
 `/var/lib/rundeck/decommission/<request>.yml`. The Ansible interface is
 `ansible-playbook playbooks/maintenance/decommission.yml -e @<private-request>` through
 the supported environment wrapper. Plan performs no mutation: it lists exact guest
 identities, configuration hashes, managed disk identities, bind/device exclusions,
-created Proxmox objects and unstamped/changed/shared exclusions. The confirmation hash
+created Proxmox objects and unstamped/changed/shared exclusions. It also resolves each
+consumer's product/instance, exact FQDN, configured provider routes and Kubernetes
+namespace without provider mutation, and checks supported cleanup/DNS access prerequisites.
+Canonical keys are identified by non-secret signatures; unrelated key contents stay private.
+The confirmation hash
 binds the consumer declarations as well as the node plan. Offline nodes, unreadable
 storage, unknown/orphan volumes and incomplete workload declarations refuse a clean plan.
 
@@ -198,7 +202,11 @@ To unwire, set `decommission_phase: unwire` and add the exact displayed
 `decommission_confirmation: 'DECOMMISSION <plan hash>'` and
 `decommission_retention: 'INDEPENDENT RETENTION VERIFIED'`. Preserve all provider services,
 databases, vault and the registry until this phase completes. The playbook uses the
-existing estate-aware inverse wiring tasks, deregisters Forgejo consumers, then removes
+existing estate-aware inverse wiring tasks in global passes: SSO/monitoring and Forgejo
+deregistration for every consumer, then every proxy route, then DNS. Provider ingress
+remains available until all integration calls finish; DNS endpoints must use direct IP
+addresses independent of records being removed. Unsupported hostname-dependent DNS
+access refuses the handoff until corrected through its owning configuration path. It then removes
 owned Kubernetes namespaces through the existing **retain data** seam. Retained PV paths
 and remote storage require independent retention verification before cluster guests are
 removed. It stops no guest and prunes no provider registry. Degraded Caddy, Authentik,
@@ -231,13 +239,16 @@ ownership and disk inventory are read again before destruction. It verifies gues
 and all VMID-associated volumes on every applicable active store. A successful task with
 remaining disks fails the operation; unknown leftovers require their owning storage
 maintenance path and a new reviewed plan, never automatic cleanup. The runner is the last
-guest removed. Dedicated token, exact user ACL, unshared user/role and canonical
+guest removed; templates follow ordinary guests so clone consumers go first. Dedicated token,
+exact user ACL (PUT with the delete flag), unshared user/role and canonical
 cluster-shared platform keys are withdrawn afterwards. A non-cluster-shared key file
 requires explicit per-node operator handoff and refuses automated final execution.
 
 Retain the private plan, creation record and journal for retry. Rerunning the **same** plan
 re-verifies completed steps, accepts already absent objects, checks their disk absence,
-and refuses reused VMIDs, changed ownership, drift or reappearing keys. Do not erase the
+and refuses reused VMIDs, recreated completed objects, changed ownership, drift or reappearing keys.
+Shared disk references refuse automatic destruction. Unrelated guests and excluded objects
+are checked before each step as well as at completion. Do not erase the
 journal or create a fresh plan merely to bypass a failure. An interrupted runner-last
 phase resumes node-side even when Rundeck is gone. Newly discovered owned guests block
 credential withdrawal. Unrelated guest configurations and excluded objects are compared

@@ -201,5 +201,6 @@ The callback and Ntfy adapter are also exercised locally without a lab or creden
 PVE transport. `test-decommission-source.py` executes the authored bootstrap creation
 guards and actual Ansible preflight/refusal/handoff assertions: future creation, no
 existing-object adoption, PBS stamp gating, exact confirmation, complete workloads,
-degraded providers, runner-last retry, changed provenance and leftover-volume refusal.
+degraded providers, global integration/proxy/DNS order, runner-last retry, changed
+provenance, shared disks, cloud-init/template order and leftover-volume refusal.
 Neither test loads credentials or contacts a provider.

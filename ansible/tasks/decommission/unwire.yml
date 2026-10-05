@@ -14,6 +14,7 @@
   ansible.builtin.include_vars:
     file: "{{ _luv_config_dir }}/apps/{{ decommission_app.instance }}.yml"
     name: _dc_instance
+  no_log: true
 
 - name: Decommission | Merge declared application
   ansible.builtin.set_fact:
@@ -23,6 +24,7 @@
     _ak_probe: {}
     kuma_session_ready: false
     kuma_call_ok: false
+  no_log: true
 
 - name: Decommission | Resolve deployment estate
   ansible.builtin.include_tasks: ../resolve-estate.yml
@@ -46,27 +48,37 @@
 
     - name: Decommission | Unwire reverse proxy
       ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
-      when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+      when:
+        - decommission_unwire_phase == 'proxy'
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
     - name: Decommission | Require proxy unwiring observation
       ansible.builtin.assert:
         that: _caddy_existing.status | default(0) in [200, 404]
         fail_msg: Caddy unwiring degraded; final teardown handoff refused.
-      when: homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
+      when:
+        - decommission_unwire_phase == 'proxy'
+        - homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
 
     - name: Decommission | Unwire Authentik
       ansible.builtin.include_tasks: ../unwiring/authentik.yml
-      when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
 
     - name: Decommission | Require SSO unwiring observation
       ansible.builtin.assert:
         that: _ak_probe.status | default(0) == 200
         fail_msg: Authentik unwiring degraded; final teardown handoff refused.
-      when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
 
     - name: Decommission | Unwire monitoring
       ansible.builtin.include_tasks: ../unwiring/uptime-kuma.yml
-      when: homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
 
     - name: Decommission | Require monitoring unwiring observation
       ansible.builtin.assert:
@@ -74,15 +86,54 @@
           - kuma_session_ready | bool
           - kuma_call_ok | bool
         fail_msg: Monitoring unwiring degraded; final teardown handoff refused.
-      when: homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+
+    - name: Decommission | Require independent DNS provider access
+      ansible.builtin.assert:
+        that: >-
+          (homelabinfra_infra.dns.host | default('') | urlsplit('hostname') | default('', true))
+          is match('^([0-9]{1,3}[.]){3}[0-9]{1,3}$|^[0-9A-Fa-f]*:[0-9A-Fa-f:]+$')
+        fail_msg: DNS cleanup requires a direct provider IP endpoint independent of records being removed. Configure it through the owning configuration path before retrying.
+      when:
+        - decommission_unwire_phase in ['plan', 'dns']
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
 
     - name: Decommission | Unwire DNS
       ansible.builtin.include_tasks: "../unwiring/{{ homelabinfra_infra.dns.provider }}.yml"
-      when: homelabinfra_infra.dns.provider | default('none') != 'none'
+      when:
+        - decommission_unwire_phase == 'dns'
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
 
     - name: Decommission | Deregister Forgejo consumer before Forgejo destruction
       ansible.builtin.include_tasks: ../app-wiring/forgejo-runner-remove.yml
       vars:
         runner_remove_instance: "{{ instance }}"
         runner_remove_forgejo_instance: "{{ app_config.app.forgejo.instance }}"
-      when: decommission_app.app == 'forgejo-runner'
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - decommission_app.app == 'forgejo-runner'
+
+    - name: Decommission | Derive planned Kubernetes namespace through the owning seam
+      ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml
+      vars:
+        k8s_namespace_for: "{{ instance }}"
+      when:
+        - decommission_unwire_phase == 'plan'
+        - app_config.hosting | default('') == 'kubernetes'
+
+    - name: Decommission | Record exact consumer wiring effects without secrets
+      ansible.builtin.set_fact:
+        _dc_wiring_plan: >-
+          {{ (_dc_wiring_plan | default([])) + [{
+               'app': decommission_app.app, 'instance': instance, 'domain': wiring_domain,
+               'reverse_proxy': homelabinfra_infra.reverse_proxy.provider | default('none'),
+               'sso': homelabinfra_infra.sso.provider | default('none'),
+               'monitoring': homelabinfra_infra.monitoring.provider | default('none'),
+               'dns': homelabinfra_infra.dns.provider | default('none'),
+               'namespace': k8s_namespace if app_config.hosting | default('') == 'kubernetes' else '',
+               'forgejo': app_config.app.forgejo.instance if decommission_app.app == 'forgejo-runner' else '',
+               'effect': 'remove only the instance route/SSO/monitor/DNS records and owned namespace; preserve dependencies and external data'
+             }] }}
+      when: decommission_unwire_phase == 'plan'

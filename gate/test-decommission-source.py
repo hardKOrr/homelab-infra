@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import yaml
@@ -60,9 +61,11 @@ play = yaml.safe_load((ROOT / 'ansible/playbooks/maintenance/decommission.yml').
 by_name = {t['name']: t for t in play['pre_tasks'] + play['tasks']}
 unwire = yaml.safe_load((ROOT / 'ansible/tasks/decommission/unwire.yml').read_text())
 block = next(t['block'] for t in unwire if 'block' in t)
+source_block = next(t for t in unwire if 'block' in t)
 guards = [t for t in block if 'ansible.builtin.assert' in t]
 plan = {'guests': [{'tags': ['_+lab', '_ntfy', '_rundeck']}], 'node': 'fixture-node', 'runner': '902'}
 base = dict(decommission_node='fixture-node', decommission_runner_vmid=902,
+            decommission_unwire_phase='integrations',
             decommission_apps=[{'app': 'ntfy', 'instance': 'ntfy'}, {'app': 'rundeck', 'instance': 'rundeck'}],
             _dc_plan={'stdout': json.dumps({'plan': plan})}, _luv_config_dir='/fixture-no-config',
             homelabinfra_infra={'reverse_proxy': {'provider': 'caddy'}, 'sso': {'provider': 'authentik'},
@@ -87,12 +90,24 @@ checks = [by_name[n] for n in ['Decommission | Require exact bounded phase and d
           'Decommission | Require complete user configuration coverage']]
 run(checks, base)
 run(checks, dict(base, decommission_phase='execute'), False)
+run(checks, dict(base, decommission_apps='rundeck'), False)
 run(checks, dict(base, decommission_apps=[{'app': 'rundeck', 'instance': 'rundeck'}]), False)
 run(guards, base)
-run(guards, dict(base, _caddy_existing={}), False)
+run(guards, dict(base, decommission_unwire_phase='proxy', _caddy_existing={}), False)
 run(guards, dict(base, _ak_probe={'status': 403}), False)
 run(guards, dict(base, kuma_call_ok=False), False)
 run(guards, dict(base, homelabinfra_infra={'dns': {'provider': 'invented'}}), False)
+run(guards, dict(base, decommission_unwire_phase='dns',
+                 homelabinfra_infra={'dns': {'provider': 'opnsense', 'host': 'https://dns.example.test'}}), False)
+run(guards, dict(base, decommission_unwire_phase='dns',
+                 homelabinfra_infra={'dns': {'provider': 'opnsense', 'host': 'https://192.0.2.53'}}))
+providers = dict(base['homelabinfra_infra'], domain='example.test',
+                 dns={'provider': 'opnsense', 'host': 'https://192.0.2.53'})
+planned = run([source_block, {'ansible.builtin.debug': {'var': '_dc_wiring_plan'}}],
+              dict(base, decommission_unwire_phase='plan', instance='ntfy',
+                   decommission_app={'app': 'ntfy', 'instance': 'ntfy'},
+                   app_config={'routing': {'subdomain': 'notify'}}, homelabinfra_infra=providers))
+assert 'notify.example.test' in planned and 'remove only the instance' in planned, planned
 confirmation = by_name['Decommission | Require plan-bound literal confirmation and retention handoff']
 run(checks[:3] + [confirmation], dict(base, decommission_phase='unwire', decommission_confirmation='yes'), False)
 handoff = by_name['Decommission | Handoff successful unwiring to independent operator']
@@ -103,3 +118,29 @@ for rows, expected in [([], True), ([{'storage': 'pbs-homelab'}], False)]:
               {'_pve_storages': {'json': {'data': rows}}})
     assert ('NEW REGISTRATION ONLY' in out) == expected
 print('decommission source: new creation/no-adoption, PBS guards, literal confirmation, provider refusal, workload coverage and outside-runner handoff passed')
+
+# Exercise the actual authored global loops and stage conditions. Only included
+# provider transports are replaced with recording tasks; no endpoint is contacted.
+with tempfile.TemporaryDirectory() as temp:
+    temp = Path(temp)
+    recording = []
+    for task in block:
+        task = dict(task)
+        if 'ansible.builtin.include_tasks' in task:
+            route = str(task.pop('ansible.builtin.include_tasks'))
+            task.pop('vars', None)
+            task['ansible.builtin.debug'] = {'msg': 'RECORD {{ decommission_unwire_phase }} {{ decommission_app.instance }} ' + route}
+        recording.append(task)
+    (temp / 'unwire.yml').write_text(yaml.safe_dump(recording))
+    phase = yaml.safe_load((ROOT / 'ansible/tasks/decommission/phase.yml').read_text())
+    (temp / 'phase.yml').write_text(yaml.safe_dump(phase))
+    orchestration = dict(by_name['Decommission | Unwire integrations before proxy routes and DNS'])
+    orchestration['ansible.builtin.include_tasks'] = str(temp / 'phase.yml')
+    providers = dict(base['homelabinfra_infra'], dns={'provider': 'opnsense', 'host': 'https://192.0.2.53'})
+    out = run([orchestration], dict(base, decommission_phase='unwire', homelabinfra_infra=providers))
+    events = re.findall(r'RECORD (integrations|proxy|dns) ([A-Za-z0-9_-]+)', out)
+    assert len(events) == 8, out  # two integrations, one proxy and one DNS, for each consumer
+    assert all(stage == 'integrations' for stage, _ in events[:4]), events
+    assert all(stage == 'proxy' for stage, _ in events[4:6]), events
+    assert all(stage == 'dns' for stage, _ in events[6:]), events
+print('decommission source: authored global integration/proxy/DNS passes preserve provider ingress')

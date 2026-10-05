@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import tempfile
 import time
 
 RECORD = Path('/var/lib/homelab-infra/decommission-ownership.json')
@@ -71,8 +72,8 @@ def read_private(path, default=None):
 def write_private(path, data):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     require(not path.is_symlink(), 'Refuse symlink record.')
-    tmp = path.with_name(path.name + '.new')
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd, filename = tempfile.mkstemp(prefix=path.name + '.', dir=path.parent)
+    tmp = Path(filename)
     try:
         with os.fdopen(fd, 'w') as stream:
             json.dump(data, stream, sort_keys=True, indent=2)
@@ -139,7 +140,7 @@ def dedicated_user(userid, state, records):
             and not users[0].get('groups')
             and all(owned_object('token', t, records) for t in state['token'] if t['userid'] == userid)
             and all(a.get('type') == 'user' and owned_object('acl', a, records)
-                    for a in state['acl'] if a['ugid'] == userid))
+                    for a in state['acl'] if a['ugid'] == userid or a['ugid'].startswith(userid + '!')))
 
 
 def tags(row):
@@ -166,7 +167,9 @@ def disks(row, cfg):
                 volume = volume[5:]
             if volume.startswith('/'):
                 external.append({'device': key, 'source': volume, 'effect': 'reference removed; data/device preserved'})
-            elif ':' in volume and volume not in ['none', 'cdrom'] and 'media=cdrom' not in str(value):
+            elif ':iso/' in volume:
+                external.append({'device': key, 'source': volume, 'effect': 'ISO reference removed; image preserved'})
+            elif ':' in volume:
                 volumes.append(volume)
         if re.fullmatch(r'(hostpci|usb|dev)\d+', key):
             external.append({'device': key, 'effect': 'binding removed; hardware/mapping preserved'})
@@ -190,6 +193,10 @@ def canonical_keys(path=KEYS):
     return [line for line in lines if key_owned(line)]
 
 
+def foreign_keys(path=KEYS):
+    return [line for line in path.read_text().splitlines(keepends=True) if not key_owned(line)] if path.exists() else []
+
+
 def key_owned(line):
     parts = line.strip().split(None, 2)
     return len(parts) == 3 and parts[0] in ['ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256',
@@ -203,7 +210,7 @@ def plan(node, runner):
     require(node in [n['name'] for n in nodes if n.get('type') == 'node'], 'Creation node not in cluster.')
     resources = api('get', '/cluster/resources', type='vm')
     guests, preserved = [], []
-    for row in resources:
+    for row in sorted(resources, key=lambda r: (int(r['vmid']), r['node'])):
         cfg = config(row)
         require((OWNER in tags(row)) == (OWNER in tags(cfg)), 'Inventory/config ownership disagrees.')
         if OWNER not in tags(cfg):
@@ -223,7 +230,7 @@ def plan(node, runner):
     require(records.get('schema') == 1 and records.get('node') == node, 'Ownership record node/schema mismatch.')
     selected, excluded = [], []
     for kind, rows in state.items():
-        for row in rows:
+        for row in sorted(rows, key=lambda r: identity(kind, r)):
             ident = identity(kind, row)
             owned = (row.get('comment') in ['managed by homelab-infra', 'managed by homelab-infra — vmid list refreshed on bootstrap re-run']
                      if kind == 'backup' else owned_object(kind, row, records))
@@ -232,19 +239,32 @@ def plan(node, runner):
                 owned_ids = {str(g['identity']['vmid']) for g in guests}
                 owned = bool(selected_ids) and selected_ids <= owned_ids and not row.get('all') and not row.get('pool')
             if owned and kind == 'role':
-                owned = all(a['ugid'] in [u['userid'] for u in state['user'] if owned_object('user', u, records)]
+                owned = all(a['type'] == 'user' and owned_object('acl', a, records)
+                            and dedicated_user(a['ugid'], state, records)
                             for a in state['acl'] if a['roleid'] == ident)
             if owned and kind in ['user', 'token', 'acl']:
                 userid = ident if kind == 'user' else row.get('userid', row.get('ugid'))
                 owned = dedicated_user(userid, state, records)
+            if owned and kind == 'storage':
+                owned = row.get('type') == 'pbs' and all(
+                    j.get('comment') in ['managed by homelab-infra', 'managed by homelab-infra — vmid list refreshed on bootstrap re-run']
+                    and bool(str(j.get('vmid', '')))
+                    and set(re.split(r'[,;\s]+', str(j['vmid']))) - {''} <= {str(g['identity']['vmid']) for g in guests}
+                    and not j.get('all') and not j.get('pool')
+                    for j in state['backup'] if j.get('storage') == ident)
             if owned:
                 selected.append({'kind': kind, 'identity': ident,
                                  'signature': digest(row) if kind == 'backup' else signature(kind, row)})
             else:
                 excluded.append({'kind': kind, 'identity': ident, 'reason': 'unstamped, changed, shared or outside authority', 'state_hash': digest(row)})
+    for guest in guests:
+        verify_volume_consumers(guest, resources)
     return {'schema': 1, 'node': node, 'runner': str(runner), 'guests': guests,
             'objects': selected, 'preserved_guests': preserved, 'excluded_objects': excluded,
             'keys_hash': digest(canonical_keys()),
+            'keys': [{'algorithm': line.split()[0], 'signature': digest(line), 'effect': 'withdraw exact canonical platform key'}
+                     for line in canonical_keys()],
+            'foreign_keys_hash': digest(foreign_keys()),
             'external_review': 'Guest-mounted remote filesystems and guest-internal PBS datastores cannot be discovered from PVE config; operator must verify independent retention before confirming.',
             'retention': 'Independent artifacts/datastores, remote filesystems, physical storage and devices are never erased.',
             'handoff': 'Unwire every declared consumer while services/vault remain available; final execution runs as root on the creation PVE node, outside the runner.'}
@@ -271,8 +291,18 @@ def current_guest(target):
     require(all(row.get(k) == v for k, v in target['identity'].items()), 'Guest identity moved or reused; re-plan.')
     cfg = config(row)
     require(OWNER in tags(row) and OWNER in tags(cfg) and digest(cfg) == target['config_hash'], 'Guest ownership/config changed; re-plan.')
+    require(not row.get('template') or '_.template' in tags(cfg), 'Owned template lacks template provenance.')
     require(set(volume_inventory(row)) == set(target['volumes']), 'Guest volume inventory changed; re-plan.')
+    verify_volume_consumers(target, rows)
     return row
+
+
+def verify_volume_consumers(target, rows):
+    for row in rows:
+        if str(row['vmid']) != str(target['identity']['vmid']):
+            volumes, _ = disks(row, config(row))
+            require(not set(volumes) & set(target['volumes']),
+                    'A managed disk is referenced by another guest; independent shared-volume handoff required.')
 
 
 def verify_disks(target):
@@ -294,6 +324,8 @@ def destroy_guest(target):
 
 def delete_object(target, records):
     kind, ident = target['kind'], target['identity']
+    current_records = read_private(RECORD, {'schema': 1, 'node': records['node'], 'objects': {}})
+    require(current_records == records, 'Creation provenance changed during execution; re-plan.')
     state = objects()  # re-read every object and sharing edge immediately before mutation
     rows = [r for r in state[kind] if identity(kind, r) == ident]
     if not rows:
@@ -323,14 +355,15 @@ def delete_object(target, records):
         api('delete', '/access/users/' + user + '/token/' + token)
     elif kind == 'acl':
         require(row['type'] == 'user', 'Only exact user ACL withdrawal supported.')
-        api('delete', '/access/acl', path=row['path'], users=row['ugid'], roles=row['roleid'])
+        api('set', '/access/acl', path=row['path'], users=row['ugid'], roles=row['roleid'], delete=1)
     else:
         api('delete', paths[kind])
     require(not any(identity(kind, r) == ident for r in objects()[kind]), 'Object remains after withdrawal.')
 
 
 def withdraw_keys(expected, path=KEYS):
-    require(digest(canonical_keys(path)) == expected, 'Canonical platform keys changed; re-plan withdrawal.')
+    current = canonical_keys(path)
+    require(not current or digest(current) == expected, 'Canonical platform keys changed; re-plan withdrawal.')
     if not path.exists():
         return
     # Write through the existing pmxcfs symlink, as bootstrap does. Never replace it.
@@ -378,9 +411,32 @@ def execute(manifest, confirmation, retention, unwired, journal):
     require(records.get('schema') == 1 and records.get('node') == manifest['node'], 'Provenance record changed.')
     require(KEYS.resolve() == Path('/etc/pve/priv/authorized_keys'),
             'Canonical keys are not cluster-shared; explicit per-node key handoff required.')
+
+    def verify_preserved():
+        require(digest(foreign_keys()) == manifest['foreign_keys_hash'], 'Unrelated authorized keys changed; investigate.')
+        state = objects()
+        for excluded in manifest['excluded_objects']:
+            rows = [r for r in state[excluded['kind']] if identity(excluded['kind'], r) == excluded['identity']]
+            require(len(rows) == 1 and digest(rows[0]) == excluded['state_hash'], 'Excluded object changed during teardown; investigate.')
+        rows = api('get', '/cluster/resources', type='vm')
+        for preserved in manifest['preserved_guests']:
+            matches = [r for r in rows if str(r['vmid']) == str(preserved['identity']['vmid'])]
+            require(len(matches) == 1 and all(matches[0].get(k) == v for k, v in preserved['identity'].items())
+                    and digest(config(matches[0])) == preserved['config_hash'], 'Unrelated guest changed during teardown; investigate.')
+
     def step(key, action):
         # Completed steps are also re-verified; no journal flag grants destruction authority.
         verify_idle(manifest['node'])
+        verify_preserved()
+        if key in done['completed']:
+            if key.startswith('guest:'):
+                require(not any(str(r['vmid']) == key.split(':', 1)[1]
+                                for r in api('get', '/cluster/resources', type='vm')),
+                        'Completed guest reappeared; refuse reused identity.')
+            elif key != 'keys':
+                kind, ident = key.split(':', 1)
+                require(not any(identity(kind, r) == ident for r in objects()[kind]),
+                        'Completed object reappeared; refuse reused identity.')
         action()
         if key not in done['completed']:
             done['completed'].append(key)
@@ -389,7 +445,8 @@ def execute(manifest, confirmation, retention, unwired, journal):
         for obj in manifest['objects']:
             if obj['kind'] == kind:
                 step(kind + ':' + obj['identity'], lambda obj=obj: delete_object(obj, records))
-    for guest in sorted(manifest['guests'], key=lambda g: str(g['identity']['vmid']) == manifest['runner']):
+    for guest in sorted(manifest['guests'], key=lambda g: (
+            str(g['identity']['vmid']) == manifest['runner'], '_.template' in g['tags'])):
         step('guest:' + str(guest['identity']['vmid']), lambda guest=guest: destroy_guest(guest))
     require(not any(OWNER in tags(r) for r in api('get', '/cluster/resources', type='vm')), 'New platform guests appeared; re-plan before credential withdrawal.')
     for kind in ['token', 'acl', 'user', 'role']:
@@ -400,12 +457,8 @@ def execute(manifest, confirmation, retention, unwired, journal):
         step('keys', lambda: withdraw_keys(manifest['keys_hash']))
     else:
         require(not canonical_keys(), 'Platform keys reappeared; re-plan.')
-    for excluded in manifest['excluded_objects']:
-        rows = [r for r in objects()[excluded['kind']] if identity(excluded['kind'], r) == excluded['identity']]
-        require(len(rows) == 1 and digest(rows[0]) == excluded['state_hash'], 'Excluded object changed during teardown; investigate.')
-    for preserved in manifest['preserved_guests']:
-        require(digest(config(preserved['identity'])) == preserved['config_hash'], 'Unrelated guest changed during teardown; investigate.')
-    return {'result': 'planned resources absent; excluded objects and independent data retained', 'completed': done['completed'],
+    verify_preserved()
+    return {'result': 'planned resources absent; exclusions unchanged; independent retention acknowledged', 'completed': done['completed'],
             'excluded_objects': manifest['excluded_objects'],
             'operator_handoff': 'Revoke external provider/Vaultwarden credentials using their owning authority; retire private runner credential files only after independent retention review. No retained key/artifact deletion is automated.'}
 
@@ -430,7 +483,13 @@ def main():
     elif args.execute:
         value = read_private(args.execute)
         require(value.get('node') == args.node and value.get('schema') == 1, 'Manifest node/schema mismatch.')
-        with Path('/var/lib/homelab-infra/decommission-operation.lock').open('a') as lock:
+        lock_path = Path('/var/lib/homelab-infra/decommission-operation.lock')
+        lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(lock_fd, 'a') as lock:
+            info = os.fstat(lock.fileno())
+            require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_mode & 0o077 == 0,
+                    'Node lock must be a root-private regular file.')
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
