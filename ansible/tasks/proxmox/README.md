@@ -24,9 +24,7 @@ the declared NIC model, bridge and VLAN tag. A mismatch fails without mutation, 
 a clone left unconfigured by an interrupted earlier run. The comparison preserves MACs
 and other NIC options; stopped state alone does not establish that a VM has never booted.
 SSH timeout remains fatal and names the guest and expected NIC/cloud-init
-configuration. `gate/test-proxmox-vm-clone.py` exercises the pinned update code with a
-recording API and the actual SSH refusal task locally, without a provider or connection.
-It proves the source behavior, not live guest readiness. A mismatched existing clone
+configuration. A mismatched existing clone
 requires the owning observation's supported recovery/recreation decision.
 
 PBS's separate existing-tag branch calls `validate-vm-network.yml` before adding its
@@ -59,9 +57,6 @@ updates at this creation boundary preserves existing console, network and storag
 settings without choosing a replacement enum. `cmode` remains outside the repository
 allowlist; upstream explicit `shell`, `console` and `tty` behavior is tested separately.
 Creation arguments and recursive configuration merges retain their existing behavior.
-`gate/test-proxmox-lxc-present.py` executes the actual pinned dispatch/create/update
-code against a stub API and the actual refusal tasks through Ansible, without sockets.
-This proves source semantics, not the method or target of a prior live request.
 
 ## Asynchronous task completion
 
@@ -116,10 +111,6 @@ unsupported static inventory would otherwise supply an empty group. Tag lookup r
 each matching guest's exact ownership tag, node, VMID and type; instance and stack tags
 must select at most one guest. Cluster tags may select multiple owned guests.
 
-`gate/test-proxmox-inventory-safety.py` executes the actual parser and selection/allocation
-tasks with a recording requests transport, without sockets or provider access. Its
-requests differential proves library/source semantics, not a captured live TLS cause.
-
 ## Device passthrough
 
 `attach-shared-device.yml` binds a host device node (an iGPU) into one or more LXC guests —
@@ -173,16 +164,7 @@ whether deployment succeeded.
 ## Verification
 
 Run the checks selected by [`../../../gate/README.md`](../../../gate/README.md).
-`gate/test-proxmox-tags.sh` verifies the shared tag translation,
-`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams,
-`gate/test-proxmox-api-contract.sh` drives the real `community.proxmox.proxmox` module
-and this repository's real dynamic inventory against a job-local HTTPS mock of the
-Proxmox REST endpoints they call, to prove ownership-tag filtering, idempotent
-create/no-change, and a controlled failure at the API-transport boundary — without a lab
-or real credentials, and `gate/test-device-passthrough-contract.sh` proves the ownership
-guard, the dedicated-device conflict check, and the provenance-tag gate on every detach
-seam in the device-passthrough task files above against fixture guest configurations, also
-without a lab.
+`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams.
 
 ## Creation provenance for decommission
 

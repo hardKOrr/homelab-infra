@@ -7,7 +7,7 @@
 # different regular expressions and one silent empty match. This file is the single lookup
 # seam. The chain below is the same chain `compose.homelabinfra_groups` in
 # inventory/proxmox.yml applies to a guest's whole tag list, differing only in its source
-# term; gate/test-proxmox-tags.sh evaluates both and fails if they disagree.
+# term.
 #
 # Inputs:
 #   tag_group_tag   one raw platform tag, e.g. `_+lab`, `_.stack+media`, `_sonarr-foxglove`

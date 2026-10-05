@@ -41,7 +41,6 @@ through `https://vaultwarden.<your domain>`. That URL has to resolve to the new 
 from the runner, and from your workstation for you to sign in later. The path to it on
 ports 80/443 also has to be open. So:
 
-<!-- output-source:network-prerequisite sha=7cfe6710 -->
 - **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy
   LXC in whatever resolver your LAN uses. Once `dns.provider` is configured and Vaultwarden
   holds its API key, later app deploys create their own records automatically — this first
@@ -58,7 +57,6 @@ None of this involves the public internet. Certificates are obtained over **DNS-
 API — the CA never connects to your lab, so no public A record and no inbound WAN port is
 required. If you already run a reverse proxy on your WAN's 80/443, it keeps those ports and
 is untouched: the lab Caddy listens on its own address.
-<!-- /output-source:network-prerequisite -->
 
 ### 1. Stand up the runner
 
@@ -93,7 +91,6 @@ gave.
 
 ### 2. Stand up the lab
 
-<!-- output-source:vault-enrollment-ceremony sha=f06d4084 -->
 Layer 1 does this itself when `vaultwarden.<domain>` already resolves to the Caddy LXC.
 Otherwise point that name at Caddy and re-run the script. Each run resumes from the phase
 the last one reached: before cutover it runs enrollment, then cutover; once the runner is
@@ -135,7 +132,6 @@ between the two, the next script run removes the leftover seed files as root and
 deploys Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS. Each step records its
 own connection details before the next one needs them, so the run is resumable: if
 something fails, fix it and re-run the script or the job.
-<!-- /output-source:vault-enrollment-ceremony -->
 
 ### 3. Deploy things
 

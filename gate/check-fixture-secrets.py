@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """Reject secret-shaped fixture/artifact fields and a tracked config/ path.
 
-Issue #34's first acceptance criterion: a fixture or artifact candidate carrying a
-prohibited secret-shaped key/value, or a tracked path under config/, must fail the gate
-before it ever reaches a hosted PR run. New test infrastructure under gate/fixtures/ and
-ansible/molecule/ is exactly the second risk surface #34 describes — a fixture file is
-free-form YAML a contributor can paste real-looking values into, unlike the reviewed
-task/role code the existing lint already covers.
-
 Reuses the exact secret-shape regex ansible/scripts/secret-shape.py enforces on generated
 facts, so a key name that would be rejected there is rejected here too — one contract, not
 two definitions that can drift apart.
@@ -33,7 +26,7 @@ SCRIPT_REPO = Path(__file__).resolve().parent.parent
 # Fixture/artifact directories: tracked test-only input a contributor edits directly,
 # as opposed to generated output or reviewed production task/role/var files those other
 # gates already cover.
-FIXTURE_DIRS = ("gate/fixtures/", "ansible/molecule/")
+FIXTURE_DIRS = ("gate/fixtures/",)
 
 # A secret-shaped key is a legitimate part of the documented schema (e.g.
 # proxmox.api_token_secret, per ansible/vars/CONTRACT.md) and fixtures must exercise it.

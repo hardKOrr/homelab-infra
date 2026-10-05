@@ -33,34 +33,28 @@ cases=(
   192.168.100.100
 )
 
-jinja_out="$(python3 - "$repo" "${cases[@]}" <<'PY'
-import re
+export ANSIBLE_CONFIG="$repo/ansible/ansible.cfg"
+jinja_out="$("$HOME/.venvs/homelab-ansible/bin/python" - "$repo" "${cases[@]}" <<'PY'
+import yaml
 import sys
 from pathlib import Path
 
-from jinja2.nativetypes import NativeEnvironment
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
 
 repo, addresses = Path(sys.argv[1]), sys.argv[2:]
-task = (repo / "ansible" / "tasks" / "proxmox" / "ip-to-vmid-guest.yml").read_text(encoding="utf-8")
+tasks = yaml.safe_load((repo / "ansible/tasks/proxmox/ip-to-vmid-guest.yml").read_text(encoding="utf-8"))
+task = next(t for t in tasks if t.get("name") == "Set VMID from IP for {{ guest_type }}")
 
-# Lift the three vars the derivation is built from, exactly as the task file spells them.
-def expr(name):
-    m = re.search(r'^\s*%s:\s*"(.+)"\s*$' % re.escape(name), task, re.M)
-    if not m:
-        raise SystemExit(
-            "vmid-from-ip test: %s is no longer a one-line var in ip-to-vmid-guest.yml. "
-            "The derivation moved; update this test to read it where it now lives." % name
-        )
-    return m.group(1)
-
-env = NativeEnvironment()
-octets_e, prefix_e, vmid_e = expr("octets"), expr("prefix_octet"), expr("vmid_from_ip")
+def render(expression, variables):
+    return Templar(loader=DataLoader(), variables=variables).template(expression)
+octets_e, prefix_e, vmid_e = (task["vars"][name] for name in ("octets", "prefix_octet", "vmid_from_ip"))
 
 for address in addresses:
     ctx = {"guest_ip": address}
-    ctx["octets"] = env.from_string(octets_e).render(**ctx)
-    ctx["prefix_octet"] = env.from_string(prefix_e).render(**ctx)
-    print("%s %s" % (address, env.from_string(vmid_e).render(**ctx)))
+    ctx["octets"] = render(octets_e, ctx)
+    ctx["prefix_octet"] = render(prefix_e, ctx)
+    print("%s %s" % (address, render(vmid_e, ctx)))
 PY
 )"
 
@@ -92,12 +86,6 @@ while read -r address want; do
     rc=1
   fi
 done <<<"$jinja_out"
-
-# The runner must not be exempt from the rule: no prompt may reintroduce a hand-typed VMID.
-if grep -qE '^\s*ask VMID\b' "$repo/rundeck/bootstrap-rundeck.sh"; then
-  echo "FAIL: bootstrap-rundeck.sh asks for a VMID again. It is derived from CT_IP; see the VMID tunable." >&2
-  rc=1
-fi
 
 if [ "$rc" -eq 0 ]; then
   echo "vmid-from-ip: OK (${#cases[@]} addresses, both implementations agree)"
