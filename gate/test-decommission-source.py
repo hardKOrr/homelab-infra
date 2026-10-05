@@ -66,6 +66,8 @@ guards = [t for t in block if 'ansible.builtin.assert' in t]
 plan = {'guests': [{'tags': ['_+lab', '_ntfy', '_rundeck']}], 'node': 'fixture-node', 'runner': '902'}
 base = dict(decommission_node='fixture-node', decommission_runner_vmid=902,
             decommission_unwire_phase='integrations',
+            _dc_effect={'instance': 'ntfy'}, _dc_manifest={'wiring': [{'instance': 'ntfy'}]},
+            _dc_forgejo_endpoint='',
             decommission_apps=[{'app': 'ntfy', 'instance': 'ntfy'}, {'app': 'rundeck', 'instance': 'rundeck'}],
             _dc_plan={'stdout': json.dumps({'plan': plan})}, _luv_config_dir='/fixture-no-config',
             homelabinfra_infra={'reverse_proxy': {'provider': 'caddy'}, 'sso': {'provider': 'authentik'},
@@ -96,6 +98,7 @@ run(guards, base)
 run(guards, dict(base, decommission_unwire_phase='proxy', _caddy_existing={}), False)
 run(guards, dict(base, _ak_probe={'status': 403}), False)
 run(guards, dict(base, kuma_call_ok=False), False)
+run(guards, dict(base, _dc_manifest={'wiring': []}), False)
 run(guards, dict(base, homelabinfra_infra={'dns': {'provider': 'invented'}}), False)
 run(guards, dict(base, decommission_unwire_phase='dns',
                  homelabinfra_infra={'dns': {'provider': 'opnsense', 'host': 'https://dns.example.test'}}), False)
@@ -131,16 +134,35 @@ with tempfile.TemporaryDirectory() as temp:
             task.pop('vars', None)
             task['ansible.builtin.debug'] = {'msg': 'RECORD {{ decommission_unwire_phase }} {{ decommission_app.instance }} ' + route}
         recording.append(task)
-    (temp / 'unwire.yml').write_text(yaml.safe_dump(recording))
+    recorded_block = dict(source_block, block=recording)
+    (temp / 'unwire.yml').write_text(yaml.safe_dump([
+        {'ansible.builtin.set_fact': {'instance': '{{ decommission_app.instance }}'}}, recorded_block]))
     phase = yaml.safe_load((ROOT / 'ansible/tasks/decommission/phase.yml').read_text())
     (temp / 'phase.yml').write_text(yaml.safe_dump(phase))
     orchestration = dict(by_name['Decommission | Unwire integrations before proxy routes and DNS'])
     orchestration['ansible.builtin.include_tasks'] = str(temp / 'phase.yml')
-    providers = dict(base['homelabinfra_infra'], dns={'provider': 'opnsense', 'host': 'https://192.0.2.53'})
-    out = run([orchestration], dict(base, decommission_phase='unwire', homelabinfra_infra=providers))
+    providers = dict(base['homelabinfra_infra'], domain='example.test',
+                     dns={'provider': 'opnsense', 'host': 'https://192.0.2.53'})
+    replan = dict(orchestration, loop=['plan'])
+    bind = {'ansible.builtin.set_fact': {'_dc_manifest': {'wiring': '{{ _dc_wiring_plan }}'}}}
+    fixture = dict(base, decommission_phase='unwire', homelabinfra_infra=providers, app_config={'routing': {}})
+    out = run([replan, bind, orchestration], fixture)
     events = re.findall(r'RECORD (integrations|proxy|dns) ([A-Za-z0-9_-]+)', out)
     assert len(events) == 8, out  # two integrations, one proxy and one DNS, for each consumer
     assert all(stage == 'integrations' for stage, _ in events[:4]), events
     assert all(stage == 'proxy' for stage, _ in events[4:6]), events
     assert all(stage == 'dns' for stage, _ in events[6:]), events
+    changed = dict(providers, dns={'provider': 'opnsense', 'host': 'https://192.0.2.54'})
+    out = run([replan, bind, {'ansible.builtin.set_fact': {'homelabinfra_infra': changed}}, orchestration], fixture, False)
+    assert not re.search(r'RECORD (integrations|proxy|dns)', out), out
+    forgejo_providers = dict(providers, apps={'forgejo-fixture': {'url': 'https://forgejo.example.test'}})
+    forgejo_fixture = dict(fixture, homelabinfra_infra=forgejo_providers,
+                           app_config={'routing': {}, 'app': {'forgejo': {'instance': 'forgejo-fixture'}}},
+                           decommission_apps=[{'app': 'forgejo-runner', 'instance': 'fixture-runner'},
+                                               {'app': 'rundeck', 'instance': 'rundeck'}])
+    out = run([replan, bind, orchestration], forgejo_fixture)
+    assert 'forgejo-runner-remove.yml' in out, out
+    changed = dict(forgejo_providers, apps={'forgejo-fixture': {'url': 'https://changed.example.test'}})
+    out = run([replan, bind, {'ansible.builtin.set_fact': {'homelabinfra_infra': changed}}, orchestration], forgejo_fixture, False)
+    assert not re.search(r'RECORD (integrations|proxy|dns)', out), out
 print('decommission source: authored global integration/proxy/DNS passes preserve provider ingress')

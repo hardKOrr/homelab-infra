@@ -181,9 +181,10 @@ The list is illustrative, not a lab inventory. Use a private 0700 directory and 
 the supported environment wrapper. Plan performs no mutation: it lists exact guest
 identities, configuration hashes, managed disk identities, bind/device exclusions,
 created Proxmox objects and unstamped/changed/shared exclusions. It also resolves each
-consumer's product/instance, exact FQDN, configured provider routes and Kubernetes
+consumer's product/instance, exact FQDN, configured provider endpoints/routes and Kubernetes
 namespace without provider mutation, and checks supported cleanup/DNS access prerequisites.
 Canonical keys are identified by non-secret signatures; unrelated key contents stay private.
+Each consumer's effects are rechecked against that plan before provider mutation.
 The confirmation hash
 binds the consumer declarations as well as the node plan. Offline nodes, unreadable
 storage, unknown/orphan volumes and incomplete workload declarations refuse a clean plan.
