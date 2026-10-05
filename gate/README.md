@@ -121,6 +121,15 @@ cover complete/failed inventory, existing owned and unowned identity collisions,
 unrelated guests and a resource appearing after inventory selection. It opens no sockets
 and makes no live-method or live-target claim.
 
+`python3 gate/test-pbs-reuse.py` executes PBS's provision play with local recording
+command fixtures. Running/stopped and current/pending model/bridge/VLAN mismatches
+must refuse before start, guest readiness or deployment; matching reuse converges while
+preserving NIC/MAC, disks and fixture data. The source datastore stage proves recovery
+`reuse` refuses a missing/changed registration and never initialises retained data.
+`python3 gate/test-guest-recovery-contract.py` covers the supported whole-guest route's
+ownership and independent artifact/key/access refusals before replacement. These checks
+do not establish PBS live recovery acceptance.
+
 ## Scope
 
 `test.sh` and `lint.sh` narrow to changed files only while the tree is dirty. A clean tree

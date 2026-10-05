@@ -61,6 +61,9 @@
 # app:
 #   port: 8007              # PBS web UI and REST API
 #   datastore_name: homelab # datastore created at infrastructure.yml backups.datastore_path
+#   datastore_mode: reuse  # recovery: require an existing registration at that path;
+#                          # never create/initialise a missing datastore (default: create).
+#                          # Read ansible/roles/pbs/README.md before guest recovery.
 #   api_token_name: ansible # token id becomes root@pam!ansible
 #
 #   # Use pbs-enterprise instead if this lab has a Proxmox subscription.

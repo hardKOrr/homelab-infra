@@ -74,7 +74,7 @@ def restore_owning_path_command(argv, fixture_path, state):
     elif command == "pvesm" and action == "extractconfig":
         artifact = argv[2].split(":", 1)[-1]
         readable = {row["volid"].split(":", 1)[-1] for row in state["artifacts"]}
-        if artifact in readable:
+        if artifact in readable and artifact not in state.get("unreadable_artifacts", []):
             stdout = json.dumps({"fixture": "readable-configuration"})
         else:
             rc, failed = 94, True
@@ -529,6 +529,26 @@ class RestoreGuestSourceTests(unittest.TestCase):
         self.assertIn(state["independent_artifact"], [
             row["volid"].split(":", 1)[-1] for row in state["artifacts"]
         ])
+
+    def test_pbs_server_missing_artifacts_or_keys_refuse_before_replacement(self):
+        from copy import deepcopy
+
+        for unavailable in ("source", "independent"):
+            for missing_keys in (False, True):
+                with self.subTest(unavailable=unavailable, missing_keys=missing_keys):
+                    state = self.initial_owning_state(kind="vm", ownership="_+lab;_pbs")
+                    artifact = state[unavailable + "_artifact"]
+                    if missing_keys:
+                        state["unreadable_artifacts"] = [artifact]
+                    else:
+                        state["artifacts"] = [row for row in state["artifacts"]
+                                              if row["volid"].split(":", 1)[-1] != artifact]
+                    original_target = deepcopy(state["target"])
+                    result, final = self.run_owning_path(state=state)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(final["mutations"], [])
+                    self.assertEqual(final["target"], original_target)
+                    self.assertEqual(final["artifacts"], state["artifacts"])
 
     def test_actual_new_restore_stays_stopped_and_target_isolated(self):
         result, state = self.run_owning_path(destination="new")
