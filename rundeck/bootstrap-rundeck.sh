@@ -2445,7 +2445,7 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
   elif [ -z "$RD_TOKEN" ]; then
     warn "no Rundeck API token — re-run this script to enroll Vaultwarden"
-  elif ! in_ct "$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/preserve-tls-env.py" --check-https "$LAB_ETC/lab-run.env" "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
+  elif ! in_ct "$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/preserve-tls-env.py" --check-https "$LAB_ETC/lab-run.env" "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null; then
     warn "https://vaultwarden.$LAB_DOMAIN is not HTTPS-ready from the runner yet"
     info "Enrollment remains pending. Verify name resolution, reachability, service"
     info "health and declared CA files in $LAB_ETC/lab-run.env before re-running."

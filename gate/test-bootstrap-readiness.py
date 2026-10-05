@@ -13,7 +13,7 @@ import threading
 
 ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / 'rundeck/bootstrap-rundeck.sh').read_text()
-predicate = re.search(r'elif ! (.+) >/dev/null 2>&1; then\n    warn "https://vaultwarden', source)[1]
+predicate = re.search(r'elif ! (.+); then\n    warn "https://vaultwarden', source)[1]
 in_ct = re.search(r'^in_ct\(\).*$', source, re.M)[0]
 enrollment = source.split('  VAULT_ENROLLED=0\n', 1)[1].split('\n  if [ "$VAULT_ENROLLED" = 1 ]; then', 1)[0]
 enrollment = 'VAULT_ENROLLED=0\n' + enrollment
@@ -68,7 +68,8 @@ sys.exit(subprocess.run(sys.argv[4:], env=env).returncode)
     credentials.write_bytes(b'RUNDECK_API_TOKEN=unchanged-fixture\n')
     url = f'https://127.0.0.1:{server.server_port}/alive'
 
-    def run(declarations='', overrides=None, endpoint=url, absent=False, flow=False):
+    def run(declarations='', overrides=None, endpoint=url, absent=False, flow=False,
+            expect_stderr=None):
         environment.write_text('TOKEN=not-exported\n' + declarations)
         if absent:
             environment.unlink()
@@ -93,6 +94,10 @@ sys.exit(subprocess.run(sys.argv[4:], env=env).returncode)
                                 env=env, capture_output=True, text=True)
         assert before == (environment.read_bytes() if environment.exists() else None,
                           credentials.read_bytes(), cert.read_bytes())
+        assert result.stdout == '', 'readiness response body must remain suppressed'
+        assert 'not-exported' not in result.stderr and 'unchanged-fixture-token' not in result.stderr
+        if expect_stderr is not None:
+            assert expect_stderr in result.stderr, 'readiness failure diagnostic must remain visible'
         return result.returncode
 
     try:
@@ -105,6 +110,11 @@ sys.exit(subprocess.run(sys.argv[4:], env=env).returncode)
         assert (root / 'enrollment-called').exists()
         (root / 'enrollment-called').unlink()
         assert run(flow=True) != 0
+        assert not (root / 'enrollment-called').exists()
+        assert run('CURL_CA_BUNDLE=/missing.pem\n', flow=True,
+                   expect_stderr='CA environment: line 2: CURL_CA_BUNDLE must name an existing absolute CA file') != 0
+        assert run(f'CURL_CA_BUNDLE={shlex.quote(str(other))}\n', flow=True,
+                   expect_stderr='curl: (60)') != 0
         assert not (root / 'enrollment-called').exists()
         for key in ('SSL_CERT_FILE', 'CURL_CA_BUNDLE'):
             assert run(f'{key}={shlex.quote(str(cert))}\n') == 0
