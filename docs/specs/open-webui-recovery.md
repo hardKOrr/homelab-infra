@@ -72,4 +72,4 @@ Neither destination stops the source, publishes an isolated target route early, 
 | Failure after data replacement or service start/health | Keep target stopped or isolated; restore verified B when existing, then retry A. |
 | Shared `ai` guest restore | Report every workload on the affected guest. Never describe the whole-guest path as an Open WebUI-only restore. |
 
-`gate/test-open-webui-recovery.py` exercises both native destinations, source isolation, chats/uploads, key handling, named upstream boundaries, A → B → restore A, B recovery/retry and the shared wrong-target/missing-key/corrupt/version/external-data/partial-recovery matrix. `gate/test-open-webui-contract.sh` checks the role boundary and removal safety. The common report keeps schedule, artifact, integrity, external-data, credential and live restore states unknown unless independently supplied.
+The common report keeps schedule, artifact, integrity, external-data, credential and live restore states unknown unless independently supplied.

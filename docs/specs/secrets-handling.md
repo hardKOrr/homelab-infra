@@ -72,20 +72,15 @@ resource even though it never touches production config.
   redaction hosted logs get until a lane needs more.
 - A checker's own failure output follows the same rule as a fixture: it may name the
   offending key path so a reviewer can find it, but it must never echo the disallowed
-  value itself. `check-fixture-secrets.py`'s findings are path-only; `test-fixture-secrets.sh`
-  asserts the rejected value never appears in the checker's own output.
+  value itself. `check-fixture-secrets.py`'s findings are path-only.
+
 
 ## Enforced by
 
 - `ansible/scripts/lab-run.sh` — mode guard, preflight, private CLI state, cleanup
 - `ansible/scripts/secret-shape.py` and `ansible/tasks/bootstrap/write-generated-facts.yml`
-- `gate/test-vaultwarden.sh` — redaction, mapping, fail-closed and cleanup tests
-- `gate/check-fixture-secrets.py` and `gate/test-fixture-secrets.sh` — fixture/artifact
-  secret-shape and tracked `config/` boundary
-- `gate/check-workflow-policy.py` and `gate/test-workflow-policy.sh` — hosted workflow
-  permissions, secrets-in-pull_request, and self-hosted-without-environment boundary
-- `gate/test-kubernetes-namespace-ownership.sh` — Kind-lane namespace-ownership refusal,
-  positive and negative fixtures
-- `gate/test-container-teardown.sh` and `gate/test-kind-teardown.sh` — cleanup
-  never swallows a teardown failure
+- `gate/check-fixture-secrets.py` in lint — fixture/artifact secret-shape and tracked
+  `config/` boundary
+- `gate/check-workflow-policy.py` in lint — hosted workflow permissions,
+  secrets-in-pull_request, and self-hosted-without-environment boundary
 - inspection — cite this specification in findings

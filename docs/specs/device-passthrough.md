@@ -148,11 +148,3 @@ rejections/no-ops of its own, both in `ansible/tasks/proxmox/detach-*.yml`:
 - inspection — cite this specification in findings
 - `ansible/scripts/config-doctor.sh` — rejects malformed device declarations and mixed
   iGPU modes across distinct nodes before a play can mutate a device.
-- `gate/test-device-passthrough-contract.sh` — proves the cross-node rejection (including
-  the deliberate default for an unmarked declaration), the declared-mode rejection in both
-  directions, the ownership guard on every attach AND detach seam, the dedicated-device
-  conflict check, and that detach treats a content match with no provenance tag as unowned
-  rather than adopting it, against the real expressions in
-  `ansible/tasks/proxmox/attach-pci-passthrough.yml`,
-  `attach-usb-passthrough.yml`, `detach-shared-device.yml`, `detach-pci-passthrough.yml`,
-  and `detach-usb-passthrough.yml`, without a lab

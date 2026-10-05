@@ -7,29 +7,29 @@ and application-specific assertions are recorded on the product's observation is
 
 ## Evidence boundary
 
-The report produced by `python3 gate/recovery_acceptance.py` is safe to paste into a
-product issue. It contains method, declared version label, a product-qualified fixture
+A recovery validation record shared in a product issue contains method, declared
+version label, a product-qualified fixture
 artifact identity (while `artifact_id` preserves the native provider identity), target
 identity/state and assertion names. It does not contain backup contents, keys,
 credentials, endpoint secrets or live configuration. `restore_tested` in a report means
 the synthetic fixture completed both routes; `live_verified` is a separate field and is
 false until an authorized isolated lab run is recorded in the applicable product observation issue.
 
-The report has three deliberately separate coverage sets:
+A validation record distinguishes three coverage sets:
 
 - **implemented** — a method is declared and its adapter interface is present;
 - **fixture-tested** — the common protocol passed for that method and destination;
 - **live-verified** — an operator-recorded run on an authorized isolated target (empty in
   this checkout; a green gate never adds an item here).
 
-`catalog_remaining` is generated from `catalog/applications.yml` and names products with
-no declared recovery adapter yet. It is a disposition, not a priority list. Must-keep
-ordering is supplied by the user and is never inferred from catalog, file, or issue order.
+Products with no declared recovery adapter can be identified from
+`catalog/applications.yml`. That disposition is not a priority list. Must-keep ordering
+is supplied by the user and is never inferred from catalog, file, or issue order.
 
 ## Common protocol
 
-`gate/test-recovery-acceptance.py` runs this protocol for the shared PBS VM and LXC
-fixtures and every currently declared application method:
+Use this protocol when validating the shared PBS VM and LXC routes and declared
+application recovery methods:
 
 1. Capture representative A state and a named recovery point without recording its data.
 2. For **new**, make the target distinct and isolated, make the source unreachable, and
@@ -48,20 +48,16 @@ fixtures and every currently declared application method:
    production side effects did not occur. The target's final identity/state is part of the
    evidence record.
 
-The fixture is intentionally not a second provider or application test platform. The
-PBS VM/LXC implementation remains covered by `test-guest-recovery-contract.py`; product
-roles keep their focused contract tests and application-level assertions beside the
-changed seam. Container and Kind lanes remain the disposable hosting harnesses described
-in [`gate/README.md`](../gate/README.md); neither is promoted to restore evidence by this
-protocol.
+A synthetic fixture is not live restore evidence. The gate runs lint, syntax checks and
+five logic suites as described in [`gate/README.md`](../gate/README.md); it does not
+execute this recovery protocol.
 
 ## Repository rollup
 
-The current declarations exercise the native method for every product that exposes
+The current declarations name the native method for every product that exposes
 `recovery.methods: [native]`, plus the shared `pbs_guest` VM and LXC routes. No
-`project_managed` method is declared. The generated report is authoritative for the
-exact set and for the remaining catalog disposition; it intentionally reports live
-coverage as deferred. A product's observation issue should attach its generated evidence and
+`project_managed` method is declared. Declarations alone do not establish fixture or
+live verification. A product's observation issue should attach its validation record and
 add the installed product version, artifact identity and application-specific assertions
 without adding secrets or backup contents. Product-specific method decisions and failure
 matrices are in the recovery specifications listed in [`specs/README.md`](specs/README.md).
