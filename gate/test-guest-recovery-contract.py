@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fixture contract checks for the shared PBS VM/LXC recovery route.
+"""Provider-free contract checks for the shared PBS VM/LXC recovery route.
 
-These tests intentionally do not contact Proxmox or PBS. They assert the mutation ordering
-and execute the production identity assertions and restore-command arguments with a
-recording action plugin. This bounded seam coverage is not full restore execution.
+The owning playbook and shared validation tasks run against a recording command plugin,
+not Proxmox or PBS. This exercises production control flow with synthetic state and does
+not establish live Restore Guest acceptance.
 """
 from __future__ import annotations
 
@@ -29,13 +29,107 @@ GROUPS = ROOT / "rundeck/job-groups.yml"
 
 
 def fixture_command(argv, fixture_path):
-    """Record restore arguments without executing a provider command."""
+    """Record provider commands without executing them."""
+    state = json.loads(Path(fixture_path).read_text())
+    if state.get("mode") == "restore-owning-path":
+        return restore_owning_path_command(argv, fixture_path, state)
     assert argv[:2] == ["pvesh", "create"]
     assert argv[2] in ("/nodes/fixture-node/qemu", "/nodes/fixture-node/lxc")
-    state = json.loads(Path(fixture_path).read_text())
     state["calls"].append(argv)
     Path(fixture_path).write_text(json.dumps(state))
     return {"rc": 0, "stdout": "UPID:fixture", "stderr": "", "changed": True}
+
+
+def restore_owning_path_command(argv, fixture_path, state):
+    """Emulate the read-only inventory and recording endpoints used by Restore Guest."""
+    state["calls"].append({"argv": argv})
+    command, action = argv[0], argv[1]
+    target = state["target"]
+    stdout = ""
+    rc = 0
+    changed = False
+    failed = False
+
+    if command == "pvesh" and action == "get":
+        path = argv[2]
+        if path == "/cluster/resources":
+            stdout = json.dumps(state["resources"])
+        elif path == "/nodes/fixture-node/storage":
+            stdout = json.dumps([{"storage": "local", "active": 1}])
+        elif path == "/nodes/fixture-node/storage/pbs-fixture/content":
+            stdout = json.dumps(state["artifacts"])
+        elif path.endswith("/tasks/UPID:fixture/status"):
+            stdout = json.dumps({"status": "stopped", "exitstatus": "OK"})
+        elif path.endswith("/status/current"):
+            stdout = json.dumps({"status": target["status"]})
+        elif path.endswith("/config"):
+            stdout = json.dumps(target["config"])
+        else:
+            rc, failed = 94, True
+    elif command == "pvesm" and action == "extractconfig":
+        artifact = argv[2].split(":", 1)[-1]
+        readable = {row["volid"].split(":", 1)[-1] for row in state["artifacts"]}
+        if artifact in readable:
+            stdout = json.dumps({"fixture": "readable-configuration"})
+        else:
+            rc, failed = 94, True
+    elif command == "pvesh" and action == "create":
+        path = argv[2]
+        changed = True
+        state["mutations"].append(argv)
+        if path.endswith("/status/stop"):
+            target["status"] = "stopped"
+            stdout = "UPID:fixture"
+        elif path.endswith("/status/start"):
+            target["status"] = "running"
+            stdout = "UPID:fixture"
+        elif path in ("/nodes/fixture-node/qemu", "/nodes/fixture-node/lxc"):
+            if state.get("fail_restore_once") and not state.get("restore_failure_used"):
+                state["restore_failure_used"] = True
+                target["status"] = "stopped"
+                rc, failed, stdout = 1, True, ""
+            else:
+                target.update(exists=True, type=path.rsplit("/", 1)[-1])
+                target["status"] = "stopped"
+                target["config"] = {
+                    "tags": "_+lab;_source",
+                    "onboot": 0,
+                    "net0": "name=eth0,bridge=vmbr0",
+                    "rootfs": "local-lvm:vm-501-disk-0,size=8G",
+                }
+                target["config"]["name" if target["type"] == "qemu" else "hostname"] = "source-name"
+                stdout = "UPID:fixture"
+        else:
+            rc, failed = 94, True
+    elif command == "pvesh" and action == "set" and argv[2].endswith("/config"):
+        changed = True
+        state["mutations"].append(argv)
+        options = dict(zip(argv[3::2], argv[4::2]))
+        for key, value in options.items():
+            target["config"][key.removeprefix("--")] = value
+    else:
+        rc, failed = 94, True
+
+    Path(fixture_path).write_text(json.dumps(state))
+    return {
+        "rc": rc,
+        "stdout": stdout,
+        "stderr": "fixture command refused" if failed else "",
+        "changed": changed,
+        "failed": failed,
+    }
+
+
+def replace_command_modules(node):
+    """Route every command task in a copied playbook/include through the fixture."""
+    if isinstance(node, dict):
+        if "ansible.builtin.command" in node:
+            node["fixture_command"] = node.pop("ansible.builtin.command")
+        for value in node.values():
+            replace_command_modules(value)
+    elif isinstance(node, list):
+        for value in node:
+            replace_command_modules(value)
 
 
 def find_yaml_value(node, key):
@@ -152,7 +246,7 @@ class GuestRecoveryContractTests(unittest.TestCase):
         self.assertIn("target_name=", script)
 
 class RestoreGuestSourceTests(unittest.TestCase):
-    """Run owning identity tasks only, without claiming full-path recovery acceptance."""
+    """Execute the owning Restore Guest path with every provider command fixture-backed."""
 
     @classmethod
     def setUpClass(cls):
@@ -161,6 +255,7 @@ class RestoreGuestSourceTests(unittest.TestCase):
         cls.renderer.filters.update(FilterModule().filters())
         cls.work = tempfile.TemporaryDirectory(prefix="restore-guest-source-")
         cls.directory = Path(cls.work.name)
+        cls.fixture_repo = cls.directory / "fixture-repo"
         plugins = cls.directory / "plugins"
         plugins.mkdir()
         (cls.directory / "guest_recovery_fixture.py").write_text(Path(__file__).read_text())
@@ -172,7 +267,19 @@ class RestoreGuestSourceTests(unittest.TestCase):
             "        return fixture_command(self._task.args['argv'], os.environ['RESTORE_FIXTURE'])\n"
         )
         cls.inventory = cls.directory / "inventory.ini"
-        cls.inventory.write_text("[proxmox_delegates]\nfixture-node ansible_connection=local\n")
+        cls.inventory.write_text(
+            "[proxmox_delegates]\nfixture-node ansible_connection=local\n"
+            "[all:vars]\nansible_connection=local\n"
+        )
+        for relative in (
+            "ansible/tasks/proxmox/wait-for-task.yml",
+            "ansible/tasks/recovery/validate-restore.yml",
+        ):
+            copied = cls.fixture_repo / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            included = yaml.safe_load((ROOT / relative).read_text(encoding="utf-8"))
+            replace_command_modules(included)
+            copied.write_text(yaml.safe_dump(included, sort_keys=False), encoding="utf-8")
         cls.env = {key: value for key, value in os.environ.items()
                    if not key.startswith(("ANSIBLE_", "PROXMOX_", "RD_"))}
         cls.env.update(ANSIBLE_CONFIG=str(ROOT / "ansible/ansible.cfg"),
@@ -189,6 +296,155 @@ class RestoreGuestSourceTests(unittest.TestCase):
     def render(self, value, **variables):
         return self.renderer.from_string(value).render(**variables)
 
+    def initial_owning_state(
+        self,
+        kind="ct",
+        destination="existing",
+        target_kind=None,
+        ownership="_+lab;_fixture",
+        template=0,
+        ambiguous=False,
+        occupy_new=False,
+        fail_restore_once=False,
+    ):
+        target_vmid = "501" if destination == "existing" else "502"
+        target_kind = target_kind or ("qemu" if kind == "vm" else "lxc")
+        source = f"backup/{kind}/501/2026-10-04T12:34:56Z"
+        independent = f"backup/{kind}/{target_vmid}/2026-10-04T13:45:57Z"
+        exists = destination == "existing" or occupy_new
+        resource = {
+            "vmid": int(target_vmid),
+            "type": target_kind,
+            "node": "fixture-node",
+            "tags": ownership,
+            "template": template,
+        }
+        resources = [resource, dict(resource)] if ambiguous else ([resource] if exists else [])
+        artifacts = [{"volid": f"pbs-fixture:{source}", "ctime": 1}]
+        if destination == "existing":
+            artifacts.append({"volid": f"pbs-fixture:{independent}", "ctime": 2})
+        config = {
+            "tags": ownership,
+            "onboot": 1,
+            "net0": "name=eth0,bridge=vmbr0,link_down=0",
+            "rootfs": f"local-lvm:vm-{target_vmid}-disk-0,size=8G",
+        }
+        config["name" if target_kind == "qemu" else "hostname"] = "fixture-guest"
+        return {
+            "mode": "restore-owning-path",
+            "destination": destination,
+            "target_vmid": target_vmid,
+            "source_artifact": source,
+            "independent_artifact": independent,
+            "artifacts": artifacts,
+            "resources": resources,
+            "target": {
+                "exists": exists,
+                "type": target_kind,
+                "status": "running" if destination == "existing" else "stopped",
+                "config": config if exists else {},
+            },
+            "calls": [],
+            "mutations": [],
+            "fail_restore_once": fail_restore_once,
+            "restore_failure_used": False,
+        }
+
+    def run_owning_path(
+        self,
+        kind="ct",
+        destination="existing",
+        target_kind=None,
+        ownership="_+lab;_fixture",
+        template=0,
+        ambiguous=False,
+        occupy_new=False,
+        fail_restore_once=False,
+        same_pre_restore_point=False,
+        target_name=None,
+        state=None,
+    ):
+        import copy
+
+        state = copy.deepcopy(state) if state is not None else self.initial_owning_state(
+            kind=kind,
+            destination=destination,
+            target_kind=target_kind,
+            ownership=ownership,
+            template=template,
+            ambiguous=ambiguous,
+            occupy_new=occupy_new,
+            fail_restore_once=fail_restore_once,
+        )
+        target_vmid = state["target_vmid"]
+        target_kind = state["target"]["type"]
+        source = state["source_artifact"]
+        selected = f"pbs-fixture:{source}"
+        independent = (
+            selected if same_pre_restore_point else f"pbs-fixture:{state['independent_artifact']}"
+        )
+        destination = state["destination"]
+        target_name = target_name or (f"restore-{target_vmid}" if destination == "new" else "fixture-guest")
+
+        play = copy.deepcopy(self.source)
+        play["pre_tasks"] = [
+            task for task in play["pre_tasks"]
+            if task.get("name") not in ("Load platform vars", "Register Proxmox delegation targets")
+        ]
+        replace_command_modules(play)
+        play["vars"].update(
+            homelabinfra_config={"proxmox": {"node": "fixture-node"}},
+            backup_storage="pbs-fixture",
+            source_vmid="501",
+            target_vmid=target_vmid,
+            target_storage="local",
+            target_node="fixture-node",
+            destination=destination,
+            recovery_point=selected,
+            pre_restore_point=independent if destination == "existing" else "",
+            overwrite=True,
+            target_name=target_name,
+            target_network="name=eth0,bridge=vmbr0,link_down=1,tag=27",
+            target_tags="_+lab;_restore-fixture",
+            restore_timeout=60,
+        )
+        play_path = self.fixture_repo / "ansible/playbooks/maintenance/restore-guest.yml"
+        play_path.parent.mkdir(parents=True, exist_ok=True)
+        play_path.write_text(yaml.safe_dump([play], sort_keys=False), encoding="utf-8")
+        fixture = Path(self.env["RESTORE_FIXTURE"])
+        fixture.write_text(json.dumps(state), encoding="utf-8")
+        ansible = str(Path(sys.executable).parent / "ansible-playbook")
+        result = subprocess.run(
+            [ansible, "-i", str(self.inventory), str(play_path)],
+            env=self.env,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        return result, json.loads(fixture.read_text(encoding="utf-8"))
+
+    def run_assertion_task(self, task, variables):
+        import copy
+
+        play = {
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": variables,
+            "tasks": [copy.deepcopy(task)],
+        }
+        path = self.directory / "assertion.yml"
+        path.write_text(yaml.safe_dump([play], sort_keys=False), encoding="utf-8")
+        ansible = str(Path(sys.executable).parent / "ansible-playbook")
+        return subprocess.run(
+            [ansible, "-i", "localhost,", "-c", "local", str(path)],
+            env=self.env,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
     def test_normalization_preserves_native_timestamps_at_every_source_site(self):
         selected = self.source["vars"]["_rg_artifact"]
         capture = next(t for t in self.source["pre_tasks"] if "block" in t)["block"]
@@ -204,6 +460,107 @@ class RestoreGuestSourceTests(unittest.TestCase):
                     self.assertEqual(self.render(supplied, pre_restore_point=point), native)
                     self.assertEqual(self.render(newest, _rg_pre_artifacts={
                         "stdout": json.dumps([{"volid": point, "ctime": 1}])}), native)
+
+    def test_actual_owning_path_accepts_matching_vm_and_lxc_backends(self):
+        for kind, backend in (("vm", "qemu"), ("ct", "lxc")):
+            with self.subTest(kind=kind, backend=backend):
+                task = next(
+                    task for task in self.source["pre_tasks"]
+                    if task.get("name") == "Validate source and destination backend match"
+                )
+                result = self.run_assertion_task(task, {
+                    "_rg_destination": "existing",
+                    "_rg_target_type": backend,
+                    "_rg_targets": [{"type": backend}],
+                })
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_actual_owning_path_refuses_mismatched_backend_before_mutation(self):
+        for kind, backend in (("vm", "lxc"), ("ct", "qemu")):
+            with self.subTest(kind=kind, backend=backend):
+                result, state = self.run_owning_path(kind=kind, target_kind=backend)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Validate source and destination backend match", result.stdout)
+                self.assertEqual(state["mutations"], [])
+
+    def test_actual_owning_path_refuses_unowned_template_ambiguous_and_occupied_targets(self):
+        cases = (
+            {"ownership": "unmanaged"},
+            {"template": 1},
+            {"ambiguous": True},
+            {"destination": "new", "occupy_new": True},
+        )
+        for values in cases:
+            with self.subTest(**values):
+                result, state = self.run_owning_path(**values)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Require a free new destination or owned existing destination", result.stdout)
+                self.assertEqual(state["mutations"], [])
+
+    def test_actual_existing_restore_reads_independent_point_and_preserves_onboot(self):
+        result, state = self.run_owning_path()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(state["target"]["status"], "running")
+        self.assertEqual(state["target"]["config"]["onboot"], "1")
+        extracted = [
+            call["argv"][2]
+            for call in state["calls"]
+            if call["argv"][:2] == ["pvesm", "extractconfig"]
+        ]
+        self.assertEqual(len(extracted), 2)
+        self.assertNotEqual(*extracted)
+        self.assertTrue(any("--onboot" in call and call[call.index("--onboot") + 1] == "1"
+                            for call in state["mutations"]))
+        self.assertIn(state["independent_artifact"], [
+            row["volid"].split(":", 1)[-1] for row in state["artifacts"]
+        ])
+
+    def test_actual_new_restore_stays_stopped_and_target_isolated(self):
+        result, state = self.run_owning_path(destination="new")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(state["target"]["status"], "stopped")
+        config = state["target"]["config"]
+        self.assertEqual(config["onboot"], "0")
+        self.assertEqual(config["hostname"], "restore-502")
+        self.assertEqual(config["tags"], "_+lab;_restore-fixture")
+        self.assertIn("link_down=1", config["net0"])
+        self.assertFalse(any(call["argv"][2].endswith("/status/start")
+                             for call in state["calls"]
+                             if call["argv"][:2] == ["pvesh", "create"]))
+        restore = next(call["argv"] for call in state["calls"]
+                       if call["argv"][:2] == ["pvesh", "create"]
+                       and call["argv"][2] == "/nodes/fixture-node/lxc")
+        self.assertEqual(restore[restore.index("--unique") + 1], "1")
+        self.assertEqual(restore[restore.index("--start") + 1], "0")
+
+    def test_actual_shared_validation_keeps_independent_point_and_isolation_refusals(self):
+        same_point, same_state = self.run_owning_path(same_pre_restore_point=True)
+        self.assertNotEqual(same_point.returncode, 0, same_point.stdout + same_point.stderr)
+        self.assertIn("Require an independent readable pre-restore point", same_point.stdout)
+        self.assertEqual(same_state["mutations"], [])
+
+        aliased_name, new_state = self.run_owning_path(destination="new", target_name="501")
+        self.assertNotEqual(aliased_name.returncode, 0, aliased_name.stdout + aliased_name.stderr)
+        self.assertIn("Require a different target for a new destination", aliased_name.stdout)
+        self.assertEqual(new_state["mutations"], [])
+
+    def test_actual_restore_failure_retains_point_and_retry_succeeds(self):
+        failed, state = self.run_owning_path(fail_restore_once=True)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertIn("Report a failed or partial guest restore without destructive cleanup", failed.stdout)
+        self.assertIn(state["independent_artifact"], [
+            row["volid"].split(":", 1)[-1] for row in state["artifacts"]
+        ])
+        self.assertEqual(state["target"]["status"], "stopped")
+
+        retried, state = self.run_owning_path(state=state)
+        self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
+        self.assertEqual(state["target"]["status"], "stopped")
+        self.assertTrue(state["restore_failure_used"])
+        self.assertEqual(state["target"]["config"]["onboot"], "1")
+        self.assertIn(state["independent_artifact"], [
+            row["volid"].split(":", 1)[-1] for row in state["artifacts"]
+        ])
 
     def run_source(self, kind="ct", destination="existing", point=None, pre=None,
                    qualified=True, captured=False):
