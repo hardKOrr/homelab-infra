@@ -22,16 +22,24 @@
     - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
+    - name: Check enrollment inputs against the preserved identity declaration
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../scripts/vaultwarden-identities.py"
+        stdin: >-
+          {{ {'domain': homelabinfra_config.infrastructure.domain,
+              'vaultwarden': {
+                'owner_email': homelabinfra_config.infrastructure.vaultwarden.owner_email | default(''),
+                'automation_email': homelabinfra_config.infrastructure.vaultwarden.automation_email | default('')
+              }} | to_json }}
+      register: _vault_identities
+      changed_when: false
+
     - name: Resolve enrollment identities
       ansible.builtin.set_fact:
-        _vault_owner_email: >-
-          {{ lookup('ansible.builtin.env', 'VAULTWARDEN_OWNER_EMAIL')
-             | default(homelabinfra_config.infrastructure.vaultwarden.owner_email
-                       | default(''), true) }}
-        _vault_automation_email: >-
-          {{ lookup('ansible.builtin.env', 'VAULTWARDEN_AUTOMATION_EMAIL')
-             | default(homelabinfra_config.infrastructure.vaultwarden.automation_email
-                       | default('homelab-infra@' ~ homelabinfra_config.infrastructure.domain), true) }}
+        _vault_owner_email: "{{ (_vault_identities.stdout | from_json).owner_email }}"
+        _vault_automation_email: "{{ (_vault_identities.stdout | from_json).automation_email }}"
 
     - name: Assert enrollment inputs
       ansible.builtin.assert:

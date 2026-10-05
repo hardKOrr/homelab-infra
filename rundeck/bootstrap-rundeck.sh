@@ -1764,9 +1764,20 @@ fi
 # identifiers, not credentials. The master passwords are generated later, in the Seed
 # phase, and recorded in $CRED_FILE; see "Vaultwarden master passwords" below.
 LAB_DOMAIN="$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])) or {}).get("domain", ""))' "$CONFIG_INFRA")"
-VAULTWARDEN_OWNER_EMAIL="${VAULTWARDEN_OWNER_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("owner_email", ""))' "$CONFIG_INFRA")}"
-VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("automation_email", ""))' "$CONFIG_INFRA")}"
-[ -n "$VAULTWARDEN_AUTOMATION_EMAIL" ] || VAULTWARDEN_AUTOMATION_EMAIL="homelab-infra@$LAB_DOMAIN"
+# Never enroll an environment override that the owning UI job cannot reproduce.
+if [ "$DEPLOY_VAULTWARDEN" = "1" ]; then
+  VAULT_IDENTITIES="$(in_ct env \
+    VAULTWARDEN_OWNER_EMAIL="${VAULTWARDEN_OWNER_EMAIL:-}" \
+    VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-}" \
+    "$VENV_DIR/bin/python3" "$REPO_DIR/ansible/scripts/vaultwarden-identities.py" \
+    --lines "$CONFIG_INFRA")" || die "Vaultwarden identity conflict; enrollment has not run"
+  VAULTWARDEN_OWNER_EMAIL="${VAULT_IDENTITIES%%$'\n'*}"
+  VAULTWARDEN_AUTOMATION_EMAIL="${VAULT_IDENTITIES#*$'\n'}"
+else
+  VAULTWARDEN_OWNER_EMAIL="${VAULTWARDEN_OWNER_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("owner_email", ""))' "$CONFIG_INFRA")}"
+  VAULTWARDEN_AUTOMATION_EMAIL="${VAULTWARDEN_AUTOMATION_EMAIL:-$(in_ct "$VENV_DIR/bin/python3" -c 'import sys,yaml; print(((yaml.safe_load(open(sys.argv[1])) or {}).get("vaultwarden") or {}).get("automation_email", ""))' "$CONFIG_INFRA")}"
+  [ -n "$VAULTWARDEN_AUTOMATION_EMAIL" ] || VAULTWARDEN_AUTOMATION_EMAIL="homelab-infra@$LAB_DOMAIN"
+fi
 in_ct sh -c "grep -q '^BW_SERVER=' '$LAB_ETC/lab-run.env' || printf '%s\\n' 'BW_SERVER=https://vaultwarden.$LAB_DOMAIN' >> '$LAB_ETC/lab-run.env'"
 
 # A converged pre-cutover rerun keeps the authored provider choice, but still needs
@@ -2464,7 +2475,7 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
   # API key in Key Storage. The Rundeck token travels on stdin.
   VAULT_ENROLLED=0
   if [ -z "$VAULTWARDEN_OWNER_EMAIL" ]; then
-    warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
+    warn "no owner email is recorded; declare vaultwarden.owner_email in config/infrastructure.yml before Vaultwarden Enrollment"
   elif [ -z "$RD_TOKEN" ]; then
     warn "no Rundeck API token — re-run this script to enroll Vaultwarden"
   elif ! in_ct "$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/preserve-tls-env.py" --check-https "$LAB_ETC/lab-run.env" "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null; then

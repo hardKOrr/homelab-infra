@@ -149,6 +149,7 @@ python3 gate/test-recovery-acceptance.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-opnsense-search.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-native-lxc-template.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-vaultwarden-enroll.py || rc=1
+"$HOME/.venvs/homelab-ansible/bin/python" gate/test-vaultwarden-identities.py || rc=1
 python3 gate/test-node-repos.py || rc=1
 python3 gate/test-runner-dns.py || rc=1
 python3 gate/test-bootstrap-mail.py || rc=1

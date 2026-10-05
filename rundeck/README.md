@@ -34,6 +34,20 @@ environment variable (`VMID`, `CT_IP`, `CT_GW`, `CT_STORAGE`, `TEMPLATE`, `REPO_
 `REPO_BRANCH`, `CT_DNS`, `DEPLOY_VAULTWARDEN`, `RUNDECK_PACKAGE_VERSION_PIN`,
 `PLATFORM_SSH_KEY_FILE`, `ANSIBLE_CORE_SPEC`, …); see the header of the script.
 
+Vaultwarden identity inputs are first-run answers, not identity-change controls.
+Both direct bootstrap Enrollment and the Rundeck Enrollment job use the preserved
+`config/infrastructure.yml` declaration: `vaultwarden.owner_email` and
+`vaultwarden.automation_email` (default `homelab-infra@<domain>` when absent).
+A nonempty `VAULTWARDEN_OWNER_EMAIL` or `VAULTWARDEN_AUTOMATION_EMAIL` must match
+that effective declaration exactly. A conflict stops bootstrap before enrollment,
+or stops Enrollment before admin authentication or invitations. Unset the conflicting
+input or align it with the preserved declaration, then retry. An undeclared owner
+must be declared through the supported configuration path first; an environment
+input cannot supply a different identity for just one invocation. The check does
+not rewrite configuration, rotate credentials, or reconcile existing accounts or
+organizations. Changing the declared identity requires a separate explicit decision
+and recovery plan; do not change it merely to bypass a conflict on a rerun.
+
 Runner sizing inputs (`CT_CORES`, `CT_MEMORY`, `CT_SWAP`, `CT_DISK`) apply to a
 **new** guest: defaults are 4 cores, 8192 MB RAM, 512 MB swap and 16 GiB rootfs.
 On a rerun, bootstrap reads the selected guest's current PVE sizing. An explicit

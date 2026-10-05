@@ -204,3 +204,10 @@ existing-object adoption, PBS stamp gating, exact confirmation, complete workloa
 degraded providers, global integration/proxy/DNS order, runner-last retry, changed
 provenance, shared disks, cloud-init/template order and leftover-volume refusal.
 Neither test loads credentials or contacts a provider.
+
+`test-vaultwarden-identities.py` executes bootstrap's identity boundary and the
+Enrollment playbook's policy, ceremony and Key Storage tasks against local fakes.
+It rejects preserved-config/input conflicts before any service request and proves
+that switching from direct bootstrap inputs to the UI's unchanged declaration
+preserves two accounts, one organization and all three machine entries without writes.
+It opens no lab connections.

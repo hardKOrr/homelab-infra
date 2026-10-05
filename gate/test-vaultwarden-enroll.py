@@ -127,6 +127,8 @@ def serve(fake: FakeVaultwarden) -> ThreadingHTTPServer:
             raw = self.rfile.read(length).decode() if length else ""
             if self.headers.get("Content-Type", "").startswith("application/x-www-form-urlencoded"):
                 body = dict(urllib.parse.parse_qsl(raw))
+            elif self.headers.get("Content-Type") == "application/x-rundeck-data-password":
+                body = raw
             else:
                 body = json.loads(raw) if raw else None
             auth = self.headers.get("Authorization", "")
