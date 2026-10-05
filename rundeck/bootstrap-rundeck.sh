@@ -1118,7 +1118,11 @@ npm install -g --silent @bitwarden/cli@2026.8.0 >/dev/null
 # substitution failing inside an argument leaves `say` itself returning 0, so set -e never
 # fires and the run continues to fail much later, at cutover, for no visible reason.
 command -v bw >/dev/null || { echo "bitwarden CLI not on PATH after install" >&2; exit 1; }
-say "bw $(bw --version 2>/dev/null)"
+BW_CLI_VERSION="$(bw --version 2>/dev/null)" \
+  || { echo "bitwarden CLI version check failed after install" >&2; exit 1; }
+[ "$BW_CLI_VERSION" = "2026.8.0" ] \
+  || { echo "bitwarden CLI on PATH does not match the required version 2026.8.0" >&2; exit 1; }
+say "bw $BW_CLI_VERSION"
 
 # -- rundeck config -------------------------------------------------------------
 say "configuring $RD_URL"

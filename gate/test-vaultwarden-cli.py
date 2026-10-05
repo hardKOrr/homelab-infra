@@ -35,6 +35,31 @@ def check():
     bootstrap = (ROOT / "rundeck/bootstrap-rundeck.sh").read_text()
     packages = re.findall(r"^npm install -g --silent (@bitwarden/cli@[^\s]+)", bootstrap, re.M)
     assert len(packages) == 1, "bootstrap must install an explicit CLI compatibility pin"
+    # Execute the shipped install/check block with a successful npm and a shadowing
+    # bw. The reported executable must match the package pin, not just exist on PATH.
+    block = bootstrap[bootstrap.index('say "Bitwarden CLI"'):
+                      bootstrap.index('# -- rundeck config')]
+    with tempfile.TemporaryDirectory(prefix="homelab-cli-version-") as directory:
+        work = Path(directory)
+        for name, body in {
+            "npm": "exit 0",
+            "bw": 'printf "%s\\n" "$FIXTURE_BW_VERSION"; exit "$FIXTURE_BW_EXIT"',
+        }.items():
+            executable = work / name
+            executable.write_text("#!/bin/sh\n" + body + "\n")
+            executable.chmod(0o700)
+        expected = packages[0].rsplit("@", 1)[1]
+        for version, exit_code, succeeds in (
+            (expected, "0", True), ("stale-version", "0", False),
+            ("", "0", False), (expected, "2", False),
+        ):
+            result = subprocess.run(
+                ["/bin/bash", "-c", 'set -euo pipefail\nsay() { :; }\n' + block + '\necho continued'],
+                env={"PATH": directory, "FIXTURE_BW_VERSION": version, "FIXTURE_BW_EXIT": exit_code},
+                capture_output=True, text=True, timeout=30,
+            )
+            assert (result.returncode == 0) == succeeds, "bootstrap accepted an incompatible CLI"
+            assert ("continued" in result.stdout) == succeeds, "bootstrap continued after a failed version check"
     container = None
     proxy = None
     with tempfile.TemporaryDirectory(prefix="homelab-cli-test-") as directory:
