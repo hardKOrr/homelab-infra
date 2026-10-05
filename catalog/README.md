@@ -14,5 +14,4 @@ Rundeck projects each entry to
 missing job, duplicate classification, mismatched name, or stale projected group. Platform
 services and operator actions are classified separately in `rundeck/job-groups.yml`.
 
-Add an entry when the application's playbook and Rundeck job become selectable. Future intent
-belongs in a GitHub issue; it is not runtime catalog state.
+Add an entry when the application's playbook and Rundeck job become selectable.

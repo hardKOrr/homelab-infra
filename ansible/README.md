@@ -4,17 +4,6 @@ This directory contains the provisioning and operating implementation. It must r
 independent of Rundeck and other operator interfaces. Operator interfaces select and run
 playbooks; they do not define Ansible behavior.
 
-## Start with the relevant guide
-
-| Task | Read |
-| --- | --- |
-| Add or change an application | [`playbooks/apps/README.md`](playbooks/apps/README.md) |
-| Change maintenance or disruption behavior | [`playbooks/maintenance/README.md`](playbooks/maintenance/README.md) |
-| Change Proxmox ownership, inventory, or provisioning | [`tasks/proxmox/README.md`](tasks/proxmox/README.md) |
-| Change the Kubernetes backend | [`tasks/kubernetes/README.md`](tasks/kubernetes/README.md) |
-| Change configuration shape or a `homelabinfra_*` variable | [`vars/CONTRACT.md`](vars/CONTRACT.md) |
-| Select and run verification | [`../gate/README.md`](../gate/README.md) |
-
 ## How a run executes
 
 A Rundeck job calls `lab-run`, the installed entry point for
@@ -51,9 +40,6 @@ that ownership boundary and leave untagged guests alone.
 - `callback_plugins/` defines the common job and terminal output.
 - `files/` contains controller-side helper programs installed or called by tasks.
 
-Search these areas for the exact implementation seam. Do not maintain a complete file
-inventory in documentation.
-
 ## Local conventions
 
 - Keep playbooks focused on orchestration. Put reusable behavior in a task file or role.
@@ -61,4 +47,3 @@ inventory in documentation.
   `vars/CONTRACT.md` for merge and namespace rules.
 - Treat `config/.generated/facts.yml` as generated topology, not a secret store.
 - Keep application deployment and day-2 playbooks safe to run again.
-- Run verification from the repository root as documented in `gate/README.md`.

@@ -33,19 +33,19 @@ Do not change the NIC, remove its tag or delete the guest to bypass the refusal.
 PBS has no declared application-native or project-managed recovery method and no guest
 recreation/storage attachment adapter. **Remove App**
 does not destroy a guest and is not a recreation path. Whole-lab decommission is also not
-a PBS repair action. Installing an empty PBS is not recovery evidence.
+a PBS repair action. An empty PBS cannot recover existing artifacts.
 
 The supported whole-guest artifact route is **Recover / Guests / Restore Guest**, owned
 by [`restore-guest.yml`](../../playbooks/maintenance/restore-guest.yml). It can be used for
 PBS only when an independently available PBS server/datastore supplies the artifact.
 It cannot restore a failed PBS from that PBS's unavailable datastore. Before any existing
-replacement, the owning observation must verify and record all of the following:
+replacement, verify all of the following:
 
 - Exact guest VMID/node, current `_+lab` ownership and instance tag, every workload,
   attached disk, datastore path, storage owner and failure domain. Account for data on
   the OS disk as well as dedicated datastore disks; deleting a managed disk deletes its data.
 - Independently retained datastore contents and server configuration, named complete
-  artifacts and integrity/readability evidence. Verify they survive loss of this PBS guest
+  artifacts with verified integrity and readability. Verify they survive loss of this PBS guest
   and the named storage failure domain. A PVE registration, snapshot listing or successful
   job alone is insufficient. Keep a distinct usable pre-replacement point for the target.
 - Working PVE and recovery-PBS access, certificate trust/fingerprint and any encryption
@@ -55,7 +55,7 @@ replacement, the owning observation must verify and record all of the following:
   coverage, with exact retained volume/export identity and a single writer. No external
   mount/device or storage-owner recovery is supplied by Deploy PBS or Restore Guest.
 
-Missing or unverified proof stops replacement. Retain the original guest, NIC/MAC,
+Missing prerequisites stop replacement. Retain the original guest, NIC/MAC,
 disks, datastore and recovery points. Do not substitute a blank datastore, a boolean
 acknowledgement or an artifact that is only reachable through the failed server.
 
@@ -84,11 +84,10 @@ A fresh PBS server with only retained external chunks has no recovered registrat
 `reuse` deliberately refuses it. This repository has no supported external datastore
 reattachment or safe fresh-guest recreation executor; adding one requires repository work
 with its storage-owner contract and regressions. Do not call the initialising `create`
-path as a substitute. This limitation leaves such recreation and its live proof pending.
+path as a substitute.
 
 After recovery, list the pre-existing artifacts, restore at least one to an isolated owned
 target, verify service and fixture checksums, and verify dependent PVE registrations and
-credentials. Keep recovery points through acceptance. On failure, leave the target inactive,
+credentials. Keep recovery points until recovery checks pass. On failure, leave the target inactive,
 inspect the owning job's result and retry from the independent point; never discard the
-retained datastore. Repository tests do not grant lab authority or establish live
-recovery/reattachment and artifact restore acceptance.
+retained datastore.

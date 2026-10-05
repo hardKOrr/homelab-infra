@@ -35,6 +35,3 @@ those defaults.
 - Store post-cutover secrets through the Rundeck **Store Secret** job.
 - Use an application's **Configure** job for normal instance overrides. Use these examples
   as the field reference, not as a second configuration source.
-
-When a configuration field changes, update its example and the authoritative contract in
-the same change. Run the checks selected by [`../gate/README.md`](../gate/README.md).
