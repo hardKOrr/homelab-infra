@@ -2445,15 +2445,10 @@ print(re.sub(r"^https?://|:.*$", "", ((d.get("reverse_proxy") or {}).get("host")
     warn "no owner email is recorded; set VAULTWARDEN_OWNER_EMAIL and run Vaultwarden Enrollment"
   elif [ -z "$RD_TOKEN" ]; then
     warn "no Rundeck API token — re-run this script to enroll Vaultwarden"
-  elif ! in_ct curl -fsS --max-time 15 "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
-    warn "https://vaultwarden.$LAB_DOMAIN is not reachable from the runner yet"
-    info "Caddy is up${CADDY_ADDR:+ at $CADDY_ADDR} — the name has to resolve there and"
-    info "the path to it on 443 has to be open before enrollment can run. Point"
-    info "'vaultwarden.$LAB_DOMAIN'${CADDY_ADDR:+ -> $CADDY_ADDR} in your LAN resolver,"
-    info "allow client subnets to reach it, then re-run this script."
-    info "Certificate issuance uses DNS-01, so getting the certificate needs no public"
-    info "record and no inbound WAN port. Publishing an app to the internet later is a"
-    info "separate choice that does require inbound 443."
+  elif ! in_ct "$VENV_DIR/bin/python3" "$REPO_DIR/rundeck/preserve-tls-env.py" --check-https "$LAB_ETC/lab-run.env" "https://vaultwarden.$LAB_DOMAIN/alive" >/dev/null 2>&1; then
+    warn "https://vaultwarden.$LAB_DOMAIN is not HTTPS-ready from the runner yet"
+    info "Enrollment remains pending. Verify name resolution, reachability, service"
+    info "health and declared CA files in $LAB_ETC/lab-run.env before re-running."
   else
     log "Vaultwarden enrollment"
     if printf '%s\n' "$RD_TOKEN" | in_ct sudo -u rundeck env \

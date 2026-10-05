@@ -60,6 +60,10 @@ skips them if one is unusable. This supports private or staging certificate auth
 without disabling TLS verification or changing system trust.
 The installed `lab-run` symlink resolves its source checkout before loading the CA
 helper, including Seed runs with checkout refresh disabled.
+Bootstrap's Vaultwarden HTTPS readiness check uses the same validated declarations
+inside its root `pct exec` context, retaining nonempty caller CA settings. Invalid
+declarations or unsuccessful verified HTTPS keep enrollment pending. The check reads
+only CA declarations and changes neither credentials nor system trust.
 
 `DEPLOY_VAULTWARDEN=1` is the default. Set `DEPLOY_VAULTWARDEN=0` only for a
 runner-only recovery or diagnostic run. The shell script does not contain a second
