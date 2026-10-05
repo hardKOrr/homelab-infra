@@ -1,8 +1,8 @@
 # Live-lab evidence for agents
 
-This is the operator how-to for collecting live-lab evidence from an agent session. The
-acceptance claims remain in the contribution rules. The three
-allowed PR **Live-lab status** values are enumerated in the
+This is the operator how-to for collecting live-lab evidence from an agent session. In the
+PR's **Live lab** section, record "Not run" or the branch@sha, job or command run, and
+observed result, as described in
 [`PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md). The normative boundary is in
 [`specs/one-click-idempotent.md`](specs/one-click-idempotent.md): every live-lab action
 uses a repository-owned Ansible playbook or Rundeck job. Do not use the API workflow here
@@ -272,9 +272,9 @@ There is no `executions output` subcommand. Preserve the job name, execution ID,
 target/options, result, and the relevant output excerpt. Replace every address, domain,
 node name, and VMID in that excerpt with its placeholder from
 [`lab-placeholders.md`](lab-placeholders.md). Include warnings and ignored
-failures rather than presenting only a green summary. Put the resulting observation on
-the observation issue, or in the PR's **Live-lab status** section when the PR itself is
-being verified, using the status contract in the contribution rules.
+failures rather than presenting only a green summary. Put the resulting observation in
+the PR's **Live lab** section, including the branch@sha, job or command run, and observed
+result as described in [`PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md).
 
 ### Idempotence
 
