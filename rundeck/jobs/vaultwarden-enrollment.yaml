@@ -9,8 +9,14 @@
     - Creates organization `homelab-infra` and confirms the automation account as Admin
     - Stages the automation API key and master password in Key Storage
 
-    Safe to re-run. The generated passwords are imported into the vault by
-    Vaultwarden Cutover, which runs next.
+    Uses the preserved config/infrastructure.yml vaultwarden.owner_email and
+    vaultwarden.automation_email (default homelab-infra@<domain>). Conflicting
+    VAULTWARDEN_OWNER_EMAIL or VAULTWARDEN_AUTOMATION_EMAIL inputs fail before
+    invitations; unset them or align them with the declaration before retrying.
+    Enrollment does not rewrite identity declarations or existing machine entries.
+
+    Safe to re-run with unchanged identities. The generated passwords are imported
+    into the vault by Vaultwarden Cutover, which runs next.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
