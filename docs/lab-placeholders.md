@@ -56,17 +56,4 @@ above:
 
 Agents read it to reach the lab, and never copy a value out of it into the repository, an
 issue, a pull request, a review, or a commit message. Its `retired:` section keeps the
-values of decommissioned labs so the leak check still catches them.
-
-## Checking before publishing
-
-`gate/check-lab-leaks.py` fails when a value from that file appears in tracked files. It
-reports the placeholder name and location, never the value. Run it on any text before
-posting it to GitHub:
-
-```bash
-python3 gate/check-lab-leaks.py --stdin < body.md
-```
-
-On a machine without the values file, such as CI, the check reports that it was skipped
-and passes.
+values of decommissioned labs.

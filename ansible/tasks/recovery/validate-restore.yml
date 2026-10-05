@@ -12,6 +12,8 @@
 #   recovery_destination                  new | existing
 #   recovery_overwrite                     false (plan) | true (replace)
 #   recovery_point                        selected artifact, may be blank in plan mode
+#   recovery_validation_point             optional normalized artifact input; when set,
+#                                         it takes precedence over recovery_point
 #   recovery_pre_restore_point            independent target recovery point for replace
 #   recovery_target_config_present        required for a new destination
 #
@@ -31,6 +33,11 @@
 #   recovery_source_storage_key,
 #   recovery_target_storage_key          explicit storage ownership keys
 #   recovery_affected_scope               complete shared-guest/application scope
+
+- name: Recovery | Capture the selected artifact input
+  ansible.builtin.set_fact:
+    _recovery_validation_point: >-
+      {{ recovery_validation_point | default(recovery_point | default('')) }}
 
 - name: Recovery | Assert restore inputs are present
   ansible.builtin.assert:
@@ -102,7 +109,7 @@
 - name: Recovery | Require the selected artifact before replacement
   ansible.builtin.assert:
     that:
-      - recovery_point | default('') | string | length > 0
+      - _recovery_validation_point | string | length > 0
       - recovery_artifact_available | default(true) | bool
     fail_msg: >-
       The selected recovery artifact is missing or unavailable. Plan/list the method's
@@ -113,7 +120,7 @@
   ansible.builtin.assert:
     that:
       - recovery_pre_restore_point | default('') | string | length > 0
-      - recovery_pre_restore_point != recovery_point
+      - recovery_pre_restore_point != _recovery_validation_point
       - recovery_pre_restore_available | default(true) | bool
     fail_msg: >-
       Existing-target replacement needs an independent, usable pre-restore recovery point
@@ -141,7 +148,7 @@
         'target': recovery_target_instance,
         'destination': recovery_destination,
         'overwrite': recovery_overwrite | bool,
-        'recovery_point': recovery_point | default(''),
+        'recovery_point': _recovery_validation_point,
         'pre_restore_point': recovery_pre_restore_point | default(''),
         'source_storage': recovery_source_storage_key | default(''),
         'target_storage': recovery_target_storage_key | default(''),

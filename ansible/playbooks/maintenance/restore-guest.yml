@@ -94,7 +94,7 @@
             (_rg_destination == 'new' and _rg_targets | length == 0)
             or
             (_rg_destination == 'existing' and _rg_targets | length == 1
-             and "'_+lab' in ((_rg_targets | first).tags | default('')).split(';')"
+             and '_+lab' in ((_rg_targets | first).tags | default('', true)).split(';')
              and not ((_rg_targets | first).template | default(0) | bool))
         fail_msg: >-
           New restore VMID {{ _rg_target_vmid }} must be unused; an existing restore must
@@ -248,7 +248,7 @@
 
     - name: Validate source and destination backend match
       ansible.builtin.assert:
-        that: _rg_target_type == (_rg_targets | first).type if _rg_targets | length == 1 else true
+        that: _rg_target_type == (_rg_targets | first).type
         fail_msg: A VM artifact cannot replace an LXC or an LXC artifact replace a VM.
       when: _rg_destination == 'existing'
 
@@ -399,6 +399,10 @@
         - _rg_destination == 'existing'
         - _rg_execute | bool
 
+    - name: Freeze the normalized artifact for shared restore validation
+      ansible.builtin.set_fact:
+        _rg_validation_artifact: "{{ _rg_artifact }}"
+
     - name: Validate the shared destination plan before mutation
       ansible.builtin.include_tasks: ../../tasks/recovery/validate-restore.yml
       vars:
@@ -406,7 +410,7 @@
         recovery_target_instance: "{{ _rg_restore_name | default(_rg_target_vmid, true) }}"
         recovery_destination: "{{ _rg_destination }}"
         recovery_overwrite: "{{ _rg_execute }}"
-        recovery_point: "{{ _rg_artifact }}"
+        recovery_validation_point: "{{ _rg_validation_artifact }}"
         recovery_pre_restore_point: "{{ _rg_pre_restore_point | default('', true) }}"
         recovery_artifact_available: "{{ _rg_artifacts.rc == 0 and (_rg_artifacts.stdout | default('') | length > 0) if _rg_execute | bool else true }}"
         recovery_pre_restore_available: "{{ _rg_pre_restore_config.rc == 0 and (_rg_pre_restore_config.stdout | default('') | length > 0) if _rg_destination == 'existing' and _rg_execute | bool else true }}"

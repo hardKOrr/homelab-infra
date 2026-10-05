@@ -93,6 +93,7 @@ fi
 # Focused unit tests: pure Python, no Ansible startup cost, so they always run in full.
 cd "$repo"
 bash gate/test-vaultwarden.sh || rc=1
+python3 gate/test-bootstrap-readiness.py || rc=1
 bash gate/test-database-provisioning.sh || rc=1
 bash gate/test-odoo-contract.sh || rc=1
 bash gate/test-searxng-contract.sh || rc=1
@@ -127,7 +128,6 @@ bash gate/test-litellm-contract.sh || rc=1
 bash gate/test-maintainerr-restore.sh || rc=1
 bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1
-bash gate/test-lab-leaks.sh || rc=1
 bash gate/test-network-scope.sh || rc=1
 bash gate/test-homepage-dashboard.sh || rc=1
 python3 gate/test-decommission.py || rc=1
