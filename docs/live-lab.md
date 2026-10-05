@@ -1,7 +1,7 @@
 # Live-lab evidence for agents
 
 This is the operator how-to for collecting live-lab evidence from an agent session. The
-acceptance claims remain in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The three
+acceptance claims remain in the contribution rules. The three
 allowed PR **Live-lab status** values are enumerated in the
 [`PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md). The normative boundary is in
 [`specs/one-click-idempotent.md`](specs/one-click-idempotent.md): every live-lab action
@@ -274,7 +274,7 @@ node name, and VMID in that excerpt with its placeholder from
 [`lab-placeholders.md`](lab-placeholders.md). Include warnings and ignored
 failures rather than presenting only a green summary. Put the resulting observation on
 the observation issue, or in the PR's **Live-lab status** section when the PR itself is
-being verified, using the status contract in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+being verified, using the status contract in the contribution rules.
 
 ### Idempotence
 

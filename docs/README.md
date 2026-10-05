@@ -19,7 +19,6 @@ specification, and its acceptance evidence live in
 | Avoid a failure the gates cannot see | [Lessons and standing facts](lessons.md) |
 | Run the lint and test gates | [`../gate/README.md`](../gate/README.md) |
 | Change a Rundeck job or the runner bootstrap | [`../rundeck/README.md`](../rundeck/README.md) |
-| File an issue or open a pull request | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
 
 [`../AGENTS.md`](../AGENTS.md) holds the concise operating rules for agents. Where a
 specification and `CONTRACT.md` disagree, `CONTRACT.md` wins.
