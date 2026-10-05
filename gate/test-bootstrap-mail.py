@@ -75,6 +75,7 @@ fi
                 NONINTERACTIVE='1', VENV_DIR=sys.prefix, VMID='fixture',
                 CT_IP='192.0.2.100/24', CT_GW='192.0.2.1', CT_BRIDGE='vmbr0',
                 CT_VLAN='0', CT_STORAGE='fixture-storage', NODE_TZ='UTC',
+                TEMPLATE_STORAGE='fixture-tmpl', TEMPLATE='fixture-ct.tar.zst',
                 PVE_API_HOST='192.0.2.1', PVE_NODE='fixture', PVE_USER='fixture@pve',
                 PVE_TOKEN_NAME='fixture', LAB_DOMAIN='example.test',
                 VAULTWARDEN_OWNER_EMAIL='synthetic-owner@example.test',
@@ -115,6 +116,9 @@ fi
     directory, _ = run('no-mail', {'LAB_MAIL_PASSWORD': secret}, trace=True)
     assert yaml.safe_load((directory / 'repo/config/infrastructure.yml').read_text())['mail'] == {'provider': 'none'}
     assert not (directory / 'etc/secrets.d/mail.env').exists()
+    # Native LXCs must be created from the template bootstrap ensured, not the repo fallback.
+    authored = yaml.safe_load((directory / 'repo/config/proxmox.yml').read_text())['proxmox']
+    assert authored['lxc'] == {'ostemplate': 'fixture-tmpl:vztmpl/fixture-ct.tar.zst'}
 
     inputs = dict(LAB_MAIL_PROVIDER='smtp', LAB_MAIL_HOST='smtp.example.test',
                   LAB_MAIL_FROM_ADDRESS='sender@example.test', LAB_MAIL_PASSWORD=secret,
