@@ -39,8 +39,8 @@ frigate_defaults:
     identity: catalog
 
   # The LXC's config and Compose project are covered by the guest PBS snapshot. The
-  # recording mount is external and needs the storage owner's own snapshot/backup; see
-  # docs/specs/frigate-recovery.md before live binding.
+  # recording mount is external and needs the storage owner's own snapshot/backup
+  # before live binding.
   backup:
     enabled: true
     schedule: "0 3 * * *"

@@ -9,7 +9,7 @@ def validate_device_modes(proxmox, report):
 
     ``report`` accepts ``(key, message)``.  A declaration without ``kind`` defaults to
     ``igpu`` only for ``mode: shared``; a bare ``mode: dedicated`` declaration is the
-    pre-existing dedicated-only GPU shape from #130 and does not opt into this iGPU rule.
+    pre-existing dedicated-only GPU shape and does not opt into this iGPU rule.
     A dedicated declaration for an iGPU must say ``kind: igpu`` explicitly.
     """
     if not isinstance(proxmox, dict):
@@ -46,7 +46,7 @@ def validate_device_modes(proxmox, report):
         kind = declaration.get("kind")
         if kind is None:
             # Shared declarations are iGPU-mode declarations by default. A bare dedicated
-            # declaration remains the #130 dedicated-only GPU shape so this rule does not
+            # declaration remains the dedicated-only GPU shape so this rule does not
             # reject Ollama/ComfyUI merely because they share a cluster with an iGPU.
             kind = "igpu" if mode == "shared" else "gpu"
         if kind not in DEVICE_KINDS:
@@ -65,9 +65,9 @@ def validate_device_modes(proxmox, report):
         if mode in DEVICE_MODES and kind == "igpu":
             igpu_declarations.append((name, node, mode))
 
-    # This intentionally compares only declarations on DIFFERENT nodes. The existing #130
+    # This intentionally compares only declarations on DIFFERENT nodes. The existing
     # per-device mutual-exclusivity check remains responsible for one node; this guard adds
-    # only the cross-node failover invariant requested by #157. Shared is the reference mode
+    # only the cross-node failover invariant. Shared is the reference mode
     # named by the contract, so each dedicated declaration that conflicts with it is reported
     # once rather than once per conflicting pair.
     reference_mode = "shared"

@@ -13,8 +13,8 @@
     - **Recovery:** the named PostgreSQL database and this instance's `/opt/<instance>/data`
       directory are one native application recovery unit. Use the generated Backup App and
       Restore App paths for both isolated-new and exact-existing destinations; a shared
-      services guest snapshot is a whole-guest fallback, not an n8n-only archive. See
-      `docs/specs/n8n-recovery.md`. The Docker guest backup includes the Compose project.
+      services guest snapshot is a whole-guest fallback, not an n8n-only archive.
+      The Docker guest backup includes the Compose project.
     - **Rerun:** the same encryption key and database role are reused on every converge.
   loglevel: INFO
   executionEnabled: true

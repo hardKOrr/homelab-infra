@@ -29,8 +29,7 @@ searxng_defaults:
   # Recovery disposition: rebuild-only for the application, with the shared Kubernetes
   # cluster's PBS guest route as the whole-guest fallback. SearXNG has no product-native
   # export/import artifact and this role creates no persistent volume; a redeploy restores
-  # the declared configuration and starts an empty limiter cache. See
-  # docs/specs/searxng-recovery.md.
+  # the declared configuration and starts an empty limiter cache.
 
   hosting: kubernetes
 

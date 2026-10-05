@@ -1574,7 +1574,7 @@ else
 # could discover plus the prompts it could not. Safe to edit by hand.
 #
 # There is deliberately NO api_token_secret here. The token is minted by the bootstrap
-# script and stored in Rundeck Key Storage / the Semaphore environment; the platform
+# script and stored in Rundeck Key Storage; the platform
 # reads it from PROXMOX_API_TOKEN. Keeping shape and secret apart is what lets this file
 # be read, diffed, copied and reviewed.
 

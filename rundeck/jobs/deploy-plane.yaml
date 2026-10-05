@@ -17,7 +17,7 @@
       helper backs up at `0 3 * * *`; Backup App calls the same helper. Plane does not prune
       existing PBS points. Use Restore App for isolated-new or exact-existing destinations;
       a shared services guest snapshot is a whole-guest fallback, not a Plane-only archive.
-      See `docs/specs/plane-recovery.md`. This job has no generic image rollback.
+      This job has no generic image rollback.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

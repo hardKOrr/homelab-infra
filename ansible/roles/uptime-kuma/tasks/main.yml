@@ -479,7 +479,6 @@
         - name: Build the notification payload
           ansible.builtin.set_fact:
             # One dict expression keeps bools as bools in the JSON body
-            # (docs/specs/jinja-type-discipline.md).
             _kuma_notification_payload: >-
               {{ {
                    'name': uptime_kuma_notification_name,

@@ -1,6 +1,6 @@
 ---
 # Remove a dedicated USB device assignment from a VM guest — the recovery half of
-# attach-usb-passthrough.yml. See docs/specs/device-passthrough.md.
+# attach-usb-passthrough.yml.
 #
 # A usbN entry is removed only when BOTH are true: its mapping equals
 # usb_passthrough_device.mapping, AND the guest carries the `_.dev+<slug>` provenance tag

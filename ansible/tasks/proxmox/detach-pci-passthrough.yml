@@ -1,6 +1,6 @@
 ---
 # Remove a dedicated PCI device assignment from a VM guest — the recovery half of
-# attach-pci-passthrough.yml. See docs/specs/device-passthrough.md.
+# attach-pci-passthrough.yml.
 #
 # A hostpciN entry is removed only when BOTH are true: its device id equals
 # pci_passthrough_device.id, AND the guest carries the `_.dev+<slug>` provenance tag

@@ -2,7 +2,7 @@ schema_version: 1
 
 # Recovery actions share these option names. The job templates carry the user-facing
 # descriptions and transition aliases; keeping the vocabulary here lets future actions
-# (#78/#89) add a method without inventing a product-specific parameter set.
+# add a method without inventing a product-specific parameter set.
 recovery_parameter_contract:
   instance: required
   method: pbs_guest|native|project_managed (required when more than one is declared)

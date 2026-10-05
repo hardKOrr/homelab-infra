@@ -177,7 +177,7 @@
         _mp_backup_datastore: "{{ k8s_pbs_datastore }}"
         # The failure notification uses the platform's own notification provider, so a lab
         # that chose `none` gets a CronJob that simply does not notify rather than one that
-        # fails trying. Only ntfy has a publisher (docs/specs/one-click-idempotent.md).
+        # fails trying. Only ntfy has a publisher.
         _mp_ntfy_url: >-
           {{ (homelabinfra_infra.notifications.host ~ '/'
               ~ (homelabinfra_infra.notifications.topic | default('homelab')))

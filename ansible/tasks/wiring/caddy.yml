@@ -1,6 +1,6 @@
 ---
 # Register an app route with Caddy via the Caddy admin API.
-# Inverse: tasks/unwiring/caddy.yml. Spec: docs/specs/provider-noop-wiring.md.
+# Inverse: tasks/unwiring/caddy.yml.
 #
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name:       app instance name (e.g. radarr-4k) — route @id is route_<name>
@@ -105,8 +105,7 @@
     # it — this is what the `copy_headers` Caddyfile directive expands to, and the
     # guard matters: copying unconditionally hands the app the literal placeholder
     # text for every header the outpost left out. Emitted as JSON and read back with
-    # from_json so ints/bools/strings keep their types
-    # (docs/specs/jinja-type-discipline.md).
+    # from_json so ints/bools/strings keep their types.
     _caddy_copy_header_routes_json: >-
       {%- set _routes = [] -%}
       {%- for _header in _caddy_authentik_headers -%}
