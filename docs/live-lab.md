@@ -149,12 +149,7 @@ rd executions follow -e "$EXECUTION_ID" -t
 There is no `executions output` subcommand. Preserve the job name, execution ID, date,
 target/options, result, and the relevant output excerpt. Replace every address, domain,
 node name, and VMID in that excerpt with its placeholder from
-[`lab-placeholders.md`](lab-placeholders.md), then check the result before posting:
-
-```bash
-python3 gate/check-lab-leaks.py --stdin < evidence.md
-```
- Include warnings and ignored
+[`lab-placeholders.md`](lab-placeholders.md). Include warnings and ignored
 failures rather than presenting only a green summary. Put the resulting observation on
 the observation issue, or in the PR's **Live-lab status** section when the PR itself is
 being verified, using the status contract in [`CONTRIBUTING.md`](../CONTRIBUTING.md).

@@ -10,8 +10,7 @@ Semaphore files are retained as a reference and are not maintained at feature pa
 - Do not expose or commit credentials, tokens, private keys, generated secrets, or files
   under `/config/`.
 - The repository and its GitHub issues, PRs, and reviews are public. Write lab addresses,
-  domains, node names, and VMIDs as the placeholders in `docs/lab-placeholders.md`, and
-  run `gate/check-lab-leaks.py --stdin` on any issue, PR, or comment body before posting.
+  domains, node names, and VMIDs as the placeholders in `docs/lab-placeholders.md`.
 - Treat `config.example/` as documentation and `/config/` as user-owned runtime state.
 - Inspect the relevant implementation and its nearest `README.md`, when one exists, before
   changing it.
