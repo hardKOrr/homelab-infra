@@ -1,39 +1,16 @@
-<!--
-See CONTRIBUTING.md for the full issue-to-PR lifecycle before filling this in.
--->
+## What changed
 
-## Linked issue
+## Why
 
-Closes #<!-- issue number — use when this PR fully satisfies the issue's repository scope
-and synthetic/gate acceptance, even if live-lab observation is deferred. Record that
-deferral in Live-lab status and a follow-up observation issue. Use "Refs #<issue>" only
-when more repository work is still required on the same issue. -->
+## Verification
 
-## Changed scope
+<!-- Commands run (`bash gate/lint.sh`, `bash gate/test.sh`, any live job) and their result. -->
 
-<!-- Playbooks, roles, tasks, vars, docs, or jobs this PR touches. -->
+## Live lab
 
-## Verification evidence
-
-<!-- The focused tests run and their result: `bash gate/lint.sh` on the dirty tree and the
-gate/test-* scripts for the area changed. The full suite runs in the Gate workflow on this
-PR. Name any additional manual check, and paste the relevant output or a summary of it. -->
-
-## Live-lab status
-
-<!-- Gate-green and live-lab acceptance are different things. State one:
-- Not applicable — no live, running guest, container, or Proxmox resource is affected.
-- Gate-green only — code is verified but the change has not been observed running on
-  the lab yet. Name what observation is still needed and where it is tracked
-  (a follow-up Live-lab observation issue).
-- Observed on the lab — describe what was watched happening and when.
-Write lab addresses, domains, nodes, and VMIDs as placeholders (docs/lab-placeholders.md). -->
+<!-- "Not run", or: branch@sha, job or command run, observed result. Placeholders only
+(docs/lab-placeholders.md). -->
 
 ## Security impact
 
-<!-- Credentials, tokens, secrets, or access scope touched by this change, or "None". -->
-
-## Remaining acceptance
-
-<!-- Acceptance criteria from the linked issue that remain unmet after this PR, or
-"None — this PR satisfies all acceptance criteria." -->
+<!-- Credentials, tokens or access scope touched, or "None". -->
