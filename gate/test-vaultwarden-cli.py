@@ -99,7 +99,7 @@ def check():
                 def dispatch(self):
                     body = self.rfile.read(int(self.headers.get("Content-Length", 0))) or None
                     headers = {k: v for k, v in self.headers.items()
-                               if k.lower() not in ("host", "content-length")}
+                               if k.lower() not in ("host", "content-length", "accept-encoding")}
                     request = urllib.request.Request(backend + self.path, data=body,
                                                      headers=headers, method=self.command)
                     try:
@@ -114,7 +114,7 @@ def check():
                         self.end_headers()
                         self.wfile.write(data)
 
-                do_GET = do_POST = do_PUT = dispatch
+                do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = dispatch
 
             proxy = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
