@@ -68,9 +68,12 @@ guest, container, or Proxmox resource states that up front, not partway through 
 3. **Work on a focused branch,** scoped to the one issue. Keep reusable behavior in roles
    or task files per [`AGENTS.md`](AGENTS.md); keep the change to what the issue's Scope
    and Exclusions describe.
-4. **Verify.** Run the checks the issue's Verification section names, at minimum
-   `bash gate/lint.sh` and `bash gate/test.sh` (see [`gate/README.md`](gate/README.md)).
-   Capture the result — it goes in the PR, not just in a local terminal.
+4. **Verify.** Before committing, run `bash gate/lint.sh` on the dirty tree and only the
+   `gate/test-*` scripts for the area changed, plus any check the issue's Verification
+   section names (see [`gate/README.md`](gate/README.md)). Capture the result and list each
+   command in the PR body — it goes in the PR, not just in a local terminal. The Gate
+   workflow (lint, test, container, kind) runs the full suite on the PR, and CI failures
+   come back to the author.
 5. **Commit** in focused, conventional-style commits.
 6. **Push** the branch and **open a pull request** using the PR template. Fill in every
    section, especially Verification evidence and Live-lab status.
@@ -95,9 +98,10 @@ guest, container, or Proxmox resource states that up front, not partway through 
 
 These are different claims and this repository does not conflate them:
 
-- **Gate-green** means `bash gate/lint.sh` and `bash gate/test.sh` pass against the
-  changed code. It confirms the repository is internally consistent. It does not confirm
-  the change behaves correctly against live Proxmox, a real guest, or a real schedule
+- **Gate-green** is the CI result on the PR: the Gate workflow (lint, test, container,
+  kind) passing against the changed code. The author's evidence is the focused
+  `gate/test-*` scripts and `bash gate/lint.sh` they ran before committing. It confirms
+  the repository is internally consistent. It does not confirm the change behaves correctly against live Proxmox, a real guest, or a real schedule
   firing.
 - **Live-lab acceptance** means the behavior was watched happening on the running lab —
   a scheduled window fired, a guest recovered, a job produced the expected result.

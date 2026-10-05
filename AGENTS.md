@@ -70,13 +70,10 @@ in this file.
 
 ## Verification
 
-Run the checks selected by `gate/README.md` from the repository root. The standard
-commands are:
-
-```text
-bash gate/lint.sh
-bash gate/test.sh
-```
+Before committing, run `bash gate/lint.sh` on the dirty tree and only the `gate/test-*`
+scripts for the area changed, from the repository root (see `gate/README.md`), and list
+each in the PR body. The Gate workflow (lint, test, container, kind) runs the full suite
+on the PR, and CI failures come back to the author.
 
 On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`
 (see `gate/README.md`). Do not start a second gate while an earlier gate process is still

@@ -92,6 +92,10 @@ to clear a failure you have not read.
 
 ## Scope
 
+`test.sh` and `lint.sh` narrow to changed files only while the tree is dirty. A clean tree
+(right after a commit) runs the full sweep by design, so use a specific `gate/test-*` script
+for isolated runs.
+
 A full sweep starts a separate `ansible-playbook` process for every playbook and lints the whole
 Ansible tree. Both gates therefore narrow by default to what the working tree changed. Ambiguous
 scope falls back to the full sweep:
