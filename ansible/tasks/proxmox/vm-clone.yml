@@ -122,7 +122,51 @@
     full: true
     storage: "{{ homelabinfra_config.proxmox.vm.storage | default(omit) }}"
     timeout: "{{ homelabinfra_config.proxmox.vm.timeout | default(300) | int }}"
+  register: _vmc_clone
   when: _vmc_existing.rc != 0
+
+# An interrupted run can leave a clone behind before its NIC was configured. A
+# stopped guest does not prove it has never booted, so do not replace its NIC/MAC
+# on retry. Read back reused/no-op clones and refuse to boot a mismatched network.
+- name: VM clone | Read the reused VM configuration
+  ansible.builtin.command:
+    cmd: "qm config {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_reused_config
+  changed_when: false
+  when: not (_vmc_clone.changed | default(false))
+
+- name: VM clone | Read the reused VM status
+  ansible.builtin.command:
+    cmd: "qm status {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_reused_status
+  changed_when: false
+  when: not (_vmc_clone.changed | default(false))
+
+- name: VM clone | Assert the reused VM network before starting
+  ansible.builtin.assert:
+    that:
+      - _vmc_reused_net0 is match('^virtio(?:=|,|$)')
+      - >-
+        (_vmc_reused_net0 | regex_findall('(?:^|,)bridge=([^,]+)'))
+        == (_vmc_net0 | regex_findall('(?:^|,)bridge=([^,]+)'))
+      - >-
+        (_vmc_reused_net0 | regex_findall('(?:^|,)tag=([0-9]+)(?:,|$)') | first | default('0') | int)
+        == (_vmc_net0 | regex_findall('(?:^|,)tag=([0-9]+)(?:,|$)') | first | default('0') | int)
+    fail_msg: >-
+      Reused VM {{ homelabinfra_config.proxmox.vm.name }} ({{ _vmc_vmid }}) on
+      {{ _vmc_api.node }} is not running and its net0 does not match the declared network.
+      Actual net0={{ _vmc_reused_net0 }}; expected net0={{ _vmc_net0 }}.
+      Refusing configuration and start; use the owning deployment/recovery workflow
+      to reconcile this guest. Existing NIC/MAC and disks have not been replaced.
+  vars:
+    _vmc_reused_net0: >-
+      {{ (_vmc_reused_config.stdout | regex_findall('(?m)^net0:\s*(.+)$')
+          | first | default('')) | trim }}
+  when:
+    - not (_vmc_clone.changed | default(false))
+    - "_vmc_reused_status.stdout | trim != 'status: running'"
 
 # Boot order (slice 205) — a cloned VM is created from an explicit argument list rather
 # than the create tasks' allowlist, so it resolves `startup` the same way by hand.
@@ -144,6 +188,11 @@
     node: "{{ _vmc_api.node }}"
     vmid: "{{ _vmc_vmid | int }}"
     update: true
+    # The module drops net on safe updates, leaving the template's untagged NIC.
+    # Permit NIC configuration only when this invocation actually created the clone;
+    # reused guests (including a clone no-op after a race) keep their NIC/MAC. No disk
+    # attachments are passed by this task, so the cloned OS/cloud-init drives stay intact.
+    update_unsafe: "{{ _vmc_clone.changed | default(false) }}"
     cores: "{{ homelabinfra_config.proxmox.vm.cores | default(2) | int }}"
     # Proxmox's default CPU model is `kvm64`, a 2003-era baseline with no SSE4.2 and no
     # POPCNT — below x86-64-v2. Modern distribution images are increasingly built against
@@ -237,6 +286,12 @@
     port: 22
     timeout: 300
     sleep: 5
+    msg: >-
+      SSH readiness timed out after 300 seconds for VM
+      {{ homelabinfra_config.proxmox.vm.name }} ({{ _vmc_vmid }}) on {{ _vmc_api.node }}
+      at {{ homelabinfra_instance.network.ip_address }}:22.
+      Expected net0={{ _vmc_net0 }}; ipconfig0={{ _vmc_ipconfig0 }}.
+      Proxmox reported running, but guest SSH readiness failed; deployment cannot continue.
   when: (homelabinfra_instance.network.ip_address | lower) != 'dhcp'
 
 - name: VM clone | Discover the DHCP lease
