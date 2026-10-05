@@ -124,6 +124,7 @@ class IdentityTests(unittest.TestCase):
             self.assertIn('conflicts with config/infrastructure.yml', direct.stderr)
             ui = self.playbook(server, cert, **inputs)
             self.assertNotEqual(ui.returncode, 0)
+            self.assertIn('conflicts with config/infrastructure.yml', ui.stdout + ui.stderr)
             self.assertEqual(fake.requests, 0, 'conflict reached an external service')
         identities = self.bootstrap()
         self.assertEqual(identities.returncode, 0, identities.stderr)
@@ -144,6 +145,7 @@ class IdentityTests(unittest.TestCase):
         requests = fake.requests
         conflict = self.playbook(server, cert, VAULTWARDEN_OWNER_EMAIL='another@example.com')
         self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn('conflicts with config/infrastructure.yml', conflict.stdout + conflict.stderr)
         self.assertEqual(requests, fake.requests)
         self.assertEqual(state, (fake.users, fake.orgs, fake.members, fake.machine))
         self.assertEqual(writes, (fake.writes, fake.machine_writes))
