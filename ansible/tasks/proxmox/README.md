@@ -15,6 +15,16 @@ The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.y
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path.
 
+The pinned VM module omits NIC changes on safe updates. `vm-clone.yml` enables NIC
+configuration only after that invocation successfully creates a clone, before its first
+boot, so the declared guest network reaches the VM alongside cloud-init addressing.
+Existing guests and clone no-ops retain their NIC/MAC; this update supplies no disk
+attachments. SSH timeout remains fatal and names the guest and expected NIC/cloud-init
+configuration. `gate/test-proxmox-vm-clone.py` exercises the pinned update code with a
+recording API and the actual SSH refusal task locally, without a provider or connection.
+It proves the source behavior, not live guest readiness. A previously booted failed clone
+still requires the owning observation's supported recovery/recreation decision.
+
 ## LXC creation and existing guests
 
 `lxc-create.yml` is a creation seam. Application and stack callers select existing
