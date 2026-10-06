@@ -116,6 +116,7 @@ bash gate/test-stale-service-detection.sh || rc=1
 bash gate/test-recovery-status.sh || rc=1
 bash gate/test-plex-client-troubleshooter.sh || rc=1
 bash gate/test-proxmox-tags.sh || rc=1
+python3 gate/test-orphan-stack-tag.py || rc=1
 bash gate/test-proxmox-api-contract.sh || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-lxc-present.py || rc=1
 "$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-vm-clone.py || rc=1

@@ -374,6 +374,38 @@ check(
     "stack-media-foxglove",
 )
 
+# Chained bootstrap plays retain the last guest's runtime lxc mapping. A native
+# notification guest and then two stacks must not make Ntfy's instance ambiguous.
+authored = {"proxmox": {"lxc": {"tags": ["_+lab", "_-debian", "operator-note"]}}}
+prior = {"proxmox": {"lxc": {
+    "tags": ["_+lab", "_-debian", "_ntfy"], "hostname": "ntfy",
+    "features": ["nesting=1"], "unrelated": "preserved"}}}
+first = run_set_fact(tag_task, {
+    "_stack_id": "sso", "_stack_shared": False, "_stack_sizing": {},
+    "_config_proxmox": authored, "homelabinfra_config": prior,
+})["homelabinfra_config"]
+# Ansible materializes iterator-valued filters when storing host facts; reproduce
+# that boundary before feeding the rendered first invocation into the second.
+first["proxmox"]["lxc"]["tags"] = list(first["proxmox"]["lxc"]["tags"])
+first["proxmox"]["lxc"]["features"] = list(first["proxmox"]["lxc"]["features"])
+second = run_set_fact(tag_task, {
+    "_stack_id": "monitoring", "_stack_shared": True, "_stack_sizing": {},
+    "_config_proxmox": authored, "homelabinfra_config": first,
+})["homelabinfra_config"]
+check("native tag does not enter first stack", sorted(first["proxmox"]["lxc"]["tags"]),
+      ["_+lab", "_-debian", "_-docker", "_.stack+sso", "operator-note"])
+check("prior native and stack tags do not enter second stack",
+      sorted(second["proxmox"]["lxc"]["tags"]),
+      ["_+lab", "_-debian", "_-docker", "_.shared", "_.stack+monitoring", "operator-note"])
+check("tag selection preserves other lxc fields", second["proxmox"]["lxc"]["unrelated"], "preserved")
+fallback = run_set_fact(tag_task, {
+    "_stack_id": "sso", "_stack_shared": False, "_stack_sizing": {},
+    "homelabinfra_defaults": {"proxmox": {"lxc": {"tags": ["_+lab", "_-ubuntu"]}}},
+    "homelabinfra_config": prior,
+})["homelabinfra_config"]
+check("authored defaults without a config file", sorted(fallback["proxmox"]["lxc"]["tags"]),
+      ["_+lab", "_-docker", "_-ubuntu", "_.stack+sso"])
+
 # Removal resolves the same identity the deploy did, or it would empty another estate's
 # host — or none at all.
 remove = task_named(

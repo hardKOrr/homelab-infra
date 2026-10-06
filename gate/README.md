@@ -132,6 +132,12 @@ do not establish PBS live recovery acceptance.
 
 ## Scope
 
+`python3 gate/test-orphan-stack-tag.py` executes the source maintenance repair against
+socket-free PVE command fixtures. It covers plan, exact-tag execution, idempotent retry,
+configuration preservation and recovery copies, and refusal for recorded apps, unowned
+guests, templates, duplicate/missing VMIDs, active locks and wrong confirmation. It
+does not contact the lab or establish live repair acceptance.
+
 `test.sh` and `lint.sh` narrow to changed files only while the tree is dirty. A clean tree
 (right after a commit) runs the full sweep by design, so use a specific `gate/test-*` script
 for isolated runs.

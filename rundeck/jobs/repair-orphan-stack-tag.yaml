@@ -1,0 +1,48 @@
+- id: f9b313f7-a20a-45f9-8492-08d29e572acd
+  uuid: f9b313f7-a20a-45f9-8492-08d29e572acd
+  name: Repair Orphan Stack Tag
+  group: Manage/Lab/Maintenance
+  description: |-
+    Plan or remove one explicitly reviewed orphan application tag from exact owned stack
+    LXCs. Refuses an application that has a managed notes row, templates and active guest
+    operations. Never removes guests or application data. Execution saves original configs
+    under /root/homelab-infra/tag-repair/ on the delegation node and changes only the named
+    tag, with PVE's config digest guarding concurrent changes. Recovery uses the saved tags
+    through the node's owning configuration interface after reviewing current state.
+    Defaults to plan only. Execution requires REMOVE ORPHAN TAG _<instance> literally.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    required: true
+    description: Exact application instance whose orphan tag was reviewed.
+  - name: vmids
+    required: true
+    description: Exact comma-separated owned stack LXC VMIDs; no spaces.
+  - name: execute
+    value: 'false'
+    values: ['false', 'true']
+    enforced: true
+    required: true
+  - name: confirmation
+    description: Required for execution; REMOVE ORPHAN TAG _<instance>.
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/repair-orphan-stack-tag.yml
+      script: |-
+        #!/bin/bash
+        set -euo pipefail
+        repair_vars=$(python3 - <<'PY'
+        import json, os
+        print(json.dumps({"repair_instance": os.environ["RD_OPTION_INSTANCE"],
+                          "repair_vmids": os.environ["RD_OPTION_VMIDS"],
+                          "repair_execute": os.environ["RD_OPTION_EXECUTE"],
+                          "repair_confirmation": os.environ.get("RD_OPTION_CONFIRMATION", "")}))
+        PY
+        )
+        exec lab-run playbooks/maintenance/repair-orphan-stack-tag.yml -e "$repair_vars"

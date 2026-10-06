@@ -170,6 +170,18 @@ read-modify-write update so one application does not replace another application
 or operator-owned notes. Recording is bookkeeping and is best-effort; it does not decide
 whether deployment succeeded.
 
+Stack creation starts its tag list from authored `config/proxmox.yml` tags or repository
+defaults, then adds that stack's Docker, topology and sharing tags. It does not inherit
+application or stack tags left in the runtime mapping by an earlier bootstrap play.
+
+For an already affected guest, **Repair Orphan Stack Tag** plans a narrowly scoped repair
+through [`repair-orphan-stack-tag.yml`](../../playbooks/maintenance/repair-orphan-stack-tag.yml).
+Supply exact reviewed stack LXC VMIDs and the instance; execution requires the literal
+confirmation shown by the job. A matching application row in the managed notes refuses
+repair. The playbook saves original configs privately on the delegation node, uses PVE's
+config digest to reject concurrent changes and verifies every other config field and tag
+is preserved. It removes no guest, application record or application data.
+
 ## Verification
 
 Run the checks selected by [`../../../gate/README.md`](../../../gate/README.md).

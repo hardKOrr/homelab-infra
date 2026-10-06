@@ -1,0 +1,146 @@
+---
+# Plan or remove one explicitly named orphan application tag from exact owned LXCs.
+# Does not remove an application, its records, or its guest. A recorded instance refuses.
+# Inputs: repair_instance, repair_vmids (comma-separated), repair_execute=false,
+# repair_confirmation='REMOVE ORPHAN TAG _<instance>'. Original configs are saved on
+# the delegated node under /root/homelab-infra/tag-repair/ before any tag write.
+- name: "Stack tags | Repair an explicitly reviewed orphan application tag"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    repair_execute: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Register node delegation
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+  tasks:
+    - name: Require exact repair inputs
+      ansible.builtin.assert:
+        that:
+          - repair_instance | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - repair_vmids | default('') is match('^[0-9]+(,[0-9]+)*$')
+          - not (repair_execute | bool) or repair_confirmation | default('') == 'REMOVE ORPHAN TAG _' ~ repair_instance
+    - name: Resolve the exact target VMIDs
+      ansible.builtin.set_fact:
+        _repair_vmids: "{{ repair_vmids.split(',') | map('int') | list }}"
+    - name: Require unique target identities
+      ansible.builtin.assert:
+        that: _repair_vmids | unique | length == _repair_vmids | length
+    - name: Read current cluster guest identities
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _repair_inventory
+      changed_when: false
+      no_log: true
+    - name: Resolve exact current targets
+      ansible.builtin.set_fact:
+        _repair_guests: "{{ _repair_inventory.stdout | from_json | selectattr('vmid', 'in', _repair_vmids) | list }}"
+      no_log: true
+    - name: Require every requested guest to exist exactly once
+      ansible.builtin.assert:
+        that: _repair_guests | length == _repair_vmids | length
+    - name: Require owned non-template stack LXCs
+      ansible.builtin.assert:
+        that:
+          - item.type == 'lxc'
+          - not (item.template | default(false) | bool)
+          - "'_+lab' in item.tags.split(';')"
+          - item.tags.split(';') | select('match', '^_[.]stack[+]') | list | length == 1
+      loop: "{{ _repair_guests }}"
+      loop_control:
+        label: "{{ item.vmid }}"
+    - name: Read all target configurations before writing any
+      ansible.builtin.command:
+        argv: [pvesh, get, "/nodes/{{ item.node }}/lxc/{{ item.vmid }}/config", --output-format, json]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      loop: "{{ _repair_guests }}"
+      register: _repair_configs
+      changed_when: false
+      no_log: true
+    - name: Refuse recorded applications or active guest operations
+      ansible.builtin.assert:
+        that:
+          - _cfg.digest is defined
+          - _cfg.lock is not defined
+          - "'_+lab' in _cfg.tags.split(';')"
+          - "not (_cfg.description | default('') is search('(?m)^[|][ ]*' ~ repair_instance ~ '[ ]*[|]'))"
+      vars:
+        _cfg: "{{ item.stdout | from_json }}"
+      loop: "{{ _repair_configs.results }}"
+      loop_control:
+        label: "{{ item.item.vmid }}"
+    - name: Report the exact planned tag removal
+      ansible.builtin.debug:
+        msg: "{{ 'Execute' if repair_execute | bool else 'Plan only' }}: remove only _{{ repair_instance }} from VMID {{ item.vmid }}; preserve guest, application records and all other configuration."
+      loop: "{{ _repair_guests }}"
+      loop_control:
+        label: "{{ item.vmid }}"
+    - name: Repair the reviewed orphan tags
+      when: repair_execute | bool
+      block:
+        - name: Create the private node recovery directory
+          ansible.builtin.file:
+            path: /root/homelab-infra/tag-repair
+            state: directory
+            mode: '0700'
+          delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+        - name: Preserve each original guest configuration
+          ansible.builtin.copy:
+            content: "{{ item.stdout }}"
+            dest: "/root/homelab-infra/tag-repair/{{ item.item.vmid }}.json"
+            force: false
+            mode: '0600'
+          delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+          loop: "{{ _repair_configs.results }}"
+          no_log: true
+        - name: Remove only the named tag with a configuration concurrency check
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - set
+              - "/nodes/{{ item.item.node }}/lxc/{{ item.item.vmid }}/config"
+              - --tags
+              - "{{ _cfg.tags.split(';') | reject('eq', '_' ~ repair_instance) | sort | join(';') }}"
+              - --digest
+              - "{{ _cfg.digest }}"
+          vars:
+            _cfg: "{{ item.stdout | from_json }}"
+          delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+          loop: "{{ _repair_configs.results }}"
+          when: "'_' ~ repair_instance in _cfg.tags.split(';')"
+          changed_when: true
+          no_log: true
+        - name: Read back every target configuration
+          ansible.builtin.command:
+            argv: [pvesh, get, "/nodes/{{ item.node }}/lxc/{{ item.vmid }}/config", --output-format, json]
+          delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+          loop: "{{ _repair_guests }}"
+          register: _repair_after
+          changed_when: false
+          no_log: true
+        - name: Verify only the reviewed orphan tag changed
+          ansible.builtin.assert:
+            that:
+              - "'_' ~ repair_instance not in _after.tags.split(';')"
+              - _after | dict2items | rejectattr('key', 'in', ['tags', 'digest']) | items2dict == _before | dict2items | rejectattr('key', 'in', ['tags', 'digest']) | items2dict
+              - _after.tags.split(';') | sort == _before.tags.split(';') | reject('eq', '_' ~ repair_instance) | sort
+          vars:
+            _before: "{{ _repair_configs.results[repair_index].stdout | from_json }}"
+            _after: "{{ item.stdout | from_json }}"
+          loop: "{{ _repair_after.results }}"
+          loop_control:
+            index_var: repair_index
+            label: "{{ item.item.vmid }}"
+          no_log: true
+        - name: Notify completed tag repair
+          ansible.builtin.include_tasks: ../../tasks/notify.yml
+          vars:
+            notify_title: Orphan stack tag repaired
+            notify_message: "Removed only _{{ repair_instance }} from explicitly reviewed stack guests; all other configuration preserved."
+        - name: Require successful notification
+          ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+          vars:
+            degradation_scope: orphan stack tag repair
