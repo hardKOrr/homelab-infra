@@ -254,8 +254,7 @@
     group: root
     mode: "0640"
   # The rendered file embeds MAUTIC_DB_PASSWORD in plain text (docker-compose.yml.j2's
-  # x-mautic-env anchor) — a diff or failure output would otherwise print it, contrary
-  # to docs/specs/secrets-handling.md.
+  # x-mautic-env anchor) — a diff or failure output would otherwise print it.
   no_log: true
   notify: Restart mautic
 

@@ -652,8 +652,8 @@
         - recovery_destination_resolved == 'new'
         - not (_ra_overwrite | bool)
 
-    # The plan path changes nothing, and a read-only job does not notify
-    # (docs/specs/one-click-idempotent.md). A restore is about as state-changing as this
+    # The plan path changes nothing, and a read-only job does not notify.
+    # A restore is about as state-changing as this
     # platform gets, so that one does.
     - name: Notify
       ansible.builtin.include_tasks: ../../tasks/notify.yml

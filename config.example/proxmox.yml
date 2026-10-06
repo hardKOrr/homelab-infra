@@ -28,7 +28,7 @@ proxmox:
   # removes the device from the host for one VM. Listing both identifiers below matters for
   # an iGPU: its shared render node and its dedicated PCI address identify the same hardware.
   # `node` is optional and falls back to this file's proxmox.node. `kind` defaults to `igpu`
-  # for mode: shared, but to `gpu` for a bare mode: dedicated so #130's dedicated-only GPU
+  # for mode: shared, but to `gpu` for a bare mode: dedicated so the dedicated-only GPU
   # convention remains valid. A dedicated iGPU must opt in with kind: igpu; mark a dedicated
   # USB device as kind: usb instead.
   # The attachment tasks refuse a request whose mode or node disagrees with this declaration
@@ -91,8 +91,8 @@ proxmox:
   # ── The secret is deliberately NOT here ──────────────────────────────────────
   # RECOMMENDED SHAPE: leave api_token_secret out of this file entirely and supply the
   # secret as the PROXMOX_API_TOKEN environment variable — from Rundeck Key Storage
-  # (keys/proxmox/api-token, injected by lab-run.sh) or the Semaphore `Homelab`
-  # environment. Both with-proxmox-env.sh and ansible/tasks/load-user-vars.yml read it
+  # (keys/proxmox/api-token, injected by lab-run.sh). Both with-proxmox-env.sh and
+  # ansible/tasks/load-user-vars.yml read it
   # from there, and the environment wins over the file when both are present.
   #
   # Why: this file is shape, not secret. Keeping them apart is what lets the shape be

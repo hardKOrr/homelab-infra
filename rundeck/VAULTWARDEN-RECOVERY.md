@@ -1,8 +1,7 @@
 # Vaultwarden recovery
 
-Vault mode never falls back to seed files. Recovery is a deliberate two-person-style
-operation: restore the external unlock material, confirm entry into Seed recovery, restore
-Vaultwarden, and prove the vault before returning to normal jobs.
+Vault mode never falls back to seed files. Restore external unlock material, enter Seed
+recovery, restore Vaultwarden, and verify the vault before returning to normal jobs.
 
 ## Recovery material to keep outside the runner
 
@@ -58,18 +57,6 @@ defence against a compromised runner root account.
 If step 8 fails, leave Seed mode and all recovery copies intact. Do not manually create the
 marker. If it succeeds, recreated seed files no longer bypass the vault.
 
-## Recovery acceptance
-
-For an enrolled account whose Cutover preflight cannot unlock, read the **Vaultwarden
-Recovery** job description before changing state. The supported CLI pin can recover the
-known client migration incompatibility without reconstructing accounts or changing
-credentials or markers.
-
-The repository gate exercises the marker transition, fail-closed runtime, recreated-seed
-rejection, private CLI state cleanup, both Rundeck converter namespaces, and child failure
-propagation with fake credentials.
-
-Recovery changes require acceptance on a disposable runner and disposable guests before
-use on the live control plane. Verify restored configuration, fail-closed Vaultwarden
-unlock, private CLI-state cleanup, rejected ordinary Seed re-entry, explicit recovery, and
-a successful ordinary job after Vault mode is restored.
+If an enrolled account cannot unlock during Cutover preflight, follow the **Vaultwarden
+Recovery** job description for the supported CLI pin before changing accounts, credentials,
+or markers.

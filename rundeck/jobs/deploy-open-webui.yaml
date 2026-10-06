@@ -22,8 +22,7 @@
       and the health check converge without selecting or changing another app.
 
     Before live deployment, record the exact Open WebUI instance, AI stack host, and named
-    Ollama/LiteLLM instance(s). Live-lab execution is deferred to the isolated acceptance
-    lane; repository and synthetic fixture verification are the closure scope for #149.
+    Ollama/LiteLLM instance(s).
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

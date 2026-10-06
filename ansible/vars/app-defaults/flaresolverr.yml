@@ -68,6 +68,6 @@ flaresolverr_defaults:
     identity: none
 
     # No `subdomain`, `access` or `estate` here, deliberately — there is no route for any
-    # of those fields to describe. gate/test-rundeck-job-tree.sh enforces the pairing:
+    # of those fields to describe.
     # routing.proxy: none is the one case a routed application's required subdomain check
     # does not apply to.

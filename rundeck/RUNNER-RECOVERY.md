@@ -1,11 +1,7 @@
 # Runner and control-plane recovery
 
-This is the operator contract for recovering the Rundeck runner when the original runner
-or Vaultwarden is unavailable. It is deliberately separate from the product adapters:
-those own application data and assertions, while this document owns the control-plane
-prerequisites and order. The shared method and destination contracts are [historical #77](https://github.com/hardKOrr/homelab-infra/issues/77)
-and [historical #78](https://github.com/hardKOrr/homelab-infra/issues/78); the common acceptance
-roll-up is now represented by current per-product observation issues, including [#215](https://github.com/hardKOrr/homelab-infra/issues/215) for runner recovery.
+Recover the Rundeck runner when the original runner or Vaultwarden is unavailable.
+Application data recovery belongs to each product's recovery procedure.
 
 ## Recovery boundary
 
@@ -18,10 +14,10 @@ roll-up is now represented by current per-product observation issues, including 
   a copied identity.
 - Before replacing an existing target, record and independently verify its pre-restore
   recovery point. Keep that point until the restored target has passed verification and
-  the recovery evidence has been recorded.
-- Secrets and live authority belong in the separately controlled recovery record under
-  [historical #77](https://github.com/hardKOrr/homelab-infra/issues/77), not in Git, this runbook,
-  an issue comment, a job log, or a test fixture.
+  dependent service checks pass.
+- Secrets and live authority belong in the separately controlled recovery record,
+  not in Git, this runbook,
+  a job log, or a test fixture.
 
 ## What must be retained
 
@@ -40,7 +36,7 @@ consistent point-in-time set when execution history or an in-place restore is re
 | Runner runtime | `/etc/homelab-infra/lab-run.env`, `state/vault-mode`, `state/cutover-complete`, and the `config/` tree including `.backups/`, `.generated/` and `artifacts/` | checkout location/branch, mode, user configuration, topology, point-in-time config recovery and Get Config archives |
 | Runner identity | `/var/lib/rundeck/.ssh/homelab-infra.pub`, the matching canonical `homelab-infra/runner` private key, and the tagged line in the PVE node's root `authorized_keys` | preserves the identity trusted by managed guests without putting the private half in ordinary runner state |
 | Job option state | `/var/lib/rundeck/app-instances/` | current instance dropdowns; reproducible from `config/apps/*.yml`, but retain it when preserving the exact UI state |
-| Evidence/logs | `/var/lib/rundeck/logs/` and the relevant `artifacts/` entries | execution evidence and operator records; do not treat logs as a secret store |
+| Logs | `/var/lib/rundeck/logs/` and the relevant `artifacts/` entries | execution logs; do not treat logs as a secret store |
 
 The paths above follow the Debian package layout described by Rundeck's
 [system properties](https://docs.rundeck.com/docs/administration/configuration/system-properties.html)
@@ -67,7 +63,7 @@ The following are reconstructed rather than backed up: `rundeck/bootstrap-rundec
 are source-controlled, but their imported UUIDs and execution history live in Rundeck;
 run **Reimport Jobs** after a Git reconstruction, and do not assume that restores history.
 The venv, installed collections and Git checkout are also rebuildable from the recorded
-branch and pins. Record the resolved commit in evidence even when the checkout is rebuilt.
+branch and pins.
 
 ### Explicit exclusions
 
@@ -80,7 +76,7 @@ preserved until exact Vaultwarden readback succeeds. Never back up a secret-shap
 
 Do not rely on a runner backup alone for the PBS datastore. The PBS guest configuration
 and its datastore path, datastore encryption/recovery keys where configured, API token,
-retention and PVE registration are product-owned by [PBS observation issue #212](https://github.com/hardKOrr/homelab-infra/issues/212).
+retention and PVE registration are owned by PBS.
 The datastore needs an independent copy, remote, or other recovery path that remains
 available when the PBS guest itself is lost. A PBS artifact that cannot be read from a
 recovered datastore is not a usable runner recovery point.
@@ -99,13 +95,13 @@ recovered datastore is not a usable runner recovery point.
 3. Verify the independent recovery record contains the PBS/PVE access, converter password,
    automation-account credentials, Vaultwarden admin token and operator SSH/API path.
    Never put the converter password into the vault you need it to open. Do not rotate an
-   existing token simply because the rehearsal has not started yet.
+   existing token during recovery.
 
 ### 1. Recover PBS before depending on it
 
 If PBS is the failed source, recover its VM/configuration and datastore through the
-independent path owned by [PBS observation issue #212](https://github.com/hardKOrr/homelab-infra/issues/212)
-first. Reattach or restore the datastore without formatting it, verify the PBS API and
+independent PBS recovery path first. Reattach or restore the datastore without
+formatting it, verify the PBS API and
 the datastore's native artifact listing, then verify the PBS token and required
 decryption material. Do not create a blank datastore with the same name and call it a
 restore: it cannot satisfy the runner or Vaultwarden recovery point.
@@ -120,8 +116,7 @@ This is the source-independent route. It has two supported forms:
 1. **Shared `pbs_guest` restore.** Use [Restore Guest](jobs/restore-guest.yaml) with
    `destination=new` and the runner's exact artifact. This route is available when a
    working control plane can invoke it; otherwise use the native PVE/PBS operator
-   procedure from [recovery proof job #206](https://github.com/hardKOrr/homelab-infra/issues/206) from the
-   independent recovery host. Select a free VMID, target storage and isolated address;
+   procedure from the independent recovery host. Select a free VMID, target storage and isolated address;
    restore stopped, and do not reuse the source address or start it on the production
    network.
 2. **Git reconstruction.** On a new Proxmox target, run
@@ -148,7 +143,7 @@ Key Storage and converter password are readable. Then follow
 [VAULTWARDEN-RECOVERY.md](VAULTWARDEN-RECOVERY.md): enter explicit Seed recovery, restore
 the complete Vaultwarden guest/database rather than a blank replacement, verify HTTPS and
 the two-account organization, and run Cutover only after exact readback. Caddy is the
-edge prerequisite and its own state/route is owned by [Caddy observation issue #213](https://github.com/hardKOrr/homelab-infra/issues/213).
+edge prerequisite; recover its state and route before dependent services.
 
 The recovery runner may run only the explicit recovery/enrollment/cutover operations while
 Vaultwarden is unavailable. `lab-run.sh` must continue to fail closed for ordinary jobs;
@@ -161,16 +156,11 @@ After Vaultwarden Cutover succeeds, run a read-only status/config validation fir
 reconcile only the isolated target in this order, verifying each recorded endpoint and
 credential before the next dependent service:
 
-1. Caddy and Vaultwarden route/state — [Caddy observation issue #213](https://github.com/hardKOrr/homelab-infra/issues/213)
-   and [Vaultwarden observation issue #214](https://github.com/hardKOrr/homelab-infra/issues/214).
-2. Ntfy/notification delivery, then Authentik identity — Authentik state and assertions
-   are owned by [Authentik observation issue #210](https://github.com/hardKOrr/homelab-infra/issues/210).
+1. Caddy and Vaultwarden route/state.
+2. Ntfy/notification delivery, then Authentik identity.
 3. PostgreSQL, MariaDB, MySQL and Redis backends, each from its own retained state and
-   credentials — [PostgreSQL observation issue #217](https://github.com/hardKOrr/homelab-infra/issues/217),
-   [MariaDB observation issue #219](https://github.com/hardKOrr/homelab-infra/issues/219),
-   [MySQL observation issue #218](https://github.com/hardKOrr/homelab-infra/issues/218), and
-   [Redis observation issue #220](https://github.com/hardKOrr/homelab-infra/issues/220).
-4. Uptime/metrics and then dependent applications, using each product issue's recovery
+   credentials.
+4. Uptime/metrics and then dependent applications, using each product's recovery
    adapter and assertions. A product's process health alone is not evidence that its
    identity, database, storage or backup dependency was restored.
 5. PBS configuration and scheduled coverage, if it was not already restored in step 1;
@@ -181,21 +171,6 @@ to skip the recovery prerequisites above. It intentionally starts Caddy before
 Vaultwarden, establishes the vault before ordinary services, and configures PBS only
 after the baseline guests exist. No dependent job may run until its upstream state and
 credential readback has passed.
-
-## Both-destination acceptance
-
-The shared `pbs_guest` method accepts both destination routes:
-
-| Route | Required proof | End state |
-| --- | --- | --- |
-| New target | Restore a selected runner point with the source inaccessible; verify VMID/address/storage, converter access, job definition visibility and a non-destructive vault preflight | target remains stopped or isolated; no production route, duplicate identity or writer is activated |
-| Existing target | Capture A, change the disposable runner to distinguishable B, preserve/verify the B pre-restore point, restore A, and inject a failure before retry | A is restored, B-only state is gone, the B point remains usable, and a failed target stays inactive with a deterministic retry path |
-
-The existing-target rehearsal must use a disposable runner and disposable dependent guests.
-The source runner is isolated from the restore operation, not shut down as a production
-experiment. The B point is retained until the restored A state and dependent identity,
-database and backup checks pass. Do not delete the disposable target automatically; record
-its exact final state and handle cleanup as a separately authorized operation.
 
 ## Version and bootstrap compatibility
 
@@ -215,19 +190,6 @@ rundeck.config.storage.converter.1.config.passwordEnvVarName=RUNDECK_STORAGE_PAS
 
 Pin the recorded package before restoring state; an unavailable pin is a stop condition.
 Do not delete the converter file, invent a second password, regenerate the runner SSH
-identity, or overwrite a product token to make a rehearsal green. If compatibility cannot
+identity, or overwrite a product token to bypass a recovery failure. If compatibility cannot
 be demonstrated, leave the target inactive and report the exact mismatch and recovery
 action.
-
-## Evidence and live status
-
-Repository evidence consists of the gate tests for this contract, `lab-run`'s fail-closed
-mode/cleanup behavior, the shared guest recovery contract, and the package/converter
-compatibility checks. Fixture evidence must name the synthetic source/target states and
-artifact identifiers without secrets or backup contents. Live evidence, when an authorized
-isolated destination exists, belongs in the applicable current per-product observation issue
-and must report source isolation, target identity/state, data handling, exact recovery
-point, dependent identity/database/backup checks, and any failed-target retry action.
-
-Neither gate success nor this runbook claims a live application restore. Cutover, source
-retirement and cleanup remain separate operations.

@@ -1,38 +1,46 @@
 # Rundeck
 
-## Bootstrap
+## Driving jobs with rd
 
-`bootstrap-rundeck.sh` is the whole of layer 1 (see the [root README](../README.md)). Copy
-it to a Proxmox node and run it as root:
+Load the operator-owned environment file containing `RD_URL` and `RD_TOKEN` with
+export enabled, then check project access and running executions:
 
 ```sh
-scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
-ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
+set -a; . "<operator-home>/.config/ai/homelab-infra/rundeck-access.env"; set +a
+rd projects info -p homelab-infra
+rd executions list -p homelab-infra
 ```
 
-For the first-time operator path, including Vaultwarden enrollment and cutover, follow the
-[root README](../README.md). This document owns the Rundeck implementation and maintenance
-contracts.
+An empty execution list means no jobs are running. Run a job by group/name, or by ID
+with its documented options after `--`; follow an existing execution by ID:
 
-### What it does
+```sh
+rd run -j '<group>/<name>' -p homelab-infra -f
+rd run -i <id> -- -<option> <value>
+rd executions follow -e <id> -f
+```
 
-| | |
-|---|---|
-| **Container** | Unprivileged Debian 13 LXC, nesting on, **tagged `_+lab;_-debian;_rundeck`** |
-| **Software** | OpenJDK, Rundeck, and the pinned Ansible toolchain in `/opt/homelab-ansible` |
-| **Repo** | cloned to `/var/lib/rundeck/homelab-infra`, tracking `origin/master` |
-| **Proxmox credential** | creates the `homelab-infra@pve` user and a scoped `HomelabInfra` role, mints that user's API token, and writes the secret straight to Key Storage |
-| **SSH identity** | generates an ed25519 keypair the platform reaches its guests with; public half into `config/proxmox.yml`, private half into Key Storage |
-| **Config** | writes `config/proxmox.yml`, `config/infrastructure.yml` and `config/apps/rundeck.yml` |
-| **Rundeck** | random admin password, non-expiring API token, the `homelab-infra` project, every job in `jobs/` imported, Key Storage staged |
-| **Wiring** | `/etc/homelab-infra/lab-run.env` and a `/usr/local/bin/lab-run` symlink into the checkout |
-| **Vaultwarden** | deploys Caddy first, then Vaultwarden and its HTTPS route; generates both master passwords (owner's handed to root in `/root/.rundeck-bootstrap`), runs Vaultwarden Enrollment and Vaultwarden Cutover, then Bootstrap Platform — resuming from the `vault-mode` / `cutover-complete` markers on a re-run |
+Read option names from `jobs/*.yaml`. After changing job definitions, run
+**Setup / Automation / Reimport Jobs** to update jobs by UUID and preserve history:
 
-Everything is idempotent — re-running converges an existing container, rotates no
-credential, and overwrites no answer you already gave. Override any default with an
-environment variable (`VMID`, `CT_IP`, `CT_GW`, `CT_STORAGE`, `TEMPLATE`, `REPO_URL`,
-`REPO_BRANCH`, `CT_DNS`, `DEPLOY_VAULTWARDEN`, `RUNDECK_PACKAGE_VERSION_PIN`,
-`PLATFORM_SSH_KEY_FILE`, `ANSIBLE_CORE_SPEC`, …); see the header of the script.
+```sh
+rd run -j 'Setup/Automation/Reimport Jobs' -p homelab-infra -f
+```
+
+To test a branch, re-run the node-side bootstrap with `REPO_BRANCH=<branch>`, using
+the same private bootstrap inputs. This rewrites `LAB_BRANCH` in
+`/etc/homelab-infra/lab-run.env`. Reimport Jobs once that branch is configured if its
+job definitions changed; restore the usual branch through bootstrap afterward.
+
+Run jobs serially across the whole lab. Every job resets one shared runner checkout
+to `origin/$LAB_BRANCH`, so concurrent jobs can replace files another run is using.
+Do not change `LAB_BRANCH` while a job is running; wait for completion before changing
+branches or starting the next job.
+
+## Bootstrap
+
+Use the [root README](../README.md#bootstrap) for bootstrap, enrollment, and cutover.
+For input defaults and overrides, see the header of `bootstrap-rundeck.sh`.
 
 Vaultwarden identity inputs are first-run answers, not identity-change controls.
 Both direct bootstrap Enrollment and the Rundeck Enrollment job use the preserved
@@ -91,7 +99,7 @@ compatibility boundary explicit before persisted database or encrypted Key Stora
 is trusted; it does not rotate or replace any identity or decryption material.
 
 The database, encrypted Key Storage, converter password, runner identity, and execution
-evidence are not reproducible from this checkout. The independent retention and restore
+logs are not reproducible from this checkout. The independent retention and restore
 contract is [RUNNER-RECOVERY.md](RUNNER-RECOVERY.md); it also covers the shared
 [new/existing guest restore](jobs/restore-guest.yaml) route and the offline route when the
 original runner is unavailable.
@@ -144,7 +152,7 @@ Everything else is discovered from the node it runs on: the node name, the API a
 storages, bridges, template storage, the timezone.
 
 Recovery handover values land in `/root/.rundeck-bootstrap` (0600) inside the container:
-`pct exec <vmid> -- cat /root/.rundeck-bootstrap`.
+`pct exec <runner-vmid> -- cat /root/.rundeck-bootstrap`.
 
 ### The Proxmox role
 
@@ -207,26 +215,12 @@ The top-level tree is:
 | `Platform` | Deploy access, identity, monitoring, backup, and hosting capabilities |
 | `Manage` | Lab-wide configuration, integration, health, and storage actions |
 | `Operate` | Read-only diagnosis and operator troubleshooting actions |
-| `Recover` | Recover guests and credentials; run bounded recovery proofs |
+| `Recover` | Recover guests and credentials |
 | `Setup` | Establish credentials, bootstrap the platform, and reload automation definitions |
 
 Run `python3 rundeck/render-job.py --check rundeck/jobs` to validate the complete tree.
 Normally, use **Reimport Jobs** rather than importing an individual raw source file: the
 renderer also injects the secure Key Storage options required by that job.
-
-### Description style
-
-Rundeck renders both job descriptions and workflow option descriptions as Markdown. Keep
-the source useful at a glance:
-
-- Lead with the outcome. Use short headings or bullets only when they separate real choices,
-  phases or effects.
-- Put exact values, paths and option names in backticks. Use bold labels for defaults,
-  boundaries and destructive effects.
-- Keep option help beside the decision it explains. State what blank or each enumerated value
-  does; do not repeat the job description.
-- Use a YAML block scalar for multiline Markdown. Stay within ordinary Markdown syntax that
-  renders consistently; MarkDeep-specific features are not required.
 
 ### One folder per application
 
@@ -236,7 +230,7 @@ Deploy job and a `Maintenance` folder with its implemented day-2 jobs.
 The renderer resolves values the platform already knows from
 `../catalog/applications.yml` and `../ansible/vars/app-defaults/<app>.yml`:
 
-| Was typed | Now |
+| Input | Resolution |
 |---|---|
 | `instance` | estate-aware default, and offered as a live dropdown on Deploy and Maintenance jobs |
 | `app` (when an instance is named differently) | baked into the step |
@@ -254,8 +248,7 @@ Restore action. An application may explicitly replace the derived action set whe
 owns a truthful recovery seam — Actual Budget archives and restores its quiesced /data
 mount without touching sibling services. There is no Rollback for a Kubernetes workload.
 Authentik and Observability also exclude Rollback: each is a multi-service Compose project,
-while the generic rollback seam pins one image. A button that misstates what it changed is
-worse than no button.
+while the generic rollback seam pins one image.
 
 An application marked `essential:` in the catalog gets no Remove job. The platform does not
 offer a one-click removal of the reverse proxy or the vault every other job depends on.
@@ -286,8 +279,7 @@ in `../ansible/vars/app-defaults/<app>.yml`, so `<app>-<estate>` can publish
 instance name and the estate suffix would show up in the address; the gate rejects a routed
 application that omits it.
 
-Copying a job file to get a second instance is not necessary, and the copy is worse: its
-UUID has to be changed by hand and it drifts from the original on every later edit.
+Use the instance option to select another deployment.
 
 ### Withdrawing a job
 
@@ -297,9 +289,7 @@ stops being generated survives in Rundeck's database as a clickable orphan in a 
 nothing else occupies. Only ever list a UUID this repository issued: deleting a job takes
 its execution history with it.
 
-The deletion runs from the **new** job definition, so the reorganization that introduced it
-needs two Reimport runs — the first imports the definition that can delete, the second
-deletes. A UUID that is already gone is reported as such, not as a failure.
+A UUID that is already gone is reported as such, not as a failure.
 
 ### Every step is one `lab-run` call
 
@@ -345,18 +335,12 @@ Job options reach the script as `RD_OPTION_*` environment variables rather than
 
 ### Playbooks refresh themselves; job definitions do not
 
-<!-- output-source:job-import-contract sha=c097a1b5 -->
 The checkout refresh keeps the **playbooks** current. **Job definitions** live in
 Rundeck's database and only change when something imports them. Run **Reimport Jobs**
 after a change to `rundeck/jobs/*.yaml` reaches the tracked branch — a new job, a new
 option, a changed description. Playbook changes never need it.
 
-**The git SCM plugin is deliberately not used.** It syncs job definitions and nothing
-else — it was never going to refresh the working tree the steps execute, which is the
-problem people reach for it to solve. It also makes UI edits and repo imports fight each
-other. One-way import from the repo is the only path here, and jobs are not expected to be
-edited in the UI; if you edit one there, the next Reimport Jobs overwrites it.
-<!-- /output-source:job-import-contract -->
+Job definitions are imported from the repository. Reimport Jobs overwrites UI edits.
 
 ## Credentials
 
@@ -389,11 +373,7 @@ The pre-cutover `keys/proxmox/api-token`, `keys/rundeck/homelab-ssh`, and Cloudf
 bootstrap entries are imported into their canonical Vaultwarden items, verified, then
 deleted. Recovery is documented in [VAULTWARDEN-RECOVERY.md](VAULTWARDEN-RECOVERY.md).
 
-When the control plane itself is lost, use [RUNNER-RECOVERY.md](RUNNER-RECOVERY.md) for
-the dependency-ordered procedure. It starts with independently available PBS access and
-decryption material, restores a stopped/isolated runner, restores both converter
-namespaces before ordinary jobs, and only then recovers Vaultwarden and its dependent
-services. It does not authorize cutover, credential rotation, source shutdown, or cleanup.
+For control-plane loss, follow [RUNNER-RECOVERY.md](RUNNER-RECOVERY.md).
 
 ### Rundeck API token rotation
 
@@ -422,12 +402,10 @@ interactive SSH session:
 
 - **Configure App** writes `config/apps/<instance>.yml` from a form. Fields are overrides;
   blank keeps the current value. `extra_yaml` covers anything the form does not name.
-<!-- output-source:config-archive-handling sha=b47d911b -->
 - **Get Config** reads the set back out, redacted, and writes an unredacted `tar.gz`
   restore point under `artifacts/` on the runner. Rundeck OSS serves no artifacts, so fetch
   that file over scp if you want it off the host — or rely on PBS, which backs up the runner
   along with it.
-<!-- /output-source:config-archive-handling -->
 - **Store Secret** writes one field of one canonical Vaultwarden item from a form, with
   the value as a secure option — masked in the form, masked in the log, passed to Ansible
   through the environment rather than argv, and stored as a hidden field. It is the only
@@ -439,13 +417,6 @@ interactive SSH session:
 Every write first copies the current file to `<dir>/.backups/<file>.<timestamp>`, prunes
 that file's backups to the newest 20, and writes the diff to the job log. This is
 point-in-time recovery, not a commit history.
-
-**Recover / Drills / Prove Recovery** owns the bounded PBS guest dispatcher. Its default
-plan is read-only; execution requires explicit disposable whole-guest authority and every
-workload acknowledgement. Existing and stopped/isolated new destinations use Restore Guest;
-new activation/data checks remain pending. Serving-only results cannot claim durable data.
-Artifact retention and failed-target retry instructions live in the job description. This
-job is not required for ordinary install/function/convergence checks.
 
 ### Decommission handoff
 

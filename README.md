@@ -1,203 +1,107 @@
 # homelab-infra
 
-One click deploys a fully configured, cross-wired application onto Proxmox.
+## What this is
 
-Deploying an app creates its guest, installs it, publishes it through your reverse proxy,
-registers it with your SSO, adds an uptime monitor and creates its DNS record — in one
-job, with no follow-up steps. Removing it unwires all four again.
+Ansible deploys and operates applications on Proxmox; Rundeck provides the operator UI.
+Deploy jobs provision guests and wire routes, SSO, monitoring, and DNS for the selected providers.
+The platform manages only guests tagged `_+lab` and the resources its playbooks create.
+Ansible remains independent of Rundeck.
 
-You clone this repo and run one command on a Proxmox node. That is the whole path: the
-command builds the automation runner, enrolls its secret store and deploys the baseline
-services without asking for anything after it starts.
+## Prerequisites
 
----
+- Proxmox VE 8 or 9 cluster, root access on a bootstrap node, and a free runner IP.
+  The platform derives the runner VMID from its address; no VMID input is needed.
+- A domain and DNS zone you control. The default Caddy DNS-01 setup needs a Cloudflare
+  API token scoped to Zone Read and DNS Edit.
+- Caddy must reach a resolver over UDP/TCP 53 that returns the public zone's SOA.
+  DNS-01 uses the selected network's `dns_servers` (`LAB_NET_DNS` during bootstrap).
+  `CT_DNS` changes only the runner resolver. SOA discovery still runs when TXT propagation
+  checking is disabled; split DNS must not substitute a different zone.
+  See the [resolver example](config.example/infrastructure.yml) for overrides.
 
-## The two bootstrap layers
+Enrollment uses `https://vaultwarden.<lab-domain>` on the new Caddy LXC. Before enrollment:
 
-Everything in this project happens in one of two places, and knowing which is which makes
-the rest of the documentation obvious.
+- Create a LAN resolver record for that name pointing at Caddy, reachable from the runner
+  and your workstation. Later deploys create records through the configured DNS provider;
+  this first record is required before cutover makes its API credential available.
+- Permit client and runner traffic to Caddy on ports 80/443 across VLANs or subnets.
+- Set `reverse_proxy.internal_cidrs` to the client source networks. Caddy restricts
+  `routing.access: internal` routes (the default) to those networks. Split DNS is not access
+  control; select `routing.access: public` explicitly for unrestricted routes.
 
-| | Layer 1 — the runner | Layer 2 — the lab |
-|---|---|---|
-| **What** | `rundeck/bootstrap-rundeck.sh` | the **Bootstrap Platform** job |
-| **Where** | as root on a Proxmox node | in Rundeck |
-| **Builds** | the runner, Caddy, and Vaultwarden in temporary Seed mode | the remaining services in mandatory Vault mode |
-| **Produces** | Rundeck/Ansible, config, jobs, encrypted Key Storage, HTTPS Vaultwarden, enrolled and cut over to Vault mode | reconciled Caddy/Vaultwarden, Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, PBS |
-| **Run it** | once, by hand | by the script when it finishes, or by clicking |
+DNS-01 proves domain control through the provider API. No public A record or inbound WAN
+port is required. An existing WAN reverse proxy keeps its ports; lab Caddy uses its own IP.
 
-Between them sit Vaultwarden enrollment and cutover, and the script does both itself. It
-generates the owner and automation master passwords and hands the owner's to root. It
-registers both accounts, stages the automation API key as encrypted job secrets, and runs
-the verified cutover. Then it runs Bootstrap Platform. Nothing needs a human, and a re-run
-resumes wherever the last one stopped.
+## Bootstrap
 
-### 0. Make the lab domain reach the lab Caddy
-
-One network prerequisite has to be true before enrollment in the middle is possible, and it
-is the only thing this project cannot arrange for you.
-
-Layer 1 puts Vaultwarden behind an HTTPS route on the Caddy it just built and enrolls it
-through `https://vaultwarden.<your domain>`. That URL has to resolve to the new Caddy LXC
-from the runner, and from your workstation for you to sign in later. The path to it on
-ports 80/443 also has to be open. So:
-
-<!-- output-source:network-prerequisite sha=7cfe6710 -->
-- **Resolution.** Create the record for `vaultwarden.<your domain>` pointing at the Caddy
-  LXC in whatever resolver your LAN uses. Once `dns.provider` is configured and Vaultwarden
-  holds its API key, later app deploys create their own records automatically — this first
-  one is the exception, because it is what the cutover that unlocks that key depends on.
-- **Reachability.** If clients and the Caddy LXC sit on different VLANs or subnets, the
-  router has to permit that traffic to 80/443. Same-subnet labs have nothing to do.
-- **Source networks.** Caddy enforces `reverse_proxy.internal_cidrs` on every app whose
-  `routing.access` is `internal` (the default), so list the subnets your clients actually
-  come from. Split DNS is not treated as an access control. An app is reachable from
-  anywhere only when you set `routing.access: public` on it deliberately.
-
-None of this involves the public internet. Certificates are obtained over **DNS-01**
-(`reverse_proxy.dns_challenge`), which proves domain control through your DNS provider's
-API — the CA never connects to your lab, so no public A record and no inbound WAN port is
-required. If you already run a reverse proxy on your WAN's 80/443, it keeps those ports and
-is untouched: the lab Caddy listens on its own address.
-<!-- /output-source:network-prerequisite -->
-
-### 1. Stand up the runner
-
-On any Proxmox node, as root:
+Copy the script to a Proxmox node and run it as root:
 
 ```sh
-scp rundeck/bootstrap-rundeck.sh root@<node>:/root/
-ssh root@<node> 'bash /root/bootstrap-rundeck.sh'
+scp rundeck/bootstrap-rundeck.sh root@<pve-node>:/root/
+ssh root@<pve-node> 'bash /root/bootstrap-rundeck.sh'
 ```
 
-It asks for the lab domain, first-owner and automation-account email addresses, the guest network,
-a timezone, and which reverse proxy / SSO / notification / DNS providers you want. Every
-answer has a default except the domain, and every answer can be supplied as an environment
-variable instead, so the whole thing scripts:
+It prompts for domain, owner and automation emails, network, timezone, and providers.
+For unattended input, load a root-owned `0600` environment file containing the token,
+without shell tracing, then run on the node:
 
 ```sh
-LAB_DOMAIN=lab.example.com NONINTERACTIVE=1 bash bootstrap-rundeck.sh
+set +x
+set -a; . /root/bootstrap-private.env; set +a  # defines CLOUDFLARE_API_TOKEN
+LAB_DOMAIN='<lab-domain>' NONINTERACTIVE=1 bash /root/bootstrap-rundeck.sh
 ```
 
-Everything else it works out for itself: the node name, the API address, storages,
-bridges, template storage, the timezone. It then creates a dedicated `homelab-infra@pve`
-Proxmox user with a scoped role, mints that user's API token and puts it straight into
-Rundeck Key Storage, generates the SSH key the platform will use to reach its guests,
-writes `config/proxmox.yml` and `config/infrastructure.yml`, creates the Rundeck project,
-imports every job, and tags its own container so the platform manages it like any other
-guest it created. Its last deployment sequence brings up Caddy first, then Vaultwarden and
-its HTTPS route, and sends the exact owner invitations while keeping public signups off.
+The script builds:
+
+- A Debian 13 Rundeck LXC with the pinned Ansible toolchain, checkout, project, and jobs.
+- A scoped Proxmox API user/token, guest SSH identity, encrypted Key Storage, and config.
+- Caddy and HTTPS Vaultwarden in temporary Seed mode, then the enrolled Vault platform.
+- Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana, and PBS through **Bootstrap Platform**.
+
+Re-running converges without rotating credentials or overwriting saved answers. If the
+Vaultwarden name does not yet resolve to Caddy, create the record and rerun. The script
+resumes enrollment, cutover, or Bootstrap Platform according to the saved markers.
+These three jobs can also be run in that order in Rundeck without input.
 Set `DEPLOY_VAULTWARDEN=0` only for deliberate runner-only recovery.
 
-Re-running it converges: it rotates no credential and overwrites no answer you already
-gave.
-
-### 2. Stand up the lab
-
-<!-- output-source:vault-enrollment-ceremony sha=f06d4084 -->
-Layer 1 does this itself when `vaultwarden.<domain>` already resolves to the Caddy LXC.
-Otherwise point that name at Caddy and re-run the script. Each run resumes from the phase
-the last one reached: before cutover it runs enrollment, then cutover; once the runner is
-in Vault mode it skips both and runs Bootstrap Platform. The same three jobs can be run in
-order from the Rundeck UI instead. None of them asks for input.
-
-The script generates both Vaultwarden master passwords as root. It records them in the
-runner's root-only handover file, `/root/.rundeck-bootstrap`, beside the Rundeck admin
-password, and stages a copy for the job user.
-
-**Vaultwarden Enrollment** invites the owner and automation addresses, registers both with
-those passwords, creates the `homelab-infra` organization, confirms the automation account
-in it as an **Admin**, and creates these encrypted Key Storage entries when they are
-missing:
+The script generates both Vaultwarden master passwords, records them beside the Rundeck
+admin password in root-only `/root/.rundeck-bootstrap`, and stages a copy for the job user.
+**Vaultwarden Enrollment** invites the declared addresses with public signups off,
+registers both accounts, creates the `homelab-infra` organization, confirms automation as
+an **Admin**, and creates missing encrypted Key Storage entries:
 
 - `keys/project/homelab-infra/vaultwarden-machine/client-id`
 - `keys/project/homelab-infra/vaultwarden-machine/client-secret`
 - `keys/project/homelab-infra/vaultwarden-machine/master-password`
 
-A re-run writes nothing. Rundeck cannot return a stored password, so a wrong entry is not
-detected: delete it in Key Storage and run Enrollment again.
+Enrollment leaves existing entries alone. Rundeck cannot return a stored password to detect
+an incorrect entry; delete that entry in Key Storage and rerun Enrollment.
+**Vaultwarden Cutover** imports every seed secret, including both master passwords, reads
+each back, writes `state/vault-mode`, deletes the job user's seed files, and writes
+`state/cutover-complete`. If cleanup fails between markers, the next script run removes
+leftover seed files as root before Bootstrap Platform.
 
-**Vaultwarden Cutover** imports every seed secret, the two master passwords included, into
-the vault, reads each one back, writes the marker and deletes the job user's seed files.
+To sign in as owner, read `VAULTWARDEN_OWNER_PASSWORD` from `/root/.rundeck-bootstrap`.
+Change it in the web vault, then edit `owner_master_password` in the
+`homelab-infra/vaultwarden` item while still signed in. Delete the handover line afterward;
+the password never passes through a job. The script removes automation's root password
+copy after cutover. Bootstrap Platform reconciles tagged Caddy/Vaultwarden and deploys
+the remaining baseline services. Fix a failed step and rerun the script or job.
 
-To sign in as the owner, read `VAULTWARDEN_OWNER_PASSWORD` from `/root/.rundeck-bootstrap`
-on the runner. Change the master password in the web vault, then, still signed in as the owner,
-edit the `owner_master_password` field of the `homelab-infra/vaultwarden` item to the new
-password so the vault copy stays correct. The password never passes through a job. Then
-delete that line from `/root/.rundeck-bootstrap`. The automation
-password's root copy is removed by the script once cutover is complete.
+## Deploying an app
 
-Cutover writes two markers under `state/`: `vault-mode` once every secret has been read
-back from the vault, and `cutover-complete` once the seed files are gone. If cleanup fails
-between the two, the next script run removes the leftover seed files as root and writes
-`cutover-complete` before it runs Bootstrap Platform.
+Run the application's **Deploy** job in Rundeck. Configure overrides through its
+**Configure** job or `config/apps/<instance>.yml`, then redeploy.
 
-**Bootstrap Platform** then reconciles the already-tagged Caddy and Vaultwarden LXCs and
-deploys Ntfy, Authentik, Uptime Kuma, Prometheus + Grafana and PBS. Each step records its
-own connection details before the next one needs them, so the run is resumable: if
-something fails, fix it and re-run the script or the job.
-<!-- /output-source:vault-enrollment-ceremony -->
+## Configuration
 
-### 3. Deploy things
+`config/` is gitignored runtime state on the runner and survives checkout refreshes.
+Platform defaults merge recursively with `config/proxmox.yml`, then `config/infrastructure.yml`.
+Application defaults merge recursively with `config/apps/<instance>.yml` for each instance.
+Generated topology and Vaultwarden runtime secrets complete the in-memory service registry.
+See the [variable contract](ansible/vars/CONTRACT.md) and [examples](config.example/README.md).
 
-One job per app, no parameters to fill in. Click **Deploy Sonarr** and you get a Sonarr,
-routed at `sonarr.yourdomain.com`, showing up in Authentik, monitored by Uptime Kuma and
-resolvable in DNS.
-
----
-
-## Where to go next
-
-| You want to… | Read |
-|---|---|
-| Understand the jobs and how to import them | [`rundeck/README.md`](rundeck/README.md) |
-| Understand or change the Ansible implementation | [`ansible/README.md`](ansible/README.md) |
-| Change an app's configuration | that app's **Configure** job, or [`config.example/README.md`](config.example/README.md) |
-| Know exactly what a config key does | [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
-| Add a new app | [`ansible/playbooks/apps/README.md`](ansible/playbooks/apps/README.md) |
-| Inspect the legacy Semaphore reference | [`semaphore/README.md`](semaphore/README.md) |
-| See current work and status | [GitHub Issues](https://github.com/hardKOrr/homelab-infra/issues) |
-| Read implementation contracts and lessons learned | [`docs/README.md`](docs/README.md) |
-| File an issue or open a pull request | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-
----
-
-## How configuration works
-
-Configuration has two independent streams, and both merge recursively so you write only
-what differs from the defaults:
-
-- Platform configuration starts with `ansible/vars/homelabinfra-defaults.yml`, then applies
-  `config/proxmox.yml` and `config/infrastructure.yml`.
-- Application configuration starts with `ansible/vars/app-defaults/<app>.yml`, then applies
-  `config/apps/<instance>.yml` for that instance.
-
-The exact schemas and precedence rules live in
-[`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md).
-
-`config/` is **gitignored and lives on the runner**. That is deliberate and it is what
-makes the runner's self-refresh safe: before every job, the checkout resets hard to the
-tracked branch, and because nothing under `config/` is tracked, your configuration
-survives untouched. A fix pushed to the repo therefore reaches your platform on the next
-click, with no action from you, and the job log names the commit it ran.
-
-You never need SSH to read or change that configuration. Four jobs do it from the UI —
-one per application, and three under **Manage > Configuration**:
-
-- **Configure &lt;App&gt;**, in that application's own Maintenance folder — writes
-  `config/apps/<instance>.yml` from a form. Every field is an override; blank fields keep
-  their current value. The previous content is kept under `.backups/` and the job log shows
-  a diff of exactly what changed.
-- **Get Config** — reads the whole set back out, secrets redacted, plus an unredacted
-  archive on the runner as a restore point.
-- **Store Secret** — puts a credential into Vaultwarden without a file ever existing on
-  the runner. Cutover is a one-time import, so this is how anything authored later — a
-  second domain's DNS-01 token, a firewall API key, a rotated password — gets in. One
-  field per run; run it twice with the same item to store a key and its secret.
-- **Config Doctor** — validates everything and names every problem by file and key path.
-  It also runs in front of every other job, so a missing key fails at the front door
-  instead of halfway through provisioning something.
-
-## Where secrets live
+## Secrets
 
 | Secret | Home |
 |---|---|
@@ -209,37 +113,25 @@ one per application, and three under **Manage > Configuration**:
 | Rundeck API token | AES-GCM Key Storage, injected only into control-plane jobs |
 | Anything authored after cutover (a second domain's DNS-01 token, a firewall API key) | typed into the **Store Secret** job, which writes it straight into its canonical Vaultwarden item — it is never written to disk |
 
-There is **no Ansible Vault**, ever. Seed files exist only while bringing up Caddy and
-Vaultwarden. After the explicit cutover marker, every mutating job unlocks Vaultwarden
-before Ansible starts and fails closed if it cannot. `config/.generated/facts.yml` contains
-topology only; secret-shaped fields are rejected.
+There is no Ansible Vault. Seed files are temporary bootstrap inputs. After cutover,
+mutating jobs unlock Vaultwarden before Ansible starts and fail closed if unlock fails.
+`config/.generated/facts.yml` holds topology only and rejects secret-shaped fields.
 
-## What this project will and will not do
+## Recovery
 
-- **It manages what it creates.** Guests it did not create are never touched — that is
-  enforced by a `homelab-infra` tag, not by convention. Point it at a lab full of
-  hand-built machines and it will ignore every one of them and build its own beside them.
-- **It provisions; it does not police.** Deploying creates the thing correctly. It does
-  not run forever reconciling drift.
-- **It uses the system that owns the concern.** Where an established tool already provides
-  the needed behavior, the project configures and integrates it. Project-owned automation
-  remains appropriate for orchestration and behavior no component owns.
-- **Defaults cover the ordinary case.** You configure what differs, not what is normal.
+Keep independent PBS/PVE access, backup artifacts, the Rundeck converter password, and
+Vaultwarden unlock material outside the components they recover. Restore the runner
+stopped or isolated, recover both encrypted storage namespaces, then recover the vault
+before ordinary jobs. Follow [runner recovery](rundeck/RUNNER-RECOVERY.md) and
+[Vaultwarden recovery](rundeck/VAULTWARDEN-RECOVERY.md) for prerequisites and ordering.
 
-## Requirements
+## You want to…
 
-- Proxmox VE 8 or 9, with root on a node
-- One free IP for the runner; its VMID is derived from that address by the platform's
-  `168<third octet><fourth octet>` rule, so no VMID is asked for
-- A domain you control (it does not need to be public; internal-only labs work)
-- A Cloudflare API token scoped to Zone Read plus DNS Edit for that domain when using the default Caddy DNS-01 setup; no public app records or inbound WAN ports are required
-- A supported DNS path from Caddy over UDP/TCP 53 that returns the public zone's
-  SOA. DNS-01 defaults to the guest's configured DNS servers, seeded from its selected
-  network's `dns_servers` (`LAB_NET_DNS` during guided bootstrap). `CT_DNS` changes
-  only the runner's resolver. SOA/zone discovery still runs when TXT propagation
-  checking is disabled; split DNS must not substitute a different zone. See the
-  [resolver configuration example](config.example/infrastructure.yml) for overrides.
-- A LAN resolver entry pointing the domain tree at the Caddy LXC, and router rules allowing your clients to reach it on 80/443 — see [step 0](#0-make-the-lab-domain-reach-the-lab-caddy)
-
-Debian 13 for the runner is not incidental: `community.proxmox` needs ansible-core ≥ 2.17,
-which needs a Python 3.11+ controller.
+| You want to… | Use |
+|---|---|
+| Run or reimport jobs | [Rundeck](rundeck/README.md) |
+| Run or change Ansible | [Ansible](ansible/README.md) |
+| Configure an app | Its **Configure** job or [examples](config.example/README.md) |
+| Look up a config key | [Variable contract](ansible/vars/CONTRACT.md) |
+| Add an app | [App authoring](ansible/playbooks/apps/README.md) |
+| Add an estate | [Estate onboarding](docs/estate-onboarding.md) |

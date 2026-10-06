@@ -1,8 +1,7 @@
 # Variable loading contract
 
 This is the authoritative variable-loading contract for the `homelabinfra_*` namespaces and config
-files. Inspection rules that protect these shapes are in `docs/specs/config-layering.md` and
-`docs/specs/namespace-merge-discipline.md`.
+files.
 
 ## 1. The three namespaces
 
@@ -42,7 +41,7 @@ configuration, a cached fact or a service-registry field; see
 The registry is role-keyed and provider-agnostic. Consumers build derived values
 (e.g. a notification URL) from `host` + `topic`; the registry never stores pre-built URLs.
 Every HTTP-service `host` value is a full base URL **including scheme** (e.g.
-`http://192.168.1.20`) — consumers concatenate paths onto it directly; consumers needing a
+`http://192.0.2.20`) — consumers concatenate paths onto it directly; consumers needing a
 bare hostname (e.g. a shoutrrr URL) strip the scheme themselves. `databases.<instance>.host`
 is the non-HTTP exception: it is a bare SSH and database address paired with `port`.
 
@@ -255,7 +254,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.validate_certs` | optional | default `false` — a stock Proxmox node is self-signed, so guest creation fails with `CERTIFICATE_VERIFY_FAILED` when this verifies. `inventory/proxmox.yml` assumes the same. Set `true` once the node serves a trusted certificate |
 | `proxmox.nodes` | optional | `{node_name: address}` for every cluster node, written by `bootstrap-rundeck.sh` from `pvesh get /cluster/status`. Consumed by `tasks/proxmox/register-nodes.yml`, which makes `delegate_to: <node name>` resolvable — node names have no `ansible_host` from the dynamic inventory. Falls back to `proxmox.api_host` for the targeted node when absent |
 | `proxmox.storage` | required *in practice* | lab-wide storage for every guest; written by `bootstrap-rundeck.sh` from the first active storage advertising content type `rootdir`. Falls back to `local`, which a stock node **cannot** hold a container on. No `vars/app-defaults/*` pins storage — it is a node fact, not an app fact. Per-app override: `proxmox.disk_volume.storage` (LXC), `proxmox.vm.storage` (VM) |
-| `proxmox.devices` | optional by default; required by an attachment request | map of `<physical-device-name>: {mode: shared\|dedicated, identifiers: [<exact host path, PCI address, or USB mapping>]}`. One entry names one physical device; `node` optionally names its target in `proxmox.nodes` and otherwise falls back to `proxmox.node`. `kind` optionally identifies `igpu`, `gpu`, `usb`, or `other`; it defaults to `igpu` for `mode: shared` and to `gpu` for a bare `mode: dedicated`, preserving #130's dedicated-only GPU convention. A dedicated iGPU declaration must opt in with `kind: igpu`; mark other dedicated-only devices explicitly. Every `kind: igpu` declaration on distinct nodes must use the same mode; config-doctor rejects a mixed configuration before device mutation. Attachment seams reject a mode or target-node mismatch before inspecting guest state; the current mode gate covers PCI, shared-device, dedicated-USB, and the LXC USB resource-mapping attachment seams, so each rejects a device not declared with its requested mode. |
+| `proxmox.devices` | optional by default; required by an attachment request | map of `<physical-device-name>: {mode: shared\|dedicated, identifiers: [<exact host path, PCI address, or USB mapping>]}`. One entry names one physical device; `node` optionally names its target in `proxmox.nodes` and otherwise falls back to `proxmox.node`. `kind` optionally identifies `igpu`, `gpu`, `usb`, or `other`; it defaults to `igpu` for `mode: shared` and to `gpu` for a bare `mode: dedicated`, preserving the dedicated-only GPU convention. A dedicated iGPU declaration must opt in with `kind: igpu`; mark other dedicated-only devices explicitly. Every `kind: igpu` declaration on distinct nodes must use the same mode; config-doctor rejects a mixed configuration before device mutation. Attachment seams reject a mode or target-node mismatch before inspecting guest state; the current mode gate covers PCI, shared-device, dedicated-USB, and the LXC USB resource-mapping attachment seams, so each rejects a device not declared with its requested mode. |
 | `networks.<name>.cidr` | required | per named subnet, **after inheritance** — see below |
 | `networks.<name>.gateway` | required | per named subnet, after inheritance |
 | `networks.<name>.dns_servers` | required | per named subnet, after inheritance |
@@ -452,9 +451,9 @@ PBS instance configuration accepts `app.datastore_mode: create|reuse` (default `
 creation/initialisation. Both modes compare registered and declared paths ignoring trailing
 slashes, without changing either path. Other differences, including `.`/`..` or symlink
 aliases, are not resolved. A missing/empty registered path does not equal `/`.
-Default `create` also refuses a same-name registration at a genuinely different path;
-earlier deployments silently skipped creation in that case. Check the declaration and
-storage-owner evidence before retrying; this guard never relocates or recreates the store.
+Default `create` also refuses a same-name registration at a genuinely different path.
+Check the declaration and backing storage before retrying; this guard never relocates
+or recreates the store.
 This is a configuration guard, not a recovery capability declaration or independent
 recovery proof. It does not attach or format external storage. See the
 [PBS guide](../roles/pbs/README.md) for supported whole-guest recovery and fail-closed
@@ -490,7 +489,7 @@ resolver is [`tasks/recovery/resolve-method.yml`](../tasks/recovery/resolve-meth
 which validates the declaration before any provider or role task runs. `restore-app.yml`
 keeps `snapshot` as a compatibility alias for `recovery_point`.
 
-Every implementation writes one evidence shape. `state` is exactly one of `missing`,
+Recovery reports use this shape. `state` is exactly one of `missing`,
 `configured_unverified`, `stale`, `verified_fresh`, or `restore_tested`:
 
 ```json
@@ -560,7 +559,7 @@ The canonical top-level items are:
 | `homelab-infra/reverse_proxy` | `dns_api_token` |
 | `homelab-infra/media/<instance>` | `api_key`, `password`, or `arl` as applicable |
 | `homelab-infra/apps/<instance>` | application-owned credentials. Database provisioning writes `database_provider`, `database_host`, `database_port`, `database_name`, `database_user`, and hidden `database_password` here; the backend never places an application password in generated facts. |
-| `homelab-infra/apps/<instance>` (Batch C) | n8n encryption keys, Plane application/RabbitMQ/object-storage secrets, Karakeep NEXTAUTH_SECRET/Meilisearch master keys, and Forgejo Runner registration tokens are hidden fields here. Forgejo Runner removal reads `admin_api_token` only from the named Forgejo item; no credential is placed in generated facts. |
+| `homelab-infra/apps/<instance>` (n8n, Plane, Karakeep, Forgejo Runner) | n8n encryption keys, Plane application/RabbitMQ/object-storage secrets, Karakeep NEXTAUTH_SECRET/Meilisearch master keys, and Forgejo Runner registration tokens are hidden fields here. Forgejo Runner removal reads `admin_api_token` only from the named Forgejo item; no credential is placed in generated facts. |
 | `homelab-infra/apps/<instance>` (Open WebUI) | Open WebUI's generated `secret_key` is a hidden field here. A selected LiteLLM API key is read only from that separately named upstream item when it supplies one; neither upstream credential is written to generated facts. |
 | `homelab-infra/estates/<estate>/<role>` | estate-scoped secret fields — e.g. `.../sso` (`token`, `admin_password`, `postgres_password`, `secret_key`) and `.../dns` (`api_token`). A non-default estate must not write a top-level role item or read the default estate's credential |
 
@@ -638,11 +637,8 @@ installing the generated token on Vaultwarden so the next run can safely generat
 Every write into `config/` goes through `tasks/config/write-config-file.yml`, which copies
 the current content to `<dir>/.backups/<file>.<YYYYmmddTHHMMSS>` before replacing it, emits
 the unified diff into the job log, and prunes to the newest 20 per file. This is the
-platform's whole config-history mechanism, and it is deliberately point-in-time rather than
-per-commit-with-message: it answers "what did this look like before" and "get it back", and
-does not answer "who changed this and why". `.backups/` is inside the gitignored `config/`
-tree, so the runner's refresh cannot touch it, and PBS carries it off the host with the rest
-of the guest.
+point-in-time recovery mechanism. `.backups/` is inside gitignored `config/`, survives
+checkout refreshes, and is included in runner PBS backups.
 
 **`domains:` — named estates (optional).** An estate is a **separate** domain scope: its
 own domain, its own SSO, its own DNS and ACME DNS-challenge material, and its own
@@ -677,7 +673,7 @@ domains:
                                    # alongside dns.host and vaultwarden.admin_token)
     dns:                           # optional — which DNS provider serves THIS estate
       provider: opnsense           # pihole | adguard | opnsense | none
-      host: 192.168.1.1            # non-secret half only; see below
+      host: 192.0.2.1            # non-secret half only; see below
 ```
 
 Caddy resolver precedence is policy-local: `domains.<estate>.dns_challenge` uses
@@ -734,10 +730,8 @@ schema is settled in the App-level layering note below.
 
 ## App-level layering note
 
-The per-app merge (`vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml` → `app_config`) is a
-**separate** per-play merge done in the app template, **not** part of `homelabinfra_config`. It is
-described here for completeness but governed by its own precedence; do not conflate it with the
-four-layer `homelabinfra_config` merge in Section 4.
+The per-app merge (`vars/app-defaults/<app>.yml` → `config/apps/<instance>.yml` → `app_config`)
+runs separately in each play. It is independent of the `homelabinfra_config` merge in §4.
 
 **Native LXC template precedence.** Lowest to highest: the repository fallback at
 `homelabinfra_defaults.proxmox.lxc.ostemplate`, the authored lab value at
@@ -811,17 +805,3 @@ When `infrastructure.yml` declares two or more estates, an estate-scoped catalog
 must use `<app>-<estate>[-<variant>]` as its instance name and must author the same estate in
 `routing.estate`. There is no unsuffixed default estate. Lab-scoped platform services keep
 their ordinary instance names because one deployment serves the whole lab.
-
-### Optional recovery drill declaration
-
-Product defaults may declare `recovery.drill.fixture_playbook`, a repository-owned
-`playbooks/maintenance/*.yml` adapter used by the bounded PBS proof dispatcher. It receives
-`proof_phase` (`A`, `B`, `verify`), a unique `proof_run`, `proof_topic` and `proof_url`.
-A emits `a_present`; B emits `a_present` and `b_present` after readback assertions.
-A/B must write and read distinguishable non-sensitive application state; verify must assert
-A-present and B-absent and publish only assertion booleans. Credentials remain in the
-existing in-memory vault contract and `no_log` tasks. This declaration does not select or
-broaden a recovery method. Method selection remains with existing defaults/catalog;
-instance files cannot replace recovery/drill declarations. An absent adapter means
-serving-only, incomplete durable-data evidence. See the
-[maintenance guide](../playbooks/maintenance/README.md#bounded-recovery-proof).

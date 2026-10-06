@@ -24,8 +24,7 @@
       Restore App is plan-first and restores both into a deployed target namespace.
 
     Before live work, name the LiteLLM instance, Kubernetes cluster, PostgreSQL instance and
-    provider accounts. Repository and synthetic fixture verification is the closure scope for
-    #145; live execution is deferred to the self-contained observation issue #224.
+    provider accounts.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

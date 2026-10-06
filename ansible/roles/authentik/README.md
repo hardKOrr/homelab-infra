@@ -1,8 +1,7 @@
 # authentik role
 
 Docker Compose deployment of Authentik (server + worker + PostgreSQL + Redis) on a
-stack host. Deployment mechanics are documented in `tasks/main.yml`; this README
-records where the role's responsibility ends.
+stack host.
 
 ## Scope
 
@@ -70,9 +69,7 @@ the selected reverse proxy enforces it), `none` (no Authentik object).
 
 The group named by `wiring_auth_group` (default `homelab-users`) is bound to each
 wired Application, and the wiring **creates the group** when it is absent — empty and
-never a superuser. A platform that names a group in every app playbook has to be the
-thing that creates it; the alternative was every deploy on a fresh lab failing until
-someone made it by hand.
+never a superuser.
 
 **Membership is declared, not discovered.** Put the group in an account's `groups:`
 list under `directory:` and this deploy makes that account's membership match the

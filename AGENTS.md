@@ -1,80 +1,50 @@
 # homelab-infra
 
-This repository provides Ansible automation for deploying and operating a homelab on
-Proxmox. Ansible is the implementation surface. Rundeck is the supported operator UI.
-Semaphore files are retained as a reference and are not maintained at feature parity.
+Ansible deploys and operates a Proxmox homelab. Rundeck is the operator UI. `ansible/`
+never depends on Rundeck.
 
-## Working in This Repository
+## Hard rules
 
-- Preserve unrelated work and live lab state.
-- Do not expose or commit credentials, tokens, private keys, generated secrets, or files
-  under `/config/`.
-- The repository and its GitHub issues, PRs, and reviews are public. Write lab addresses,
-  domains, node names, and VMIDs as the placeholders in `docs/lab-placeholders.md`.
-- Treat `config.example/` as documentation and `/config/` as user-owned runtime state.
-- Inspect the relevant implementation and its nearest `README.md`, when one exists, before
-  changing it.
-- Keep `ansible/` independent of Rundeck and other operator interfaces.
-- Change only resources owned by homelab-infra. Existing untagged Proxmox resources are
-  outside project authority.
-- Use `combine(recursive=True)` when updating `homelabinfra_config`,
-  `homelabinfra_instance`, or `homelabinfra_infra`. Do not replace one of these mappings
-  with a partial mapping.
-- Keep reusable behavior in roles or task files. Keep playbooks focused on orchestration.
-- Make deployment and day-2 operations safe to run again.
-- Before a destructive or disruptive action, identify the exact target and verify the
-  applicable maintenance and recovery behavior.
+- Never commit or print credentials, tokens, private keys, generated secrets, or anything
+  under `/config/`. `config.example/` is documentation; `/config/` is user-owned state.
+- This repository, its commits and its PRs are public. Write lab addresses, domains, node
+  names and VMIDs only as the placeholders in `docs/lab-placeholders.md`.
+- homelab-infra changes only resources it owns: Proxmox guests tagged `_+lab` and the
+  files, records and accounts its playbooks create. Never modify an untagged guest.
+- Update `homelabinfra_config`, `homelabinfra_instance` and `homelabinfra_infra` only with
+  `combine(recursive=True)`. Never replace one of them with a partial mapping.
+- Reusable behavior lives in roles and task files. Playbooks only orchestrate.
+- Every deploy and day-2 operation is safe to run again: a second run keeps configuration,
+  credentials and data, and creates no duplicate resources.
+- Fix defects in the repository. A manual change on the lab is for diagnosis or for
+  clearing a failed run's leftovers, never the fix.
+- Never relax a safety guard to clear a failure (Vault-mode guard, ownership and tag
+  checks, restore guards, the `update_unsafe` scope in `ansible/tasks/proxmox/vm-clone.yml`).
+- Do not add issue trackers, specifications, lesson logs, evidence records or work
+  inventories to this repository. Explain behavior in the nearest README or a short code
+  comment.
 
-## Read Documentation by Area
+## Where things are
 
-Start with the nearest `README.md` for the area being changed. Load deeper contracts only
-when the task reaches their subject.
-
-| Area | Read |
+| Need | Read |
 | --- | --- |
-| Issue intake, verification, commits, and PR workflow | `CONTRIBUTING.md` |
-| Repository use and operator entry points | `README.md` |
-| Ansible implementation | `ansible/README.md`, then the nearest subsystem `README.md` |
-| Configuration schema and `homelabinfra_*` variables | `ansible/vars/CONTRACT.md` |
-| User configuration examples | `config.example/README.md` |
-| Application catalog | `catalog/README.md` |
-| Live-lab evidence collection | `docs/live-lab.md` |
-| Lab identifiers in public text | `docs/lab-placeholders.md` |
-| Architecture and documentation map | `docs/README.md`, then `docs/architecture.md` when needed |
-| Reviewable implementation contracts | `docs/specs/README.md`, then the applicable specification |
-| Verification commands and test selection | `gate/README.md` |
-| Rundeck jobs, rendering, and bootstrap behavior | `rundeck/README.md` |
-| Semaphore reference files | `semaphore/README.md` |
+| Operate the platform | [`README.md`](README.md) |
+| Ansible layout, execution and config loading | [`ansible/README.md`](ansible/README.md), [`ansible/vars/CONTRACT.md`](ansible/vars/CONTRACT.md) |
+| Rundeck jobs, the runner, `rd` and live runs | [`rundeck/README.md`](rundeck/README.md) |
+| Gate commands | [`gate/README.md`](gate/README.md) |
+| Application catalog | [`catalog/README.md`](catalog/README.md) |
+| User configuration examples | [`config.example/README.md`](config.example/README.md) |
+| Placeholders for public text | [`docs/lab-placeholders.md`](docs/lab-placeholders.md) |
 
-Some subdirectories have a more specific `README.md`. Read it before changing that
-subsystem.
+## Verify before committing
 
-GitHub Issues owns work specification, priority, status, and acceptance evidence — see
-`CONTRIBUTING.md`. The repository keeps no parallel work records; do not recreate the
-retired `docs/meta/` slice tree. Durable lessons belong in `docs/lessons.md`.
+From the repository root run `bash gate/lint.sh` and `bash gate/test.sh`. Both must
+pass. Put the commands and results in the PR body. CI runs the same checks on the PR.
+On a Windows checkout through WSL, wrap each command in `wsl bash -lc '...'`.
 
-## Repository Areas
+## Live lab
 
-- `ansible/` contains provisioning, configuration, application roles, maintenance flows,
-  and shared automation.
-- `catalog/` declares applications exposed through the automation platform.
-- `config.example/` documents user configuration without containing live values.
-- `docs/` contains architecture, review contracts, and historical work records.
-- `gate/` contains local static checks and focused regression tests.
-- `rundeck/` contains the supported operator jobs and their renderer.
-- `semaphore/` contains an unmaintained reference integration.
-
-Search the repository when exact files or seams are needed. Do not duplicate directory
-trees, generated job inventories, bootstrap order, or other implementation-derived lists
-in this file.
-
-## Verification
-
-Before committing, run `bash gate/lint.sh` on the dirty tree and only the `gate/test-*`
-scripts for the area changed, from the repository root (see `gate/README.md`), and list
-each in the PR body. The Gate workflow (lint, test, container, kind) runs the full suite
-on the PR, and CI failures come back to the author.
-
-On a Windows checkout accessed through WSL, prefix each command with `wsl bash -lc '...'`
-(see `gate/README.md`). Do not start a second gate while an earlier gate process is still
-running.
+Live runs are serial across the whole lab: every Rundeck job resets the one runner
+checkout to `origin/$LAB_BRANCH`, so two concurrent runs corrupt each other. Test an
+unmerged branch by pointing the runner at that branch (see `rundeck/README.md`), and never
+change `LAB_BRANCH` while a job is running.

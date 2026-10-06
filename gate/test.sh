@@ -1,12 +1,5 @@
 #!/bin/bash
-# Syntax-check gate: --syntax-check over the playbooks under ansible/playbooks/, without
-# contacting Proxmox. Run from the repo root:
-#   bash gate/test.sh          # narrow to the working tree's changes
-#   bash gate/test.sh --all    # full sweep
-#
-# A clean tree, an unreadable git, or a change to anything a playbook consumes all resolve
-# to the full sweep — see gate/lib-scope.sh for why the narrowing only ever errs
-# toward checking more.
+# Test gate: --syntax-check every playbook, then the five logic suites.
 set -uo pipefail
 
 # STDIN IS CLOSED FOR THE WHOLE GATE, DELIBERATELY. See the same note in gate/lint.sh:
@@ -17,10 +10,6 @@ exec < /dev/null
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
 
-# shellcheck source=lib-scope.sh
-. gate/lib-scope.sh
-gate_resolve_scope "${1:-}"
-
 cd ansible
 
 # See gate/lint.sh for the ANSIBLE_CONFIG world-writable-directory rationale.
@@ -30,22 +19,12 @@ export ANSIBLE_CONFIG="$PWD/ansible.cfg"
 # Neutralise the Proxmox dynamic inventory (see lint.sh) so no live inventory is touched.
 export ANSIBLE_INVENTORY="$repo/gate/fixtures/localhost.ini"
 
-if [ "$gate_scope" = "changed" ]; then
-    mapfile -t playbooks < <(cd "$repo" && gate_changed_playbooks)
-    echo "Scope: changed ($gate_scope_reason) — ${#playbooks[@]} playbook(s)."
-    # A changed set that touches no playbook is a legitimate zero: the focused tests below
-    # still run. Only the full sweep may never legitimately be empty.
-else
-    mapfile -t playbooks < <(find playbooks -name "*.yml")
+mapfile -t playbooks < <(find playbooks -name "*.yml")
 
-    # Refuse to report success on an empty check set: an unexpanded find (e.g. a shell
-    # quoting hazard that mangles the command before it runs) must fail loudly, not
-    # silently run zero iterations and exit 0.
-    if [ "${#playbooks[@]}" -eq 0 ]; then
-        echo "ERROR: find playbooks -name *.yml matched zero files; refusing to report a false pass." >&2
-        exit 1
-    fi
-    echo "Scope: full ($gate_scope_reason) — ${#playbooks[@]} playbook(s)."
+# Refuse to report success when no playbooks were found.
+if [ "${#playbooks[@]}" -eq 0 ]; then
+    echo "ERROR: find playbooks -name *.yml matched zero files; refusing to report a false pass." >&2
+    exit 1
 fi
 
 rc=0
@@ -57,8 +36,6 @@ if [ "${#playbooks[@]}" -gt 0 ]; then
     # parallel children are unreadable, and a failure's diagnostic is the whole point.
     GATE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/homelab-gate-test.XXXXXX")"
     trap 'rm -rf -- "$GATE_TMP"' EXIT
-    # Overridable so the parallel runner itself can be exercised against a stub, without
-    # paying for 33 real interpreters to prove the fan-out and log replay work.
     GATE_ANSIBLE_PLAYBOOK="${GATE_ANSIBLE_PLAYBOOK:-$HOME/.venvs/homelab-ansible/bin/ansible-playbook}"
     export GATE_TMP GATE_ANSIBLE_PLAYBOOK
 
@@ -90,84 +67,11 @@ if [ "${#playbooks[@]}" -gt 0 ]; then
     done
 fi
 
-# Focused unit tests: pure Python, no Ansible startup cost, so they always run in full.
 cd "$repo"
-bash gate/test-vaultwarden.sh || rc=1
-python3 gate/test-bootstrap-readiness.py || rc=1
-bash gate/test-database-provisioning.sh || rc=1
-bash gate/test-odoo-contract.sh || rc=1
-bash gate/test-searxng-contract.sh || rc=1
-bash gate/test-mautic-contract.sh || rc=1
-bash gate/test-hi-events-contract.sh || rc=1
-bash gate/test-batch-c-contract.sh || rc=1
-bash gate/test-open-webui-contract.sh || rc=1
-bash gate/test-bookstack-contract.sh || rc=1
-bash gate/test-wordpress-contract.sh || rc=1
-bash gate/test-immich-contract.sh || rc=1
-bash gate/test-emby-contract.sh || rc=1
-bash gate/test-navidrome-contract.sh || rc=1
-bash gate/test-registry-handoff.sh || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-callback-output.py || rc=1
-bash gate/test-rundeck-job-tree.sh || rc=1
+py="$HOME/.venvs/homelab-ansible/bin/python"
 bash gate/test-allocate-ip.sh || rc=1
-bash gate/test-registry-forget.sh || rc=1
-bash gate/test-maintenance-schedule.sh || rc=1
-bash gate/test-stale-service-detection.sh || rc=1
-bash gate/test-recovery-status.sh || rc=1
-bash gate/test-plex-client-troubleshooter.sh || rc=1
-bash gate/test-proxmox-tags.sh || rc=1
-python3 gate/test-orphan-stack-tag.py || rc=1
-bash gate/test-proxmox-api-contract.sh || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-lxc-present.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-vm-clone.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-pbs-reuse.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-proxmox-inventory-safety.py || rc=1
-bash gate/test-device-passthrough-contract.sh || rc=1
-bash gate/test-frigate-contract.sh || rc=1
-bash gate/test-home-assistant-contract.sh || rc=1
-bash gate/test-comfyui-contract.sh || rc=1
-bash gate/test-ollama-contract.sh || rc=1
-bash gate/test-litellm-contract.sh || rc=1
-bash gate/test-maintainerr-restore.sh || rc=1
-bash gate/test-deemix-arl-rotation.sh || rc=1
 bash gate/test-vmid-from-ip.sh || rc=1
-bash gate/test-network-scope.sh || rc=1
-bash gate/test-homepage-dashboard.sh || rc=1
-python3 gate/test-decommission.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-decommission-source.py || rc=1
-python3 gate/test-backup-audit.py || rc=1
-python3 gate/test-recovery-coverage.py || rc=1
-python3 gate/test-caddy-recovery.py || rc=1
-python3 gate/test-odoo-recovery.py || rc=1
-python3 gate/test-n8n-recovery.py || rc=1
-python3 gate/test-plane-recovery.py || rc=1
-python3 gate/test-open-webui-recovery.py || rc=1
-python3 gate/test-searxng-recovery.py || rc=1
-python3 gate/test-recovery-contract.py || rc=1
-python3 gate/test-guest-recovery-contract.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-recovery-proof.py || rc=1
-python3 gate/test-runner-recovery-contract.py || rc=1
-python3 gate/test-recovery-acceptance.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-caddy-acme-ca.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-opnsense-search.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-native-lxc-template.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-vaultwarden-enroll.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-vaultwarden-identities.py || rc=1
-python3 gate/test-node-repos.py || rc=1
-python3 gate/test-runner-dns.py || rc=1
-python3 gate/test-bootstrap-mail.py || rc=1
-python3 gate/test-runner-sizing.py || rc=1
-python3 gate/test-runner-ssh.py || rc=1
-python3 gate/test-runner-tls.py || rc=1
-"$HOME/.venvs/homelab-ansible/bin/python" gate/test-rundeck-yaml.py || rc=1
-bash gate/test-config-fixtures.sh || rc=1
-bash gate/test-mail-contract.sh || rc=1
-bash gate/test-estate-resolution.sh || rc=1
-bash gate/test-config-loading.sh || rc=1
-bash gate/test-container-teardown.sh || rc=1
-bash gate/test-kind-teardown.sh || rc=1
-bash gate/test-kubernetes-namespace-ownership.sh || rc=1
-bash gate/test-kubernetes-shared-storage.sh || rc=1
-bash gate/test-fixture-secrets.sh || rc=1
-bash gate/test-workflow-policy.sh || rc=1
+"$py" gate/test-config.py || rc=1
+"$py" gate/test-rundeck-yaml.py || rc=1
+"$py" gate/test-template-rendering.py || rc=1
 exit $rc

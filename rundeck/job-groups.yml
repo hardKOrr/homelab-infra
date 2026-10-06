@@ -19,7 +19,6 @@ jobs:
   reclaim-volume.yaml: Manage/Storage/Volumes
   reimport-jobs.yaml: Setup/Automation
   repair-orphan-stack-tag.yaml: Manage/Lab/Maintenance
-  prove-recovery.yaml: Recover/Drills
   restore-guest.yaml: Recover/Guests
   store-secret.yaml: Manage/Configuration/Secrets
   troubleshoot-plex-client.yaml: Operate/Troubleshooting

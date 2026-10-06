@@ -85,24 +85,14 @@ StorageClass. For one approved application instance:
 Turning `shared_storage.enabled` off does not remove the driver, classes, snapshots, or data.
 Explicit removal is separate maintenance after every dependent PV, PVC, and snapshot is inventoried.
 
-### Eligibility and required live drill
+### Eligibility
 
-Eligible Batch C candidates are Kubernetes candidates with external/disposable state or proven
+Eligible applications are Kubernetes candidates with external/disposable state or proven
 NFS-safe persistence and restore: currently `searxng`, `homepage`, and `litellm`. `mixpost` may
 retain `homelab-local-path` under its existing backup contract. Database HA and storage-heavy rows
 (`nextcloud`, `paperless-ngx`, `immich`, `plane`, `n8n`, CRMs, and databases) remain ineligible
 until each application proves application-consistent backup and restore. Device-bound, host-path,
 media-library, GPU, USB, and high-write workloads retain their declared LXC or VM storage.
-
-Record this live drill only against the named disposable workload and approved target:
-
-1. Provision a `ReadWriteMany` PVC. Record PV path, access mode, free target capacity, CSI status,
-   and target snapshot/backup identifier.
-2. Write a known checksum, take a CSI snapshot, restore it to a new disposable PVC, and record its checksum.
-3. Stop one Kubernetes node in a declared Proxmox failure domain. Record Ready nodes, CSI availability,
-   pod rescheduling or its defined recovery behavior, and checksum after recovery.
-4. Restart the node and confirm convergence. Remove only the named disposable namespace after target-owner
-   approval; retain snapshot and restore point until restore acceptance.
 
 The current schema is documented in [`../../vars/CONTRACT.md`](../../vars/CONTRACT.md).
 Hosting selection belongs in [`../../playbooks/apps/README.md`](../../playbooks/apps/README.md),

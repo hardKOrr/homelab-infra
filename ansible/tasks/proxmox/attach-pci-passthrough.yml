@@ -1,7 +1,7 @@
 ---
 # Assign a PCI device to a VM guest, exclusively: PCIe passthrough removes the device from
 # the Proxmox host, so exactly one guest may hold it. This is the DEDICATED-GPU half of the
-# device-passthrough contract — see docs/specs/device-passthrough.md. The SHARED half (an
+# device-passthrough contract. The SHARED half (an
 # iGPU bound into several LXC guests at once) is attach-shared-device.yml and does not share
 # this file, because the two modes have opposite conflict rules.
 #

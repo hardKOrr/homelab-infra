@@ -75,10 +75,9 @@ controller or writer cutover. Existing restores require the exact `_+lab` target
 capture an independent target recovery point before stopping it; a failed or partial
 restore leaves the target stopped and the point accessible for retry. Bind/device mounts,
 physical or disabled disks, passthrough, hook resources, and external filesystems are
-outside PBS guest coverage and remain explicit review items. Guest restore correctness is
-not application-specific acceptance.
+outside PBS guest coverage; recover them through their storage owner.
 
-## Backup evidence audit
+## Backup audit
 
 `audit-backups.yml` powers **Audit Backups** under **Manage / Lab / Health**. It reads
 Proxmox guest configurations, backup jobs and backup storage visible to the configured
@@ -87,7 +86,7 @@ changing them. `max_age_hours` defaults to 36; `audit_node` optionally selects a
 configured delegation node.
 
 The report distinguishes missing, stale, future-dated and fresh snapshot candidates;
-unreadable evidence remains unknown. It flags LXC bind/device mounts, omitted volume
+unreadable inventory remains unknown. It flags LXC bind/device mounts, omitted volume
 mounts, excluded VM disks and external devices. A snapshot candidate does not prove the
 application's identity, database consistency, artifact integrity or successful restore.
 Those fields remain explicitly unverified. The audit does not discover guest-mounted
@@ -95,64 +94,11 @@ remote filesystems or application-specific backup jobs, and pool-based schedules
 a separate membership check. Its exit status reports whether inventory collection ran,
 not whether the applications are recoverable.
 
-The audit joins the unchanged PR #81 guest document with the controller-side
-[`catalog/recovery.yml`](../../../catalog/recovery.yml) inventory. That product view links
-every catalog product to its recovery issue, derives the declared native method from the
-product defaults, and records the PBS guest unit, shared-guest effects, external data and
-credential boundary. It never infers application identity from a guest name or VMID. A
-configured native schedule is not a successful artifact; artifact, integrity, external
-data and restore fields stay unknown until product evidence is supplied. The user's
-must-keep priority remains a separate pending selection. The one legacy source named by
-the PR #81 observation is preserved as an explicit, non-adopted pending selection.
-
 For recovery when the runner is unavailable, the same collector can run on a Proxmox
 node with Python 3 and read permission: `python3 audit.py --node <node> --include-legacy`.
 The source is [`../../files/recovery/audit.py`](../../files/recovery/audit.py). Only
 `pvesh get` requests run; no credentials, full guest configurations or raw command errors
 appear in the report.
-
-## Bounded recovery proof
-
-`prove-recovery.yml` is the **Recover / Drills / Prove Recovery** dispatcher. It resolves
-product defaults and catalog recovery ownership, refusing native/project-managed,
-rebuild-only, Kubernetes, appliance and out-of-band runner/vault/PBS units. It requires
-an exact owned, running disposable guest, complete comma-separated workload acknowledgement,
-and explicit active PBS/destination storage. Plan can discover workload tags with a blank
-acknowledgement; execution requires the exact disclosed list. Application tags and
-shared-stack membership must match the selected instance. Device/excluded disk and bind-mount coverage are refused; guest-mounted remote
-filesystems and independently hosted dependencies remain unverified.
-
-Plan is read-only and reports the sequence/scope; it creates no fixture or recovery point.
-Execute invokes the owning deploy twice, requires zero second-run changes, writes and reads
-A using an optional repository-owned adapter, invokes `backup-guest.yml`, identifies a newly
-completed A artifact, writes/reads B and captures a distinct B artifact. It invokes unchanged
-`restore-guest.yml` for plan and execution with that independent B point. Existing restores
-verify running state, original identity/interfaces/onboot and serving plus A-present/B-absent.
-A product without an adapter reports serving-only evidence, incomplete for durable data.
-
-The child-playbook callback transports only explicit observations and counters to the
-controller helper. Raw task diagnostics, no-log results and backup contents never become
-proof output. Warnings and ignored/rescued failures prevent an unqualified evidence claim.
-Failures report the stage and any captured A/B identities; artifacts and partial targets
-remain for inspection and the owning Restore Guest retry route. No automatic retry or
-cleanup runs. The Ntfy adapter retains uniquely identified, non-sensitive cached messages
-on the application's already-authorized topic; it does not change access policy.
-
-New destinations use the same restore seam, require an unused VMID, distinct explicit
-address/MAC/name with target-only tags (no source application/stack/cluster selectors)
-and one target-owned LXC `net0` with `link_down=1`, and are inspected stopped with
-`onboot=0`. Multiple interfaces and VM cloud-init address layouts are refused because
-the owning route cannot replace their full connectivity. Only destination inspection
-follows new restore; it does not read source configuration or serving state. Serving
-and fixture verification remain pending until separately authorized isolated activation; the dispatcher never claims a complete new-target data
-proof. No routing or writer cutover is provided.
-
-Optional `recovery.drill.fixture_playbook` is declared beside application defaults and
-names a committed maintenance playbook, never a second product registry. Its A/B phases
-write and read through the application; verify emits `serving`, `a_present`, `b_absent`
-booleans after assertions without contents. Runtime instance config cannot replace method
-or adapter declarations. This dispatcher is not a prerequisite for ordinary deployment,
-function/convergence checks or supported Backup/Restore observations.
 
 ## Whole-lab decommission
 
@@ -220,7 +166,7 @@ the recorded creation PVE node. Save the displayed **plan object** (not its wrap
 a root-owned 0600 JSON file on that node. Preserve the exact reviewed repository revision
 and copy its [`lab.py`](../../files/decommission/lab.py) there using the supported
 operator access path. Verify no other Rundeck execution or node operation is running and
-hold the workstation-wide live-operation lock throughout final observation. Run as node
+hold the workstation-wide live-operation lock throughout execution. Run as node
 root, using independent operator access rather than the platform SSH key being withdrawn:
 
 ```text
@@ -262,7 +208,7 @@ phase resumes node-side even when Rundeck is gone. Newly discovered owned guests
 credential withdrawal. Unrelated guest configurations and excluded objects are compared
 with the plan at completion. External changes require investigation rather than a clean
 result. Excluded unstamped/adopted/shared objects remain explicitly reported afterwards;
-only planned, proven-owned objects have an absence claim.
+only planned, owned objects are checked for absence.
 
 Finally revoke external provider/Vaultwarden credentials through their owning authority
 and retire workstation/private runner credential files after retention review. Their

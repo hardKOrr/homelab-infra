@@ -71,8 +71,7 @@ filters:
 # is a host pattern nothing in this repository can reason about.
 #
 # THIS EXPRESSION IS THE CONTRACT. tasks/proxmox/tag-group.yml converts ONE tag for a
-# dynamic lookup and carries the same chain, byte for byte after the source term; the
-# focused gate (gate/test-proxmox-tags.sh) evaluates both and fails if they disagree.
+# dynamic lookup and carries the same chain, byte for byte after the source term.
 # Do not open-code a variant of it anywhere else.
 compose:
   # Give every guest an address to connect to. The plugin does NOT set ansible_host for

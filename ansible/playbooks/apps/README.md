@@ -6,9 +6,7 @@ Six steps. Most of the work is step 4.
 
 ## Step 1 — Choose the hosting backend
 
-Use the first condition that matches the application. Explicit configuration syntax does
-not determine preference: `hosting: kubernetes` is explicit because Kubernetes was added
-after the native and Docker inference rules, not because it is discouraged.
+Use the first condition that matches the application.
 
 1. Keep a platform dependency outside Kubernetes when the cluster needs it to deploy,
    publish, unlock, recover, or back up the cluster. The current external boundary includes
@@ -185,20 +183,6 @@ bash gate/test.sh
 python rundeck/render-job.py --check rundeck/jobs
 ```
 
-Then reimport the jobs and run the application's Rundeck Deploy job against a disposable or
-deliberately targeted lab. Check:
-
-- [ ] App is accessible at its configured `routing.subdomain` and estate domain
-- [ ] Caddy/Nginx route exists
-- [ ] Authentik shape matches the identity mode (tile for `catalog`, OAuth2
-      provider for `oidc`, proxy provider + outpost for `forward_auth`)
-- [ ] Uptime Kuma monitor is registered
-- [ ] Re-running the deploy playbook makes no unwanted changes (idempotency)
-- [ ] The generated Maintenance actions match the hosting kind
-- [ ] The Remove job unwires and removes a non-essential test instance cleanly
-
----
-
 ## Wiring Contract Reference
 
 Play 3 of every app playbook sets these variables before calling wiring tasks.
@@ -220,17 +204,3 @@ Play 3 of every app playbook sets these variables before calling wiring tasks.
 Play 3 also runs `tasks/resolve-estate.yml` before wiring: it overlays the app's
 `routing.estate` domain/sso/dns facts onto `homelabinfra_infra`, so wiring tasks
 stay estate-agnostic.
-
----
-
-## PR Checklist
-
-- [ ] `vars/app-defaults/<app>.yml` — sensible defaults, all keys documented
-- [ ] `roles/<app>/` — idempotent, health check included, no hardcoded values
-- [ ] `playbooks/apps/<app>.yml` — backend-appropriate play structure and stable wiring handoff
-- [ ] `config.example/apps/<app>.example.yml` — user-facing knobs only
-- [ ] `catalog/applications.yml` — purpose/type classification; it also generates the app's Maintenance folder
-- [ ] `rundeck/jobs/deploy-<app>.yaml` — stable UUID and projected catalog group
-- [ ] App-to-app wiring added to relevant `stacks/wire-<stack>.yml`
-- [ ] Re-run is idempotent (no spurious changes on second run)
-- [ ] `remove.yml` tears down cleanly (test it)

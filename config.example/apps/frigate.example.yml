@@ -44,4 +44,4 @@ backup:
 
 # Recovery: the LXC PBS snapshot covers config; the external recording-storage owner must
 # snapshot/restore its mount separately before Frigate is redeployed. See
-# ansible/roles/frigate/README.md and docs/specs/frigate-recovery.md.
+# ansible/roles/frigate/README.md.

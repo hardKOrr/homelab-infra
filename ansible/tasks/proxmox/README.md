@@ -1,8 +1,6 @@
 # Proxmox automation boundary
 
-This directory contains the shared Proxmox provisioning and guest-record tasks. Read this
-guide before changing guest ownership, tag-to-inventory behavior, VM or LXC creation,
-cloud templates, or node-local execution.
+This directory contains shared Proxmox provisioning and guest-record tasks.
 
 ## Execution model
 
@@ -24,10 +22,8 @@ the declared NIC model, bridge and VLAN tag. A mismatch fails without mutation, 
 a clone left unconfigured by an interrupted earlier run. The comparison preserves MACs
 and other NIC options; stopped state alone does not establish that a VM has never booted.
 SSH timeout remains fatal and names the guest and expected NIC/cloud-init
-configuration. `gate/test-proxmox-vm-clone.py` exercises the pinned update code with a
-recording API and the actual SSH refusal task locally, without a provider or connection.
-It proves the source behavior, not live guest readiness. A mismatched existing clone
-requires the owning observation's supported recovery/recreation decision.
+configuration. A mismatched existing clone
+requires a supported recovery or recreation path.
 
 PBS's separate existing-tag branch calls `validate-vm-network.yml` before adding its
 guest to the deploy group or starting it. It reads current and pending NIC fields for
@@ -50,18 +46,14 @@ subsequent node-local configuration.
 The direct [`create-lxc.yml`](../../playbooks/proxmox/create-lxc.yml) entry point and
 the LXC path of [`create-docker-host.yml`](../../playbooks/docker/create-docker-host.yml)
 have no inventory reuse branch and are create-only. Re-running either against an
-existing pinned address/VMID now refuses creation instead of updating that guest in
+existing pinned address/VMID refuses creation instead of updating that guest in
 place. Use the application or stack deployment path for existing-guest reuse.
 
 Pinned `community.proxmox` 2.0.0 defaults to `update: true` and `cmode: default`.
 Creation strips that sentinel, while existing updates can forward it to PVE. Disabling
 updates at this creation boundary preserves existing console, network and storage
 settings without choosing a replacement enum. `cmode` remains outside the repository
-allowlist; upstream explicit `shell`, `console` and `tty` behavior is tested separately.
-Creation arguments and recursive configuration merges retain their existing behavior.
-`gate/test-proxmox-lxc-present.py` executes the actual pinned dispatch/create/update
-code against a stub API and the actual refusal tasks through Ansible, without sockets.
-This proves source semantics, not the method or target of a prior live request.
+allowlist.
 
 ## Asynchronous task completion
 
@@ -109,16 +101,12 @@ only after the entire parse succeeds and every node's guests can be enumerated. 
 nodes remain in a successfully parsed diagnostic inventory, with the completion marker
 false and `homelabinfra_proxmox_inventory_offline_nodes` identifying the missing coverage.
 Status reports that incomplete view; ascent verification reports it and fails its final
-acceptance check. Malformed responses remain fatal. Neither case proves guest absence.
+health check. Malformed responses remain fatal. Neither case proves guest absence.
 A healthy inventory with no guests does establish absence and may allocate.
 `assert-inventory.yml` guards address allocation and the shared tag lookup even when an
 unsupported static inventory would otherwise supply an empty group. Tag lookup requires
 each matching guest's exact ownership tag, node, VMID and type; instance and stack tags
 must select at most one guest. Cluster tags may select multiple owned guests.
-
-`gate/test-proxmox-inventory-safety.py` executes the actual parser and selection/allocation
-tasks with a recording requests transport, without sockets or provider access. Its
-requests differential proves library/source semantics, not a captured live TLS cause.
 
 ## Device passthrough
 
@@ -140,7 +128,7 @@ must agree with the seam. A declaration's optional `node` statically scopes it t
 automatically. Put every identifier for one physical device (such as an iGPU's render node
 and PCI address) in that entry; the declaration, not current bindings, is what keeps shared
 and dedicated mutually exclusive. `kind` defaults to `igpu` for shared declarations
-and to `gpu` for a bare dedicated declaration, preserving #130's dedicated-only GPU shape;
+and to `gpu` for a bare dedicated declaration, preserving the dedicated-only GPU shape;
 a dedicated iGPU must opt in with `kind: igpu`, while dedicated USB or other entries use
 `kind: usb` or `kind: other`.
 
@@ -150,10 +138,6 @@ first, then removes a binding only when its content matches the caller's input A
 `_.dev+<slug>` tag is present. A content match with no tag is an operator's own entry, left
 in place and reported, never deleted. Every other `devN`/`hostpciN`/`usbN` entry, every
 other tag, and the guest itself are always untouched.
-
-See [`../../../docs/specs/device-passthrough.md`](../../../docs/specs/device-passthrough.md)
-for the full contract, including why the shared and dedicated modes are not interchangeable
-and why USB devices are identified by resource mapping rather than vendor:product.
 
 ## Guest application records
 
@@ -182,23 +166,9 @@ repair. The playbook saves original configs privately on the delegation node, us
 config digest to reject concurrent changes and verifies every other config field and tag
 is preserved. It removes no guest, application record or application data.
 
-## Verification
-
-Run the checks selected by [`../../../gate/README.md`](../../../gate/README.md).
-`gate/test-proxmox-tags.sh` verifies the shared tag translation,
-`gate/test-vmid-from-ip.sh` verifies the address-to-VMID seams,
-`gate/test-proxmox-api-contract.sh` drives the real `community.proxmox.proxmox` module
-and this repository's real dynamic inventory against a job-local HTTPS mock of the
-Proxmox REST endpoints they call, to prove ownership-tag filtering, idempotent
-create/no-change, and a controlled failure at the API-transport boundary — without a lab
-or real credentials, and `gate/test-device-passthrough-contract.sh` proves the ownership
-guard, the dedicated-device conflict check, and the provenance-tag gate on every detach
-seam in the device-passthrough task files above against fixture guest configurations, also
-without a lab.
-
 ## Creation provenance for decommission
 
-Future PBS registrations and dedicated bootstrap API roles/users/tokens/ACL edges are
+New PBS registrations and dedicated bootstrap API roles/users/tokens/ACL edges are
 recorded only after successful **new creation** by their owning seam. Existing resources
 retain bootstrap reuse behavior and never acquire a retrospective ownership record.
 [`lab.py`](../../files/decommission/lab.py) records schema 1 in the creation node's

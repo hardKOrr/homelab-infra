@@ -21,9 +21,7 @@
       wiring, and the system-stats health check converge without changing another guest.
 
     Before live deployment, record the instance, Proxmox node, VM/VMID, PCI address, GPU
-    console recovery procedure, and model-storage path. Live-lab execution is deferred to
-    the isolated acceptance lane; repository and synthetic fixture verification are the
-    closure scope for #147.
+    console recovery procedure, and model-storage path.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

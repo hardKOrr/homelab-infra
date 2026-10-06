@@ -117,8 +117,6 @@
             format: gz
             mode: "0600"
 
-        # Restates output-source:config-archive-handling, canonical in
-        # rundeck/README.md. Change that passage first.
         - name: Report the archive
           ansible.builtin.debug:
             msg:

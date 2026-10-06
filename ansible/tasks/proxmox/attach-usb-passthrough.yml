@@ -1,8 +1,8 @@
 ---
 # Assign a USB device to a VM guest by its Proxmox USB resource mapping, exclusively: a USB
 # passthrough device leaves the host for one guest, so exactly one guest may hold it. This
-# is the dedicated half of the device-passthrough contract for USB — see
-# docs/specs/device-passthrough.md. Home Assistant's Zigbee coordinator is the driving case:
+# is the dedicated half of the device-passthrough contract for USB.
+# Home Assistant's Zigbee coordinator is the driving case:
 # the guest needs that exact physical adapter, not "the first USB serial device attached
 # today".
 #
@@ -44,7 +44,7 @@
     fail_msg: >-
       attach-usb-passthrough.yml needs usb_passthrough_guest and
       usb_passthrough_device.mapping (a USB resource mapping name, not a raw
-      vendorid:productid pair — see docs/specs/device-passthrough.md).
+      vendorid:productid pair).
 
 # Mode is an authored physical-device fact, not something this seam infers from current
 # VM configuration. Keep the check ahead of the first Proxmox query so a shared declaration,
@@ -85,8 +85,7 @@
     fail_msg: >-
       USB resource mapping {{ usb_passthrough_device.mapping }} does not exist, or does not
       cover {{ homelabinfra_config.proxmox.node }}. This platform assigns a mapping the
-      operator already defined against a physical port; it does not create or discover one
-      — see docs/specs/device-passthrough.md.
+      operator already defined against a physical port; it does not create or discover one.
   vars:
     _usb_mapping_nodes: >-
       {{ (_usb_mapping.stdout | from_json).map | default([])

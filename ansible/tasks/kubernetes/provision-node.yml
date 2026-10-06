@@ -206,7 +206,7 @@
 # this node left behind. A recursive combine would fold this node's name, address, sizing
 # and vmid into the restored value, and the next iteration of the loop would start from a
 # blend of two nodes. The outer combine still preserves every other homelabinfra_config
-# key, so the namespace-merge rule in docs/specs/ is not being sidestepped — only the
+# key, so the recursive namespace-merge rule is not being sidestepped — only the
 # subtree this file deliberately borrowed is put back.
 - name: k3s node | Restore the caller's Proxmox settings
   ansible.builtin.set_fact:

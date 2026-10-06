@@ -3,7 +3,7 @@
 # Users override specific values in config/apps/litellm.yml. Provider credentials are
 # deliberately absent: the `app.credentials` map names Vaultwarden fields only.
 #
-# HOSTING DECISION (issue #145)
+# HOSTING DECISION
 #
 # LiteLLM's proxy process does not need a writable filesystem. Its routing configuration
 # is rendered into a ConfigMap, provider credentials are read from a Vaultwarden-backed
