@@ -45,6 +45,8 @@ class Fixture:
             return copy.deepcopy(self.guests)
         if endpoint == '/access/acl' and method == 'get':
             return copy.deepcopy(self.state['acl'])
+        if method == 'get' and endpoint in ['/storage', '/cluster/backup']:
+            return copy.deepcopy(self.state['storage' if endpoint == '/storage' else 'backup'])
         if endpoint.endswith('/tasks'):
             return self.active
         if '/tasks/' in endpoint:
@@ -143,6 +145,153 @@ class DecommissionTests(unittest.TestCase):
         self.fixture.state['storage'][0]['server'] = '192.0.2.21'
         with self.assertRaises(lab.Refused):
             lab.record('storage', 'pbs-homelab', 'configure-pbs', 'fixture-node', self.fixture.state)
+
+    def withdraw(self, expected=None, node='fixture-node'):
+        expected = expected if expected is not None else lab.signature('storage', self.fixture.state['storage'][0])
+        with patch.object(lab.os, 'geteuid', return_value=0), patch.object(lab.os, 'uname') as uname, \
+             patch.object(lab.Path, 'exists', return_value=True):
+            uname.return_value.nodename = 'fixture-node'
+            return lab.withdraw('storage', 'pbs-homelab', expected, node)
+
+    def test_withdraw_retires_stamp_and_replacement_records_new_fingerprint(self):
+        for kind in lab.SOURCES:
+            self.fixture.stamp(kind)
+        self.fixture.state['backup'] = []
+        before = copy.deepcopy(self.fixture.records)
+        self.fixture.records['retired'] = [{'key': 'storage:old-fixture', 'stamp': {}, 'retired_at': 1}]
+        replacement = copy.deepcopy(self.fixture.state['storage'][0])
+        self.withdraw()
+        retired = self.saved[str(lab.RECORD)]
+        self.assertEqual(self.fixture.state['storage'], [])
+        self.assertNotIn('storage:pbs-homelab', retired['objects'])
+        for key, stamp in before['objects'].items():
+            if key != 'storage:pbs-homelab':
+                self.assertEqual(json.dumps(stamp).encode(), json.dumps(retired['objects'][key]).encode())
+        self.assertEqual(retired['retired'][0], self.fixture.records['retired'][0])
+        self.assertEqual(retired['retired'][1]['key'], 'storage:pbs-homelab')
+        self.assertEqual(retired['retired'][1]['stamp'], before['objects']['storage:pbs-homelab'])
+        self.assertIsInstance(retired['retired'][1]['retired_at'], int)
+        self.fixture.records = retired
+        replacement['fingerprint'] = 'replacement-fingerprint'
+        self.fixture.state['storage'] = [replacement]
+        lab.record('storage', 'pbs-homelab', 'configure-pbs', 'fixture-node', self.fixture.state)
+        new = self.saved[str(lab.RECORD)]
+        self.assertTrue(lab.owned_object('storage', replacement, new))
+        self.assertNotEqual(new['objects']['storage:pbs-homelab']['signature'],
+                            before['objects']['storage:pbs-homelab']['signature'])
+        self.assertEqual(new['retired'], retired['retired'])
+
+    def test_withdraw_mismatched_stamp_or_live_storage_never_mutates(self):
+        self.fixture.stamp('storage')
+        self.fixture.state['backup'] = []
+        original = copy.deepcopy(self.fixture.records)
+        expected = lab.signature('storage', self.fixture.state['storage'][0])
+        for change in ['absent', 'source', 'identity', 'signature', 'node', 'live-signature', 'type']:
+            with self.subTest(change=change):
+                self.fixture.records = copy.deepcopy(original)
+                row = copy.deepcopy(self.fixture.state['storage'][0])
+                if change == 'absent':
+                    self.fixture.records['objects'].clear()
+                elif change == 'node':
+                    self.fixture.records['node'] = 'other-node'
+                elif change == 'live-signature':
+                    self.fixture.state['storage'][0]['fingerprint'] = 'drifted'
+                elif change == 'type':
+                    self.fixture.state['storage'][0]['type'] = 'dir'
+                else:
+                    self.fixture.records['objects']['storage:pbs-homelab'][change] = 'different'
+                with self.assertRaises(lab.Refused):
+                    self.withdraw(expected)
+                self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+                self.assertNotIn(str(lab.RECORD), self.saved)
+                self.fixture.state['storage'][0] = row
+        self.fixture.records = original
+        with self.assertRaises(lab.Refused):
+            self.withdraw('0' * 64)
+        self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+
+    def test_withdraw_any_backup_reference_refuses(self):
+        self.fixture.stamp('storage')
+        expected = lab.signature('storage', self.fixture.state['storage'][0])
+        for comment in ['managed by homelab-infra', 'foreign job']:
+            for absent in [False, True]:
+                with self.subTest(comment=comment, storage_absent=absent):
+                    self.fixture.state['backup'][0]['comment'] = comment
+                    row = self.fixture.state['storage']
+                    if absent:
+                        self.fixture.state['storage'] = []
+                    with self.assertRaisesRegex(lab.Refused, 'backup jobs'):
+                        self.withdraw(expected)
+                    self.fixture.state['storage'] = row
+        self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+        self.assertNotIn(str(lab.RECORD), self.saved)
+
+    def test_withdraw_retry_after_delete_before_retire(self):
+        self.fixture.stamp('storage')
+        expected = lab.signature('storage', self.fixture.state['storage'][0])
+        self.fixture.state['backup'] = []
+        with patch.object(lab, 'write_private', side_effect=OSError('injected interruption')):
+            with self.assertRaises(OSError):
+                self.withdraw(expected)
+        self.assertEqual(self.fixture.state['storage'], [])
+        self.assertIn('storage:pbs-homelab', self.fixture.records['objects'])
+        self.withdraw(expected)
+        self.fixture.records = self.saved[str(lab.RECORD)]
+        self.assertNotIn('storage:pbs-homelab', self.fixture.records['objects'])
+        self.assertEqual(sum(c[0] == 'delete' for c in self.fixture.calls), 1)
+        with self.assertRaisesRegex(lab.Refused, 'stamp missing/mismatched'):
+            self.withdraw(expected)
+
+    def test_withdraw_verifies_absence_before_retirement(self):
+        self.fixture.stamp('storage')
+        self.fixture.state['backup'] = []
+        original_api = self.fixture.api
+        def keep_registration(method, endpoint, **params):
+            if method == 'delete':
+                self.fixture.calls.append((method, endpoint, params))
+                return None
+            return original_api(method, endpoint, **params)
+        with patch.object(lab, 'api', keep_registration):
+            with self.assertRaisesRegex(lab.Refused, 'Storage remains'):
+                self.withdraw()
+        self.assertNotIn(str(lab.RECORD), self.saved)
+
+    def test_withdraw_wrong_node_or_active_operation_refuses(self):
+        self.fixture.stamp('storage')
+        self.fixture.state['backup'] = []
+        with self.assertRaisesRegex(lab.Refused, 'recorded creation PVE node'):
+            self.withdraw(node='other-node')
+        self.fixture.active = [{'upid': 'UPID:foreign'}]
+        with self.assertRaisesRegex(lab.Refused, 'node operation is active'):
+            self.withdraw()
+        self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+
+    def test_withdraw_malformed_inventory_cannot_mean_absence(self):
+        self.fixture.stamp('storage')
+        self.fixture.state['backup'] = []
+        original_api = self.fixture.api
+        for invalid in [{}, [{}], [None]]:
+            with self.subTest(invalid=invalid):
+                def invalid_inventory(method, endpoint, **params):
+                    if method == 'get' and endpoint == '/storage':
+                        return invalid
+                    return original_api(method, endpoint, **params)
+                with patch.object(lab, 'api', invalid_inventory):
+                    with self.assertRaisesRegex(lab.Refused, 'Invalid storage/job inventory'):
+                        self.withdraw()
+                self.assertFalse(any(c[0] != 'get' for c in self.fixture.calls))
+                self.assertNotIn(str(lab.RECORD), self.saved)
+
+    def test_withdraw_requires_root_and_pve_host(self):
+        expected = lab.signature('storage', self.fixture.state['storage'][0])
+        for uid, is_pve in [(1000, True), (0, False)]:
+            with self.subTest(uid=uid, is_pve=is_pve):
+                with patch.object(lab.os, 'geteuid', return_value=uid), \
+                     patch.object(lab.Path, 'exists', return_value=is_pve):
+                    with self.assertRaisesRegex(lab.Refused, 'recorded creation PVE node'):
+                        lab.withdraw('storage', 'pbs-homelab', expected, 'fixture-node')
+        self.assertEqual(self.fixture.calls, [])
+        self.assertNotIn(str(lab.RECORD), self.saved)
 
     def test_target_guest_acl_refuses_read_only_plan(self):
         self.fixture.guests[2].update(tags='_+lab;_.template', template=1)

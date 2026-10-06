@@ -402,6 +402,46 @@ def verify_idle(node):
     require(node in [n['name'] for n in nodes if n.get('type') == 'node'], 'Creation node is absent.')
 
 
+def withdraw(kind, ident, expected, node):
+    """Withdraw the PBS registration and retire only its owning creation stamp."""
+    require(os.geteuid() == 0 and Path('/etc/pve/local').exists()
+            and os.uname().nodename == node, 'Withdraw as root on the recorded creation PVE node.')
+    require(kind == 'storage' and ident == 'pbs-homelab', 'Only pbs-homelab storage retirement supported.')
+    require(isinstance(expected, str) and re.fullmatch(r'[0-9a-f]{64}', expected),
+            'Exact expected storage signature required.')
+    records = read_private(RECORD)
+    require(records.get('schema') == 1 and records.get('node') == node,
+            'Ownership node/schema mismatch.')
+    key = kind + ':' + ident
+    stamp = records.get('objects', {}).get(key)
+    require(isinstance(stamp, dict) and stamp.get('source') == 'configure-pbs'
+            and stamp.get('identity') == ident and stamp.get('signature') == expected,
+            'Storage creation stamp missing/mismatched; refuse retirement.')
+    require(isinstance(records.get('retired', []), list), 'Invalid retired record list.')
+    verify_idle(node)
+    rows = api('get', '/storage')
+    jobs = api('get', '/cluster/backup')
+    require(isinstance(rows, list) and all(isinstance(r, dict) and r.get('storage') for r in rows)
+            and isinstance(jobs, list) and all(isinstance(j, dict) for j in jobs),
+            'Invalid storage/job inventory; no absence inferred.')
+    matches = [r for r in rows if r.get('storage') == ident]
+    require(len(matches) <= 1, 'Ambiguous storage identity.')
+    require(not any(j.get('storage') == ident for j in jobs), 'Storage still used by backup jobs.')
+    if matches:
+        require(matches[0].get('type') == 'pbs' and signature(kind, matches[0]) == expected,
+                'Live PBS registration signature/type mismatched; refuse withdrawal.')
+        api('delete', '/storage/' + ident)
+    remaining = api('get', '/storage')
+    require(isinstance(remaining, list) and all(isinstance(r, dict) and r.get('storage') for r in remaining),
+            'Invalid storage verification; no absence inferred.')
+    require(not any(r.get('storage') == ident for r in remaining), 'Storage remains after withdrawal.')
+    require(read_private(RECORD) == records, 'Creation provenance changed during withdrawal; retry after review.')
+    del records['objects'][key]
+    records.setdefault('retired', []).append({'key': key, 'stamp': stamp, 'retired_at': int(time.time())})
+    write_private(RECORD, records)
+    return {'result': 'PBS registration absent; creation stamp retired', 'key': key}
+
+
 def execute(manifest, confirmation, retention, unwired, journal):
     require(confirmation == 'DECOMMISSION ' + digest(manifest), 'Literal plan-bound confirmation required.')
     require(retention == 'INDEPENDENT RETENTION VERIFIED' and unwired == 'ALL CONSUMERS UNWIRED',
@@ -484,10 +524,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True)
     parser.add_argument('--runner')
-    parser.add_argument('--record', choices=SOURCES)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--record', choices=SOURCES)
+    mode.add_argument('--withdraw', choices=['storage'])
+    mode.add_argument('--execute', type=Path)
     parser.add_argument('--identity')
+    parser.add_argument('--expect-signature')
     parser.add_argument('--source')
-    parser.add_argument('--execute', type=Path)
     parser.add_argument('--confirmation', default='')
     parser.add_argument('--retention', default='')
     parser.add_argument('--unwired', default='')
@@ -497,9 +540,14 @@ def main():
         require(os.geteuid() == 0, 'Creation records require node root authority.')
         record(args.record, args.identity, args.source, args.node)
         print('Creation identity recorded; no secret retained.')
-    elif args.execute:
-        value = read_private(args.execute)
-        require(value.get('node') == args.node and value.get('schema') == 1, 'Manifest node/schema mismatch.')
+    elif args.execute or args.withdraw:
+        if args.withdraw:
+            require(os.geteuid() == 0 and Path('/etc/pve/local').exists()
+                    and os.uname().nodename == args.node,
+                    'Withdraw as root on the recorded creation PVE node.')
+        else:
+            value = read_private(args.execute)
+            require(value.get('node') == args.node and value.get('schema') == 1, 'Manifest node/schema mismatch.')
         lock_path = Path('/var/lib/homelab-infra/decommission-operation.lock')
         lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -511,7 +559,10 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise Refused('Another node decommission owns the local lock.') from exc
-            print(json.dumps(execute(value, args.confirmation, args.retention, args.unwired, args.journal)))
+            if args.withdraw:
+                print(json.dumps(withdraw(args.withdraw, args.identity, args.expect_signature, args.node)))
+            else:
+                print(json.dumps(execute(value, args.confirmation, args.retention, args.unwired, args.journal)))
     else:
         value = plan(args.node, args.runner)
         print(json.dumps({'plan': value, 'confirmation': 'DECOMMISSION ' + digest(value)}, sort_keys=True))
