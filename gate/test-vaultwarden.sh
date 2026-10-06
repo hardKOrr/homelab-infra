@@ -157,8 +157,9 @@ PY
 # writes cutover-complete only after its degradation check, and bootstrap finishes a
 # failed cleanup as root before Bootstrap Platform may run — over the same seed files.
 python3 - "$repo/ansible/playbooks/maintenance/vaultwarden-cutover.yml" \
-  "$repo/rundeck/bootstrap-rundeck.sh" <<'PY' || fail "cutover cleanup is not resumable"
-import re, sys
+  "$repo/rundeck/bootstrap-rundeck.sh" "$work" <<'PY' || fail "cutover cleanup is not resumable"
+import os, re, subprocess, sys
+from pathlib import Path
 import yaml
 cutover_text = open(sys.argv[1], encoding="utf-8").read()
 bootstrap = open(sys.argv[2], encoding="utf-8").read()
@@ -170,11 +171,64 @@ assert complete == len(names) - 1, "cutover-complete must be the last step"
 removal = next(t for t in tasks if t.get("name") == "Remove temporary seed files")
 cutover_files = {p.replace("/etc/homelab-infra", "$LAB_ETC").replace("{{ _cutover_ssh_file }}", "$LAB_SSH_KEY")
                  for p in removal["loop"]}
-resume = bootstrap[bootstrap.index('if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then'):]
+resume = bootstrap[bootstrap.index('VAULT_MODE=0\n'):]
 loop = resume[resume.index("for f in"):resume.index("; do")]
 bootstrap_files = set(re.findall(r'"([^"]+)"', loop))
 assert cutover_files == bootstrap_files, (cutover_files ^ bootstrap_files)
+assert "$LAB_ETC/secrets.d/dns.env" in cutover_files, "DNS seed omitted from both cleanup paths"
 assert bootstrap.index('state/cutover-complete"; then') < bootstrap.index('rd_run_job "Bootstrap Platform"')
+
+# Execute the source cleanup phase against disposable files, including an old
+# completion marker. Comparing two lists alone cannot catch a shared omission.
+phase = resume[:resume.index("  # The automation master password lives on")]+"fi\n"
+fixture = '''set -euo pipefail
+ct_file_exists() { test -f "$1"; }
+log() { :; }
+info() { :; }
+# The local fixture models root's container ownership operation; no local
+# rundeck account is required to exercise the real filesystem cleanup.
+chown() { :; }
+export -f chown
+in_ct() {
+  if [ "$1" = rm ] && [ "${FAIL_PATH:-}" = "$3" ]; then return 1; fi
+  if [ "$1" = sh ]; then shift; bash "$@"; else "$@"; fi
+}
+''' + phase
+for case in ("seed", "partial", "complete", "failed"):
+    root = Path(sys.argv[3]) / ("cleanup-"+case)
+    etc = root / "etc"
+    state = etc / "state"
+    state.mkdir(parents=True)
+    paths = [Path(p.replace("$LAB_ETC", str(etc)).replace("$LAB_SSH_KEY", str(root / "platform-key")))
+             for p in bootstrap_files]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("seed-probe\n")
+    unrelated = etc / "secrets.d/operator.env"
+    unrelated.write_text("unrelated-probe\n")
+    vault = state / "vault-mode"
+    complete = state / "cutover-complete"
+    if case != "seed": vault.write_text("verified-vault-probe\n")
+    if case == "complete": complete.write_text("existing-completion-probe\n")
+    marker_before = complete.stat().st_mtime_ns if complete.exists() else None
+    env = dict(os.environ, LAB_ETC=str(etc), LAB_SSH_KEY=str(root / "platform-key"), DEPLOY_VAULTWARDEN="1")
+    if case == "failed": env["FAIL_PATH"] = str(etc / "secrets.d/dns.env")
+    result = subprocess.run(["bash", "-c", fixture], env=env, text=True, capture_output=True)
+    if case == "failed":
+        assert result.returncode != 0 and not complete.exists(), "cleanup failure wrote completion"
+        assert (etc / "secrets.d/dns.env").exists(), "failed removal was mistaken for absence"
+    else:
+        assert result.returncode == 0, result.stderr
+        assert all(p.exists() == (case == "seed") for p in paths), (case, paths)
+        assert complete.exists() == (case != "seed"), case
+    assert unrelated.read_text() == "unrelated-probe\n", "cleanup touched an unrelated file"
+    if vault.exists(): assert vault.read_text() == "verified-vault-probe\n"
+    if case == "complete":
+        assert complete.read_text() == "existing-completion-probe\n" and complete.stat().st_mtime_ns == marker_before
+    if case in ("partial", "complete"):
+        before = complete.stat().st_mtime_ns
+        again = subprocess.run(["bash", "-c", fixture], env=env, text=True, capture_output=True)
+        assert again.returncode == 0 and complete.stat().st_mtime_ns == before, "repeat cleanup rewrote completion"
 PY
 # Recovery reopens Seed mode for a new cutover. A cutover-complete left from the previous
 # one would vouch for the new cutover's cleanup before it ran, so both markers go —
