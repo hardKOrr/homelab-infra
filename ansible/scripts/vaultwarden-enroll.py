@@ -6,7 +6,8 @@ an account or create an organization. This script performs the same client-side 
 web vault does, then drives the Vaultwarden API:
 
   1. register the owner and the automation account (both already invited by the admin
-     facility, which is what lets them register while signups are closed)
+     facility, which is what lets them register while signups are closed) through the
+     two-step send-verification-email / register/finish flow
   2. as the owner, create organization `homelab-infra`
   3. invite the automation account as Admin; with mail disabled Vaultwarden accepts an
      existing account's invitation immediately
@@ -202,14 +203,28 @@ class Account:
         return True
 
     def register(self) -> None:
+        # Two-step registration. Verified live: 1.37.4 no longer routes the legacy
+        # single-step POST /identity/accounts/register (404); 1.37.1 serves both. With
+        # mail disabled, an admin-invited address gets its verification token back
+        # directly; with mail enabled it is mailed instead (204), which this cannot use.
+        token = request(
+            "POST",
+            f"{self.server}/identity/accounts/register/send-verification-email",
+            json_body={"email": self.email, "name": self.email.split("@")[0][:50]},
+        )
+        if not isinstance(token, str) or not token:
+            fail(
+                f"Vaultwarden returned no registration token for {self.email}; enrollment "
+                "needs mail disabled so the token is returned instead of mailed."
+            )
         user_key = os.urandom(64)
         public, encrypted_private = keypair(user_key)
         request(
             "POST",
-            f"{self.server}/identity/accounts/register",
+            f"{self.server}/identity/accounts/register/finish",
             json_body={
                 "email": self.email,
-                "name": self.email.split("@")[0][:50],
+                "emailVerificationToken": token,
                 "masterPasswordHash": self.hash,
                 "masterPasswordHint": None,
                 "key": enc_string(user_key, stretch(self.mkey)),

@@ -52,8 +52,17 @@ class FakeVaultwarden:
             token = uuid.uuid4().hex
             self.tokens[token] = user["email"]
             return 200, {"access_token": token, "Key": user["key"], "PrivateKey": user["private"]}
-        if (method, path) == ("POST", "/identity/accounts/register"):
+        # Only the two-step flow is routed, as on 1.37.4; the legacy single-step
+        # /identity/accounts/register falls through to the unauthenticated refusal below.
+        if (method, path) == ("POST", "/identity/accounts/register/send-verification-email"):
+            # Mail is disabled, so an invited address gets its token back directly.
+            if body["email"] not in self.invited:
+                return 400, {"message": "Registration not allowed or user already exists"}
+            return 200, "verify:" + body["email"]
+        if (method, path) == ("POST", "/identity/accounts/register/finish"):
             email = body["email"]
+            if body.get("emailVerificationToken") != "verify:" + email:
+                return 400, {"message": "Email verification token does not match email"}
             if email in self.users or email not in self.invited:
                 return 400, {"message": "Registration not allowed or user already exists"}
             self.writes += 1
