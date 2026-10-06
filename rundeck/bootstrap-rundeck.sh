@@ -1593,6 +1593,12 @@ proxmox:
   # proxmox.disk_volume.storage (LXC) or proxmox.vm.storage (VM) in its instance file.
   storage: "$CT_STORAGE"
 
+  # The container template every native LXC and stack host is created from: the one this
+  # script ensured on the node for the runner above. Without it the repository fallback in
+  # ansible/vars/homelabinfra-defaults.yml applies, and nothing downloads that template.
+  lxc:
+    ostemplate: "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}"
+
   # Node name -> address, for every node in the cluster. The provisioning tasks reach
   # node-local pct/qm over SSH with \`delegate_to: <node name>\`, and a Proxmox node name is
   # not resolvable on its own: the dynamic inventory gives nodes no ansible_host, and a
@@ -2528,16 +2534,18 @@ if [ "$DEPLOY_VAULTWARDEN" = "1" ] && ct_file_exists "$LAB_ETC/state/vault-mode"
   # is closed and cutover cannot run again — finish the removal here, as root, which can
   # unlink what the job user could not. The list mirrors "Remove temporary seed files" in
   # vaultwarden-cutover.yml.
+  # Scan even when cutover-complete exists: older versions omitted the DNS seed from
+  # both cleanup lists, so their completion marker did not prove that file was gone.
+  for f in "$LAB_ETC/secrets.d/proxmox.env" "$LAB_ETC/secrets.env" \
+           "$LAB_ETC/secrets.d/vaultwarden.env" "$LAB_ETC/secrets.d/vaultwarden-accounts.json" \
+           "$LAB_ETC/secrets.d/dns.env" "$LAB_SSH_KEY"; do
+    if ct_file_exists "$f"; then
+      in_ct rm -f "$f"
+      info "removed leftover seed file $f"
+    fi
+  done
   if ! ct_file_exists "$LAB_ETC/state/cutover-complete"; then
     log "Finishing Vaultwarden cutover cleanup"
-    for f in "$LAB_ETC/secrets.d/proxmox.env" "$LAB_ETC/secrets.env" \
-             "$LAB_ETC/secrets.d/vaultwarden.env" "$LAB_ETC/secrets.d/vaultwarden-accounts.json" \
-             "$LAB_SSH_KEY"; do
-      if ct_file_exists "$f"; then
-        in_ct rm -f "$f"
-        info "removed leftover seed file $f"
-      fi
-    done
     in_ct sh -c "umask 077; printf 'version=1\n' > '$LAB_ETC/state/cutover-complete' && chown rundeck:rundeck '$LAB_ETC/state/cutover-complete'"
     info "cutover complete"
   fi

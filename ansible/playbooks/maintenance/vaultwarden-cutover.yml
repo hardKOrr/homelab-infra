@@ -303,6 +303,7 @@
         - /etc/homelab-infra/secrets.env
         - /etc/homelab-infra/secrets.d/vaultwarden.env
         - /etc/homelab-infra/secrets.d/vaultwarden-accounts.json
+        - /etc/homelab-infra/secrets.d/dns.env
         - "{{ _cutover_ssh_file }}"
       register: _cutover_seed_removal
       failed_when: false

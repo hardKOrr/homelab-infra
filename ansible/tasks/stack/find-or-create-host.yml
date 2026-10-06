@@ -210,23 +210,17 @@
             )
           }}
       vars:
-        # The tag list is APPENDED to, and homelabinfra_config survives from the previous
-        # play (load-user-vars.yml merges the old dict over the freshly loaded layers). Two
-        # stack hosts in one bootstrap therefore gave the second one the first one's stack
-        # tag as well as its own — and `Check for existing stack host` matches on exactly
-        # that tag, so from the next run on, both stacks would resolve to whichever host
-        # inventory listed first. `stack_tag` records what this task last appended so the
-        # next call can drop it; a lab-wide tag in config/proxmox.yml is left alone.
-        #
-        # `_.shared` is dropped from the inherited list for the same reason and re-added
-        # only when THIS stack declares it: a shared stack created earlier in the same run
-        # must not leave that declaration on the next, ordinary stack host. Both are
-        # dropped by exact value, never by prefix — a prefix rule here would eat `_+lab`.
+        # Runtime lxc state survives chained plays and may contain a preceding native
+        # application's tag or another stack's identity. Start from authored lab tags
+        # and repository defaults instead. Application records add this stack's actual
+        # instances after deployment; they must never inherit another guest's instances.
+        # Sharing is still declared by this stack, not inherited from authored tags.
         _stack_tag: "_.stack+{{ _stack_id }}"
-        _stack_prior_tag: "{{ homelabinfra_config.proxmox.lxc.stack_tag | default('') }}"
         _stack_base_tags: >-
-          {{ (homelabinfra_config.proxmox.lxc.tags | default(['_+lab', '_-debian']))
-             | reject('eq', _stack_prior_tag) | reject('eq', '_.shared') | list }}
+          {{ (_config_proxmox | default({})).get('proxmox', {}).get('lxc', {}).get('tags',
+               (homelabinfra_defaults | default({})).get('proxmox', {}).get('lxc', {}).get(
+                 'tags', ['_+lab', '_-debian']))
+             | reject('eq', '_.shared') | list }}
         # `_-docker` is a declared machine fact, not a probe: this task is the one that
         # decides a guest is a Docker host, so it is the one that says so.
         _stack_tags: >-
