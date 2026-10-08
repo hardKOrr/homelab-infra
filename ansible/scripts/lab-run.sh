@@ -39,7 +39,11 @@
 #   BW_SERVER         public HTTPS Vaultwarden URL
 #   SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, NODE_EXTRA_CA_CERTS
 #                     CA bundle paths; exported from the env file when not already set
-#   BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD — secure runner inputs for Vault mode
+#   BW_CLIENTID, BW_CLIENTSECRET, BW_PASSWORD — secure runner inputs for Vault mode;
+#                     when absent, read from the vaulted config/vaultwarden.yml
+#   ANSIBLE_VAULT_PASSWORD_FILE, ANSIBLE_VAULT_IDENTITY_LIST, LAB_VAULT_PASSWORD
+#                     the Ansible Vault password for config/vaultwarden.yml (a terminal
+#                     prompts when none is set); see ansible/scripts/vaultwarden-login.py
 
 set -euo pipefail
 
@@ -258,9 +262,9 @@ _vault_cleanup() {
 _vault_preflight() {
   command -v bw >/dev/null 2>&1 || die "Bitwarden CLI (bw) is not installed"
   [ -n "$BW_SERVER" ] || die "BW_SERVER is not configured"
-  [ -n "${BW_CLIENTID:-}" ] || die "BW_CLIENTID was not supplied by secure job storage"
-  [ -n "${BW_CLIENTSECRET:-}" ] || die "BW_CLIENTSECRET was not supplied by secure job storage"
-  [ -n "${BW_PASSWORD:-}" ] || die "BW_PASSWORD was not supplied by secure job storage"
+  [ -n "${BW_CLIENTID:-}" ] || die "BW_CLIENTID was not supplied by a secure job option or config/vaultwarden.yml"
+  [ -n "${BW_CLIENTSECRET:-}" ] || die "BW_CLIENTSECRET was not supplied by a secure job option or config/vaultwarden.yml"
+  [ -n "${BW_PASSWORD:-}" ] || die "BW_PASSWORD was not supplied by a secure job option or config/vaultwarden.yml"
 
   _vault_tmp="$(mktemp -d "${TMPDIR:-/tmp}/homelab-bw.XXXXXX")"
   chmod 0700 "$_vault_tmp"
@@ -347,8 +351,33 @@ sys.stdout.write(value.rstrip("\n") + "\n")
   log "Vaultwarden preflight complete"
 }
 
+# Rundeck supplies the automation login from Key Storage. Any other caller — an operator
+# or agent running this script directly — supplies only the Ansible Vault password, and
+# the login comes from config/vaultwarden.yml (written by the Vaultwarden Login File job).
+# A file that cannot be decrypted stops the run here: it is never a reason to skip the
+# preflight. The password source is consumed once and then unset, because a prompt or
+# stdin cannot be read a second time and nothing after this point reads Ansible Vault data.
+_lab_login_file="$LAB_REPO/config/vaultwarden.yml"
+_lab_load_login() {
+  local _py _exports _id="${BW_CLIENTID:-}" _secret="${BW_CLIENTSECRET:-}" _password="${BW_PASSWORD:-}"
+  _py="$(bash scripts/resolve-python.sh "$ANSIBLE_PLAYBOOK")" || die "no python3 with PyYAML for $_lab_login_file"
+  _exports="$("$_py" scripts/vaultwarden-login.py read "$_lab_login_file")" \
+    || die "could not read the Vaultwarden login from $_lab_login_file — supply its Ansible Vault password (see ansible/README.md)"
+  # The helper prints three shell-quoted export lines. Values already supplied win.
+  eval "$_exports"
+  [ -z "$_id" ] || BW_CLIENTID="$_id"
+  [ -z "$_secret" ] || BW_CLIENTSECRET="$_secret"
+  [ -z "$_password" ] || BW_PASSWORD="$_password"
+  unset ANSIBLE_VAULT_PASSWORD_FILE ANSIBLE_VAULT_IDENTITY_LIST LAB_VAULT_PASSWORD
+  log "Vaultwarden login loaded from $_lab_login_file"
+}
+
 if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
    && [ "$_lab_recovery" != "1" ]; then
+  if { [ -z "${BW_CLIENTID:-}" ] || [ -z "${BW_CLIENTSECRET:-}" ] || [ -z "${BW_PASSWORD:-}" ]; } \
+     && [ -f "$_lab_login_file" ]; then
+    _lab_load_login
+  fi
   _vault_preflight
 fi
 

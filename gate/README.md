@@ -27,7 +27,7 @@ Lint runs `ansible-lint` over `ansible/{playbooks,roles,tasks,vars}`, parses Jin
 checks repository links and fixture secrets, and enforces GitHub workflow policy.
 
 Test syntax-checks every playbook in parallel, replays diagnostics in order, and
-runs five logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
+runs six logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
 The Python suites use Ansible's templar to render production expressions and templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
@@ -35,6 +35,7 @@ The Python suites use Ansible's templar to render production expressions and tem
 - `test-config.py`: Config Doctor, precedence, estates, mail, provider gates and networks.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
 - `test-template-rendering.py`: Caddy, Emby, Navidrome, Maintainerr restore PVCs and Mautic.
+- `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 
 On a Windows checkout accessed through WSL, wrap each command:
 

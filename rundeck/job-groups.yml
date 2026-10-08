@@ -24,6 +24,7 @@ jobs:
   troubleshoot-plex-client.yaml: Operate/Troubleshooting
   vaultwarden-cutover.yaml: Setup/Credentials
   vaultwarden-enrollment.yaml: Setup/Credentials
+  vaultwarden-login-file.yaml: Setup/Credentials
   vaultwarden-recovery.yaml: Recover/Credentials
   verify-ascent.yaml: Manage/Lab/Health
   wire-media-stack.yaml: Manage/Integrations

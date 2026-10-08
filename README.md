@@ -88,6 +88,11 @@ the password never passes through a job. The script removes automation's root pa
 copy after cutover. Bootstrap Platform reconciles tagged Caddy/Vaultwarden and deploys
 the remaining baseline services. Fix a failed step and rerun the script or job.
 
+To run `lab-run` without Rundeck, run **Setup / Credentials / Vaultwarden Login File** once
+with an Ansible Vault password you keep. It stores the automation login in
+`config/vaultwarden.yml`, encrypted with that password; see
+[Running directly](ansible/README.md#running-directly).
+
 ## Deploying an app
 
 Run the application's **Deploy** job in Rundeck. Configure overrides through its
@@ -105,7 +110,7 @@ See the [variable contract](ansible/vars/CONTRACT.md) and [examples](config.exam
 
 | Secret | Home |
 |---|---|
-| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage; the master password also in `homelab-infra/vaultwarden` (`automation_master_password`) |
+| Vault automation client ID, client secret, master password | AES-GCM-encrypted Rundeck Key Storage; the master password also in `homelab-infra/vaultwarden` (`automation_master_password`); once **Vaultwarden Login File** has run, also `config/vaultwarden.yml`, encrypted with your Ansible Vault password |
 | Vaultwarden owner master password (generated) | root-only `/root/.rundeck-bootstrap` on the runner until you change it and delete the line; also `homelab-infra/vaultwarden` (`owner_master_password`), which you edit in the web vault when you change it |
 | Vaultwarden admin token | AES-GCM-encrypted external runner storage; it administers the server but cannot decrypt vault items |
 | Cloudflare DNS-01 token | temporary AES-GCM runner storage during Seed mode, then `homelab-infra/reverse_proxy` in Vaultwarden |
@@ -113,14 +118,16 @@ See the [variable contract](ansible/vars/CONTRACT.md) and [examples](config.exam
 | Rundeck API token | AES-GCM Key Storage, injected only into control-plane jobs |
 | Anything authored after cutover (a second domain's DNS-01 token, a firewall API key) | typed into the **Store Secret** job, which writes it straight into its canonical Vaultwarden item — it is never written to disk |
 
-There is no Ansible Vault. Seed files are temporary bootstrap inputs. After cutover,
+Ansible Vault encrypts only `config/vaultwarden.yml`, and its password stays with the
+operator. Seed files are temporary bootstrap inputs. After cutover,
 mutating jobs unlock Vaultwarden before Ansible starts and fail closed if unlock fails.
 `config/.generated/facts.yml` holds topology only and rejects secret-shaped fields.
 
 ## Recovery
 
-Keep independent PBS/PVE access, backup artifacts, the Rundeck converter password, and
-Vaultwarden unlock material outside the components they recover. Restore the runner
+Keep independent PBS/PVE access, backup artifacts, the Rundeck converter password,
+Vaultwarden unlock material, and your Ansible Vault password outside the components they
+recover. Restore the runner
 stopped or isolated, recover both encrypted storage namespaces, then recover the vault
 before ordinary jobs. Follow [runner recovery](rundeck/RUNNER-RECOVERY.md) and
 [Vaultwarden recovery](rundeck/VAULTWARDEN-RECOVERY.md) for prerequisites and ordering.

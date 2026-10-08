@@ -19,6 +19,122 @@ bootstrap secrets. After the vault-mode marker exists, ordinary runs must unlock
 Vaultwarden, and Seed mode cannot bypass that guard. The explicit vault recovery
 playbook has its own guarded recovery path.
 
+## Running directly
+
+`lab-run` is the entry point for every caller; Rundeck is one of them. A direct run uses
+the runner's network position, `config/` and lab state, so it runs on the runner as the
+`rundeck` user, the account that owns `config/` and runs every job step.
+
+Enable direct runs once after cutover: run **Setup / Credentials / Vaultwarden Login
+File** with your Ansible Vault password. After the job has unlocked Vaultwarden with the
+automation login from Key Storage, it stores that login in `config/vaultwarden.yml`, each
+value encrypted with the password. Run it again after rotating the automation login or
+changing the password.
+
+A direct run then supplies only the Ansible Vault password, through
+`ANSIBLE_VAULT_PASSWORD_FILE` (a file, `/dev/stdin`, or an executable that prints it),
+`ANSIBLE_VAULT_IDENTITY_LIST=lab@prompt`, or the prompt `lab-run` shows on a terminal.
+`lab-run` reads it once, fills the missing `BW_CLIENTID`, `BW_CLIENTSECRET` and
+`BW_PASSWORD` from the file, and continues through the same Vault-mode guard and
+Vaultwarden preflight as a job. A file it cannot decrypt stops the run.
+
+Run a candidate revision from its own checkout beside the runner checkout, with refresh off
+and `config/` linked to the runner's. On the runner (`pct exec <runner-vmid>` from its
+node), as root:
+
+```sh
+c=/var/lib/rundeck/homelab-infra-candidate
+sudo -u rundeck -H bash -c '
+  set -e
+  [ -d "$1/.git" ] || git clone --quiet "$(git -C /var/lib/rundeck/homelab-infra remote get-url origin)" "$1"
+  [ -e "$1/config" ] || ln -s /var/lib/rundeck/homelab-infra/config "$1/config"
+  git -C "$1" fetch --quiet origin "$2"
+  git -C "$1" checkout --quiet --detach FETCH_HEAD
+  git -C "$1" log --oneline -1' _ "$c" <branch>
+
+sudo -u rundeck -H env LAB_REPO="$c" LAB_REFRESH=0 ANSIBLE_VAULT_PASSWORD_FILE=/dev/stdin \
+  bash "$c/ansible/scripts/lab-run.sh" playbooks/apps/<app>.yml -e instance=<instance>
+```
+
+Feed the password on stdin from wherever you keep it, for example through
+`ssh root@<pve-node> pct exec <runner-vmid> -- ...`. `/etc/homelab-infra/lab-run.env`
+still supplies the venv, `BW_SERVER` and CA settings, and `LAB_STATE_DIR` defaults to
+`/etc/homelab-infra/state`, so the run sees the same lab mode as every job. The runner
+checkout stays on `LAB_BRANCH` for Rundeck.
+
+## Live operations
+
+Live runs are serial across the whole lab. Before changing live state, take the
+operator's lab lock as the private access instructions describe, and confirm that no
+Rundeck execution or node-side bootstrap is running. Hold the lock until the live work is
+done.
+
+### Fixing and testing a change
+
+1. **Fix loop.** Change the owning code, run the gates, push the branch, update the
+   candidate checkout and run the affected playbooks directly. Read the failure, fix and
+   rerun until the checks pass. Run the complete application drill from the final
+   candidate revision before merge. Bootstrap runs only for changes to bootstrap or the
+   runner itself.
+2. **Job definitions.** A change to `rundeck/jobs/`, `rundeck/render-job.py` or how job
+   options reach `lab-run` is also checked through Rundeck at the same revision: point the
+   runner at the branch as [`../rundeck/README.md`](../rundeck/README.md) describes,
+   Reimport Jobs, run the changed job, and restore the usual branch after merge.
+3. **PR and merge.** Put the gate results, the tested SHA, the direct Ansible results
+   and the execution IDs of any Rundeck checks in the PR. Retest after any change to the
+   candidate. The issue can close at merge.
+
+### Application recovery drill
+
+The drill proves deploy, convergence and native recovery for one instance. Running it
+authorizes every step below on the issue's target instance, including Remove with
+`delete_data=true` and overwrite Restore. Go straight through. Stop only for an ownership
+mismatch, a safety guard that trips, or a failure the issue's scope cannot fix. Read
+inputs from the playbook headers and the application's documentation; Rundeck options map
+to the same inputs.
+
+1. Verify the target carries the lab tag, its dependencies exist (deploy them if absent),
+   and the candidate checkout is at the intended revision. Choose a few checks that show
+   other applications and the platform are unaffected.
+2. Deploy. Verify HTTPS and login with the canonical credential, and that the declared
+   DNS, ingress, identity provider and monitor wiring each appear exactly once.
+3. Create the issue's data and configuration canaries through the application's normal
+   interface and read both back. Deploy again; both survive and the wiring stays unique.
+4. Back up through the application's backup playbook. Record the recovery point and
+   verify it exists.
+5. Remove with `delete_data=true`. Verify the instance, its data and its wiring are gone,
+   the backup remains, and other applications are unaffected. The stack host stays;
+   Remove never destroys a guest.
+6. Deploy a fresh instance with the same name. Verify it works and neither canary is
+   present. Run Restore with `overwrite=false` to preview, then restore the recorded
+   recovery point with overwrite.
+7. Read both canaries back exactly, verify login and unique wiring, then Deploy once more.
+   Restored data, configuration and the other applications remain.
+
+A check that cannot be read back counts as unverified.
+
+For a stateless application, skip backup and restore and prove a fresh deploy recreates
+its configuration and wiring. For multiple instances, verify siblings stay intact. If the
+application has no backup and restore yet, build them in the repository before step 4.
+Restoring a whole stack guest does not prove one application's restore.
+
+### Application data port
+
+The issue names the source, destination, capture method, required path or address
+changes, and the counts to compare. Source access comes from the operator's verified
+private values. The source is not tagged `_+lab`, so it is read-only: capture from it, and
+never stop, change or delete it. If it has no consistent read-only export, report that as
+the blocker.
+
+Capture only application data, through a consistent export or backup, and keep the copy
+private. Change only the paths, peer addresses and public URL the destination needs.
+Import through the repository's Restore or Import path into a fresh instance; if that
+path is missing, build it in the repository.
+
+Verify the issue's counts and spot checks, a real account's login and unique wiring. Back
+up the destination through homelab-infra, record its first recovery point, and verify a
+final Deploy keeps the imported data.
+
 Platform defaults merge recursively with `config/proxmox.yml` and
 `config/infrastructure.yml`; application defaults merge with `config/apps/<instance>.yml`.
 Generated topology and the in-memory secret overlay complete the runtime view. See
