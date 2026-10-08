@@ -26,16 +26,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: "3.12"
 
+      # The cached venv links to the runner's Python, so the key carries its exact patch
+      # version; a runner image with a newer 3.12 would otherwise restore a dangling venv.
       - name: Cache gate toolchain
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.GATE_VENV }}
             ~/.ansible/collections
-          key: gate-toolchain-${{ runner.os }}-py3.12-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
+          key: gate-toolchain-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
 
       - name: Install gate toolchain
         run: |
@@ -62,16 +65,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
+        id: python
         with:
           python-version: "3.12"
 
+      # The cached venv links to the runner's Python, so the key carries its exact patch
+      # version; a runner image with a newer 3.12 would otherwise restore a dangling venv.
       - name: Cache gate toolchain
         uses: actions/cache@v4
         with:
           path: |
             ${{ env.GATE_VENV }}
             ~/.ansible/collections
-          key: gate-toolchain-${{ runner.os }}-py3.12-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
+          key: gate-toolchain-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('gate/requirements-dev.txt', 'ansible/requirements.yml') }}
 
       - name: Install gate toolchain
         run: |
