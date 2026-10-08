@@ -1,0 +1,54 @@
+---
+# Store the automation account's Vaultwarden login in config/vaultwarden.yml, encrypted
+# with the operator's Ansible Vault password, so lab-run.sh can run without Rundeck.
+#
+# lab-run has already logged in and unlocked Vaultwarden with BW_CLIENTID,
+# BW_CLIENTSECRET and BW_PASSWORD before this play starts, so the values stored here are
+# proven to work. The Ansible Vault password arrives as LAB_VAULT_PASSWORD (the job's
+# secure option) or through Ansible's standard password sources.
+#
+# Rerunning with the same login and password changes nothing. A rotated login, or a new
+# Ansible Vault password, rewrites the file and keeps the previous copy under
+# config/.backups/. Rundeck Key Storage keeps its own copy.
+
+- name: Vaultwarden | Store the automation login for direct runs
+  hosts: localhost
+  become: false
+  gather_facts: false
+  vars:
+    _login_file: "{{ playbook_dir }}/../../../config/vaultwarden.yml"
+
+  tasks:
+    - name: Assert the login and an Ansible Vault password source are present
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'BW_CLIENTID') | length > 0
+          - lookup('ansible.builtin.env', 'BW_CLIENTSECRET') | length > 0
+          - lookup('ansible.builtin.env', 'BW_PASSWORD') | length > 0
+          - >-
+            (lookup('ansible.builtin.env', 'LAB_VAULT_PASSWORD')
+             ~ lookup('ansible.builtin.env', 'ANSIBLE_VAULT_PASSWORD_FILE')
+             ~ lookup('ansible.builtin.env', 'ANSIBLE_VAULT_IDENTITY_LIST')) | length > 0
+        fail_msg: >-
+          Run this in Vault mode with the automation login supplied, and give the Ansible
+          Vault password as the job's ansible_vault_password option (or
+          ANSIBLE_VAULT_PASSWORD_FILE outside Rundeck).
+      no_log: true
+
+    - name: Write and read back config/vaultwarden.yml
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../scripts/vaultwarden-login.py"
+          - write
+          - "{{ _login_file }}"
+        stdin: ""
+      register: _login_write
+      changed_when: _login_write.stdout == 'written'
+      no_log: true
+
+    - name: Report the login file
+      ansible.builtin.debug:
+        msg: >-
+          config/vaultwarden.yml is {{ _login_write.stdout }}. Direct lab-run.sh runs now
+          need only the Ansible Vault password.

@@ -1,0 +1,43 @@
+# Vaultwarden Login File — store the automation login for runs outside Rundeck.
+# Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
+# raw import: the renderer injects the Key Storage login options this job stores.
+#
+# `ansible_vault_password` is a secure option with no storagePath: Rundeck prompts for it,
+# masks it in the form and the log, and never writes it to Key Storage or to this file.
+
+- id: a33679bc-439d-567b-9c08-7df8b762f16d
+  uuid: a33679bc-439d-567b-9c08-7df8b762f16d
+  name: Vaultwarden Login File
+  group: Setup/Credentials
+  description: |-
+    Store the automation account's Vaultwarden login in `config/vaultwarden.yml`,
+    encrypted with your Ansible Vault password.
+
+    With that file in place, `lab-run` runs directly from a shell or another operator
+    interface with only the Ansible Vault password. Rerun after rotating the automation
+    login or changing the Ansible Vault password; an unchanged rerun changes nothing.
+
+    > Run after Vaultwarden Cutover.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: ansible_vault_password
+    description: The operator's Ansible Vault password. Masked in the form and the log and
+      passed through the environment; never stored by Rundeck.
+    required: true
+    secure: true
+    valueExposed: true
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/maintenance/vaultwarden-login-file.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          : "${RD_OPTION_ANSIBLE_VAULT_PASSWORD:?ansible_vault_password is required}"
+          export LAB_VAULT_PASSWORD="$RD_OPTION_ANSIBLE_VAULT_PASSWORD"
+          exec lab-run playbooks/maintenance/vaultwarden-login-file.yml

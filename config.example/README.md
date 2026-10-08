@@ -22,6 +22,8 @@ Synthetic owner addresses do not require working mail.
 - `apps/<app>.example.yml` documents optional overrides for one application instance.
 - `apps/_template.example.yml` is the starting point for an application that does not yet
   have an example.
+- `vaultwarden.yml` has no example: the **Vaultwarden Login File** job writes it, holding
+  the automation login encrypted with the operator's Ansible Vault password.
 
 The authoritative schema and merge behavior are in
 [`../ansible/vars/CONTRACT.md`](../ansible/vars/CONTRACT.md). Application defaults live in

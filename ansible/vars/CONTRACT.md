@@ -575,6 +575,11 @@ options or config-file values:
 | `VAULTWARDEN_ADMIN_TOKEN` | server administration, enrollment and recovery | admin API only |
 | `RUNDECK_API_TOKEN` | job import/cutover control-plane calls | selected maintenance jobs only |
 
+Outside Rundeck, `lab-run.sh` reads the three `BW_*` values it was not given from
+`config/vaultwarden.yml`, decrypted with the Ansible Vault password from
+`ANSIBLE_VAULT_PASSWORD_FILE`, `ANSIBLE_VAULT_IDENTITY_LIST`, `LAB_VAULT_PASSWORD` or a
+terminal prompt. No playbook reads that file.
+
 Three more environment variables are Seed-mode inputs rather than control-plane material.
 `CLOUDFLARE_API_TOKEN` supplies the ACME DNS-01 challenge credential
 (`reverse_proxy.dns_challenge`), `LAB_DNS_API_KEY` / `LAB_DNS_API_SECRET` supply the

@@ -27,7 +27,9 @@ Read option names from `jobs/*.yaml`. After changing job definitions, run
 rd run -j 'Setup/Automation/Reimport Jobs' -p homelab-infra -f
 ```
 
-To test a branch, re-run the node-side bootstrap with `REPO_BRANCH=<branch>`, using
+Playbook changes are tested by running `lab-run` directly from a candidate checkout
+([`../ansible/README.md`](../ansible/README.md#running-directly)). To test job definitions
+on a branch, re-run the node-side bootstrap with `REPO_BRANCH=<branch>`, using
 the same private bootstrap inputs. This rewrites `LAB_BRANCH` in
 `/etc/homelab-infra/lab-run.env`. Reimport Jobs once that branch is configured if its
 job definitions changed; restore the usual branch through bootstrap afterward.
@@ -41,6 +43,12 @@ branches or starting the next job.
 
 Use the [root README](../README.md#bootstrap) for bootstrap, enrollment, and cutover.
 For input defaults and overrides, see the header of `bootstrap-rundeck.sh`.
+
+Run bootstrap only for a new runner, a change to bootstrap or the runner itself, or to
+point the runner at a branch. Run one attempt at a time: start it as one identifiable
+process on the node, follow its output, and wait for it to finish. An attempt keeps
+running after the shell or tool call that started it times out, so check for it before
+starting another. On failure, read the error, fix the repository and run again.
 
 Vaultwarden identity inputs are first-run answers, not identity-change controls.
 Both direct bootstrap Enrollment and the Rundeck Enrollment job use the preserved
@@ -354,6 +362,7 @@ and ordinary jobs cannot read replacements.
 | `.../client-secret` | automation API client secret | secure option on vault-backed jobs |
 | `.../master-password` | automation master password | secure option on vault-backed jobs |
 | `.../admin-token` | Vaultwarden server administration token | enrollment/cutover only |
+| `config/vaultwarden.yml` on the runner | automation client ID, client secret and master password, each Ansible Vault encrypted | direct `lab-run` outside Rundeck; written by **Vaultwarden Login File** |
 | `keys/project/homelab-infra/rundeck/api-token` | Rundeck API token | job import/cutover only |
 | `keys/project/homelab-infra/bootstrap/cloudflare-api-token` | temporary token scoped to Zone Read and DNS Edit | Caddy Seed bootstrap and cutover; deleted after exact Vaultwarden readback |
 

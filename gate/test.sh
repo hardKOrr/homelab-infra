@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test gate: --syntax-check every playbook, then the five logic suites.
+# Test gate: --syntax-check every playbook, then the six logic suites.
 set -uo pipefail
 
 # STDIN IS CLOSED FOR THE WHOLE GATE, DELIBERATELY. See the same note in gate/lint.sh:
@@ -74,4 +74,5 @@ bash gate/test-vmid-from-ip.sh || rc=1
 "$py" gate/test-config.py || rc=1
 "$py" gate/test-rundeck-yaml.py || rc=1
 "$py" gate/test-template-rendering.py || rc=1
+"$py" gate/test-vaultwarden-login.py || rc=1
 exit $rc
