@@ -31,12 +31,13 @@ automation login from Key Storage, it stores that login in `config/vaultwarden.y
 value encrypted with the password. Run it again after rotating the automation login or
 changing the password.
 
-A direct run then supplies only the Ansible Vault password, through
-`ANSIBLE_VAULT_PASSWORD_FILE` (a file, `/dev/stdin`, or an executable that prints it),
+A direct run then supplies only the Ansible Vault password, through `LAB_VAULT_PASSWORD`,
+`ANSIBLE_VAULT_PASSWORD_FILE` (a file, or an executable that prints it),
 `ANSIBLE_VAULT_IDENTITY_LIST=lab@prompt`, or the prompt `lab-run` shows on a terminal.
-`lab-run` reads it once, fills the missing `BW_CLIENTID`, `BW_CLIENTSECRET` and
-`BW_PASSWORD` from the file, and continues through the same Vault-mode guard and
-Vaultwarden preflight as a job. A file it cannot decrypt stops the run.
+`lab-run` reads it once, unsets those variables, fills the missing `BW_CLIENTID`,
+`BW_CLIENTSECRET` and `BW_PASSWORD` from the file, and continues through the same
+Vault-mode guard and Vaultwarden preflight as a job. A file it cannot decrypt stops the
+run.
 
 Run a candidate revision from its own checkout beside the runner checkout, with refresh off
 and `config/` linked to the runner's. On the runner (`pct exec <runner-vmid>` from its
@@ -52,12 +53,15 @@ sudo -u rundeck -H bash -c '
   git -C "$1" checkout --quiet --detach FETCH_HEAD
   git -C "$1" log --oneline -1' _ "$c" <branch>
 
-sudo -u rundeck -H env LAB_REPO="$c" LAB_REFRESH=0 ANSIBLE_VAULT_PASSWORD_FILE=/dev/stdin \
+IFS= read -r LAB_VAULT_PASSWORD; export LAB_VAULT_PASSWORD
+sudo -u rundeck -H --preserve-env=LAB_VAULT_PASSWORD env LAB_REPO="$c" LAB_REFRESH=0 \
   bash "$c/ansible/scripts/lab-run.sh" playbooks/apps/<app>.yml -e instance=<instance>
 ```
 
-Feed the password on stdin from wherever you keep it, for example through
-`ssh root@<pve-node> pct exec <runner-vmid> -- ...`. `/etc/homelab-infra/lab-run.env`
+Feed the password on root's stdin from wherever you keep it, for example through
+`ssh root@<pve-node> pct exec <runner-vmid> -- ...`. Pass it in the environment as above:
+the `rundeck` user cannot reopen root's stdin as `/dev/stdin`, and a command argument
+would show it to every local account. `/etc/homelab-infra/lab-run.env`
 still supplies the venv, `BW_SERVER` and CA settings, and `LAB_STATE_DIR` defaults to
 `/etc/homelab-infra/state`, so the run sees the same lab mode as every job. The runner
 checkout stays on `LAB_BRANCH` for Rundeck.
