@@ -18,7 +18,7 @@
       configured PBS before an on-demand backup can run.
 
 - name: Actual Budget backup | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
   vars:
     k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
 

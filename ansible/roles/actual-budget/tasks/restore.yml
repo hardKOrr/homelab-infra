@@ -16,7 +16,7 @@
       overwrite=false to list snapshots before selecting one.
 
 - name: Actual Budget restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
   vars:
     k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
 

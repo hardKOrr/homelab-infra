@@ -46,6 +46,10 @@
         that: instance is defined and instance | length > 0
         fail_msg: "Provide the instance to back up: -e instance=mixpost"
 
+    - name: Publish the application backup dispatch across plays
+      ansible.builtin.set_fact:
+        _ba_app: "{{ _ba_app }}"
+
     - name: Load app defaults (optional — absent for an app with no defaults file)
       ansible.builtin.include_vars:
         file: "../../vars/app-defaults/{{ _ba_app }}.yml"

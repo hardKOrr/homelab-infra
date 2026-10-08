@@ -76,4 +76,5 @@ bash gate/test-vmid-from-ip.sh || rc=1
 "$py" gate/test-template-rendering.py || rc=1
 "$py" gate/test-vaultwarden-login.py || rc=1
 "$py" gate/test-actual-budget-password.py || rc=1
+"$py" gate/test-recovery-dispatch.py || rc=1
 exit $rc

@@ -131,6 +131,16 @@
         fail_msg: >-
           Provide the instance that owns the backup: -e instance=mixpost
 
+    - name: Publish the application restore dispatch across plays
+      ansible.builtin.set_fact:
+        _ra_app: "{{ _ra_app }}"
+        _ra_target: "{{ _ra_target }}"
+        _ra_method: "{{ _ra_method }}"
+        _ra_destination: "{{ _ra_destination }}"
+        _ra_recovery_point: "{{ _ra_recovery_point }}"
+        _ra_overwrite: "{{ _ra_overwrite }}"
+        _ra_pre_restore_point: "{{ _ra_pre_restore_point }}"
+
     # Tolerated rather than required, so an unknown app name produces the assert below —
     # which names the actual problem — instead of an include_vars file-not-found crash.
     - name: Load app defaults (optional — absent for an app with no defaults file)
