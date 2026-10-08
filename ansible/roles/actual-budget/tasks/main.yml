@@ -77,25 +77,14 @@
   delay: 5
   changed_when: false
 
-# The upstream reset utility prompts twice and writes the password hash into
-# account.sqlite. Feeding it through stdin keeps the generated credential out of command
-# arguments and lets the application own its native authentication format.
+# The upstream reset utility needs a terminal for its two masked prompts. The helper
+# receives the credential on stdin and gives the native utility a private pseudo-terminal.
 - name: Actual Budget | Initialize the application server password
-  ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - --project-directory
-      - "{{ actual_budget_project_dir }}"
-      - exec
-      - -T
-      - "{{ app_config.app.service_name }}"
-      - node
-      - /app/src/scripts/reset-password.js
-    stdin: "{{ _actual_budget_server_password }}\n{{ _actual_budget_server_password }}\n"
+  ansible.builtin.include_tasks: reset-password.yml
+  vars:
+    actual_budget_reset_password: "{{ _actual_budget_server_password }}"
   when: not _actual_budget_password_marker.stat.exists
   no_log: true
-  changed_when: true
 
 - name: Actual Budget | Record password initialization
   ansible.builtin.copy:

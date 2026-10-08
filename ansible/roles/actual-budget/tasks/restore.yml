@@ -202,21 +202,11 @@
     # account.sqlite. This is still Actual's own authentication utility; the platform does
     # not write or invent a second authentication database.
     - name: Actual Budget restore | Reapply the Vaultwarden-owned server password
-      ansible.builtin.command:
-        argv:
-          - docker
-          - compose
-          - --project-directory
-          - "{{ actual_budget_project_dir }}"
-          - exec
-          - -T
-          - "{{ app_config.app.service_name }}"
-          - node
-          - /app/src/scripts/reset-password.js
-        stdin: "{{ app_config.app.server_password }}\n{{ app_config.app.server_password }}\n"
+      ansible.builtin.include_tasks: reset-password.yml
+      vars:
+        actual_budget_reset_password: "{{ app_config.app.server_password }}"
       when: app_config.app.server_password | default('') | length > 0
       no_log: true
-      changed_when: true
 
     - name: Actual Budget restore | Mark the recovery complete
       ansible.builtin.set_fact:
