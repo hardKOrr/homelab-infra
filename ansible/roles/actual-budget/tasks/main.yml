@@ -3,6 +3,10 @@
 # application-owned account.sqlite file. Generate it once, write it to Vaultwarden, and
 # use the application's own reset utility on first deployment. Later converges leave the
 # password and every user-created budget untouched.
+- name: Actual Budget | Install Docker on the services host
+  ansible.builtin.include_role:
+    name: docker
+
 - name: Actual Budget | Create project directory
   ansible.builtin.file:
     path: "{{ actual_budget_project_dir }}"
