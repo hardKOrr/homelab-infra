@@ -226,7 +226,7 @@
     - name: Bazarr restore | Extract the archived API key
       ansible.builtin.set_fact:
         _bazarr_api_key: >-
-          {{ (_bazarr_config.content | b64decode | from_yaml).auth.apikey | default('') }}
+          {{ ((_bazarr_config.content | b64decode | from_yaml).auth | default({})).apikey | default('') }}
       no_log: true
 
     - name: Bazarr restore | Require the archived API key

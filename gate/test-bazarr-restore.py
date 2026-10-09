@@ -82,7 +82,8 @@ mount=args[args.index('--volume')+1]
 assert mount.endswith(':/restore')
 Path(mount[:-9], 'restored.txt').write_text('restored state\\n')
 Path(mount[:-9], 'config').mkdir()
-Path(mount[:-9], 'config/config.yaml').write_text('auth:\\n  apikey: fixture-key\\n')
+text='general: {}\\n' if os.environ['BAZARR_TEST_CASE']=='missing-auth' else 'auth:\\n  apikey: fixture-key\\n'
+Path(mount[:-9], 'config/config.yaml').write_text(text)
 """,
             "cp": """#!/usr/bin/env python3
 import os,subprocess,sys
@@ -166,21 +167,37 @@ def main():
     try:
         # Deploy and Restore must read the same nested YAML credential.
         deploy = yaml.safe_load((repo / "ansible/roles/bazarr/tasks/main.yml").read_text())
-        extract = next(t for t in deploy if t["name"] == "Extract the Bazarr API key")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "credential.yml"
-            path.write_text(yaml.safe_dump([{
-                "hosts": "localhost", "gather_facts": False,
-                "vars": {"_bazarr_config": {"content": base64.b64encode(
-                    b"auth:\n  apikey: fixture-key\n").decode()}},
-                "tasks": [extract, {"ansible.builtin.assert": {
-                    "that": ["_bazarr_api_key == 'fixture-key'"]}}],
-            }]))
-            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                    text=True, capture_output=True, check=False)
-            assert result.returncode == 0, result.stdout + result.stderr
+        restore = next(t["block"] for t in source if "block" in t)
+        for tasks, extract_name, guard_name in [
+            (deploy, "Extract the Bazarr API key", "Assert Bazarr generated an API key"),
+            (restore, "Bazarr restore | Extract the archived API key",
+             "Bazarr restore | Require the archived API key"),
+        ]:
+            extract = next(t for t in tasks if t["name"] == extract_name)
+            guard = next(t for t in tasks if t["name"] == guard_name)
+            for config, expected in [("auth:\n  apikey: fixture-key\n", "fixture-key"),
+                                     ("general: {}\n", ""), ("auth: {}\n", "")]:
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "credential.yml"
+                    path.write_text(yaml.safe_dump([{
+                        "hosts": "localhost", "gather_facts": False,
+                        "vars": {"_bazarr_config": {"content": base64.b64encode(
+                            config.encode()).decode()}},
+                        "tasks": [extract, {"ansible.builtin.assert": {
+                            "that": [f"_bazarr_api_key == '{expected}'"]}}, {
+                            "block": [guard, {"ansible.builtin.assert": {"that": [bool(expected)]}}],
+                            "rescue": [{"ansible.builtin.assert": {"that": [
+                                not bool(expected),
+                                f"ansible_failed_task.name == '{guard_name}'",
+                                "_bazarr_api_key == ''",
+                            ]}}],
+                        }],
+                    }]))
+                    result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                            text=True, capture_output=True, check=False)
+                    assert result.returncode == 0, result.stdout + result.stderr
         for case in ["plan", "foreign-group", "extract-failure", "move-failure", "copy-failure",
-                     "ownership-failure", "start-failure", "health-failure", "credential-failure", "success"]:
+                     "ownership-failure", "start-failure", "health-failure", "credential-failure", "missing-auth", "success"]:
             check(case, server)
     finally:
         server.shutdown()
