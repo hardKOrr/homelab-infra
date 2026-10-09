@@ -48,3 +48,12 @@ Live runs are serial across the whole lab: every Rundeck job resets the one runn
 checkout to `origin/$LAB_BRANCH`, so two concurrent runs corrupt each other. Test an
 unmerged branch by pointing the runner at that branch (see `rundeck/README.md`), and never
 change `LAB_BRANCH` while a job is running.
+
+## GitHub coordination
+
+GitHub owns work scope, decisions and progress. Follow [GitHub coordination](README.md#github-coordination)
+for AO work. Publish significant milestones, blockers, review fixes and final validation
+on the PR (the issue before a PR exists), preserving history in comments. Do not use
+`ao report`, routine agent messages, acknowledgements or duplicate CI/review relays.
+The watcher admits selected issues through assignment, handles approved merges and
+completed workers, and resumes a worker only for an explicit operator command.

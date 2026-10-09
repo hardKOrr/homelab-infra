@@ -142,3 +142,35 @@ before ordinary jobs. Follow [runner recovery](rundeck/RUNNER-RECOVERY.md) and
 | Look up a config key | [Variable contract](ansible/vars/CONTRACT.md) |
 | Add an app | [App authoring](ansible/playbooks/apps/README.md) |
 | Add an estate | [Estate onboarding](docs/estate-onboarding.md) |
+
+## GitHub coordination
+
+For AO work, GitHub issues own scope and dependencies; PR comments preserve decisions,
+meaningful milestones, blockers, review fixes and final validation. Keep the PR body
+current too. Before a PR exists, use the issue. Preserve any issue-specific requirement
+for a single final result comment. Public text uses [lab placeholders](docs/lab-placeholders.md).
+
+Select authorized work with `ao:ready` and one explicit dependency field in the issue body:
+`<!-- ao-dependencies: none -->` or `<!-- ao-dependencies: #123 #456 -->`. Dependencies
+must be closed; `ao:blocked` prevents admission. The watcher admits one issue at a time
+through assignment, checking task ownership and usage limits. Orchestrators plan or
+handle operator-requested exceptions; they do not spawn around the queue.
+
+Workers append an event marker to each significant comment, substituting their actual
+`AO_SESSION_ID`: `<!-- ao-event session=homelab-infra-123 kind=checkpoint -->`.
+Use `kind=blocked` for one concrete question or unmet prerequisite, then stop; the watcher
+alerts the operator once with the comment link. Use `kind=done` only after the full issue
+scope and required validation pass. Failed, unverified and partial results never count
+as done. Include the tested SHA, commands/results and remaining limits in the final comment.
+
+Answer with a new issue/PR comment whose first line is
+`/ao continue homelab-infra-123`, optionally followed by the decision. Only an explicit
+command from the configured operator resumes that worker; ordinary comments do not.
+After resuming, publish fresh completion before merge or retirement. Never include secrets.
+
+AO delivers CI/review feedback directly to the owning worker. Do not use `ao report`,
+send routine coordination messages, relay that feedback again, acknowledge receipts or
+poll other agents for status. Claim the PR and make it ready once acceptance and checks
+pass; use `Closes #<issue>` only when its full scope is satisfied. The watcher verifies
+current-head approval, CI and mergeability, then merges, closes the completed issue and
+retires the idle worker. Existing ownership, recovery and serial live-operation guards apply.
