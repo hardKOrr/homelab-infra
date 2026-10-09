@@ -498,10 +498,22 @@ def execute(manifest, confirmation, retention, unwired, journal):
         if key not in done['completed']:
             done['completed'].append(key)
             write_private(journal, done)
+
+    def delete_storage(obj):
+        nonlocal records
+        require(obj['identity'] == 'pbs-homelab', 'Only pbs-homelab storage retirement supported.')
+        delete_object(obj, records)
+        key = 'storage:' + obj['identity']
+        if key not in done['completed'] or key in records.get('objects', {}):
+            withdraw('storage', obj['identity'], obj['signature'], manifest['node'])
+            # Retirement changes provenance; later deletions still require exact equality.
+            records = read_private(RECORD)
+
     for kind in ['backup', 'storage']:
         for obj in manifest['objects']:
             if obj['kind'] == kind:
-                step(kind + ':' + obj['identity'], lambda obj=obj: delete_object(obj, records))
+                step(kind + ':' + obj['identity'], lambda obj=obj: (
+                    delete_storage(obj) if obj['kind'] == 'storage' else delete_object(obj, records)))
     for guest in sorted(manifest['guests'], key=lambda g: (
             str(g['identity']['vmid']) == manifest['runner'], '_.template' in g['tags'])):
         step('guest:' + str(guest['identity']['vmid']), lambda guest=guest: destroy_guest(guest))
