@@ -146,7 +146,9 @@ authenticated API check.
 Prowlarr, Sonarr, Radarr and Lidarr share Servarr native recovery. Backup stops only the
 selected instance and captures its config directory (including `<app>.db`, `config.xml`
 and the verified API key) as one PBS `data.pxar` in `host/<instance>`. Logs, `logs.db`
-and local `Backups` are excluded; media mounts remain outside recovery. Restore previews
+and local `Backups` are excluded; media mounts remain outside recovery. Pruning retains
+the two newest snapshots in addition to daily retention, so a same-day pre-restore safety
+backup keeps the immediately preceding recovery point. Restore previews
 without mutation until `overwrite=true`, validates the selected backup group and staged
 database/configuration, then adopts the archived API key in Compose and the canonical
 `homelab-infra/media/<instance>` item after an authenticated API check. A subsequent
