@@ -1,4 +1,8 @@
 ---
+- name: Ensure Docker is available for Tautulli deployment
+  ansible.builtin.include_role:
+    name: docker
+
 # Tautulli's official image accepts settings as TAUTULLI_<setting> environment variables. The Plex token comes from the Plex role's verified Vaultwarden item; this role deliberately never reads another app's on-disk configuration.
 - name: Resolve Tautulli paths and Plex credentials
   ansible.builtin.set_fact:

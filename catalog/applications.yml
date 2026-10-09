@@ -173,6 +173,7 @@ applications:
     category: Media & Entertainment
     type: Media Analytics
     scope: estate
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   jellyseerr:
     name: Jellyseerr

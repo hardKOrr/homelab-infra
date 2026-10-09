@@ -736,7 +736,7 @@
                                                    | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
                                                              '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
                                  }}, recursive=True)
-                               if hostvars['localhost']._ra_app == 'home-assistant'
+                               if hostvars['localhost']._ra_app in ['home-assistant', 'tautulli']
                                else hostvars['localhost'].restore_target_config)))) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
