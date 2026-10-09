@@ -54,6 +54,9 @@ def main():
             source = yaml.safe_load((repo / "ansible/roles/plex/tasks/main.yml").read_text())
             extract = next(task for task in source if task["name"] ==
                            "Extract the Plex server token for media consumers")
+            token_guard = next(task for task in source if task["name"] ==
+                               "Assert Plex exchanged the claim token for a server token")
+            restore = yaml.safe_load((repo / "ansible/roles/plex/tasks/restore.yml").read_text())
             play = [{
                 "hosts": "localhost", "gather_facts": False,
                 "vars": {
@@ -70,6 +73,7 @@ def main():
                 },
                 "tasks": [
                     extract,
+                    token_guard,
                     {"ansible.builtin.assert": {"that": ["_plex_server_token == 'fixture-server-token'"]}},
                     {"ansible.builtin.include_tasks": str(repo / "ansible/tasks/recovery/resolve-method.yml")},
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
@@ -80,17 +84,50 @@ def main():
                 ],
             }]
             path = Path(directory) / "plan.yml"
-            path.write_text(yaml.safe_dump(play))
             env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
                                 "ANSIBLE_ROLES_PATH": str(repo / "ansible/roles")}
-            result = subprocess.run([str(dispatch.ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                    env=env, capture_output=True, text=True, check=False)
-            assert result.returncode == 0, result.stdout + result.stderr
+
+            def run(tasks, overrides=None, failure=None):
+                candidate = [{**play[0], "vars": play[0]["vars"] | (overrides or {}), "tasks": tasks}]
+                path.write_text(yaml.safe_dump(candidate))
+                result = subprocess.run([str(dispatch.ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                        env=env, capture_output=True, text=True, check=False)
+                output = result.stdout + result.stderr
+                if failure:
+                    assert result.returncode != 0 and failure in output, output
+                else:
+                    assert result.returncode == 0, output
+
+            run(play[0]["tasks"])
+            run([{"ansible.builtin.include_role": {"name": "plex", "tasks_from": "restore"}}],
+                {"restore_backup_id": "plex-source", "restore_snapshot": "host/plex-source/fixture"})
+            # The production role must reject a different group before stopping Plex.
+            for snapshot in ["host/another-app/fixture", "host/plex-copy/fixture"]:
+                run([{"ansible.builtin.include_role": {"name": "plex", "tasks_from": "restore"}}],
+                    {"restore_overwrite": True, "restore_snapshot": snapshot},
+                    "must belong to the requested host backup group")
+            # Exercise the actual tempfile task without invoking Docker or replacing state.
+            staging = next(task for task in restore if task["name"] ==
+                           "Plex restore | Create a private staging directory")
+            run([staging, {"ansible.builtin.assert": {"that": [
+                "(_plex_restore_tmp.path | dirname) == app_config.app.config_path"]}},
+                 {"ansible.builtin.file": {"path": "{{ _plex_restore_tmp.path }}", "state": "absent"}}],
+                {"restore_overwrite": True})
+            restored_tasks = next(task["block"] for task in restore if "block" in task)
+            restored_extract = next(task for task in restored_tasks if task["name"] ==
+                                    "Plex restore | Resolve the restored server token")
+            restored_guard = next(task for task in restored_tasks if task["name"] ==
+                                  "Plex restore | Require the restored server token")
+            for preferences in [b'<Preferences/>', b'<Preferences PlexOnlineToken=""/>']:
+                content = {"content": base64.b64encode(preferences).decode()}
+                run([extract, token_guard], {"_plex_preferences_after": content}, "lacks PlexOnlineToken")
+                run([restored_extract, restored_guard], {"_plex_restored_preferences": content},
+                    "lacks PlexOnlineToken")
             assert sentinel.read_text() == "preserve me"
     finally:
         server.shutdown()
         server.server_close()
-    print("Plex recovery: native dispatch and read-only restore guard passed")
+    print("Plex recovery: dispatch, preview, source group, config-volume staging and token guards passed")
 
 
 if __name__ == "__main__":

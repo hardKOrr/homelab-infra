@@ -50,6 +50,13 @@
       {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
   no_log: true
 
+- name: Plex restore | Require the selected backup group
+  ansible.builtin.assert:
+    that: >-
+      (restore_snapshot | default('') | length == 0) or
+      restore_snapshot.startswith('host/' ~ _plex_restore_backup_id ~ '/')
+    fail_msg: "The selected Plex snapshot must belong to the requested host backup group."
+
 - name: Plex restore | List available snapshots
   when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
   ansible.builtin.command:
@@ -109,6 +116,7 @@
 - name: Plex restore | Create a private staging directory
   ansible.builtin.tempfile:
     state: directory
+    path: "{{ app_config.app.config_path }}"
     prefix: "{{ instance }}-plex-restore-"
   register: _plex_restore_tmp
   when: restore_overwrite | bool
@@ -241,8 +249,13 @@
       ansible.builtin.set_fact:
         _plex_restored_token: >-
           {{ (_plex_restored_preferences.content | b64decode
-              | regex_findall('PlexOnlineToken="([^"]+)"') | first) }}
+              | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
       no_log: true
+
+    - name: Plex restore | Require the restored server token
+      ansible.builtin.assert:
+        that: _plex_restored_token | length > 0
+        fail_msg: "Restored Preferences.xml lacks PlexOnlineToken; authenticated recovery cannot continue."
 
     - name: Plex restore | Verify the restored token through Plex
       ansible.builtin.uri:
