@@ -158,6 +158,15 @@ original config directory beside the live path until verified recovery succeeds.
 restore leaves the service stopped and reports the retained directory for inspection;
 it does not automatically put that directory back or revert the Compose API-key overrides.
 
+Bazarr native recovery stops only the selected service and archives its config directory
+as one PBS `data.pxar` in `host/<instance>`, excluding `log` and `cache`. Backup retains
+the two newest snapshots alongside daily retention, preserving the selected recovery
+point when the fresh instance is backed up. Restore previews until `overwrite=true`,
+checks the source group, and retains the original directory on the same filesystem until
+an authenticated settings check and canonical API-key publication succeed. A failure
+puts the original state back and leaves Bazarr stopped. The final Deploy keeps the
+restored API key, language profiles and settings.
+
 ### Application data port
 
 The issue names the source, destination, capture method, required path or address

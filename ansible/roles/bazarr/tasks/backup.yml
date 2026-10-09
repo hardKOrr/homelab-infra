@@ -1,0 +1,112 @@
+---
+# Quiesce Bazarr so its SQLite data and settings share one recovery point.
+# Logs and cache are disposable and never enter the application archive.
+
+- name: Bazarr backup | Assert the backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Bazarr needs its declared application-consistent backup contract and a
+      configured PBS before an on-demand backup can run.
+
+- name: Bazarr backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Bazarr backup | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Bazarr. Deploy PBS and re-run this backup;
+      no local archive is treated as a recovery point.
+
+- name: Bazarr backup | Check the application data path
+  ansible.builtin.stat:
+    path: "{{ app_config.app.config_path }}"
+  register: _bazarr_backup_data
+  changed_when: false
+
+- name: Bazarr backup | Assert the data path is a directory
+  ansible.builtin.assert:
+    that:
+      - _bazarr_backup_data.stat.exists
+      - _bazarr_backup_data.stat.isdir
+    fail_msg: >-
+      Bazarr data path {{ app_config.app.config_path }} is missing; refusing to
+      create a backup that would not contain the application's persistent state.
+
+- name: Bazarr backup | Stop only Bazarr
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ instance }}"
+    state: stopped
+    services:
+      - "{{ instance }}"
+
+- name: Bazarr backup | Archive the quiesced data directory to PBS
+  block:
+    - name: Bazarr backup | Push one application archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ app_config.app.config_path }}:/source:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID" \
+              --exclude /log --exclude /cache
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
+            echo "backup complete: host/$BACKUP_ID"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+      no_log: true
+      changed_when: true
+
+    - name: Bazarr backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    # A failed PBS upload must not leave the application down. The backup task's failure
+    # still propagates, while this service restart is limited to Bazarr itself.
+    - name: Bazarr backup | Start only Bazarr
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ instance }}"
+        state: present
+        services:
+          - "{{ instance }}"

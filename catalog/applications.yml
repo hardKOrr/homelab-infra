@@ -108,6 +108,7 @@ applications:
     category: Media & Entertainment
     type: Library Automation
     scope: estate
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   deemix:
     name: Deemix

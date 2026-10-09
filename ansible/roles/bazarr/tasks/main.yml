@@ -72,9 +72,7 @@
 - name: Extract the Bazarr API key
   ansible.builtin.set_fact:
     _bazarr_api_key: >-
-      {{ (_bazarr_config.content | b64decode
-          | regex_search('(?m)^apikey:[ \\t]*([^\\s#]+)', '\\1')
-          | default([], true) | join('')) }}
+      {{ (_bazarr_config.content | b64decode | from_yaml).auth.apikey | default('') }}
   no_log: true
 
 - name: Assert Bazarr generated an API key
