@@ -158,6 +158,7 @@ applications:
     actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   plex:
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
     name: Plex
     job: deploy-plex.yaml
     root: Applications

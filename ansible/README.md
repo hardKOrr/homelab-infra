@@ -122,6 +122,13 @@ its configuration and wiring. For multiple instances, verify siblings stay intac
 application has no backup and restore yet, build them in the repository before step 4.
 Restoring a whole stack guest does not prove one application's restore.
 
+Plex native recovery captures its stopped service's server identity, library databases,
+Metadata and Media as one PBS `data.pxar` in `host/<instance>`. Cache, Codecs, Crash
+Reports and Logs are excluded; external media mounts and transcode are outside the
+recovery unit. Restore requires `overwrite=true`, preserves declared media paths, and
+publishes the restored server token to `homelab-infra/media/<instance>` after an
+authenticated API check.
+
 ### Application data port
 
 The issue names the source, destination, capture method, required path or address

@@ -57,10 +57,11 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for operation in ["backup", "restore"]:
+        for application in ["actual-budget", "plex"]:
+          for operation in ["backup", "restore"]:
             tasks.append({
                 "block": [{"ansible.builtin.include_role": {
-                    "name": "actual-budget", "tasks_from": operation}}],
+                    "name": application, "tasks_from": operation}}],
                 "rescue": [{"ansible.builtin.assert": {"that": [
                     "ansible_failed_result.msg is search('No usable PBS')",
                     "not k8s_pbs_available"]}}],
