@@ -23,6 +23,37 @@
       Plex instance {{ _tautulli_plex_instance }} has no server token in Vaultwarden. Deploy or converge that Plex instance first, then rerun {{ instance }}.
   no_log: true
 
+- name: Read the selected Plex server identity without changing Plex
+  community.docker.docker_container_exec:
+    container: "{{ _tautulli_plex_instance }}"
+    argv:
+      - curl
+      - --fail
+      - --silent
+      - --show-error
+      - --max-time
+      - "30"
+      - --header
+      - "X-Plex-Token:{{ _tautulli_plex_token }}"
+      - http://localhost:32400/identity
+  register: _tautulli_plex_discovery
+  until:
+    - _tautulli_plex_discovery.rc | default(1) == 0
+    - >-
+      (_tautulli_plex_discovery.stdout | default('')
+       | regex_findall('machineIdentifier="([a-zA-Z0-9_-]+)"')) | length == 1
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Resolve the verified Plex machine identifier for Tautulli
+  ansible.builtin.set_fact:
+    _tautulli_plex_identifier: >-
+      {{ (_tautulli_plex_discovery.stdout
+          | regex_findall('machineIdentifier="([a-zA-Z0-9_-]+)"')) | first }}
+  no_log: true
+
 - name: Create Tautulli project and persistent directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -94,7 +125,27 @@
     return_content: true
     status_code: 200
   register: _tautulli_server_identity
-  until: _tautulli_server_identity.status | default(0) == 200
+  until:
+    - _tautulli_server_identity.status | default(0) == 200
+    - >-
+      (_tautulli_server_identity.json.response.data.machine_identifier | default(''))
+      == _tautulli_plex_identifier
+  retries: "{{ tautulli_http_retries }}"
+  delay: "{{ tautulli_http_delay }}"
+  changed_when: false
+  no_log: true
+
+- name: Wait for Tautulli to import the selected Plex admin
+  ansible.builtin.uri:
+    url: "{{ _tautulli_base }}/api/v2?cmd=get_users&apikey={{ _tautulli_api_key }}"
+    return_content: true
+    status_code: 200
+  register: _tautulli_users
+  until:
+    - _tautulli_users.status | default(0) == 200
+    - >-
+      (_tautulli_users.json.response.data | default([])
+       | selectattr('is_admin', 'equalto', 1) | list | length) > 0
   retries: "{{ tautulli_http_retries }}"
   delay: "{{ tautulli_http_delay }}"
   changed_when: false
