@@ -194,12 +194,44 @@
         that: _servarr_restored_key | length > 0
         fail_msg: "Restored config.xml lacks ApiKey; live state was preserved."
 
-    # The archive is complete before the live path is removed. If extraction fails, the
-    # original data remains in place; a failed restore leaves the service stopped.
-    - name: Servarr restore | Replace the data directory
-      ansible.builtin.file:
-        path: "{{ app_config.app.config_path }}"
-        state: absent
+    - name: Servarr restore | Read the Compose key overrides
+      ansible.builtin.slurp:
+        src: "{{ servarr_project_dir }}/docker-compose.yml"
+      register: _servarr_restore_compose
+      no_log: true
+
+    - name: Servarr restore | Resolve the Compose override names
+      ansible.builtin.set_fact:
+        _servarr_restore_override_names: >-
+          {{ (_servarr_restore_compose.content | b64decode
+              | regex_findall('(?m)^\s*- (' ~ (app_config.app.media_kind | upper)
+                              ~ '__(?:AUTH__)?APIKEY)=.*$')) | sort }}
+      no_log: true
+
+    - name: Servarr restore | Require both Compose key overrides
+      ansible.builtin.assert:
+        that: >-
+          _servarr_restore_override_names ==
+          [(app_config.app.media_kind | upper) ~ '__APIKEY',
+           (app_config.app.media_kind | upper) ~ '__AUTH__APIKEY']
+        fail_msg: "Compose must contain exactly one legacy and one AUTH API-key override; live state was preserved."
+
+    # Keep the original on the config filesystem until authenticated recovery and
+    # credential publication succeed. A failed copy/chown cannot destroy it.
+    - name: Servarr restore | Create a private original-state directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ app_config.app.config_path | dirname }}"
+        prefix: "{{ instance }}-servarr-original-"
+      register: _servarr_restore_original
+
+    - name: Servarr restore | Preserve the original data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ app_config.app.config_path }}"
+          - "{{ _servarr_restore_original.path }}/config"
+      changed_when: true
 
     - name: Servarr restore | Recreate the data directory
       ansible.builtin.file:
@@ -263,6 +295,11 @@
         vault_item_secret_fields: [api_key]
       no_log: true
 
+    - name: Servarr restore | Remove the verified original-state copy
+      ansible.builtin.file:
+        path: "{{ _servarr_restore_original.path }}"
+        state: absent
+
     - name: Servarr restore | Mark the recovery complete
       ansible.builtin.set_fact:
         _application_restore_complete: true
@@ -277,7 +314,9 @@
       ansible.builtin.fail:
         msg: >-
           Servarr restore failed. The service was left stopped rather than serving
-          partial state; inspect the job output and rerun the restore after correcting it.
+          partial state. Original data is retained at
+          {{ _servarr_restore_original.path | default(app_config.app.config_path) }}
+          (or the live path if the move failed). Inspect the job output before retrying.
   always:
     - name: Servarr restore | Remove private staging data
       ansible.builtin.file:

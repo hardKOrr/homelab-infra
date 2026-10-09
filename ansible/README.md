@@ -138,6 +138,9 @@ without mutation until `overwrite=true`, validates the selected backup group and
 database/configuration, then adopts the archived API key in Compose and the canonical
 `homelab-infra/media/<instance>` item after an authenticated API check. A subsequent
 Deploy keeps that key and the recovered application state.
+Restore requires both Compose API-key overrides before replacing state, and retains the
+original config directory beside the live path until verified recovery succeeds. A failed
+restore leaves the service stopped and reports the retained directory for inspection.
 
 ### Application data port
 
