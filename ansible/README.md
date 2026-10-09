@@ -110,17 +110,30 @@ to the same inputs.
    the backup remains, and other applications are unaffected. The stack host stays;
    Remove never destroys a guest.
 6. Deploy a fresh instance with the same name. Verify it works and neither canary is
-   present. Run Restore with `overwrite=false` to preview, then restore the recorded
-   recovery point with overwrite.
+   present. An overwrite Restore of an existing target requires `pre_restore_point`;
+   back up the fresh instance with Backup App, verify that point exists, and pass it as
+   `pre_restore_point`. Run Restore with `overwrite=false` to preview, then restore the
+   recovery point recorded in step 4 with overwrite.
 7. Read both canaries back exactly, verify login and unique wiring, then Deploy once more.
    Restored data, configuration and the other applications remain.
+
+After the fresh Deploy in step 6, an SSO-protected route can return 404 for up to about
+five minutes while the Authentik embedded outpost reconnects. Wait and retry the same
+check in steps 6/7; restart nothing.
 
 A check that cannot be read back counts as unverified.
 
 For a stateless application, skip backup and restore and prove a fresh deploy recreates
 its configuration and wiring. For multiple instances, verify siblings stay intact. If the
 application has no backup and restore yet, build them in the repository before step 4.
+For those new implementations, `restore.yml` must move the original state aside on the
+same filesystem before replacing it and put it back on any later failure, as
+[`roles/tautulli/tasks/restore.yml`](roles/tautulli/tasks/restore.yml) and
+[`roles/plex/tasks/restore.yml`](roles/plex/tasks/restore.yml) do. Add gate regressions for
+failures after the move.
 Restoring a whole stack guest does not prove one application's restore.
+
+After the drill, when no PR is needed, post the result comment and close the issue.
 
 Plex native recovery captures its stopped service's server identity, library databases,
 Metadata and Media as one PBS `data.pxar` in `host/<instance>`. Cache, Codecs, Crash
@@ -140,7 +153,8 @@ database/configuration, then adopts the archived API key in Compose and the cano
 Deploy keeps that key and the recovered application state.
 Restore requires both Compose API-key overrides before replacing state, and retains the
 original config directory beside the live path until verified recovery succeeds. A failed
-restore leaves the service stopped and reports the retained directory for inspection.
+restore leaves the service stopped and reports the retained directory for inspection;
+it does not automatically put that directory back or revert the Compose API-key overrides.
 
 ### Application data port
 
