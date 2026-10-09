@@ -3,3 +3,4 @@
 plex_project_dir: "/opt/{{ instance }}"
 plex_http_retries: 30
 plex_http_delay: 2
+plex_state_path: "{{ app_config.app.config_path }}/Library/Application Support/Plex Media Server"

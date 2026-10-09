@@ -121,21 +121,19 @@
   changed_when: false
   no_log: true
 
-- name: Assert Plex exchanged the claim token for a server token
-  ansible.builtin.assert:
-    that: (_plex_preferences_after.content | b64decode) is search('PlexOnlineToken="[^"]+"')
-    fail_msg: >-
-      Plex started but did not record a server token. Obtain a fresh claim token,
-      update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
-  no_log: true
-
 - name: Extract the Plex server token for media consumers
   ansible.builtin.set_fact:
     _plex_server_token: >-
       {{ (_plex_preferences_after.content | b64decode
-          | regex_search('PlexOnlineToken="([^"]+)"', '\\1')
-          | default([], true) | join('')) }}
+          | regex_findall('PlexOnlineToken="([^"]+)"') | first | default('')) }}
   no_log: true
+
+- name: Assert Plex exchanged the claim token for a server token
+  ansible.builtin.assert:
+    that: _plex_server_token | length > 0
+    fail_msg: >-
+      Plex started but Preferences.xml lacks PlexOnlineToken. Obtain a fresh claim
+      token, update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
 
 - name: Store and verify the Plex server token
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml

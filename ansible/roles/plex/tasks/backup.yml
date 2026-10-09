@@ -1,0 +1,146 @@
+---
+# Stop only Plex, then capture its identity, library databases, Metadata and Media
+# as one data.pxar. External library mounts and transcode are never archive sources.
+# Disposable Plex state is excluded explicitly below.
+
+- name: Plex backup | Assert the backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Plex needs its declared application-consistent backup contract and a
+      configured PBS before an on-demand backup can run.
+
+- name: Plex backup | Keep external media outside recovery state
+  ansible.builtin.assert:
+    that:
+      - plex_state_path != item.path
+      - not plex_state_path.startswith(item.path ~ '/')
+      - not item.path.startswith(plex_state_path ~ '/')
+    fail_msg: "Plex recovery state must not overlap declared media or the transcode path."
+  loop: "{{ app_config.app.mounts | default([], true) }}"
+
+- name: Plex backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Plex backup | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Plex. Deploy PBS and re-run this backup;
+      no local archive is treated as a recovery point.
+
+- name: Plex backup | Keep transcode outside recovery state
+  ansible.builtin.assert:
+    that:
+      - app_config.app.transcode_path != plex_state_path
+      - not app_config.app.transcode_path.startswith(plex_state_path ~ '/')
+      - not plex_state_path.startswith(app_config.app.transcode_path ~ '/')
+    fail_msg: "Plex recovery state must not overlap the transcode path."
+
+- name: Plex backup | Check the application data path
+  ansible.builtin.stat:
+    path: "{{ plex_state_path }}"
+  register: _plex_backup_data
+  changed_when: false
+
+- name: Plex backup | Assert the data path is a directory
+  ansible.builtin.assert:
+    that:
+      - _plex_backup_data.stat.exists
+      - _plex_backup_data.stat.isdir
+    fail_msg: >-
+      Plex data path {{ plex_state_path }} is missing; refusing to
+      create a backup that would not contain the application's persistent state.
+
+- name: Plex backup | Check the identity and library databases
+  ansible.builtin.stat:
+    path: "{{ plex_state_path }}/{{ item }}"
+  loop:
+    - Preferences.xml
+    - Plug-in Support/Databases
+  register: _plex_backup_checks
+  no_log: true
+
+- name: Plex backup | Refuse an incomplete recovery unit
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "Plex identity or library databases are missing; refusing an incomplete backup."
+  loop: "{{ _plex_backup_checks.results }}"
+  no_log: true
+
+- name: Plex backup | Stop only Plex
+  community.docker.docker_compose_v2:
+    project_src: "{{ plex_project_dir }}"
+    state: stopped
+    services:
+      - "{{ instance }}"
+
+- name: Plex backup | Archive the quiesced data directory to PBS
+  block:
+    - name: Plex backup | Push one application archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ plex_state_path }}:/source:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID" \
+              --exclude /Cache --exclude /Codecs --exclude '/Crash Reports' --exclude /Logs
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
+            echo "backup complete: host/$BACKUP_ID"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+      no_log: true
+      changed_when: true
+
+    - name: Plex backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    # A failed PBS upload must not leave the application down. The backup task's failure
+    # still propagates, while this service restart is limited to Plex itself.
+    - name: Plex backup | Start only Plex
+      community.docker.docker_compose_v2:
+        project_src: "{{ plex_project_dir }}"
+        state: present
+        services:
+          - "{{ instance }}"
