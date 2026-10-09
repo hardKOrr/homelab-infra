@@ -67,9 +67,18 @@
 - name: Verify Tautulli can reach the selected Plex container
   community.docker.docker_container_exec:
     container: "{{ instance }}"
-    command: >-
-      curl --fail --silent --show-error
-      --header=X-Plex-Token:{{ _tautulli_plex_token }} {{ _tautulli_plex_url }}/identity
+    argv:
+      - curl
+      - --fail
+      - --silent
+      - --show-error
+      - --connect-timeout
+      - "10"
+      - --max-time
+      - "30"
+      - --header
+      - "X-Plex-Token:{{ _tautulli_plex_token }}"
+      - "{{ _tautulli_plex_url }}/identity"
   register: _tautulli_plex_identity
   until:
     - _tautulli_plex_identity.rc | default(1) == 0

@@ -18,6 +18,12 @@ source = yaml.safe_load((repo / "ansible/roles/tautulli/tasks/restore.yml").read
 
 class Health(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/identity":
+            valid = self.headers.get("X-Plex-Token") == "fixture token with spaces"
+            self.send_response(200 if valid else 401)
+            self.end_headers()
+            self.wfile.write(b'<MediaContainer machineIdentifier="fixture"/>')
+            return
         self.send_response(self.server.response_status)
         self.end_headers()
 
@@ -153,6 +159,27 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        # Run the deployment check's exact curl argv through Ansible against an
+        # authenticated local endpoint; only the Docker exec boundary is substituted.
+        deploy = yaml.safe_load((repo / "ansible/roles/tautulli/tasks/main.yml").read_text())
+        task = copy.deepcopy(next(t for t in deploy if t["name"] ==
+                                  "Verify Tautulli can reach the selected Plex container"))
+        task["ansible.builtin.command"] = {
+            "argv": task.pop("community.docker.docker_container_exec")["argv"]}
+        task["retries"] = 1
+        task["delay"] = 0
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "connectivity.yml"
+            path.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"_tautulli_plex_url": f"http://127.0.0.1:{server.server_port}",
+                         "_tautulli_plex_token": "fixture token with spaces"},
+                "tasks": [task],
+            }]))
+            env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                    env=env, text=True, capture_output=True, check=False)
+            assert result.returncode == 0, result.stdout + result.stderr
         for case in ["plan", "foreign-group", "extract-failure", "move-failure", "copy-failure",
                      "ownership-failure", "start-failure", "health-failure", "success"]:
             check(case, server)
