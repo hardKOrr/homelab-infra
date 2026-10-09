@@ -1,0 +1,311 @@
+---
+# Restore one application-consistent Bazarr config archive, with an explicit overwrite.
+
+- name: Bazarr restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Bazarr restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Bazarr restore | Resolve the source backup identity
+  ansible.builtin.set_fact:
+    _bazarr_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _application_restore_complete: false
+    _bazarr_restore_rolled_back: false
+    _bazarr_restore_moved: {rc: 1}
+  no_log: true
+
+- name: Bazarr restore | Require the selected snapshot to belong to the source group
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot.startswith('host/' ~ _bazarr_restore_backup_id ~ '/')
+      - restore_snapshot | length > ('host/' ~ _bazarr_restore_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Bazarr snapshot must belong to host/{{ _bazarr_restore_backup_id }}/;
+      refusing to replace application state with another backup group's archive.
+  when: restore_snapshot | default('') | length > 0
+
+- name: Bazarr restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Bazarr restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Bazarr. Deploy PBS before listing or restoring
+      application data.
+
+- name: Bazarr restore | List available snapshots
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _bazarr_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _bazarr_restore_backup_id }}"
+  no_log: true
+
+- name: Bazarr restore | Print available snapshots
+  ansible.builtin.debug:
+    msg: "PBS snapshots for host/{{ _bazarr_restore_backup_id }}:\n{{ _bazarr_snapshots.stdout }}"
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Bazarr restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with snapshot=<PBS snapshot ID> and overwrite=true to
+      replace {{ app_config.app.config_path }} from one application-consistent data.pxar.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Bazarr restore | Create a private staging directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-bazarr-restore-"
+  register: _bazarr_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Bazarr restore | Stop and replace application state
+  when: restore_overwrite | bool
+  block:
+    # Keep the rollback copy on the config filesystem so moving the original is an
+    # atomic rename. It is outside config_path and cannot enter an application backup.
+    - name: Bazarr restore | Create private rollback space beside the config directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ app_config.app.config_path | dirname }}"
+        prefix: .bazarr-pre-restore-
+      register: _bazarr_restore_previous
+
+    - name: Bazarr restore | Stop only Bazarr
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ instance }}"
+        state: stopped
+        services:
+          - "{{ instance }}"
+
+    - name: Bazarr restore | Extract the selected archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _bazarr_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    # Keep the original until the replacement passes its health check. The failure
+    # boundary can put it back after a copy, ownership, start or health-check failure.
+    - name: Bazarr restore | Move the original config into rollback space
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ app_config.app.config_path }}"
+          - "{{ _bazarr_restore_previous.path }}/config"
+      register: _bazarr_restore_moved
+      changed_when: _bazarr_restore_moved.rc == 0
+      no_log: true
+
+    - name: Bazarr restore | Recreate the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        mode: "0750"
+
+    - name: Bazarr restore | Copy the archived application state into place
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - "{{ _bazarr_restore_tmp.path }}/."
+          - "{{ app_config.app.config_path }}/"
+      changed_when: true
+      no_log: true
+
+    - name: Bazarr restore | Restore application data ownership
+      ansible.builtin.command:
+        argv: [chown, -R, "{{ app_config.app.puid | default(1313) }}:{{ app_config.app.pgid | default(1313) }}", "{{ app_config.app.config_path }}"]
+      changed_when: true
+      no_log: true
+
+    - name: Bazarr restore | Start only Bazarr
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ instance }}"
+        state: present
+        services:
+          - "{{ instance }}"
+
+    - name: Bazarr restore | Read the archived configuration
+      ansible.builtin.slurp:
+        src: "{{ app_config.app.config_path }}/config/config.yaml"
+      register: _bazarr_config
+      until: _bazarr_config.content is defined
+      retries: 30
+      delay: 2
+      changed_when: false
+      no_log: true
+
+    - name: Bazarr restore | Extract the archived API key
+      ansible.builtin.set_fact:
+        _bazarr_api_key: >-
+          {{ ((_bazarr_config.content | b64decode | from_yaml).auth | default({})).apikey | default('') }}
+      no_log: true
+
+    - name: Bazarr restore | Require the archived API key
+      ansible.builtin.assert:
+        that: _bazarr_api_key | length > 0
+      no_log: true
+
+    - name: Bazarr restore | Verify the authenticated settings API
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/system/settings"
+        headers:
+          X-API-KEY: "{{ _bazarr_api_key }}"
+          Accept: application/json
+        status_code: 200
+      register: _bazarr_settings
+      until: _bazarr_settings.status | default(0) == 200
+      retries: 30
+      delay: 2
+      changed_when: false
+      no_log: true
+
+    - name: Bazarr restore | Store and verify the restored API key
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/media/{{ instance }}"
+        vault_item_fields:
+          api_key: "{{ _bazarr_api_key }}"
+        vault_item_secret_fields: [api_key]
+      no_log: true
+
+    - name: Bazarr restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Bazarr restore | Stop only Bazarr after failure
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ instance }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Bazarr restore | Remove the failed replacement config
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: absent
+      when: _bazarr_restore_moved.rc | default(1) == 0
+
+    - name: Bazarr restore | Put the original config back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _bazarr_restore_previous.path }}/config"
+          - "{{ app_config.app.config_path }}"
+      changed_when: true
+      no_log: true
+      when: _bazarr_restore_moved.rc | default(1) == 0
+
+    - name: Bazarr restore | Record that rollback completed
+      ansible.builtin.set_fact:
+        _bazarr_restore_rolled_back: true
+
+    - name: Bazarr restore | State that the service remains stopped
+      ansible.builtin.fail:
+        msg: >-
+          Bazarr restore failed. The service was left stopped rather than serving
+          partial state. The original config was retained or put back; inspect the job
+          output and rerun the restore after correcting it.
+  always:
+    - name: Bazarr restore | Remove rollback space only after health or rollback succeeded
+      ansible.builtin.file:
+        path: "{{ _bazarr_restore_previous.path }}"
+        state: absent
+      when:
+        - _bazarr_restore_previous.path is defined
+        - >-
+          (_application_restore_complete | bool) or (_bazarr_restore_rolled_back | bool)
+          or (_bazarr_restore_moved.rc | default(1) != 0)
+
+    - name: Bazarr restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _bazarr_restore_tmp.path }}"
+        state: absent
+      when: _bazarr_restore_tmp.path is defined
