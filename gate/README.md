@@ -27,7 +27,7 @@ Lint runs `ansible-lint` over `ansible/{playbooks,roles,tasks,vars}`, parses Jin
 checks repository links and fixture secrets, and enforces GitHub workflow policy.
 
 Test syntax-checks every playbook in parallel, replays diagnostics in order, and
-runs eight logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
+runs nine logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
 The Python suites use Ansible's templar to render production expressions and templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
@@ -38,6 +38,7 @@ The Python suites use Ansible's templar to render production expressions and tem
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available to the Docker dispatch play.
+- `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 
 On a Windows checkout accessed through WSL, wrap each command:
 
