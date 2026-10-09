@@ -501,6 +501,7 @@ def execute(manifest, confirmation, retention, unwired, journal):
 
     def delete_storage(obj):
         nonlocal records
+        require(obj['identity'] == 'pbs-homelab', 'Only pbs-homelab storage retirement supported.')
         delete_object(obj, records)
         key = 'storage:' + obj['identity']
         if key not in done['completed'] or key in records.get('objects', {}):

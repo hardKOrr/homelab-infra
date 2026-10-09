@@ -110,7 +110,8 @@ class Retirement(unittest.TestCase):
                 return [{k: v for k, v in row.items() if k != 'userid'}
                         for row in copy.deepcopy(self.state['token'])]
         elif method in ['delete', 'set']:
-            kind = {'/storage/pbs-homelab': 'storage', '/access/users/homelab-infra@pve': 'user',
+            kind = {'/storage/pbs-homelab': 'storage', '/storage/pbs-other': 'storage',
+                    '/access/users/homelab-infra@pve': 'user',
                     '/access/users/homelab-infra@pve/token/automation': 'token',
                     '/access/roles/HomelabInfra': 'role', '/access/acl': 'acl'}[endpoint]
             self.state[kind] = []
@@ -161,6 +162,21 @@ class Retirement(unittest.TestCase):
                     self.execute()
                 self.assertEqual(self.files[lab.RECORD], encoded(invalid))
                 self.assertNotIn('storage:pbs-homelab', self.read(self.journal, {'completed': []})['completed'])
+
+    def test_other_pbs_identity_refused_before_deletion(self):
+        self.state['storage'][0]['storage'] = 'pbs-other'
+        target = next(obj for obj in self.manifest['objects'] if obj['kind'] == 'storage')
+        target['identity'] = 'pbs-other'
+        target['signature'] = lab.signature('storage', self.state['storage'][0])
+        records = self.read(lab.RECORD)
+        stamp = records['objects'].pop('storage:pbs-homelab')
+        stamp.update(identity=target['identity'], signature=target['signature'])
+        records['objects']['storage:pbs-other'] = stamp
+        self.files[lab.RECORD] = encoded(records)
+        snapshot = copy.deepcopy((self.files, self.state, self.writes, self.mutations))
+        with self.assertRaisesRegex(lab.Refused, 'Only pbs-homelab storage retirement supported'):
+            self.execute()
+        self.assertEqual((self.files, self.state, self.writes, self.mutations), snapshot)
 
     def test_later_provenance_change_still_refused(self):
         self.tamper = True
