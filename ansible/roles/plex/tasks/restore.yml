@@ -46,6 +46,9 @@
 
 - name: Plex restore | Resolve the source backup identity
   ansible.builtin.set_fact:
+    _application_restore_complete: false
+    _plex_restore_rolled_back: false
+    _plex_restore_moved: {rc: 1}
     _plex_restore_backup_id: >-
       {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
   no_log: true
@@ -124,6 +127,15 @@
 - name: Plex restore | Stop and replace application state
   when: restore_overwrite | bool
   block:
+    # A sibling on the state filesystem keeps the original move an atomic rename,
+    # including Metadata and Media, without copying the library or entering backups.
+    - name: Plex restore | Create private rollback space beside the data directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ plex_state_path | dirname }}"
+        prefix: .plex-pre-restore-
+      register: _plex_restore_previous
+
     - name: Plex restore | Stop only Plex
       community.docker.docker_compose_v2:
         project_src: "{{ plex_project_dir }}"
@@ -191,12 +203,16 @@
       loop: "{{ _plex_restore_checks.results }}"
       no_log: true
 
-    # The archive is complete before the live path is removed. If extraction fails, the
-    # original data remains in place; failures leave the service stopped for inspection.
-    - name: Plex restore | Replace the data directory
-      ansible.builtin.file:
-        path: "{{ plex_state_path }}"
-        state: absent
+    # Retain the original until the replacement token is verified and published.
+    - name: Plex restore | Move the original data into rollback space
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ plex_state_path }}"
+          - "{{ _plex_restore_previous.path }}/state"
+      register: _plex_restore_moved
+      changed_when: _plex_restore_moved.rc == 0
+      no_log: true
 
     - name: Plex restore | Recreate the data directory
       ansible.builtin.file:
@@ -285,12 +301,43 @@
         state: stopped
         services: ["{{ instance }}"]
 
+    - name: Plex restore | Remove the failed replacement data
+      ansible.builtin.file:
+        path: "{{ plex_state_path }}"
+        state: absent
+      when: _plex_restore_moved.rc | default(1) == 0
+
+    - name: Plex restore | Put the original data back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _plex_restore_previous.path }}/state"
+          - "{{ plex_state_path }}"
+      changed_when: true
+      no_log: true
+      when: _plex_restore_moved.rc | default(1) == 0
+
+    - name: Plex restore | Record that rollback completed
+      ansible.builtin.set_fact:
+        _plex_restore_rolled_back: true
+
     - name: Plex restore | State that the service remains stopped
       ansible.builtin.fail:
         msg: >-
           Plex restore failed. The service was left stopped rather than serving
-          partial state; inspect the job output and rerun the restore after correcting it.
+          partial state. The original data was retained or put back; inspect the job
+          output and rerun the restore after correcting it.
   always:
+    - name: Plex restore | Remove rollback space only after recovery or rollback succeeded
+      ansible.builtin.file:
+        path: "{{ _plex_restore_previous.path }}"
+        state: absent
+      when:
+        - _plex_restore_previous.path is defined
+        - >-
+          (_application_restore_complete | bool) or (_plex_restore_rolled_back | bool)
+          or (_plex_restore_moved.rc | default(1) != 0)
+
     - name: Plex restore | Remove private staging data
       ansible.builtin.file:
         path: "{{ _plex_restore_tmp.path }}"
