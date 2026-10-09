@@ -699,7 +699,7 @@
     # below must not silently skip a future Docker role.
     - name: Restore the application-owned Docker archive
       ansible.builtin.include_role:
-        name: "{{ hostvars['localhost']._ra_app }}"
+        name: "{{ hostvars['localhost'].recovery_capability.role | default(hostvars['localhost']._ra_app) }}"
         tasks_from: "{{ hostvars['localhost'].recovery_capability.restore_role_task | default('restore') }}"
       vars:
         instance: "{{ hostvars['localhost']._ra_target }}"
@@ -736,7 +736,7 @@
                                                    | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
                                                              '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
                                  }}, recursive=True)
-                               if hostvars['localhost']._ra_app in ['home-assistant', 'tautulli']
+                               if hostvars['localhost']._ra_app in ['home-assistant', 'tautulli', 'prowlarr', 'sonarr', 'radarr', 'lidarr']
                                else hostvars['localhost'].restore_target_config)))) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"

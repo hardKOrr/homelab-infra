@@ -41,25 +41,26 @@ def main():
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
     dispatch = next(play for play in source if play["name"] ==
                     "Restore App | Restore Docker application data from PBS")["tasks"][0]
-    for config_path, expected_path in [("/opt/tautulli/config", "/opt/tautulli-copy/config"),
-                                       ("/srv/custom/config", "/srv/custom/config")]:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "target-path.yml"
-            path.write_text(yaml.safe_dump([
-                {"hosts": "localhost", "gather_facts": False, "tasks": [
-                    {"ansible.builtin.set_fact": {
-                        "_ra_app": "tautulli", "_ra_source_instance": "tautulli",
-                        "_ra_target": "tautulli-copy",
-                        "restore_target_config": {"app": {"config_path": config_path}}}}]},
-                {"hosts": "localhost", "gather_facts": False, "tasks": [
-                    {"vars": dispatch["vars"], "ansible.builtin.assert": {"that": [
-                        "instance == 'tautulli-copy'",
-                        f"app_config.app.config_path == '{expected_path}'"]}}]},
-            ]))
-            env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
-            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                    env=env, text=True, capture_output=True, check=False)
-            assert result.returncode == 0, result.stdout + result.stderr
+    for app in ["tautulli", "prowlarr", "sonarr", "radarr", "lidarr"]:
+        for config_path, expected_path in [(f"/opt/{app}/config", f"/opt/{app}-copy/config"),
+                                           ("/srv/custom/config", "/srv/custom/config")]:
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "target-path.yml"
+                path.write_text(yaml.safe_dump([
+                    {"hosts": "localhost", "gather_facts": False, "tasks": [
+                        {"ansible.builtin.set_fact": {
+                            "_ra_app": app, "_ra_source_instance": app,
+                            "_ra_target": app + "-copy",
+                            "restore_target_config": {"app": {"config_path": config_path}}}}]},
+                    {"hosts": "localhost", "gather_facts": False, "tasks": [
+                        {"vars": dispatch["vars"], "ansible.builtin.assert": {"that": [
+                            f"instance == '{app}-copy'",
+                            f"app_config.app.config_path == '{expected_path}'"]}}]},
+                ]))
+                env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
+                result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                        env=env, text=True, capture_output=True, check=False)
+                assert result.returncode == 0, result.stdout + result.stderr
     for app in ["actual-budget", "tautulli"]:
         for inputs in ({"instance": app}, {"instance": app + "-copy", "app": app}):
             check("backup-app.yml", "Publish the application backup dispatch across plays",
@@ -82,7 +83,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for app in ["actual-budget", "plex", "tautulli"]:
+        for app in ["actual-budget", "plex", "tautulli", "servarr"]:
             for operation in ["backup", "restore"]:
                 tasks.append({
                     "block": [{"ansible.builtin.include_role": {
@@ -100,6 +101,7 @@ def main():
             "rescue": [{"ansible.builtin.assert": {"that": [
                 "ansible_failed_result.msg is search('Tautulli restore needs')"]}}],
         })
+
         path.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False, "vars": {
                 "instance": "actual-budget", "homelabinfra_infra": {"backups": {}},

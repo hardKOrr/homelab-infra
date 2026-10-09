@@ -38,6 +38,7 @@ The Python suites exercise production logic, expressions and templates.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
+- `test-servarr-recovery.py`: shared four-app dispatch, restore preview and API key continuity.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available to the Docker dispatch play.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.

@@ -246,7 +246,7 @@ applications:
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    extra: [migrate]
+    extra: [backup, restore, migrate]
 
   mixpost:
     name: Mixpost
@@ -308,7 +308,7 @@ applications:
     category: Media & Entertainment
     type: Indexer Management
     scope: estate
-    extra: [migrate]
+    extra: [backup, restore, migrate]
 
   qbittorrent:
     name: qBittorrent
@@ -325,7 +325,7 @@ applications:
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    extra: [migrate]
+    extra: [backup, restore, migrate]
 
   sabnzbd:
     name: SABnzbd
@@ -350,7 +350,7 @@ applications:
     category: Media & Entertainment
     type: Library Automation
     scope: estate
-    extra: [migrate]
+    extra: [backup, restore, migrate]
 
   uptime-kuma:
     name: Uptime Kuma

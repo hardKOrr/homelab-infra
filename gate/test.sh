@@ -79,6 +79,7 @@ bash gate/test-vmid-from-ip.sh || rc=1
 "$py" gate/test-recovery-dispatch.py || rc=1
 "$py" gate/test-plex-recovery.py || rc=1
 "$py" gate/test-plex-restore.py || rc=1
+"$py" gate/test-servarr-recovery.py || rc=1
 "$py" gate/test-tautulli-restore.py || rc=1
 "$py" gate/test-proxmox-task.py || rc=1
 "$py" gate/test-decommission-retire.py || rc=1

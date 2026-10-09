@@ -1,0 +1,325 @@
+---
+# Restore one Servarr data.pxar archive. The generic Restore App playbook only
+# dispatches here for applications that explicitly declare this path; ordinary Docker
+# applications remain covered by their whole-guest PBS snapshots.
+
+- name: Servarr restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Servarr restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Servarr restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Servarr restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Servarr. Deploy PBS before listing or restoring
+      application data.
+
+- name: Servarr restore | Resolve the source backup identity
+  ansible.builtin.set_fact:
+    _servarr_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+  no_log: true
+
+- name: Servarr restore | Require the selected backup group
+  ansible.builtin.assert:
+    that: >-
+      (restore_snapshot | default('') | length == 0) or
+      restore_snapshot.startswith('host/' ~ _servarr_restore_backup_id ~ '/')
+    fail_msg: "The selected Servarr snapshot must belong to the requested host backup group."
+
+- name: Servarr restore | Resolve the application contract
+  ansible.builtin.include_tasks: recovery-config.yml
+
+- name: Servarr restore | List available snapshots
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _servarr_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _servarr_restore_backup_id }}"
+  no_log: true
+
+- name: Servarr restore | Print available snapshots
+  ansible.builtin.debug:
+    msg: "PBS snapshots for host/{{ _servarr_restore_backup_id }}:\n{{ _servarr_snapshots.stdout }}"
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Servarr restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with snapshot=<PBS snapshot ID> and overwrite=true to
+      replace {{ app_config.app.config_path }} from one application-consistent data.pxar.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Servarr restore | Create a private staging directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-servarr-restore-"
+  register: _servarr_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Servarr restore | Stop and replace application state
+  when: restore_overwrite | bool
+  block:
+    - name: Servarr restore | Stop only Servarr
+      community.docker.docker_compose_v2:
+        project_src: "{{ servarr_project_dir }}"
+        state: stopped
+        services:
+          - "{{ instance }}"
+
+    - name: Servarr restore | Extract the selected archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _servarr_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    - name: Servarr restore | Check the staged recovery unit
+      ansible.builtin.stat:
+        path: "{{ _servarr_restore_tmp.path }}/{{ item }}"
+      loop:
+        - "{{ app_config.app.media_kind }}.db"
+        - config.xml
+      register: _servarr_restore_files
+
+    - name: Servarr restore | Refuse an incomplete archive
+      ansible.builtin.assert:
+        that: item.stat.isreg | default(false)
+        fail_msg: "The archive lacks the Servarr database or config.xml; live state was preserved."
+      loop: "{{ _servarr_restore_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Servarr restore | Read the restored config.xml
+      ansible.builtin.slurp:
+        src: "{{ _servarr_restore_tmp.path }}/config.xml"
+      register: _servarr_restored_config
+      no_log: true
+
+    - name: Servarr restore | Resolve the restored API key
+      ansible.builtin.set_fact:
+        _servarr_restored_key: >-
+          {{ (_servarr_restored_config.content | b64decode
+              | regex_search('<ApiKey>([^<]+)</ApiKey>', '\1') | default([], true) | join('')) }}
+      no_log: true
+
+    - name: Servarr restore | Require the archived API key
+      ansible.builtin.assert:
+        that: _servarr_restored_key | length > 0
+        fail_msg: "Restored config.xml lacks ApiKey; live state was preserved."
+
+    - name: Servarr restore | Read the Compose key overrides
+      ansible.builtin.slurp:
+        src: "{{ servarr_project_dir }}/docker-compose.yml"
+      register: _servarr_restore_compose
+      no_log: true
+
+    - name: Servarr restore | Resolve the Compose override names
+      ansible.builtin.set_fact:
+        _servarr_restore_override_names: >-
+          {{ (_servarr_restore_compose.content | b64decode
+              | regex_findall('(?m)^\s*- (' ~ (app_config.app.media_kind | upper)
+                              ~ '__(?:AUTH__)?APIKEY)=.*$')) | sort }}
+      no_log: true
+
+    - name: Servarr restore | Require both Compose key overrides
+      ansible.builtin.assert:
+        that: >-
+          _servarr_restore_override_names ==
+          [(app_config.app.media_kind | upper) ~ '__APIKEY',
+           (app_config.app.media_kind | upper) ~ '__AUTH__APIKEY']
+        fail_msg: "Compose must contain exactly one legacy and one AUTH API-key override; live state was preserved."
+
+    # Keep the original on the config filesystem until authenticated recovery and
+    # credential publication succeed. A failed copy/chown cannot destroy it.
+    - name: Servarr restore | Create a private original-state directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ app_config.app.config_path | dirname }}"
+        prefix: "{{ instance }}-servarr-original-"
+      register: _servarr_restore_original
+
+    - name: Servarr restore | Preserve the original data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ app_config.app.config_path }}"
+          - "{{ _servarr_restore_original.path }}/config"
+      changed_when: true
+
+    - name: Servarr restore | Recreate the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1000) }}"
+        group: "{{ app_config.app.pgid | default(1000) }}"
+        mode: "0750"
+
+    - name: Servarr restore | Copy the archived application state into place
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - "{{ _servarr_restore_tmp.path }}/."
+          - "{{ app_config.app.config_path }}/"
+      changed_when: true
+      no_log: true
+
+    - name: Servarr restore | Restore application data ownership
+      ansible.builtin.command:
+        argv: [chown, -R, "{{ app_config.app.puid | default(1000) }}:{{ app_config.app.pgid | default(1000) }}", "{{ app_config.app.config_path }}"]
+      changed_when: true
+      no_log: true
+
+    # Preserve the project's mounts and configuration, changing only the key
+    # overrides that would otherwise mask the restored config.xml on restart.
+    - name: Servarr restore | Adopt the archived key in Compose
+      ansible.builtin.replace:
+        path: "{{ servarr_project_dir }}/docker-compose.yml"
+        regexp: "(^\\s*- {{ app_config.app.media_kind | upper }}__(?:AUTH__)?APIKEY=).*$"
+        replace: '\g<1>{{ _servarr_restored_key }}'
+      no_log: true
+
+    - name: Servarr restore | Start only Servarr
+      community.docker.docker_compose_v2:
+        project_src: "{{ servarr_project_dir }}"
+        state: present
+        services:
+          - "{{ instance }}"
+
+    - name: Servarr restore | Wait for the restored service
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/status"
+        headers:
+          X-Api-Key: "{{ _servarr_restored_key }}"
+        status_code: 200
+      register: _servarr_restore_health
+      until: _servarr_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+      no_log: true
+
+    - name: Servarr restore | Publish the verified restored key
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/media/{{ instance }}"
+        vault_item_fields:
+          api_key: "{{ _servarr_restored_key }}"
+        vault_item_secret_fields: [api_key]
+      no_log: true
+
+    - name: Servarr restore | Remove the verified original-state copy
+      ansible.builtin.file:
+        path: "{{ _servarr_restore_original.path }}"
+        state: absent
+
+    - name: Servarr restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Servarr restore | Stop the instance after failed recovery
+      community.docker.docker_compose_v2:
+        project_src: "{{ servarr_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Servarr restore | State that the service remains stopped
+      ansible.builtin.fail:
+        msg: >-
+          Servarr restore failed. The service was left stopped rather than serving
+          partial state. Original data is retained at
+          {{ _servarr_restore_original.path | default(app_config.app.config_path) }}
+          (or the live path if the move failed). Inspect the job output before retrying.
+  always:
+    - name: Servarr restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _servarr_restore_tmp.path }}"
+        state: absent
+      when: _servarr_restore_tmp.path is defined
