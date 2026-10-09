@@ -9,23 +9,31 @@
 #   proxmox_task_timeout (seconds, default 3600)
 #   proxmox_task_poll (seconds, default 5)
 
+- name: Proxmox | Normalize the task identity
+  ansible.builtin.set_fact:
+    # pvesh may return a bare UPID or a JSON string. Strip only one outer quote
+    # pair; the assertion below rejects whitespace, escapes and ambiguous output.
+    _proxmox_task_upid: >-
+      {{ proxmox_task_upid | default('') | string
+         | regex_replace('^"(UPID:[^"]+)"$', '\1') }}
+
 - name: Proxmox | Require a task identity
   ansible.builtin.assert:
     that:
       - proxmox_task_node is defined
       - proxmox_task_node in groups['proxmox_delegates'] | default([])
       - proxmox_task_upid is defined
-      - proxmox_task_upid | string is match('^UPID:[^ ]+$')
+      - _proxmox_task_upid is match('^UPID:[^"\\\\\\s]+\\Z')
       - proxmox_task_timeout | default(3600) | int > 0
       - proxmox_task_poll | default(5) | int > 0
     fail_msg: A Proxmox task node and UPID are required before polling can begin.
 
-- name: Proxmox | Poll task {{ proxmox_task_upid }}
+- name: Proxmox | Poll task {{ _proxmox_task_upid }}
   ansible.builtin.command:
     argv:
       - pvesh
       - get
-      - "/nodes/{{ proxmox_task_node }}/tasks/{{ proxmox_task_upid }}/status"
+      - "/nodes/{{ proxmox_task_node }}/tasks/{{ _proxmox_task_upid }}/status"
       - --output-format
       - json
   delegate_to: "{{ proxmox_task_node }}"
@@ -45,10 +53,10 @@
       - (_proxmox_task_status.stdout | from_json).status | default('') == 'stopped'
       - (_proxmox_task_status.stdout | from_json).exitstatus | default('') == 'OK'
     fail_msg: >-
-      Proxmox task {{ proxmox_task_upid }} did not complete successfully
+      Proxmox task {{ _proxmox_task_upid }} did not complete successfully
       ({{ _proxmox_task_status.stdout | default('no status') }}). The source and any
       independent recovery point were retained; inspect the target before retrying.
 
 - name: Proxmox | Record completed task
   ansible.builtin.debug:
-    msg: "Proxmox task {{ proxmox_task_upid }} completed successfully on {{ proxmox_task_node }}."
+    msg: "Proxmox task {{ _proxmox_task_upid }} completed successfully on {{ proxmox_task_node }}."
