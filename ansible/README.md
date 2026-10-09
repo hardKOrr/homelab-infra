@@ -130,6 +130,15 @@ only snapshots in the selected `host/<backup id>` group, preserves declared medi
 publishes the restored server token to `homelab-infra/media/<instance>` after an
 authenticated API check.
 
+Prowlarr, Sonarr, Radarr and Lidarr share Servarr native recovery. Backup stops only the
+selected instance and captures its config directory (including `<app>.db`, `config.xml`
+and the verified API key) as one PBS `data.pxar` in `host/<instance>`. Logs, `logs.db`
+and local `Backups` are excluded; media mounts remain outside recovery. Restore previews
+without mutation until `overwrite=true`, validates the selected backup group and staged
+database/configuration, then adopts the archived API key in Compose and the canonical
+`homelab-infra/media/<instance>` item after an authenticated API check. A subsequent
+Deploy keeps that key and the recovered application state.
+
 ### Application data port
 
 The issue names the source, destination, capture method, required path or address

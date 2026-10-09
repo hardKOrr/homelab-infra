@@ -13,6 +13,13 @@
 prowlarr_defaults:
   stack: media
 
+  recovery:
+    methods: [native]
+    native:
+      role: servarr
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     media_kind: prowlarr
 
@@ -39,3 +46,22 @@ prowlarr_defaults:
     # Coupled to AuthenticationMethod External — the reverse proxy is the only
     # authentication in front of this UI. See sonarr.yml.
     identity: forward_auth
+
+  # One stopped config directory, including the API key, per PBS recovery point.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+
+    # The backup client is installed inside a short-lived Debian container. This keeps the
+    # services host free of a PBS apt source while using the same signed Proxmox client
+    # source as the Kubernetes application backup roles.
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

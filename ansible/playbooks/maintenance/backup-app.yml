@@ -220,7 +220,7 @@
     # silently skipping the notification and degradation gate.
     - name: Run the application-owned Docker backup
       ansible.builtin.include_role:
-        name: "{{ hostvars['localhost']._ba_app }}"
+        name: "{{ hostvars['localhost'].recovery_capability.role | default(hostvars['localhost']._ba_app) }}"
         tasks_from: backup
       vars:
         app_config: "{{ hostvars['localhost'].app_config }}"

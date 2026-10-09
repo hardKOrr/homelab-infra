@@ -1,0 +1,16 @@
+---
+- name: Servarr recovery | Load the media API contract
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../vars/media-wiring.yml"
+
+- name: Servarr recovery | Require a supported app and config path
+  ansible.builtin.assert:
+    that:
+      - app_config.app.media_kind in ['prowlarr', 'sonarr', 'radarr', 'lidarr']
+      - app_config.app.config_path.startswith('/')
+      - app_config.app.config_path != '/'
+    fail_msg: "Servarr native recovery requires a supported app and its config directory."
+
+- name: Servarr recovery | Resolve the API version
+  ansible.builtin.set_fact:
+    _servarr_api: "{{ media_wiring.kinds[app_config.app.media_kind].api }}"
