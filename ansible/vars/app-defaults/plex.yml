@@ -34,6 +34,7 @@ plex_defaults:
     subdomain: plex
     proxy: internal
     access: internal
+    identity: none
     # Plex clients authenticate against Plex itself; an interactive proxy gate
     # would prevent televisions and mobile clients from completing their API flow.
 

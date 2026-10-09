@@ -133,8 +133,7 @@
   ansible.builtin.set_fact:
     _plex_server_token: >-
       {{ (_plex_preferences_after.content | b64decode
-          | regex_search('PlexOnlineToken="([^"]+)"', '\\1')
-          | default([], true) | join('')) }}
+          | regex_findall('PlexOnlineToken="([^"]+)"') | first) }}
   no_log: true
 
 - name: Store and verify the Plex server token

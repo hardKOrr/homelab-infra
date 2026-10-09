@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise Plex capability/dispatch and the real role's non-mutating restore plan."""
 
+import base64
 import importlib.util
 import json
 import os
@@ -38,6 +39,7 @@ def main():
                        {"_ra_app": "plex", "_ra_target": instance, "_ra_overwrite": False,
                         "_ra_recovery_point": "host/plex/fixture"})
     config = yaml.safe_load((repo / "ansible/vars/app-defaults/plex.yml").read_text())["plex_defaults"]
+    assert config["routing"]["identity"] == "none"
     catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
     assert {"backup", "restore"} <= set(catalog["applications"]["plex"]["actions"])
     server = HTTPServer(("127.0.0.1", 0), Certificate)
@@ -49,6 +51,9 @@ def main():
             config["app"]["mounts"] = []
             sentinel = Path(directory) / "Preferences.xml"
             sentinel.write_text("preserve me")
+            source = yaml.safe_load((repo / "ansible/roles/plex/tasks/main.yml").read_text())
+            extract = next(task for task in source if task["name"] ==
+                           "Extract the Plex server token for media consumers")
             play = [{
                 "hosts": "localhost", "gather_facts": False,
                 "vars": {
@@ -58,10 +63,14 @@ def main():
                         "datastore": "fixture", "api_token_id": "fixture",
                         "api_token_secret": "fixture"}},
                     "restore_overwrite": False, "restore_snapshot": "host/plex/fixture",
+                    "_plex_preferences_after": {"content": base64.b64encode(
+                        b'<Preferences PlexOnlineToken="fixture-server-token"/>').decode()},
                     "recovery_app_config": config, "recovery_app": "plex",
                     "recovery_instance": "plex", "recovery_operation": "restore",
                 },
                 "tasks": [
+                    extract,
+                    {"ansible.builtin.assert": {"that": ["_plex_server_token == 'fixture-server-token'"]}},
                     {"ansible.builtin.include_tasks": str(repo / "ansible/tasks/recovery/resolve-method.yml")},
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
                     {"ansible.builtin.include_role": {"name": "plex", "tasks_from": "restore"}},
