@@ -126,13 +126,12 @@ A check that cannot be read back counts as unverified.
 For a stateless application, skip backup and restore and prove a fresh deploy recreates
 its configuration and wiring. For multiple instances, verify siblings stay intact. If the
 application has no backup and restore yet, build them in the repository before step 4.
-Restoring a whole stack guest does not prove one application's restore.
-
-A new `restore.yml` must move the original state aside on the same filesystem before
-replacing it and put it back on any later failure, as
+For those new implementations, `restore.yml` must move the original state aside on the
+same filesystem before replacing it and put it back on any later failure, as
 [`roles/tautulli/tasks/restore.yml`](roles/tautulli/tasks/restore.yml) and
 [`roles/plex/tasks/restore.yml`](roles/plex/tasks/restore.yml) do. Add gate regressions for
 failures after the move.
+Restoring a whole stack guest does not prove one application's restore.
 
 After the drill, when no PR is needed, post the result comment and close the issue.
 
@@ -154,7 +153,8 @@ database/configuration, then adopts the archived API key in Compose and the cano
 Deploy keeps that key and the recovered application state.
 Restore requires both Compose API-key overrides before replacing state, and retains the
 original config directory beside the live path until verified recovery succeeds. A failed
-restore leaves the service stopped and reports the retained directory for inspection.
+restore leaves the service stopped and reports the retained directory for inspection;
+it does not automatically put that directory back or revert the Compose API-key overrides.
 
 ### Application data port
 
