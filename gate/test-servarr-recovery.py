@@ -4,6 +4,7 @@
 import base64
 import copy
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -26,6 +27,49 @@ class Health(BaseHTTPRequestHandler):
 
     def log_message(self, *_):
         pass
+
+
+def check_safety_backup_retention(backup):
+    """Exercise the production prune command against two same-day recovery points."""
+    capture = next(t["block"] for t in backup if "block" in t)
+    upload = next(t for t in capture if "Push one application archive" in t["name"])
+    script = upload["ansible.builtin.command"]["argv"][-1]
+    prune = next(line.strip() for line in script.splitlines()
+                 if line.strip().startswith("proxmox-backup-client prune "))
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        state = root / "snapshots.json"
+        points = ["2026-10-08T03:00:00Z", "2026-10-09T10:00:00Z", "2026-10-09T11:00:00Z"]
+        state.write_text(json.dumps({"host/lidarr": points, "host/sonarr": points}))
+        client = root / "proxmox-backup-client"
+        client.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+assert sys.argv[1] == 'prune'
+group = sys.argv[2]
+options = dict(zip(sys.argv[3::2], map(int, sys.argv[4::2])))
+path = Path(os.environ['PBS_TEST_STATE'])
+groups = json.loads(path.read_text())
+rows = sorted(groups[group], reverse=True)
+keep = set(rows[:options.get('--keep-last', 0)])
+days = set()
+for row in rows:
+    if row[:10] not in days and len(days) < options.get('--keep-daily', 0):
+        keep.add(row)
+        days.add(row[:10])
+groups[group] = [row for row in groups[group] if row in keep]
+path.write_text(json.dumps(groups))
+""")
+        client.chmod(0o700)
+        subprocess.run(["/bin/sh", "-ceu", prune], check=True, capture_output=True,
+                       env=os.environ | {"PATH": str(root) + os.pathsep + os.environ["PATH"],
+                                         "BACKUP_ID": "lidarr", "RETENTION_DAYS": "14",
+                                         "PBS_TEST_STATE": str(state)})
+        groups = json.loads(state.read_text())
+        assert points[1] in groups["host/lidarr"], "Safety backup pruned the selected recovery point"
+        assert points[2] in groups["host/lidarr"], "Safety backup was not retained"
+        assert points[0] in groups["host/lidarr"], "Daily retention was lost"
+        assert groups["host/sonarr"] == points, "Pruning affected another instance"
 
 
 def check_file_failures(restore):
@@ -121,6 +165,7 @@ with Path(os.environ['SERVARR_ROOT'],'services').open('a') as out:out.write(sys.
 def main():
     catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())["applications"]
     backup = yaml.safe_load((repo / "ansible/roles/servarr/tasks/backup.yml").read_text())
+    check_safety_backup_retention(backup)
     restore = yaml.safe_load((repo / "ansible/roles/servarr/tasks/restore.yml").read_text())
     capture = next(t["block"] for t in backup if "block" in t)
     restored = next(t["block"] for t in restore if "block" in t)
