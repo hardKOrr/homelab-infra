@@ -36,36 +36,70 @@ def check(playbook, task_name, inputs, expected):
 
 
 def main():
-    for inputs in ({"instance": "actual-budget"},
-                   {"instance": "actual-budget-copy", "app": "actual-budget"}):
-        check("backup-app.yml", "Publish the application backup dispatch across plays",
-              inputs, {"_ba_app": "actual-budget"})
-    check("restore-app.yml", "Publish the application restore dispatch across plays",
-          {"instance": "actual-budget", "snapshot": "host/actual-budget/2026-10-08T00:00:00Z"},
-          {"_ra_app": "actual-budget", "_ra_target": "actual-budget", "_ra_method": "",
-           "_ra_destination": "existing", "_ra_recovery_point": "host/actual-budget/2026-10-08T00:00:00Z",
-           "_ra_overwrite": False, "_ra_pre_restore_point": ""})
-    check("restore-app.yml", "Publish the application restore dispatch across plays",
-          {"instance": "actual-budget", "app": "actual-budget", "target": "actual-budget-copy",
-           "method": "native", "destination": "existing", "overwrite": True,
-           "recovery_point": "selected", "snapshot": "ignored", "pre_restore_point": "independent"},
-          {"_ra_app": "actual-budget", "_ra_target": "actual-budget-copy", "_ra_method": "native",
-           "_ra_destination": "existing", "_ra_recovery_point": "selected",
-           "_ra_overwrite": True, "_ra_pre_restore_point": "independent"})
+    # Render the production Docker restore arguments in a second play. A renamed
+    # target must receive its own config path, while an authored custom path survives.
+    source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
+    dispatch = next(play for play in source if play["name"] ==
+                    "Restore App | Restore Docker application data from PBS")["tasks"][0]
+    for config_path, expected_path in [("/opt/tautulli/config", "/opt/tautulli-copy/config"),
+                                       ("/srv/custom/config", "/srv/custom/config")]:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "target-path.yml"
+            path.write_text(yaml.safe_dump([
+                {"hosts": "localhost", "gather_facts": False, "tasks": [
+                    {"ansible.builtin.set_fact": {
+                        "_ra_app": "tautulli", "_ra_source_instance": "tautulli",
+                        "_ra_target": "tautulli-copy",
+                        "restore_target_config": {"app": {"config_path": config_path}}}}]},
+                {"hosts": "localhost", "gather_facts": False, "tasks": [
+                    {"vars": dispatch["vars"], "ansible.builtin.assert": {"that": [
+                        "instance == 'tautulli-copy'",
+                        f"app_config.app.config_path == '{expected_path}'"]}}]},
+            ]))
+            env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                    env=env, text=True, capture_output=True, check=False)
+            assert result.returncode == 0, result.stdout + result.stderr
+    for app in ["actual-budget", "tautulli"]:
+        for inputs in ({"instance": app}, {"instance": app + "-copy", "app": app}):
+            check("backup-app.yml", "Publish the application backup dispatch across plays",
+                  inputs, {"_ba_app": app})
+        check("restore-app.yml", "Publish the application restore dispatch across plays",
+              {"instance": app, "snapshot": f"host/{app}/2026-10-08T00:00:00Z"},
+              {"_ra_app": app, "_ra_target": app, "_ra_method": "",
+               "_ra_destination": "existing",
+               "_ra_recovery_point": f"host/{app}/2026-10-08T00:00:00Z",
+               "_ra_overwrite": False, "_ra_pre_restore_point": ""})
+        check("restore-app.yml", "Publish the application restore dispatch across plays",
+              {"instance": app, "app": app, "target": app + "-copy", "method": "native",
+               "overwrite": True, "recovery_point": "selected", "snapshot": "ignored",
+               "pre_restore_point": "independent"},
+              {"_ra_app": app, "_ra_target": app + "-copy", "_ra_method": "native",
+               "_ra_destination": "existing", "_ra_recovery_point": "selected",
+               "_ra_overwrite": True, "_ra_pre_restore_point": "independent"})
     # Exercise the role's actual PBS resolver include without live access. An absent
     # PBS must reach the role's safety assertion, rather than a missing include path.
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for application in ["actual-budget", "plex"]:
-          for operation in ["backup", "restore"]:
-            tasks.append({
-                "block": [{"ansible.builtin.include_role": {
-                    "name": application, "tasks_from": operation}}],
-                "rescue": [{"ansible.builtin.assert": {"that": [
-                    "ansible_failed_result.msg is search('No usable PBS')",
-                    "not k8s_pbs_available"]}}],
-            })
+        for app in ["actual-budget", "plex", "tautulli"]:
+            for operation in ["backup", "restore"]:
+                tasks.append({
+                    "block": [{"ansible.builtin.include_role": {
+                        "name": app, "tasks_from": operation}},
+                        {"ansible.builtin.fail": {"msg": "Missing PBS was accepted"}}],
+                    "rescue": [{"ansible.builtin.assert": {"that": [
+                        "ansible_failed_result.msg is search('No usable PBS')",
+                        "not k8s_pbs_available"]}}],
+                })
+        tasks.append({
+            "vars": {"restore_overwrite": True, "restore_snapshot": ""},
+            "block": [{"ansible.builtin.include_role": {
+                "name": "tautulli", "tasks_from": "restore"}},
+                {"ansible.builtin.fail": {"msg": "Overwrite without a point was accepted"}}],
+            "rescue": [{"ansible.builtin.assert": {"that": [
+                "ansible_failed_result.msg is search('Tautulli restore needs')"]}}],
+        })
         path.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False, "vars": {
                 "instance": "actual-budget", "homelabinfra_infra": {"backups": {}},

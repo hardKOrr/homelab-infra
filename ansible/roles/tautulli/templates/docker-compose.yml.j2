@@ -14,6 +14,9 @@ services:
       # Tautulli reads TAUTULLI_<setting> as runtime config. The token and API
       # key are sourced from Vaultwarden and task output stays no_log.
       - TAUTULLI_PMS_URL={{ _tautulli_plex_url }}
+      - TAUTULLI_PMS_IP={{ _tautulli_plex_instance }}
+      - TAUTULLI_PMS_PORT=32400
+      - TAUTULLI_PMS_IDENTIFIER={{ _tautulli_plex_identifier }}
       - TAUTULLI_PMS_TOKEN={{ _tautulli_plex_token }}
       - TAUTULLI_PMS_URL_MANUAL=1
       - TAUTULLI_FIRST_RUN_COMPLETE=1

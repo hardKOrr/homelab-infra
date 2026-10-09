@@ -1,0 +1,277 @@
+---
+# Restore one application-consistent Tautulli config archive, with an explicit overwrite.
+
+- name: Tautulli restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Tautulli restore needs a PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Tautulli restore | Resolve the source backup identity
+  ansible.builtin.set_fact:
+    _tautulli_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _application_restore_complete: false
+    _tautulli_restore_rolled_back: false
+    _tautulli_restore_moved: {rc: 1}
+  no_log: true
+
+- name: Tautulli restore | Require the selected snapshot to belong to the source group
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot.startswith('host/' ~ _tautulli_restore_backup_id ~ '/')
+      - restore_snapshot | length > ('host/' ~ _tautulli_restore_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Tautulli snapshot must belong to host/{{ _tautulli_restore_backup_id }}/;
+      refusing to replace application state with another backup group's archive.
+  when: restore_snapshot | default('') | length > 0
+
+- name: Tautulli restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Tautulli restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Tautulli. Deploy PBS before listing or restoring
+      application data.
+
+- name: Tautulli restore | List available snapshots
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _tautulli_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _tautulli_restore_backup_id }}"
+  no_log: true
+
+- name: Tautulli restore | Print available snapshots
+  ansible.builtin.debug:
+    msg: "PBS snapshots for host/{{ _tautulli_restore_backup_id }}:\n{{ _tautulli_snapshots.stdout }}"
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Tautulli restore | Explain the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with snapshot=<PBS snapshot ID> and overwrite=true to
+      replace {{ app_config.app.config_path }} from one application-consistent data.pxar.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Tautulli restore | Create a private staging directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-tautulli-restore-"
+  register: _tautulli_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Tautulli restore | Stop and replace application state
+  when: restore_overwrite | bool
+  block:
+    # Keep the rollback copy on the config filesystem so moving the original is an
+    # atomic rename. It is outside config_path and cannot enter an application backup.
+    - name: Tautulli restore | Create private rollback space beside the config directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ app_config.app.config_path | dirname }}"
+        prefix: .tautulli-pre-restore-
+      register: _tautulli_restore_previous
+
+    - name: Tautulli restore | Stop only Tautulli
+      community.docker.docker_compose_v2:
+        project_src: "{{ tautulli_project_dir }}"
+        state: stopped
+        services:
+          - "{{ instance }}"
+
+    - name: Tautulli restore | Extract the selected archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _tautulli_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    # Keep the original until the replacement passes its health check. The failure
+    # boundary can put it back after a copy, ownership, start or health-check failure.
+    - name: Tautulli restore | Move the original config into rollback space
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ app_config.app.config_path }}"
+          - "{{ _tautulli_restore_previous.path }}/config"
+      register: _tautulli_restore_moved
+      changed_when: _tautulli_restore_moved.rc == 0
+      no_log: true
+
+    - name: Tautulli restore | Recreate the data directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        mode: "0750"
+
+    - name: Tautulli restore | Copy the archived application state into place
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - "{{ _tautulli_restore_tmp.path }}/."
+          - "{{ app_config.app.config_path }}/"
+      changed_when: true
+      no_log: true
+
+    - name: Tautulli restore | Restore application data ownership
+      ansible.builtin.command:
+        argv: [chown, -R, "{{ app_config.app.puid | default(1313) }}:{{ app_config.app.pgid | default(1313) }}", "{{ app_config.app.config_path }}"]
+      changed_when: true
+      no_log: true
+
+    - name: Tautulli restore | Start only Tautulli
+      community.docker.docker_compose_v2:
+        project_src: "{{ tautulli_project_dir }}"
+        state: present
+        services:
+          - "{{ instance }}"
+
+    - name: Tautulli restore | Wait for the restored service
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}"
+        status_code: 200
+      register: _tautulli_restore_health
+      until: _tautulli_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Tautulli restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Tautulli restore | Stop only Tautulli after failure
+      community.docker.docker_compose_v2:
+        project_src: "{{ tautulli_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Tautulli restore | Remove the failed replacement config
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: absent
+      when: _tautulli_restore_moved.rc | default(1) == 0
+
+    - name: Tautulli restore | Put the original config back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _tautulli_restore_previous.path }}/config"
+          - "{{ app_config.app.config_path }}"
+      changed_when: true
+      no_log: true
+      when: _tautulli_restore_moved.rc | default(1) == 0
+
+    - name: Tautulli restore | Record that rollback completed
+      ansible.builtin.set_fact:
+        _tautulli_restore_rolled_back: true
+
+    - name: Tautulli restore | State that the service remains stopped
+      ansible.builtin.fail:
+        msg: >-
+          Tautulli restore failed. The service was left stopped rather than serving
+          partial state. The original config was retained or put back; inspect the job
+          output and rerun the restore after correcting it.
+  always:
+    - name: Tautulli restore | Remove rollback space only after health or rollback succeeded
+      ansible.builtin.file:
+        path: "{{ _tautulli_restore_previous.path }}"
+        state: absent
+      when:
+        - _tautulli_restore_previous.path is defined
+        - >-
+          (_application_restore_complete | bool) or (_tautulli_restore_rolled_back | bool)
+          or (_tautulli_restore_moved.rc | default(1) != 0)
+
+    - name: Tautulli restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _tautulli_restore_tmp.path }}"
+        state: absent
+      when: _tautulli_restore_tmp.path is defined

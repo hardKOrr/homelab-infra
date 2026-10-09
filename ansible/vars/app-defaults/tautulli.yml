@@ -3,6 +3,13 @@
 # role to Vaultwarden, never authored in this file or an instance config.
 tautulli_defaults:
   stack: media
+
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     image: "ghcr.io/tautulli/tautulli:latest"
     port: 8181
@@ -20,3 +27,22 @@ tautulli_defaults:
     access: internal
     # Tautulli uses Plex authentication itself. A forward-auth proxy would
     # interfere with its Plex sign-in flow.
+
+  # Stop the one service and archive config, excluding disposable logs and cache.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+
+    # The backup client is installed inside a short-lived Debian container. This keeps the
+    # media host free of a PBS apt source while using the same signed Proxmox client
+    # source as the Kubernetes application backup roles.
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
