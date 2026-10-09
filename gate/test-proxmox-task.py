@@ -60,10 +60,12 @@ def main():
         # Each of the five production callers must poll exactly the same identity
         # for bare and JSON-quoted stdout, including pvesh's trailing newline.
         for index, expression in enumerate(callers):
-            upid = f"UPID:<pve-node>:00000001:00000002:00000003:vzdump:<GUEST-vmid>:fixture{index}:"
-            for output in (upid + "\n", json.dumps(upid) + "\n"):
-                tasks.append(include(expression, output))
-                expected.append(["get", f"/nodes/localhost/tasks/{upid}/status", "--output-format", "json"])
+            for operation in ("vzdump", "qmstop", "qmstart", "vzrestore", "vzstop", "vzstart"):
+                upid = (f"UPID:<pve-node>:00000001:00000002:00000003:{operation}:"
+                        f"<GUEST-vmid>:fixture{index}:")
+                for output in (upid + "\n", json.dumps(upid) + "\n"):
+                    tasks.append(include(expression, output))
+                    expected.append(["get", f"/nodes/localhost/tasks/{upid}/status", "--output-format", "json"])
 
         # Run failures after successful calls to also detect stale normalized facts.
         upid = "UPID:<pve-node>:00000001:00000002:00000003:vzdump:<GUEST-vmid>:fixture:"

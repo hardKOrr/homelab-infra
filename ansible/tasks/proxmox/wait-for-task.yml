@@ -11,11 +11,11 @@
 
 - name: Proxmox | Normalize the task identity
   ansible.builtin.set_fact:
-    # pvesh may return a bare UPID or a JSON string. Strip only one complete
-    # quoted UPID, never extract an identity from ambiguous or multiline output.
+    # pvesh may return a bare UPID or a JSON string. Strip only one outer quote
+    # pair; the assertion below rejects whitespace, escapes and ambiguous output.
     _proxmox_task_upid: >-
       {{ proxmox_task_upid | default('') | string
-         | regex_replace('^"(UPID:[^"\\\s]+)"\Z', '\1') }}
+         | regex_replace('^"(UPID:[^"]+)"$', '\1') }}
 
 - name: Proxmox | Require a task identity
   ansible.builtin.assert:
