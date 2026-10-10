@@ -160,6 +160,10 @@
       ansible.builtin.include_tasks: ../../tasks/unwiring/sabnzbd-clients.yml
       when: (app | default(instance)) == 'sabnzbd'
 
+    - name: Withdraw qBittorrent from its deployed consumers
+      ansible.builtin.include_tasks: ../../tasks/unwiring/qbittorrent-clients.yml
+      when: (app | default(instance)) == 'qbittorrent'
+
     - name: Unregister from the service registry
       ansible.builtin.include_tasks: ../../tasks/unwiring/registry.yml
       vars:

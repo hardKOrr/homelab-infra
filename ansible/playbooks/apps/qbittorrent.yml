@@ -10,11 +10,9 @@
 # hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
 # the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
-# Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
-# what closes the loop with slice 504: wire-media-stack.yml reads that key to find
-# this client and reads the WebUI credentials this deploy stored in
-# homelab-infra/media/<instance>, then registers it in every *arr that speaks
-# `torrent`. Nothing has to be declared by hand afterwards.
+# Play 3 records the media registry entry before wiring this selected client into
+# every deployed torrent consumer. Credentials come from the canonical item
+# homelab-infra/media/<instance>; sibling connections remain in place.
 #
 # The deploy shape is the same as the *arr apps' — see playbooks/apps/lidarr.yml —
 # but the role is its own: qBittorrent has no config.xml, no API key and no
@@ -263,17 +261,8 @@
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
 
-    # App-to-app wiring is deliberately NOT done here, for the same reason the *arr
-    # playbooks leave it alone: this client's peers are every *arr in the lab, and
-    # wiring them pairwise from each deploy would mean every app re-wiring the whole
-    # stack. playbooks/stacks/wire-media-stack.yml owns that, is idempotent, and
-    # finds this client through the registry entry written above.
-    - name: Report how to wire this app into the media stack
-      ansible.builtin.debug:
-        msg: >-
-          {{ instance }} is registered in the media registry. Run the Wire Media
-          Stack job to register it as a download client in every *arr that
-          downloads over torrent.
+    - name: Wire this download client into deployed torrent consumers
+      ansible.builtin.include_tasks: ../../tasks/app-wiring/qbittorrent-clients.yml
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops

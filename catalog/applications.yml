@@ -312,6 +312,7 @@ applications:
     extra: [backup, restore, migrate]
 
   qbittorrent:
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
     name: qBittorrent
     job: deploy-qbittorrent.yaml
     root: Applications

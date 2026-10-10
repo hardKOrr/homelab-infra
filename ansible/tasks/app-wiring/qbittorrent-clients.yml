@@ -1,0 +1,24 @@
+---
+# Wire just this deployed download client, preserving each consumer's other connections.
+- name: qBittorrent clients | Resolve peers
+  ansible.builtin.include_tasks: qbittorrent-peers.yml
+
+- name: qBittorrent clients | Register the client in each consumer
+  ansible.builtin.include_tasks: arr-download-client.yml
+  vars:
+    mw_client_name: "{{ instance }}"
+    mw_client: "{{ _qbt_client }}"
+    mw_arr_name: "{{ item.key }}"
+    mw_arr: "{{ item.value }}"
+  loop: "{{ _qbt_consumers }}"
+  loop_control:
+    label: "{{ instance }} → {{ item.key }}"
+
+- name: qBittorrent clients | Record failed consumer connections
+  ansible.builtin.include_tasks: ../report-degradation.yml
+  vars:
+    degradation_component: "{{ item.connection }}"
+    degradation_reason: "{{ item.detail | default('Could not register the qBittorrent download client.') }}"
+  loop: "{{ media_wire_results | selectattr('state', 'equalto', 'failed') | list }}"
+  loop_control:
+    label: "{{ item.connection }}"

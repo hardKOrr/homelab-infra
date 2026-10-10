@@ -1,0 +1,12 @@
+---
+# The registry still contains the owned client until all its connections are withdrawn.
+- name: qBittorrent clients | Resolve peers before removal
+  ansible.builtin.include_tasks: ../app-wiring/qbittorrent-peers.yml
+
+- name: qBittorrent clients | Remove the selected client's entries
+  ansible.builtin.include_tasks: qbittorrent-consumer.yml
+  loop: "{{ _qbt_consumers }}"
+  loop_control:
+    loop_var: qbt_consumer
+    label: "{{ qbt_consumer.key }}"
+  when: _qbt_client.host is defined
