@@ -201,6 +201,19 @@
     or (lookup('env', 'LAB_DNS_API_SECRET') | default('', true) | length > 0)
   no_log: true
 
+# The firewall provider follows the DNS shape: config/infrastructure.yml `firewall:`
+# declares provider, host and interface map; the homelab-infra/firewall vault item
+# (merged into homelabinfra_infra at the top of this file) carries api_key/api_secret
+# and wins over anything authored.
+- name: Overlay the authored firewall provider onto the registry
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ homelabinfra_infra
+         | combine({'firewall': (_config_infrastructure | default({})).firewall | default({}, true)
+                                | combine(homelabinfra_infra.firewall | default({}, true))}) }}
+  when: ((_config_infrastructure | default({})).firewall | default({}, true)) | length > 0
+  no_log: true
+
 - name: Overlay the authored mail provider onto the registry
   ansible.builtin.set_fact:
     homelabinfra_infra: >-

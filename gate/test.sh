@@ -89,4 +89,5 @@ bash gate/test-vmid-from-ip.sh || rc=1
 "$py" gate/test-sabnzbd-clients.py || rc=1
 "$py" gate/test-proxmox-task.py || rc=1
 "$py" gate/test-decommission-retire.py || rc=1
+"$py" gate/test-firewall-wiring.py || rc=1
 exit $rc

@@ -20,9 +20,9 @@ slskd_defaults:
     port: 5030
     container_port: 5030
 
-    # Published for incoming Soulseek peer connections. Forward it at the
-    # router for full download speed; the client works without that, more
-    # slowly — the same tradeoff as qBittorrent's torrenting_port.
+    # Published for incoming Soulseek peer connections. The client works
+    # without a WAN forward, more slowly — the same tradeoff as qBittorrent's
+    # torrenting_port. firewall.inbound below publishes it when enabled.
     listen_port: 50300
 
     config_path: "/opt/{{ instance }}/config"
@@ -66,6 +66,24 @@ slskd_defaults:
     # role sets the container's `user:` field from these instead.
     puid: 1313
     pgid: 1313
+
+  # Network access Deploy opens through infrastructure.firewall
+  # (tasks/wiring/firewall-opnsense.yml). Soulseek logs in to the server on
+  # TCP 2271 and then talks to each peer on whatever port that peer listens
+  # on, so outbound TCP to any port is the smallest rule that works.
+  firewall:
+    egress:
+      - name: soulseek
+        protocol: TCP
+        port: ""
+    # Opt-in WAN forward of listen_port. To publish it, copy this list into
+    # config/apps/<instance>.yml with `enabled: true`; keep `port` equal to
+    # app.listen_port.
+    inbound:
+      - name: soulseek-peers
+        protocol: TCP
+        port: 50300
+        enabled: false
 
   routing:
     subdomain: slskd

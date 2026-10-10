@@ -22,7 +22,7 @@
 #   2. Unwire (localhost, each step conditional on its provider):
 #      a. Caddy/Nginx route      d. DNS record
 #      b. Authentik application + provider
-#      c. Uptime Kuma monitor
+#      c. Uptime Kuma monitor    f. firewall rules the instance owns
 #      e. its entries in config/.generated/facts.yml — the service registry. Added
 #         2026-08-15: a removal used to leave the registry claiming the app was still
 #         there, and an orphaned media entry is not inert (Wire Media Stack registers
@@ -139,6 +139,13 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Unwire firewall
+      ansible.builtin.include_tasks: "../../tasks/unwiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
 
     # The runner is an app-to-app registration, not a proxy route. Remove exactly this
     # named registration while the Forgejo endpoint and its admin credential still exist;

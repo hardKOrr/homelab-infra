@@ -27,7 +27,7 @@ Lint runs `ansible-lint` over `ansible/{playbooks,roles,tasks,vars}`, parses Jin
 checks repository links and fixture secrets, and enforces GitHub workflow policy.
 
 Test syntax-checks every playbook in parallel, replays diagnostics in order, and
-runs ten logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
+runs eleven logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
 The Python suites exercise production logic, expressions and templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
@@ -46,6 +46,7 @@ The Python suites exercise production logic, expressions and templates.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available to the Docker dispatch play.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
+- `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:
 

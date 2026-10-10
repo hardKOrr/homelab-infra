@@ -12,9 +12,10 @@
 # every estate; an estate-scoped guest lands on its estate's own.
 #
 # The LAN itself is not ours. This file selects among the networks the operator declared in
-# config/proxmox.yml. It never creates a VLAN, a bridge, a route or a firewall rule, and it
-# is not what makes the shared network reachable from an estate — that is the operator's
-# router, exactly like the gateway and the DHCP range this platform already refuses to own.
+# config/proxmox.yml. It never creates a VLAN, a bridge or a route, and it is not what
+# makes the shared network reachable from an estate — that is the operator's router,
+# exactly like the gateway and the DHCP range. An app's own egress and port forwards are
+# opened by Deploy through infrastructure.firewall (tasks/wiring/firewall-opnsense.yml).
 #
 # Inputs:
 #   resolve_network_app     — the application slug, keyed in catalog/applications.yml.

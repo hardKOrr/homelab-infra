@@ -1,0 +1,49 @@
+---
+# Remove every OPNsense rule an instance owns. Inverse of tasks/wiring/firewall-opnsense.yml.
+#
+# Wiring contract: wiring_app_name. No address is needed — rules are found by their
+# "homelab-infra: <instance> " description — so removal works after the guest is gone.
+#
+# Runs for every instance whenever a firewall provider is configured, not only for apps
+# that declare access today: an instance whose declaration was dropped still has rules
+# to withdraw. Idempotent: nothing owned → no change and no reload.
+
+- name: Unwire firewall | Withdraw this instance's OPNsense rules
+  vars:
+    _fw_cfg: "{{ homelabinfra_infra.firewall }}"
+    fw_base: >-
+      {{ _fw_cfg.host if _fw_cfg.host is search('^https?://') else 'https://' ~ _fw_cfg.host }}
+    fw_validate: "{{ _fw_cfg.validate_certs | default(false) }}"
+    fw_owner_prefix: "homelab-infra: {{ wiring_app_name }} "
+    fw_desired: []
+  block:
+    - name: Unwire firewall | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name | default('') | length > 0
+          - _fw_cfg.host | default('') | length > 0
+          - _fw_cfg.api_key | default('') | length > 0
+          - _fw_cfg.api_secret | default('') | length > 0
+        fail_msg: >-
+          Firewall cleanup needs firewall.host in config/infrastructure.yml and api_key +
+          api_secret in the homelab-infra/firewall vault item.
+
+    - name: Unwire firewall | Remove egress rules
+      ansible.builtin.include_tasks: ../firewall/opnsense-reconcile.yml
+      vars:
+        fw_model: filter
+        fw_desc_field: description
+
+    - name: Unwire firewall | Remember whether egress changed
+      ansible.builtin.set_fact:
+        _fw_filter_changed: "{{ _fw_model_changed }}"
+
+    - name: Unwire firewall | Remove inbound port forwards
+      ansible.builtin.include_tasks: ../firewall/opnsense-reconcile.yml
+      vars:
+        fw_model: d_nat
+        fw_desc_field: descr
+
+    - name: Unwire firewall | Apply the ruleset
+      ansible.builtin.include_tasks: ../firewall/opnsense-apply.yml
+      when: (_fw_filter_changed | bool) or (_fw_model_changed | bool)

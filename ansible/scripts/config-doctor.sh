@@ -334,6 +334,21 @@ else:
                    "required for provider %r unless dns.instance names a guest "
                    "this platform created" % provider)
 
+    # The firewall an app's declared network access is opened on (app_config.firewall,
+    # tasks/wiring/firewall-opnsense.yml). Its API key/secret live in the
+    # homelab-infra/firewall vault item, never here.
+    provider = enum(infra, "infrastructure.yml", "firewall.provider", ["opnsense", "none"],
+                    required=False)
+    if provider and provider != "none":
+        need(infra, "infrastructure.yml", "firewall.host")
+        interfaces = dig(infra, "firewall.interfaces")
+        if not isinstance(interfaces, list) or not interfaces or not all(
+                isinstance(entry, dict) and entry.get("cidr") and entry.get("interface")
+                for entry in interfaces):
+            report("ERROR", "infrastructure.yml", "firewall.interfaces",
+                   "a list of {cidr, interface} naming the OPNsense interface each guest "
+                   "network enters on, e.g. [{cidr: 192.168.40.0/24, interface: opt4}]")
+
     # Mail is always an external relay -- this platform never runs an SMTP server, so
     # unlike dns/pihole there is no in-lab instance option; a configured provider always
     # needs an address. The credential is never authored here at all -- it lives in
@@ -360,7 +375,7 @@ else:
 # key is optional. What is checked is shape: a recursive merge means replacing a mapping
 # with a scalar silently clobbers the whole subtree (CONTRACT.md, App-level layering).
 IDENTITY_MODES = ["none", "catalog", "oidc", "forward_auth"]
-MAPPING_KEYS = ["proxmox", "app", "routing", "update", "resources", "network"]
+MAPPING_KEYS = ["proxmox", "app", "routing", "update", "resources", "network", "firewall"]
 
 app_files = sorted(glob.glob(os.path.join(CONFIG_DIR, "apps", "*.yml")))
 estate_names = set((infra.get("domains") or {}).keys()) if isinstance(infra, dict) else set()

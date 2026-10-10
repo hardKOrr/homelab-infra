@@ -25,12 +25,23 @@ app:
   download_path: /mnt/downloads
 
   # port: 5030                 # the web port the stack host publishes.
-  # listen_port: 50300         # forward this at the router for full download speed.
+  # listen_port: 50300         # incoming peer port; see firewall.inbound below.
 
   # Optional: host paths to share back to the Soulseek network. Sharing
   # nothing still works; it is what other users judge this account by.
   # shared_dirs:
   #   - /mnt/data/media/music
+
+# ── Firewall ─────────────────────────────────────────────────────────────────
+# With infrastructure.yml `firewall:` configured, Deploy always opens outbound
+# TCP to the Soulseek server and peers. The WAN forward of listen_port is
+# opt-in: set the whole list here (a list replaces the default one).
+# firewall:
+#   inbound:
+#     - name: soulseek-peers
+#       protocol: TCP
+#       port: 50300            # keep equal to app.listen_port
+#       enabled: true
 
 # ── Routing ──────────────────────────────────────────────────────────────────
 # routing:

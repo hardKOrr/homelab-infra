@@ -123,9 +123,10 @@ proxmox:
 #
 # ONE NETWORK PER VLAN, and this platform does not create the VLAN. The tag, the subnet and
 # the gateway travel together, so `which network` and `which VLAN` are one question — but
-# the VLAN itself, its bridge, its routes, and the firewall rules that let `shared` reach
-# each estate are yours, exactly like the gateway and your router's DHCP range. Declare
-# here only what already exists on the wire.
+# the VLAN itself, its bridge, its routes, and the rules that let `shared` reach each
+# estate are yours, exactly like the gateway and your router's DHCP range. Declare here
+# only what already exists on the wire. Per-app internet access and port forwards are
+# opened by Deploy through infrastructure.yml `firewall:`.
 #
 # Addressing is static. Every guest this platform creates is given an address it
 # chose, so it can wire, route and monitor that guest afterwards. DHCP happens only

@@ -1,0 +1,20 @@
+---
+# Reload the OPNsense ruleset after opnsense-reconcile.yml changed it. Filter rules and
+# destination NAT share one pf reload, so one call applies both models.
+# Inputs: fw_base, fw_validate from the caller.
+
+- name: Firewall | Apply the OPNsense ruleset
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/filter/apply"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _fw_apply
+  changed_when: true
+  failed_when: _fw_apply.json.status | default('error') | trim | lower == 'error'
+  no_log: true

@@ -1,0 +1,137 @@
+---
+# Open the network access an application declares, on an OPNsense firewall.
+# Inverse: tasks/unwiring/firewall-opnsense.yml.
+#
+# An application whose defaults declare `firewall:` is not working until that access
+# exists: slskd cannot log in to Soulseek through a VLAN that only lets 53 and 443 out.
+# Deploy therefore owns it, the same way it owns the app's DNS record and route.
+#
+# Wiring contract (vars supplied by the calling playbook):
+#   wiring_app_name       — instance name; every rule is described
+#                           "homelab-infra: <instance> <direction> <name>"
+#   wiring_upstream_host  — the guest's IPv4 address (the rules' source / NAT target)
+#   wiring_firewall       — the merged app_config.firewall:
+#       egress:   list of {name, protocol, port, destination}
+#                 protocol TCP | UDP | TCP/UDP; port '' means any port;
+#                 destination defaults to any
+#       inbound:  list of {name, protocol, port, local_port, enabled}
+#                 a WAN port forward to the guest. Opt-in: a rule is published only
+#                 when its `enabled` is true in config/apps/<instance>.yml.
+#
+# Reads homelabinfra_infra.firewall (config/infrastructure.yml `firewall:` plus the
+# homelab-infra/firewall vault item, see ansible/vars/CONTRACT.md):
+#   host, api_key, api_secret, validate_certs (default false)
+#   interfaces    — list of {cidr, interface}: which OPNsense interface a guest's
+#                   traffic enters on, chosen by the guest's address
+#   wan_interface — default 'wan'
+#   sequence      — default 1000. Egress rules land here, after the operator's own
+#                   lower-numbered rules, so a private-range block the operator placed
+#                   earlier still applies to an "any destination" egress rule.
+#
+# Only rules whose description starts with "homelab-infra: <instance> " are created,
+# changed or removed. The ruleset is applied once, and only when something changed.
+
+- name: Wire firewall | Open declared access on OPNsense
+  when: >-
+    (wiring_firewall.egress | default([]) | length > 0)
+    or (wiring_firewall.inbound | default([]) | length > 0)
+  vars:
+    _fw_cfg: "{{ homelabinfra_infra.firewall }}"
+    fw_base: >-
+      {{ _fw_cfg.host if _fw_cfg.host is search('^https?://') else 'https://' ~ _fw_cfg.host }}
+    fw_validate: "{{ _fw_cfg.validate_certs | default(false) }}"
+    fw_owner_prefix: "homelab-infra: {{ wiring_app_name }} "
+    _fw_interfaces_json: >-
+      {%- set found = [] -%}
+      {%- for entry in _fw_cfg.interfaces | default([]) -%}
+      {%-   if entry.cidr is defined and entry.interface is defined
+              and entry.cidr | ansible.utils.network_in_network(wiring_upstream_host) -%}
+      {%-     set _ = found.append(entry.interface) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ found | to_json }}
+    _fw_interfaces: "{{ _fw_interfaces_json | from_json }}"
+  block:
+    - name: Wire firewall | Assert wiring contract vars
+      ansible.builtin.assert:
+        that:
+          - wiring_app_name | default('') | length > 0
+          - wiring_upstream_host | default('') is ansible.utils.ipv4_address
+          - _fw_cfg.host | default('') | length > 0
+          - _fw_cfg.api_key | default('') | length > 0
+          - _fw_cfg.api_secret | default('') | length > 0
+          - _fw_interfaces | length == 1
+        fail_msg: >-
+          {{ wiring_app_name }} declares firewall access, which needs firewall.host and
+          exactly one firewall.interfaces entry whose cidr contains
+          {{ wiring_upstream_host | default('<no address>') }} (found
+          {{ _fw_interfaces | length }}) in config/infrastructure.yml, and api_key +
+          api_secret in the homelab-infra/firewall vault item (Store Secret job).
+
+    - name: Wire firewall | Build the declared rules
+      ansible.builtin.set_fact:
+        _fw_filter_desired: "{{ _fw_filter_json | from_json }}"
+        _fw_dnat_desired: "{{ _fw_dnat_json | from_json }}"
+      vars:
+        _fw_filter_json: >-
+          {%- set rules = [] -%}
+          {%- for e in wiring_firewall.egress | default([]) -%}
+          {%-   set fields = {
+                  'enabled': '1', 'action': 'pass', 'quick': '1',
+                  'interface': _fw_interfaces[0], 'direction': 'in',
+                  'ipprotocol': 'inet', 'protocol': e.protocol | default('TCP') | upper,
+                  'source_net': wiring_upstream_host,
+                  'destination_net': e.destination | default('any', true),
+                  'destination_port': e.port | default('', true) | string,
+                  'sequence': _fw_cfg.sequence | default(1000) | string,
+                  'log': '0',
+                  'description': fw_owner_prefix ~ 'egress ' ~ e.name} -%}
+          {%-   set _ = rules.append({'description': fields.description,
+                                      'fields': fields, 'payload': fields}) -%}
+          {%- endfor -%}
+          {{ rules | to_json }}
+        _fw_dnat_json: >-
+          {%- set rules = [] -%}
+          {%- for i in wiring_firewall.inbound | default([]) if i.enabled | default(false) | bool -%}
+          {%-   set port = i.port | string -%}
+          {%-   set local = i.local_port | default(i.port) | string -%}
+          {%-   set descr = fw_owner_prefix ~ 'inbound ' ~ i.name -%}
+          {%-   set fields = {
+                  'disabled': '0', 'interface': _fw_cfg.wan_interface | default('wan'),
+                  'ipprotocol': 'inet', 'protocol': i.protocol | default('TCP') | lower,
+                  'destination.network': 'wanip', 'destination.port': port,
+                  'target': wiring_upstream_host, 'local-port': local,
+                  'pass': 'pass', 'log': '1', 'descr': descr} -%}
+          {%-   set payload = {
+                  'disabled': '0', 'interface': fields.interface,
+                  'ipprotocol': 'inet', 'protocol': fields.protocol,
+                  'destination': {'network': 'wanip', 'port': port},
+                  'target': wiring_upstream_host, 'local-port': local,
+                  'pass': 'pass', 'log': '1', 'descr': descr} -%}
+          {%-   set _ = rules.append({'description': descr, 'fields': fields,
+                                      'payload': payload}) -%}
+          {%- endfor -%}
+          {{ rules | to_json }}
+
+    - name: Wire firewall | Reconcile egress rules
+      ansible.builtin.include_tasks: ../firewall/opnsense-reconcile.yml
+      vars:
+        fw_model: filter
+        fw_desc_field: description
+        fw_desired: "{{ _fw_filter_desired }}"
+
+    - name: Wire firewall | Remember whether egress changed
+      ansible.builtin.set_fact:
+        _fw_filter_changed: "{{ _fw_model_changed }}"
+
+    # Reconciled even when no forward is enabled, so turning one off removes it.
+    - name: Wire firewall | Reconcile inbound port forwards
+      ansible.builtin.include_tasks: ../firewall/opnsense-reconcile.yml
+      vars:
+        fw_model: d_nat
+        fw_desc_field: descr
+        fw_desired: "{{ _fw_dnat_desired }}"
+
+    - name: Wire firewall | Apply the ruleset
+      ansible.builtin.include_tasks: ../firewall/opnsense-apply.yml
+      when: (_fw_filter_changed | bool) or (_fw_model_changed | bool)
