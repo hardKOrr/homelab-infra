@@ -16,19 +16,11 @@
 # Exports (read by Play 3 to write the `media` registry key):
 #   deemix_media_kind, deemix_media_host
 #
-# WHY THIS IS NOT roles/sabnzbd OR roles/qbittorrent. Deemix's credential is
-# neither an API key this platform mints (SABnzbd) nor a password this
-# platform generates (qBittorrent): the ARL is a Deezer login session cookie
-# the OPERATOR owns, the same shape as Plex's claim_token
-# (roles/plex/tasks/main.yml) — captured from the operator's own Deezer
-# account, stored in Vaultwarden, and carried through unchanged to both this
-# app and to Lidarr's own download-client entry
-# (ansible/tasks/app-wiring/arr-download-client.yml, `arl` field). There is
-# nothing for this role to generate or mint, and — unlike sabnzbd.ini or
-# qBittorrent.conf — nothing in this image is documented to rewrite the
-# seeded credential file from memory, so there is no drift to repair either.
-# Vaultwarden is this credential's source of truth: the role re-seeds it on
-# every run, and rotating an expired ARL is "update Vaultwarden, redeploy".
+# The ARL is an operator-owned Deezer session cookie, never generated here.
+# A non-empty configured ARL rotates the file and restarts the service. An empty
+# value supports settings-only use and preserves any existing or restored .arl.
+# The effective file value is published to homelab-infra/media/<instance> so
+# Lidarr receives the same credential. Human access still uses Authentik.
 
 - name: Load the media wiring table
   ansible.builtin.include_vars:
@@ -168,18 +160,38 @@
       on the Proxmox node.
 
 # ── Credential ─────────────────────────────────────────────────────────────────
-# Plain text, no trailing newline: the format the deemix-py backend this
-# image wraps reads its Deezer session cookie from. Written unconditionally,
-# never force:false — see the role header for why Vaultwarden, not the
-# running container, is this credential's source of truth.
-#
-# notify, deliberately: Deemix reads .arl once, at process start — a rotation
-# that only rewrites the file leaves the running container answering to the
-# session it already loaded, so the deploy would report success while still
-# using the expired ARL. The restart handler is what makes "update
-# Vaultwarden, redeploy" (the role header, and every operator-facing doc this
-# role ships) actually true. Idempotent on an unchanged ARL: copy reports no
-# change, so no restart fires, matching the Compose template's own notify.
+# Plain text, no trailing newline: the backend reads this cookie at startup.
+# Preserve restored state when no rotation is supplied, including when the
+# operator has not populated the app's Vaultwarden ARL field. Publish the
+# effective value below so subsequent media wiring agrees with the app.
+- name: Check the existing Deezer ARL file
+  ansible.builtin.stat:
+    path: "{{ app_config.app.config_path }}/.arl"
+    get_checksum: false
+    get_mime: false
+  register: _dmx_arl_file
+  no_log: true
+
+- name: Read the preserved Deezer ARL
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.config_path }}/.arl"
+  register: _dmx_preserved_arl
+  when:
+    - _dmx_arl | length == 0
+    - _dmx_arl_file.stat.exists
+  no_log: true
+
+- name: Adopt the preserved Deezer ARL for media wiring
+  ansible.builtin.set_fact:
+    _dmx_arl: "{{ _dmx_preserved_arl.content | b64decode }}"
+  when:
+    - _dmx_arl | length == 0
+    - _dmx_arl_file.stat.exists
+  no_log: true
+
+# A non-empty rotation notifies the restart handler because Deemix reads .arl
+# at process start. An unchanged value creates no restart. A first account-free
+# deployment initializes an empty file; later empty inputs leave it untouched.
 - name: Seed the Deezer ARL
   ansible.builtin.copy:
     content: "{{ _dmx_arl }}"
@@ -187,6 +199,9 @@
     owner: "{{ app_config.app.puid | default(1000) }}"
     group: "{{ app_config.app.pgid | default(1000) }}"
     mode: "0640"
+  when: >-
+    (app_config.app.arl | default('', true) | length > 0)
+    or not _dmx_arl_file.stat.exists
   notify: Restart deemix
   no_log: true
 
@@ -228,15 +243,8 @@
   delay: "{{ deemix_webui_delay }}"
   changed_when: false
 
-# No further identity proof is attempted here, unlike SABnzbd's api_key or
-# qBittorrent's WebUI password. This image documents no REST endpoint to
-# submit or validate an ARL outside its own web UI's login flow, and there is
-# no live instance in this session to confirm one against — the same scope
-# decision this repo already made for Jellyseerr's media-server connection
-# (ansible/roles/jellyseerr/tasks/main.yml): ship a deployed, wired,
-# monitored app rather than guess at an unverified REST contract. The
-# operator confirms a working Deezer login in the Deemix web interface after
-# this deploy; a bad or expired ARL fails there, visibly.
+# HTTPS human login is enforced by Authentik. A Deezer account is optional;
+# the operator verifies any supplied ARL through the Deemix web interface.
 
 # ── Store the credential ──────────────────────────────────────────────────────
 # Written under the same canonical item name wire-media-stack.yml reads, and

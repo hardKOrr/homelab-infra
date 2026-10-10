@@ -37,7 +37,8 @@ deemix_defaults:
           | first | default('/mnt', true)) | regex_replace('/+$', '') }}/downloads
 
     # Empty is supported: the human route still requires Authentik login.
-    # Set the hidden arl field in Vaultwarden to enable Deezer downloads.
+    # Empty preserves an existing/restored .arl; a non-empty Vaultwarden field
+    # enables downloads or rotates the cookie.
     arl: ""
 
     puid: 1313

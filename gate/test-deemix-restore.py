@@ -205,31 +205,56 @@ with Path(os.environ['DEEMIX_TEST_ROOT'], 'services').open('a') as log:
         assert (config / "settings.json").read_text() == '{"tracknameTemplate":"canary"}'
 
 
-def check_empty_arl():
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        settings = root / "settings.json"
-        settings.write_text('{"tracknameTemplate":"canary"}')
-        deploy = yaml.safe_load((repo / "ansible/roles/deemix/tasks/main.yml").read_text())
-        tasks = [copy.deepcopy(next(t for t in deploy if t["name"] == name))
-                 for name in ["Resolve the app kind and ARL", "Seed the Deezer ARL"]]
-        path = root / "empty.yml"
-        path.write_text(yaml.safe_dump([{
-            "hosts": "localhost", "gather_facts": False,
-            "vars": {"app_config": {"app": {"config_path": str(root), "media_kind": "deemix",
-                                           "port": 6595, "puid": os.getuid(), "pgid": os.getgid()}}},
-            "tasks": tasks,
-            "handlers": [{"name": "Restart deemix", "ansible.builtin.debug": {"msg": "restart"}}],
-        }]))
-        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
-                                text=True, capture_output=True, check=False)
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert (root / ".arl").read_text() == ""
-        assert settings.read_text() == '{"tracknameTemplate":"canary"}'
+def check_arl():
+    deploy = yaml.safe_load((repo / "ansible/roles/deemix/tasks/main.yml").read_text())
+    names = ["Resolve the app kind and ARL", "Check the existing Deezer ARL file",
+             "Read the preserved Deezer ARL", "Adopt the preserved Deezer ARL for media wiring",
+             "Seed the Deezer ARL", "Store and verify the ARL"]
+    for original, configured, expected in [(None, "", ""), ("", "", ""),
+                                           ("restored cookie", "", "restored cookie"),
+                                           ("restored cookie", "rotated cookie", "rotated cookie")]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = root / "settings.json"
+            settings.write_text('{"tracknameTemplate":"canary"}')
+            cookie = root / ".arl"
+            if original is not None:
+                cookie.write_text(original)
+                cookie.chmod(0o600)
+            before = cookie.stat() if original is not None else None
+            tasks = [copy.deepcopy(next(t for t in deploy if t["name"] == name)) for name in names]
+            # Stub only Vaultwarden transport, retaining the production publication vars.
+            publish = tasks[-1]
+            publish.pop("ansible.builtin.include_tasks")
+            publish["ansible.builtin.set_fact"] = {"published_arl": "{{ vault_item_fields.arl }}"}
+            tasks[-2]["register"] = "seed_result"
+            verify = {"ansible.builtin.assert": {"that": [
+                "published_arl == expected_arl", "_dmx_arl == expected_arl"]}}
+            path = root / "arl.yml"
+            path.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {"instance": "deemix", "expected_arl": expected,
+                         "app_config": {"app": {"config_path": str(root), "arl": configured,
+                                                "media_kind": "deemix", "port": 6595,
+                                                "puid": os.getuid(), "pgid": os.getgid()}}},
+                "tasks": tasks + [verify] + copy.deepcopy(tasks) + [verify, {
+                    "ansible.builtin.assert": {"that": ["not seed_result.changed"]}}],
+                "handlers": [{"name": "Restart deemix", "ansible.builtin.debug": {"msg": "restart"}}],
+            }]))
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                    text=True, capture_output=True, check=False)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert cookie.read_text() == expected
+            if original is not None and not configured:
+                assert cookie.stat().st_mode == before.st_mode
+                assert cookie.stat().st_mtime_ns == before.st_mtime_ns
+            restarted = "RUNNING HANDLER [Restart deemix]" in result.stdout
+            assert restarted == (original is None or bool(configured and configured != original))
+            assert settings.read_text() == '{"tracknameTemplate":"canary"}'
 
 
 def main():
-    check_empty_arl()
+    check_arl()
     check_backup(False)
     check_backup(True)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)

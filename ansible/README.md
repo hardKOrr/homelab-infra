@@ -143,7 +143,10 @@ keeps the prior recovery point. Restore previews until `overwrite=true`, checks
 the source group, and keeps the original config on its filesystem until the
 replacement passes health checks. Any later failure puts the original back and
 leaves the service stopped. An empty ARL supports settings-only use; the human
-route still uses its declared Authentik access path.
+route still uses its declared Authentik access path. Deploy preserves an existing
+or restored `.arl` when the configured ARL is empty, and publishes that effective
+value to the canonical media credential for Lidarr. A non-empty configured ARL
+rotates the file and restarts Deemix.
 
 Plex native recovery captures its stopped service's server identity, library databases,
 Metadata and Media as one PBS `data.pxar` in `host/<instance>`. Cache, Codecs, Crash
