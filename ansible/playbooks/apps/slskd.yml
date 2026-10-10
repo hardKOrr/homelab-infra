@@ -15,7 +15,7 @@
 # homelab-infra/apps/<instance> — see roles/slskd/tasks/main.yml for why this
 # platform never creates a Soulseek account.
 #
-# Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
+# Play 4 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
 # what closes the loop with slice 504: wire-media-stack.yml reads that key to find
 # this client and reads the API key this deploy stored in
 # homelab-infra/media/<instance>, then registers it in every Lidarr running the
@@ -27,7 +27,7 @@
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to find or create the stack host.
-# Adds the target host to a group for Play 2 to use.
+# Adds the target host to a group for Play 3 to use.
 - name: "slskd | Provision"
   hosts: localhost
   become: false
@@ -71,7 +71,7 @@
 
   tasks:
     # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
-    # The stack host is found (or created) by tag. The app is deployed in Play 2.
+    # The stack host is found (or created) by tag. The app is deployed in Play 3.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -107,7 +107,30 @@
       when: _slskd_host_mounts | length > 0
 
 
-# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# ── Play 2: Open network access ────────────────────────────────────────────────
+# Before Deploy, not with the other wiring: the role's last step waits for the Soulseek
+# login, which cannot complete until the guest may reach the network. Fails the deploy
+# rather than recording a degradation, because without this access slskd cannot work.
+- name: "slskd | Open network access"
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    _slskd_deploy_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _slskd_deploy_host.ansible_host }}"
+    wiring_firewall: "{{ _slskd_deploy_host.app_config.firewall | default({}) }}"
+
+  tasks:
+    - name: Wire firewall
+      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
+
+# ── Play 3: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the stack host to install and configure slskd.
 - name: "slskd | Deploy"
   # Per-instance group, not a shared one: add_host groups persist for the whole
@@ -154,7 +177,7 @@
         name: slskd
 
 
-# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# ── Play 4: Record facts + wire ────────────────────────────────────────────────
 # Registers the app in the media registry, then registers it with platform
 # services. Runs on localhost (API calls). All wiring tasks are idempotent.
 - name: "slskd | Record facts and wire"
@@ -253,17 +276,6 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
-
-    # Fails the deploy rather than recording a degradation: without this access
-    # slskd cannot reach the Soulseek network at all.
-    - name: Wire firewall
-      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
-      vars:
-        wiring_firewall: "{{ _slskd_deploy_host.app_config.firewall | default({}) }}"
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.firewall is defined
-        - homelabinfra_infra.firewall.provider | default('none') != 'none'
 
     # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the
     # UI shows what each host actually runs.
