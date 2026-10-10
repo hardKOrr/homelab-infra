@@ -16,7 +16,7 @@
       - _sab_entry_fields.port | int == (_sab_client.host | ansible.builtin.urlsplit('port') | int)
     fail_msg: "The named SABnzbd download client addresses another instance; refusing removal."
   vars:
-    _sab_entry_fields: "{{ item.fields | items2dict(key_name='name', value_name='value') }}"
+    _sab_entry_fields: "{{ item.fields | selectattr('value', 'defined') | items2dict(key_name='name', value_name='value') }}"
   loop: "{{ _sab_consumer_clients.json | selectattr('name', 'equalto', instance) | selectattr('implementation', 'equalto', 'Sabnzbd') | list }}"
   no_log: true
 

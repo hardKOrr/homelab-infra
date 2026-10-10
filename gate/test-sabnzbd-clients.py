@@ -39,7 +39,7 @@ class API(http.server.BaseHTTPRequestHandler):
         assert self.headers.get('X-Api-Key') == 'arr-key'
         if parsed.path.endswith('/schema'):
             self.respond([{'implementation': 'Sabnzbd', 'fields': [
-                {'name': x, 'value': ''} for x in ['host', 'port', 'apiKey', 'movieCategory', 'useSsl']]}])
+                {'name': x, 'value': ''} for x in ['host', 'port', 'apiKey', 'movieCategory', 'useSsl', 'urlBase', 'username', 'password']]}])
         else:
             assert parsed.path == '/api/v3/downloadclient'
             self.respond(self.server.clients)
@@ -51,6 +51,10 @@ class API(http.server.BaseHTTPRequestHandler):
         assert row['name'] == 'sabnzbd'
         fields = {x['name']: x.get('value') for x in row['fields']}
         assert fields['apiKey'] == 'sab-key' and fields['movieCategory'] in self.server.categories
+        # Real Servarr reads omit values for unset optional fields.
+        for field in row['fields']:
+            if field['name'] in ['urlBase', 'username', 'password']:
+                field.pop('value', None)
         self.server.clients.append(row | {'id': 3})
         self.server.mutations += 1
         self.respond(row | {'id': 3}, 201)
