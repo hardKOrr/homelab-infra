@@ -34,7 +34,7 @@ The Python suites exercise production logic, expressions and templates.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
 - `test-config.py`: Config Doctor, precedence, estates, mail, provider gates and networks.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
-- `test-template-rendering.py`: Caddy, Emby, Navidrome, Maintainerr restore PVCs and Mautic.
+- `test-template-rendering.py`: Caddy, Emby, Unpackerr, Navidrome, Maintainerr restore PVCs and Mautic.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.

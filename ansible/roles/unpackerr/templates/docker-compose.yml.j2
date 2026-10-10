@@ -10,11 +10,13 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
       - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - UN_PARALLEL={{ app_config.app.parallel | default(1) }}
 {% for arr in _unpackerr_arrs %}
-      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_URL={{ arr.value.host }}
-      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_API_KEY={{ arr.value.api_key }}
-      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_PATHS_0={{ app_config.app.download_path }}
-      - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_PROTOCOLS={{ app_config.app.protocols }}
+{% set arr_index = _unpackerr_arrs[:loop.index0] | selectattr('value.app', 'equalto', arr.value.app) | list | length %}
+      - UN_{{ arr.value.app | upper }}_{{ arr_index }}_URL={{ arr.value.host }}
+      - UN_{{ arr.value.app | upper }}_{{ arr_index }}_API_KEY={{ arr.value.api_key }}
+      - UN_{{ arr.value.app | upper }}_{{ arr_index }}_PATHS_0={{ app_config.app.download_path }}
+      - UN_{{ arr.value.app | upper }}_{{ arr_index }}_PROTOCOLS={{ app_config.app.protocols }}
 {% endfor %}
     volumes:
 {% for mount in _unpackerr_mounts %}

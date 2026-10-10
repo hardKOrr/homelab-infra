@@ -5,5 +5,6 @@ app:
   # Must be inside media_storage.mounts. The default is a downloads directory below the first mount, and is passed to every registered Arr as Unpackerr's fallback extraction path.
   download_path: /mnt/downloads
   # protocols: "usenet,UsenetDownloadProtocol,torrent,TorrentDownloadProtocol"
+  # parallel: 2
   # puid: 1313
   # pgid: 1313
