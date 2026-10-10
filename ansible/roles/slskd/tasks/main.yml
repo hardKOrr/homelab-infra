@@ -1,6 +1,6 @@
 ---
 # slskd role — slskd as a Docker container on a stack host. Called from
-# Play 2 of playbooks/apps/slskd.yml. Target: the media host.
+# Play 3 of playbooks/apps/slskd.yml. Target: the media host.
 #
 # Lidarr's plugins-branch Soulseek download client (ansible/vars/media-wiring.yml,
 # `slskd` kind — the plugins branch only; a mainline Lidarr rejects it and the
@@ -12,7 +12,7 @@
 #   homelabinfra_config   — merged input config, including infrastructure.*
 #   homelabinfra_vault    — the in-memory Vaultwarden contract
 #
-# Exports (read by Play 3 to write the `media` registry key):
+# Exports (read by Play 4 to write the `media` registry key):
 #   slskd_media_kind, slskd_media_host
 #
 # WHY THIS IS NEITHER roles/deemix NOR roles/sabnzbd, but borrows from both.
