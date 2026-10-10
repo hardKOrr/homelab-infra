@@ -28,13 +28,13 @@ class API(http.server.BaseHTTPRequestHandler):
         if parsed.path == '/api':
             args = urllib.parse.parse_qs(parsed.query)
             assert args['apikey'] == ['sab-key']
-            if args['mode'] == ['get_config']:
-                self.respond({'config': {'categories': [{'name': x} for x in self.server.categories]}})
+            if args['mode'] == ['get_cats']:
+                self.respond({'categories': sorted(self.server.categories)})
             else:
                 assert args['mode'] == ['set_config']
                 self.server.categories.add(args['name'][0])
                 self.server.mutations += 1
-                self.respond({'status': True})
+                self.respond({'config': {'categories': [{'name': args['name'][0]}]}})
             return
         assert self.headers.get('X-Api-Key') == 'arr-key'
         if parsed.path.endswith('/schema'):

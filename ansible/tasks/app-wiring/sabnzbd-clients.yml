@@ -5,7 +5,7 @@
 
 - name: SABnzbd clients | Read configured categories
   ansible.builtin.uri:
-    url: "{{ _sab_client.host }}/api?mode=get_config&section=categories&output=json&apikey={{ _sab_client.api_key | urlencode }}"
+    url: "{{ _sab_client.host }}/api?mode=get_cats&output=json&apikey={{ _sab_client.api_key | urlencode }}"
     return_content: true
     status_code: 200
   register: _sab_categories
@@ -14,7 +14,10 @@
 
 - name: SABnzbd clients | Require an authenticated category response
   ansible.builtin.assert:
-    that: (_sab_categories.json | default({})).config.categories is defined
+    that:
+      - (_sab_categories.json | default({})).categories is defined
+      - _sab_categories.json.categories is sequence
+      - _sab_categories.json.categories is not string
   no_log: true
 
 - name: SABnzbd clients | Create missing consumer categories
@@ -29,9 +32,11 @@
   loop: "{{ _sab_consumers }}"
   loop_control:
     label: "{{ item.key }}"
-  when: _sab_category not in (_sab_categories.json.config.categories | map(attribute='name') | list)
+  when: _sab_category not in _sab_categories.json.categories
   register: _sab_category_created
-  failed_when: not (_sab_category_created.json.status | default(false) | bool)
+  failed_when: >-
+    _sab_category not in ((_sab_category_created.json.config | default({})).categories
+                         | default([]) | map(attribute='name') | list)
   changed_when: true
   no_log: true
 
