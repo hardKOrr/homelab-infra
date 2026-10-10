@@ -10,6 +10,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
       - TZ={{ homelabinfra_config.timezone | default('UTC') }}
+      - UN_PARALLEL={{ app_config.app.parallel | default(1) }}
 {% for arr in _unpackerr_arrs %}
       - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_URL={{ arr.value.host }}
       - UN_{{ arr.value.app | upper }}_{{ loop.index0 }}_API_KEY={{ arr.value.api_key }}

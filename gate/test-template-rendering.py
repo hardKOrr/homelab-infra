@@ -473,6 +473,61 @@ def emby_rendering():
     assert str(unmounted).strip().lower() == "false", "unmounted is False"
 
 
+def unpackerr_rendering():
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/unpackerr.yml"))[
+        "unpackerr_defaults"
+    ]
+    template = read("ansible/roles/unpackerr/templates/docker-compose.yml.j2")
+    arrs = [
+        {
+            "key": name,
+            "value": {
+                "app": app,
+                "host": f"http://{name}:8989",
+                "api_key": f"fixture-{name}-key",
+            },
+        }
+        for name, app in (
+            ("sonarr", "sonarr"),
+            ("radarr", "radarr"),
+            ("lidarr", "lidarr"),
+        )
+    ]
+
+    def compose(parallel):
+        app = dict(defaults["app"])
+        if parallel is not None:
+            app["parallel"] = parallel
+        app.update(
+            {
+                "image": "golift/unpackerr:latest",
+                "download_path": "/srv/fixtures/downloads",
+            }
+        )
+        return render(
+            template,
+            {
+                "instance": "unpackerr-fixture",
+                "app_config": {"app": app},
+                "homelabinfra_config": {"timezone": "UTC"},
+                "_unpackerr_arrs": arrs,
+                "_unpackerr_mounts": [{"path": "/srv/fixtures"}],
+            },
+        )
+
+    for configured, expected in ((None, 1), (3, 3)):
+        output = compose(configured)
+        assert output.count(f"UN_PARALLEL={expected}") == 1, "parallel setting rendered once"
+        for index, entry in enumerate(arrs):
+            prefix = f"UN_{entry['value']['app'].upper()}_{index}_"
+            assert (
+                output.count(f"{prefix}URL={entry['value']['host']}") == 1
+            ), "Arr URL rendered once"
+            assert (
+                output.count(f"{prefix}API_KEY={entry['value']['api_key']}") == 1
+            ), "Arr key rendered once"
+
+
 def navidrome_rendering():
     compose_template = read("ansible/roles/navidrome/templates/docker-compose.yml.j2")
     compose = render(
@@ -720,7 +775,8 @@ if __name__ == "__main__":
     )
     caddy_missing_or_invalid_resolvers_fail_without_external_fallback(caddy)
     emby_rendering()
+    unpackerr_rendering()
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
-    print("Template rendering: Caddy, Emby, Navidrome, Maintainerr and Mautic passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr and Mautic passed")

@@ -10,6 +10,8 @@ unpackerr_defaults:
     mounts: >-
       {{ (homelabinfra_config.infrastructure.media_storage | default({})).mounts | default([], true) }}
     protocols: "usenet,UsenetDownloadProtocol,torrent,TorrentDownloadProtocol"
+    # Number of archives Unpackerr extracts at once (UN_PARALLEL).
+    parallel: 1
     puid: 1313
     pgid: 1313
   routing:
