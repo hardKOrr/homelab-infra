@@ -1,0 +1,24 @@
+---
+# Select deployed Usenet consumers; secrets come from the canonical vault overlay.
+- name: SABnzbd clients | Load the media wiring table
+  ansible.builtin.include_vars:
+    file: ../../vars/media-wiring.yml
+
+- name: SABnzbd clients | Resolve deployed consumers and the selected client
+  ansible.builtin.set_fact:
+    _sab_clients_registry: >-
+      {{ (homelabinfra_infra.media | default({}))
+         | combine(homelabinfra_vault.media | default({}), recursive=True) }}
+    _sab_consumer_kinds: >-
+      {{ media_wiring.kinds | dict2items | selectattr('value.role', 'equalto', 'arr')
+         | selectattr('value.protocols', 'contains', 'usenet') | map(attribute='key') | list }}
+    media_wire_results: []
+  no_log: true
+
+- name: SABnzbd clients | Select peers
+  ansible.builtin.set_fact:
+    _sab_consumers: >-
+      {{ _sab_clients_registry | dict2items | selectattr('value.app', 'defined')
+         | selectattr('value.app', 'in', _sab_consumer_kinds) | list }}
+    _sab_client: "{{ _sab_clients_registry[instance] | default({}) }}"
+  no_log: true

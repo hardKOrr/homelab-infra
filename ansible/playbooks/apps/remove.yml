@@ -156,6 +156,10 @@
     # After the provider unwiring, deliberately: the registry is what the unwire steps
     # above read to find those providers, so pruning it first would remove the app's own
     # entry while the reverse proxy and DNS still carried its route.
+    - name: Withdraw SABnzbd from deployed Usenet consumers
+      ansible.builtin.include_tasks: ../../tasks/unwiring/sabnzbd-clients.yml
+      when: (app | default(instance)) == 'sabnzbd'
+
     - name: Unregister from the service registry
       ansible.builtin.include_tasks: ../../tasks/unwiring/registry.yml
       vars:

@@ -20,6 +20,12 @@ rd run -i <id> -- -<option> <value>
 rd executions follow -e <id> -f
 ```
 
+SABnzbd Deploy registers the selected download client in deployed Usenet consumers and
+creates missing categories. **Manage / Integrations / Wire Media Stack** remains the
+stack-wide reconciliation job: it registers every compatible download client, syncs *arr
+applications with Prowlarr, and connects Bazarr. Both operations can be rerun safely;
+Deploy no longer requires a separate Wire Media Stack run for its SABnzbd connections.
+
 Read option names from `jobs/*.yaml`. After changing job definitions, run
 **Setup / Automation / Reimport Jobs** to update jobs by UUID and preserve history:
 

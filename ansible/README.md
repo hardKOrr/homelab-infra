@@ -167,6 +167,22 @@ an authenticated settings check and canonical API-key publication succeed. A fai
 puts the original state back and leaves Bazarr stopped. The final Deploy keeps the
 restored API key, language profiles and settings.
 
+SABnzbd Deploy registers only that client in each deployed Usenet consumer and creates
+missing consumer categories. Existing categories and other client entries are preserved.
+Consumer failures are recorded while the remaining connections are attempted; the play's
+final degradation check fails the run with the collected problems. Wire Media Stack still
+reconciles all compatible download clients and the other media connections across the stack.
+Remove withdraws only its named entries after checking that they address the owned client.
+
+SABnzbd native recovery stops only the selected service and captures its configuration
+and history as one PBS `data.pxar` in `host/<instance>`. Logs and download directories
+are excluded; external media mounts stay outside the archive. Backup keeps the two newest
+snapshots alongside daily retention. Restore previews until `overwrite=true`, checks the
+source group, and keeps the original directory beside the config path until the archived
+API key passes an authenticated queue check and is published to the canonical credential
+item. A failure puts the original directory back and leaves SABnzbd stopped. Deploy keeps
+the recovered INI, API key, categories and application settings.
+
 ### Application data port
 
 The issue names the source, destination, capture method, required path or address

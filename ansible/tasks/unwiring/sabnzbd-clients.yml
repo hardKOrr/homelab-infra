@@ -1,0 +1,12 @@
+---
+# The registry still contains the owned client until all its connections are withdrawn.
+- name: SABnzbd clients | Resolve peers before removal
+  ansible.builtin.include_tasks: ../app-wiring/sabnzbd-peers.yml
+
+- name: SABnzbd clients | Remove the selected client's entries
+  ansible.builtin.include_tasks: sabnzbd-consumer.yml
+  loop: "{{ _sab_consumers }}"
+  loop_control:
+    loop_var: sab_consumer
+    label: "{{ sab_consumer.key }}"
+  when: _sab_client.host is defined
