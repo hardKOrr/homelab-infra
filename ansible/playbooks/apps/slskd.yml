@@ -254,6 +254,17 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
+    # Fails the deploy rather than recording a degradation: without this access
+    # slskd cannot reach the Soulseek network at all.
+    - name: Wire firewall
+      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      vars:
+        wiring_firewall: "{{ _slskd_deploy_host.app_config.firewall | default({}) }}"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
     # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the
     # UI shows what each host actually runs.
     - name: Record the app on its Proxmox guest

@@ -1,0 +1,152 @@
+---
+# Reconcile one instance's rules in one OPNsense firewall model to a desired list.
+# Called by tasks/wiring/firewall-opnsense.yml (desired = the app's declaration) and
+# tasks/unwiring/firewall-opnsense.yml (desired = []).
+#
+# Inputs:
+#   fw_model         — 'filter' (Firewall: Rules) or 'd_nat' (Firewall: NAT: Destination NAT)
+#   fw_desc_field    — the model's description field: 'description' (filter), 'descr' (d_nat)
+#   fw_owner_prefix  — "homelab-infra: <instance> ". A rule is owned by this instance only
+#                      when its description starts with exactly this text; every other
+#                      rule on the firewall is left alone.
+#   fw_desired       — list of {description, fields, payload}: `fields` is the flat
+#                      row shape searchRule returns and is what drift is judged on;
+#                      `payload` is what addRule/setRule receive under `rule`.
+#   fw_base / fw_validate — from the caller.
+#
+# Output: _fw_model_changed — true when a rule was added, updated or deleted. The caller
+# applies the ruleset once, after every model is reconciled.
+#
+# Idempotent: rules are matched by description; identical → no call, drifted → setRule,
+# missing → addRule, owned but no longer declared (or a duplicate a failed run left) →
+# delRule.
+
+- name: Firewall | Search {{ fw_model }} rules owned by this instance
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/{{ fw_model }}/searchRule"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': wiring_app_name} }}"
+    status_code: 200
+  register: _fw_search
+  changed_when: false
+  no_log: true
+
+# A login page, an ACL denial rendered as HTML or a truncated page must not read as
+# "this instance owns no rules": that would add duplicates or leave stale rules open.
+- name: Firewall | Validate the {{ fw_model }} search response
+  ansible.builtin.assert:
+    that:
+      - _fw_search.json is defined
+      - _fw_search.json is mapping
+      - _fw_search.json.rows is defined
+      - _fw_search.json.rows | type_debug == 'list'
+      - _fw_search.json.total | default(0) | int <= _fw_search.json.rows | length
+    fail_msg: >-
+      OPNsense {{ fw_model }} searchRule returned an unexpected shape (HTTP
+      {{ _fw_search.status | default('?') }}). Check that the homelab-infra/firewall API
+      key holds the 'Firewall: Rules [new]' and 'Firewall: NAT: Destination NAT'
+      privileges.
+
+- name: Firewall | Plan {{ fw_model }} changes
+  ansible.builtin.set_fact:
+    _fw_plan: "{{ _fw_plan_json | from_json }}"
+  vars:
+    _fw_owned: >-
+      {{ _fw_search.json.rows
+         | selectattr('uuid', 'defined')
+         | rejectattr('is_automatic', 'defined')
+         | selectattr(fw_desc_field, 'defined')
+         | selectattr(fw_desc_field, 'match', fw_owner_prefix | regex_escape)
+         | list }}
+    _fw_plan_json: >-
+      {%- set plan = {'add': [], 'set': [], 'del': []} -%}
+      {%- set wanted = fw_desired | map(attribute='description') | list -%}
+      {%- for rule in fw_desired -%}
+      {%-   set found = _fw_owned | selectattr(fw_desc_field, 'equalto', rule.description) | list -%}
+      {%-   if found | length == 0 -%}
+      {%-     set _ = plan.add.append(rule.payload) -%}
+      {%-   else -%}
+      {%-     set drift = [] -%}
+      {%-     for key, value in rule.fields.items() -%}
+      {%-       if (found[0][key] | default('') | string) != (value | string) -%}
+      {%-         set _ = drift.append(key) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if drift | length > 0 -%}
+      {%-       set _ = plan.set.append({'uuid': found[0].uuid, 'payload': rule.payload}) -%}
+      {%-     endif -%}
+      {%-     for extra in found[1:] -%}
+      {%-       set _ = plan.del.append(extra.uuid) -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for row in _fw_owned -%}
+      {%-   if row[fw_desc_field] not in wanted -%}
+      {%-     set _ = plan.del.append(row.uuid) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ plan | to_json }}
+
+- name: Firewall | Add missing {{ fw_model }} rules
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/{{ fw_model }}/addRule"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: "{{ {'rule': item} }}"
+    status_code: 200
+  loop: "{{ _fw_plan.add }}"
+  loop_control:
+    label: "{{ item[fw_desc_field] }}"
+  register: _fw_add
+  changed_when: true
+  failed_when: _fw_add.json.result | default('') != 'saved'
+  no_log: true
+
+- name: Firewall | Update drifted {{ fw_model }} rules
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/{{ fw_model }}/setRule/{{ item.uuid }}"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: "{{ {'rule': item.payload} }}"
+    status_code: 200
+  loop: "{{ _fw_plan.set }}"
+  loop_control:
+    label: "{{ item.payload[fw_desc_field] }}"
+  register: _fw_set
+  changed_when: true
+  failed_when: _fw_set.json.result | default('') != 'saved'
+  no_log: true
+
+- name: Firewall | Delete {{ fw_model }} rules this instance no longer declares
+  ansible.builtin.uri:
+    url: "{{ fw_base }}/api/firewall/{{ fw_model }}/delRule/{{ item }}"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ fw_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  loop: "{{ _fw_plan.del }}"
+  register: _fw_del
+  changed_when: true
+  failed_when: _fw_del.json.result | default('') not in ['deleted', 'saved']
+  no_log: true
+
+- name: Firewall | Record whether {{ fw_model }} changed
+  ansible.builtin.set_fact:
+    _fw_model_changed: "{{ (_fw_plan.add + _fw_plan.set + _fw_plan.del) | length > 0 }}"

@@ -155,6 +155,27 @@ dns:
   # points certificate issuance at the wrong module.
   # instance: pihole        # for pihole/adguard: Proxmox hostname
 
+# ── Firewall ───────────────────────────────────────────────────────────────────
+# provider: opnsense | none (default none)
+# An app whose defaults declare `firewall:` (slskd: outbound TCP to Soulseek and its
+# peers) needs that access to work at all. With a provider here, Deploy opens it and
+# Remove withdraws it; every rule is described "homelab-infra: <instance> ...", and
+# no other rule on the firewall is touched. Inbound WAN forwards are opt-in per
+# instance (`enabled: true` in config/apps/<instance>.yml).
+#
+# api_key/api_secret are read from the homelab-infra/firewall vault item (Store Secret
+# job). Give that OPNsense account only the "Firewall: Rules [new]" and
+# "Firewall: NAT: Destination NAT" privileges.
+# firewall:
+#   provider: opnsense
+#   host: "192.168.1.1"
+#   interfaces:                # which OPNsense interface each guest network enters on
+#     - cidr: "192.168.1.0/24"
+#       interface: lan
+#   # wan_interface: wan
+#   # sequence: 1000           # after your own lower-numbered rules
+#   # validate_certs: false
+
 # ── Mail ───────────────────────────────────────────────────────────────────────
 # provider: smtp | none
 # This is the default/shared relay contract. An estate may add domains.<name>.mail

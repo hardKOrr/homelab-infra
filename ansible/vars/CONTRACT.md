@@ -119,6 +119,7 @@ and read only by that provider's wiring tasks:
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
+| `firewall` | `api_key`, `api_secret` | opnsense | OPNsense API key/secret for an account holding only the `Firewall: Rules [new]` and `Firewall: NAT: Destination NAT` privileges; a separate account from the Unbound-only DNS key |
 | `mail` | `password` | smtp | Shared SMTP AUTH password for `mail.username`; Vaultwarden-only, never authored |
 | `estates.<estate>.mail` | `password` | smtp | Optional estate-specific SMTP AUTH password; selected only for that estate, never authored |
 
@@ -306,8 +307,10 @@ would override this resolution in every lab at once.
 
 The estate boundary is a network boundary because one network is one VLAN: the tag, the
 subnet and the gateway travel together. What this platform does NOT do is create that VLAN,
-its bridge, its routes, or the firewall rules that let `shared` reach each estate. Those are
-the operator's, exactly like the gateway and the DHCP range. Declare here only what already
+its bridge, its routes, or the rules that let `shared` reach each estate. Those are
+the operator's, exactly like the gateway and the DHCP range. An application's own
+internet egress and port forwards are different: the app declares them under `firewall:`
+and Deploy opens them through `infrastructure.firewall`. Declare here only what already
 exists on the wire.
 | `ansible.ssh_user` | required | |
 | `ansible.ssh_public_key` | required | |
@@ -335,6 +338,12 @@ exists on the wire.
 | `dns.host` | required for external providers | not in Proxmox inventory |
 | `dns.api_key` | optional | |
 | `dns.instance` | optional | |
+| `firewall.provider` | optional, default `none` | `opnsense \| none` — the firewall Deploy opens each app's declared `firewall:` access on (internet egress rules, opt-in WAN port forwards) and Remove withdraws it from |
+| `firewall.host` | required unless provider `none` | OPNsense API address |
+| `firewall.interfaces` | required unless provider `none` | list of `{cidr, interface}`: the OPNsense interface (e.g. `opt4`) a guest's traffic enters on, matched by the guest's address |
+| `firewall.wan_interface` | optional | default `wan`; where inbound port forwards are published |
+| `firewall.sequence` | optional | default `1000`; egress rules sit after the operator's lower-numbered rules, so an earlier private-range block still applies |
+| `firewall.validate_certs` | optional | default `false` |
 | `mail.provider` | optional, default `none` | `smtp \| none` — absent means disabled, exactly like an explicit `none`, so an existing checkout with no `mail:` block keeps passing `config-doctor.sh` unchanged |
 | `mail.host` | required unless provider `none` | SMTP relay hostname; never in Proxmox inventory |
 | `mail.port` | required unless provider `none` | typically `587` (STARTTLS) or `465` (implicit TLS) |
@@ -554,6 +563,7 @@ The canonical top-level items are:
 | `homelab-infra/metrics` | `admin_password` |
 | `homelab-infra/backups` | `api_token_secret` |
 | `homelab-infra/dns` | `api_key`, `api_secret` |
+| `homelab-infra/firewall` | `api_key`, `api_secret` |
 | `homelab-infra/mail` | `password` — shared relay credential used by every estate without a scoped override |
 | `homelab-infra/estates/<estate>/mail` | `password` — optional estate-specific relay credential; Store Secret is the post-cutover write path |
 | `homelab-infra/reverse_proxy` | `dns_api_token` |

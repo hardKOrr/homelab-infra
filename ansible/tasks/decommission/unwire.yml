@@ -47,6 +47,7 @@
           - homelabinfra_infra.sso.provider | default('none') in ['none', 'authentik']
           - homelabinfra_infra.monitoring.provider | default('none') in ['none', 'uptime_kuma']
           - homelabinfra_infra.dns.provider | default('none') in ['none', 'opnsense', 'pihole']
+          - homelabinfra_infra.firewall.provider | default('none') in ['none', 'opnsense']
         fail_msg: A declared provider has no supported inverse wiring route; handoff refused.
 
     - name: Decommission | Require provider endpoints without embedded credentials
@@ -59,7 +60,7 @@
         fail_msg: Provider endpoints must be base URLs with credentials supplied by the existing secret contract.
       vars:
         _dc_endpoint: "{{ _dc_forgejo_endpoint if item == 'forgejo' else homelabinfra_infra.get(item, {}).host | default('') }}"
-      loop: ['reverse_proxy', 'sso', 'monitoring', 'dns', 'forgejo']
+      loop: ['reverse_proxy', 'sso', 'monitoring', 'dns', 'firewall', 'forgejo']
       no_log: true
 
     - name: Decommission | Derive planned Kubernetes namespace through the owning seam
@@ -77,16 +78,18 @@
                'sso': homelabinfra_infra.sso.provider | default('none'),
                'monitoring': homelabinfra_infra.monitoring.provider | default('none'),
                'dns': homelabinfra_infra.dns.provider | default('none'),
+               'firewall': homelabinfra_infra.firewall.provider | default('none'),
                'targets': {
                  'reverse_proxy': homelabinfra_infra.reverse_proxy.host | default(''),
                  'reverse_proxy_port': homelabinfra_infra.reverse_proxy.port | default(''),
                  'sso': homelabinfra_infra.sso.host | default(''),
                  'monitoring': homelabinfra_infra.monitoring.host | default(''),
-                 'dns': homelabinfra_infra.dns.host | default('')},
+                 'dns': homelabinfra_infra.dns.host | default(''),
+                 'firewall': homelabinfra_infra.firewall.host | default('')},
                'namespace': k8s_namespace if app_config.hosting | default('') == 'kubernetes' else '',
                'forgejo': app_config.app.forgejo.instance if decommission_app.app == 'forgejo-runner' else '',
                'forgejo_endpoint': _dc_forgejo_endpoint,
-               'effect': 'remove only the instance route/SSO/monitor/DNS records and owned namespace; preserve dependencies and external data'
+               'effect': 'remove only the instance route/SSO/monitor/DNS/firewall records and owned namespace; preserve dependencies and external data'
              } }}
 
     - name: Decommission | Refuse changed consumer effects before provider mutation
@@ -138,6 +141,12 @@
       when:
         - decommission_unwire_phase == 'integrations'
         - homelabinfra_infra.monitoring.provider | default('none') == 'uptime_kuma'
+
+    - name: Decommission | Unwire firewall
+      ansible.builtin.include_tasks: "../unwiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - decommission_unwire_phase == 'integrations'
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
 
     - name: Decommission | Require independent DNS provider access
       ansible.builtin.assert:
