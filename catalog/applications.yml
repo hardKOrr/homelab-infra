@@ -345,6 +345,7 @@ applications:
     root: Applications
     category: Media & Entertainment
     type: Download Clients
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
     scope: estate
 
   sonarr:

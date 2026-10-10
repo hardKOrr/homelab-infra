@@ -81,6 +81,7 @@ bash gate/test-vmid-from-ip.sh || rc=1
 "$py" gate/test-plex-restore.py || rc=1
 "$py" gate/test-servarr-recovery.py || rc=1
 "$py" gate/test-tautulli-restore.py || rc=1
+"$py" gate/test-slskd-restore.py || rc=1
 "$py" gate/test-deemix-restore.py || rc=1
 "$py" gate/test-bazarr-restore.py || rc=1
 "$py" gate/test-qbittorrent-restore.py || rc=1

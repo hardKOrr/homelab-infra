@@ -11,6 +11,12 @@
 slskd_defaults:
   stack: media
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     # The key ansible/vars/media-wiring.yml is looked up by. It is already
     # declared there as a download client that speaks the `slskd` protocol.
@@ -66,6 +72,25 @@ slskd_defaults:
     # role sets the container's `user:` field from these instead.
     puid: 1313
     pgid: 1313
+
+  # Stop slskd and capture its app state as one PBS archive. Logs are excluded;
+  # downloads and shared directories are separate mounts and stay outside recovery.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+
+    # The backup client is installed inside a short-lived Debian container.
+    # This keeps a PBS apt source off the media host.
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
 
   routing:
     subdomain: slskd

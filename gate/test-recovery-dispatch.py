@@ -41,7 +41,7 @@ def main():
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
     dispatch = next(play for play in source if play["name"] ==
                     "Restore App | Restore Docker application data from PBS")["tasks"][0]
-    for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "prowlarr", "sonarr", "radarr", "lidarr"]:
+    for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "slskd", "prowlarr", "sonarr", "radarr", "lidarr"]:
         for config_path, expected_path in [(f"/opt/{app}/config", f"/opt/{app}-copy/config"),
                                            ("/srv/custom/config", "/srv/custom/config")]:
             with tempfile.TemporaryDirectory() as directory:
@@ -61,7 +61,7 @@ def main():
                 result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                         env=env, text=True, capture_output=True, check=False)
                 assert result.returncode == 0, result.stdout + result.stderr
-    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli"]:
+    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli", "slskd"]:
         for inputs in ({"instance": app}, {"instance": app + "-copy", "app": app}):
             check("backup-app.yml", "Publish the application backup dispatch across plays",
                   inputs, {"_ba_app": app})
@@ -82,8 +82,17 @@ def main():
     # PBS must reach the role's safety assertion, rather than a missing include path.
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
+        # slskd's role meta installs Docker. Recovery already targets its deployed
+        # Docker host; omit that deployment dependency here so this local dispatch
+        # test can run without root or an apt operation.
+        role_overrides = Path(directory) / "roles"
+        slskd_role = role_overrides / "slskd"
+        slskd_role.mkdir(parents=True)
+        (slskd_role / "tasks").symlink_to(repo / "ansible/roles/slskd/tasks", target_is_directory=True)
+        (slskd_role / "defaults").symlink_to(repo / "ansible/roles/slskd/defaults", target_is_directory=True)
+        (Path(directory) / "tasks").symlink_to(repo / "ansible/tasks", target_is_directory=True)
         tasks = []
-        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix"]:
+        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "slskd"]:
             defaults = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[f"{app}_defaults"]
             tasks.append({
                 "vars": {"recovery_app_config": defaults, "recovery_app": app,
@@ -93,7 +102,7 @@ def main():
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
                 ],
             })
-        for app in ["qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr", "deemix", "tautulli", "servarr"]:
+        for app in ["qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr", "deemix", "tautulli", "slskd", "servarr"]:
             for operation in ["backup", "restore"]:
                 tasks.append({
                     "block": [{"ansible.builtin.include_role": {
@@ -103,14 +112,15 @@ def main():
                         "ansible_failed_result.msg is search('No usable PBS')",
                         "not k8s_pbs_available"]}}],
                 })
-        for app in ["tautulli", "deemix"]:
+        for app in ["tautulli", "deemix", "slskd"]:
+            recovery_name = app if app == "slskd" else app.capitalize()
             tasks.append({
                 "vars": {"restore_overwrite": True, "restore_snapshot": ""},
                 "block": [{"ansible.builtin.include_role": {
                     "name": app, "tasks_from": "restore"}},
                     {"ansible.builtin.fail": {"msg": "Overwrite without a point was accepted"}}],
                 "rescue": [{"ansible.builtin.assert": {"that": [
-                    f"ansible_failed_result.msg is search('{app.capitalize()} restore needs')"]}}],
+                    f"ansible_failed_result.msg is search('{recovery_name} restore needs')"]}}],
             })
 
         path.write_text(yaml.safe_dump([{
@@ -121,7 +131,7 @@ def main():
             }, "tasks": tasks,
         }]))
         env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
-                            "ANSIBLE_ROLES_PATH": str(repo / "ansible/roles")}
+                            "ANSIBLE_ROLES_PATH": f"{role_overrides}:{repo / 'ansible/roles'}"}
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
