@@ -10,8 +10,8 @@
 # The Deezer ARL is NOT configured here and never will be: it is a login
 # session cookie from your own Deezer account, and it expires every 3-6
 # months. Store a current one with Store Secret: item
-# homelab-infra/apps/<instance>, hidden field arl, before the first deploy —
-# and again whenever it expires.
+# homelab-infra/apps/<instance>, hidden field arl, to enable downloads —
+# and again whenever it expires. Settings-only use can leave it empty.
 
 # ── Stack assignment (Docker app) ────────────────────────────────────────────
 stack: media     # which Docker stack host this app runs on

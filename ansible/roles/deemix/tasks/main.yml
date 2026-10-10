@@ -56,16 +56,6 @@
       {{ media_wiring.kinds.keys() | list | join(', ') }}.
       wire-media-stack.yml would skip this instance.
 
-- name: Require a Vaultwarden ARL for this instance
-  ansible.builtin.assert:
-    that: _dmx_arl | length > 0
-    fail_msg: >-
-      {{ instance }} has no Deezer ARL. Store a current one as hidden field
-      arl in Vaultwarden item homelab-infra/apps/{{ instance }}, then rerun.
-      ARLs are login session cookies from the operator's own Deezer account
-      and expire every 3-6 months — this platform never generates one.
-  no_log: true
-
 # A download client sees the whole of the lab's media storage by default,
 # which is more than an *arr gets: it writes the downloads directory AND the
 # library has to be on the same mount namespace, or every completed import
