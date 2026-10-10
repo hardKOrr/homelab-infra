@@ -1,0 +1,24 @@
+---
+# Select deployed torrent consumers; secrets come from the canonical vault overlay.
+- name: qBittorrent clients | Load the media wiring table
+  ansible.builtin.include_vars:
+    file: ../../vars/media-wiring.yml
+
+- name: qBittorrent clients | Resolve deployed consumers and the selected client
+  ansible.builtin.set_fact:
+    _qbt_clients_registry: >-
+      {{ (homelabinfra_infra.media | default({}))
+         | combine(homelabinfra_vault.media | default({}), recursive=True) }}
+    _qbt_consumer_kinds: >-
+      {{ media_wiring.kinds | dict2items | selectattr('value.role', 'equalto', 'arr')
+         | selectattr('value.protocols', 'contains', 'torrent') | map(attribute='key') | list }}
+    media_wire_results: []
+  no_log: true
+
+- name: qBittorrent clients | Select peers
+  ansible.builtin.set_fact:
+    _qbt_consumers: >-
+      {{ _qbt_clients_registry | dict2items | selectattr('value.app', 'defined')
+         | selectattr('value.app', 'in', _qbt_consumer_kinds) | list }}
+    _qbt_client: "{{ _qbt_clients_registry[instance] | default({}) }}"
+  no_log: true
