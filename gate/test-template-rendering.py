@@ -478,21 +478,25 @@ def unpackerr_rendering():
         "unpackerr_defaults"
     ]
     template = read("ansible/roles/unpackerr/templates/docker-compose.yml.j2")
-    arrs = [
-        {
-            "key": name,
-            "value": {
-                "app": app,
-                "host": f"http://{name}:8989",
-                "api_key": f"fixture-{name}-key",
-            },
-        }
-        for name, app in (
-            ("sonarr", "sonarr"),
-            ("radarr", "radarr"),
-            ("lidarr", "lidarr"),
-        )
-    ]
+    arrs = sorted(
+        [
+            {
+                "key": name,
+                "value": {
+                    "app": app,
+                    "host": f"http://{name}:8989",
+                    "api_key": f"fixture-{name}-key",
+                },
+            }
+            for name, app in (
+                ("sonarr", "sonarr"),
+                ("sonarr-anime", "sonarr"),
+                ("radarr", "radarr"),
+                ("lidarr", "lidarr"),
+            )
+        ],
+        key=lambda entry: entry["key"],
+    )
 
     def compose(parallel):
         app = dict(defaults["app"])
@@ -518,8 +522,12 @@ def unpackerr_rendering():
     for configured, expected in ((None, 1), (3, 3)):
         output = compose(configured)
         assert output.count(f"UN_PARALLEL={expected}") == 1, "parallel setting rendered once"
-        for index, entry in enumerate(arrs):
-            prefix = f"UN_{entry['value']['app'].upper()}_{index}_"
+        app_indexes = {}
+        for entry in arrs:
+            app = entry["value"]["app"]
+            index = app_indexes.get(app, 0)
+            app_indexes[app] = index + 1
+            prefix = f"UN_{app.upper()}_{index}_"
             assert (
                 output.count(f"{prefix}URL={entry['value']['host']}") == 1
             ), "Arr URL rendered once"
