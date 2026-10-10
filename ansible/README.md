@@ -169,6 +169,9 @@ restored API key, language profiles and settings.
 
 SABnzbd Deploy registers only that client in each deployed Usenet consumer and creates
 missing consumer categories. Existing categories and other client entries are preserved.
+Consumer failures are recorded while the remaining connections are attempted; the play's
+final degradation check fails the run with the collected problems. Wire Media Stack still
+reconciles all compatible download clients and the other media connections across the stack.
 Remove withdraws only its named entries after checking that they address the owned client.
 
 SABnzbd native recovery stops only the selected service and captures its configuration

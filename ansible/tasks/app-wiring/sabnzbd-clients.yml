@@ -51,7 +51,11 @@
   loop_control:
     label: "{{ instance }} → {{ item.key }}"
 
-- name: SABnzbd clients | Require every connection to succeed
-  ansible.builtin.assert:
-    that: media_wire_results | selectattr('state', 'equalto', 'failed') | list | length == 0
-    fail_msg: "SABnzbd could not be registered in every deployed Usenet consumer."
+- name: SABnzbd clients | Record failed consumer connections
+  ansible.builtin.include_tasks: ../report-degradation.yml
+  vars:
+    degradation_component: "{{ item.connection }}"
+    degradation_reason: "{{ item.detail | default('Could not register the SABnzbd download client.') }}"
+  loop: "{{ media_wire_results | selectattr('state', 'equalto', 'failed') | list }}"
+  loop_control:
+    label: "{{ item.connection }}"

@@ -4,6 +4,7 @@ import copy
 import http.server
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import threading
@@ -42,6 +43,7 @@ class API(http.server.BaseHTTPRequestHandler):
                 {'name': x, 'value': ''} for x in ['host', 'port', 'apiKey', 'movieCategory', 'useSsl', 'urlBase', 'username', 'password']]}])
         else:
             assert parsed.path == '/api/v3/downloadclient'
+            self.server.client_reads += 1
             self.respond(self.server.clients)
 
     def do_POST(self):
@@ -74,6 +76,7 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), API)
     server.categories = {'operator-category'}
     server.mutations = 0
+    server.client_reads = 0
     server.clients = [
         {'id': 1, 'name': 'operator-client', 'implementation': 'Other', 'fields': []},
         {'id': 2, 'name': 'sabnzbd-sibling', 'implementation': 'Sabnzbd', 'fields': [
@@ -83,12 +86,15 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory() as directory:
+        # A bound socket without listen() reliably refuses connections and cannot
+        # be claimed by another test while the playbook tries the broken consumer.
+        with tempfile.TemporaryDirectory() as directory, socket.socket() as unavailable:
+            unavailable.bind(('127.0.0.1', 0))
             base = f'http://127.0.0.1:{server.server_port}'
-            for action in ['deploy', 'converge', 'foreign-entry', 'remove', 'remove-again']:
+            for action in ['partial-failure', 'deploy', 'converge', 'foreign-entry', 'remove', 'remove-again']:
                 operation = 'unwiring' if action.startswith('remove') or action == 'foreign-entry' else 'app-wiring'
                 path = Path(directory) / 'clients.yml'
-                path.write_text(yaml.safe_dump([{
+                play = {
                     'hosts': 'localhost', 'gather_facts': False, 'vars': {
                         'instance': 'sabnzbd',
                         'homelabinfra_infra': {'media': {
@@ -100,8 +106,28 @@ def main():
                             'sabnzbd': {'api_key': 'sab-key'}, 'radarr': {'api_key': 'arr-key'}}},
                     }, 'tasks': [{'ansible.builtin.include_tasks': str(
                         repo / f'ansible/tasks/{operation}/sabnzbd-clients.yml')}],
-                }]))
+                }
+                if action == 'partial-failure':
+                    media = play['vars']['homelabinfra_infra']['media']
+                    media['radarr-0-broken'] = {
+                        'app': 'radarr', 'host': f'http://127.0.0.1:{unavailable.getsockname()[1]}'}
+                    media['radarr-1-healthy'] = media.pop('radarr')
+                    secrets = play['vars']['homelabinfra_vault']['media']
+                    secrets['radarr-0-broken'] = {'api_key': 'arr-key'}
+                    secrets['radarr-1-healthy'] = secrets.pop('radarr')
+                    play['tasks'] += [{
+                        'name': 'Verify consumer failure was collected before subsequent wiring',
+                        'ansible.builtin.assert': {'that': [
+                            "homelabinfra_degradations | length == 1",
+                            "homelabinfra_degradations[0].component == 'sabnzbd → radarr-0-broken'",
+                            "media_wire_results | selectattr('state', 'equalto', 'created') | list | length == 1",
+                        ]},
+                    }, {'name': 'Remaining wiring attempted', 'ansible.builtin.copy': {
+                        'dest': str(Path(directory) / 'remaining-wiring'), 'content': 'completed', 'mode': '0600'}},
+                        {'ansible.builtin.include_tasks': str(repo / 'ansible/tasks/assert-no-degradations.yml')}]
+                path.write_text(yaml.safe_dump([play]))
                 before = server.mutations
+                reads_before = server.client_reads
                 if action == 'foreign-entry':
                     saved = copy.deepcopy(server.clients[2]['fields'])
                     next(x for x in server.clients[2]['fields'] if x['name'] == 'host')['value'] = '192.0.2.99'
@@ -109,6 +135,13 @@ def main():
                 result = subprocess.run([str(ansible), '-i', 'localhost,', '-c', 'local', str(path)],
                                         text=True, capture_output=True, check=False,
                                         env=os.environ | {'ANSIBLE_STDOUT_CALLBACK': 'default'})
+                if action == 'partial-failure':
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    assert (Path(directory) / 'remaining-wiring').read_text() == 'completed'
+                    assert 'Degradations | Fail when anything did not work' in result.stdout
+                    assert server.client_reads == reads_before + 1
+                    assert len(server.clients) == 3 and server.clients[:2] == original
+                    continue
                 if action == 'foreign-entry':
                     assert result.returncode != 0, result.stdout + result.stderr
                     assert server.mutations == before and len(server.clients) == 3
@@ -124,7 +157,7 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
-    print('SABnzbd: category creation, unique client wiring, convergence and scoped removal passed')
+    print('SABnzbd: category creation, unique client wiring, convergence, collected consumer failure and scoped removal passed')
 
 
 if __name__ == '__main__':
