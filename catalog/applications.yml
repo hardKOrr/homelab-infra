@@ -117,6 +117,7 @@ applications:
     category: Media & Entertainment
     type: Download Clients
     scope: estate
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   jellyfin:
     name: Jellyfin

@@ -10,9 +10,9 @@
 # hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
 # the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
-# Before the first run, store a current Deezer ARL as the hidden `arl` field of
+# To enable downloads, store a current Deezer ARL as the hidden `arl` field of
 # Vaultwarden item homelab-infra/apps/<instance> — see roles/deemix/tasks/main.yml
-# for why this platform never generates one.
+# for why this platform never generates one. Settings-only use leaves ARL empty.
 #
 # Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
 # what closes the loop with slice 504: wire-media-stack.yml reads that key to find
