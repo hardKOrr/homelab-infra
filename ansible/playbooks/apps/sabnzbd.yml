@@ -265,19 +265,8 @@
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
 
-    # App-to-app wiring is deliberately NOT done here, for the same reason the *arr
-    # playbooks leave it alone: this client's peers are every *arr in the lab, and
-    # wiring them pairwise from each deploy would mean every app re-wiring the whole
-    # stack. playbooks/stacks/wire-media-stack.yml owns that, is idempotent, and
-    # finds this client through the registry entry written above.
-    - name: Report how to wire this app into the media stack
-      ansible.builtin.debug:
-        msg: >-
-          {{ instance }} is registered in the media registry. Run the Wire Media
-          Stack job to register it as a download client in every *arr that
-          downloads over usenet. Add your news server in the SABnzbd web interface
-          once — the provider and its credentials are yours, not the platform's,
-          and the setting survives every re-deploy.
+    - name: Wire this download client into deployed Usenet consumers
+      ansible.builtin.include_tasks: ../../tasks/app-wiring/sabnzbd-clients.yml
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops
