@@ -163,7 +163,8 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client backup database.pxar:/backup media.pxar:/media
+            proxmox-backup-client backup database.pxar:/backup media.pxar:/media \
+              --backup-id "$BACKUP_ID"
             # A same-day pre-restore safety backup must retain the preceding recovery point.
             proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
       environment:

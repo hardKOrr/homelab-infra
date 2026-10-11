@@ -59,6 +59,13 @@ def main():
         assert not {"environment", "no_log", "changed_when"} & set(
             task["ansible.builtin.command"]), task_name
 
+    pbs_push = next(item for item in archive_block["block"]
+                    if item.get("name") == "Immich backup | Push the database and durable media archives")
+    pbs_script = pbs_push["ansible.builtin.command"]["argv"][-1]
+    assert "proxmox-backup-client backup database.pxar:/backup media.pxar:/media" in pbs_script
+    assert '--backup-id "$BACKUP_ID"' in pbs_script
+    assert "BACKUP_ID" in pbs_push["environment"]
+
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
