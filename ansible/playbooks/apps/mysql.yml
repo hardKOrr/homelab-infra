@@ -78,10 +78,9 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: databases
-        generated_facts_data:
-          "{{ instance }}":
-            provider: mysql
-            host: "{{ _mysql_host.ansible_host }}"
-            port: "{{ _mysql_host.app_config.app.port }}"
-            client_hosts: "{{ _mysql_host.app_config.app.client_hosts }}"
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'mysql',
+             'host': _mysql_host.ansible_host,
+             'port': _mysql_host.app_config.app.port,
+             'client_hosts': _mysql_host.app_config.app.client_hosts}} }}
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

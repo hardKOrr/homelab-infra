@@ -82,9 +82,8 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: databases
-        generated_facts_data:
-          "{{ instance }}":
-            provider: influxdb
-            host: "{{ _influxdb_host.ansible_host }}"
-            port: "{{ _influxdb_host.app_config.app.port }}"
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'influxdb',
+             'host': _influxdb_host.ansible_host,
+             'port': _influxdb_host.app_config.app.port}} }}
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

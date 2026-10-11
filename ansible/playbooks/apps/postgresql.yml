@@ -110,11 +110,10 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: databases
-        generated_facts_data:
-          "{{ instance }}":
-            provider: postgresql
-            version: "{{ _postgresql_host.app_config.app.version }}"
-            host: "{{ _postgresql_host.ansible_host }}"
-            port: "{{ _postgresql_host.app_config.app.port }}"
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'postgresql',
+             'version': _postgresql_host.app_config.app.version,
+             'host': _postgresql_host.ansible_host,
+             'port': _postgresql_host.app_config.app.port}} }}
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml

@@ -27,8 +27,11 @@ services:
       - "{{ immich_env_file }}"
     volumes:
       - "{{ app_config.app.model_cache_path }}:/cache"
+{# A blank shared_device keeps CPU machine-learning images free of an empty device bind. #}
+{% if app_config.app.shared_device | default('', true) | trim | length > 0 %}
     devices:
       # OpenVINO uses the operator-declared shared render node for inference. This
       # is a Docker device bind inside an LXC, not dedicated PCI passthrough.
       - "{{ app_config.app.shared_device }}:{{ app_config.app.shared_device }}"
+{% endif %}
     restart: unless-stopped

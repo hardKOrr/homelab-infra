@@ -83,7 +83,7 @@
       redis_port: "{{ _immich_redis_backend.port }}"
       redis_password: "{{ _immich_redis_password }}"
       media_path: "{{ _immich_media_path }}"
-      shared_device: "{{ app_config.app.shared_device }}"
+      shared_device: "{{ app_config.app.shared_device | default('') }}"
     vault_item_secret_fields: [database_password, redis_password]
   no_log: true
 
@@ -144,13 +144,13 @@
   register: _immich_running_services
   changed_when: false
 
-- name: Immich | Prove the shared iGPU ML service is running
+- name: Immich | Prove the machine-learning service is running
   ansible.builtin.assert:
     that: "'immich-machine-learning' in _immich_running_services.stdout_lines"
     fail_msg: >-
-      Immich's machine-learning service is not running with shared device
-      {{ app_config.app.shared_device }}. Check the declared shared iGPU mode and the
-      render-node bind before retrying; dedicated GPU passthrough is not supported here.
+      Immich's machine-learning service is not running. Check the configured image
+      {{ app_config.app.machine_learning_image }} and optional shared device
+      {{ app_config.app.shared_device | default('') }} before retrying.
 
 - name: Immich | Export the app URL to the playbook
   ansible.builtin.set_fact:
