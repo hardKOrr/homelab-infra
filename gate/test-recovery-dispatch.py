@@ -77,9 +77,30 @@ def main():
                          if task.get("name") == "Immich restore | Replace the application-consistent artifact")
     fetch_index = next(i for i, task in enumerate(restore_block)
                        if task.get("name") == "Immich restore | Fetch the database and durable media archives")
+    database_private_index = next(i for i, task in enumerate(restore_block)
+                                  if task.get("name") == "Immich restore | Keep the database dump private from the media owner")
+    scratch_traverse_index = next(i for i, task in enumerate(restore_block)
+                                  if task.get("name") == "Immich restore | Allow the media owner to traverse private scratch")
+    media_owner_index = next(i for i, task in enumerate(restore_block)
+                             if task.get("name") == "Immich restore | Assign extracted media to its declared owner")
     clear_index = next(i for i, task in enumerate(restore_block)
                        if task.get("name") == "Immich restore | Empty the durable media mount as its declared owner")
-    assert fetch_index < clear_index, "media must not be emptied before both PBS archives validate"
+    copy_index = next(i for i, task in enumerate(restore_block)
+                      if task.get("name") == "Immich restore | Restore durable originals and thumbnails as their declared owner")
+    assert fetch_index < database_private_index < scratch_traverse_index < media_owner_index < clear_index < copy_index, (
+        "both PBS archives must validate before staging changes or the target mount is replaced")
+    database_private = restore_block[database_private_index]
+    assert database_private["ansible.builtin.file"]["mode"] == "0700"
+    assert database_private["ansible.builtin.file"]["owner"] == "root"
+    assert database_private.get("no_log") is True
+    scratch_traverse = restore_block[scratch_traverse_index]
+    assert scratch_traverse["ansible.builtin.file"]["mode"] == "0711"
+    assert scratch_traverse.get("no_log") is True
+    media_stage = restore_block[media_owner_index]["ansible.builtin.file"]
+    assert media_stage["owner"] == "{{ app_config.media_storage.owner.uid | int }}"
+    assert media_stage["group"] == "{{ app_config.media_storage.owner.gid | int }}"
+    assert media_stage["recurse"] is True
+    assert restore_block[media_owner_index].get("no_log") is True
     clear_media = restore_block[clear_index]
     clear_argv = clear_media["ansible.builtin.command"]["argv"]
     assert clear_argv == [
@@ -91,6 +112,17 @@ def main():
     assert clear_media["ansible.builtin.command"]["chdir"] == "/"
     assert clear_media.get("no_log") is True
     assert clear_media.get("changed_when") is True
+    copy_media = restore_block[copy_index]
+    copy_argv = copy_media["ansible.builtin.command"]["argv"]
+    assert copy_argv == [
+        "setpriv", "--reuid", "{{ app_config.media_storage.owner.uid | int }}",
+        "--regid", "{{ app_config.media_storage.owner.gid | int }}", "--clear-groups",
+        "cp", "-a", "--no-preserve=ownership", "{{ _immich_restore_scratch.path }}/media/.",
+        "{{ _immich_restore_media_path }}/",
+    ], copy_argv
+    assert copy_media["ansible.builtin.command"]["chdir"] == "/"
+    assert copy_media.get("no_log") is True
+    assert copy_media.get("changed_when") is True
 
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.

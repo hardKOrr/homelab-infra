@@ -175,6 +175,31 @@
       no_log: true
       changed_when: true
 
+    - name: Immich restore | Keep the database dump private from the media owner
+      ansible.builtin.file:
+        path: "{{ _immich_restore_scratch.path }}/database"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      no_log: true
+
+    - name: Immich restore | Allow the media owner to traverse private scratch
+      ansible.builtin.file:
+        path: "{{ _immich_restore_scratch.path }}"
+        state: directory
+        mode: "0711"
+      no_log: true
+
+    - name: Immich restore | Assign extracted media to its declared owner
+      ansible.builtin.file:
+        path: "{{ _immich_restore_scratch.path }}/media"
+        state: directory
+        owner: "{{ app_config.media_storage.owner.uid | int }}"
+        group: "{{ app_config.media_storage.owner.gid | int }}"
+        recurse: true
+      no_log: true
+
     # Root-squashed NFS needs the declared owner; find also needs an accessible starting cwd.
     - name: Immich restore | Empty the durable media mount as its declared owner
       ansible.builtin.command:
@@ -201,14 +226,23 @@
       changed_when: true
       no_log: true
 
-    - name: Immich restore | Restore durable originals and thumbnails
+    - name: Immich restore | Restore durable originals and thumbnails as their declared owner
       ansible.builtin.command:
         argv:
+          - setpriv
+          - --reuid
+          - "{{ app_config.media_storage.owner.uid | int }}"
+          - --regid
+          - "{{ app_config.media_storage.owner.gid | int }}"
+          - --clear-groups
           - cp
           - -a
+          - --no-preserve=ownership
           - "{{ _immich_restore_scratch.path }}/media/."
           - "{{ _immich_restore_media_path }}/"
+        chdir: /
       changed_when: true
+      no_log: true
 
     - name: Immich restore | Restore the named PostgreSQL database
       ansible.builtin.command:
