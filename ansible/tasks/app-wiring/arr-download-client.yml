@@ -25,7 +25,24 @@
 #
 # Appends one entry to `media_wire_results`; failures are recorded, not fatal.
 
+# Deemix without an ARL is a supported settings-only install, but Lidarr's Deemix
+# client refuses to save without one. Record the pair as skipped, not failed; the
+# next run registers it once Deemix has an ARL.
+- name: Download client | Skip {{ mw_client_name }} in {{ mw_arr_name }} until it has an ARL
+  ansible.builtin.set_fact:
+    media_wire_results: >-
+      {{ media_wire_results | default([])
+         + [{'connection': mw_client_name ~ ' → ' ~ mw_arr_name,
+             'state': 'skipped',
+             'detail': mw_client_name ~ ' has no ARL'}] }}
+  when:
+    - media_wiring.kinds[mw_client.app].auth | default('') == 'arl'
+    - mw_client.arl | default('') | length == 0
+
 - name: Download client | Wire {{ mw_client_name }} into {{ mw_arr_name }}
+  when: >-
+    media_wiring.kinds[mw_client.app].auth | default('') != 'arl'
+    or mw_client.arl | default('') | length > 0
   vars:
     _mw_api: "{{ mw_arr.host }}/api/{{ media_wiring.kinds[mw_arr.app].api }}/downloadclient"
     _mw_headers:
@@ -112,8 +129,8 @@
         that: _mw_schema.implementation is defined
         fail_msg: >-
           {{ mw_arr_name }} offers no {{ _mw_client_kind.implementation }} download
-          client. Deemix and Slskd need the Lidarr plugins branch; check the app
-          version, or drop {{ mw_client_name }} from this app's peers.
+          client. Deemix and Slskd are Lidarr plugins: they need the nightly image and
+          the plugin in app.plugins, or drop {{ mw_client_name }} from this app's peers.
 
     - name: Download client | Build the payload
       ansible.builtin.set_fact:
