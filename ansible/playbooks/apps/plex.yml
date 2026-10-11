@@ -43,6 +43,22 @@
           {{ (homelabinfra_config.infrastructure.media_storage | default({})).owner | default({}) }}
       when: app_config.app.mounts | default([], true) | length > 0
 
+- name: "Plex | Open network access"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _plex_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _plex_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _plex_fw_host.app_config.firewall | default({}) }}"
+  tasks:
+    - name: Wire firewall
+      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
 - name: "Plex | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true

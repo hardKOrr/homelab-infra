@@ -19,11 +19,19 @@ lidarr_defaults:
   app:
     media_kind: lidarr
 
-    # Mainline, not the plugins branch. Deemix and Slskd are plugins-branch
-    # download clients: wiring either one to a mainline Lidarr fails, and slice
-    # 504 reports that rather than posting a client the app cannot use. Set
-    # image to a plugins tag here if the lab runs those clients.
-    image: "lscr.io/linuxserver/lidarr:latest"
+    # Nightly, because Deemix and Slskd reach Lidarr as plugin download clients and
+    # plugin support is only in Lidarr's nightly channel. Moving an existing Lidarr
+    # from mainline to nightly migrates its database; going back needs a backup
+    # taken before the move.
+    image: "lscr.io/linuxserver/lidarr:nightly"
+    # Installed by Deploy (roles/servarr/tasks/plugins.yml) so Wire Media Stack can
+    # register Deemix and slskd. Set `plugins: []` in config/apps/<instance>.yml
+    # with a mainline image to run Lidarr without them.
+    plugins:
+      - github_url: https://github.com/ta264/Lidarr.Plugin.Deemix
+        download_client: Deemix
+      - github_url: https://github.com/allquiet-hub/Lidarr.Plugin.Slskd
+        download_client: Slskd
     port: 8686
     container_port: 8686
 

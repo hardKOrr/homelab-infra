@@ -52,34 +52,10 @@ k3s_cluster_defaults:
     # Nodes. Order matters only for the first entry: it is the one that runs
     # `--cluster-init` and the one the others join. A re-run detects an existing
     # cluster and never re-inits.
-    nodes:
-      - name: k3s-1
-        proxmox_node: pve1
-        ip_address: 192.168.0.21
-        cores: 2
-        memory: 2048
-        disk_size: 20
-        # Quorum only. pve1 also carries the CARP BACKUP firewall peer, so no
-        # workload may schedule beside it. The taint is applied by the role and
-        # asserted on every re-run.
-        taints:
-          - "homelab-infra.io/quorum-only=true:NoSchedule"
-
-      - name: k3s-2
-        proxmox_node: pve2
-        ip_address: 192.168.0.22
-        cores: 4
-        memory: 16384
-        disk_size: 100
-        taints: []
-
-      - name: k3s-3
-        proxmox_node: pve3
-        ip_address: 192.168.0.23
-        cores: 4
-        memory: 12288
-        disk_size: 60
-        taints: []
+    # No default: which Proxmox nodes and addresses the servers take is this lab's own
+    # statement, in config/apps/k3s-cluster.yml (see config.example/apps/
+    # k3s-cluster.example.yml). The playbook refuses to run without it.
+    nodes: []
 
   # ── Ingress ─────────────────────────────────────────────────────────────────
   ingress:
@@ -99,12 +75,11 @@ k3s_cluster_defaults:
     # The single stable internal ingress address. The platform Caddy is pointed here
     # once and never again. Must be OUTSIDE any DHCP range and outside the addresses
     # assigned to the nodes above.
-    vip: 192.168.0.30
+    vip: ""
 
     # MetalLB needs a pool, even for one address. Widen it when more LoadBalancer
     # services than Traefik are wanted.
-    address_pool:
-      - 192.168.0.30-192.168.0.34
+    address_pool: []
 
   # ── Persistent storage ──────────────────────────────────────────────────────
   storage:
@@ -224,8 +199,9 @@ k3s_cluster_defaults:
     # git-managed defaults would override that resolution in every lab at once. A lab that
     # declares only `networks.default` is unaffected either way. Set `network:` in
     # config/apps/<instance>.yml to override one instance.
-    # Mirrored SSD ZFS pool, present under this name on all three nodes.
-    storage: friends-pool-zfs
+    # No `storage:` here: the lab-wide proxmox.storage from config/proxmox.yml is used
+    # unless config/apps/k3s-cluster.yml names one. It must exist on every node in
+    # cluster.nodes.
     vm:
       # NOT Proxmox's default. `kvm64` is a 2003-era baseline with no SSE4.2 and no
       # POPCNT — below x86-64-v2 — and modern container images are increasingly built

@@ -30,6 +30,16 @@ plex_defaults:
     # deliberate: Plex's custom access URL is not complete without it, even for
     # HTTPS's conventional port.
     advertise_url: ""
+  # Opened on the firewall before Deploy (tasks/wiring/firewall-opnsense.yml).
+  # Remote access outside the lab is an opt-in WAN forward of app.port: copy this
+  # list into config/apps/<instance>.yml with `enabled: true` to publish it, and
+  # back to `enabled: false` to withdraw it.
+  firewall:
+    inbound:
+      - name: plex-remote-access
+        protocol: TCP
+        port: 32400
+        enabled: false
   routing:
     subdomain: plex
     proxy: internal

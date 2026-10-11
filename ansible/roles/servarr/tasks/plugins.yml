@@ -1,0 +1,111 @@
+---
+# Install the plugins an app declares (app.plugins), so the download clients they add
+# exist before Wire Media Stack registers them. Lidarr's Deemix and Slskd clients are
+# plugins; plugin support is only in the nightly channel (see vars/app-defaults/lidarr.yml).
+#
+# A plugin counts as installed when the download client it provides is in the app's
+# download-client schema, the same check the wiring makes, so a rerun installs nothing.
+#
+# Inputs: _servarr_api, _servarr_effective_key, app_config.app.plugins:
+#   - github_url:      the repository Lidarr installs from (System > Plugins)
+#     download_client: the implementation name the plugin adds
+
+- name: Plugins | Read the download-client schema
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/downloadclient/schema"
+    headers:
+      X-Api-Key: "{{ _servarr_effective_key }}"
+  register: _servarr_schema
+  changed_when: false
+  no_log: true
+
+- name: Plugins | Select the plugins whose client is missing
+  ansible.builtin.set_fact:
+    _servarr_missing_plugins: >-
+      {{ app_config.app.plugins
+         | rejectattr('download_client', 'in',
+                      _servarr_schema.json | map(attribute='implementation') | list)
+         | list }}
+
+- name: Plugins | Install the missing plugins
+  when: _servarr_missing_plugins | length > 0
+  block:
+    - name: Plugins | Queue each install
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/command"
+        method: POST
+        headers:
+          X-Api-Key: "{{ _servarr_effective_key }}"
+        body_format: json
+        body:
+          name: InstallPlugin
+          githubUrl: "{{ plugin.github_url }}"
+        status_code: [200, 201]
+      loop: "{{ _servarr_missing_plugins }}"
+      loop_control:
+        loop_var: plugin
+        label: "{{ plugin.download_client }}"
+      register: _servarr_plugin_commands
+      changed_when: true
+      no_log: true
+
+    - name: Plugins | Wait for each install to finish
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/command/{{ cmd.json.id }}"
+        headers:
+          X-Api-Key: "{{ _servarr_effective_key }}"
+      loop: "{{ _servarr_plugin_commands.results }}"
+      loop_control:
+        loop_var: cmd
+        label: "{{ cmd.plugin.download_client }}"
+      register: _servarr_plugin_status
+      until: _servarr_plugin_status.json.status | default('') in ['completed', 'failed', 'aborted']
+      retries: 60
+      delay: 5
+      failed_when: _servarr_plugin_status.json.status | default('') != 'completed'
+      changed_when: false
+      no_log: true
+
+    # A plugin loads at startup, so the new client appears only after a restart.
+    - name: Plugins | Restart the app to load them
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/system/restart"
+        method: POST
+        headers:
+          X-Api-Key: "{{ _servarr_effective_key }}"
+        status_code: [200, 202, 204]
+      changed_when: true
+      no_log: true
+
+    - name: Plugins | Wait for the app to answer again with the new clients
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/{{ _servarr_api }}/downloadclient/schema"
+        headers:
+          X-Api-Key: "{{ _servarr_effective_key }}"
+        status_code: [200, 401, 502, 503, -1]
+      register: _servarr_schema_after
+      until: >-
+        _servarr_schema_after.status | default(0) == 200
+        and (app_config.app.plugins | map(attribute='download_client')
+             | difference(_servarr_schema_after.json | map(attribute='implementation') | list)
+             | length == 0)
+      retries: 36
+      delay: 5
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Plugins | Assert every declared client is now offered
+      ansible.builtin.assert:
+        that:
+          - _servarr_schema_after.status | default(0) == 200
+          - >-
+            app_config.app.plugins | map(attribute='download_client')
+            | difference(_servarr_schema_after.json | default([]) | map(attribute='implementation') | list)
+            | length == 0
+        fail_msg: >-
+          {{ instance }} installed {{ _servarr_missing_plugins | map(attribute='github_url') | join(', ') }}
+          but still does not offer
+          {{ app_config.app.plugins | map(attribute='download_client')
+             | difference(_servarr_schema_after.json | default([]) | map(attribute='implementation') | list)
+             | join(', ') }}. Plugins need a plugins-capable image (Lidarr nightly).
