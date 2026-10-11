@@ -66,6 +66,7 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: databases
-        generated_facts_data:
-          "{{ instance }}": {provider: redis, host: "{{ _redis_host.ansible_host }}", port: "{{ _redis_host.app_config.app.port }}"}
+        generated_facts_data: >-
+          {{ {instance: {'provider': 'redis', 'host': _redis_host.ansible_host,
+             'port': _redis_host.app_config.app.port}} }}
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
