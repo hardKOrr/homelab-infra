@@ -1,0 +1,39 @@
+---
+# Open the network access one app needs on the configured firewall provider: what its
+# defaults declare under `firewall:`, plus SMTP egress to the platform relay when the
+# app sends mail. The mail rule is derived from the mail contract (tasks/mail/
+# resolve-mail.yml), never copied into an app's defaults, so a relay or port change
+# follows on the next Deploy. Remove withdraws it with the app's other rules, since
+# every rule is found by its "homelab-infra: <instance> " description.
+#
+# Inputs (localhost):
+#   wiring_app_name       — instance name
+#   wiring_upstream_host  — the guest's IPv4 address
+#   wiring_firewall       — the app's declared firewall access ({egress, inbound})
+#   app_config            — the app's merged config (for the mail estate)
+#   firewall_sends_mail   — true for a mail consumer (default false)
+#
+# The SMTP rule allows any destination on the relay's port: OPNsense filter rules take
+# addresses or aliases, not hostnames.
+
+- name: Firewall access | Resolve platform mail
+  ansible.builtin.include_tasks: ../mail/resolve-mail.yml
+  when: firewall_sends_mail | default(false) | bool
+
+- name: Firewall access | Add SMTP egress for a mail consumer
+  ansible.builtin.set_fact:
+    _fw_app_access: >-
+      {{ wiring_firewall | default({}) | combine({'egress':
+           (wiring_firewall.egress | default([]))
+           + ([{'name': 'smtp', 'protocol': 'TCP', 'port': wiring_mail.port | string}]
+              if (firewall_sends_mail | default(false) | bool)
+                 and (wiring_mail.enabled | default(false) | bool) else [])}) }}
+
+- name: Firewall access | Open it on the configured provider
+  ansible.builtin.include_tasks: "../wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+  vars:
+    wiring_firewall: "{{ _fw_app_access }}"
+  when:
+    - homelabinfra_infra is defined
+    - homelabinfra_infra.firewall is defined
+    - homelabinfra_infra.firewall.provider | default('none') != 'none'
