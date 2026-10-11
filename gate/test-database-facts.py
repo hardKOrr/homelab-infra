@@ -292,6 +292,35 @@ def database_role_password_sql_uses_psql_stdin():
         assert "PASSWORD :'database_password'" in command["stdin"]
 
 
+def postgres_superuser_is_an_explicit_database_request():
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/immich.yml"))[
+        "immich_defaults"
+    ]
+    assert defaults["app"]["database"]["postgresql_superuser"] is True
+
+    tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    request = task_named(tasks, "Database | Assert provisioning request")
+    conditions = request["ansible.builtin.assert"]["that"]
+    assert any("postgresql_superuser" in condition and "is boolean" in condition for condition in conditions)
+    assert any("provider == 'postgresql'" in condition for condition in conditions)
+
+    status = task_named(tasks, "Database | Read the PostgreSQL role superuser status")
+    assert "rolsuper::text" in " ".join(status["ansible.builtin.command"]["argv"])
+
+    create = task_named(tasks, "Database | Create PostgreSQL application role")
+    assert "SUPERUSER" in create["ansible.builtin.command"]["stdin"]
+    assert "NOSUPERUSER" in create["ansible.builtin.command"]["stdin"]
+    assert "_database_role_status.stdout | trim == 'missing'" in create["when"]
+
+    reconcile = task_named(
+        tasks, "Database | Reconcile PostgreSQL application role superuser status"
+    )
+    alter = " ".join(reconcile["ansible.builtin.command"]["argv"])
+    assert "ALTER ROLE" in alter and "SUPERUSER" in alter and "NOSUPERUSER" in alter
+    assert any("_database_role_status.stdout | trim != 'missing'" in condition for condition in reconcile["when"])
+    assert any("_database_role_status.stdout | trim == 'true'" in condition for condition in reconcile["when"])
+
+
 def immich_database_extensions_are_prepared_by_the_backend():
     defaults = yaml.safe_load(read("ansible/vars/app-defaults/immich.yml"))[
         "immich_defaults"
@@ -323,5 +352,6 @@ if __name__ == "__main__":
     database_producers_resolve_instance_keys()
     database_writer_removes_unresolved_keys_and_preserves_other_estates()
     database_role_password_sql_uses_psql_stdin()
+    postgres_superuser_is_an_explicit_database_request()
     immich_database_extensions_are_prepared_by_the_backend()
     print("ok database fact producers and registry cleanup")
