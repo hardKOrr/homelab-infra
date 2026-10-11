@@ -175,6 +175,16 @@
   vars:
     resolve_startup_guest: "{{ homelabinfra_config.proxmox.vm | default({}) }}"
 
+# proxmox_kvm reports `changed` on every `update: true` call, even when it writes back the
+# configuration the VM already has. Reading the config on both sides of the update is what
+# lets a converged re-run report no changes.
+- name: VM clone | Read the configuration before the update
+  ansible.builtin.command:
+    cmd: "qm config {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_config_before
+  changed_when: false
+
 # A clone carries the template's sizing and no cloud-init identity, so everything
 # that makes this VM itself is applied here.
 - name: VM clone | Apply per-VM configuration
@@ -218,7 +228,35 @@
       ipconfig0: "{{ _vmc_ipconfig0 }}"
     nameservers: "{{ homelabinfra_instance.network.dns_servers | default(omit) }}"
     searchdomains: "{{ homelabinfra_instance.network.searchdomain | default(omit) }}"
+  changed_when: false
 
+# The configuration change, if any, is reported here rather than on the update itself.
+- name: VM clone | Read the configuration after the update
+  ansible.builtin.command:
+    cmd: "qm config {{ _vmc_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_config_after
+  changed_when: >-
+    (_vmc_config_before.stdout_lines | reject('match', '^digest:') | list)
+    != (_vmc_config_after.stdout_lines | reject('match', '^digest:') | list)
+
+# Proxmox writes sizes as an integer with an optional K/M/G/T suffix, e.g. `size=200G`.
+# An unparsable size reads as 0, which falls back to issuing the resize.
+- name: VM clone | Read the current disk size
+  ansible.builtin.set_fact:
+    _vmc_disk_bytes: >-
+      {{ (_vmc_disk_size_parts[0] | int)
+         * {'': 1, 'K': 1024, 'M': 1024 ** 2, 'G': 1024 ** 3, 'T': 1024 ** 4}[_vmc_disk_size_parts[1]] }}
+  vars:
+    _vmc_disk_size_parts: >-
+      {{ _vmc_config_after.stdout
+         | regex_search('(?m)^scsi0:.*[,\s]size=([0-9]+)([KMGT]?)', '\1', '\2')
+         | default(['0', ''], true) }}
+  when: homelabinfra_config.proxmox.vm.disk_size is defined
+
+# A disk already at or above the requested size is the normal re-run case. Running
+# `qm resize` to the current size exits 0 on some storages, which would report a change
+# that did not happen, so it is skipped rather than issued.
 - name: VM clone | Resize the disk
   ansible.builtin.command:
     cmd: >-
@@ -226,14 +264,15 @@
       {{ homelabinfra_config.proxmox.vm.disk_size }}G
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _vmc_resize
-  # Shrinking is refused by Proxmox; a clone already at or above the requested
-  # size is the normal re-run case, not a failure.
+  # Shrinking is refused by Proxmox; kept for a size the parse above misread.
   failed_when:
     - _vmc_resize.rc != 0
     - "'not supported' not in _vmc_resize.stderr"
     - "'shrink' not in _vmc_resize.stderr | lower"
   changed_when: _vmc_resize.rc == 0
-  when: homelabinfra_config.proxmox.vm.disk_size is defined
+  when:
+    - homelabinfra_config.proxmox.vm.disk_size is defined
+    - (_vmc_disk_bytes | int) < (homelabinfra_config.proxmox.vm.disk_size | int) * 1024 ** 3
 
 # Node-local `qm start` rather than the module's `state: started`: the module resolves the
 # guest through the eventually-consistent /cluster/resources cache and reads its name
