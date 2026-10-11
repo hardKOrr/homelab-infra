@@ -100,28 +100,7 @@
       when: _qbt_host_mounts | length > 0
 
 
-# ── Play 2: Open network access ────────────────────────────────────────────────
-# Before Deploy, so the client can reach peers as soon as it starts. Fails the deploy
-# rather than recording a degradation: without peer access the client cannot work.
-- name: "qBittorrent | Open network access"
-  hosts: localhost
-  gather_facts: false
-
-  vars:
-    _qbt_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
-    wiring_app_name: "{{ instance }}"
-    wiring_upstream_host: "{{ _qbt_fw_host.ansible_host }}"
-    wiring_firewall: "{{ _qbt_fw_host.app_config.firewall | default({}) }}"
-
-  tasks:
-    - name: Open the app's network access
-      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
-      vars:
-        firewall_inbound_ports:
-          bittorrent-listen: "{{ _qbt_fw_host.app_config.app.torrenting_port }}"
-
-
-# ── Play 3: Deploy ─────────────────────────────────────────────────────────────
+# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the stack host to install and configure qBittorrent.
 - name: "qBittorrent | Deploy"
   # Per-instance group, not a shared one: add_host groups persist for the whole
@@ -166,6 +145,28 @@
     - name: Deploy qBittorrent
       ansible.builtin.include_role:
         name: qbittorrent
+
+
+# ── Play 3: Open network access ────────────────────────────────────────────────
+# Apply the peer source-port rules only after Deploy has enforced the matching
+# qBittorrent settings on both new and existing instances. Fails the deploy rather
+# than recording a degradation: without peer access the client cannot work.
+- name: "qBittorrent | Open network access"
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    _qbt_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _qbt_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _qbt_fw_host.app_config.firewall | default({}) }}"
+
+  tasks:
+    - name: Open the app's network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        firewall_inbound_ports:
+          bittorrent-listen: "{{ _qbt_fw_host.app_config.app.torrenting_port }}"
 
 
 # ── Play 4: Record facts + wire ────────────────────────────────────────────────

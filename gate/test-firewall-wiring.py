@@ -176,7 +176,7 @@ def main():
         check("qBittorrent replaces its broad legacy peer rule",
               run(server, root, wire, "qbittorrent", qbt_defaults["firewall"],
                   {"app_config": {"app": qbt_app}}),
-              ["filter/addRule", "filter/addRule", "filter/addRule",
+              ["filter/addRule", "filter/addRule", "filter/addRule", "filter/addRule",
                "filter/delRule", "filter/apply"])
         qbt_rules = {r["description"].rsplit(" ", 1)[-1]: r
                      for r in server.rules["filter"].values()
@@ -187,10 +187,14 @@ def main():
         check("qBittorrent UDP peers use the listen source port",
               qbt_rules.get("bittorrent-peers-udp", {}).get("source_port"),
               str(qbt_defaults["app"]["torrenting_port"]))
-        check("qBittorrent allows HTTP trackers on TCP/80",
-              (qbt_rules.get("bittorrent-trackers-http", {}).get("protocol"),
-               qbt_rules.get("bittorrent-trackers-http", {}).get("destination_port")),
+        check("qBittorrent allows HTTP trackers and web fetches on TCP/80",
+              (qbt_rules.get("bittorrent-web-http", {}).get("protocol"),
+               qbt_rules.get("bittorrent-web-http", {}).get("destination_port")),
               ("TCP", "80"))
+        check("qBittorrent allows HTTPS trackers and web fetches on TCP/443",
+              (qbt_rules.get("bittorrent-web-https", {}).get("protocol"),
+               qbt_rules.get("bittorrent-web-https", {}).get("destination_port")),
+              ("TCP", "443"))
         check("qBittorrent rerun changes nothing",
               run(server, root, wire, "qbittorrent", qbt_defaults["firewall"],
                   {"app_config": {"app": qbt_app}}), [])

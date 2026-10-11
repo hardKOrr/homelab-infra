@@ -810,8 +810,9 @@ def wireguard_opens_its_udp_forward_before_deploy():
 
 
 def apps_open_access_through_the_shared_task():
-    # Each app opens its access before Deploy through one task file, which reaches the
-    # provider only when one is configured and refuses a forward that misses the app's port.
+    # Apps use one task file for firewall access; it reaches the provider only when one is
+    # configured and refuses a forward that misses the app's port. qBittorrent applies its
+    # source-port policy after Deploy has enforced the matching client settings.
     tasks = yaml.safe_load(read("ansible/tasks/firewall/open-app-access.yml"))
     provider = task_named(tasks, "Firewall access | Open it on the configured provider")
     for name, expected in (("opnsense", True), ("none", False)):
@@ -841,7 +842,11 @@ def apps_open_access_through_the_shared_task():
         plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
         names = [play["name"] for play in plays]
         opened = next(i for i, n in enumerate(names) if n.endswith("| Open network access"))
-        assert opened < next(i for i, n in enumerate(names) if n.endswith("| Deploy")), (app, names)
+        deployed = next(i for i, n in enumerate(names) if n.endswith("| Deploy"))
+        if app == "qbittorrent":
+            assert deployed < opened, (app, names)
+        else:
+            assert opened < deployed, (app, names)
         task = task_named(plays[opened]["tasks"], "Open the app's network access")
         assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", app
         if app in ports:

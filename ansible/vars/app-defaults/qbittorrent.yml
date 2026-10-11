@@ -59,11 +59,15 @@ qbittorrent_defaults:
     puid: 1313
     pgid: 1313
 
-  # Opened on the firewall before Deploy (tasks/wiring/firewall-opnsense.yml).
+  # Applied after Deploy has enforced qBittorrent's outgoing peer port range.
+  # Nonstandard tracker or web-seed ports need an explicit egress entry in the
+  # instance's config/apps/<instance>.yml firewall override.
   firewall:
     # Peer egress is identified by the socket source port qBittorrent binds.
-    # DHT, uTP and UDP trackers share the listen socket; HTTP trackers use TCP/80
-    # and do not use qBittorrent's peer socket range.
+    # DHT, uTP and UDP trackers share the listen socket. HTTP and HTTPS trackers,
+    # web seeds, RSS, search plugins and qBittorrent's own HTTPS fetches use their
+    # usual web ports rather than the peer socket range. Add an explicit egress
+    # entry for any tracker or web seed configured on a nonstandard port.
     egress:
       - name: bittorrent-peers-tcp
         protocol: TCP
@@ -73,9 +77,12 @@ qbittorrent_defaults:
         protocol: UDP
         port: ""
         source_port: "{{ ((app_config | default({})).get('app', {})).get('torrenting_port', 6881) }}"
-      - name: bittorrent-trackers-http
+      - name: bittorrent-web-http
         protocol: TCP
         port: 80
+      - name: bittorrent-web-https
+        protocol: TCP
+        port: 443
     # Opt-in WAN forward of torrenting_port. To publish it, copy this list into
     # config/apps/<instance>.yml with `enabled: true`; keep `port` equal to
     # app.torrenting_port.
