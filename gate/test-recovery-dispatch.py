@@ -39,7 +39,7 @@ def main():
     # Role includes resolve from the calling maintenance playbook directory. Keep the
     # Immich backup and restore roles pointed at the shared PBS resolver from that root.
     maintenance_dir = repo / "ansible/playbooks/maintenance"
-    pbs_resolver = repo / "ansible/tasks/kubernetes/resolve-pbs-target.yml"
+    pbs_resolver = repo / "ansible/tasks/backup/resolve-pbs-target.yml"
     for task_file in ["backup.yml", "restore.yml"]:
         tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks" / task_file).read_text())
         resolver_task = next(task for task in tasks
