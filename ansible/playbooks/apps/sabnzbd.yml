@@ -10,7 +10,7 @@
 # hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
 # the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
-# Play 3 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
+# Play 4 records the `media` registry key (CONTRACT.md §3) BEFORE wiring, which is
 # what closes the loop with slice 504: wire-media-stack.yml reads that key to find
 # this client and reads the API key this deploy stored in
 # homelab-infra/media/<instance>, then registers it in every *arr that speaks
@@ -23,7 +23,7 @@
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to find or create the stack host.
-# Adds the target host to a group for Play 2 to use.
+# Adds the target host to a group for Plays 2 and 3 to use.
 - name: "SABnzbd | Provision"
   hosts: localhost
   become: false
@@ -67,7 +67,7 @@
 
   tasks:
     # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
-    # The stack host is found (or created) by tag. The app is deployed in Play 2.
+    # The stack host is found (or created) by tag. The app is deployed in Play 3.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -103,7 +103,28 @@
       when: _sab_host_mounts | length > 0
 
 
-# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# ── Play 2: Open network access ────────────────────────────────────────────────
+# Before Deploy, so SABnzbd can reach a Usenet server as soon as one is configured.
+- name: "SABnzbd | Open network access"
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    _sab_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _sab_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _sab_fw_host.app_config.firewall | default({}) }}"
+
+  tasks:
+    - name: Wire firewall
+      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
+
+# ── Play 3: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the stack host to install and configure SABnzbd.
 - name: "SABnzbd | Deploy"
   # Per-instance group, not a shared one: add_host groups persist for the whole
@@ -150,7 +171,7 @@
         name: sabnzbd
 
 
-# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# ── Play 4: Record facts + wire ────────────────────────────────────────────────
 # Registers the app in the media registry, then registers it with platform
 # services. Runs on localhost (API calls). All wiring tasks are idempotent.
 - name: "SABnzbd | Record facts and wire"
