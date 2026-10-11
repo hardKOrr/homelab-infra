@@ -76,14 +76,29 @@ gate_report() {
     done
 }
 
-echo "Syntax-checking with $jobs parallel job(s)."
-printf '%s\n' "${playbooks[@]}" | xargs -P "$jobs" -I{} bash -c 'gate_check_one "$@"' _ {}
-gate_report "${playbooks[@]}"
+# GATE_SHARD=k/n runs the k-th of n slices, so CI can spread the gate over several
+# runners: shard 1 also syntax-checks, and suite i belongs to shard (i mod n) + 1.
+shard="${GATE_SHARD:-1/1}"
+shard_k="${shard%/*}" shard_n="${shard#*/}"
+if ! [[ "$shard_k" =~ ^[1-9][0-9]*$ && "$shard_n" =~ ^[1-9][0-9]*$ ]] || [ "$shard_k" -gt "$shard_n" ]; then
+    echo "ERROR: GATE_SHARD must be k/n with 1 <= k <= n, not '$shard'." >&2
+    exit 1
+fi
+
+if [ "$shard_k" -eq 1 ]; then
+    echo "Syntax-checking with $jobs parallel job(s)."
+    printf '%s\n' "${playbooks[@]}" | xargs -P "$jobs" -I{} bash -c 'gate_check_one "$@"' _ {}
+    gate_report "${playbooks[@]}"
+fi
 
 # Every gate/test-* script is a suite, so a new one runs without being listed here.
 cd "$repo"
-mapfile -t suites < <(find gate -maxdepth 1 -name 'test-*' \( -name '*.py' -o -name '*.sh' \) | sort)
-echo "Running ${#suites[@]} logic suites with $jobs parallel job(s)."
+mapfile -t all_suites < <(find gate -maxdepth 1 -name 'test-*' \( -name '*.py' -o -name '*.sh' \) | sort)
+suites=()
+for i in "${!all_suites[@]}"; do
+    [ $(( i % shard_n + 1 )) -eq "$shard_k" ] && suites+=("${all_suites[$i]}")
+done
+echo "Running ${#suites[@]} of ${#all_suites[@]} logic suites (shard $shard) with $jobs parallel job(s)."
 printf '%s\n' "${suites[@]}" | xargs -P "$jobs" -I{} bash -c 'gate_suite_one "$@"' _ {}
 gate_report "${suites[@]}"
 exit $rc

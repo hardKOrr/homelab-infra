@@ -58,9 +58,15 @@ jobs:
 
       - run: bash gate/lint.sh
 
+  # Three runners, each with a third of the suites (GATE_SHARD in gate/test.sh); one
+  # runner's four cores took over four minutes for the whole set.
   test:
-    name: gate / test
+    name: gate / test (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -96,3 +102,5 @@ jobs:
         run: echo "$GATE_VENV/bin" >> "$GITHUB_PATH"
 
       - run: bash gate/test.sh
+        env:
+          GATE_SHARD: ${{ matrix.shard }}/3
