@@ -5,7 +5,8 @@
 #   database_provision_app_instance  application instance (Vaultwarden item owner)
 #   database_provision_config        {provider, instance, name, role,
 #                                     credential_action: reuse|rotate,
-#                                     extensions: []|[vector]}
+#                                     postgresql_superuser: bool,
+#                                     extensions: []|[vector, earthdistance]}
 #
 # A backend is resolved from generated facts, creates the database and login role,
 # and returns only the application connection fields through the canonical app item.
@@ -21,6 +22,8 @@
       - database_provision_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
       - database_provision_config.version | default('') is match('^[0-9]+$') or database_provision_config.version | default('') == ''
       - database_provision_config.credential_action | default('reuse') in ['reuse', 'rotate']
+      - database_provision_config.postgresql_superuser | default(false) is boolean
+      - not (database_provision_config.postgresql_superuser | default(false)) or database_provision_config.provider == 'postgresql'
       - database_provision_config.extensions | default([]) is sequence
       - (database_provision_config.extensions | default([]) | difference(['vector', 'earthdistance']) | length) == 0
     fail_msg: >-
@@ -95,7 +98,7 @@
     groups: database_delegates
   changed_when: false
 
-- name: Database | Check whether the PostgreSQL role exists
+- name: Database | Read the PostgreSQL role superuser status
   ansible.builtin.command:
     argv:
       - psql
@@ -104,13 +107,13 @@
       - --username=postgres
       - --dbname=postgres
       - "--port={{ _database_backend.port }}"
-      - --command=SELECT 1 FROM pg_roles WHERE rolname = '{{ database_provision_config.role }}'
+      - "--command=SELECT COALESCE((SELECT rolsuper::text FROM pg_roles WHERE rolname = '{{ database_provision_config.role }}'), 'missing')"
   delegate_to: database_backend_target
   become: true
   become_user: postgres
   no_log: true
   changed_when: false
-  register: _database_role_exists
+  register: _database_role_status
   when: database_provision_config.provider == 'postgresql'
 
 - name: Database | Create PostgreSQL application role
@@ -123,7 +126,9 @@
       - --dbname=postgres
       - "--port={{ _database_backend.port }}"
     stdin: >-
-      CREATE ROLE {{ database_provision_config.role }} LOGIN NOSUPERUSER NOCREATEDB
+      CREATE ROLE {{ database_provision_config.role }} LOGIN
+      {{ 'SUPERUSER' if (database_provision_config.postgresql_superuser | default(false) | bool) else 'NOSUPERUSER' }}
+      NOCREATEDB
       NOCREATEROLE NOINHERIT PASSWORD :'database_password'
   delegate_to: database_backend_target
   become: true
@@ -131,7 +136,27 @@
   no_log: true
   when:
     - database_provision_config.provider == 'postgresql'
-    - _database_role_exists.stdout | trim != '1'
+    - _database_role_status.stdout | trim == 'missing'
+
+- name: Database | Reconcile PostgreSQL application role superuser status
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - --username=postgres
+      - --dbname=postgres
+      - "--port={{ _database_backend.port }}"
+      - >-
+        --command=ALTER ROLE {{ database_provision_config.role }}
+        {{ 'SUPERUSER' if (database_provision_config.postgresql_superuser | default(false) | bool) else 'NOSUPERUSER' }}
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - _database_role_status.stdout | trim != 'missing'
+    - (_database_role_status.stdout | trim == 'true') != (database_provision_config.postgresql_superuser | default(false) | bool)
 
 - name: Database | Rotate PostgreSQL application role password
   ansible.builtin.command:
@@ -150,7 +175,7 @@
   no_log: true
   when:
     - database_provision_config.provider == 'postgresql'
-    - _database_role_exists.stdout | trim == '1'
+    - _database_role_status.stdout | trim != 'missing'
     - _database_existing_password | length == 0 or _database_credential_action == 'rotate'
 
 - name: Database | Check whether the PostgreSQL database exists

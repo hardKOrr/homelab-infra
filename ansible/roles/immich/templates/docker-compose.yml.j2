@@ -5,6 +5,9 @@ services:
   immich-server:
     image: "{{ app_config.app.image }}"
     container_name: "{{ instance }}-server"
+    # The originals mount is owned by media_storage.owner. Run the server as that
+    # same uid/gid so uploads and generated assets remain writable on the shared mount.
+    user: "{{ app_config.media_storage.owner.uid | int }}:{{ app_config.media_storage.owner.gid | int }}"
     env_file:
       - "{{ immich_env_file }}"
     volumes:

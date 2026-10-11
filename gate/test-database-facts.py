@@ -292,6 +292,35 @@ def database_role_password_sql_uses_psql_stdin():
         assert "PASSWORD :'database_password'" in command["stdin"]
 
 
+def postgres_superuser_is_an_explicit_database_request():
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/immich.yml"))[
+        "immich_defaults"
+    ]
+    assert defaults["app"]["database"]["postgresql_superuser"] is True
+
+    tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    request = task_named(tasks, "Database | Assert provisioning request")
+    conditions = request["ansible.builtin.assert"]["that"]
+    assert any("postgresql_superuser" in condition and "is boolean" in condition for condition in conditions)
+    assert any("provider == 'postgresql'" in condition for condition in conditions)
+
+    status = task_named(tasks, "Database | Read the PostgreSQL role superuser status")
+    assert "rolsuper::text" in " ".join(status["ansible.builtin.command"]["argv"])
+
+    create = task_named(tasks, "Database | Create PostgreSQL application role")
+    assert "SUPERUSER" in create["ansible.builtin.command"]["stdin"]
+    assert "NOSUPERUSER" in create["ansible.builtin.command"]["stdin"]
+    assert "_database_role_status.stdout | trim == 'missing'" in create["when"]
+
+    reconcile = task_named(
+        tasks, "Database | Reconcile PostgreSQL application role superuser status"
+    )
+    alter = " ".join(reconcile["ansible.builtin.command"]["argv"])
+    assert "ALTER ROLE" in alter and "SUPERUSER" in alter and "NOSUPERUSER" in alter
+    assert any("_database_role_status.stdout | trim != 'missing'" in condition for condition in reconcile["when"])
+    assert any("_database_role_status.stdout | trim == 'true'" in condition for condition in reconcile["when"])
+
+
 def immich_database_extensions_are_prepared_by_the_backend():
     defaults = yaml.safe_load(read("ansible/vars/app-defaults/immich.yml"))[
         "immich_defaults"
@@ -319,9 +348,47 @@ def immich_database_extensions_are_prepared_by_the_backend():
     assert enable["become_user"] == "postgres"
 
 
+def postgresql_delete_and_redeploy_reconcile_cluster_identity():
+    remove_plays = yaml.safe_load(read("ansible/playbooks/apps/remove.yml"))
+    native_play = next(play for play in remove_plays if play["name"].startswith("Remove App | Stop"))
+    native_tasks = native_play["tasks"]
+    native_block = task_named(native_tasks, "Stop the native service")["block"]
+    resolve = task_named(native_play["pre_tasks"], "Resolve every PostgreSQL cluster removal unit")
+    drop = task_named(native_block, "Drop PostgreSQL clusters with their configuration when deleting data")
+    assert drop["ansible.builtin.command"]["argv"] == [
+        "pg_dropcluster",
+        "--stop",
+        "{{ _rm_postgresql_cluster[0] }}",
+        "{{ _rm_postgresql_cluster[1] }}",
+    ]
+    assert "_rm_delete_data | bool" in drop["when"]
+    assert "^[0-9]+[ ]+" in resolve["loop"] and "^[0-9]+[ ]+" in drop["loop"]
+    assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data path"))
+
+    postgres_tasks = yaml.safe_load(read("ansible/roles/postgresql/tasks/main.yml"))
+    discover = task_named(postgres_tasks, "PostgreSQL | Discover registered clusters after package installation")
+    create = task_named(postgres_tasks, "PostgreSQL | Create main when no cluster is registered")
+    stale_guard = task_named(postgres_tasks, "PostgreSQL | Refuse registered clusters with missing data")
+    identity_file = task_named(postgres_tasks, "PostgreSQL | Check the existing main cluster identity file")
+    assert discover["ansible.builtin.command"]["argv"] == ["pg_lsclusters", "--no-header"]
+    assert create["ansible.builtin.command"]["argv"] == [
+        "pg_createcluster",
+        "{{ app_config.app.version }}",
+        "main",
+    ]
+    assert create["when"] == "_postgresql_main_clusters | length == 0"
+    assert identity_file["ansible.builtin.stat"]["path"] == "{{ _postgresql_main_data_directory }}/PG_VERSION"
+    assert "_postgresql_main_version_file.stat.isreg" in stale_guard["ansible.builtin.assert"]["that"]
+    assert "delete_data=true" in stale_guard["ansible.builtin.assert"]["fail_msg"]
+    assert postgres_tasks.index(discover) < postgres_tasks.index(create)
+    assert postgres_tasks.index(stale_guard) < postgres_tasks.index(create)
+
+
 if __name__ == "__main__":
     database_producers_resolve_instance_keys()
     database_writer_removes_unresolved_keys_and_preserves_other_estates()
     database_role_password_sql_uses_psql_stdin()
+    postgres_superuser_is_an_explicit_database_request()
     immich_database_extensions_are_prepared_by_the_backend()
+    postgresql_delete_and_redeploy_reconcile_cluster_identity()
     print("ok database fact producers and registry cleanup")

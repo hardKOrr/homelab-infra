@@ -21,6 +21,7 @@ immich_defaults:
       version: "16"
       name: immich
       role: immich
+      postgresql_superuser: true
       extensions: [vector, earthdistance]
     redis:
       provider: redis

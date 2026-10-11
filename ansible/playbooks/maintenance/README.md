@@ -77,6 +77,15 @@ restore leaves the target stopped and the point accessible for retry. Bind/devic
 physical or disabled disks, passthrough, hook resources, and external filesystems are
 outside PBS guest coverage; recover them through their storage owner.
 
+`repair-orphan-postgresql-tag.yml` is the plan-first recovery path when Remove App has
+withdrawn a PostgreSQL instance tag but left its guest in place. It requires the exact
+instance and VMID, then verifies that both identify one current, non-template LXC with
+the exact `_+lab` ownership tag and matching live hostname. Execute mode requires the
+matching confirmation, saves the original configuration privately on the PVE node, and
+uses the Proxmox config digest while adding only `_<instance>`. It neither creates a guest
+nor relaxes the LXC creation collision guard; the normal PostgreSQL Deploy can then select
+the repaired guest through inventory.
+
 ## Backup audit
 
 `audit-backups.yml` powers **Audit Backups** under **Manage / Lab / Health**. It reads

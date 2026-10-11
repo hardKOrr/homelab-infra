@@ -36,6 +36,94 @@ def check(playbook, task_name, inputs, expected):
 
 
 def main():
+    # Role includes resolve from the calling maintenance playbook directory. Keep the
+    # Immich backup and restore roles pointed at the shared PBS resolver from that root.
+    maintenance_dir = repo / "ansible/playbooks/maintenance"
+    pbs_resolver = repo / "ansible/tasks/backup/resolve-pbs-target.yml"
+    for task_file in ["backup.yml", "restore.yml"]:
+        tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks" / task_file).read_text())
+        resolver_task = next(task for task in tasks
+                             if task.get("name", "").endswith("| Resolve the PBS client target"))
+        resolved = (maintenance_dir / resolver_task["ansible.builtin.include_tasks"]).resolve()
+        assert resolved == pbs_resolver.resolve(), (task_file, resolved)
+
+    backup_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/backup.yml").read_text())
+    archive_block = next(item for item in backup_tasks
+                         if item.get("name") == "Immich backup | Archive the database and media to PBS")
+    for task_name in ["Immich backup | Dump the named PostgreSQL database",
+                      "Immich backup | Push the database and durable media archives"]:
+        task = next(item for item in archive_block["block"] if item.get("name") == task_name)
+        assert task.get("environment"), task_name
+        assert task.get("no_log") is True, task_name
+        assert task.get("changed_when") is True, task_name
+        assert not {"environment", "no_log", "changed_when"} & set(
+            task["ansible.builtin.command"]), task_name
+
+    pbs_push = next(item for item in archive_block["block"]
+                    if item.get("name") == "Immich backup | Push the database and durable media archives")
+    pbs_script = pbs_push["ansible.builtin.command"]["argv"][-1]
+    assert "proxmox-backup-client backup database.pxar:/backup media.pxar:/media" in pbs_script
+    assert '--backup-id "$BACKUP_ID"' in pbs_script
+    assert "BACKUP_ID" in pbs_push["environment"]
+
+    restore_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/restore.yml").read_text())
+    restore_contract = next(task for task in restore_tasks
+                            if task.get("name") == "Immich restore | Assert the restore contract")
+    assert "app_config.media_storage.owner.uid | default(0) | int > 0" in restore_contract[
+        "ansible.builtin.assert"]["that"]
+    assert "app_config.media_storage.owner.gid | default(0) | int > 0" in restore_contract[
+        "ansible.builtin.assert"]["that"]
+    restore_block = next(task["block"] for task in restore_tasks
+                         if task.get("name") == "Immich restore | Replace the application-consistent artifact")
+    fetch_index = next(i for i, task in enumerate(restore_block)
+                       if task.get("name") == "Immich restore | Fetch the database and durable media archives")
+    database_private_index = next(i for i, task in enumerate(restore_block)
+                                  if task.get("name") == "Immich restore | Keep the database dump private from the media owner")
+    scratch_traverse_index = next(i for i, task in enumerate(restore_block)
+                                  if task.get("name") == "Immich restore | Allow the media owner to traverse private scratch")
+    media_owner_index = next(i for i, task in enumerate(restore_block)
+                             if task.get("name") == "Immich restore | Assign extracted media to its declared owner")
+    clear_index = next(i for i, task in enumerate(restore_block)
+                       if task.get("name") == "Immich restore | Empty the durable media mount as its declared owner")
+    copy_index = next(i for i, task in enumerate(restore_block)
+                      if task.get("name") == "Immich restore | Restore durable originals and thumbnails as their declared owner")
+    assert fetch_index < database_private_index < scratch_traverse_index < media_owner_index < clear_index < copy_index, (
+        "both PBS archives must validate before staging changes or the target mount is replaced")
+    database_private = restore_block[database_private_index]
+    assert database_private["ansible.builtin.file"]["mode"] == "0700"
+    assert database_private["ansible.builtin.file"]["owner"] == "root"
+    assert database_private.get("no_log") is True
+    scratch_traverse = restore_block[scratch_traverse_index]
+    assert scratch_traverse["ansible.builtin.file"]["mode"] == "0711"
+    assert scratch_traverse.get("no_log") is True
+    media_stage = restore_block[media_owner_index]["ansible.builtin.file"]
+    assert media_stage["owner"] == "{{ app_config.media_storage.owner.uid | int }}"
+    assert media_stage["group"] == "{{ app_config.media_storage.owner.gid | int }}"
+    assert media_stage["recurse"] is True
+    assert restore_block[media_owner_index].get("no_log") is True
+    clear_media = restore_block[clear_index]
+    clear_argv = clear_media["ansible.builtin.command"]["argv"]
+    assert clear_argv == [
+        "setpriv", "--reuid", "{{ app_config.media_storage.owner.uid | int }}",
+        "--regid", "{{ app_config.media_storage.owner.gid | int }}", "--clear-groups",
+        "find", "{{ _immich_restore_media_path }}", "-mindepth", "1", "-maxdepth", "1",
+        "-exec", "rm", "-rf", "--", "{}", "+",
+    ], clear_argv
+    assert clear_media["ansible.builtin.command"]["chdir"] == "/"
+    assert clear_media.get("no_log") is True
+    assert clear_media.get("changed_when") is True
+    copy_media = restore_block[copy_index]
+    copy_argv = copy_media["ansible.builtin.command"]["argv"]
+    assert copy_argv == [
+        "setpriv", "--reuid", "{{ app_config.media_storage.owner.uid | int }}",
+        "--regid", "{{ app_config.media_storage.owner.gid | int }}", "--clear-groups",
+        "cp", "-a", "--no-preserve=ownership", "{{ _immich_restore_scratch.path }}/media/.",
+        "{{ _immich_restore_media_path }}/",
+    ], copy_argv
+    assert copy_media["ansible.builtin.command"]["chdir"] == "/"
+    assert copy_media.get("no_log") is True
+    assert copy_media.get("changed_when") is True
+
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
