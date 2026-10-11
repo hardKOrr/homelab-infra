@@ -228,18 +228,12 @@
     policy: missing
   changed_when: false
 
-- name: Start the app
-  community.docker.docker_compose_v2:
-    project_src: "{{ qbittorrent_project_dir }}"
-    state: present
-    remove_orphans: true
-
-- name: Apply pending restarts before the checks
-  ansible.builtin.meta: flush_handlers
-
 # qBittorrent owns its config after the initial seed, so a template edit alone
 # would never update an existing instance. Check the two firewall-dependent
-# settings without changing the file; only stop the app when one has drifted.
+# settings before the first start: a legacy config must not run with unbounded
+# peer source ports while this deploy is converging. Only stop an already-running
+# app when one of the settings has drifted; the normal start below applies the
+# corrected file before the playbook updates firewall access.
 - name: Check qBittorrent's outgoing peer port settings
   community.general.ini_file:
     path: "{{ _qbt_conf }}"
@@ -284,11 +278,15 @@
       loop_control:
         label: "{{ item.option }}"
       no_log: true
-  always:
-    - name: Ensure qBittorrent is started after updating its port settings
-      community.docker.docker_compose_v2:
-        project_src: "{{ qbittorrent_project_dir }}"
-        state: present
+
+- name: Start the app
+  community.docker.docker_compose_v2:
+    project_src: "{{ qbittorrent_project_dir }}"
+    state: present
+    remove_orphans: true
+
+- name: Apply pending restarts before the WebUI checks
+  ansible.builtin.meta: flush_handlers
 
 - name: Wait for the WebUI to answer
   ansible.builtin.uri:
