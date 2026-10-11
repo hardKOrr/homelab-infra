@@ -770,6 +770,7 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+
 def bazarr_wiring_sends_lowercase_booleans():
     # Bazarr converts only lowercase 'true'/'false'; 'True' fails its type check with 406.
     block = yaml.safe_load(read("ansible/tasks/app-wiring/bazarr-arr.yml"))[0]["block"]
@@ -783,6 +784,45 @@ def bazarr_wiring_sends_lowercase_booleans():
         assert body["settings-general-use_radarr"] == "true", body
         assert body["settings-radarr-ssl"] == expected, body
         assert body["settings-radarr-port"] == "7878", body
+        
+def flaresolverr_rendering():
+    defaults = yaml.safe_load(
+        read("ansible/vars/app-defaults/flaresolverr.yml")
+    )["flaresolverr_defaults"]
+    assert defaults["app"]["log_level"] == "info", "default log level"
+
+    app_config = {
+        **defaults,
+        "app": {**defaults["app"], "log_level": "debug"},
+    }
+    manifest = render(
+        read("ansible/roles/flaresolverr/templates/manifest.yaml.j2"),
+        {
+            "instance": "flaresolverr",
+            "app_config": app_config,
+            "homelabinfra_config": {"timezone": "UTC"},
+        },
+    )
+    deployment = next(
+        doc
+        for doc in yaml.safe_load_all(manifest)
+        if doc and doc["kind"] == "Deployment"
+    )
+    environment = {
+        item["name"]: item["value"]
+        for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
+
+
+def kubernetes_backup_prune_keeps_the_previous_point():
+    # A same-day pre-restore backup must not prune the recovery point being restored.
+    templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
+    assert templates, "no Kubernetes backup templates found"
+    for template in templates:
+        text = template.read_text()
+        assert "proxmox-backup-client prune" in text, f"{template} has no prune"
+        assert "--keep-last 2 --keep-daily" in text, f"{template} prunes without --keep-last 2"
 
 
 if __name__ == "__main__":
@@ -803,4 +843,6 @@ if __name__ == "__main__":
     maintainerr_rendering()
     mautic_rendering()
     bazarr_wiring_sends_lowercase_booleans()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and Bazarr wiring passed")
+    flaresolverr_rendering()
+    kubernetes_backup_prune_keeps_the_previous_point()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, FlareSolverr and backup pruning passed")

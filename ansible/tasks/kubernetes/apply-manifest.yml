@@ -39,6 +39,12 @@
 # Server-side apply always prints `serverside-applied`, including when the live object is
 # already identical. Use the API server's diff first so Ansible can distinguish a real
 # desired-state change without giving up server-side field ownership.
+#
+# The diff is a server-side dry run, and a NodePort freed by a Remove moments earlier can
+# still read as "already allocated" to it: on the green lab, a fresh FlareSolverr Deploy
+# straight after Remove failed this way, and the same port was free a minute later with no
+# Service holding it. Retry only that error, for up to three minutes. A port that another
+# Service really holds still fails here, after the retries.
 - name: k8s apply | Compare the manifest with live state
   ansible.builtin.command:
     argv:
@@ -55,6 +61,11 @@
   delegate_to: "{{ k8s_api_host }}"
   become: true
   register: _k8s_diff
+  until: >-
+    _k8s_diff.rc in [0, 1]
+    or 'provided port is already allocated' not in (_k8s_diff.stderr | default(''))
+  retries: 18
+  delay: 10
   failed_when: _k8s_diff.rc not in [0, 1]
   changed_when: false
 
