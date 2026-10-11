@@ -32,6 +32,8 @@
     that:
       - app_config.backup.enabled | default(false) | bool
       - app_config.backup.application_consistent | default(false) | bool
+      - app_config.media_storage.owner.uid | default(0) | int > 0
+      - app_config.media_storage.owner.gid | default(0) | int > 0
       - restore_target is defined and restore_target | length > 0
       - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - _immich_restore_database_backend.provider | default('') == 'postgresql'
@@ -173,10 +175,28 @@
       no_log: true
       changed_when: true
 
-    - name: Immich restore | Empty the durable media mount after archive validation
-      ansible.builtin.shell: >-
-        find "{{ _immich_restore_media_path }}" -mindepth 1 -maxdepth 1
-        -exec rm -rf -- {} +
+    # Shared NFS mounts may root-squash the stack guest; delete as the declared owner.
+    - name: Immich restore | Empty the durable media mount as its declared owner
+      ansible.builtin.command:
+        argv:
+          - setpriv
+          - --reuid
+          - "{{ app_config.media_storage.owner.uid | int }}"
+          - --regid
+          - "{{ app_config.media_storage.owner.gid | int }}"
+          - --clear-groups
+          - find
+          - "{{ _immich_restore_media_path }}"
+          - -mindepth
+          - "1"
+          - -maxdepth
+          - "1"
+          - -exec
+          - rm
+          - -rf
+          - --
+          - "{}"
+          - +
       changed_when: true
       no_log: true
 

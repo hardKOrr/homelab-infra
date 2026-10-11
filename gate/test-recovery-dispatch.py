@@ -66,6 +66,31 @@ def main():
     assert '--backup-id "$BACKUP_ID"' in pbs_script
     assert "BACKUP_ID" in pbs_push["environment"]
 
+    restore_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/restore.yml").read_text())
+    restore_contract = next(task for task in restore_tasks
+                            if task.get("name") == "Immich restore | Assert the restore contract")
+    assert "app_config.media_storage.owner.uid | default(0) | int > 0" in restore_contract[
+        "ansible.builtin.assert"]["that"]
+    assert "app_config.media_storage.owner.gid | default(0) | int > 0" in restore_contract[
+        "ansible.builtin.assert"]["that"]
+    restore_block = next(task["block"] for task in restore_tasks
+                         if task.get("name") == "Immich restore | Replace the application-consistent artifact")
+    fetch_index = next(i for i, task in enumerate(restore_block)
+                       if task.get("name") == "Immich restore | Fetch the database and durable media archives")
+    clear_index = next(i for i, task in enumerate(restore_block)
+                       if task.get("name") == "Immich restore | Empty the durable media mount as its declared owner")
+    assert fetch_index < clear_index, "media must not be emptied before both PBS archives validate"
+    clear_media = restore_block[clear_index]
+    clear_argv = clear_media["ansible.builtin.command"]["argv"]
+    assert clear_argv == [
+        "setpriv", "--reuid", "{{ app_config.media_storage.owner.uid | int }}",
+        "--regid", "{{ app_config.media_storage.owner.gid | int }}", "--clear-groups",
+        "find", "{{ _immich_restore_media_path }}", "-mindepth", "1", "-maxdepth", "1",
+        "-exec", "rm", "-rf", "--", "{}", "+",
+    ], clear_argv
+    assert clear_media.get("no_log") is True
+    assert clear_media.get("changed_when") is True
+
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
