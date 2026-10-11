@@ -83,7 +83,7 @@
       redis_port: "{{ _immich_redis_backend.port }}"
       redis_password: "{{ _immich_redis_password }}"
       media_path: "{{ _immich_media_path }}"
-      shared_device: "{{ app_config.app.shared_device }}"
+      shared_device: "{{ app_config.app.shared_device | default('') }}"
     vault_item_secret_fields: [database_password, redis_password]
   no_log: true
 

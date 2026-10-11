@@ -146,25 +146,40 @@
     _gf_existing_infra: >-
       {{ _gf_existing_infra
          | combine(
-             {'databases': _gf_clean_database_registry}
+             {'databases': _gf_clean_infra_database_registry}
              if _generated_facts_estate | length == 0 else
              {'estates': _gf_existing_infra.get('estates', {})
                | combine({_generated_facts_estate:
                  _gf_existing_infra.get('estates', {}).get(_generated_facts_estate, {})
-                 | combine({'databases': _gf_clean_database_registry}, recursive=False)},
+                 | combine({'databases': _gf_clean_infra_database_registry}, recursive=False)},
                  recursive=False)},
              recursive=False) }}
     _gf_existing_local_infra: >-
       {{ _gf_existing_local_infra
          | combine(
-             {'databases': _gf_clean_database_registry}
+             {'databases': _gf_clean_local_infra_database_registry}
              if _generated_facts_estate | length == 0 else
              {'estates': _gf_existing_local_infra.get('estates', {})
                | combine({_generated_facts_estate:
                  _gf_existing_local_infra.get('estates', {}).get(_generated_facts_estate, {})
-                 | combine({'databases': _gf_clean_database_registry}, recursive=False)},
+                 | combine({'databases': _gf_clean_local_infra_database_registry}, recursive=False)},
                  recursive=False)},
              recursive=False) }}
+  vars:
+    _gf_clean_infra_database_registry: >-
+      {{ (_gf_existing_infra.get('databases', {}) if _generated_facts_estate | length == 0
+          else _gf_existing_infra.get('estates', {}).get(_generated_facts_estate, {})
+            .get('databases', {})) | default({}, true)
+         | dict2items
+         | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+         | items2dict }}
+    _gf_clean_local_infra_database_registry: >-
+      {{ (_gf_existing_local_infra.get('databases', {}) if _generated_facts_estate | length == 0
+          else _gf_existing_local_infra.get('estates', {}).get(_generated_facts_estate, {})
+            .get('databases', {})) | default({}, true)
+         | dict2items
+         | selectattr('key', 'match', '^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+         | items2dict }}
   when: generated_facts_service == 'databases'
 
 - name: Generated facts | Ensure config/.generated exists

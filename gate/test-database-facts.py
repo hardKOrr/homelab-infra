@@ -168,49 +168,112 @@ def database_writer_removes_unresolved_keys_and_preserves_other_estates():
     memory_task = task_named(
         tasks, "Generated facts | Remove unresolved database instance keys from memory registry"
     )
-    source_map = {
-        "postgresql-keep": {"provider": "postgresql"},
-        "redis-keep": {"provider": "redis"},
-    }
+    memory_task_vars = memory_task["vars"]
     roots = {
         "default": {
-            "domain": "example.test",
-            "databases": {"{{ instance }}": {"provider": "redis"}, "other": {"provider": "mysql"}},
-            "estates": {"foxglove": {"databases": {"mysql-keep": {"provider": "mysql"}}}},
+            "_gf_existing_infra": {
+                "domain": "infra.example.test",
+                "databases": {
+                    "{{ instance }}": {"provider": "redis"},
+                    "infra-only": {"provider": "postgresql"},
+                    "infra.keep_1": {"provider": "redis"},
+                },
+                "estates": {
+                    "foxglove": {"databases": {"infra-estate": {"provider": "mysql"}}}
+                },
+            },
+            "_gf_existing_local_infra": {
+                "domain": "localhost.example.test",
+                "databases": {
+                    "invalid/name": {"provider": "mysql"},
+                    "localhost-only": {"provider": "redis"},
+                },
+                "estates": {
+                    "foxglove": {"databases": {"localhost-estate": {"provider": "mysql"}}}
+                },
+            },
         },
         "estate": {
-            "databases": {"postgresql-default": {"provider": "postgresql"}},
-            "estates": {
-                "foxglove": {
-                    "domain": "foxglove.example.test",
-                    "databases": {"{{ instance }}": {"provider": "redis"}, "old": {"provider": "mysql"}},
+            "_gf_existing_infra": {
+                "databases": {"infra-default": {"provider": "postgresql"}},
+                "estates": {
+                    "foxglove": {
+                        "domain": "foxglove.example.test",
+                        "databases": {
+                            "{{ instance }}": {"provider": "redis"},
+                            "infra-foxglove": {"provider": "mysql"},
+                        },
+                    },
+                    "other": {"databases": {"infra-other": {"provider": "redis"}}},
                 },
-                "other": {"databases": {"mysql-other": {"provider": "mysql"}}},
+            },
+            "_gf_existing_local_infra": {
+                "databases": {"localhost-default": {"provider": "mysql"}},
+                "estates": {
+                    "foxglove": {
+                        "domain": "foxglove.example.test",
+                        "databases": {
+                            "invalid/name": {"provider": "redis"},
+                            "localhost-foxglove": {"provider": "postgresql"},
+                        },
+                    },
+                    "other": {"databases": {"localhost-other": {"provider": "mysql"}}},
+                },
             },
         },
     }
+    expected_maps = {
+        "default": {
+            "_gf_existing_infra": {
+                "infra-only": {"provider": "postgresql"},
+                "infra.keep_1": {"provider": "redis"},
+            },
+            "_gf_existing_local_infra": {"localhost-only": {"provider": "redis"}},
+        },
+        "estate": {
+            "_gf_existing_infra": {"infra-foxglove": {"provider": "mysql"}},
+            "_gf_existing_local_infra": {
+                "localhost-foxglove": {"provider": "postgresql"}
+            },
+        },
+    }
+
+    def replace_database_map(root, estate, database_map):
+        result = dict(root)
+        if estate:
+            result["estates"] = dict(root["estates"])
+            estate_registry = dict(result["estates"][estate])
+            estate_registry["databases"] = database_map
+            result["estates"][estate] = estate_registry
+        else:
+            result["databases"] = database_map
+        return result
+
     for scope, root in roots.items():
         estate = "" if scope == "default" else "foxglove"
-        expected = (
-            {**root, "databases": source_map}
-            if not estate
-            else {
-                **root,
-                "estates": {
-                    **root["estates"],
-                    estate: {**root["estates"][estate], "databases": source_map},
-                },
-            }
-        )
         for root_variable in ("_gf_existing_infra", "_gf_existing_local_infra"):
+            clean_variable = (
+                "_gf_clean_infra_database_registry"
+                if root_variable == "_gf_existing_infra"
+                else "_gf_clean_local_infra_database_registry"
+            )
+            cleaned_registry = render(
+                memory_task_vars[clean_variable],
+                {root_variable: root[root_variable], "_generated_facts_estate": estate},
+            )
+            assert cleaned_registry == expected_maps[scope][root_variable], cleaned_registry
+
             expression = memory_task["ansible.builtin.set_fact"][root_variable]
             actual = render(
                 expression,
                 {
-                    root_variable: root,
-                    "_gf_clean_database_registry": source_map,
+                    root_variable: root[root_variable],
+                    clean_variable: cleaned_registry,
                     "_generated_facts_estate": estate,
                 },
+            )
+            expected = replace_database_map(
+                root[root_variable], estate, expected_maps[scope][root_variable]
             )
             assert actual == expected, (scope, root_variable, actual)
 

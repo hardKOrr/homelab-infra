@@ -998,6 +998,21 @@ def immich_machine_learning_device_is_optional():
     assert hardware["devices"] == ["/dev/dri/renderD128:/dev/dri/renderD128"], hardware
 
 
+def immich_task_defaults_missing_shared_device_to_empty():
+    tasks = yaml.safe_load(read("ansible/roles/immich/tasks/main.yml"))
+    task = task_named(tasks, "Immich | Store the backend and device contract in Vaultwarden")
+    expression = task["vars"]["vault_item_fields"]["shared_device"]
+
+    assert render(expression, {"app_config": {"app": {}}}) == ""
+    assert (
+        render(
+            expression,
+            {"app_config": {"app": {"shared_device": "/dev/dri/renderD128"}}},
+        )
+        == "/dev/dri/renderD128"
+    )
+
+
 def backup_prune_keeps_the_previous_point():
     # A same-day pre-restore backup must not prune the recovery point being restored, in
     # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
@@ -1034,6 +1049,7 @@ if __name__ == "__main__":
     mail_consumers_open_smtp_egress()
     flaresolverr_rendering()
     immich_machine_learning_device_is_optional()
+    immich_task_defaults_missing_shared_device_to_empty()
     print("Template rendering: Immich CPU mode omits device binds and hardware mode retains its declared device")
     wireguard_opens_its_udp_forward_before_deploy()
     apps_open_access_through_the_shared_task()
