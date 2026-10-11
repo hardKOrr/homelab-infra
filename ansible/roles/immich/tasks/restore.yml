@@ -175,7 +175,7 @@
       no_log: true
       changed_when: true
 
-    # Shared NFS mounts may root-squash the stack guest; delete as the declared owner.
+    # Root-squashed NFS needs the declared owner; find also needs an accessible starting cwd.
     - name: Immich restore | Empty the durable media mount as its declared owner
       ansible.builtin.command:
         argv:
@@ -197,6 +197,7 @@
           - --
           - "{}"
           - +
+        chdir: /
       changed_when: true
       no_log: true
 

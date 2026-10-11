@@ -88,6 +88,7 @@ def main():
         "find", "{{ _immich_restore_media_path }}", "-mindepth", "1", "-maxdepth", "1",
         "-exec", "rm", "-rf", "--", "{}", "+",
     ], clear_argv
+    assert clear_media["ansible.builtin.command"]["chdir"] == "/"
     assert clear_media.get("no_log") is True
     assert clear_media.get("changed_when") is True
 
