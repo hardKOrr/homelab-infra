@@ -28,8 +28,8 @@ home_assistant_defaults:
     image: ghcr.io/home-assistant/home-assistant:stable
     port: 8123
     config_path: "/opt/{{ instance }}/config"
-    # Both values are deliberately empty/defaulted to a common guest path. The mapping
-    # must be named by the operator and the path must match the coordinator's guest node.
+    # An empty mapping disables passthrough. When set, it must name an operator-defined
+    # dedicated mapping and the path must match the coordinator's guest node.
     usb_mapping: ""
     usb_device_path: /dev/ttyUSB0
     # Integration credentials are a JSON object in the hidden Vaultwarden field

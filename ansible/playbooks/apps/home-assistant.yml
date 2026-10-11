@@ -1,11 +1,10 @@
 ---
-# Deploy Home Assistant as Docker on its own VM. The full VM is intentional: its Zigbee
-# coordinator is assigned through a dedicated Proxmox USB resource mapping, never through
-# a raw vendor:product pair or an LXC bind.
+# Deploy Home Assistant as Docker on its own VM. A Zigbee coordinator can be assigned
+# through a dedicated Proxmox USB resource mapping; an empty mapping disables passthrough.
+# USB devices are never selected by a raw vendor:product pair or exposed through an LXC bind.
 #
-# Before a live run, record the Home Assistant instance, Proxmox node, VM identity, USB
-# resource mapping, and guest serial path in the acceptance evidence. The mapping must
-# already exist and be declared `mode: dedicated` in config/proxmox.yml.
+# When USB is configured, the mapping must already exist and be declared `mode: dedicated`
+# in config/proxmox.yml, and usb_device_path must name the guest serial path.
 
 - name: "Home Assistant | Provision"
   hosts: localhost
@@ -45,17 +44,19 @@
              | combine(_instance_config | default({}), recursive=True) }}
       no_log: true
 
-    - name: Assert the explicit VM and USB contract
+    - name: Assert the explicit VM and optional USB contract
       ansible.builtin.assert:
         that:
           - app_config.hosting == 'docker'
           - app_config.proxmox.vm is mapping
-          - app_config.app.usb_mapping | default('') | length > 0
-          - app_config.app.usb_device_path | default('') is match('^/dev/')
+          - >-
+            (app_config.app.usb_mapping | default('') | length == 0)
+            or (app_config.app.usb_device_path | default('') is match('^/dev/'))
         fail_msg: >-
-          Home Assistant requires its own Docker-capable VM, an exact existing Proxmox USB
-          resource mapping, and the coordinator's guest serial path. Do not use a raw
-          vendor:product pair or adopt a pre-existing untagged device.
+          Home Assistant requires its own Docker-capable VM. When usb_mapping is set, it
+          also requires an exact dedicated Proxmox USB resource mapping and the coordinator's
+          guest serial path. Do not use a raw vendor:product pair or adopt a pre-existing
+          untagged device.
 
   tasks:
     - name: Refresh inventory to get current Proxmox state
@@ -160,16 +161,17 @@
           ansible.builtin.set_fact:
             _ha_guest: "{{ instance }}"
 
-    # This is deliberately after VM creation/reuse and before guest deployment. The shared
-    # task preflights the exact mapping, ownership tag, node presence, and dedicated-device
-    # conflict before it can issue qm set. A mapping already on this VM is a no-op; an
-    # identical mapping on a different VM fails rather than being adopted or moved.
-    - name: Attach the named Zigbee USB resource mapping
+    # This is deliberately after VM creation/reuse and before guest deployment. When a
+    # mapping is set, the shared task preflights its exact identity, ownership tag, node
+    # presence and dedicated-device conflict before it can issue qm set. A mapping already
+    # on this VM is a no-op; one on another VM fails rather than being adopted or moved.
+    - name: Attach the optional Zigbee USB resource mapping
       ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
       vars:
         usb_passthrough_guest: "{{ _ha_guest }}"
         usb_passthrough_device:
           mapping: "{{ app_config.app.usb_mapping }}"
+      when: app_config.app.usb_mapping | default('') | length > 0
 
 - name: "Home Assistant | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
