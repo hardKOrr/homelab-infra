@@ -394,7 +394,7 @@
         _rm_postgresql_cluster: "{{ item | split() }}"
       loop: >-
         {{ _rm_postgresql_clusters.stdout_lines | default([])
-           | select('match', '^[0-9]+\\s+') | list }}
+           | select('match', '^[0-9]+[ ]+') | list }}
       when:
         - remove_kind == 'native'
         - _rm_is_postgresql | bool
@@ -619,7 +619,7 @@
             _rm_postgresql_cluster: "{{ item | split() }}"
           loop: >-
             {{ _rm_postgresql_clusters.stdout_lines | default([])
-               | select('match', '^[0-9]+\\s+') | list }}
+               | select('match', '^[0-9]+[ ]+') | list }}
           when:
             - _rm_is_postgresql | bool
             - _rm_delete_data | bool

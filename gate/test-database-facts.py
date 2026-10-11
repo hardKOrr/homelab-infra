@@ -350,8 +350,10 @@ def immich_database_extensions_are_prepared_by_the_backend():
 
 def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     remove_plays = yaml.safe_load(read("ansible/playbooks/apps/remove.yml"))
-    native_tasks = next(play["tasks"] for play in remove_plays if play["name"].startswith("Remove App | Stop"))
+    native_play = next(play for play in remove_plays if play["name"].startswith("Remove App | Stop"))
+    native_tasks = native_play["tasks"]
     native_block = task_named(native_tasks, "Stop the native service")["block"]
+    resolve = task_named(native_play["pre_tasks"], "Resolve every PostgreSQL cluster removal unit")
     drop = task_named(native_block, "Drop PostgreSQL clusters with their configuration when deleting data")
     assert drop["ansible.builtin.command"]["argv"] == [
         "pg_dropcluster",
@@ -360,6 +362,7 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
         "{{ _rm_postgresql_cluster[1] }}",
     ]
     assert "_rm_delete_data | bool" in drop["when"]
+    assert "^[0-9]+[ ]+" in resolve["loop"] and "^[0-9]+[ ]+" in drop["loop"]
     assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data path"))
 
     postgres_tasks = yaml.safe_load(read("ansible/roles/postgresql/tasks/main.yml"))
