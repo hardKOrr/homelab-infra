@@ -75,6 +75,18 @@ sabnzbd_defaults:
     puid: 1313
     pgid: 1313
 
+  # Opened on the firewall before Deploy (tasks/wiring/firewall-opnsense.yml), so a
+  # Usenet server the operator adds in SABnzbd is reachable. Rules match the stack
+  # host's address, so they apply to every app on that host.
+  firewall:
+    egress:
+      - name: nntp-tls
+        protocol: TCP
+        port: 563
+      - name: nntp
+        protocol: TCP
+        port: 119
+
   routing:
     subdomain: sabnzbd                     # hostname on the estate domain, independent of the instance name
     proxy: internal

@@ -173,9 +173,10 @@ backup:
   datastore: ""      # empty resolves to the datastore in your generated facts
 
 proxmox:
-  # A storage id that exists on every node listed above. SSD-backed is strongly
-  # preferred: etcd is fsync-heavy and unhappy on spinning disks.
-  storage: friends-pool-zfs
+  # OVERRIDE ONLY. Absent, the lab-wide proxmox.storage from config/proxmox.yml is
+  # used. Either way it must exist on every node listed above; SSD-backed is strongly
+  # preferred, because etcd is fsync-heavy and unhappy on spinning disks.
+  # storage: <pve-storage>
   # OVERRIDE ONLY. The cluster is lab-scoped and its nodes carry `_.shared`, so it
   # resolves to the network named `shared` when your lab declares one, and to `default`
   # when it does not. Name one here only to put the cluster somewhere else.

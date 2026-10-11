@@ -789,6 +789,122 @@ def mail_consumers_open_smtp_egress():
         opened = [i for i, n in enumerate(names) if n.endswith("| Open network access")]
         deployed = [i for i, n in enumerate(names) if n.endswith("| Deploy")]
         assert opened and opened[0] < deployed[0], (app, names)
+        
+def wireguard_opens_its_udp_forward_before_deploy():
+    plays = yaml.safe_load(read("ansible/playbooks/apps/wireguard.yml"))
+    names = [play["name"] for play in plays]
+    assert names.index("WireGuard | Open network access") < names.index("WireGuard | Deploy"), names
+    fw_play = plays[names.index("WireGuard | Open network access")]
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/wireguard.yml"))["wireguard_defaults"]
+    host = {"ansible_host": "192.0.2.20", "app_config": defaults}
+    variables = {"instance": "wireguard", "groups": {"deploy_wireguard": ["wg"]}, "hostvars": {"wg": host}}
+    firewall = render(fw_play["vars"]["wiring_firewall"], {**variables, "_wg_fw_host": host})
+    assert firewall.get("egress", []) == [], firewall
+    assert firewall["inbound"] == [{"name": "wireguard", "protocol": "UDP",
+                                    "port": defaults["app"]["port"], "enabled": True}], firewall
+    task = task_named(fw_play["tasks"], "Wire firewall")
+    for provider, expected in (("opnsense", True), ("none", False)):
+        infra = {"firewall": {"provider": provider}}
+        results = [render("{{ " + condition + " }}", {"homelabinfra_infra": infra}) for condition in task["when"]]
+        assert all(results) is expected, (provider, results)
+
+def k3s_defaults_carry_no_lab_topology():
+    # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/k3s-cluster.yml"))["k3s_cluster_defaults"]
+    example = yaml.safe_load(read("config.example/apps/k3s-cluster.example.yml"))
+    play = yaml.safe_load(read("ansible/playbooks/apps/k3s-cluster.yml"))[0]
+    fallback = task_named(play["pre_tasks"], "Use the lab-wide storage unless the cluster names its own")
+    check = task_named(play["tasks"], "Assert the cluster's topology is declared")
+
+    def resolve(instance, lab_storage):
+        merged = render("{{ d | combine(i, recursive=True) }}", {"d": defaults, "i": instance})
+        merged = render(fallback["ansible.builtin.set_fact"]["k8s_cluster_config"],
+                        {"k8s_cluster_config": merged,
+                         "homelabinfra_config": {"proxmox": {"storage": lab_storage}}})
+        missing = render(check["vars"]["_k3s_missing"], {"k8s_cluster_config": merged})
+        return merged, missing
+
+    _, missing = resolve({}, "")
+    assert [m.split(" ")[0] for m in missing] == [
+        "cluster.nodes", "ingress.vip", "ingress.address_pool", "proxmox.storage"], missing
+    merged, missing = resolve(example, "lab-pool")
+    assert missing == [], missing
+    assert merged["proxmox"]["storage"] == "lab-pool", merged["proxmox"]
+
+
+def vm_clone_keeps_recorded_app_tags_and_notes():
+    # A redeploy must not strip what apps recorded on the guest (record-app-on-guest.yml).
+    tasks = yaml.safe_load(read("ansible/tasks/proxmox/vm-clone.yml"))
+    merge = task_named(tasks, "VM clone | Merge the recorded app tags and notes into the request")
+    region = "<!-- homelab-infra:apps -->\n| app | kind |\n<!-- /homelab-infra:apps -->"
+    current = {"tags": "_+lab;_-k3s;_.shared;_jellyseerr;_old-platform-lane;operator-note;_.stale",
+               "description": "k3s cluster node, created by homelab-infra\n\n" + region}
+    variables = dict(merge["vars"])
+    variables.update({
+        "_vmc_existing_config": {"stdout": json.dumps(current)},
+        "homelabinfra_config": {"proxmox": {"vm": {
+            "tags": ["_+lab", "_-k3s", "_.shared"],
+            "description": "k3s cluster node, created by homelab-infra"}}},
+    })
+    tags = render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables)
+    notes = render(merge["ansible.builtin.set_fact"]["_vmc_description"], variables)
+    assert tags == sorted(["_+lab", "_-k3s", "_.shared", "_jellyseerr", "_old-platform-lane", "operator-note"]), tags
+    assert notes == current["description"], notes
+    variables["_vmc_existing_config"] = {}
+    assert render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables) == ["_+lab", "_-k3s", "_.shared"]
+
+def bazarr_wiring_sends_lowercase_booleans():
+    # Bazarr converts only lowercase 'true'/'false'; 'True' fails its type check with 406.
+    block = yaml.safe_load(read("ansible/tasks/app-wiring/bazarr-arr.yml"))[0]["block"]
+    task = task_named(block, "Bazarr | Apply the connection")
+    for ssl, expected in (("False", "false"), ("True", "true")):
+        body = render(task["ansible.builtin.uri"]["body"], {
+            "_mw_section": "radarr",
+            "_mw_wanted": {"ip": "192.0.2.10", "port": "7878", "apikey": "k",
+                           "ssl": ssl, "base_url": ""},
+        })
+        assert body["settings-general-use_radarr"] == "true", body
+        assert body["settings-radarr-ssl"] == expected, body
+        assert body["settings-radarr-port"] == "7878", body
+        
+def flaresolverr_rendering():
+    defaults = yaml.safe_load(
+        read("ansible/vars/app-defaults/flaresolverr.yml")
+    )["flaresolverr_defaults"]
+    assert defaults["app"]["log_level"] == "info", "default log level"
+
+    app_config = {
+        **defaults,
+        "app": {**defaults["app"], "log_level": "debug"},
+    }
+    manifest = render(
+        read("ansible/roles/flaresolverr/templates/manifest.yaml.j2"),
+        {
+            "instance": "flaresolverr",
+            "app_config": app_config,
+            "homelabinfra_config": {"timezone": "UTC"},
+        },
+    )
+    deployment = next(
+        doc
+        for doc in yaml.safe_load_all(manifest)
+        if doc and doc["kind"] == "Deployment"
+    )
+    environment = {
+        item["name"]: item["value"]
+        for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
+
+
+def kubernetes_backup_prune_keeps_the_previous_point():
+    # A same-day pre-restore backup must not prune the recovery point being restored.
+    templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
+    assert templates, "no Kubernetes backup templates found"
+    for template in templates:
+        text = template.read_text()
+        assert "proxmox-backup-client prune" in text, f"{template} has no prune"
+        assert "--keep-last 2 --keep-daily" in text, f"{template} prunes without --keep-last 2"
 
 
 if __name__ == "__main__":
@@ -809,4 +925,12 @@ if __name__ == "__main__":
     maintainerr_rendering()
     mautic_rendering()
     mail_consumers_open_smtp_egress()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and mail egress passed")
+    flaresolverr_rendering()
+    wireguard_opens_its_udp_forward_before_deploy()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, WireGuard firewall and mail egreess passed")
+    
+    k3s_defaults_carry_no_lab_topology()
+    vm_clone_keeps_recorded_app_tags_and_notes()
+    bazarr_wiring_sends_lowercase_booleans()
+    kubernetes_backup_prune_keeps_the_previous_point()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags passed and backup pruning passed")

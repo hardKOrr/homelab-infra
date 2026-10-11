@@ -1,12 +1,10 @@
 ---
 # Managed inbound WireGuard server. This is UDP, not an HTTP application: do not
-# add routing.proxy/Caddy settings. The router owner must create and maintain the
-# UDP forward; homelab-infra never adopts or changes an existing router/firewall.
+# add routing.proxy/Caddy settings. With a firewall provider configured
+# (config/infrastructure.yml `firewall:`), Deploy opens the WAN forward of app.port
+# to this LXC and Remove withdraws it; see `firewall.inbound` in the app defaults.
 inbound:
   public_endpoint: vpn.example.net
-  forwarding:
-    owner: network-team
-    responsibility: manual # UDP 51820 -> this managed LXC's LAN address
 
 app:
   port: 51820

@@ -21,10 +21,15 @@ wireguard_defaults:
   inbound:
     # A public DNS name or address is intentionally required in the instance config.
     public_endpoint: ''
-    forwarding:
-      # This project documents the forward but never configures a router or firewall.
-      owner: ''
-      responsibility: manual
+  # Opened on the firewall before Deploy (tasks/wiring/firewall-opnsense.yml): the WAN
+  # forward of the listen port to this guest. On by default, because the server has no
+  # use without it. Keep `port` equal to app.port.
+  firewall:
+    inbound:
+      - name: wireguard
+        protocol: UDP
+        port: 51820
+        enabled: true
   routing:
     proxy: none
     identity: none
