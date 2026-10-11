@@ -27,7 +27,14 @@
 
 # Deemix without an ARL is a supported settings-only install, but Lidarr's Deemix
 # client refuses to save without one. Record the pair as skipped, not failed; the
-# next run registers it once Deemix has an ARL.
+# next run registers it once Deemix has an ARL. Decided once here: mw_client is
+# `item.0.value` from the caller, which the loops inside the block would shadow.
+- name: Download client | Decide whether {{ mw_client_name }} can be registered
+  ansible.builtin.set_fact:
+    _mw_skip_no_arl: >-
+      {{ media_wiring.kinds[mw_client.app].auth | default('') == 'arl'
+         and mw_client.arl | default('') | length == 0 }}
+
 - name: Download client | Skip {{ mw_client_name }} in {{ mw_arr_name }} until it has an ARL
   ansible.builtin.set_fact:
     media_wire_results: >-
@@ -35,14 +42,10 @@
          + [{'connection': mw_client_name ~ ' → ' ~ mw_arr_name,
              'state': 'skipped',
              'detail': mw_client_name ~ ' has no ARL'}] }}
-  when:
-    - media_wiring.kinds[mw_client.app].auth | default('') == 'arl'
-    - mw_client.arl | default('') | length == 0
+  when: _mw_skip_no_arl | bool
 
 - name: Download client | Wire {{ mw_client_name }} into {{ mw_arr_name }}
-  when: >-
-    media_wiring.kinds[mw_client.app].auth | default('') != 'arl'
-    or mw_client.arl | default('') | length > 0
+  when: not (_mw_skip_no_arl | bool)
   vars:
     _mw_api: "{{ mw_arr.host }}/api/{{ media_wiring.kinds[mw_arr.app].api }}/downloadclient"
     _mw_headers:
