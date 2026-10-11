@@ -25,25 +25,6 @@
       vendor:product identities and credential values in config/apps are not accepted.
   no_log: true
 
-- name: Home Assistant | Resolve the declared reverse proxy
-  ansible.builtin.set_fact:
-    _ha_reverse_proxy_provider: >-
-      {{ (homelabinfra_infra | default({})).get('reverse_proxy', {}).get('provider', 'none') }}
-    _ha_trusted_proxy_host: >-
-      {{ (homelabinfra_infra | default({})).get('reverse_proxy', {}).get('host', '')
-         | urlsplit('hostname') }}
-  no_log: true
-
-- name: Home Assistant | Assert the reverse proxy has a trusted IP address
-  ansible.builtin.assert:
-    that:
-      - _ha_trusted_proxy_host is ansible.utils.ipv4_address
-    fail_msg: >-
-      Home Assistant is behind a reverse proxy, but its registered address is not an
-      IPv4 address. Set homelabinfra_infra.reverse_proxy.host to the proxy's direct
-      address before deploying.
-  when: _ha_reverse_proxy_provider in ['caddy', 'nginx']
-
 - name: Home Assistant | Create the project and config directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -54,55 +35,6 @@
   loop:
     - "{{ home_assistant_project_dir }}"
     - "{{ app_config.app.config_path }}"
-
-- name: Home Assistant | Seed default YAML configuration when a proxy is registered
-  ansible.builtin.copy:
-    dest: "{{ app_config.app.config_path }}/configuration.yaml"
-    content: "default_config:\n"
-    force: false
-    owner: root
-    group: root
-    mode: "0640"
-  when: _ha_reverse_proxy_provider in ['caddy', 'nginx']
-
-- name: Home Assistant | Read existing YAML configuration privately
-  ansible.builtin.slurp:
-    src: "{{ app_config.app.config_path }}/configuration.yaml"
-  register: _ha_configuration_file
-  no_log: true
-  when: _ha_reverse_proxy_provider in ['caddy', 'nginx']
-
-- name: Home Assistant | Exclude the managed proxy block from authored configuration
-  ansible.builtin.set_fact:
-    _ha_authored_configuration: >-
-      {{ _ha_configuration_file.content | b64decode
-         | regex_replace('(?ms)^# BEGIN ANSIBLE MANAGED HOME ASSISTANT REVERSE PROXY\n.*?^# END ANSIBLE MANAGED HOME ASSISTANT REVERSE PROXY\n?', '') }}
-  no_log: true
-  when: _ha_reverse_proxy_provider in ['caddy', 'nginx']
-
-- name: Home Assistant | Refuse to duplicate a user-owned HTTP integration
-  ansible.builtin.assert:
-    that:
-      - _ha_authored_configuration | regex_search('(?m)^http\s*:') is none
-    fail_msg: >-
-      Home Assistant configuration.yaml already defines the HTTP integration. Merge
-      the registered reverse proxy into that user-owned block before deploying again.
-  when: _ha_reverse_proxy_provider in ['caddy', 'nginx']
-
-- name: Home Assistant | Trust the registered reverse proxy
-  ansible.builtin.blockinfile:
-    path: "{{ app_config.app.config_path }}/configuration.yaml"
-    marker: "# {mark} ANSIBLE MANAGED HOME ASSISTANT REVERSE PROXY"
-    block: |
-      http:
-        use_x_forwarded_for: true
-        trusted_proxies:
-          - {{ _ha_trusted_proxy_host | to_json }}
-    owner: root
-    group: root
-    mode: "0640"
-  notify: Restart Home Assistant
-  when: _ha_reverse_proxy_provider in ['caddy', 'nginx']
 
 - name: Home Assistant | Store integration credentials in Vaultwarden
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
