@@ -74,7 +74,7 @@
       {{ wiring_authentik_signing_key | default('authentik Self-signed Certificate') }}
     _ak_external_url: "{{ wiring_external_url | default('https://' ~ wiring_domain) }}"
     # Authentik's OWN browser-facing base URL — deliberately not sso.host, which is the
-    # LAN URL the control node uses for API calls (e.g. http://192.168.0.13:9000) and
+    # LAN URL the control node uses for API calls (e.g. http://192.0.2.13:9000) and
     # which no browser off the LAN can reach. Estate-correct by construction: the app's
     # domain and its estate's Authentik share the estate domain, and resolve-estate.yml
     # has already put that estate's domain in homelabinfra_infra.domain.
