@@ -26,15 +26,16 @@ They close stdin and select a local inventory so no live Proxmox inventory is in
 Lint runs `ansible-lint` over `ansible/{playbooks,roles,tasks,vars}`, parses Jinja,
 checks repository links and fixture secrets, and enforces GitHub workflow policy.
 
-Test syntax-checks every playbook in parallel, replays diagnostics in order, and
-runs eleven logic suites. Set `GATE_JOBS=n` to choose syntax-check concurrency.
-The Python suites exercise production logic, expressions and templates.
+Test syntax-checks every playbook, then runs every `gate/test-*.py` and `gate/test-*.sh`
+suite. Both phases run in parallel and replay each item's diagnostics in order. Set
+`GATE_JOBS=n` to choose the concurrency (default: the number of cores). The suites
+exercise production logic, expressions and templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
 - `test-config.py`: Config Doctor, precedence, estates, mail, provider gates and networks.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
-- `test-template-rendering.py`: Caddy, Emby, Unpackerr, Navidrome, Maintainerr restore PVCs and Mautic.
+- `test-template-rendering.py`: app templates and defaults, including Caddy, the media apps and the Kubernetes manifests.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
@@ -46,6 +47,9 @@ The Python suites exercise production logic, expressions and templates.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available to the Docker dispatch play.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
+- `test-orphan-stack-tag.py`: the orphan stack tag repair's plan, execute, repeat and refusal cases.
+- `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
+- `test-plex-restore.py`, `test-tautulli-restore.py`, `test-qbittorrent-restore.py`: read-only preview, group guard, restore and rollback.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:
