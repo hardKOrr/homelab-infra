@@ -72,12 +72,14 @@
         headers: "{{ _mw_headers }}"
         body_format: form-urlencoded
         # Flat `settings-<section>-<key>` pairs, plus the master switch that makes
-        # Bazarr actually use the connection.
+        # Bazarr actually use the connection. Bazarr turns only lowercase 'true' and
+        # 'false' into booleans; 'True' stays a string and fails its type check (406).
         body: >-
           {{ dict(_mw_wanted.keys()
                   | map('regex_replace', '^', 'settings-' ~ _mw_section ~ '-') | list
                   | zip(_mw_wanted.values() | list))
-             | combine({'settings-general-use_' ~ _mw_section: 'True'}) }}
+             | combine({'settings-' ~ _mw_section ~ '-ssl': (_mw_wanted.ssl | bool) | string | lower,
+                        'settings-general-use_' ~ _mw_section: 'true'}) }}
         status_code: [200, 204]
       when: _mw_drifted | bool
       changed_when: true

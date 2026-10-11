@@ -770,6 +770,21 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+
+def bazarr_wiring_sends_lowercase_booleans():
+    # Bazarr converts only lowercase 'true'/'false'; 'True' fails its type check with 406.
+    block = yaml.safe_load(read("ansible/tasks/app-wiring/bazarr-arr.yml"))[0]["block"]
+    task = task_named(block, "Bazarr | Apply the connection")
+    for ssl, expected in (("False", "false"), ("True", "true")):
+        body = render(task["ansible.builtin.uri"]["body"], {
+            "_mw_section": "radarr",
+            "_mw_wanted": {"ip": "192.0.2.10", "port": "7878", "apikey": "k",
+                           "ssl": ssl, "base_url": ""},
+        })
+        assert body["settings-general-use_radarr"] == "true", body
+        assert body["settings-radarr-ssl"] == expected, body
+        assert body["settings-radarr-port"] == "7878", body
+        
 def flaresolverr_rendering():
     defaults = yaml.safe_load(
         read("ansible/vars/app-defaults/flaresolverr.yml")
@@ -827,6 +842,7 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
+    bazarr_wiring_sends_lowercase_booleans()
     flaresolverr_rendering()
     kubernetes_backup_prune_keeps_the_previous_point()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr and backup pruning passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, FlareSolverr and backup pruning passed")
