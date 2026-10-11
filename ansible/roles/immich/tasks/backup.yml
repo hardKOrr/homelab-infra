@@ -115,14 +115,14 @@
             PGPASSWORD="$DB_PASSWORD" pg_dump --format=custom --no-owner --no-acl
             --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER"
             --dbname="$DB_NAME" --file=/backup/immich.dump
-        environment:
-          DB_HOST: "{{ _immich_backup_database_backend.host }}"
-          DB_PORT: "{{ _immich_backup_database_backend.port }}"
-          DB_NAME: "{{ app_config.app.database.name }}"
-          DB_USER: "{{ _immich_backup_database_user }}"
-          DB_PASSWORD: "{{ _immich_backup_database_password }}"
-        no_log: true
-        changed_when: true
+      environment:
+        DB_HOST: "{{ _immich_backup_database_backend.host }}"
+        DB_PORT: "{{ _immich_backup_database_backend.port }}"
+        DB_NAME: "{{ app_config.app.database.name }}"
+        DB_USER: "{{ _immich_backup_database_user }}"
+        DB_PASSWORD: "{{ _immich_backup_database_password }}"
+      no_log: true
+      changed_when: true
 
     - name: Immich backup | Push the database and durable media archives
       ansible.builtin.command:
@@ -166,16 +166,16 @@
             proxmox-backup-client backup database.pxar:/backup media.pxar:/media
             # A same-day pre-restore safety backup must retain the preceding recovery point.
             proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
-        environment:
-          PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-          PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-          PBS_PASSWORD: "{{ k8s_pbs_password }}"
-          BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
-          RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
-          PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-          PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
-        no_log: true
-        changed_when: true
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      no_log: true
+      changed_when: true
 
     - name: Immich backup | Mark the application backup complete
       ansible.builtin.set_fact:

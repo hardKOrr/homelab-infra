@@ -47,6 +47,18 @@ def main():
         resolved = (maintenance_dir / resolver_task["ansible.builtin.include_tasks"]).resolve()
         assert resolved == pbs_resolver.resolve(), (task_file, resolved)
 
+    backup_tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks/backup.yml").read_text())
+    archive_block = next(item for item in backup_tasks
+                         if item.get("name") == "Immich backup | Archive the database and media to PBS")
+    for task_name in ["Immich backup | Dump the named PostgreSQL database",
+                      "Immich backup | Push the database and durable media archives"]:
+        task = next(item for item in archive_block["block"] if item.get("name") == task_name)
+        assert task.get("environment"), task_name
+        assert task.get("no_log") is True, task_name
+        assert task.get("changed_when") is True, task_name
+        assert not {"environment", "no_log", "changed_when"} & set(
+            task["ansible.builtin.command"]), task_name
+
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
