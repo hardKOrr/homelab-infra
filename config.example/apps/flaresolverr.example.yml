@@ -24,3 +24,5 @@
 #   # cluster-wide: a second FlareSolverr instance MUST set this to a different, unused
 #   # 30000-32767 port, or its deploy fails the collision check rather than let
 #   # Kubernetes reject the Service silently.
+#   # FlareSolverr LOG_LEVEL: debug, info, warning or error.
+#   log_level: info

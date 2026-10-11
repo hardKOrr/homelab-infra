@@ -770,6 +770,36 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+def flaresolverr_rendering():
+    defaults = yaml.safe_load(
+        read("ansible/vars/app-defaults/flaresolverr.yml")
+    )["flaresolverr_defaults"]
+    assert defaults["app"]["log_level"] == "info", "default log level"
+
+    app_config = {
+        **defaults,
+        "app": {**defaults["app"], "log_level": "debug"},
+    }
+    manifest = render(
+        read("ansible/roles/flaresolverr/templates/manifest.yaml.j2"),
+        {
+            "instance": "flaresolverr",
+            "app_config": app_config,
+            "homelabinfra_config": {"timezone": "UTC"},
+        },
+    )
+    deployment = next(
+        doc
+        for doc in yaml.safe_load_all(manifest)
+        if doc and doc["kind"] == "Deployment"
+    )
+    environment = {
+        item["name"]: item["value"]
+        for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
+
+
 def kubernetes_backup_prune_keeps_the_previous_point():
     # A same-day pre-restore backup must not prune the recovery point being restored.
     templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
@@ -797,5 +827,6 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
+    flaresolverr_rendering()
     kubernetes_backup_prune_keeps_the_previous_point()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and backup pruning passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr and backup pruning passed")
