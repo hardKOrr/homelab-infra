@@ -81,7 +81,7 @@ compose:
   # stopped the first re-run that successfully reused an existing guest.
   #
   # Shape comes from the plugin's own documented example: net0 (LXC) and ipconfig0 (VM) are
-  # parsed into dicts, so .ip is "192.168.0.10/20" and the prefix is stripped here. A DHCP
+  # parsed into dicts, so .ip is "192.0.2.10/24" and the prefix is stripped here. A DHCP
   # guest yields an empty string rather than the literal "dhcp", so it fails as a missing
   # value instead of as a bogus hostname; DHCP guests are resolved at create time by
   # lxc-create.yml's lease discovery.

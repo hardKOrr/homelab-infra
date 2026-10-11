@@ -789,7 +789,8 @@ def mail_consumers_open_smtp_egress():
         opened = [i for i, n in enumerate(names) if n.endswith("| Open network access")]
         deployed = [i for i, n in enumerate(names) if n.endswith("| Deploy")]
         assert opened and opened[0] < deployed[0], (app, names)
-        
+
+
 def wireguard_opens_its_udp_forward_before_deploy():
     plays = yaml.safe_load(read("ansible/playbooks/apps/wireguard.yml"))
     names = [play["name"] for play in plays]
@@ -802,11 +803,56 @@ def wireguard_opens_its_udp_forward_before_deploy():
     assert firewall.get("egress", []) == [], firewall
     assert firewall["inbound"] == [{"name": "wireguard", "protocol": "UDP",
                                     "port": defaults["app"]["port"], "enabled": True}], firewall
-    task = task_named(fw_play["tasks"], "Wire firewall")
-    for provider, expected in (("opnsense", True), ("none", False)):
-        infra = {"firewall": {"provider": provider}}
-        results = [render("{{ " + condition + " }}", {"homelabinfra_infra": infra}) for condition in task["when"]]
-        assert all(results) is expected, (provider, results)
+    task = task_named(fw_play["tasks"], "Open the app's network access")
+    assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", task
+    ports = render(task["vars"]["firewall_inbound_ports"], {**variables, "_wg_fw_host": host})
+    assert ports == {"wireguard": str(defaults["app"]["port"])}, ports
+
+
+def apps_open_access_through_the_shared_task():
+    # Each app opens its access before Deploy through one task file, which reaches the
+    # provider only when one is configured and refuses a forward that misses the app's port.
+    tasks = yaml.safe_load(read("ansible/tasks/firewall/open-app-access.yml"))
+    provider = task_named(tasks, "Firewall access | Open it on the configured provider")
+    for name, expected in (("opnsense", True), ("none", False)):
+        infra = {"firewall": {"provider": name}}
+        results = [render("{{ " + condition + " }}", {"homelabinfra_infra": infra})
+                   for condition in provider["when"]]
+        assert all(results) is expected, (name, results)
+
+    check = task_named(tasks, "Firewall access | Assert each enabled forward lands on the app's port")
+    inbound = [{"name": "listen", "port": 6881, "enabled": True},
+               {"name": "off", "port": 1, "enabled": False},
+               {"name": "other", "port": 2, "enabled": True}]
+    checked = render(check["loop"], {"wiring_firewall": {"inbound": inbound},
+                                     "firewall_inbound_ports": {"listen": "6881", "off": "9"}})
+    assert [f["name"] for f in checked] == ["listen"], checked
+    for forward, port, ok in (({"name": "listen", "port": 6881}, "6881", True),
+                              ({"name": "listen", "port": 6881}, "6882", False),
+                              ({"name": "listen", "port": 443, "local_port": 6881}, "6881", True)):
+        result = render("{{ " + check["ansible.builtin.assert"]["that"] + " }}",
+                        {"_fw_forward": forward, "firewall_inbound_ports": {"listen": port}})
+        assert result is ok, (forward, port, result)
+
+    ports = {"plex": ("_plex_fw_host", "plex-remote-access", "port"),
+             "qbittorrent": ("_qbt_fw_host", "bittorrent-listen", "torrenting_port"),
+             "wireguard": ("_wg_fw_host", "wireguard", "port")}
+    for app in ("slskd", "qbittorrent", "sabnzbd", "plex", "wireguard"):
+        plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
+        names = [play["name"] for play in plays]
+        opened = next(i for i, n in enumerate(names) if n.endswith("| Open network access"))
+        assert opened < next(i for i, n in enumerate(names) if n.endswith("| Deploy")), (app, names)
+        task = task_named(plays[opened]["tasks"], "Open the app's network access")
+        assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", app
+        if app in ports:
+            host, forward, key = ports[app]
+            defaults = yaml.safe_load(read(f"ansible/vars/app-defaults/{app}.yml"))[f"{app}_defaults"]
+            declared = {f["name"]: f["port"] for f in defaults["firewall"]["inbound"]}
+            rendered = render(task["vars"]["firewall_inbound_ports"],
+                              {host: {"app_config": defaults}, "instance": app,
+                               "homelabinfra_config": {}})
+            assert rendered == {forward: str(defaults["app"][key])} and declared[forward] == defaults["app"][key], (
+                app, rendered, declared)
 
 def k3s_defaults_carry_no_lab_topology():
     # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
@@ -897,14 +943,20 @@ def flaresolverr_rendering():
     assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
 
 
-def kubernetes_backup_prune_keeps_the_previous_point():
-    # A same-day pre-restore backup must not prune the recovery point being restored.
+def backup_prune_keeps_the_previous_point():
+    # A same-day pre-restore backup must not prune the recovery point being restored, in
+    # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
     templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
     assert templates, "no Kubernetes backup templates found"
     for template in templates:
-        text = template.read_text()
-        assert "proxmox-backup-client prune" in text, f"{template} has no prune"
-        assert "--keep-last 2 --keep-daily" in text, f"{template} prunes without --keep-last 2"
+        assert "proxmox-backup-client prune" in template.read_text(), f"{template} has no prune"
+    scripts = [path for path in sorted(ROOT.glob("ansible/roles/*/*/*"))
+               if path.is_file() and "--keep-daily" in path.read_text(errors="ignore")]
+    assert len(scripts) > len(templates), scripts
+    for script in scripts:
+        for line in script.read_text().splitlines():
+            if "--keep-daily" in line and not line.lstrip().startswith("#"):
+                assert "--keep-last 2 --keep-daily" in line, f"{script} prunes without --keep-last 2"
 
 
 if __name__ == "__main__":
@@ -927,10 +979,11 @@ if __name__ == "__main__":
     mail_consumers_open_smtp_egress()
     flaresolverr_rendering()
     wireguard_opens_its_udp_forward_before_deploy()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, WireGuard firewall and mail egreess passed")
+    apps_open_access_through_the_shared_task()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, the shared firewall access and mail egress passed")
     
     k3s_defaults_carry_no_lab_topology()
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
-    kubernetes_backup_prune_keeps_the_previous_point()
+    backup_prune_keeps_the_previous_point()
     print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags passed and backup pruning passed")

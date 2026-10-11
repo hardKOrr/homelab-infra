@@ -167,7 +167,8 @@
             test -s /backup/n8n.dump
             proxmox-backup-client backup database.pxar:/backup data.pxar:/data \
               --backup-id "$BACKUP_ID"
-            proxmox-backup-client prune "host/$BACKUP_ID" --keep-daily "$RETENTION_DAYS"
+            # A same-day pre-restore safety backup must retain the preceding recovery point.
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
             echo "backup complete: host/$BACKUP_ID (database plus n8n data)"
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"

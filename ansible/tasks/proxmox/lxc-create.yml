@@ -389,7 +389,7 @@
 # binding port 22 — and the play that follows this one connects over SSH, not pct. On a
 # freshly created guest that gap is real:
 #
-#   fatal: [sso-stack]: UNREACHABLE! ssh: connect to host 192.168.0.16 port 22:
+#   fatal: [sso-stack]: UNREACHABLE! ssh: connect to host 192.0.2.16 port 22:
 #   Connection refused
 #
 # and the port was open moments later, so nothing was wrong except the timing. It hid for
