@@ -36,6 +36,17 @@ def check(playbook, task_name, inputs, expected):
 
 
 def main():
+    # Role includes resolve from the calling maintenance playbook directory. Keep the
+    # Immich backup and restore roles pointed at the shared PBS resolver from that root.
+    maintenance_dir = repo / "ansible/playbooks/maintenance"
+    pbs_resolver = repo / "ansible/tasks/kubernetes/resolve-pbs-target.yml"
+    for task_file in ["backup.yml", "restore.yml"]:
+        tasks = yaml.safe_load((repo / "ansible/roles/immich/tasks" / task_file).read_text())
+        resolver_task = next(task for task in tasks
+                             if task.get("name", "").endswith("| Resolve the PBS client target"))
+        resolved = (maintenance_dir / resolver_task["ansible.builtin.include_tasks"]).resolve()
+        assert resolved == pbs_resolver.resolve(), (task_file, resolved)
+
     # Render the production Docker restore arguments in a second play. A renamed
     # target must receive its own config path, while an authored custom path survives.
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())

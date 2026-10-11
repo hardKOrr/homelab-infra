@@ -46,7 +46,9 @@
   no_log: true
 
 - name: Immich restore | Resolve the PBS client target
-  ansible.builtin.include_tasks: ../../../tasks/kubernetes/resolve-pbs-target.yml
+  # This role task is dispatched from Restore App under playbooks/maintenance. Ansible
+  # resolves relative includes from that playbook directory, not this role directory.
+  ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-pbs-target.yml
   vars:
     k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
 
