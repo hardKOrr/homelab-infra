@@ -978,11 +978,14 @@ def immich_machine_learning_device_is_optional():
                         "model_cache_path": "/opt/immich/model-cache",
                         "port": 2283,
                         "shared_device": shared_device,
-                    }
+                    },
+                    "media_storage": {"owner": {"uid": 1313, "gid": 1313}},
                 },
             },
         )
         services = yaml.safe_load(rendered)["services"]
+        assert services["immich-server"]["user"] == "1313:1313"
+        assert "user" not in services["immich-machine-learning"]
         return services["immich-machine-learning"]
 
     cpu = machine_learning_service(
