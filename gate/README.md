@@ -28,8 +28,10 @@ checks repository links and fixture secrets, and enforces GitHub workflow policy
 
 Test syntax-checks every playbook, then runs every `gate/test-*.py` and `gate/test-*.sh`
 suite. Both phases run in parallel and replay each item's diagnostics in order. Set
-`GATE_JOBS=n` to choose the concurrency (default: the number of cores). The suites
-exercise production logic, expressions and templates.
+`GATE_JOBS=n` to choose the concurrency (default: the number of cores), and
+`GATE_SHARD=k/n` to run only the k-th of n slices (shard 1 also syntax-checks); CI runs
+three shards on separate runners. The suites exercise production logic, expressions and
+templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
