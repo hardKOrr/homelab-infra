@@ -771,6 +771,51 @@ def mautic_rendering():
 
 
 
+def k3s_defaults_carry_no_lab_topology():
+    # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/k3s-cluster.yml"))["k3s_cluster_defaults"]
+    example = yaml.safe_load(read("config.example/apps/k3s-cluster.example.yml"))
+    play = yaml.safe_load(read("ansible/playbooks/apps/k3s-cluster.yml"))[0]
+    fallback = task_named(play["pre_tasks"], "Use the lab-wide storage unless the cluster names its own")
+    check = task_named(play["tasks"], "Assert the cluster's topology is declared")
+
+    def resolve(instance, lab_storage):
+        merged = render("{{ d | combine(i, recursive=True) }}", {"d": defaults, "i": instance})
+        merged = render(fallback["ansible.builtin.set_fact"]["k8s_cluster_config"],
+                        {"k8s_cluster_config": merged,
+                         "homelabinfra_config": {"proxmox": {"storage": lab_storage}}})
+        missing = render(check["vars"]["_k3s_missing"], {"k8s_cluster_config": merged})
+        return merged, missing
+
+    _, missing = resolve({}, "")
+    assert [m.split(" ")[0] for m in missing] == [
+        "cluster.nodes", "ingress.vip", "ingress.address_pool", "proxmox.storage"], missing
+    merged, missing = resolve(example, "lab-pool")
+    assert missing == [], missing
+    assert merged["proxmox"]["storage"] == "lab-pool", merged["proxmox"]
+
+
+def vm_clone_keeps_recorded_app_tags_and_notes():
+    # A redeploy must not strip what apps recorded on the guest (record-app-on-guest.yml).
+    tasks = yaml.safe_load(read("ansible/tasks/proxmox/vm-clone.yml"))
+    merge = task_named(tasks, "VM clone | Merge the recorded app tags and notes into the request")
+    region = "<!-- homelab-infra:apps -->\n| app | kind |\n<!-- /homelab-infra:apps -->"
+    current = {"tags": "_+lab;_-k3s;_.shared;_jellyseerr;_old-platform-lane;operator-note;_.stale",
+               "description": "k3s cluster node, created by homelab-infra\n\n" + region}
+    variables = dict(merge["vars"])
+    variables.update({
+        "_vmc_existing_config": {"stdout": json.dumps(current)},
+        "homelabinfra_config": {"proxmox": {"vm": {
+            "tags": ["_+lab", "_-k3s", "_.shared"],
+            "description": "k3s cluster node, created by homelab-infra"}}},
+    })
+    tags = render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables)
+    notes = render(merge["ansible.builtin.set_fact"]["_vmc_description"], variables)
+    assert tags == sorted(["_+lab", "_-k3s", "_.shared", "_jellyseerr", "_old-platform-lane", "operator-note"]), tags
+    assert notes == current["description"], notes
+    variables["_vmc_existing_config"] = {}
+    assert render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables) == ["_+lab", "_-k3s", "_.shared"]
+
 def bazarr_wiring_sends_lowercase_booleans():
     # Bazarr converts only lowercase 'true'/'false'; 'True' fails its type check with 406.
     block = yaml.safe_load(read("ansible/tasks/app-wiring/bazarr-arr.yml"))[0]["block"]
@@ -842,7 +887,9 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
+    k3s_defaults_carry_no_lab_topology()
+    vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
     flaresolverr_rendering()
     kubernetes_backup_prune_keeps_the_previous_point()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, FlareSolverr and backup pruning passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, FlareSolverr, k3s defaults, VM clone tags passed and backup pruning passed")

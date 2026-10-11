@@ -185,6 +185,45 @@
   register: _vmc_config_before
   changed_when: false
 
+# Apps record themselves on the guest after it exists (tasks/proxmox/record-app-on-guest.yml):
+# a `_<instance>` tag and a marker-delimited region of the notes. Rewriting tags and notes
+# from this deploy's declaration alone stripped both from every k3s node on each cluster
+# Deploy, and the next app Deploy put them back. Keep the app and operator tags and the
+# app region; the platform's own lanes (`_+`, `_-`, `_.`) still come only from the request.
+- name: VM clone | Read the tags and notes an existing guest carries
+  ansible.builtin.command:
+    cmd: >-
+      pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ _vmc_vmid }}/config
+      --output-format json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_existing_config
+  changed_when: false
+  when: _vmc_existing.rc == 0
+
+- name: VM clone | Merge the recorded app tags and notes into the request
+  vars:
+    _vmc_current: "{{ (_vmc_existing_config.stdout | default('{}', true)) | from_json }}"
+    _vmc_requested_tags: "{{ homelabinfra_config.proxmox.vm.tags | default(['_+lab', '_-debian']) }}"
+    _vmc_kept_tags: >-
+      {{ (_vmc_current.tags | default('')).split(';') | map('trim') | select
+         | reject('match', '^_[+.-]') | list }}
+    _vmc_current_notes: "{{ _vmc_current.description | default('') }}"
+    # The separator files/proxmox/guest-app-record.py joins notes with (compose()).
+    _vmc_notes_gap: "\n\n"
+    _vmc_app_region: >-
+      {{ ('<!-- homelab-infra:apps -->'
+          ~ (_vmc_current_notes.split('<!-- homelab-infra:apps -->', 1)[1]
+             .split('<!-- /homelab-infra:apps -->', 1)[0])
+          ~ '<!-- /homelab-infra:apps -->')
+         if '<!-- homelab-infra:apps -->' in _vmc_current_notes
+            and '<!-- /homelab-infra:apps -->' in _vmc_current_notes else '' }}
+  ansible.builtin.set_fact:
+    _vmc_tags: "{{ (_vmc_requested_tags + _vmc_kept_tags) | unique | sort }}"
+    _vmc_description: >-
+      {{ (homelabinfra_config.proxmox.vm.description
+          ~ (_vmc_notes_gap ~ _vmc_app_region if _vmc_app_region | length > 0 else ''))
+         if homelabinfra_config.proxmox.vm.description is defined else '' }}
+
 # A clone carries the template's sizing and no cloud-init identity, so everything
 # that makes this VM itself is applied here.
 - name: VM clone | Apply per-VM configuration
@@ -218,8 +257,8 @@
     agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
     onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"
     startup: "{{ _proxmox_startup if (_proxmox_startup | length > 0) else omit }}"
-    tags: "{{ homelabinfra_config.proxmox.vm.tags | default(['_+lab', '_-debian']) }}"
-    description: "{{ homelabinfra_config.proxmox.vm.description | default(omit) }}"
+    tags: "{{ _vmc_tags }}"
+    description: "{{ _vmc_description if _vmc_description | length > 0 else omit }}"
     ciuser: "{{ homelabinfra_config.proxmox.vm.ciuser | default(homelabinfra_config.ansible.ssh_user) }}"
     sshkeys: "{{ homelabinfra_config.ansible.ssh_public_key }}"
     net:
