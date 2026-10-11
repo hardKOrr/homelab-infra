@@ -36,6 +36,7 @@ templates.
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
 - `test-config.py`: Config Doctor, precedence, estates, mail, provider gates and networks.
+- `test-database-facts.py`: generated database registry cleanup, PostgreSQL privilege/extension setup and delete/redeploy cluster lifecycle.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
 - `test-template-rendering.py`: app templates and defaults, including Caddy, the media apps and the Kubernetes manifests.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.

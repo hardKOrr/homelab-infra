@@ -348,10 +348,44 @@ def immich_database_extensions_are_prepared_by_the_backend():
     assert enable["become_user"] == "postgres"
 
 
+def postgresql_delete_and_redeploy_reconcile_cluster_identity():
+    remove_plays = yaml.safe_load(read("ansible/playbooks/apps/remove.yml"))
+    native_tasks = next(play["tasks"] for play in remove_plays if play["name"].startswith("Remove App | Stop"))
+    native_block = task_named(native_tasks, "Stop the native service")["block"]
+    drop = task_named(native_block, "Drop PostgreSQL clusters with their configuration when deleting data")
+    assert drop["ansible.builtin.command"]["argv"] == [
+        "pg_dropcluster",
+        "--stop",
+        "{{ _rm_postgresql_cluster[0] }}",
+        "{{ _rm_postgresql_cluster[1] }}",
+    ]
+    assert "_rm_delete_data | bool" in drop["when"]
+    assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data path"))
+
+    postgres_tasks = yaml.safe_load(read("ansible/roles/postgresql/tasks/main.yml"))
+    discover = task_named(postgres_tasks, "PostgreSQL | Discover registered clusters after package installation")
+    create = task_named(postgres_tasks, "PostgreSQL | Create main when no cluster is registered")
+    stale_guard = task_named(postgres_tasks, "PostgreSQL | Refuse registered clusters with missing data")
+    identity_file = task_named(postgres_tasks, "PostgreSQL | Check the existing main cluster identity file")
+    assert discover["ansible.builtin.command"]["argv"] == ["pg_lsclusters", "--no-header"]
+    assert create["ansible.builtin.command"]["argv"] == [
+        "pg_createcluster",
+        "{{ app_config.app.version }}",
+        "main",
+    ]
+    assert create["when"] == "_postgresql_main_clusters | length == 0"
+    assert identity_file["ansible.builtin.stat"]["path"] == "{{ _postgresql_main_data_directory }}/PG_VERSION"
+    assert "_postgresql_main_version_file.stat.isreg" in stale_guard["ansible.builtin.assert"]["that"]
+    assert "delete_data=true" in stale_guard["ansible.builtin.assert"]["fail_msg"]
+    assert postgres_tasks.index(discover) < postgres_tasks.index(create)
+    assert postgres_tasks.index(stale_guard) < postgres_tasks.index(create)
+
+
 if __name__ == "__main__":
     database_producers_resolve_instance_keys()
     database_writer_removes_unresolved_keys_and_preserves_other_estates()
     database_role_password_sql_uses_psql_stdin()
     postgres_superuser_is_an_explicit_database_request()
     immich_database_extensions_are_prepared_by_the_backend()
+    postgresql_delete_and_redeploy_reconcile_cluster_identity()
     print("ok database fact producers and registry cleanup")

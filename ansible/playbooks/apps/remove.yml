@@ -594,6 +594,37 @@
           loop: "{{ _rm_service_stop.results | default([]) }}"
           when: "'could not be found' in (item.msg | default(''))"
 
+        # PostgreSQL's data directory is not the cluster's whole identity: Debian keeps
+        # its cluster registration and configuration under /etc/postgresql. Drop each
+        # discovered cluster before deleting the parent data path, so a later Deploy can
+        # create a fresh main cluster even when the server package remains installed.
+        - name: Require PostgreSQL cluster discovery before deleting its data
+          ansible.builtin.assert:
+            that: _rm_postgresql_clusters.rc == 0
+            fail_msg: >-
+              Could not enumerate PostgreSQL clusters safely. No PostgreSQL data or
+              cluster configuration was deleted.
+          when:
+            - _rm_is_postgresql | bool
+            - _rm_delete_data | bool
+
+        - name: Drop PostgreSQL clusters with their configuration when deleting data
+          ansible.builtin.command:
+            argv:
+              - pg_dropcluster
+              - --stop
+              - "{{ _rm_postgresql_cluster[0] }}"
+              - "{{ _rm_postgresql_cluster[1] }}"
+          vars:
+            _rm_postgresql_cluster: "{{ item | split() }}"
+          loop: >-
+            {{ _rm_postgresql_clusters.stdout_lines | default([])
+               | select('match', '^[0-9]+\\s+') | list }}
+          when:
+            - _rm_is_postgresql | bool
+            - _rm_delete_data | bool
+          changed_when: true
+
         - name: Delete the data path
           ansible.builtin.file:
             path: "{{ app_config.app.data_path }}"
