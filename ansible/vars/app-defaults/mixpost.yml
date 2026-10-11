@@ -118,7 +118,7 @@ mixpost_defaults:
     # Cron in the CronJob's own timezone (see `timezone` below), not in UTC-by-default.
     schedule: "0 3 * * *"
 
-    # Applied as `proxmox-backup-client prune --keep-daily`, which is exactly this many
+    # Applied as `prune --keep-daily` (plus `--keep-last 2`), which is exactly this many
     # days for the daily schedule above. Pruning marks snapshots for removal; the disk
     # space comes back when PBS runs its own garbage collection, which PBS schedules
     # itself and this platform does not drive.

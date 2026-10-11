@@ -12,9 +12,32 @@
 #   wiring_firewall       — the app's declared firewall access ({egress, inbound})
 #   app_config            — the app's merged config (for the mail estate)
 #   firewall_sends_mail   — true for a mail consumer (default false)
+#   firewall_inbound_ports — optional {inbound name: port the app listens on}; an enabled
+#                           forward with that name must land on that port, so a changed
+#                           app port fails Deploy instead of forwarding to nothing
 #
 # The SMTP rule allows any destination on the relay's port: OPNsense filter rules take
 # addresses or aliases, not hostnames.
+
+- name: Firewall access | Assert each enabled forward lands on the app's port
+  ansible.builtin.assert:
+    that: >-
+      (_fw_forward.local_port | default(_fw_forward.port)) | string
+      == firewall_inbound_ports[_fw_forward.name] | string
+    fail_msg: >-
+      {{ wiring_app_name }}'s forward {{ _fw_forward.name }} lands on port
+      {{ _fw_forward.local_port | default(_fw_forward.port) }}, but the app listens on
+      {{ firewall_inbound_ports[_fw_forward.name] }}. Set the forward's port in
+      config/apps/{{ wiring_app_name }}.yml `firewall.inbound` to match.
+    quiet: true
+  loop: >-
+    {{ wiring_firewall.inbound | default([])
+       | selectattr('enabled', 'defined') | selectattr('enabled')
+       | selectattr('name', 'in', (firewall_inbound_ports | default({})).keys() | list)
+       | list }}
+  loop_control:
+    loop_var: _fw_forward
+    label: "{{ _fw_forward.name }}"
 
 - name: Firewall access | Resolve platform mail
   ansible.builtin.include_tasks: ../mail/resolve-mail.yml

@@ -122,12 +122,8 @@
     wiring_firewall: "{{ _slskd_deploy_host.app_config.firewall | default({}) }}"
 
   tasks:
-    - name: Wire firewall
-      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.firewall is defined
-        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+    - name: Open the app's network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
 
 
 # ── Play 3: Deploy ─────────────────────────────────────────────────────────────

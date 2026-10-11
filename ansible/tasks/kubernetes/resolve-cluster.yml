@@ -24,7 +24,7 @@
 # connects as whoever the runner is. That is `rundeck`, which no guest authorises:
 #
 #   fatal: [localhost -> k3s-1]: UNREACHABLE! => Failed to connect to the host via ssh:
-#   rundeck@192.168.0.21: Permission denied (publickey).
+#   rundeck@192.0.2.21: Permission denied (publickey).
 #
 # tasks/proxmox/register-nodes.yml hit exactly this for Proxmox node delegation and solved
 # it the same way. Registering from the REGISTRY rather than the inventory has a second
