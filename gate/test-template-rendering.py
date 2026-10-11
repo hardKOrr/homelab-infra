@@ -960,6 +960,44 @@ def flaresolverr_rendering():
     assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
 
 
+def immich_machine_learning_device_is_optional():
+    template = read("ansible/roles/immich/templates/docker-compose.yml.j2")
+
+    def machine_learning_service(shared_device, image):
+        rendered = render(
+            template,
+            {
+                "ansible_managed": "Managed by gate test",
+                "instance": "immich",
+                "immich_env_file": "/opt/immich/immich.env",
+                "_immich_media_path": "/mnt/media/p2-immich",
+                "app_config": {
+                    "app": {
+                        "image": "ghcr.io/immich-app/immich-server:v3.1.0",
+                        "machine_learning_image": image,
+                        "model_cache_path": "/opt/immich/model-cache",
+                        "port": 2283,
+                        "shared_device": shared_device,
+                    }
+                },
+            },
+        )
+        services = yaml.safe_load(rendered)["services"]
+        return services["immich-machine-learning"]
+
+    cpu = machine_learning_service(
+        "", "ghcr.io/immich-app/immich-machine-learning:v3.1.0"
+    )
+    assert "devices" not in cpu, cpu
+    assert cpu["image"] == "ghcr.io/immich-app/immich-machine-learning:v3.1.0", cpu
+
+    hardware = machine_learning_service(
+        "/dev/dri/renderD128",
+        "ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino",
+    )
+    assert hardware["devices"] == ["/dev/dri/renderD128:/dev/dri/renderD128"], hardware
+
+
 def backup_prune_keeps_the_previous_point():
     # A same-day pre-restore backup must not prune the recovery point being restored, in
     # any app: Kubernetes CronJobs, native backup tasks and the recovery scripts.
@@ -995,6 +1033,8 @@ if __name__ == "__main__":
     mautic_rendering()
     mail_consumers_open_smtp_egress()
     flaresolverr_rendering()
+    immich_machine_learning_device_is_optional()
+    print("Template rendering: Immich CPU mode omits device binds and hardware mode retains its declared device")
     wireguard_opens_its_udp_forward_before_deploy()
     apps_open_access_through_the_shared_task()
     qbittorrent_enforces_peer_ports_before_start()
