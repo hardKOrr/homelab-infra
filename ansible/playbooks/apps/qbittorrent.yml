@@ -114,12 +114,11 @@
     wiring_firewall: "{{ _qbt_fw_host.app_config.firewall | default({}) }}"
 
   tasks:
-    - name: Wire firewall
-      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.firewall is defined
-        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+    - name: Open the app's network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        firewall_inbound_ports:
+          bittorrent-listen: "{{ _qbt_fw_host.app_config.app.torrenting_port }}"
 
 
 # ── Play 3: Deploy ─────────────────────────────────────────────────────────────
