@@ -61,11 +61,21 @@ qbittorrent_defaults:
 
   # Opened on the firewall before Deploy (tasks/wiring/firewall-opnsense.yml).
   firewall:
-    # Peers listen on any port, over TCP and UDP (uTP, DHT).
+    # Peer egress is identified by the socket source port qBittorrent binds.
+    # DHT, uTP and UDP trackers share the listen socket; HTTP trackers use TCP/80
+    # and do not use qBittorrent's peer socket range.
     egress:
-      - name: bittorrent-peers
-        protocol: TCP/UDP
+      - name: bittorrent-peers-tcp
+        protocol: TCP
         port: ""
+        source_port: "61000-65535"
+      - name: bittorrent-peers-udp
+        protocol: UDP
+        port: ""
+        source_port: "{{ ((app_config | default({})).get('app', {})).get('torrenting_port', 6881) }}"
+      - name: bittorrent-trackers-http
+        protocol: TCP
+        port: 80
     # Opt-in WAN forward of torrenting_port. To publish it, copy this list into
     # config/apps/<instance>.yml with `enabled: true`; keep `port` equal to
     # app.torrenting_port.

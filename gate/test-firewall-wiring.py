@@ -71,7 +71,7 @@ class FakeOPNsense(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run(server, root, task, instance, firewall):
+def run(server, root, task, instance, firewall, extra_vars=None):
     server.calls.clear()
     infra = {"firewall": {
         "provider": "opnsense", "host": f"http://127.0.0.1:{server.server_port}",
@@ -81,7 +81,8 @@ def run(server, root, task, instance, firewall):
     play = [{
         "hosts": "localhost", "gather_facts": False,
         "vars": {"homelabinfra_infra": infra, "wiring_app_name": instance,
-                 "wiring_upstream_host": "198.51.100.34", "wiring_firewall": firewall},
+                 "wiring_upstream_host": "198.51.100.34", "wiring_firewall": firewall,
+                 **(extra_vars or {})},
         "tasks": [{"ansible.builtin.include_tasks": str(repo / "ansible/tasks" / task)}],
     }]
     path = root / "play.yml"
@@ -102,22 +103,31 @@ def main():
     sibling = {"description": "homelab-infra: slskd-2 egress soulseek", "interface": "opt4"}
     server.rules["filter"].update({"foreign": foreign, "sibling": sibling})
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    declared = {"egress": [{"name": "soulseek", "protocol": "TCP", "port": ""}],
+    declared = {"egress": [{"name": "soulseek", "protocol": "TCP", "port": ""},
+                           {"name": "peer-range", "protocol": "TCP", "port": "",
+                            "source_port": "61000-65535"}],
                 "inbound": [{"name": "peers", "protocol": "TCP", "port": 50300,
                              "enabled": False}]}
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         wire, unwire = "wiring/firewall-opnsense.yml", "unwiring/firewall-opnsense.yml"
 
-        check("first deploy adds one egress rule and applies",
-              run(server, root, wire, "slskd", declared), ["filter/addRule", "filter/apply"])
+        check("first deploy adds two egress rules and applies",
+              run(server, root, wire, "slskd", declared),
+              ["filter/addRule", "filter/addRule", "filter/apply"])
         owned = [r for r in server.rules["filter"].values()
-                 if r["description"] == "homelab-infra: slskd egress soulseek"]
+                 if r["description"].startswith("homelab-infra: slskd egress ")]
+        legacy = next(r for r in owned if r["description"].endswith("soulseek"))
         check("egress rule shape", owned and {k: owned[0][k] for k in (
             "interface", "source_net", "destination_net", "destination_port",
             "protocol", "action", "sequence")}, {
             "interface": "opt4", "source_net": "198.51.100.34", "destination_net": "any",
             "destination_port": "", "protocol": "TCP", "action": "pass", "sequence": "1000"})
+        check("legacy egress has no source-port restriction",
+              "source_port" not in legacy, True)
+        peer = next(r for r in owned if r["description"].endswith("peer-range"))
+        check("optional egress source port reaches the filter rule",
+              peer.get("source_port"), "61000-65535")
         check("disabled forward publishes nothing", server.rules["d_nat"], {})
 
         check("second deploy changes nothing",
@@ -125,6 +135,10 @@ def main():
 
         owned[0]["destination_port"] = "2271"
         check("drift is corrected in place",
+              run(server, root, wire, "slskd", declared), ["filter/setRule", "filter/apply"])
+
+        peer["source_port"] = "61001-65535"
+        check("source-port drift is corrected in place",
               run(server, root, wire, "slskd", declared), ["filter/setRule", "filter/apply"])
 
         declared["inbound"][0]["enabled"] = True
@@ -143,10 +157,43 @@ def main():
               run(server, root, wire, "slskd", declared), ["d_nat/delRule", "filter/apply"])
 
         check("remove withdraws only this instance's rules",
-              run(server, root, unwire, "slskd", {}), ["filter/delRule", "filter/apply"])
+              run(server, root, unwire, "slskd", {}),
+              ["filter/delRule", "filter/delRule", "filter/apply"])
         check("foreign and sibling-instance rules survive",
               sorted(server.rules["filter"]), ["foreign", "sibling"])
         check("second remove changes nothing", run(server, root, unwire, "slskd", {}), [])
+
+        qbt_defaults = yaml.safe_load(
+            (repo / "ansible/vars/app-defaults/qbittorrent.yml").read_text()
+        )["qbittorrent_defaults"]
+        qbt_role_defaults = yaml.safe_load(
+            (repo / "ansible/roles/qbittorrent/defaults/main.yml").read_text()
+        )
+        server.rules["filter"]["qbt-old"] = {
+            "description": "homelab-infra: qbittorrent egress bittorrent-peers",
+            "interface": "opt4", "source_net": "198.51.100.34"}
+        qbt_app = {"torrenting_port": qbt_defaults["app"]["torrenting_port"]}
+        check("qBittorrent replaces its broad legacy peer rule",
+              run(server, root, wire, "qbittorrent", qbt_defaults["firewall"],
+                  {"app_config": {"app": qbt_app}}),
+              ["filter/addRule", "filter/addRule", "filter/addRule",
+               "filter/delRule", "filter/apply"])
+        qbt_rules = {r["description"].rsplit(" ", 1)[-1]: r
+                     for r in server.rules["filter"].values()
+                     if r.get("description", "").startswith("homelab-infra: qbittorrent egress ")}
+        check("qBittorrent declares TCP peer source range",
+              qbt_rules.get("bittorrent-peers-tcp", {}).get("source_port"),
+              f"{qbt_role_defaults['qbittorrent_peer_outgoing_ports_min']}-{qbt_role_defaults['qbittorrent_peer_outgoing_ports_max']}")
+        check("qBittorrent UDP peers use the listen source port",
+              qbt_rules.get("bittorrent-peers-udp", {}).get("source_port"),
+              str(qbt_defaults["app"]["torrenting_port"]))
+        check("qBittorrent allows HTTP trackers on TCP/80",
+              (qbt_rules.get("bittorrent-trackers-http", {}).get("protocol"),
+               qbt_rules.get("bittorrent-trackers-http", {}).get("destination_port")),
+              ("TCP", "80"))
+        check("qBittorrent rerun changes nothing",
+              run(server, root, wire, "qbittorrent", qbt_defaults["firewall"],
+                  {"app_config": {"app": qbt_app}}), [])
     server.shutdown()
 
     for failure in failures:

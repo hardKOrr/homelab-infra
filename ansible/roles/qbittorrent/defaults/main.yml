@@ -5,6 +5,11 @@
 
 qbittorrent_project_dir: "/opt/{{ instance }}"
 
+# Keep outgoing peer sockets above Linux's default ephemeral range (32768-60999)
+# so OPNsense can distinguish qBittorrent peers from other apps on the stack host.
+qbittorrent_peer_outgoing_ports_min: 61000
+qbittorrent_peer_outgoing_ports_max: 65535
+
 # How long to wait for the WebUI to answer after the container starts. qBittorrent
 # opens its port a few seconds after the process starts, and a first run also has
 # to read the seeded config file.

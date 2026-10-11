@@ -237,6 +237,59 @@
 - name: Apply pending restarts before the checks
   ansible.builtin.meta: flush_handlers
 
+# qBittorrent owns its config after the initial seed, so a template edit alone
+# would never update an existing instance. Check the two firewall-dependent
+# settings without changing the file; only stop the app when one has drifted.
+- name: Check qBittorrent's outgoing peer port settings
+  community.general.ini_file:
+    path: "{{ _qbt_conf }}"
+    section: BitTorrent
+    option: "{{ item.option }}"
+    value: "{{ item.value | string }}"
+    no_extra_spaces: true
+  loop:
+    - option: 'Session\OutgoingPortsMin'
+      value: "{{ qbittorrent_peer_outgoing_ports_min }}"
+    - option: 'Session\OutgoingPortsMax'
+      value: "{{ qbittorrent_peer_outgoing_ports_max }}"
+  loop_control:
+    label: "{{ item.option }}"
+  check_mode: true
+  register: _qbt_peer_ports_check
+  no_log: true
+
+- name: Enforce qBittorrent's outgoing peer port settings when they drift
+  when: _qbt_peer_ports_check.results | selectattr('changed') | list | length > 0
+  block:
+    - name: Stop qBittorrent before editing its configuration
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbittorrent_project_dir }}"
+        state: stopped
+
+    - name: Write qBittorrent's outgoing peer port settings
+      community.general.ini_file:
+        path: "{{ _qbt_conf }}"
+        section: BitTorrent
+        option: "{{ item.option }}"
+        value: "{{ item.value | string }}"
+        owner: "{{ app_config.app.puid | default(1000) }}"
+        group: "{{ app_config.app.pgid | default(1000) }}"
+        mode: "0640"
+        no_extra_spaces: true
+      loop:
+        - option: 'Session\OutgoingPortsMin'
+          value: "{{ qbittorrent_peer_outgoing_ports_min }}"
+        - option: 'Session\OutgoingPortsMax'
+          value: "{{ qbittorrent_peer_outgoing_ports_max }}"
+      loop_control:
+        label: "{{ item.option }}"
+      no_log: true
+  always:
+    - name: Ensure qBittorrent is started after updating its port settings
+      community.docker.docker_compose_v2:
+        project_src: "{{ qbittorrent_project_dir }}"
+        state: present
+
 - name: Wait for the WebUI to answer
   ansible.builtin.uri:
     url: "{{ _qbt_base }}/"
