@@ -770,6 +770,30 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+def k3s_defaults_carry_no_lab_topology():
+    # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/k3s-cluster.yml"))["k3s_cluster_defaults"]
+    example = yaml.safe_load(read("config.example/apps/k3s-cluster.example.yml"))
+    play = yaml.safe_load(read("ansible/playbooks/apps/k3s-cluster.yml"))[0]
+    fallback = task_named(play["pre_tasks"], "Use the lab-wide storage unless the cluster names its own")
+    check = task_named(play["tasks"], "Assert the cluster's topology is declared")
+
+    def resolve(instance, lab_storage):
+        merged = render("{{ d | combine(i, recursive=True) }}", {"d": defaults, "i": instance})
+        merged = render(fallback["ansible.builtin.set_fact"]["k8s_cluster_config"],
+                        {"k8s_cluster_config": merged,
+                         "homelabinfra_config": {"proxmox": {"storage": lab_storage}}})
+        missing = render(check["vars"]["_k3s_missing"], {"k8s_cluster_config": merged})
+        return merged, missing
+
+    _, missing = resolve({}, "")
+    assert [m.split(" ")[0] for m in missing] == [
+        "cluster.nodes", "ingress.vip", "ingress.address_pool", "proxmox.storage"], missing
+    merged, missing = resolve(example, "lab-pool")
+    assert missing == [], missing
+    assert merged["proxmox"]["storage"] == "lab-pool", merged["proxmox"]
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -787,4 +811,5 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr and Mautic passed")
+    k3s_defaults_carry_no_lab_topology()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and k3s defaults passed")

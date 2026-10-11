@@ -62,12 +62,31 @@
           {{ _app_defaults.k3s_cluster_defaults
              | combine(_instance_config | default({}), recursive=True) }}
 
+    # The defaults carry no lab topology; storage falls back to the lab-wide pool.
+    - name: Use the lab-wide storage unless the cluster names its own
+      ansible.builtin.set_fact:
+        k8s_cluster_config: >-
+          {{ k8s_cluster_config | combine({'proxmox': {'storage':
+               k8s_cluster_config.proxmox.storage
+               | default(homelabinfra_config.proxmox.storage | default(''), true)}},
+             recursive=True) }}
+
   tasks:
-    - name: Assert the cluster declares at least one node
+    - name: Assert the cluster's topology is declared
+      vars:
+        _k3s_missing: >-
+          {{ ([] if k8s_cluster_config.cluster.nodes | default([]) | length > 0 else ['cluster.nodes'])
+             + ([] if k8s_cluster_config.ingress.vip | default('') | length > 0 else ['ingress.vip'])
+             + ([] if k8s_cluster_config.ingress.address_pool | default([]) | length > 0
+                else ['ingress.address_pool'])
+             + ([] if k8s_cluster_config.proxmox.storage | default('') | length > 0
+                else ['proxmox.storage (or the lab-wide proxmox.storage in config/proxmox.yml)']) }}
       ansible.builtin.assert:
-        that:
-          - k8s_cluster_config.cluster.nodes | default([]) | length > 0
-        fail_msg: "cluster.nodes must declare at least one node."
+        that: _k3s_missing | length == 0
+        fail_msg: >-
+          config/apps/k3s-cluster.yml must declare {{ _k3s_missing | join(', ') }}.
+          The git-managed defaults hold no lab topology; see
+          config.example/apps/k3s-cluster.example.yml.
 
     # The README's condition for calling a control plane highly available is that its
     # servers occupy DISTINCT physical failure domains. Three VMs on one Proxmox node is
