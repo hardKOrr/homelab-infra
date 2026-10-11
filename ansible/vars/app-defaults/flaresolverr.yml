@@ -56,6 +56,7 @@ flaresolverr_defaults:
   app:
     image: "flaresolverr/flaresolverr:latest"
     port: 8191
+    log_level: info
 
     # Fixed rather than left to Kubernetes' own ephemeral NodePort allocation: the
     # operator has to type this number into Prowlarr, so it must not change on every
