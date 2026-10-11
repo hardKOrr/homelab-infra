@@ -770,6 +770,21 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+def bazarr_wiring_sends_lowercase_booleans():
+    # Bazarr converts only lowercase 'true'/'false'; 'True' fails its type check with 406.
+    block = yaml.safe_load(read("ansible/tasks/app-wiring/bazarr-arr.yml"))[0]["block"]
+    task = task_named(block, "Bazarr | Apply the connection")
+    for ssl, expected in (("False", "false"), ("True", "true")):
+        body = render(task["ansible.builtin.uri"]["body"], {
+            "_mw_section": "radarr",
+            "_mw_wanted": {"ip": "192.0.2.10", "port": "7878", "apikey": "k",
+                           "ssl": ssl, "base_url": ""},
+        })
+        assert body["settings-general-use_radarr"] == "true", body
+        assert body["settings-radarr-ssl"] == expected, body
+        assert body["settings-radarr-port"] == "7878", body
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -787,4 +802,5 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr and Mautic passed")
+    bazarr_wiring_sends_lowercase_booleans()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and Bazarr wiring passed")
