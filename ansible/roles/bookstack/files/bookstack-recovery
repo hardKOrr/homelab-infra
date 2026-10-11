@@ -79,9 +79,10 @@ backup() {
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client backup \
     database.pxar:"$work/database" storage.pxar:"$BOOKSTACK_DATA_PATH" \
     --backup-id "$PBS_BACKUP_ID"
+  # A same-day pre-restore safety backup must retain the preceding recovery point.
   PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" \
     PBS_FINGERPRINT="$PBS_FINGERPRINT" proxmox-backup-client prune \
-    "host/$PBS_BACKUP_ID" --keep-daily "$PBS_RETENTION_DAYS"
+    "host/$PBS_BACKUP_ID" --keep-last 2 --keep-daily "$PBS_RETENTION_DAYS"
   echo "BookStack backup complete: host/$PBS_BACKUP_ID in ${PBS_REPOSITORY##*:}"
   "${compose[@]}" start "$BOOKSTACK_SERVICE" >/dev/null
   stopped=0

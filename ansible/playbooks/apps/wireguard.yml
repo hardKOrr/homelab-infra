@@ -72,12 +72,11 @@
     wiring_upstream_host: "{{ _wg_fw_host.ansible_host }}"
     wiring_firewall: "{{ _wg_fw_host.app_config.firewall | default({}) }}"
   tasks:
-    - name: Wire firewall
-      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
-      when:
-        - homelabinfra_infra is defined
-        - homelabinfra_infra.firewall is defined
-        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+    - name: Open the app's network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        firewall_inbound_ports:
+          wireguard: "{{ _wg_fw_host.app_config.app.port }}"
 
 - name: WireGuard | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"

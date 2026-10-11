@@ -54,6 +54,22 @@
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
 
+# Before Deploy: the declared access plus SMTP egress to the platform relay, which
+# Odoo needs to send mail (tasks/firewall/open-app-access.yml).
+- name: "Odoo | Open network access"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _odoo_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    app_config: "{{ _odoo_fw_host.app_config }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _odoo_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _odoo_fw_host.app_config.firewall | default({}) }}"
+    firewall_sends_mail: true
+  tasks:
+    - name: Open the app's network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+
 - name: "Odoo | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true

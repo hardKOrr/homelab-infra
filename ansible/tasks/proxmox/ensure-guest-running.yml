@@ -9,7 +9,7 @@
 # guest created by an earlier run that failed before it started anything. Every
 # subsequent deploy then died identically at the first connection:
 #
-#     fatal: [ntfy]: UNREACHABLE! ... connect to host 192.168.0.11 port 22: No route to host
+#     fatal: [ntfy]: UNREACHABLE! ... connect to host 192.0.2.11 port 22: No route to host
 #
 # That contradicts the promise bootstrap.yml makes in its header — "re-running after
 # any failure is safe" — because the one thing a re-run could not do was recover a
