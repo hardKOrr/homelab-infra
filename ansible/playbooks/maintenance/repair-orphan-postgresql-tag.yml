@@ -1,0 +1,184 @@
+---
+# Restore only one missing PostgreSQL instance tag on an exact owned LXC.
+#
+# Inputs: repair_instance, repair_vmid, repair_execute=false,
+# repair_confirmation='RESTORE POSTGRESQL INSTANCE TAG _<instance>'. The current guest
+# config is saved privately on its PVE node before the tag-only write.
+- name: "PostgreSQL | Repair one orphan instance tag"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    repair_execute: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Register node delegation
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+  tasks:
+    - name: Require exact repair inputs
+      ansible.builtin.assert:
+        that:
+          - repair_instance | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - repair_vmid | default(0) | int > 0
+          - >-
+            not (repair_execute | bool)
+            or repair_confirmation | default('') ==
+               'RESTORE POSTGRESQL INSTANCE TAG _' ~ repair_instance
+        fail_msg: >-
+          Provide one exact PostgreSQL instance and positive VMID. Applying the repair
+          also requires its exact RESTORE POSTGRESQL INSTANCE TAG confirmation.
+
+    - name: Read current cluster guest identities
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _repair_inventory
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the requested VMID and instance name
+      ansible.builtin.set_fact:
+        _repair_vmid_matches: >-
+          {{ _repair_inventory.stdout | from_json
+             | selectattr('vmid', 'equalto', repair_vmid | int) | list }}
+        _repair_name_matches: >-
+          {{ _repair_inventory.stdout | from_json
+             | selectattr('name', 'equalto', repair_instance) | list }}
+      no_log: true
+
+    - name: Require one exact owned non-template PostgreSQL LXC
+      ansible.builtin.assert:
+        that:
+          - _repair_vmid_matches | length == 1
+          - _repair_name_matches | length == 1
+          - (_repair_vmid_matches | first).name == repair_instance
+          - (_repair_vmid_matches | first).type == 'lxc'
+          - not ((_repair_vmid_matches | first).template | default(false) | bool)
+          - "'_+lab' in ((_repair_vmid_matches | first).tags | default('')).split(';')"
+          - (_repair_vmid_matches | first).node | default('') | length > 0
+        fail_msg: >-
+          The requested VMID and instance name must resolve to the same single, owned,
+          non-template LXC. Refusing to repair an ambiguous, unowned or unrelated guest.
+      no_log: true
+
+    - name: Read the target LXC configuration
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ (_repair_vmid_matches | first).node }}/lxc/{{ repair_vmid }}/config"
+          - --output-format
+          - json
+      delegate_to: "{{ (_repair_vmid_matches | first).node }}"
+      register: _repair_config_read
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the target LXC configuration
+      ansible.builtin.set_fact:
+        _repair_config: "{{ _repair_config_read.stdout | from_json }}"
+      no_log: true
+
+    - name: Require exact live ownership and an unlocked configuration
+      ansible.builtin.assert:
+        that:
+          - _repair_config.hostname | default('') == repair_instance
+          - "'_+lab' in (_repair_config.tags | default('')).split(';')"
+          - _repair_config.digest is defined
+          - _repair_config.digest | string is match('^[A-Fa-f0-9]+$')
+          - _repair_config.lock is not defined
+          - >-
+            (_repair_config.tags | default('')).split(';')
+            | select('equalto', '_' ~ repair_instance) | list | length <= 1
+        fail_msg: >-
+          The live LXC hostname, ownership, tag state or configuration revision does not
+          match the reviewed target. Refusing to repair it.
+      no_log: true
+
+    - name: Resolve current and desired target tags
+      ansible.builtin.set_fact:
+        _repair_current_tags: >-
+          {{ _repair_config.tags | default('', true) | split(';')
+             | reject('equalto', '') | list }}
+      no_log: true
+
+    - name: Add only the requested instance tag to the desired tag set
+      ansible.builtin.set_fact:
+        _repair_desired_tags: >-
+          {{ (_repair_current_tags
+              + (['_' ~ repair_instance]
+                 if ('_' ~ repair_instance) not in _repair_current_tags else []))
+             | join(';') }}
+      no_log: true
+
+    - name: Report the exact tag repair plan
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Execute' if repair_execute | bool else 'Plan only' }}: restore only
+          _{{ repair_instance }} on the exact owned LXC VMID {{ repair_vmid }};
+          preserve the guest and every other tag/configuration field.
+
+    - name: Repair the reviewed PostgreSQL instance tag
+      when: repair_execute | bool
+      block:
+        - name: Create the private node recovery directory
+          ansible.builtin.file:
+            path: /root/homelab-infra/tag-repair
+            state: directory
+            mode: '0700'
+          delegate_to: "{{ (_repair_vmid_matches | first).node }}"
+          when: "'_' ~ repair_instance not in _repair_current_tags"
+
+        - name: Preserve the original LXC configuration before changing its tag
+          ansible.builtin.copy:
+            content: "{{ _repair_config | to_nice_json }}"
+            dest: "/root/homelab-infra/tag-repair/postgresql-{{ repair_instance }}-{{ repair_vmid }}-{{ _repair_config.digest }}.json"
+            force: false
+            mode: '0600'
+          delegate_to: "{{ (_repair_vmid_matches | first).node }}"
+          when: "'_' ~ repair_instance not in _repair_current_tags"
+          no_log: true
+
+        - name: Add only the instance tag with a configuration revision check
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - set
+              - "/nodes/{{ (_repair_vmid_matches | first).node }}/lxc/{{ repair_vmid }}/config"
+              - --tags
+              - "{{ _repair_desired_tags }}"
+              - --digest
+              - "{{ _repair_config.digest }}"
+          delegate_to: "{{ (_repair_vmid_matches | first).node }}"
+          when: "'_' ~ repair_instance not in _repair_current_tags"
+          changed_when: true
+          no_log: true
+
+        - name: Read back the target LXC configuration
+          ansible.builtin.command:
+            argv:
+              - pvesh
+              - get
+              - "/nodes/{{ (_repair_vmid_matches | first).node }}/lxc/{{ repair_vmid }}/config"
+              - --output-format
+              - json
+          delegate_to: "{{ (_repair_vmid_matches | first).node }}"
+          register: _repair_after_read
+          changed_when: false
+          no_log: true
+
+        - name: Verify the instance tag was restored without changing other fields
+          ansible.builtin.assert:
+            that:
+              - "'_' ~ repair_instance in _repair_after.tags.split(';')"
+              - _repair_after.tags.split(';') | sort == _repair_desired_tags.split(';') | sort
+              - >-
+                _repair_after | dict2items | rejectattr('key', 'in', ['tags', 'digest']) | items2dict
+                == _repair_config | dict2items | rejectattr('key', 'in', ['tags', 'digest']) | items2dict
+            fail_msg: >-
+              The target tag repair did not preserve the reviewed guest configuration.
+              The original configuration remains on the PVE node for recovery.
+          vars:
+            _repair_after: "{{ _repair_after_read.stdout | from_json }}"
+          no_log: true

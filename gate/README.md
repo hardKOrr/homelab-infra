@@ -50,6 +50,7 @@ templates.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
 - `test-orphan-stack-tag.py`: the orphan stack tag repair's plan, execute, repeat and refusal cases.
+- `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
 - `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
 - `test-plex-restore.py`, `test-tautulli-restore.py`, `test-qbittorrent-restore.py`: read-only preview, group guard, restore and rollback.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
