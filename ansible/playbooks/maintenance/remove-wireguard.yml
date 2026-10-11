@@ -52,5 +52,11 @@
         argv: [bw, delete, item, "{{ (_wg_items.stdout | from_json | selectattr('name', 'equalto', 'homelab-infra/apps/' ~ instance) | map(attribute='id') | list | first) }}"]
       when: (_wg_items.stdout | from_json | selectattr('name', 'equalto', 'homelab-infra/apps/' ~ instance) | list | length) == 1
       no_log: true
-    - ansible.builtin.debug:
-        msg: Router UDP forwarding is external and remains unchanged; remove it only with router-owner authority.
+    - name: Withdraw the instance's firewall forward
+      ansible.builtin.include_tasks: "../../tasks/unwiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      vars:
+        wiring_app_name: "{{ instance }}"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'

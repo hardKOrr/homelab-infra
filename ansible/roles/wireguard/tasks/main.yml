@@ -1,15 +1,13 @@
 ---
-- name: WireGuard | Validate inbound endpoint and forwarding ownership
+- name: WireGuard | Validate the inbound endpoint
   ansible.builtin.assert:
     that:
       - app_config.inbound.public_endpoint | default('') | length > 0
-      - app_config.inbound.forwarding.owner | default('') | length > 0
-      - app_config.inbound.forwarding.responsibility | default('') == 'manual'
       - app_config.routing.proxy | default('none') == 'none'
       - app_config.app.peers is iterable
     fail_msg: >-
-      WireGuard requires inbound.public_endpoint and inbound.forwarding.owner, with
-      forwarding.responsibility=manual. It is an unmanaged-router UDP forward, never a proxy route.
+      WireGuard requires inbound.public_endpoint, the address clients dial. It is a UDP
+      forward (firewall.inbound, opened by Deploy), never a proxy route.
   no_log: true
 
 - name: WireGuard | Install upstream package
