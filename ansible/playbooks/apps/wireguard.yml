@@ -62,6 +62,23 @@
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
 
+# Before Deploy: the forward of the listen port is what makes the server reachable.
+- name: WireGuard | Open network access
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _wg_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _wg_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _wg_fw_host.app_config.firewall | default({}) }}"
+  tasks:
+    - name: Wire firewall
+      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
 - name: WireGuard | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
   become: true

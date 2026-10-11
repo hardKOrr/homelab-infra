@@ -770,6 +770,23 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+def wireguard_opens_its_udp_forward_before_deploy():
+    plays = yaml.safe_load(read("ansible/playbooks/apps/wireguard.yml"))
+    names = [play["name"] for play in plays]
+    assert names.index("WireGuard | Open network access") < names.index("WireGuard | Deploy"), names
+    fw_play = plays[names.index("WireGuard | Open network access")]
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/wireguard.yml"))["wireguard_defaults"]
+    host = {"ansible_host": "192.0.2.20", "app_config": defaults}
+    variables = {"instance": "wireguard", "groups": {"deploy_wireguard": ["wg"]}, "hostvars": {"wg": host}}
+    firewall = render(fw_play["vars"]["wiring_firewall"], {**variables, "_wg_fw_host": host})
+    assert firewall.get("egress", []) == [], firewall
+    assert firewall["inbound"] == [{"name": "wireguard", "protocol": "UDP",
+                                    "port": defaults["app"]["port"], "enabled": True}], firewall
+    task = task_named(fw_play["tasks"], "Wire firewall")
+    for provider, expected in (("opnsense", True), ("none", False)):
+        infra = {"firewall": {"provider": provider}}
+        results = [render("{{ " + condition + " }}", {"homelabinfra_infra": infra}) for condition in task["when"]]
+        assert all(results) is expected, (provider, results)
 
 def k3s_defaults_carry_no_lab_topology():
     # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
@@ -887,9 +904,12 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
+    flaresolverr_rendering()
+    wireguard_opens_its_udp_forward_before_deploy()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr and WireGuard firewall passed")
+    
     k3s_defaults_carry_no_lab_topology()
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
-    flaresolverr_rendering()
     kubernetes_backup_prune_keeps_the_previous_point()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, FlareSolverr, k3s defaults, VM clone tags passed and backup pruning passed")
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags passed and backup pruning passed")
