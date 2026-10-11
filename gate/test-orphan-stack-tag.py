@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory() as t:
    if 'block' in task:task['block']=[x for x in task['block'] if 'ansible.builtin.include_tasks' not in x]
   path=d/'play.yml';path.write_text(yaml.safe_dump([play],sort_keys=False))
   env=dict(os.environ,REPAIR_FIXTURE=str(d),PATH=str(d)+os.pathsep+os.environ['PATH'],ANSIBLE_CONFIG=str(R/'ansible/ansible.cfg'),ANSIBLE_NOCOLOR='1')
-  p=subprocess.run(['ansible-playbook','-i','localhost,',str(path)],env=env,text=True,capture_output=True,timeout=90)
+  p=subprocess.run([str(Path.home()/'.venvs/homelab-ansible/bin/ansible-playbook'),'-i','localhost,',str(path)],env=env,text=True,capture_output=True,timeout=90)
   good=case in ['plan','execute','repeat'];assert (p.returncode==0)==good,(case,p.stdout,p.stderr)
   after=json.loads((d/'123.json').read_text());writes=(d/'writes').read_text() if (d/'writes').exists() else ''
   if case=='execute':
