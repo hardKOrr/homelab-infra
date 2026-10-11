@@ -228,8 +228,10 @@ spec:
                   # Retention. Pruning marks snapshots for removal; PBS reclaims the space
                   # in its own garbage collection, which PBS schedules and this platform
                   # does not drive.
+                  # --keep-last 2: a same-day pre-restore backup must not prune the point being
+                  # restored, which --keep-daily alone does (one snapshot per day).
                   proxmox-backup-client prune "host/${BACKUP_ID}" \
-                    --keep-daily "${RETENTION_DAYS}"
+                    --keep-last 2 --keep-daily "${RETENTION_DAYS}"
 
                   echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
               env:

@@ -770,6 +770,16 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+def kubernetes_backup_prune_keeps_the_previous_point():
+    # A same-day pre-restore backup must not prune the recovery point being restored.
+    templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
+    assert templates, "no Kubernetes backup templates found"
+    for template in templates:
+        text = template.read_text()
+        assert "proxmox-backup-client prune" in text, f"{template} has no prune"
+        assert "--keep-last 2 --keep-daily" in text, f"{template} prunes without --keep-last 2"
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -787,4 +797,5 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr and Mautic passed")
+    kubernetes_backup_prune_keeps_the_previous_point()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and backup pruning passed")
