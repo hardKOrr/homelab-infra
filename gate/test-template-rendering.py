@@ -770,6 +770,7 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+
 def k3s_defaults_carry_no_lab_topology():
     # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
     defaults = yaml.safe_load(read("ansible/vars/app-defaults/k3s-cluster.yml"))["k3s_cluster_defaults"]
@@ -815,6 +816,59 @@ def vm_clone_keeps_recorded_app_tags_and_notes():
     variables["_vmc_existing_config"] = {}
     assert render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables) == ["_+lab", "_-k3s", "_.shared"]
 
+def bazarr_wiring_sends_lowercase_booleans():
+    # Bazarr converts only lowercase 'true'/'false'; 'True' fails its type check with 406.
+    block = yaml.safe_load(read("ansible/tasks/app-wiring/bazarr-arr.yml"))[0]["block"]
+    task = task_named(block, "Bazarr | Apply the connection")
+    for ssl, expected in (("False", "false"), ("True", "true")):
+        body = render(task["ansible.builtin.uri"]["body"], {
+            "_mw_section": "radarr",
+            "_mw_wanted": {"ip": "192.0.2.10", "port": "7878", "apikey": "k",
+                           "ssl": ssl, "base_url": ""},
+        })
+        assert body["settings-general-use_radarr"] == "true", body
+        assert body["settings-radarr-ssl"] == expected, body
+        assert body["settings-radarr-port"] == "7878", body
+        
+def flaresolverr_rendering():
+    defaults = yaml.safe_load(
+        read("ansible/vars/app-defaults/flaresolverr.yml")
+    )["flaresolverr_defaults"]
+    assert defaults["app"]["log_level"] == "info", "default log level"
+
+    app_config = {
+        **defaults,
+        "app": {**defaults["app"], "log_level": "debug"},
+    }
+    manifest = render(
+        read("ansible/roles/flaresolverr/templates/manifest.yaml.j2"),
+        {
+            "instance": "flaresolverr",
+            "app_config": app_config,
+            "homelabinfra_config": {"timezone": "UTC"},
+        },
+    )
+    deployment = next(
+        doc
+        for doc in yaml.safe_load_all(manifest)
+        if doc and doc["kind"] == "Deployment"
+    )
+    environment = {
+        item["name"]: item["value"]
+        for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
+
+
+def kubernetes_backup_prune_keeps_the_previous_point():
+    # A same-day pre-restore backup must not prune the recovery point being restored.
+    templates = sorted(ROOT.glob("ansible/roles/*/templates/backup-cronjob.yaml.j2"))
+    assert templates, "no Kubernetes backup templates found"
+    for template in templates:
+        text = template.read_text()
+        assert "proxmox-backup-client prune" in text, f"{template} has no prune"
+        assert "--keep-last 2 --keep-daily" in text, f"{template} prunes without --keep-last 2"
+
 
 if __name__ == "__main__":
     caddy = CaddyRendering()
@@ -835,4 +889,7 @@ if __name__ == "__main__":
     mautic_rendering()
     k3s_defaults_carry_no_lab_topology()
     vm_clone_keeps_recorded_app_tags_and_notes()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, k3s defaults and VM clone tags passed")
+    bazarr_wiring_sends_lowercase_booleans()
+    flaresolverr_rendering()
+    kubernetes_backup_prune_keeps_the_previous_point()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, FlareSolverr, k3s defaults, VM clone tags passed and backup pruning passed")

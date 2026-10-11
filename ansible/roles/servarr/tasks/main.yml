@@ -490,6 +490,10 @@
 # Written under the same canonical item name wire-media-stack.yml reads, so the
 # stack wiring finds the key without the config.xml discovery pass. Stored after
 # the app has proven the key works, never before.
+- name: Install the plugins the app declares
+  ansible.builtin.include_tasks: plugins.yml
+  when: app_config.app.plugins | default([]) | length > 0
+
 - name: Store and verify the API key
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:

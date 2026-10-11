@@ -40,6 +40,9 @@ services:
       - SLSKD_PASSWORD={{ _slskd_web_password }}
       - SLSKD_DOWNLOADS_DIR=/downloads/complete
       - SLSKD_INCOMPLETE_DIR=/downloads/incomplete
+      # Lets Lidarr delete a completed download after importing it. Lidarr's Slskd
+      # client refuses to register without it, since downloads would pile up.
+      - SLSKD_REMOTE_FILE_MANAGEMENT=true
 {% set _slskd_shared = app_config.app.shared_dirs | default([]) %}
 {% if _slskd_shared | length > 0 %}
       - SLSKD_SHARED_DIR={{ range(_slskd_shared | length) | map('string') | map('regex_replace', '^', '/shared/') | join(';') }}

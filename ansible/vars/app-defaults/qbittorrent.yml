@@ -23,8 +23,9 @@ qbittorrent_defaults:
     container_port: 8080
 
     # The BitTorrent listen port, published on TCP and UDP and unchanged on both
-    # sides of the container — see the compose template. Forward it at the router
-    # for incoming peer connections; the client works without that, more slowly.
+    # sides of the container — see the compose template. Incoming peer
+    # connections need the opt-in `firewall.inbound` forward below; the client
+    # works without it, more slowly.
     torrenting_port: 6881
 
     config_path: "/opt/{{ instance }}/config"
@@ -57,6 +58,22 @@ qbittorrent_defaults:
     # them into the library afterwards.
     puid: 1313
     pgid: 1313
+
+  # Opened on the firewall before Deploy (tasks/wiring/firewall-opnsense.yml).
+  firewall:
+    # Peers listen on any port, over TCP and UDP (uTP, DHT).
+    egress:
+      - name: bittorrent-peers
+        protocol: TCP/UDP
+        port: ""
+    # Opt-in WAN forward of torrenting_port. To publish it, copy this list into
+    # config/apps/<instance>.yml with `enabled: true`; keep `port` equal to
+    # app.torrenting_port.
+    inbound:
+      - name: bittorrent-listen
+        protocol: TCP/UDP
+        port: 6881
+        enabled: false
 
   routing:
     subdomain: qbittorrent                 # hostname on the estate domain, independent of the instance name

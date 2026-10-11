@@ -146,7 +146,10 @@
               | zip(_mw_arrs | reverse | map(attribute='key') | list)) }}
     _mw_ok: >-
       {{ media_wire_results | default([])
-         | rejectattr('state', 'equalto', 'failed') | list }}
+         | rejectattr('state', 'in', ['failed', 'skipped']) | list }}
+    _mw_skipped: >-
+      {{ media_wire_results | default([])
+         | selectattr('state', 'equalto', 'skipped') | list }}
     _mw_failed: >-
       {{ media_wire_results | default([])
          | selectattr('state', 'equalto', 'failed') | list }}
@@ -243,7 +246,10 @@
           Media stack wired: {{ _mw_ok | length }} connections confirmed
           ({{ _mw_ok | selectattr('state', 'equalto', 'created') | list | length }} new,
           {{ _mw_ok | selectattr('state', 'equalto', 'updated') | list | length }} updated).
-          {{ (_mw_failed | length ~ ' failed: '
+          {{ (_mw_skipped | length ~ ' skipped: '
+              ~ (_mw_skipped | map(attribute='connection') | join(', '))
+              ~ ' (' ~ (_mw_skipped | map(attribute='detail') | unique | join('; ')) ~ '). ')
+             if _mw_skipped | length > 0 else '' }}{{ (_mw_failed | length ~ ' failed: '
               ~ (_mw_failed | map(attribute='connection') | join(', ')))
              if _mw_failed | length > 0 else '' }}
 

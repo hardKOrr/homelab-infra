@@ -10,7 +10,7 @@
 # hostname, Caddy subdomain, Authentik app slug and Uptime Kuma monitor name. If
 # the user has a config/apps/<instance>.yml, it is loaded and merged over defaults.
 #
-# Play 3 records the media registry entry before wiring this selected client into
+# Play 4 records the media registry entry before wiring this selected client into
 # every deployed torrent consumer. Credentials come from the canonical item
 # homelab-infra/media/<instance>; sibling connections remain in place.
 #
@@ -20,7 +20,7 @@
 
 # ── Play 1: Provision ──────────────────────────────────────────────────────────
 # Runs on localhost against the Proxmox API to find or create the stack host.
-# Adds the target host to a group for Play 2 to use.
+# Adds the target host to a group for Plays 2 and 3 to use.
 - name: "qBittorrent | Provision"
   hosts: localhost
   become: false
@@ -64,7 +64,7 @@
 
   tasks:
     # PATH A: DOCKER APP — the app runs as a container on a shared stack host.
-    # The stack host is found (or created) by tag. The app is deployed in Play 2.
+    # The stack host is found (or created) by tag. The app is deployed in Play 3.
     - name: Find or create stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
@@ -100,7 +100,29 @@
       when: _qbt_host_mounts | length > 0
 
 
-# ── Play 2: Deploy ─────────────────────────────────────────────────────────────
+# ── Play 2: Open network access ────────────────────────────────────────────────
+# Before Deploy, so the client can reach peers as soon as it starts. Fails the deploy
+# rather than recording a degradation: without peer access the client cannot work.
+- name: "qBittorrent | Open network access"
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    _qbt_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _qbt_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _qbt_fw_host.app_config.firewall | default({}) }}"
+
+  tasks:
+    - name: Wire firewall
+      ansible.builtin.include_tasks: "../../tasks/wiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.firewall is defined
+        - homelabinfra_infra.firewall.provider | default('none') != 'none'
+
+
+# ── Play 3: Deploy ─────────────────────────────────────────────────────────────
 # Runs on the stack host to install and configure qBittorrent.
 - name: "qBittorrent | Deploy"
   # Per-instance group, not a shared one: add_host groups persist for the whole
@@ -147,7 +169,7 @@
         name: qbittorrent
 
 
-# ── Play 3: Record facts + wire ────────────────────────────────────────────────
+# ── Play 4: Record facts + wire ────────────────────────────────────────────────
 # Registers the app in the media registry, then registers it with platform
 # services. Runs on localhost (API calls). All wiring tasks are idempotent.
 - name: "qBittorrent | Record facts and wire"
