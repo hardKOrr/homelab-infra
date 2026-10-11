@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check database backend facts use resolved instance keys and repair old entries."""
+"""Check database facts and provisioning contracts remain safe and resolvable."""
 
 import os
 from pathlib import Path
@@ -229,8 +229,36 @@ def database_role_password_sql_uses_psql_stdin():
         assert "PASSWORD :'database_password'" in command["stdin"]
 
 
+def immich_database_extensions_are_prepared_by_the_backend():
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/immich.yml"))[
+        "immich_defaults"
+    ]
+    extensions = defaults["app"]["database"]["extensions"]
+    assert extensions == ["vector", "earthdistance"], extensions
+
+    tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    request = task_named(tasks, "Database | Assert provisioning request")
+    allowed = next(
+        condition
+        for condition in request["ansible.builtin.assert"]["that"]
+        if "difference" in condition
+    )
+    assert "vector" in allowed and "earthdistance" in allowed, allowed
+
+    check = task_named(
+        tasks, "Database | Check whether the PostgreSQL earthdistance extension exists"
+    )
+    assert "earthdistance" in " ".join(check["ansible.builtin.command"]["argv"])
+    enable = task_named(tasks, "Database | Enable the PostgreSQL earthdistance extension")
+    command = enable["ansible.builtin.command"]["argv"]
+    assert any("CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE" in arg for arg in command)
+    assert enable["delegate_to"] == "database_backend_target"
+    assert enable["become_user"] == "postgres"
+
+
 if __name__ == "__main__":
     database_producers_resolve_instance_keys()
     database_writer_removes_unresolved_keys_and_preserves_other_estates()
     database_role_password_sql_uses_psql_stdin()
+    immich_database_extensions_are_prepared_by_the_backend()
     print("ok database fact producers and registry cleanup")

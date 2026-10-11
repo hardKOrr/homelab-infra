@@ -22,7 +22,7 @@
       - database_provision_config.version | default('') is match('^[0-9]+$') or database_provision_config.version | default('') == ''
       - database_provision_config.credential_action | default('reuse') in ['reuse', 'rotate']
       - database_provision_config.extensions | default([]) is sequence
-      - (database_provision_config.extensions | default([]) | difference(['vector']) | length) == 0
+      - (database_provision_config.extensions | default([]) | difference(['vector', 'earthdistance']) | length) == 0
     fail_msg: >-
       Database provisioning needs a supported provider plus safe instance, name and role values.
 
@@ -240,6 +240,48 @@
     - database_provision_config.provider == 'postgresql'
     - "'vector' in (database_provision_config.extensions | default([]))"
     - _database_vector_extension_exists.stdout | trim != '1'
+
+# Immich's migrations use earthdistance, which is not trusted for application roles.
+# Register it as the PostgreSQL superuser before the non-superuser app starts. CASCADE
+# installs cube, earthdistance's required companion extension, in the same schema.
+- name: Database | Check whether the PostgreSQL earthdistance extension exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --tuples-only
+      - --no-align
+      - --username=postgres
+      - --dbname={{ database_provision_config.name }}
+      - "--port={{ _database_backend.port }}"
+      - --command=SELECT 1 FROM pg_extension WHERE extname = 'earthdistance'
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: false
+  register: _database_earthdistance_extension_exists
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - "'earthdistance' in (database_provision_config.extensions | default([]))"
+
+- name: Database | Enable the PostgreSQL earthdistance extension
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --set=ON_ERROR_STOP=1
+      - --username=postgres
+      - --dbname={{ database_provision_config.name }}
+      - "--port={{ _database_backend.port }}"
+      - --command=CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE
+  delegate_to: database_backend_target
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: true
+  when:
+    - database_provision_config.provider == 'postgresql'
+    - "'earthdistance' in (database_provision_config.extensions | default([]))"
+    - _database_earthdistance_extension_exists.stdout | trim != '1'
 
 - name: Database | Assert MySQL-compatible client hosts are declared
   ansible.builtin.assert:

@@ -21,7 +21,7 @@ immich_defaults:
       version: "16"
       name: immich
       role: immich
-      extensions: [vector]
+      extensions: [vector, earthdistance]
     redis:
       provider: redis
       instance: redis-immich
