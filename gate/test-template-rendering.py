@@ -770,6 +770,27 @@ def mautic_rendering():
         assert result == allowed, f"mail encryption guard for {encryption}"
 
 
+def mail_consumers_open_smtp_egress():
+    tasks = yaml.safe_load(read("ansible/tasks/firewall/open-app-access.yml"))
+    access = task_named(tasks, "Firewall access | Add SMTP egress for a mail consumer")
+    expression = access["ansible.builtin.set_fact"]["_fw_app_access"]
+    declared = {"egress": [{"name": "nntp", "protocol": "TCP", "port": 119}]}
+    on = render(expression, {"wiring_firewall": {}, "firewall_sends_mail": True,
+                             "wiring_mail": {"enabled": True, "port": "587"}})
+    assert on["egress"] == [{"name": "smtp", "protocol": "TCP", "port": "587"}], on
+    off = render(expression, {"wiring_firewall": {}, "firewall_sends_mail": True,
+                              "wiring_mail": {"enabled": False, "port": ""}})
+    assert off["egress"] == [], off
+    both = render(expression, {"wiring_firewall": declared, "firewall_sends_mail": True,
+                               "wiring_mail": {"enabled": True, "port": "465"}})
+    assert both["egress"] == declared["egress"] + [{"name": "smtp", "protocol": "TCP", "port": "465"}], both
+    for app in ("mautic", "odoo", "bookstack"):
+        names = [play["name"] for play in yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))]
+        opened = [i for i, n in enumerate(names) if n.endswith("| Open network access")]
+        deployed = [i for i, n in enumerate(names) if n.endswith("| Deploy")]
+        assert opened and opened[0] < deployed[0], (app, names)
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -787,4 +808,5 @@ if __name__ == "__main__":
     navidrome_rendering()
     maintainerr_rendering()
     mautic_rendering()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr and Mautic passed")
+    mail_consumers_open_smtp_egress()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and mail egress passed")
