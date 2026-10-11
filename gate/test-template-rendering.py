@@ -794,6 +794,28 @@ def k3s_defaults_carry_no_lab_topology():
     assert merged["proxmox"]["storage"] == "lab-pool", merged["proxmox"]
 
 
+def vm_clone_keeps_recorded_app_tags_and_notes():
+    # A redeploy must not strip what apps recorded on the guest (record-app-on-guest.yml).
+    tasks = yaml.safe_load(read("ansible/tasks/proxmox/vm-clone.yml"))
+    merge = task_named(tasks, "VM clone | Merge the recorded app tags and notes into the request")
+    region = "<!-- homelab-infra:apps -->\n| app | kind |\n<!-- /homelab-infra:apps -->"
+    current = {"tags": "_+lab;_-k3s;_.shared;_jellyseerr;_old-platform-lane;operator-note;_.stale",
+               "description": "k3s cluster node, created by homelab-infra\n\n" + region}
+    variables = dict(merge["vars"])
+    variables.update({
+        "_vmc_existing_config": {"stdout": json.dumps(current)},
+        "homelabinfra_config": {"proxmox": {"vm": {
+            "tags": ["_+lab", "_-k3s", "_.shared"],
+            "description": "k3s cluster node, created by homelab-infra"}}},
+    })
+    tags = render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables)
+    notes = render(merge["ansible.builtin.set_fact"]["_vmc_description"], variables)
+    assert tags == sorted(["_+lab", "_-k3s", "_.shared", "_jellyseerr", "_old-platform-lane", "operator-note"]), tags
+    assert notes == current["description"], notes
+    variables["_vmc_existing_config"] = {}
+    assert render(merge["ansible.builtin.set_fact"]["_vmc_tags"], variables) == ["_+lab", "_-k3s", "_.shared"]
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -812,4 +834,5 @@ if __name__ == "__main__":
     maintainerr_rendering()
     mautic_rendering()
     k3s_defaults_carry_no_lab_topology()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic and k3s defaults passed")
+    vm_clone_keeps_recorded_app_tags_and_notes()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, k3s defaults and VM clone tags passed")
