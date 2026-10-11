@@ -215,7 +215,22 @@ def database_writer_removes_unresolved_keys_and_preserves_other_estates():
             assert actual == expected, (scope, root_variable, actual)
 
 
+def database_role_password_sql_uses_psql_stdin():
+    tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    for name in (
+        "Database | Create PostgreSQL application role",
+        "Database | Rotate PostgreSQL application role password",
+    ):
+        task = task_named(tasks, name)
+        command = task["ansible.builtin.command"]
+        assert "--set=database_password={{ _database_password }}" in command["argv"]
+        assert "stdin" in command
+        assert "--command" not in " ".join(command["argv"])
+        assert "PASSWORD :'database_password'" in command["stdin"]
+
+
 if __name__ == "__main__":
     database_producers_resolve_instance_keys()
     database_writer_removes_unresolved_keys_and_preserves_other_estates()
+    database_role_password_sql_uses_psql_stdin()
     print("ok database fact producers and registry cleanup")

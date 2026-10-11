@@ -122,7 +122,9 @@
       - --username=postgres
       - --dbname=postgres
       - "--port={{ _database_backend.port }}"
-      - "--command=CREATE ROLE {{ database_provision_config.role }} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD :'database_password'"
+    stdin: >-
+      CREATE ROLE {{ database_provision_config.role }} LOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT PASSWORD :'database_password'
   delegate_to: database_backend_target
   become: true
   become_user: postgres
@@ -140,7 +142,8 @@
       - --username=postgres
       - --dbname=postgres
       - "--port={{ _database_backend.port }}"
-      - "--command=ALTER ROLE {{ database_provision_config.role }} PASSWORD :'database_password'"
+    stdin: >-
+      ALTER ROLE {{ database_provision_config.role }} PASSWORD :'database_password'
   delegate_to: database_backend_target
   become: true
   become_user: postgres
