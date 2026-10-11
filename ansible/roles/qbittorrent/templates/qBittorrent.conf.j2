@@ -8,9 +8,9 @@
 # re-templated it. Settings chosen in the UI stand, the same fire-and-forget rule
 # the rest of the platform follows.
 #
-# The role enforces exactly one value after the seed: the WebUI password, because
-# it is the credential every *arr in the lab authenticates to this client with.
-# Changing it in the WebUI breaks that wiring, so a deploy puts it back.
+# After the seed, the role enforces the WebUI password and outgoing peer port range
+# on every deploy. The password is the credential every *arr authenticates with;
+# the port range is what lets the firewall match only qBittorrent's peer traffic.
 
 [LegalNotice]
 # Unattended, so the container does not sit on the legal notice waiting for a
@@ -24,6 +24,8 @@ Session\DefaultSavePath={{ app_config.app.download_path }}
 # into a second copy.
 Session\TempPathEnabled=false
 Session\Port={{ app_config.app.torrenting_port | default(6881) }}
+Session\OutgoingPortsMin={{ qbittorrent_peer_outgoing_ports_min }}
+Session\OutgoingPortsMax={{ qbittorrent_peer_outgoing_ports_max }}
 
 [Preferences]
 WebUI\Username={{ app_config.app.webui_user | default('admin') }}

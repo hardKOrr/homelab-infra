@@ -810,8 +810,9 @@ def wireguard_opens_its_udp_forward_before_deploy():
 
 
 def apps_open_access_through_the_shared_task():
-    # Each app opens its access before Deploy through one task file, which reaches the
-    # provider only when one is configured and refuses a forward that misses the app's port.
+    # Apps use one task file for firewall access; it reaches the provider only when one is
+    # configured and refuses a forward that misses the app's port. qBittorrent applies its
+    # source-port policy after Deploy has enforced the matching client settings.
     tasks = yaml.safe_load(read("ansible/tasks/firewall/open-app-access.yml"))
     provider = task_named(tasks, "Firewall access | Open it on the configured provider")
     for name, expected in (("opnsense", True), ("none", False)):
@@ -841,7 +842,11 @@ def apps_open_access_through_the_shared_task():
         plays = yaml.safe_load(read(f"ansible/playbooks/apps/{app}.yml"))
         names = [play["name"] for play in plays]
         opened = next(i for i, n in enumerate(names) if n.endswith("| Open network access"))
-        assert opened < next(i for i, n in enumerate(names) if n.endswith("| Deploy")), (app, names)
+        deployed = next(i for i, n in enumerate(names) if n.endswith("| Deploy"))
+        if app == "qbittorrent":
+            assert deployed < opened, (app, names)
+        else:
+            assert opened < deployed, (app, names)
         task = task_named(plays[opened]["tasks"], "Open the app's network access")
         assert task["ansible.builtin.include_tasks"] == "../../tasks/firewall/open-app-access.yml", app
         if app in ports:
@@ -853,6 +858,18 @@ def apps_open_access_through_the_shared_task():
                                "homelabinfra_config": {}})
             assert rendered == {forward: str(defaults["app"][key])} and declared[forward] == defaults["app"][key], (
                 app, rendered, declared)
+
+def qbittorrent_enforces_peer_ports_before_start():
+    tasks = yaml.safe_load(read("ansible/roles/qbittorrent/tasks/main.yml"))
+    names = [task["name"] for task in tasks if "name" in task]
+    check = names.index("Check qBittorrent's outgoing peer port settings")
+    enforce = names.index("Enforce qBittorrent's outgoing peer port settings when they drift")
+    start = names.index("Start the app")
+    flush = names.index("Apply pending restarts before the WebUI checks")
+    assert check < enforce < start < flush, names
+    assert not any("Ensure qBittorrent is started after updating its port settings" in name
+                   for name in names), names
+
 
 def k3s_defaults_carry_no_lab_topology():
     # A Deploy with no config/apps/k3s-cluster.yml must stop before Proxmox, naming what is missing.
@@ -980,7 +997,8 @@ if __name__ == "__main__":
     flaresolverr_rendering()
     wireguard_opens_its_udp_forward_before_deploy()
     apps_open_access_through_the_shared_task()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, the shared firewall access and mail egress passed")
+    qbittorrent_enforces_peer_ports_before_start()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, qBittorrent startup order, the shared firewall access and mail egress passed")
     
     k3s_defaults_carry_no_lab_topology()
     vm_clone_keeps_recorded_app_tags_and_notes()

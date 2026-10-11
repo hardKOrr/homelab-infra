@@ -11,9 +11,9 @@
 #                           "homelab-infra: <instance> <direction> <name>"
 #   wiring_upstream_host  — the guest's IPv4 address (the rules' source / NAT target)
 #   wiring_firewall       — the merged app_config.firewall:
-#       egress:   list of {name, protocol, port, destination}
-#                 protocol TCP | UDP | TCP/UDP; port '' means any port;
-#                 destination defaults to any
+#       egress:   list of {name, protocol, port, source_port, destination}
+#                 protocol TCP | UDP | TCP/UDP; port '' means any destination port;
+#                 source_port is optional (a port or range); destination defaults to any
 #       inbound:  list of {name, protocol, port, local_port, enabled}
 #                 a WAN port forward to the guest. Opt-in: a rule is published only
 #                 when its `enabled` is true in config/apps/<instance>.yml.
@@ -86,6 +86,9 @@
                   'sequence': _fw_cfg.sequence | default(1000) | string,
                   'log': '0',
                   'description': fw_owner_prefix ~ 'egress ' ~ e.name} -%}
+          {%-   if e.source_port is defined -%}
+          {%-     set fields = fields | combine({'source_port': e.source_port | string}) -%}
+          {%-   endif -%}
           {%-   set _ = rules.append({'description': fields.description,
                                       'fields': fields, 'payload': fields}) -%}
           {%- endfor -%}
