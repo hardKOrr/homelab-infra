@@ -29,65 +29,61 @@ fi
 
 rc=0
 
-if [ "${#playbooks[@]}" -gt 0 ]; then
-    # Each check is a cold interpreter that re-imports every collection, and the checks are
-    # independent, so the wall clock here is core-bound rather than work-bound. Output goes
-    # to a file per playbook and is replayed in order afterwards: interleaved writes from
-    # parallel children are unreadable, and a failure's diagnostic is the whole point.
-    GATE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/homelab-gate-test.XXXXXX")"
-    trap 'rm -rf -- "$GATE_TMP"' EXIT
-    GATE_ANSIBLE_PLAYBOOK="${GATE_ANSIBLE_PLAYBOOK:-$HOME/.venvs/homelab-ansible/bin/ansible-playbook}"
-    export GATE_TMP GATE_ANSIBLE_PLAYBOOK
+# Every check below is independent, so both phases run in parallel. Output goes to a file
+# per check and is replayed in order afterwards: interleaved writes from parallel children
+# are unreadable, and a failure's diagnostic is the whole point.
+GATE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/homelab-gate-test.XXXXXX")"
+trap 'rm -rf -- "$GATE_TMP"' EXIT
+GATE_ANSIBLE_PLAYBOOK="${GATE_ANSIBLE_PLAYBOOK:-$HOME/.venvs/homelab-ansible/bin/ansible-playbook}"
+GATE_PYTHON="$HOME/.venvs/homelab-ansible/bin/python"
+export GATE_TMP GATE_ANSIBLE_PLAYBOOK GATE_PYTHON
+jobs="${GATE_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
-    gate_check_one() {
-        local pb="$1" slug
-        slug="${pb//\//__}"
-        if "$GATE_ANSIBLE_PLAYBOOK" --syntax-check -i localhost, "$pb" \
-            > "$GATE_TMP/$slug.log" 2>&1; then
-            return 0
-        fi
-        : > "$GATE_TMP/$slug.fail"
-        return 1
-    }
-    export -f gate_check_one
+# Runs the command after $1 (the item's name) with its log in $GATE_TMP; a .fail
+# marker records failure.
+gate_run_one() {
+    local item="$1" slug="${1//\//__}"
+    shift
+    if "$@" > "$GATE_TMP/$slug.log" 2>&1; then
+        return 0
+    fi
+    : > "$GATE_TMP/$slug.fail"
+    return 1
+}
+gate_check_one() {
+    gate_run_one "$1" "$GATE_ANSIBLE_PLAYBOOK" --syntax-check -i localhost, "$1"
+}
+gate_suite_one() {
+    case "$1" in
+        *.sh) gate_run_one "$1" bash "$1" ;;
+        *) gate_run_one "$1" "$GATE_PYTHON" "$1" ;;
+    esac
+}
+export -f gate_run_one gate_check_one gate_suite_one
 
-    jobs="${GATE_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-    echo "Syntax-checking with $jobs parallel job(s)."
-    printf '%s\n' "${playbooks[@]}" | xargs -P "$jobs" -I{} bash -c 'gate_check_one "$@"' _ {}
-
-    for pb in "${playbooks[@]}"; do
-        slug="${pb//\//__}"
+# Replays each item's verdict and, for a failure, its whole log.
+gate_report() {
+    local item slug
+    for item in "$@"; do
+        slug="${item//\//__}"
         if [ -e "$GATE_TMP/$slug.fail" ]; then
             rc=1
-            echo "== FAIL $pb"
+            echo "== FAIL $item"
             cat "$GATE_TMP/$slug.log"
         else
-            echo "== ok   $pb"
+            echo "== ok   $item"
         fi
     done
-fi
+}
 
+echo "Syntax-checking with $jobs parallel job(s)."
+printf '%s\n' "${playbooks[@]}" | xargs -P "$jobs" -I{} bash -c 'gate_check_one "$@"' _ {}
+gate_report "${playbooks[@]}"
+
+# Every gate/test-* script is a suite, so a new one runs without being listed here.
 cd "$repo"
-py="$HOME/.venvs/homelab-ansible/bin/python"
-bash gate/test-allocate-ip.sh || rc=1
-bash gate/test-vmid-from-ip.sh || rc=1
-"$py" gate/test-config.py || rc=1
-"$py" gate/test-rundeck-yaml.py || rc=1
-"$py" gate/test-template-rendering.py || rc=1
-"$py" gate/test-vaultwarden-login.py || rc=1
-"$py" gate/test-actual-budget-password.py || rc=1
-"$py" gate/test-recovery-dispatch.py || rc=1
-"$py" gate/test-plex-recovery.py || rc=1
-"$py" gate/test-plex-restore.py || rc=1
-"$py" gate/test-servarr-recovery.py || rc=1
-"$py" gate/test-tautulli-restore.py || rc=1
-"$py" gate/test-deemix-restore.py || rc=1
-"$py" gate/test-bazarr-restore.py || rc=1
-"$py" gate/test-qbittorrent-restore.py || rc=1
-"$py" gate/test-sabnzbd-restore.py || rc=1
-"$py" gate/test-qbittorrent-clients.py || rc=1
-"$py" gate/test-sabnzbd-clients.py || rc=1
-"$py" gate/test-proxmox-task.py || rc=1
-"$py" gate/test-decommission-retire.py || rc=1
-"$py" gate/test-firewall-wiring.py || rc=1
+mapfile -t suites < <(find gate -maxdepth 1 -name 'test-*' \( -name '*.py' -o -name '*.sh' \) | sort)
+echo "Running ${#suites[@]} logic suites with $jobs parallel job(s)."
+printf '%s\n' "${suites[@]}" | xargs -P "$jobs" -I{} bash -c 'gate_suite_one "$@"' _ {}
+gate_report "${suites[@]}"
 exit $rc
