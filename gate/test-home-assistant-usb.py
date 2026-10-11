@@ -13,6 +13,7 @@ PLAYBOOK = ROOT / "ansible/playbooks/apps/home-assistant.yml"
 ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/main.yml"
 COMPOSE_TEMPLATE = ROOT / "ansible/roles/home-assistant/templates/docker-compose.yml.j2"
 USB_TASKS = ROOT / "ansible/tasks/proxmox/attach-usb-passthrough.yml"
+INSTANCE_EXAMPLE = ROOT / "config.example/apps/home-assistant.example.yml"
 
 
 def render(source, variables):
@@ -53,6 +54,13 @@ def compose_service(mapping_marker):
 
 
 def main():
+    example = yaml.safe_load(INSTANCE_EXAMPLE.read_text())
+    assert example["app"]["usb_mapping"] == ""
+    for section in ("proxmox", "routing"):
+        assert section not in example or isinstance(example[section], dict), (
+            f"{section} must be omitted or a mapping so instance config preserves defaults"
+        )
+
     plays = load_yaml(PLAYBOOK)[0]
     provision = next(play for play in plays if play["name"] == "Home Assistant | Provision")
     provision_assertion = task_named(

@@ -12,18 +12,20 @@ app:
   usb_device_path: /dev/ttyUSB0
   # proxmox.ip_address may pin the VM address; otherwise the selected network allocates it.
 
-proxmox:
-  # network: shared
-  # ip_address: 192.168.1.80
-  # vm:
-  #   cores: 4
-  #   memory: 8192
-  #   disk_size: 64
+# Optional provisioning overrides; uncomment the top-level key to set any of these.
+# proxmox:
+#   network: shared
+#   ip_address: 192.168.1.80
+#   vm:
+#     cores: 4
+#     memory: 8192
+#     disk_size: 64
 
-routing:
-  # subdomain: home-assistant
-  # access: internal
-  # identity: catalog
+# Optional routing overrides; uncomment the top-level key to set any of these.
+# routing:
+#   subdomain: home-assistant
+#   access: internal
+#   identity: catalog
 
 backup:
   # Home Assistant's config/state, including integration state and generated secrets, is
