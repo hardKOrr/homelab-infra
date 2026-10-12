@@ -137,7 +137,7 @@ export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR LAB_BRANCH
 # The refresh is a `git reset --hard`, which destroys uncommitted work in whatever
 # checkout it is pointed at. Ordinary jobs therefore use the checkout as it stands.
 # `LAB_REFRESH=1` must be supplied by the caller for an explicit one-off update. Do not
-# read LAB_REFRESH from lab-run.env: older runner env files may still contain `=1`.
+# read it from lab-run.env: legacy files may still contain `=1`, and are ignored.
 #
 LAB_REFRESH="${LAB_REFRESH:-0}"
 

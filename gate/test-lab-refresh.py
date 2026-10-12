@@ -57,6 +57,16 @@ def check_bootstrap_leaves_refresh_unset() -> None:
         "bootstrap must leave LAB_REFRESH unset"
 
 
+def check_reimport_is_explicit_refresh() -> None:
+    reimport = (repo / "rundeck" / "jobs" / "reimport-jobs.yaml").read_text(encoding="utf-8")
+    assert 'git -C "$LAB_REPO" fetch --quiet --prune origin "${LAB_BRANCH:-master}"' in reimport, \
+        "Reimport Jobs must fetch its selected branch"
+    assert 'git -C "$LAB_REPO" reset --hard --quiet "origin/${LAB_BRANCH:-master}"' in reimport, \
+        "Reimport Jobs must refresh the runner checkout"
+    assert 'if [ "${LAB_REFRESH' not in reimport, \
+        "Reimport Jobs must remain an explicit refresh path even with legacy env values"
+
+
 def check_jobs_stay_pinned_during_push(work: Path) -> None:
     origin = work / "origin.git"
     runner = work / "runner"
@@ -165,6 +175,7 @@ def check_jobs_stay_pinned_during_push(work: Path) -> None:
 
 def main() -> int:
     check_bootstrap_leaves_refresh_unset()
+    check_reimport_is_explicit_refresh()
     with tempfile.TemporaryDirectory(prefix="homelab-lab-refresh.") as directory:
         check_jobs_stay_pinned_during_push(Path(directory))
     print("ok   lab refresh stays opt-in across concurrent jobs and a push")
