@@ -176,9 +176,12 @@
     url: "http://localhost:{{ app_config.app.port }}/"
     headers:
       Host: "{{ plane_fqdn }}"
-    status_code: 200
+    # Plane may redirect its HTTP origin to WEB_URL before the later Wire play
+    # publishes that hostname. Keep this probe local and treat the redirect as ready.
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307, 308]
   register: _plane_health
-  until: _plane_health.status | default(0) == 200
+  until: _plane_health.status | default(0) in [200, 301, 302, 303, 307, 308]
   retries: 90
   delay: 5
   changed_when: false

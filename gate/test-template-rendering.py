@@ -1079,6 +1079,47 @@ def plane_env_matches_the_bundled_proxy_and_api_contract():
     assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
 
 
+def plane_health_probes_do_not_follow_the_unwired_https_hostname():
+    accepted_statuses = [200, 301, 302, 303, 307, 308]
+
+    def find_task(value, name):
+        if isinstance(value, dict):
+            if value.get("name") == name:
+                return value
+            for child in value.values():
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        return None
+
+    for path, task_name, register in (
+        (
+            "ansible/roles/plane/tasks/main.yml",
+            "Plane | Wait for the recovery unit health endpoint",
+            "_plane_health",
+        ),
+        (
+            "ansible/roles/plane/tasks/restore.yml",
+            "Plane restore | Wait for the restored Plane health endpoint",
+            "_plane_restore_health",
+        ),
+    ):
+        task = find_task(yaml.safe_load(read(path)), task_name)
+        assert task is not None, f"{path} has no {task_name} task"
+        request = task["ansible.builtin.uri"]
+        assert request["follow_redirects"] == "none"
+        assert request["status_code"] == accepted_statuses
+        assert task["until"] == (
+            f"{register}.status | default(0) in "
+            "[200, 301, 302, 303, 307, 308]"
+        )
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -1093,6 +1134,8 @@ if __name__ == "__main__":
     caddy_missing_or_invalid_resolvers_fail_without_external_fallback(caddy)
     plane_env_matches_the_bundled_proxy_and_api_contract()
     print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
+    plane_health_probes_do_not_follow_the_unwired_https_hostname()
+    print("Template rendering: Plane deploy and restore probes keep canonical redirects local")
     emby_rendering()
     unpackerr_rendering()
     navidrome_rendering()

@@ -557,9 +557,11 @@
         headers:
           Host: >-
             {{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}
-        status_code: 200
+        # Keep the readiness request local; the isolated target is not wired yet.
+        follow_redirects: none
+        status_code: [200, 301, 302, 303, 307, 308]
       register: _plane_restore_health
-      until: _plane_restore_health.status | default(0) == 200
+      until: _plane_restore_health.status | default(0) in [200, 301, 302, 303, 307, 308]
       retries: 90
       delay: 5
       changed_when: false
