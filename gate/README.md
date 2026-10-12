@@ -40,6 +40,7 @@ templates.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
 - `test-template-rendering.py`: app templates and defaults, including Caddy, the media apps and the Kubernetes manifests.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
+- `test-lab-refresh.py`: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote push; explicit refresh still updates it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
 - `test-servarr-recovery.py`: shared four-app dispatch, restore preview and API key continuity.

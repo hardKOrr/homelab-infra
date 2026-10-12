@@ -8,8 +8,8 @@
 #   1. resolves the checkout, the ansible venv and the tracked branch from
 #      /etc/homelab-infra/lab-run.env (written by rundeck/bootstrap-rundeck.sh),
 #      from the environment, or from its own location
-#   2. refreshes the checkout to origin/<branch> and echoes the resolved commit,
-#      so every job log records the revision that produced the run
+#   2. optionally refreshes the checkout to origin/<branch>; ordinary runs use
+#      the checkout as it stands and echo its resolved commit
 #   3. enforces Seed/Vault mode and unlocks Vaultwarden before mutation
 #   4. runs config-doctor.sh — a missing key fails here, at the front door,
 #      instead of as a stack trace mid-provision
@@ -25,10 +25,9 @@
 #   LAB_REPO       path to the checkout            (default: this script's repo root)
 #   LAB_VENV       ansible venv root               (default: /opt/homelab-ansible)
 #   LAB_BRANCH     branch to track                 (default: master)
-#   LAB_REFRESH    1 enables the git refresh; DEFAULTS TO 1 ONLY when the env file
-#                  exists (i.e. on a bootstrapped runner) and to 0 everywhere else,
-#                  because the refresh is a `git reset --hard`
-#                  It also refuses outright when the tree has uncommitted tracked changes.
+#   LAB_REFRESH    1 opts this run into a git refresh; defaults to 0 everywhere.
+#                  Values in lab-run.env are ignored so a stored setting cannot make
+#                  ordinary jobs refresh the shared checkout. Refresh refuses tracked edits.
 #   LAB_DOCTOR     0 disables the config check     (default: 1)
 #   LAB_SSH_KEY    private key used for guests and delegated PVE node commands
 #                  (default: unset; bootstrapped runner supplies it)
@@ -67,7 +66,7 @@ if [ -r "$LAB_ENV_FILE" ]; then
   _lab_configured=1
   while IFS='=' read -r _key _value; do
     case "$_key" in
-      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_REFRESH|LAB_DOCTOR|LAB_SSH_KEY|LAB_OPTION_DIR|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)
+      LAB_REPO|LAB_VENV|LAB_BRANCH|LAB_DOCTOR|LAB_SSH_KEY|LAB_OPTION_DIR|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)
         [ -n "${!_key:-}" ] || printf -v "$_key" '%s' "$_value" ;;
     esac
   done < <(grep -E '^(LAB_[A-Z_]+|BW_SERVER|RUNDECK_URL|RUNDECK_PROJECT)=' "$LAB_ENV_FILE" || true)
@@ -133,17 +132,14 @@ LAB_BRANCH="${LAB_BRANCH:-master}"
 LAB_DOCTOR="${LAB_DOCTOR:-1}"
 BW_SERVER="${BW_SERVER:-}"
 export BW_SERVER RUNDECK_URL RUNDECK_PROJECT LAB_STATE_DIR LAB_BRANCH
-# THE REFRESH DEFAULTS TO OFF, AND ONLY A BOOTSTRAPPED RUNNER TURNS IT ON.
+# THE REFRESH DEFAULTS TO OFF, INCLUDING ON BOOTSTRAPPED RUNNERS.
 #
 # The refresh is a `git reset --hard`, which destroys uncommitted work in whatever
-# checkout it is pointed at. On the runner that is exactly right — the checkout is a
-# machine-managed copy of origin/<branch> plus gitignored config, and nothing edits it by
-# hand. Anywhere else it is a footgun, and defaulting it on made this script destructive
-# when merely executed from a developer's working tree, which is where it also lives.
+# checkout it is pointed at. Ordinary jobs therefore use the checkout as it stands.
+# `LAB_REFRESH=1` must be supplied by the caller for an explicit one-off update. Do not
+# read it from lab-run.env: legacy files may still contain `=1`, and are ignored.
 #
-# So: refresh only when /etc/homelab-infra/lab-run.env exists (which only
-# rundeck/bootstrap-rundeck.sh creates) or when LAB_REFRESH=1 is passed deliberately.
-LAB_REFRESH="${LAB_REFRESH:-$([ "$_lab_configured" = "1" ] && echo 1 || echo 0)}"
+LAB_REFRESH="${LAB_REFRESH:-0}"
 
 [ -d "$LAB_REPO/ansible" ] || die "no ansible/ under LAB_REPO=$LAB_REPO"
 
@@ -154,9 +150,9 @@ ANSIBLE_PLAYBOOK="$LAB_VENV/bin/ansible-playbook"
 }
 
 # ── Refresh the checkout ──────────────────────────────────────────────────────
-# Fire-and-forget means the runner runs current origin/<branch>: a fix pushed to the
-# repo reaches the platform on the next click, with no human action. config/ is
-# gitignored and untracked, so `reset --hard` cannot touch proxmox.yml,
+# An explicit refresh updates the shared runner checkout to origin/<branch>. A push by
+# itself never changes files under a running job because ordinary runs skip this block.
+# config/ is gitignored and untracked, so `reset --hard` cannot touch proxmox.yml,
 # infrastructure.yml, .generated/facts.yml, apps/*.yml or .backups/ — the checkout is
 # git plus local config, and that invariant is what makes the reset safe.
 #

@@ -77,6 +77,6 @@
           if [ -n "${RD_OPTION_CONFIRM:-}" ]; then ARGS+=(-e "confirm=$RD_OPTION_CONFIRM"); fi
           if [ -n "${RD_OPTION_AT:-}" ]; then ARGS+=(-e "at=$RD_OPTION_AT"); fi
 
-          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # lab-run runs config-doctor and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
           exec lab-run playbooks/maintenance/lab-descent.yml "${ARGS[@]}"

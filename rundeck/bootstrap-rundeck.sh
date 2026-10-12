@@ -1373,9 +1373,9 @@ fi
 # the checkout, the venv and the tracked branch are, plus a symlink so every job step is
 # a single `lab-run <playbook>` call with no path in it.
 #
-# Writing this file is also what ARMS the per-run checkout refresh: lab-run.sh defaults
-# LAB_REFRESH to 0 unless this file exists, so the `git reset --hard` it performs can
-# only ever happen on a runner this script built.
+# This file configures runner paths and credentials. It deliberately leaves LAB_REFRESH
+# unset: ordinary jobs use this checkout as it stands; an explicit caller may set
+# LAB_REFRESH=1 for a one-off update.
 say "lab-run wiring at $LAB_ETC"
 install -d -m 0755 "$LAB_ETC"
 tls_env="$(mktemp)"
@@ -1388,9 +1388,6 @@ LAB_VENV=$VENV_DIR
 LAB_BRANCH=$REPO_BRANCH
 RUNDECK_URL=$RD_URL
 RUNDECK_PROJECT=$RD_PROJECT
-# 1 = refresh the checkout to origin/\$LAB_BRANCH before every job, so a commit pushed to
-# the repo is executed by the next click with no human action. 0 pins the on-disk tree.
-LAB_REFRESH=1
 # 1 = run config-doctor before every job, so a missing key fails at the front door.
 LAB_DOCTOR=1
 # Dedicated identity generated above. lab-run exports it as
@@ -2565,7 +2562,7 @@ cat <<EOF
     Rundeck    $RD_URL   (project: $RD_PROJECT)
     Container  VMID $VMID ($CT_HOSTNAME) on $PVE_NODE, tagged $MANAGED_TAGS
     SSH        ssh root@${RD_HOST}
-    Repo       $REPO_DIR   (tracking origin/$REPO_BRANCH, refreshed before every job)
+    Repo       $REPO_DIR   (tracking origin/$REPO_BRANCH; jobs use the checkout as it stands)
     Ansible    $VENV_DIR/bin/ansible
     Config     $REPO_DIR/config/{proxmox.yml,infrastructure.yml,apps/rundeck.yml}
     Proxmox    $PVE_USER (role $PVE_ROLE), token secret in Key Storage

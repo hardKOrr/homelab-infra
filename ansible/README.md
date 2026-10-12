@@ -10,7 +10,7 @@ A Rundeck job calls `lab-run`, the installed entry point for
 `ansible/scripts/lab-run.sh`. The wrapper reads its runner environment from
 `/etc/homelab-infra/lab-run.env` (or `LAB_ENV_FILE`). With `LAB_REFRESH=1`, it
 refreshes the checkout to `origin/$LAB_BRANCH` and re-executes the refreshed wrapper;
-refresh defaults on for a configured runner and off for a local checkout. `LAB_DOCTOR`
+refresh defaults off for every caller, including a bootstrapped runner. `LAB_DOCTOR`
 defaults to `1`, validating configuration before the selected playbook runs; set it to
 `0` to disable that check. The playbook orchestrates reusable roles and task files.
 
@@ -68,9 +68,9 @@ checkout stays on `LAB_BRANCH` for Rundeck.
 
 ## Live operations
 
-Live runs may overlap; there is no lab lock. The runner checkout is refreshed to
-`origin/$LAB_BRANCH` when a job starts, so a push or a `LAB_BRANCH` change replaces files
-under a job that is already running. Push, then start the next run.
+Live runs may overlap; there is no lab lock. Ordinary runs use the on-disk checkout, so a
+push does not change files under a running job. `LAB_REFRESH=1` is an explicit shared
+checkout update; the Reimport Jobs path also refreshes before importing job definitions.
 
 ### Fixing and testing a change
 

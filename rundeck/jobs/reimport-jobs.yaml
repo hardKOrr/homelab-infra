@@ -2,9 +2,9 @@
 # Rendered and imported by rundeck/render-job.py. Use the Reimport Jobs job rather than a
 # raw import: the renderer injects this job's Key Storage options and validates its group.
 #
-# This job exists because lab-run's checkout refresh solves only half of "the runner runs
-# current master". The refresh keeps the PLAYBOOKS current; job DEFINITIONS live in
-# Rundeck's database and only change when something imports them. The Rundeck git SCM
+# Ordinary lab-run calls keep the current checkout. This job is the explicit refresh path
+# for job definitions: they live in Rundeck's database and only change when something
+# imports them. The Rundeck git SCM
 # plugin is deliberately not used — it syncs job definitions and nothing else, it makes
 # UI edits and repo imports fight each other, and it was never going to refresh the
 # working tree the steps execute. One-way import from the repo is the only path, and this
@@ -26,7 +26,8 @@
     - Adding or removing a job
     - Changing a job name, option, group, or description
 
-    Playbook-only changes do **not** need reimporting; every execution refreshes the checkout.
+    Playbook-only changes do **not** need reimporting. Ordinary runs use the current runner
+    checkout; set `LAB_REFRESH=1` on a run to explicitly update it first.
     Jobs update in place by UUID. Definitions in `rundeck/retired-jobs.yml` are removed, and
     a failed removal fails this job.
   loglevel: INFO
@@ -53,10 +54,8 @@
 
           # Refresh the checkout first: importing the job definitions that are already on
           # disk would defeat the point of the job.
-          if [ "${LAB_REFRESH:-1}" != "0" ]; then
-            git -C "$LAB_REPO" fetch --quiet --prune origin "${LAB_BRANCH:-master}"
-            git -C "$LAB_REPO" reset --hard --quiet "origin/${LAB_BRANCH:-master}"
-          fi
+          git -C "$LAB_REPO" fetch --quiet --prune origin "${LAB_BRANCH:-master}"
+          git -C "$LAB_REPO" reset --hard --quiet "origin/${LAB_BRANCH:-master}"
           echo "[reimport] revision $(git -C "$LAB_REPO" log --oneline -1)"
 
           imported=0; failed=0
