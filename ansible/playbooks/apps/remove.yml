@@ -520,11 +520,11 @@
       vars:
         usb_passthrough_guest: "{{ inventory_hostname }}"
         usb_passthrough_device:
-          mapping: "{{ app_config.app.usb_mapping }}"
+          mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
       when:
         - remove_kind == 'docker'
         - (remove_app | default(instance)) == 'home-assistant'
-        - app_config.app.usb_mapping | default('') | length > 0
+        - app_config.app.usb_mapping | default('', true) | length > 0
 
     # ComfyUI's GPU is a dedicated PCI assignment. Detach it only after the Compose
     # service has stopped, and only when the passthrough seam can prove this platform

@@ -14,6 +14,7 @@ ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/main.yml"
 COMPOSE_TEMPLATE = ROOT / "ansible/roles/home-assistant/templates/docker-compose.yml.j2"
 USB_TASKS = ROOT / "ansible/tasks/proxmox/attach-usb-passthrough.yml"
 INSTANCE_EXAMPLE = ROOT / "config.example/apps/home-assistant.example.yml"
+REMOVE_PLAYBOOK = ROOT / "ansible/playbooks/apps/remove.yml"
 MISSING = object()
 
 
@@ -27,6 +28,24 @@ def load_yaml(path):
 
 def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
+
+
+def find_task(node, name):
+    if isinstance(node, dict):
+        if node.get("name") == name:
+            return node
+        for value in node.values():
+            try:
+                return find_task(value, name)
+            except StopIteration:
+                pass
+    elif isinstance(node, list):
+        for value in node:
+            try:
+                return find_task(value, name)
+            except StopIteration:
+                pass
+    raise StopIteration(name)
 
 
 def condition_result(expression, variables):
@@ -124,6 +143,18 @@ def main():
     assert compose_service("coordinator")["devices"] == [
         "/dev/ttyUSB0:/dev/ttyUSB0"
     ]
+
+    remove_tasks = load_yaml(REMOVE_PLAYBOOK)
+    detach = find_task(remove_tasks, "Detach Home Assistant's project-owned Zigbee USB mapping")
+    assert detach["ansible.builtin.include_tasks"] == "../../tasks/proxmox/detach-usb-passthrough.yml"
+    remove_null_mapping = {
+        "remove_kind": "docker",
+        "remove_app": "home-assistant",
+        "instance": "home-assistant",
+        "app_config": {"app": {"usb_mapping": None}},
+    }
+    assert condition_result(detach["when"][-1], remove_null_mapping) is False
+    assert render(detach["vars"]["usb_passthrough_device"]["mapping"], remove_null_mapping) == ""
 
     usb_tasks = load_yaml(USB_TASKS)[0]
     required_input = task_named(usb_tasks, "USB passthrough | Assert required input")
