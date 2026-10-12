@@ -441,6 +441,8 @@ applications:
     category: Automation
     type: Workflow Automation
     scope: estate
+    # n8n owns native application-consistent backup and restore.
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   plane:
     name: Plane
