@@ -44,7 +44,6 @@ On a Windows checkout through WSL, wrap each command in `wsl bash -lc '...'`.
 
 ## Live lab
 
-Live runs are serial across the whole lab: every Rundeck job resets the one runner
-checkout to `origin/$LAB_BRANCH`, so two concurrent runs corrupt each other. Test an
-unmerged branch by pointing the runner at that branch (see `rundeck/README.md`), and never
-change `LAB_BRANCH` while a job is running.
+Live runs may overlap. The one runner checkout is refreshed to `origin/$LAB_BRANCH` when
+a job starts, so jobs started from the same commit do not disturb each other. Test an
+unmerged branch by pointing the runner at that branch (see `rundeck/README.md`).

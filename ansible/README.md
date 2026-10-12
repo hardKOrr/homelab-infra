@@ -68,10 +68,9 @@ checkout stays on `LAB_BRANCH` for Rundeck.
 
 ## Live operations
 
-Live runs are serial across the whole lab. Before changing live state, take the
-operator's lab lock as the private access instructions describe, and confirm that no
-Rundeck execution or node-side bootstrap is running. Hold the lock until the live work is
-done.
+Live runs may overlap; there is no lab lock. The runner checkout is refreshed to
+`origin/$LAB_BRANCH` when a job starts, so a push or a `LAB_BRANCH` change replaces files
+under a job that is already running. Push, then start the next run.
 
 ### Fixing and testing a change
 

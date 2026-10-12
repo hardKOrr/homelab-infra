@@ -40,10 +40,10 @@ the same private bootstrap inputs. This rewrites `LAB_BRANCH` in
 `/etc/homelab-infra/lab-run.env`. Reimport Jobs once that branch is configured if its
 job definitions changed; restore the usual branch through bootstrap afterward.
 
-Run jobs serially across the whole lab. Every job resets one shared runner checkout
-to `origin/$LAB_BRANCH`, so concurrent jobs can replace files another run is using.
-Do not change `LAB_BRANCH` while a job is running; wait for completion before changing
-branches or starting the next job.
+Jobs may run at the same time. Every job refreshes the one shared runner checkout to
+`origin/$LAB_BRANCH` when it starts: jobs at the same commit are unaffected, but a push
+or a `LAB_BRANCH` change replaces files under a job that is already running. Push, then
+start the next job.
 
 ## Bootstrap
 
