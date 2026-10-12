@@ -530,9 +530,7 @@
         instance: "{{ restore_target }}"
         plane_project_dir: "/opt/{{ restore_target }}"
         plane_env_file: "/opt/{{ restore_target }}/plane.env"
-        plane_fqdn: >-
-          {{ app_config.routing.subdomain | default(restore_target, true) }}
-          .{{ homelabinfra_infra.domain }}
+        plane_fqdn: "{{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
         _plane_env_database_backend: "{{ _plane_restore_database_backend }}"
         _plane_env_database_user: "{{ _plane_restore_database_user }}"
         _plane_env_database_password: "{{ _plane_restore_database_password }}"
