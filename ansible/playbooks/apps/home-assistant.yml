@@ -152,6 +152,7 @@
             name: "{{ instance }}"
             groups: "deploy_{{ instance }}"
             ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+            proxmox_vmid: "{{ homelabinfra_instance.vm.vmid }}"
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
             homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"

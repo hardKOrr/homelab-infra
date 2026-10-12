@@ -71,11 +71,9 @@ def pvesh(args):
 def find_guest(name, vmid):
     """Resolve a guest to (vmid, node, type) from the cluster-wide resource list.
 
-    Looked up by name rather than by hostvars, because the deploy group's member is an
-    add_host entry: a guest created earlier in the same run carries no inventory facts at
-    all, so proxmox_vmid/proxmox_node are absent on exactly the first-deploy path that most
-    needs recording. The cluster resource list is authoritative for both cases and also
-    tells us which node holds the guest, which need not be the node we are delegated to.
+    The cluster resource list is authoritative and tells us which node holds the guest,
+    which need not be the node we are delegated to. Prefer the VMID carried by a selected
+    inventory host; a name-only lookup is retained for callers without that fact.
     """
     rc, out, err = pvesh(["get", "/cluster/resources", "--type", "vm", "--output-format", "json"])
     if rc != 0:
@@ -87,6 +85,12 @@ def find_guest(name, vmid):
 
     for res in resources:
         if vmid and str(res.get("vmid")) == str(vmid):
+            if name and res.get("name") != name:
+                return None, "guest vmid %s is named %s, not %s" % (
+                    vmid,
+                    res.get("name", ""),
+                    name,
+                )
             return res, None
     if vmid:
         return None, "no guest with vmid %s" % vmid

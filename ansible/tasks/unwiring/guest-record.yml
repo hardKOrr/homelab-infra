@@ -41,6 +41,7 @@
           {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
           --instance "{{ _rug_instance }}"
           --guest "{{ item }}"
+          --vmid "{{ hostvars[item].proxmox_vmid | default('') if item in hostvars else '' }}"
           --withdraw
         executable: /usr/bin/python3
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
