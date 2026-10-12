@@ -1032,6 +1032,53 @@ def backup_prune_keeps_the_previous_point():
                 assert "--keep-last 2 --keep-daily" in line, f"{script} prunes without --keep-last 2"
 
 
+def plane_env_matches_the_bundled_proxy_and_api_contract():
+    template = read("ansible/roles/plane/templates/plane.env.j2")
+    output = render(
+        template,
+        {
+            "ansible_managed": "Managed by gate test",
+            "plane_fqdn": "plane.example.test",
+            "app_config": {
+                "app": {
+                    "release": "v1.4.2",
+                    "object_storage": {"bucket": "plane"},
+                    "database": {"name": "plane"},
+                    "database_user": "fixture-db-user",
+                    "database_password": "fixture-db-password",
+                    "database_host": "postgresql-plane",
+                    "database_port": 5432,
+                    "rabbitmq": {
+                        "user": "plane",
+                        "host": "plane-mq",
+                        "port": 5672,
+                        "vhost": "plane",
+                    },
+                }
+            },
+            "_plane_redis_backend": {"host": "redis-plane", "port": 6379},
+            "_plane_redis_password": "fixture-redis-password",
+            "_plane_rabbitmq_password": "fixture-rabbitmq-password",
+            "_plane_object_storage_access_key": "fixture-access-key",
+            "_plane_object_storage_secret_key": "fixture-object-storage-secret",
+            "_plane_secret_key": "fixture-plane-secret",
+            "_plane_live_server_secret_key": "fixture-live-secret",
+        },
+    )
+    environment = {
+        line.split("=", 1)[0]: line.split("=", 1)[1]
+        for line in output.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+
+    assert environment["APP_DOMAIN"] == "plane.example.test"
+    assert environment["BUCKET_NAME"] == "plane"
+    assert environment["AWS_S3_BUCKET_NAME"] == "plane"
+    assert environment["GUNICORN_WORKERS"] == "1"
+    assert environment["WEB_URL"] == "https://plane.example.test"
+    assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -1044,6 +1091,8 @@ if __name__ == "__main__":
         caddy
     )
     caddy_missing_or_invalid_resolvers_fail_without_external_fallback(caddy)
+    plane_env_matches_the_bundled_proxy_and_api_contract()
+    print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
     emby_rendering()
     unpackerr_rendering()
     navidrome_rendering()
