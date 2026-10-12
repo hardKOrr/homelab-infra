@@ -76,7 +76,9 @@ services:
       - "{{ app_config.app.data_path }}/rabbitmq:/var/lib/rabbitmq"
 
   plane-minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    # MinIO removed its public Docker Hub image; Silo keeps the MinIO-compatible
+    # S3 API and bundles the matching mc-compatible client used by the init service.
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     container_name: "{{ instance }}-plane-minio"
     env_file: ["{{ plane_env_file }}"]
     command: ["server", "/export", "--console-address", ":9090"]
@@ -85,7 +87,7 @@ services:
       - "{{ app_config.app.object_storage_path }}:/export"
 
   plane-minio-init:
-    image: minio/mc:RELEASE.2024-06-11T11-32-16Z
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     container_name: "{{ instance }}-plane-minio-init"
     # See plane-migrator above: init services never start as part of default `up`.
     profiles: ["init"]
