@@ -104,6 +104,10 @@
           - --rm
           - --network
           - host
+          # The PBS client uses its cache for temporary restore files. Keep these on tmpfs
+          # instead of the container overlay, which rejected the restore's unnamed temp file.
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _ha_restore_tmp.path }}:/restore"
           - --env

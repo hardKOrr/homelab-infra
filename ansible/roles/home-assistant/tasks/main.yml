@@ -12,15 +12,16 @@
          else (_ha_vault_item.integration_credentials | default('{}', true) | from_json) }}
   no_log: true
 
-- name: Home Assistant | Assert the VM device contract reached the role
+- name: Home Assistant | Assert the optional VM device contract reached the role
   ansible.builtin.assert:
     that:
-      - app_config.app.usb_mapping | default('') | length > 0
-      - app_config.app.usb_device_path | default('') is match('^/dev/')
+      - >-
+        (app_config.app.usb_mapping | default('', true) | length == 0)
+        or (app_config.app.usb_device_path | default('') is match('^/dev/'))
       - _ha_integration_credentials is mapping
     fail_msg: >-
-      Home Assistant requires an explicit Proxmox USB resource mapping, its guest serial
-      device path, and a JSON object of integration credentials from Vaultwarden. Raw
+      When configured, Home Assistant's Proxmox USB mapping requires its guest serial
+      device path. Integration credentials must be a JSON object from Vaultwarden; raw
       vendor:product identities and credential values in config/apps are not accepted.
   no_log: true
 
