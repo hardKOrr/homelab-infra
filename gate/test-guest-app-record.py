@@ -45,6 +45,7 @@ def main():
         "ansible.builtin.script"
     ]["cmd"]
     assert "--vmid" in record_cmd and "hostvars[item].proxmox_vmid" in record_cmd
+    assert "--guest" in record_cmd and "hostvars[item].proxmox_name" in record_cmd
 
     withdraw_tasks = yaml.safe_load(
         (ROOT / "ansible/tasks/unwiring/guest-record.yml").read_text()
@@ -53,6 +54,7 @@ def main():
         "ansible.builtin.script"
     ]["cmd"]
     assert "--vmid" in withdraw_cmd and "hostvars[item].proxmox_vmid" in withdraw_cmd
+    assert "--guest" in withdraw_cmd and "hostvars[item].proxmox_name" in withdraw_cmd
 
     ha_plays = yaml.safe_load(
         (ROOT / "ansible/playbooks/apps/home-assistant.yml").read_text()
@@ -79,6 +81,8 @@ def main():
     helper.pvesh = lambda _args: (0, json.dumps(resources), "")
     selected, problem = helper.find_guest("home-assistant", "1002")
     assert problem is None and selected["vmid"] == 1002
+    selected, problem = helper.find_guest("home-assistant-1002", "1002")
+    assert selected is None and "not home-assistant-1002" in problem
     mismatch, problem = helper.find_guest("other-name", "1002")
     assert mismatch is None and "not other-name" in problem
 

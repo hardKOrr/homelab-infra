@@ -33,8 +33,8 @@
 #   record_guest_names     — the whole hosting unit, when it is more than one guest. A
 #                            Kubernetes app passes every cluster node here. Defaults to
 #                            [record_guest_name].
-#   The selected inventory host's `proxmox_vmid` is passed when available, so duplicate
-#   guest names cannot make the record land on a different owned guest.
+#   The selected inventory host's real Proxmox name and `proxmox_vmid` are passed when
+#   available: duplicate-name aliases are not Proxmox names, and VMID scopes the write.
 #   record_guest_instance  — instance name (default: `instance`)
 #   record_guest_kind      — docker | native | kubernetes | appliance (default: derived from
 #                            app_config.stack)
@@ -105,7 +105,7 @@
         cmd: >-
           {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
           --instance "{{ _rg_instance }}"
-          --guest "{{ item }}"
+          --guest "{{ hostvars[item].proxmox_name | default(item, true) if item in hostvars else item }}"
           --vmid "{{ hostvars[item].proxmox_vmid | default('') if item in hostvars else '' }}"
           --kind "{{ _rg_kind | default('native') }}"
           --url "{{ _rg_url }}"

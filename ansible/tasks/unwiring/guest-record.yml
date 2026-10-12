@@ -17,6 +17,8 @@
 #   record_guest_names     — the whole hosting unit, when it is more than one guest: a
 #                            Kubernetes app withdraws from EVERY cluster node, because that
 #                            is where the deploy stamped it. Defaults to [record_guest_name].
+#                            When an inventory key is VMID-suffixed, use its `proxmox_name`
+#                            fact with the VMID so the helper can verify the actual guest.
 #   record_guest_instance  — instance name (default: `instance`)
 #
 # Best-effort and never fatal: by the time removal runs, the guest may already have been
@@ -40,7 +42,7 @@
         cmd: >-
           {{ playbook_dir }}/../../files/proxmox/guest-app-record.py
           --instance "{{ _rug_instance }}"
-          --guest "{{ item }}"
+          --guest "{{ hostvars[item].proxmox_name | default(item, true) if item in hostvars else item }}"
           --vmid "{{ hostvars[item].proxmox_vmid | default('') if item in hostvars else '' }}"
           --withdraw
         executable: /usr/bin/python3
