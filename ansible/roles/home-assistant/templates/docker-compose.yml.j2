@@ -9,7 +9,7 @@ services:
     volumes:
       - "{{ app_config.app.config_path }}:/config"
       - /etc/localtime:/etc/localtime:ro
-{% if app_config.app.usb_mapping | default('') | length > 0 %}
+{% if app_config.app.usb_mapping | default('', true) | length > 0 %}
     devices:
       # Only the exact serial node for the mapped coordinator enters the container.
       # The Proxmox mapping is the physical-device identity; this is its guest path.

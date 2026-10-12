@@ -14,6 +14,7 @@ ROLE_TASKS = ROOT / "ansible/roles/home-assistant/tasks/main.yml"
 COMPOSE_TEMPLATE = ROOT / "ansible/roles/home-assistant/templates/docker-compose.yml.j2"
 USB_TASKS = ROOT / "ansible/tasks/proxmox/attach-usb-passthrough.yml"
 INSTANCE_EXAMPLE = ROOT / "config.example/apps/home-assistant.example.yml"
+MISSING = object()
 
 
 def render(source, variables):
@@ -32,14 +33,14 @@ def condition_result(expression, variables):
     return render("{{ (%s) }}" % expression, variables)
 
 
-def compose_service(mapping_marker):
+def compose_service(mapping_marker=MISSING):
     app = {
         "image": "ghcr.io/home-assistant/home-assistant:stable",
         "port": 8123,
         "config_path": "/opt/home-assistant/config",
         "usb_device_path": "/dev/ttyUSB0",
     }
-    if mapping_marker is not None:
+    if mapping_marker is not MISSING:
         app["usb_mapping"] = mapping_marker
     rendered = render(
         COMPOSE_TEMPLATE.read_text(),
@@ -69,12 +70,16 @@ def main():
     vm_contract = " ".join(provision_assertion)
     assert "app_config.hosting == 'docker'" in vm_contract
     assert "app_config.proxmox.vm is mapping" in vm_contract
-    assert "app_config.app.usb_mapping | default('') | length > 0" not in vm_contract
+    assert "app_config.app.usb_mapping | default('', true) | length == 0" in vm_contract
 
     optional_path_condition = provision_assertion[-1]
     assert condition_result(
         optional_path_condition,
         {"app_config": {"app": {"usb_mapping": "", "usb_device_path": "invalid"}}},
+    ) is True
+    assert condition_result(
+        optional_path_condition,
+        {"app_config": {"app": {"usb_mapping": None, "usb_device_path": "invalid"}}},
     ) is True
     assert condition_result(
         optional_path_condition,
@@ -92,19 +97,30 @@ def main():
     attach = task_named(provision["tasks"], "Attach the optional Zigbee USB resource mapping")
     assert attach["ansible.builtin.include_tasks"] == "../../tasks/proxmox/attach-usb-passthrough.yml"
     assert condition_result(attach["when"], {"app_config": {"app": {"usb_mapping": ""}}}) is False
+    null_mapping_vars = {"app_config": {"app": {"usb_mapping": None}}}
+    assert condition_result(attach["when"], null_mapping_vars) is False
     assert condition_result(
         attach["when"], {"app_config": {"app": {"usb_mapping": "coordinator"}}}
     ) is True
+    mapping_value = attach["vars"]["usb_passthrough_device"]["mapping"]
+    assert render(mapping_value, null_mapping_vars) == ""
 
     role_tasks = load_yaml(ROLE_TASKS)[0]
     role_assertion = task_named(
         role_tasks, "Home Assistant | Assert the optional VM device contract reached the role"
     )["ansible.builtin.assert"]["that"]
     assert any("_ha_integration_credentials is mapping" in check for check in role_assertion)
-    assert any("usb_mapping" in check and "usb_device_path" in check for check in role_assertion)
+    role_usb_condition = next(
+        check for check in role_assertion if "usb_mapping" in check and "usb_device_path" in check
+    )
+    assert condition_result(
+        role_usb_condition,
+        {"app_config": {"app": {"usb_mapping": None, "usb_device_path": "invalid"}}},
+    ) is True
 
     assert "devices" not in compose_service("")
     assert "devices" not in compose_service(None)
+    assert "devices" not in compose_service()
     assert compose_service("coordinator")["devices"] == [
         "/dev/ttyUSB0:/dev/ttyUSB0"
     ]

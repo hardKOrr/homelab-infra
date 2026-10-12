@@ -50,7 +50,7 @@
           - app_config.hosting == 'docker'
           - app_config.proxmox.vm is mapping
           - >-
-            (app_config.app.usb_mapping | default('') | length == 0)
+            (app_config.app.usb_mapping | default('', true) | length == 0)
             or (app_config.app.usb_device_path | default('') is match('^/dev/'))
         fail_msg: >-
           Home Assistant requires its own Docker-capable VM. When usb_mapping is set, it
@@ -170,8 +170,8 @@
       vars:
         usb_passthrough_guest: "{{ _ha_guest }}"
         usb_passthrough_device:
-          mapping: "{{ app_config.app.usb_mapping }}"
-      when: app_config.app.usb_mapping | default('') | length > 0
+          mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
+      when: app_config.app.usb_mapping | default('', true) | length > 0
 
 - name: "Home Assistant | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
