@@ -451,9 +451,9 @@ applications:
     category: Planning and Collaboration
     type: Project Management
     scope: estate
-    # Plane is a multi-container recovery unit; the generic one-image rollback action
-    # cannot truthfully converge all of its services.
-    exclude: [rollback]
+    # Plane has native recovery for its multi-container Compose unit; the generic
+    # one-image rollback action cannot truthfully converge all of its services.
+    actions: [backup, configure, remove, restart, restore, tail]
 
   forgejo:
     name: Forgejo
