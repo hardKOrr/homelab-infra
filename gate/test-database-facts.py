@@ -16,6 +16,10 @@ def render(expression, variables):
     return Templar(loader=DataLoader(), variables=variables).template(expression)
 
 
+def condition_result(expression, variables):
+    return render("{{ (%s) }}" % expression, variables)
+
+
 def read(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
@@ -350,7 +354,9 @@ def immich_database_extensions_are_prepared_by_the_backend():
 
 def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     remove_plays = yaml.safe_load(read("ansible/playbooks/apps/remove.yml"))
+    unwire_play = next(play for play in remove_plays if play["name"] == "Remove App | Unwire")
     native_play = next(play for play in remove_plays if play["name"].startswith("Remove App | Stop"))
+    withdraw = task_named(unwire_play["tasks"], "Withdraw the app's record from its Proxmox guest")
     native_tasks = native_play["tasks"]
     native_block = task_named(native_tasks, "Stop the native service")["block"]
     resolve = task_named(native_play["pre_tasks"], "Resolve every PostgreSQL cluster removal unit")
@@ -364,6 +370,21 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
     assert "_rm_delete_data | bool" in drop["when"]
     assert "^[0-9]+[ ]+" in resolve["loop"] and "^[0-9]+[ ]+" in drop["loop"]
     assert native_block.index(drop) < native_block.index(task_named(native_block, "Delete the data path"))
+
+    # Remove App withdraws guest records before it stops services. PostgreSQL's LXC survives
+    # removal, so its identity must be retained through cluster teardown for the next Deploy
+    # to reuse instead of reaching the LXC creation seam as an unrecorded existing guest.
+    assert remove_plays.index(unwire_play) < remove_plays.index(native_play)
+    preserve_identity = unwire_play["vars"]["_rm_preserve_guest_identity"]
+    postgresql_removal = {"_rm_kind": "native", "app": "postgresql", "instance": "postgresql-n8n"}
+    ordinary_removal = {"_rm_kind": "docker", "app": "n8n", "instance": "n8n"}
+    assert render(preserve_identity, postgresql_removal) is True
+    assert render(preserve_identity, ordinary_removal) is False
+    assert "_rm_preserve_guest_identity | bool" in " ".join(withdraw["when"])
+    postgresql_removal["_rm_preserve_guest_identity"] = render(preserve_identity, postgresql_removal)
+    ordinary_removal["_rm_preserve_guest_identity"] = render(preserve_identity, ordinary_removal)
+    assert condition_result(withdraw["when"][-1], postgresql_removal) is False
+    assert condition_result(withdraw["when"][-1], ordinary_removal) is True
 
     postgres_tasks = yaml.safe_load(read("ansible/roles/postgresql/tasks/main.yml"))
     discover = task_named(postgres_tasks, "PostgreSQL | Discover registered clusters after package installation")

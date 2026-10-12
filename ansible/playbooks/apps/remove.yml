@@ -27,7 +27,8 @@
 #         2026-08-15: a removal used to leave the registry claiming the app was still
 #         there, and an orphaned media entry is not inert (Wire Media Stack registers
 #         it as a live download client). See tasks/unwiring/registry.yml.
-#   3. Withdraw the instance's row and `_<instance>` tag from its Proxmox guest
+#   3. Withdraw the instance's row and `_<instance>` tag from its Proxmox guest, unless
+#      it is a PostgreSQL guest that this playbook leaves in place for redeployment
 #   4. Stop and remove the app on its host (compose down, or stop+disable the service)
 #   5. Notify via Ntfy: "<instance> removed"
 #
@@ -107,6 +108,11 @@
     wiring_app_name: "{{ instance }}"
     wiring_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
     wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain | default('invalid') }}"
+    # Remove App stops PostgreSQL and may drop its cluster, but it deliberately keeps the
+    # guest. Keep the guest's app row/tag as its deployment identity so PostgreSQL Deploy
+    # reuses that LXC instead of refusing it at the creation seam as an unrecorded guest.
+    _rm_preserve_guest_identity: >-
+      {{ _rm_kind == 'native' and (app | default(instance)) == 'postgresql' }}
 
   tasks:
     - name: Unwire reverse proxy
@@ -333,6 +339,9 @@
         - _rm_hosts | length > 0
         - app_config.app.coral_usb_mapping | default('') | length > 0
 
+    # This runs before Play 2 stops the service and tears down PostgreSQL's cluster. A
+    # PostgreSQL guest survives Remove App, so retain its record/tag for that whole time;
+    # its next Deploy will find the same owned guest and create a fresh cluster if needed.
     - name: Withdraw the app's record from its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/unwiring/guest-record.yml
       vars:
@@ -341,7 +350,9 @@
               | map(attribute='name') | list)
              if _rm_kind == 'kubernetes'
              else ([instance] if _rm_kind == 'appliance' else _rm_hosts[:1]) }}
-      when: _rm_hosts | length > 0 or _rm_kind in ['kubernetes', 'appliance']
+      when:
+        - _rm_hosts | length > 0 or _rm_kind in ['kubernetes', 'appliance']
+        - not (_rm_preserve_guest_identity | bool)
 
     - name: Stop an ISO appliance through Proxmox
       ansible.builtin.command:
