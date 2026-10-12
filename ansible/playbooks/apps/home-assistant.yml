@@ -71,6 +71,14 @@
       ansible.builtin.set_fact:
         _ha_existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
+    - name: Refuse ambiguous existing Home Assistant VMs
+      ansible.builtin.assert:
+        that:
+          - _ha_existing_hosts | length <= 1
+        fail_msg: >-
+          Multiple guests match the Home Assistant instance tag. Refusing to reuse an
+          arbitrary VM; remove the stale app record and retry.
+
     - name: Add the existing VM to the deploy group
       ansible.builtin.add_host:
         name: "{{ _ha_existing_hosts[0] }}"
@@ -78,6 +86,7 @@
         ansible_host: >-
           {{ hostvars[_ha_existing_hosts[0]].ansible_host
              | default(hostvars[_ha_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
+        proxmox_vmid: "{{ hostvars[_ha_existing_hosts[0]].proxmox_vmid }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"

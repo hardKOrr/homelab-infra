@@ -58,6 +58,14 @@ def main():
         (ROOT / "ansible/playbooks/apps/home-assistant.yml").read_text()
     )
     ha_provision = next(play for play in ha_plays if play["name"] == "Home Assistant | Provision")
+    unique_target = task_named(ha_provision["tasks"], "Refuse ambiguous existing Home Assistant VMs")
+    assert unique_target["ansible.builtin.assert"]["that"] == [
+        "_ha_existing_hosts | length <= 1"
+    ]
+    existing_add_host = task_named(ha_provision["tasks"], "Add the existing VM to the deploy group")[
+        "ansible.builtin.add_host"
+    ]
+    assert existing_add_host["proxmox_vmid"] == "{{ hostvars[_ha_existing_hosts[0]].proxmox_vmid }}"
     add_host = task_named(ha_provision["tasks"], "Add the new VM to the deploy group")[
         "ansible.builtin.add_host"
     ]
