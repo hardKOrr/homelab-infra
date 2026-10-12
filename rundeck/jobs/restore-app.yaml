@@ -117,6 +117,6 @@
           : "${RD_OPTION_OVERWRITE:?overwrite is required}"
           ARGS+=(-e "overwrite=$RD_OPTION_OVERWRITE")
 
-          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # lab-run runs config-doctor and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
           exec lab-run playbooks/maintenance/restore-app.yml "${ARGS[@]}"

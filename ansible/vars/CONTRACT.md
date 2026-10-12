@@ -82,7 +82,8 @@ any playbook can run. It exists so playbooks and `status.yml` can name the host 
 executing on. `provider` is `rundeck`; `host` is the UI's base URL including
 scheme; `checkout_path` and `venv_path` are the paths `lab-run.sh` resolves from
 `/etc/homelab-infra/lab-run.env`; `branch` is the branch the checkout tracks and refreshes
-to before every job. Nothing wires against this key — it is descriptive.
+to only when a caller explicitly requests it. Nothing wires against this key — it is
+descriptive.
 
 **Estate scoping.** `infrastructure.yml` may declare a `domains:` map of named
 estates (§5); apps pick one with `routing.estate`. Estate-bound role keys (`sso`,

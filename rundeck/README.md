@@ -40,10 +40,10 @@ the same private bootstrap inputs. This rewrites `LAB_BRANCH` in
 `/etc/homelab-infra/lab-run.env`. Reimport Jobs once that branch is configured if its
 job definitions changed; restore the usual branch through bootstrap afterward.
 
-Jobs may run at the same time. Every job refreshes the one shared runner checkout to
-`origin/$LAB_BRANCH` when it starts: jobs at the same commit are unaffected, but a push
-or a `LAB_BRANCH` change replaces files under a job that is already running. Push, then
-start the next job.
+Ordinary jobs may run at the same time and use the runner checkout as it stands. A push or
+changing `LAB_BRANCH` does not change files under a running job. `LAB_REFRESH=1` and
+Reimport Jobs explicitly refresh the shared checkout; run either only when no other job is
+using that checkout.
 
 ## Bootstrap
 
@@ -324,35 +324,38 @@ clone; only the symlink and `/etc/homelab-infra/lab-run.env` live on the host. I
    cutover, and recovery playbooks before the durable marker exists
 3. in Vault mode, logs in and unlocks the dedicated automation account, synchronizes all
    canonical items, and writes the runner SSH key only to execution-private state
-4. **refreshes the checkout** to `origin/$LAB_BRANCH` and echoes the resolved commit into
-   the job log, then re-execs itself from the refreshed copy
+4. when `LAB_REFRESH=1` is set by the caller, refreshes the checkout to
+   `origin/$LAB_BRANCH` and re-execs itself from the refreshed copy; otherwise it keeps
+   the checkout as it stands
 5. runs `config-doctor` — a missing key fails here, at the front door
 6. runs `ansible-playbook` through `with-proxmox-env.sh`, then locks/logs out and removes
    all temporary CLI/session state while preserving the playbook exit status
 
-This makes execution behavior a shared implementation and lets the next job run use a fix
-that has reached the tracked branch.
+Every run logs the revision that produced it. A push alone does not change the shared
+checkout or files used by a running job.
 
-Escape hatches, per job or per shell: `LAB_REFRESH=0` runs the on-disk checkout unchanged
-(for pinning while debugging), `LAB_DOCTOR=0` skips the config check (the diagnostic
-configuration jobs set this themselves — they exist to diagnose and fix a config the
-doctor is complaining about).
+`LAB_REFRESH` defaults to `0`, including on a bootstrapped runner. The wrapper ignores any
+`LAB_REFRESH` value left in `lab-run.env`, so older runner files cannot turn refresh back
+on. Set `LAB_REFRESH=1` in a single caller environment to explicitly update the shared
+checkout. `LAB_DOCTOR=0` skips the config check (the diagnostic configuration jobs set
+this themselves — they exist to diagnose and fix a config the doctor is complaining
+about).
 
-**The refresh is off unless a runner turned it on.** It is a `git reset --hard`, so
-`lab-run.sh` defaults `LAB_REFRESH` to 1 only when `/etc/homelab-infra/lab-run.env` exists
-— which only `bootstrap-rundeck.sh` creates — and to 0 everywhere else, including a
-developer's working tree. It also refuses outright if the checkout has uncommitted tracked
-changes. A bootstrapped runner never has any: its checkout is only ever written by git.
+An explicit refresh uses `git reset --hard` and refuses if the checkout has uncommitted
+tracked changes. The Reimport Jobs operation also explicitly fetches and resets the runner
+checkout before it imports the current job definitions.
 
 Job options reach the script as `RD_OPTION_*` environment variables rather than
 `${option.x}` tokens, which would collide with shell expansion.
 
-### Playbooks refresh themselves; job definitions do not
+### Refresh the runner checkout and job definitions
 
-The checkout refresh keeps the **playbooks** current. **Job definitions** live in
-Rundeck's database and only change when something imports them. Run **Reimport Jobs**
-after a change to `rundeck/jobs/*.yaml` reaches the tracked branch — a new job, a new
-option, a changed description. Playbook changes never need it.
+Ordinary playbook runs use the current runner checkout. Set `LAB_REFRESH=1` on a run when
+it should first update to the tracked branch. **Job definitions** live in Rundeck's
+database and only change when something imports them. Run **Reimport Jobs** after a change
+to `rundeck/jobs/*.yaml` reaches the tracked branch — a new job, a new option, or a
+changed description. That operation refreshes the checkout before importing; playbook-only
+changes do not need a job reimport.
 
 Job definitions are imported from the repository. Reimport Jobs overwrites UI edits.
 

@@ -36,6 +36,6 @@
           #!/bin/bash
           set -euo pipefail
 
-          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # lab-run runs config-doctor and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
           exec lab-run playbooks/maintenance/verify-ascent.yml

@@ -4,7 +4,7 @@
 #
 # The step calls `lab-run`, the single entry point installed by
 # rundeck/bootstrap-rundeck.sh (a symlink to ansible/scripts/lab-run.sh in the checkout).
-# It refreshes the checkout to origin/<branch>, validates config/ and execs
+# It validates config/ and runs
 # ansible-playbook. Paths live in /etc/homelab-infra/lab-run.env, never in this file.
 
 - id: 10893fda-28ad-5771-88ee-f4c3a51f24e7
@@ -44,6 +44,6 @@
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
 
-          # lab-run refreshes the checkout, runs config-doctor, and execs
+          # lab-run runs config-doctor and execs
           # ansible-playbook through with-proxmox-env.sh. See ansible/scripts/lab-run.sh.
           exec lab-run playbooks/apps/sonarr.yml "${ARGS[@]}"
