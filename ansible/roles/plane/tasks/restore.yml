@@ -554,6 +554,9 @@
     - name: Plane restore | Wait for the restored Plane health endpoint
       ansible.builtin.uri:
         url: "http://localhost:{{ app_config.app.port }}/"
+        headers:
+          Host: >-
+            {{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}
         status_code: 200
       register: _plane_restore_health
       until: _plane_restore_health.status | default(0) == 200
