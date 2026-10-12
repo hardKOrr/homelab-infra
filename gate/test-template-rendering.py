@@ -1079,6 +1079,47 @@ def plane_env_matches_the_bundled_proxy_and_api_contract():
     assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
 
 
+def plane_compose_provides_the_proxy_upstream_aliases():
+    template = read("ansible/roles/plane/templates/docker-compose.yml.j2")
+    output = render(
+        template,
+        {
+            "ansible_managed": "Managed by gate test",
+            "instance": "plane",
+            "plane_env_file": "/opt/plane/plane.env",
+            "app_config": {
+                "app": {
+                    "release": "v1.4.2",
+                    "data_path": "/opt/plane/data",
+                    "object_storage_path": "/opt/plane/object-storage",
+                    "port": 8093,
+                }
+            },
+        },
+    )
+    compose = yaml.safe_load(output)
+    services = compose["services"]
+
+    # Plane's bundled Caddyfile uses these short upstream names.
+    for service, alias in (
+        ("plane-web", "web"),
+        ("plane-space", "space"),
+        ("plane-admin", "admin"),
+        ("plane-live", "live"),
+        ("plane-api", "api"),
+    ):
+        assert services[service]["networks"]["default"]["aliases"] == [alias]
+
+    assert set(services["plane-proxy"]["depends_on"]) == {
+        "plane-web",
+        "plane-space",
+        "plane-admin",
+        "plane-live",
+        "plane-api",
+    }
+    assert "default" in compose["networks"]
+
+
 def plane_health_probes_do_not_follow_the_unwired_https_hostname():
     accepted_statuses = [200, 301, 302, 303, 307, 308]
 
@@ -1134,6 +1175,8 @@ if __name__ == "__main__":
     caddy_missing_or_invalid_resolvers_fail_without_external_fallback(caddy)
     plane_env_matches_the_bundled_proxy_and_api_contract()
     print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
+    plane_compose_provides_the_proxy_upstream_aliases()
+    print("Template rendering: Plane Compose provides the bundled Caddy upstream aliases")
     plane_health_probes_do_not_follow_the_unwired_https_hostname()
     print("Template rendering: Plane deploy and restore probes keep canonical redirects local")
     emby_rendering()

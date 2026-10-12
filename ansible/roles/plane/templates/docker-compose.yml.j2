@@ -5,18 +5,27 @@ services:
     container_name: "{{ instance }}-plane-web"
     env_file: ["{{ plane_env_file }}"]
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [web]
 
   plane-space:
     image: makeplane/plane-space:{{ app_config.app.release }}
     container_name: "{{ instance }}-plane-space"
     env_file: ["{{ plane_env_file }}"]
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [space]
 
   plane-admin:
     image: makeplane/plane-admin:{{ app_config.app.release }}
     container_name: "{{ instance }}-plane-admin"
     env_file: ["{{ plane_env_file }}"]
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [admin]
 
   plane-live:
     image: makeplane/plane-live:{{ app_config.app.release }}
@@ -24,6 +33,9 @@ services:
     env_file: ["{{ plane_env_file }}"]
     restart: unless-stopped
     depends_on: [plane-mq, plane-api]
+    networks:
+      default:
+        aliases: [live]
 
   plane-api:
     image: makeplane/plane-backend:{{ app_config.app.release }}
@@ -34,6 +46,9 @@ services:
     volumes:
       - "{{ app_config.app.data_path }}/api:/code/plane/media"
     depends_on: [plane-mq, plane-minio]
+    networks:
+      default:
+        aliases: [api]
 
   plane-worker:
     image: makeplane/plane-backend:{{ app_config.app.release }}
@@ -109,3 +124,6 @@ services:
     ports:
       - "{{ app_config.app.port }}:80"
     depends_on: [plane-web, plane-space, plane-admin, plane-live, plane-api]
+
+networks:
+  default: {}
