@@ -36,6 +36,10 @@ def verify_virtiofs_mount_contract():
         task for task in tasks
         if task.get("name") == "VM host mounts | Build stable directory mapping IDs"
     )
+    mapping_verify_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Refuse an existing mapping with a different compute path"
+    )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         stub = root / "pvesh"
@@ -115,6 +119,53 @@ def verify_virtiofs_mount_contract():
         )
         output = result.stdout + result.stderr
         assert result.returncode == 0, f"virtiofs mapping ID was invalid\n{output}"
+
+    def run_mapping_verification(entries):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            playbook = root / "mapping-verify.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {
+                    "_vmfs_compute_nodes": ["compute-3", "compute-2"],
+                    "_vmfs_mapping_details": {"results": [{
+                        "stdout": json.dumps({"map": entries}),
+                        "item": {"id": "d123", "host": "/mnt/media"},
+                    }]},
+                },
+                "tasks": [mapping_verify_task],
+            }]))
+            inventory = root / "inventory.ini"
+            inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+            return subprocess.run(
+                [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+                env=os.environ | {
+                    "ANSIBLE_STDOUT_CALLBACK": "default",
+                    "ANSIBLE_NOCOLOR": "1",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    valid_mapping = run_mapping_verification([
+        "node=compute-3,path=/mnt/media",
+        "node=compute-2,path=/mnt/media/",
+    ])
+    output = valid_mapping.stdout + valid_mapping.stderr
+    assert valid_mapping.returncode == 0, f"valid virtiofs mapping was refused\n{output}"
+
+    conflicting_mapping = run_mapping_verification([
+        "node=compute-3,path=/mnt/media",
+        "node=compute-2,path=/mnt/other",
+    ])
+    output = conflicting_mapping.stdout + conflicting_mapping.stderr
+    assert conflicting_mapping.returncode != 0, "conflicting virtiofs path was accepted"
+    normalized_output = " ".join(output.split())
+    assert "different or incomplete compute-node paths" in normalized_output, (
+        "conflicting virtiofs path did not report the expected refusal\n" + output
+    )
 
 
 def node(name, status="online"):

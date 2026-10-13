@@ -141,11 +141,11 @@
   vars:
     _vmfs_map_entries: "{{ (item.stdout | from_json).map | default([]) }}"
     _vmfs_map_compute_nodes: >-
-      {{ _vmfs_map_entries | selectattr('node', 'in', _vmfs_compute_nodes)
-         | map(attribute='node') | list }}
+      {{ _vmfs_map_entries | map('split', ',') | map('first')
+         | map('regex_replace', '^node=', '') | list }}
     _vmfs_map_compute_paths: >-
-      {{ _vmfs_map_entries | selectattr('node', 'in', _vmfs_compute_nodes)
-         | map(attribute='path') | map('regex_replace', '/+$', '') | list }}
+      {{ _vmfs_map_entries | map('split', ',') | map('last')
+         | map('regex_replace', '^path=', '') | map('regex_replace', '/+$', '') | list }}
   loop: "{{ _vmfs_mapping_details.results }}"
   loop_control:
     label: "{{ item.item.id }}"
