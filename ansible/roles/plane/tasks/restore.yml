@@ -278,17 +278,17 @@
             test -s /restore/redis/dump.rdb
             test -d /restore/data
             test -d /restore/object-storage
-        environment:
-          PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-          PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-          PBS_PASSWORD: "{{ k8s_pbs_password }}"
-          PBS_SNAPSHOT: "{{ restore_snapshot }}"
-          PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-          PBS_APT_REPO: >-
-            {{ app_config.backup.client.repository }}
-            {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-        no_log: true
-        changed_when: true
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        PBS_SNAPSHOT: "{{ restore_snapshot }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: >-
+          {{ app_config.backup.client.repository }}
+          {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
+      no_log: true
+      changed_when: true
 
     - name: Plane restore | Read the selected artifact's release identity
       ansible.builtin.command:

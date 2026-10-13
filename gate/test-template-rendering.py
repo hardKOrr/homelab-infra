@@ -1126,6 +1126,40 @@ def plane_restore_environment_renders_the_canonical_hostname():
     assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
 
 
+def plane_restore_snapshot_extraction_uses_task_level_options():
+    restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore.yml"))
+
+    def find_task(value, name):
+        if isinstance(value, dict):
+            if value.get("name") == name:
+                return value
+            for child in value.values():
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        return None
+
+    task = find_task(restore_tasks, "Plane restore | Extract the selected PBS snapshot")
+    assert task is not None, "restore task does not extract the selected PBS snapshot"
+    command = task["ansible.builtin.command"]
+    assert set(command) == {"argv"}, "command module options must stay under argv"
+    assert set(task["environment"]) == {
+        "PBS_REPOSITORY",
+        "PBS_FINGERPRINT",
+        "PBS_PASSWORD",
+        "PBS_SNAPSHOT",
+        "PBS_KEY_URL",
+        "PBS_APT_REPO",
+    }
+    assert task["no_log"] is True
+    assert task["changed_when"] is True
+
+
 def plane_backup_maps_root_only_database_and_redis_config_for_containers():
     script = read("ansible/roles/plane/files/plane-recovery")
     mappings = {
@@ -1247,6 +1281,8 @@ if __name__ == "__main__":
     print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
     plane_restore_environment_renders_the_canonical_hostname()
     print("Template rendering: Plane restore environment renders the canonical hostname")
+    plane_restore_snapshot_extraction_uses_task_level_options()
+    print("Template rendering: Plane restore extraction keeps task options at task scope")
     plane_backup_maps_root_only_database_and_redis_config_for_containers()
     print(
         "Template rendering: Plane backup maps database and Redis credentials to client containers"
