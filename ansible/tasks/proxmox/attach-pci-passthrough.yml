@@ -92,19 +92,25 @@
   register: _pci_mapping
   changed_when: false
 
+- name: PCI passthrough | Parse the PCI resource mapping properties
+  ansible.builtin.include_tasks: parse-pci-mapping-entries.yml
+  vars:
+    proxmox_pci_mapping_result: "{{ _pci_mapping }}"
+
 - name: PCI passthrough | Assert the mapping names this device on this node
   ansible.builtin.assert:
     that:
       - _pci_map_entries | length == 1
-      - _pci_map_entries[0].id == pci_passthrough_device.id
+      - _pci_map_entries[0].path == pci_passthrough_device.id
     fail_msg: >-
       PCI resource mapping {{ pci_passthrough_device.mapping }} must map
       {{ pci_passthrough_device.id }} on {{ homelabinfra_config.proxmox.node }}. The
       mapping is operator-owned; this platform does not create or alter PCI mappings.
   vars:
     _pci_map_entries: >-
-      {{ (_pci_mapping.stdout | from_json).map | default([])
-         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node) | list }}
+      {{ _proxmox_pci_mapping_entries
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node)
+         | selectattr('path', 'equalto', pci_passthrough_device.id) | list }}
 
 - name: PCI passthrough | Assert the device exists on the node
   ansible.builtin.assert:

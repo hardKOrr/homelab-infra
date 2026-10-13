@@ -13,8 +13,45 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 RESOLVER = REPO / "ansible/tasks/proxmox/resolve-guest-placement.yml"
+PCI_MAPPING_PARSER = REPO / "ansible/tasks/proxmox/parse-pci-mapping-entries.yml"
+PCI_ATTACH = REPO / "ansible/tasks/proxmox/attach-pci-passthrough.yml"
 VM_HOST_MOUNTS = REPO / "ansible/tasks/proxmox/attach-host-mounts-vm.yml"
 BOOTSTRAP = REPO / "rundeck/bootstrap-rundeck.sh"
+
+
+def verify_pci_mapping_contract():
+    resolver_tasks = yaml.safe_load(RESOLVER.read_text())
+    parser_tasks = yaml.safe_load(PCI_MAPPING_PARSER.read_text())
+    attach_tasks = yaml.safe_load(PCI_ATTACH.read_text())
+    parser_name = "parse-pci-mapping-entries.yml"
+
+    assert len(parser_tasks) == 2
+    assert any(
+        task.get("ansible.builtin.include_tasks") == parser_name
+        for task in resolver_tasks
+    )
+    assert any(
+        task.get("ansible.builtin.include_tasks") == parser_name
+        for task in attach_tasks
+    )
+    assert "dict(item | split(',') | map('split', '='))" in parser_tasks[1][
+        "ansible.builtin.set_fact"
+    ]["_proxmox_pci_mapping_entries"]
+
+    placement_check = next(
+        task for task in resolver_tasks
+        if task.get("name") == "Guest placement | Verify the PCI mapping names this device on its node"
+    )
+    attach_check = next(
+        task for task in attach_tasks
+        if task.get("name") == "PCI passthrough | Assert the mapping names this device on this node"
+    )
+    assert "selectattr('path', 'equalto', _guest_gpu_pci_id)" in placement_check["vars"][
+        "_guest_gpu_map_entries"
+    ]
+    assert "selectattr('path', 'equalto', pci_passthrough_device.id)" in attach_check["vars"][
+        "_pci_map_entries"
+    ]
 
 
 def verify_virtiofs_mount_contract():
@@ -349,6 +386,7 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
 
 
 def main():
+    verify_pci_mapping_contract()
     verify_virtiofs_mount_contract()
     run_case(
         "database pinned to storage role",
@@ -415,7 +453,10 @@ def main():
             "pci_id": "0000:00:02.0",
         },
         devices={"intel-igpu": gpu_device},
-        pci_mapping={"map": [{"node": "compute-3", "id": "0000:00:02.0"}]},
+        pci_mapping={"map": [
+            "node=compute-3,path=0000:00:02.0,id=8086:1234",
+            "node=compute-2,path=0000:00:02.1,id=8086:1234",
+        ]},
         device="intel-igpu",
     )
     run_case(
@@ -424,7 +465,7 @@ def main():
         [node("storage-1"), node("compute-3"), node("compute-2")],
         expected_error="not in proxmox.node_roles.compute",
         devices={"intel-igpu": {**gpu_device, "node": "storage-1"}},
-        pci_mapping={"map": [{"node": "storage-1", "id": "0000:00:02.0"}]},
+        pci_mapping={"map": ["node=storage-1,path=0000:00:02.0,id=8086:1234"]},
         device="intel-igpu",
     )
     run_case(
@@ -433,7 +474,16 @@ def main():
         [node("storage-1"), node("compute-3"), node("compute-2")],
         expected_error="must map exactly",
         devices={"intel-igpu": gpu_device},
-        pci_mapping={"map": [{"node": "compute-3", "id": "0000:00:02.1"}]},
+        pci_mapping={"map": ["node=compute-3,path=0000:00:02.1,id=8086:1234"]},
+        device="intel-igpu",
+    )
+    run_case(
+        "GPU VM refuses a matching PCI path mapped to another node",
+        "gpu_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        expected_error="must map exactly",
+        devices={"intel-igpu": gpu_device},
+        pci_mapping={"map": ["node=compute-2,path=0000:00:02.0,id=8086:1234"]},
         device="intel-igpu",
     )
     run_case(

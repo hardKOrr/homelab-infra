@@ -184,20 +184,27 @@
   changed_when: false
   when: guest_placement_class == 'gpu_vm'
 
+- name: Guest placement | Parse the PCI resource mapping properties
+  ansible.builtin.include_tasks: parse-pci-mapping-entries.yml
+  vars:
+    proxmox_pci_mapping_result: "{{ _guest_gpu_mapping }}"
+  when: guest_placement_class == 'gpu_vm'
+
 - name: Guest placement | Verify the PCI mapping names this device on its node
   ansible.builtin.assert:
     that:
       - _guest_gpu_mapping.rc == 0
       - _guest_gpu_map_entries | length == 1
-      - _guest_gpu_map_entries[0].id == _guest_gpu_pci_id
+      - _guest_gpu_map_entries[0].path == _guest_gpu_pci_id
     fail_msg: >-
       PCI resource mapping {{ _guest_gpu_mapping_id }} must map exactly
       {{ _guest_gpu_pci_id }} on the declared device node. The mapping is operator-owned;
       this task does not create or alter PCI mappings.
   vars:
     _guest_gpu_map_entries: >-
-      {{ (_guest_gpu_mapping.stdout | default('{}') | from_json).map | default([])
-         | selectattr('node', 'equalto', _guest_gpu_node) | list }}
+      {{ _proxmox_pci_mapping_entries
+         | selectattr('node', 'equalto', _guest_gpu_node)
+         | selectattr('path', 'equalto', _guest_gpu_pci_id) | list }}
   when: guest_placement_class == 'gpu_vm'
 
 - name: Guest placement | Select the ordered node and storage
