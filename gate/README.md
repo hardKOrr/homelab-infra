@@ -55,6 +55,8 @@ templates.
 - `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
 - `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
 - `test-plex-restore.py`, `test-tautulli-restore.py`, `test-qbittorrent-restore.py`: read-only preview, group guard, restore and rollback.
+- `test-karakeep-recovery.py`: one-archive backup of both persistent volumes and restore
+  rollback after either original directory moves.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:

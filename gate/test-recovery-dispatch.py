@@ -171,7 +171,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix"]:
+        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "karakeep"]:
             defaults = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[f"{app}_defaults"]
             tasks.append({
                 "vars": {"recovery_app_config": defaults, "recovery_app": app,
@@ -181,7 +181,10 @@ def main():
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
                 ],
             })
-        for app in ["qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr", "deemix", "tautulli", "servarr"]:
+        for app in [
+            "qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr",
+            "deemix", "tautulli", "servarr", "karakeep",
+        ]:
             for operation in ["backup", "restore"]:
                 tasks.append({
                     "block": [{"ansible.builtin.include_role": {
@@ -204,7 +207,11 @@ def main():
         path.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False, "vars": {
                 "instance": "actual-budget", "homelabinfra_infra": {"backups": {}},
-                "app_config": {"backup": {"enabled": True, "application_consistent": True}},
+                "app_config": {
+                    "app": {"data_path": "/opt/test/data"},
+                    "backup": {"enabled": True, "application_consistent": True},
+                },
+                "karakeep_meilisearch_data_path": "/opt/test/meilisearch",
                 "restore_overwrite": False,
             }, "tasks": tasks,
         }]))

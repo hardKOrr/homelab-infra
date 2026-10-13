@@ -1,0 +1,413 @@
+---
+# Restore one data.pxar archive while keeping both originals on their own filesystems
+# until the replacement services pass Karakeep's health endpoint.
+
+- name: Karakeep restore | Resolve the source recovery identity
+  ansible.builtin.set_fact:
+    _karakeep_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _application_restore_complete: false
+    _karakeep_restore_rolled_back: false
+    _karakeep_restore_services_stopped: false
+    _karakeep_restore_data_moved: {rc: 1}
+    _karakeep_restore_search_moved: {rc: 1}
+
+- name: Karakeep restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Karakeep restore needs its PBS-backed application recovery contract. Keep
+      overwrite=false to list snapshots before selecting one.
+
+- name: Karakeep restore | Require the selected point to belong to its source group
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot.startswith('host/' ~ _karakeep_restore_backup_id ~ '/')
+      - restore_snapshot | length > ('host/' ~ _karakeep_restore_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Karakeep snapshot must belong to host/{{ _karakeep_restore_backup_id }}/;
+      refusing to replace application state with another backup group's archive.
+  when: restore_snapshot | default('') | length > 0
+
+- name: Karakeep restore | Resolve the target persistent paths
+  ansible.builtin.set_fact:
+    _karakeep_restore_data_path: "{{ app_config.app.data_path }}"
+    _karakeep_restore_search_path: "{{ karakeep_meilisearch_data_path }}"
+
+- name: Karakeep restore | Assert the persistent paths do not overlap
+  ansible.builtin.assert:
+    that:
+      - _karakeep_restore_data_path is match('^/[^/].*')
+      - _karakeep_restore_data_path != '/'
+      - _karakeep_restore_search_path is match('^/[^/].*')
+      - _karakeep_restore_search_path != '/'
+      - _karakeep_restore_data_path != _karakeep_restore_search_path
+      - not _karakeep_restore_data_path.startswith(_karakeep_restore_search_path.rstrip('/') ~ '/')
+      - not _karakeep_restore_search_path.startswith(_karakeep_restore_data_path.rstrip('/') ~ '/')
+    fail_msg: >-
+      Karakeep's data and Meilisearch paths must be separate absolute directories; refusing
+      to overwrite an overlapping or root path.
+
+- name: Karakeep restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Karakeep restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Karakeep. Deploy PBS before listing or restoring
+      application data.
+
+- name: Karakeep restore | List available snapshots in plan mode
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - >-
+        PBS_APT_REPO={{ app_config.backup.client.repository }}
+        {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _karakeep_restore_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _karakeep_restore_backup_id }}"
+  no_log: true
+
+- name: Karakeep restore | Print available snapshots
+  ansible.builtin.debug:
+    msg: "PBS snapshots for host/{{ _karakeep_restore_backup_id }}:\n{{ _karakeep_restore_snapshots.stdout }}"
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Karakeep restore | Explain the selected read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with this snapshot and overwrite=true to replace
+      {{ _karakeep_restore_data_path }} (SQLite and assets) and
+      {{ _karakeep_restore_search_path }} (the search index) from one data.pxar archive.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Karakeep restore | Create private extraction space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-karakeep-restore-"
+  register: _karakeep_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Karakeep restore | Inspect overwrite target paths
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ _karakeep_restore_data_path }}"
+    - "{{ _karakeep_restore_search_path }}"
+  register: _karakeep_restore_target_paths
+  changed_when: false
+  when: restore_overwrite | bool
+
+- name: Karakeep restore | Require existing target directories
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+      - not item.stat.islnk
+    fail_msg: >-
+      Karakeep target path {{ item.item }} is not an existing directory; deploy the exact
+      target and retry rather than replacing an unowned or missing path.
+  loop: "{{ _karakeep_restore_target_paths.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: restore_overwrite | bool
+
+- name: Karakeep restore | Replace the selected application archive
+  when: restore_overwrite | bool
+  block:
+    - name: Karakeep restore | Extract the selected PBS archive
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _karakeep_restore_tmp.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - >-
+            PBS_APT_REPO={{ app_config.backup.client.repository }}
+            {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    - name: Karakeep restore | Require both archived data directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ _karakeep_restore_tmp.path }}/data"
+        - "{{ _karakeep_restore_tmp.path }}/meilisearch"
+      register: _karakeep_restore_archived_paths
+      changed_when: false
+
+    - name: Karakeep restore | Refuse an incomplete archive
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+          - not item.stat.islnk
+        fail_msg: >-
+          The selected Karakeep archive is missing {{ item.item }}; the original data will
+          remain untouched.
+      loop: "{{ _karakeep_restore_archived_paths.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # Each rollback directory is created beside its original so both moves stay on the
+    # same filesystem, even when an operator configured the two data paths separately.
+    - name: Karakeep restore | Create rollback space beside the SQLite and assets directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ _karakeep_restore_data_path | dirname }}"
+        prefix: .karakeep-pre-restore-data-
+      register: _karakeep_restore_previous_data
+
+    - name: Karakeep restore | Create rollback space beside the search index
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ _karakeep_restore_search_path | dirname }}"
+        prefix: .karakeep-pre-restore-search-
+      register: _karakeep_restore_previous_search
+
+    - name: Karakeep restore | Stop only this instance's services
+      community.docker.docker_compose_v2:
+        project_src: "{{ karakeep_project_dir }}"
+        state: stopped
+        services: [web, chrome, meilisearch]
+
+    - name: Karakeep restore | Record the stopped services
+      ansible.builtin.set_fact:
+        _karakeep_restore_services_stopped: true
+
+    - name: Karakeep restore | Move the original data directory into rollback space
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _karakeep_restore_data_path }}"
+          - "{{ _karakeep_restore_previous_data.path }}/data"
+      register: _karakeep_restore_data_moved
+      changed_when: _karakeep_restore_data_moved.rc == 0
+      no_log: true
+
+    - name: Karakeep restore | Move the original search index into rollback space
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _karakeep_restore_search_path }}"
+          - "{{ _karakeep_restore_previous_search.path }}/meilisearch"
+      register: _karakeep_restore_search_moved
+      changed_when: _karakeep_restore_search_moved.rc == 0
+      no_log: true
+
+    - name: Karakeep restore | Recreate the data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0750"
+      loop:
+        - "{{ _karakeep_restore_data_path }}"
+        - "{{ _karakeep_restore_search_path }}"
+
+    - name: Karakeep restore | Copy the archived SQLite and assets data
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - "{{ _karakeep_restore_tmp.path }}/data/."
+          - "{{ _karakeep_restore_data_path }}/"
+      changed_when: true
+      no_log: true
+
+    - name: Karakeep restore | Copy the archived search index
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -a
+          - "{{ _karakeep_restore_tmp.path }}/meilisearch/."
+          - "{{ _karakeep_restore_search_path }}/"
+      changed_when: true
+      no_log: true
+
+    - name: Karakeep restore | Set ownership of both data directories
+      ansible.builtin.command:
+        argv:
+          - chown
+          - -R
+          - "1000:1000"
+          - "{{ item }}"
+      loop:
+        - "{{ _karakeep_restore_data_path }}"
+        - "{{ _karakeep_restore_search_path }}"
+      changed_when: true
+      no_log: true
+
+    - name: Karakeep restore | Start only this instance's services
+      community.docker.docker_compose_v2:
+        project_src: "{{ karakeep_project_dir }}"
+        state: present
+        services: [web, chrome, meilisearch]
+
+    - name: Karakeep restore | Wait for the restored application
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/health"
+        status_code: 200
+      register: _karakeep_restore_health
+      until: _karakeep_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Karakeep restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Karakeep restore | Stop only this instance's services after failure
+      community.docker.docker_compose_v2:
+        project_src: "{{ karakeep_project_dir }}"
+        state: stopped
+        services: [web, chrome, meilisearch]
+      when: _karakeep_restore_services_stopped | default(false) | bool
+
+    - name: Karakeep restore | Remove a failed data replacement
+      ansible.builtin.file:
+        path: "{{ _karakeep_restore_data_path }}"
+        state: absent
+      when: _karakeep_restore_data_moved.rc | default(1) == 0
+
+    - name: Karakeep restore | Remove a failed search index replacement
+      ansible.builtin.file:
+        path: "{{ _karakeep_restore_search_path }}"
+        state: absent
+      when: _karakeep_restore_search_moved.rc | default(1) == 0
+
+    - name: Karakeep restore | Put the original data directory back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _karakeep_restore_previous_data.path }}/data"
+          - "{{ _karakeep_restore_data_path }}"
+      changed_when: true
+      no_log: true
+      when: _karakeep_restore_data_moved.rc | default(1) == 0
+
+    - name: Karakeep restore | Put the original search index back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _karakeep_restore_previous_search.path }}/meilisearch"
+          - "{{ _karakeep_restore_search_path }}"
+      changed_when: true
+      no_log: true
+      when: _karakeep_restore_search_moved.rc | default(1) == 0
+
+    - name: Karakeep restore | Record that rollback completed
+      ansible.builtin.set_fact:
+        _karakeep_restore_rolled_back: true
+
+    - name: Karakeep restore | Report the failed restore
+      ansible.builtin.fail:
+        msg: >-
+          Karakeep restore failed. Both original data directories were retained or put
+          back; services remain stopped if replacement had started. Inspect the job output
+          and retry after correcting the failure.
+  always:
+    - name: Karakeep restore | Remove data rollback space when safe
+      ansible.builtin.file:
+        path: "{{ _karakeep_restore_previous_data.path }}"
+        state: absent
+      when:
+        - _karakeep_restore_previous_data.path is defined
+        - >-
+          (_application_restore_complete | bool) or (_karakeep_restore_rolled_back | bool)
+          or (_karakeep_restore_data_moved.rc | default(1) != 0)
+
+    - name: Karakeep restore | Remove search rollback space when safe
+      ansible.builtin.file:
+        path: "{{ _karakeep_restore_previous_search.path }}"
+        state: absent
+      when:
+        - _karakeep_restore_previous_search.path is defined
+        - >-
+          (_application_restore_complete | bool) or (_karakeep_restore_rolled_back | bool)
+          or (_karakeep_restore_search_moved.rc | default(1) != 0)
+
+    - name: Karakeep restore | Remove private extraction data
+      ansible.builtin.file:
+        path: "{{ _karakeep_restore_tmp.path }}"
+        state: absent
+      when: _karakeep_restore_tmp.path is defined
