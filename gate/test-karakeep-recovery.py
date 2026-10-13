@@ -45,6 +45,8 @@ def fixture_tasks(tasks, root):
                                          if restore_resolver else "test"),
                 "k8s_pbs_password": ("pbs-password-secret" if restore_resolver else "test"),
             }
+            if restore_resolver:
+                task["no_log"] = True
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
             task["ansible.builtin.command"] = {"argv": [
@@ -69,6 +71,7 @@ def all_tasks(tasks):
 def environment(root, case):
     return os.environ | {
         "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
+        "ANSIBLE_DISPLAY_OK_HOSTS": "1" if case == "success" else "0",
         "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
         "KARAKEEP_TEST_CASE": case, "KARAKEEP_TEST_ROOT": str(root),
     }
@@ -89,7 +92,7 @@ def make_stubs(root):
     (root / "bin").mkdir()
     scripts = {
         "docker": r'''#!/usr/bin/env python3
-import os,sys
+import os,sqlite3,sys
 from pathlib import Path
 args=sys.argv[1:]
 case=os.environ['KARAKEEP_TEST_CASE']
@@ -119,6 +122,14 @@ stage=Path(mount[:-9])
 assert stage.parent == Path(os.environ['KARAKEEP_TEST_ROOT']), stage
 (stage/'data').mkdir()
 (stage/'data'/'restored.sqlite').write_text('recovered database and assets\n')
+if case!='incomplete-archive':
+    connection=sqlite3.connect(stage/'data'/'db.sqlite')
+    connection.execute('CREATE TABLE bookmarks (title TEXT)')
+    connection.execute('INSERT INTO bookmarks VALUES (?)', ('karakeep-gate-canary',))
+    connection.execute('CREATE TABLE bookmarkLists (name TEXT)')
+    connection.execute('INSERT INTO bookmarkLists VALUES (?)', ('karakeep-gate-canary',))
+    connection.commit()
+    connection.close()
 if case!='incomplete-archive':
     (stage/'meilisearch').mkdir()
     (stage/'meilisearch'/'restored-index').write_text('recovered search index\n')
@@ -230,12 +241,14 @@ def restore_check(case, server):
                                       "component": "test"}},
             },
         }
-        variables["karakeep_restore_diagnostics"] = case == "extract-failure"
+        variables["karakeep_restore_diagnostics"] = case in ["extract-failure", "success"]
+        variables["karakeep_restore_diagnostic_canary_title"] = "karakeep-gate-canary"
         result = run_play(root, restore_source, variables, case)
         success = case in ["plan", "success"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
 
         if case == "success":
+            assert "Recovered SQLite summary: sqlite_files=1 canary_bookmark_rows=1 canary_list_rows=1" in result.stdout, result.stdout
             assert not (data / "original.sqlite").exists()
             assert (data / "restored.sqlite").read_text() == "recovered database and assets\n"
             assert not (search / "original-index").exists()

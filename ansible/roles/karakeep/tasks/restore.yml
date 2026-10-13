@@ -334,6 +334,67 @@
       delay: 5
       changed_when: false
 
+    - name: Karakeep restore | Summarize recovered SQLite canaries when requested
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, pathlib, sqlite3, sys
+            root = pathlib.Path(sys.argv[1])
+            title = sys.argv[2]
+            databases = []
+            for path in root.rglob('*'):
+                if not path.is_file():
+                    continue
+                try:
+                    with path.open('rb') as stream:
+                        if stream.read(16) == b'SQLite format 3\x00':
+                            databases.append(path)
+                except OSError:
+                    pass
+            bookmark_rows = 0
+            list_rows = 0
+            for path in databases:
+                try:
+                    connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+                    tables = [row[0] for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'")]
+                    for table in tables:
+                        identifier = '"' + table.replace('"', '""') + '"'
+                        columns = {row[1] for row in connection.execute(
+                            'PRAGMA table_info(' + identifier + ')')}
+                        if 'bookmark' in table.lower() and 'title' in columns:
+                            bookmark_rows += connection.execute(
+                                'SELECT COUNT(*) FROM ' + identifier + ' WHERE title=?',
+                                (title,)).fetchone()[0]
+                        if 'list' in table.lower() and 'name' in columns:
+                            list_rows += connection.execute(
+                                'SELECT COUNT(*) FROM ' + identifier + ' WHERE name=?',
+                                (title,)).fetchone()[0]
+                    connection.close()
+                except sqlite3.Error:
+                    pass
+            print('sqlite_files={} canary_bookmark_rows={} canary_list_rows={}'.format(
+                len(databases), bookmark_rows, list_rows))
+          - "{{ _karakeep_restore_data_path }}"
+          - "{{ karakeep_restore_diagnostic_canary_title | default('') }}"
+      register: _karakeep_restore_sqlite_summary
+      changed_when: false
+      when:
+        - karakeep_restore_diagnostics | default(false) | bool
+        - karakeep_restore_diagnostic_canary_title | default('') | length > 0
+
+    - name: Karakeep restore | Report recovered SQLite canaries when requested
+      ansible.builtin.assert:
+        that: _karakeep_restore_sqlite_summary.rc == 0
+        success_msg: >-
+          Recovered SQLite summary: {{ _karakeep_restore_sqlite_summary.stdout }}
+        fail_msg: "Could not inspect the recovered Karakeep SQLite database."
+      when:
+        - karakeep_restore_diagnostics | default(false) | bool
+        - karakeep_restore_diagnostic_canary_title | default('') | length > 0
+
     - name: Karakeep restore | Mark the recovery complete
       ansible.builtin.set_fact:
         _application_restore_complete: true
