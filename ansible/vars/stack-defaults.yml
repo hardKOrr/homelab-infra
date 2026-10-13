@@ -103,6 +103,15 @@ stack_defaults:
     disk_volume:
       size: 32
 
+  # Actual Budget, Karakeep (with Meilisearch and headless Chrome), n8n and Plane. Plane's
+  # API, workers and web front end alone outgrow the 2 GiB default; at that size the host
+  # swaps until SSH and every tenant's HTTP route stop answering.
+  services:
+    cores: 4
+    memory: 8192
+    disk_volume:
+      size: 32
+
   # Immich's server and OpenVINO worker share a host, while originals and thumbnails
   # live on the explicitly declared media mount rather than the stack rootfs.
   photos:
