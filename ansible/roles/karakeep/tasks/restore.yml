@@ -340,43 +340,61 @@
           - python3
           - -c
           - |
-            import json, pathlib, sqlite3, sys
-            root = pathlib.Path(sys.argv[1])
-            title = sys.argv[2]
-            databases = []
-            for path in root.rglob('*'):
-                if not path.is_file():
-                    continue
-                try:
-                    with path.open('rb') as stream:
-                        if stream.read(16) == b'SQLite format 3\x00':
-                            databases.append(path)
-                except OSError:
-                    pass
-            bookmark_rows = 0
-            list_rows = 0
-            for path in databases:
-                try:
-                    connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
-                    tables = [row[0] for row in connection.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table'")]
-                    for table in tables:
-                        identifier = '"' + table.replace('"', '""') + '"'
-                        columns = {row[1] for row in connection.execute(
-                            'PRAGMA table_info(' + identifier + ')')}
-                        if 'bookmark' in table.lower() and 'title' in columns:
-                            bookmark_rows += connection.execute(
-                                'SELECT COUNT(*) FROM ' + identifier + ' WHERE title=?',
-                                (title,)).fetchone()[0]
-                        if 'list' in table.lower() and 'name' in columns:
-                            list_rows += connection.execute(
-                                'SELECT COUNT(*) FROM ' + identifier + ' WHERE name=?',
-                                (title,)).fetchone()[0]
-                    connection.close()
-                except sqlite3.Error:
-                    pass
-            print('sqlite_files={} canary_bookmark_rows={} canary_list_rows={}'.format(
-                len(databases), bookmark_rows, list_rows))
+            import pathlib, sqlite3, sys
+
+            def summarize(root, title):
+                databases = []
+                for path in root.rglob('*'):
+                    if not path.is_file():
+                        continue
+                    try:
+                        with path.open('rb') as stream:
+                            if stream.read(16) == b'SQLite format 3\x00':
+                                databases.append(path)
+                    except OSError:
+                        pass
+                metrics = {'sqlite_files': len(databases), 'bookmark_rows': 0,
+                           'list_rows': 0, 'canary_bookmark_rows': 0,
+                           'canary_list_rows': 0, 'database_errors': 0}
+                schemas = set()
+                for path in databases:
+                    try:
+                        connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+                        tables = [row[0] for row in connection.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'")]
+                        for table in tables:
+                            lower = table.lower()
+                            if not any(part in lower for part in ('bookmark', 'list', 'user', 'apikey')):
+                                continue
+                            identifier = '"' + table.replace('"', '""') + '"'
+                            columns = {row[1] for row in connection.execute(
+                                'PRAGMA table_info(' + identifier + ')')}
+                            schemas.add('{}({})'.format(table, ','.join(sorted(columns))))
+                            rows = connection.execute('SELECT COUNT(*) FROM ' + identifier).fetchone()[0]
+                            if lower == 'bookmarks':
+                                metrics['bookmark_rows'] += rows
+                                if 'title' in columns:
+                                    metrics['canary_bookmark_rows'] += connection.execute(
+                                        'SELECT COUNT(*) FROM ' + identifier + ' WHERE title=?',
+                                        (title,)).fetchone()[0]
+                            if lower == 'bookmarklists' and 'name' in columns:
+                                metrics['list_rows'] += rows
+                                metrics['canary_list_rows'] += connection.execute(
+                                    'SELECT COUNT(*) FROM ' + identifier + ' WHERE name=?',
+                                    (title,)).fetchone()[0]
+                        connection.close()
+                    except sqlite3.Error:
+                        metrics['database_errors'] += 1
+                metrics['tables'] = ','.join(sorted(schemas)) or '-'
+                return metrics
+
+            title = sys.argv[3]
+            for name, root in (('archive', pathlib.Path(sys.argv[1]) / 'data'),
+                               ('restored', pathlib.Path(sys.argv[2]))):
+                metrics = summarize(root, title)
+                print('{} {}'.format(name, ' '.join(
+                    '{}={}'.format(key, value) for key, value in metrics.items())))
+          - "{{ _karakeep_restore_tmp.path }}"
           - "{{ _karakeep_restore_data_path }}"
           - "{{ karakeep_restore_diagnostic_canary_title | default('') }}"
       register: _karakeep_restore_sqlite_summary

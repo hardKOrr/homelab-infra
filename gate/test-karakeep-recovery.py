@@ -248,7 +248,14 @@ def restore_check(case, server):
         assert (result.returncode == 0) == success, result.stdout + result.stderr
 
         if case == "success":
-            assert "Recovered SQLite summary: sqlite_files=1 canary_bookmark_rows=1 canary_list_rows=1" in result.stdout, result.stdout
+            for fragment in [
+                "archive sqlite_files=1 bookmark_rows=1 list_rows=1 "
+                "canary_bookmark_rows=1 canary_list_rows=1",
+                "tables=bookmarkLists(name),bookmarks(title)",
+                "restored sqlite_files=1 bookmark_rows=1 list_rows=1 "
+                "canary_bookmark_rows=1 canary_list_rows=1",
+            ]:
+                assert fragment in result.stdout, result.stdout
             assert not (data / "original.sqlite").exists()
             assert (data / "restored.sqlite").read_text() == "recovered database and assets\n"
             assert not (search / "original-index").exists()
