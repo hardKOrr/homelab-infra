@@ -359,7 +359,7 @@
     label: "{{ item.path }}"
 
 - name: VM host mounts | Persist and mount virtiofs at the requested guest path
-  ansible.builtin.mount:
+  ansible.posix.mount:
     path: "{{ item.path }}"
     src: >-
       {{ _vmfs_directory_mappings

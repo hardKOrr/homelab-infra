@@ -4,8 +4,10 @@
 # truth: the gate bootstrap and a fresh clone both install from it via
 # `ansible-galaxy collection install -r ansible/requirements.yml`. Users get version bumps via
 # git pull when the repo re-verifies; they never resolve versions themselves.
-# Verified 2026-07-06: gate (lint + syntax-check) green on ansible-core 2.18.1 with these pins.
+# Verified 2026-10-13: gate (lint + syntax-check) green on ansible-core 2.18 with these pins.
 collections:
+  - name: ansible.posix
+    version: "2.2.2"
   - name: community.proxmox
     version: "2.0.0"
   - name: ansible.utils

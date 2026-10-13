@@ -12,6 +12,19 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 RESOLVER = REPO / "ansible/tasks/proxmox/resolve-guest-placement.yml"
+VM_HOST_MOUNTS = REPO / "ansible/tasks/proxmox/attach-host-mounts-vm.yml"
+BOOTSTRAP = REPO / "rundeck/bootstrap-rundeck.sh"
+
+
+def verify_virtiofs_mount_contract():
+    requirements = yaml.safe_load((REPO / "ansible/requirements.yml").read_text())
+    collections = {item["name"]: item["version"] for item in requirements["collections"]}
+    assert collections.get("ansible.posix") == "2.2.2"
+
+    task_source = VM_HOST_MOUNTS.read_text()
+    assert "ansible.posix.mount:" in task_source
+    assert "ansible.builtin.mount:" not in task_source
+    assert "ansible.posix" in BOOTSTRAP.read_text()
 
 
 def node(name, status="online"):
@@ -141,6 +154,7 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
 
 
 def main():
+    verify_virtiofs_mount_contract()
     run_case(
         "database pinned to storage role",
         "database_vm",
@@ -234,7 +248,7 @@ def main():
         cpu="host",
         expected_error="floating_vm_cpu_model | lower != 'host'",
     )
-    print("Guest placement: class storage, pinned node, ordered floating selection, GPU mapping and safety refusals")
+    print("Guest placement: class storage, pinned node, ordered floating selection, GPU mapping, virtiofs dependency and safety refusals")
 
 
 if __name__ == "__main__":
