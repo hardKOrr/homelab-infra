@@ -344,6 +344,7 @@
 
             def summarize(root, title):
                 databases = []
+                files = [path for path in root.rglob('*') if path.is_file()]
                 for path in root.rglob('*'):
                     if not path.is_file():
                         continue
@@ -353,7 +354,9 @@
                                 databases.append(path)
                     except OSError:
                         pass
-                metrics = {'sqlite_files': len(databases), 'bookmark_rows': 0,
+                metrics = {'files': len(files),
+                           'entries': ','.join(sorted(path.name for path in root.iterdir())) or '-',
+                           'sqlite_files': len(databases), 'bookmark_rows': 0,
                            'list_rows': 0, 'canary_bookmark_rows': 0,
                            'canary_list_rows': 0, 'database_errors': 0}
                 schemas = set()
@@ -389,7 +392,8 @@
                 return metrics
 
             title = sys.argv[3]
-            for name, root in (('archive', pathlib.Path(sys.argv[1]) / 'data'),
+            for name, root in (('archive_tree', pathlib.Path(sys.argv[1])),
+                               ('archive_data', pathlib.Path(sys.argv[1]) / 'data'),
                                ('restored', pathlib.Path(sys.argv[2]))):
                 metrics = summarize(root, title)
                 print('{} {}'.format(name, ' '.join(

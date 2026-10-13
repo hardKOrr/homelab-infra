@@ -249,10 +249,13 @@ def restore_check(case, server):
 
         if case == "success":
             for fragment in [
-                "archive sqlite_files=1 bookmark_rows=1 list_rows=1 "
-                "canary_bookmark_rows=1 canary_list_rows=1",
+                "archive_tree files=3 entries=data,meilisearch sqlite_files=1",
+                "archive_data files=2 entries=db.sqlite,restored.sqlite sqlite_files=1",
+                "archive_data files=2 entries=db.sqlite,restored.sqlite sqlite_files=1 "
+                "bookmark_rows=1 list_rows=1 canary_bookmark_rows=1 canary_list_rows=1",
                 "tables=bookmarkLists(name),bookmarks(title)",
-                "restored sqlite_files=1 bookmark_rows=1 list_rows=1 "
+                "restored files=2 entries=db.sqlite,restored.sqlite sqlite_files=1 "
+                "bookmark_rows=1 list_rows=1 "
                 "canary_bookmark_rows=1 canary_list_rows=1",
             ]:
                 assert fragment in result.stdout, result.stdout
