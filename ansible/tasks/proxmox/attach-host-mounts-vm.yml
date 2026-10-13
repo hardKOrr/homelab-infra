@@ -79,8 +79,8 @@
   ansible.builtin.set_fact:
     _vmfs_directory_mappings: >-
       {{ _vmfs_directory_mappings + [
-           {'id': 'd' ~ ((item ~ '|' ~ (_vmfs_compute_nodes | sort | join('|')))
-                         | hash('sha1') | regex_replace('^(.{12}).*$', '\\1')),
+           {'id': 'd' ~ (((item ~ '|' ~ (_vmfs_compute_nodes | sort | join('|')))
+                         | hash('sha1'))[:12]),
             'host': item}
          ] }}
   loop: "{{ _vmfs_host_paths }}"

@@ -2,6 +2,7 @@
 """Exercise the guest placement resolver with a local pvesh fixture."""
 
 import json
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -30,6 +31,10 @@ def verify_virtiofs_mount_contract():
     mapping_task = next(
         task for task in tasks
         if task.get("name") == "VM host mounts | Create only missing directory mappings"
+    )
+    mapping_id_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Build stable directory mapping IDs"
     )
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -76,6 +81,40 @@ def verify_virtiofs_mount_contract():
             "--map", "node=compute-3,path=/mnt/media",
             "--map", "node=compute-2,path=/mnt/media",
         ], "virtiofs directory mapping arguments were not passed separately"
+
+    expected_id = "d" + hashlib.sha1(b"/mnt/media|compute-2|compute-3").hexdigest()[:12]
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        playbook = root / "mapping-id.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": {
+                "_vmfs_directory_mappings": [],
+                "_vmfs_host_paths": ["/mnt/media"],
+                "_vmfs_compute_nodes": ["compute-3", "compute-2"],
+            },
+            "tasks": [mapping_id_task, {
+                "ansible.builtin.assert": {
+                    "that": [
+                        "_vmfs_directory_mappings | length == 1",
+                        f"_vmfs_directory_mappings[0].id == {json.dumps(expected_id)}",
+                        "_vmfs_directory_mappings[0].id is match('^d[0-9a-f]{12}$')",
+                    ]
+                }
+            }],
+        }]))
+        inventory = root / "inventory.ini"
+        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        result = subprocess.run(
+            [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+            env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"virtiofs mapping ID was invalid\n{output}"
 
 
 def node(name, status="online"):
