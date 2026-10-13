@@ -95,6 +95,86 @@
           config/apps/{{ instance }}.yml exists. If the instance was deployed under
           a different app name, pass it: -e app=<app>.
 
+    # Plane uses a named PostgreSQL database outside its Compose project. Resolve and
+    # validate that exact resource before unwiring anything; delete_data must never turn
+    # into dropping an unregistered backend or a database shared with another app.
+    - name: Resolve Plane's named database removal inputs
+      ansible.builtin.set_fact:
+        _rm_plane_database_config: "{{ app_config.app.database | default({}) }}"
+        _rm_plane_database_backend: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.database.instance | default(''), {}) }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'plane'
+        - delete_data | default(false) | bool
+
+    - name: Validate Plane's named database removal inputs
+      ansible.builtin.assert:
+        that:
+          - _rm_plane_database_config.provider | default('') == 'postgresql'
+          - _rm_plane_database_config.instance | default('') | length > 0
+          - _rm_plane_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_plane_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_plane_database_backend.provider | default('') == 'postgresql'
+          - _rm_plane_database_backend.host | default('') | length > 0
+          - _rm_plane_database_backend.port | default(0) | int > 0
+        fail_msg: >-
+          Refusing to remove Plane data because its named PostgreSQL database or backend
+          is not registered with safe identifiers.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'plane'
+        - delete_data | default(false) | bool
+
+    - name: Check Plane's database and role are not shared by another app
+      ansible.builtin.set_fact:
+        _rm_plane_shared_database_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_plane_database_backend.host)
+             | selectattr('value.database_name', 'defined')
+             | selectattr('value.database_name', 'equalto', _rm_plane_database_config.name)
+             | list }}
+        _rm_plane_shared_role_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_plane_database_backend.host)
+             | selectattr('value.database_user', 'defined')
+             | selectattr('value.database_user', 'equalto', _rm_plane_database_config.role)
+             | list }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'plane'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove a shared Plane database or role
+      ansible.builtin.assert:
+        that:
+          - _rm_plane_shared_database_consumers | length == 0
+          - _rm_plane_shared_role_consumers | length == 0
+        fail_msg: >-
+          Refusing to remove Plane's named database or role because another canonical app
+          item references it.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'plane'
+        - delete_data | default(false) | bool
+
+    - name: Add Plane's named database backend to the removal inventory
+      ansible.builtin.add_host:
+        name: plane_database_removal_target
+        ansible_host: "{{ _rm_plane_database_backend.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: plane_database_removal_targets
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'plane'
+        - delete_data | default(false) | bool
+
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
@@ -295,6 +375,12 @@
         homelabinfra_config: "{{ homelabinfra_config }}"
         remove_kind: "{{ _rm_kind }}"
         remove_app: "{{ app | default(instance) }}"
+        remove_database_config: "{{ _rm_plane_database_config | default({}) }}"
+        remove_database_backend: "{{ _rm_plane_database_backend | default({}) }}"
+        remove_database_backend_target: >-
+          {{ 'plane_database_removal_target'
+             if (app | default(instance)) == 'plane' and delete_data | default(false) | bool
+             else '' }}
       when: _rm_hosts | length > 0
       # Inventory bookkeeping, not a lab change — the same reason
       # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without
@@ -537,6 +623,104 @@
           when:
             - _rm_delete_data | bool
             - item | length > 0
+
+    # Plane's PostgreSQL database and login are application-owned even though the
+    # backend guest is not. Remove only that validated, unshared database and role after
+    # stopping Compose, so the next Deploy creates an empty database for a real drill.
+    - name: Remove Plane's named database and role
+      when:
+        - remove_kind == 'docker'
+        - remove_app == 'plane'
+        - _rm_delete_data | bool
+      block:
+        - name: Revalidate Plane's database target before deletion
+          ansible.builtin.assert:
+            that:
+              - remove_database_backend_target == 'plane_database_removal_target'
+              - remove_database_config.provider | default('') == 'postgresql'
+              - remove_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - remove_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - remove_database_backend.provider | default('') == 'postgresql'
+              - remove_database_backend.port | default(0) | int > 0
+            fail_msg: "Refusing to delete Plane data without its validated PostgreSQL target."
+          no_log: true
+
+        - name: Read the owner of Plane's named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ remove_database_backend.port }}"
+              - >-
+                --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
+                FROM pg_database WHERE datname = '{{ remove_database_config.name }}'), 'missing')
+          delegate_to: "{{ remove_database_backend_target }}"
+          become: true
+          become_user: postgres
+          register: _rm_plane_database_owner
+          changed_when: false
+          no_log: true
+
+        - name: Refuse to delete Plane's database with an unexpected owner
+          ansible.builtin.assert:
+            that:
+              - _rm_plane_database_owner.stdout | trim in ['missing', remove_database_config.role]
+            fail_msg: "Refusing to delete Plane's named database because its owner is unexpected."
+          no_log: true
+
+        - name: Drop Plane's named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ remove_database_backend.port }}"
+              - "--command=DROP DATABASE {{ remove_database_config.name }}"
+          delegate_to: "{{ remove_database_backend_target }}"
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_plane_database_owner.stdout | trim != 'missing'
+
+        - name: Read whether Plane's named PostgreSQL role exists
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ remove_database_backend.port }}"
+              - >-
+                --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = '{{ remove_database_config.role }}') THEN 'present' ELSE 'missing' END
+          delegate_to: "{{ remove_database_backend_target }}"
+          become: true
+          become_user: postgres
+          register: _rm_plane_database_role
+          changed_when: false
+          no_log: true
+
+        - name: Drop Plane's named PostgreSQL role
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ remove_database_backend.port }}"
+              - "--command=DROP ROLE {{ remove_database_config.role }}"
+          delegate_to: "{{ remove_database_backend_target }}"
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_plane_database_role.stdout | trim == 'present'
 
     # Home Assistant's USB coordinator is a dedicated VM mapping. Detach it only after
     # Compose has stopped and only when the USB seam can prove this platform created the
