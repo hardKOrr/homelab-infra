@@ -223,6 +223,102 @@ def main():
     remove_playbook = yaml.safe_load(
         (repo / "ansible/playbooks/apps/remove.yml").read_text()
     )
+    unwire_play = next(
+        play for play in remove_playbook if play["name"] == "Remove App | Unwire"
+    )
+    removal_identity = next(
+        task for task in unwire_play["tasks"]
+        if task.get("name") == "Resolve removal identity for the app host"
+    )
+    identity_facts = removal_identity["ansible.builtin.set_fact"]
+    assert identity_facts["_rm_app_name"] == "{{ app | default(instance) }}"
+    assert identity_facts["_rm_database_config"] == "{{ _rm_plane_database_config | default({}) }}"
+    assert identity_facts["_rm_database_backend"] == "{{ _rm_plane_database_backend | default({}) }}"
+    assert "plane_database_removal_target" in identity_facts["_rm_database_backend_target"]
+    add_host = next(
+        task for task in unwire_play["tasks"]
+        if task.get("name") == "Add the app host to the removal group"
+    )["ansible.builtin.add_host"]
+    assert add_host["remove_app"] == "{{ _rm_app_name }}"
+    assert add_host["remove_database_config"] == "{{ _rm_database_config }}"
+    assert add_host["remove_database_backend"] == "{{ _rm_database_backend }}"
+    assert add_host["remove_database_backend_target"] == "{{ _rm_database_backend_target }}"
+
+    # Exercise the exact values copied by add_host in another play. They must be plain
+    # values after crossing that boundary, so a Karakeep removal cannot inherit a
+    # stack-host app name and a Plane removal still gets its explicit DB target.
+    host_vars = {
+        key: add_host[key]
+        for key in (
+            "remove_app",
+            "remove_database_config",
+            "remove_database_backend",
+            "remove_database_backend_target",
+        )
+    }
+    removal_plays = []
+    for app_name, expected_target in (
+        ("karakeep", ""),
+        ("plane", "plane_database_removal_target"),
+    ):
+        expected_database_config = (
+            {"provider": "postgresql", "name": "drill_test", "role": "drill_test"}
+            if app_name == "plane" else {}
+        )
+        expected_database_backend = (
+            {"provider": "postgresql", "host": "127.0.0.1", "port": 5432}
+            if app_name == "plane" else {}
+        )
+        host = f"remove_test_{app_name}"
+        removal_plays.extend([
+            {
+                "name": "Resolve and register removal identity",
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {
+                    "instance": app_name,
+                    "app": app_name,
+                    "delete_data": True,
+                    "_rm_plane_database_config": expected_database_config,
+                    "_rm_plane_database_backend": expected_database_backend,
+                },
+                "tasks": [
+                    removal_identity,
+                    {"ansible.builtin.add_host": {
+                        "name": host,
+                        "groups": f"remove_test_{app_name}",
+                        **host_vars,
+                    }},
+                ],
+            },
+            {
+                "name": "Check identity on the removal host",
+                "hosts": f"remove_test_{app_name}",
+                "gather_facts": False,
+                "tasks": [{"ansible.builtin.assert": {"that": [
+                    f"remove_app == {json.dumps(app_name)}",
+                    f"remove_database_config == {json.dumps(expected_database_config)}",
+                    f"remove_database_backend == {json.dumps(expected_database_backend)}",
+                    f"remove_database_backend_target == {json.dumps(expected_target)}",
+                ]}}],
+            },
+        ])
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "remove-identity.yml"
+        path.write_text(yaml.safe_dump(removal_plays))
+        env = os.environ | {
+            "ANSIBLE_STDOUT_CALLBACK": "default",
+            "ANSIBLE_NOCOLOR": "1",
+        }
+        result = subprocess.run(
+            [str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
     compose_remove = next(
         task["block"]
         for task in remove_playbook[1]["tasks"]

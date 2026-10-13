@@ -363,6 +363,20 @@
           nothing to stop. Unwiring completed; {{ instance }} is fully removed.
       when: _rm_hosts | length == 0
 
+    # Freeze these scalars on localhost before add_host crosses into Play 2. Passing
+    # conditional Jinja expressions as host vars defers their evaluation until the
+    # remote host context, where `app` and `instance` can resolve to unrelated inventory
+    # values (and a delegate target can remain a literal template expression).
+    - name: Resolve removal identity for the app host
+      ansible.builtin.set_fact:
+        _rm_app_name: "{{ app | default(instance) }}"
+        _rm_database_config: "{{ _rm_plane_database_config | default({}) }}"
+        _rm_database_backend: "{{ _rm_plane_database_backend | default({}) }}"
+        _rm_database_backend_target: >-
+          {{ 'plane_database_removal_target'
+             if (app | default(instance)) == 'plane' and delete_data | default(false) | bool
+             else '' }}
+
     - name: Add the app host to the removal group
       ansible.builtin.add_host:
         name: "{{ _rm_hosts[0] }}"
@@ -374,13 +388,10 @@
         app_config: "{{ app_config }}"
         homelabinfra_config: "{{ homelabinfra_config }}"
         remove_kind: "{{ _rm_kind }}"
-        remove_app: "{{ app | default(instance) }}"
-        remove_database_config: "{{ _rm_plane_database_config | default({}) }}"
-        remove_database_backend: "{{ _rm_plane_database_backend | default({}) }}"
-        remove_database_backend_target: >-
-          {{ 'plane_database_removal_target'
-             if (app | default(instance)) == 'plane' and delete_data | default(false) | bool
-             else '' }}
+        remove_app: "{{ _rm_app_name }}"
+        remove_database_config: "{{ _rm_database_config }}"
+        remove_database_backend: "{{ _rm_database_backend }}"
+        remove_database_backend_target: "{{ _rm_database_backend_target }}"
       when: _rm_hosts | length > 0
       # Inventory bookkeeping, not a lab change — the same reason
       # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without
