@@ -171,7 +171,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix"]:
+        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "karakeep"]:
             defaults = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[f"{app}_defaults"]
             tasks.append({
                 "vars": {"recovery_app_config": defaults, "recovery_app": app,
@@ -181,7 +181,10 @@ def main():
                     {"ansible.builtin.assert": {"that": ["recovery_method_resolved == 'native'"]}},
                 ],
             })
-        for app in ["qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr", "deemix", "tautulli", "servarr"]:
+        for app in [
+            "qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr",
+            "deemix", "tautulli", "servarr", "karakeep",
+        ]:
             for operation in ["backup", "restore"]:
                 tasks.append({
                     "block": [{"ansible.builtin.include_role": {
@@ -204,7 +207,11 @@ def main():
         path.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False, "vars": {
                 "instance": "actual-budget", "homelabinfra_infra": {"backups": {}},
-                "app_config": {"backup": {"enabled": True, "application_consistent": True}},
+                "app_config": {
+                    "app": {"data_path": "/opt/test/data"},
+                    "backup": {"enabled": True, "application_consistent": True},
+                },
+                "karakeep_meilisearch_data_path": "/opt/test/meilisearch",
                 "restore_overwrite": False,
             }, "tasks": tasks,
         }]))
@@ -216,6 +223,98 @@ def main():
     remove_playbook = yaml.safe_load(
         (repo / "ansible/playbooks/apps/remove.yml").read_text()
     )
+    unwire_play = next(
+        play for play in remove_playbook if play["name"] == "Remove App | Unwire"
+    )
+    removal_identity = next(
+        task for task in unwire_play["tasks"]
+        if task.get("name") == "Resolve removal identity for the app host"
+    )
+    plane_db_inputs = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Resolve Plane's named database removal inputs"
+    )
+    identity_facts = removal_identity["ansible.builtin.set_fact"]
+    assert identity_facts["_rm_app_name"] == "{{ app | default(instance) }}"
+    add_host = next(
+        task for task in unwire_play["tasks"]
+        if task.get("name") == "Add the app host to the removal group"
+    )["ansible.builtin.add_host"]
+    assert not {"remove_app", "remove_database_config", "remove_database_backend",
+                "remove_database_backend_target"} & set(add_host)
+
+    # Exercise the exact values copied by add_host in another play. They must be plain
+    # values after crossing that boundary, so a Karakeep removal cannot inherit a
+    # stack-host app name and a Plane removal still gets its explicit DB target.
+    removal_plays = []
+    for app_name in ("karakeep", "plane"):
+        expected_database_config = (
+            {"provider": "postgresql", "instance": "dbtest",
+             "name": "drill_test", "role": "drill_test"}
+            if app_name == "plane" else {}
+        )
+        expected_database_backend = (
+            {"provider": "postgresql", "host": "127.0.0.1", "port": 5432}
+            if app_name == "plane" else {}
+        )
+        host = f"remove_test_{app_name}"
+        removal_plays.extend([
+            {
+                "name": "Resolve and register removal identity",
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {
+                    "instance": app_name,
+                    "app": app_name,
+                    "delete_data": True,
+                    "app_config": {"app": {"database": {
+                        "provider": "postgresql",
+                        "instance": "dbtest",
+                        "name": "drill_test",
+                        "role": "drill_test",
+                    }}},
+                    "homelabinfra_infra": {"databases": {"dbtest": {
+                        "provider": "postgresql",
+                        "host": "127.0.0.1",
+                        "port": 5432,
+                    }}},
+                },
+                "tasks": [
+                    plane_db_inputs,
+                    removal_identity,
+                    {"ansible.builtin.add_host": {
+                        "name": host,
+                        "groups": f"remove_test_group_{app_name}",
+                    }},
+                ],
+            },
+            {
+                "name": "Check identity on the removal host",
+                "hosts": f"remove_test_group_{app_name}",
+                "gather_facts": False,
+                "tasks": [{"ansible.builtin.assert": {"that": [
+                    f"hostvars['localhost']._rm_app_name == {json.dumps(app_name)}",
+                    f"hostvars['localhost']._rm_plane_database_config | default({{}}) == {json.dumps(expected_database_config)}",
+                    f"hostvars['localhost']._rm_plane_database_backend | default({{}}) == {json.dumps(expected_database_backend)}",
+                ]}}],
+            },
+        ])
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "remove-identity.yml"
+        path.write_text(yaml.safe_dump(removal_plays))
+        env = os.environ | {
+            "ANSIBLE_STDOUT_CALLBACK": "default",
+            "ANSIBLE_NOCOLOR": "1",
+        }
+        result = subprocess.run(
+            [str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
     compose_remove = next(
         task["block"]
         for task in remove_playbook[1]["tasks"]
@@ -232,7 +331,7 @@ def main():
         "homelab-infra-plane-{{ instance }}"
     )
     assert plane_schedule["ansible.builtin.cron"]["state"] == "absent"
-    assert plane_schedule["when"] == "remove_app == 'plane'"
+    assert plane_schedule["when"] == "hostvars['localhost']._rm_app_name == 'plane'"
 
     plane_config = next(
         task for task in compose_remove
@@ -242,13 +341,9 @@ def main():
         "/etc/homelab-infra/plane/{{ instance }}.env"
     )
     assert plane_config["ansible.builtin.file"]["state"] == "absent"
-    assert plane_config["when"] == "remove_app == 'plane'"
+    assert plane_config["when"] == "hostvars['localhost']._rm_app_name == 'plane'"
 
     remove_pretasks = remove_playbook[0]["pre_tasks"]
-    plane_db_inputs = next(
-        task for task in remove_pretasks
-        if task.get("name") == "Resolve Plane's named database removal inputs"
-    )
     assert plane_db_inputs["when"] == [
         "(app | default(instance)) == 'plane'",
         "delete_data | default(false) | bool",
@@ -268,27 +363,29 @@ def main():
     )
     assert plane_db_remove["when"] == [
         "remove_kind == 'docker'",
-        "remove_app == 'plane'",
+        "hostvars['localhost']._rm_app_name == 'plane'",
         "_rm_delete_data | bool",
     ]
     plane_db_tasks = plane_db_remove["block"]
     owner = next(task for task in plane_db_tasks
                  if task.get("name") == "Read the owner of Plane's named PostgreSQL database")
     assert "pg_get_userbyid" in owner["ansible.builtin.command"]["argv"][-1]
-    assert owner["delegate_to"] == "{{ remove_database_backend_target }}"
+    assert owner["delegate_to"] == "plane_database_removal_target"
     assert owner["no_log"] is True
     owner_guard = next(task for task in plane_db_tasks
                        if task.get("name") == "Refuse to delete Plane's database with an unexpected owner")
-    assert "remove_database_config.role" in owner_guard["ansible.builtin.assert"]["that"][0]
+    assert "hostvars['localhost']._rm_plane_database_config.role" in owner_guard[
+        "ansible.builtin.assert"
+    ]["that"][0]
     drop_database = next(task for task in plane_db_tasks
                          if task.get("name") == "Drop Plane's named PostgreSQL database")
-    assert "DROP DATABASE {{ remove_database_config.name }}" in drop_database[
+    assert "DROP DATABASE {{ hostvars['localhost']._rm_plane_database_config.name }}" in drop_database[
         "ansible.builtin.command"
     ]["argv"][-1]
     assert drop_database["no_log"] is True
     drop_role = next(task for task in plane_db_tasks
                      if task.get("name") == "Drop Plane's named PostgreSQL role")
-    assert "DROP ROLE {{ remove_database_config.role }}" in drop_role[
+    assert "DROP ROLE {{ hostvars['localhost']._rm_plane_database_config.role }}" in drop_role[
         "ansible.builtin.command"
     ]["argv"][-1]
     assert drop_role["no_log"] is True

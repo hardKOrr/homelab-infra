@@ -492,6 +492,7 @@ applications:
     category: Search & Discovery
     type: Bookmarks and Read Later
     scope: estate
+    actions: [backup, configure, remove, restart, restore, tail]
     # Karakeep is a multi-container Compose recovery unit; the generic one-image
     # rollback action cannot truthfully converge its web, Chrome, and Meilisearch images.
     exclude: [rollback]

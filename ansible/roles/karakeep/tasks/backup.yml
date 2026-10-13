@@ -1,0 +1,155 @@
+---
+# One quiesced archive contains Karakeep's SQLite/assets volume and Meilisearch index.
+
+- name: Karakeep backup | Assert the backup contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Karakeep needs its declared application-consistent backup contract and a configured
+      PBS before an on-demand backup can run.
+
+- name: Karakeep backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Karakeep backup | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Karakeep. Deploy PBS and re-run this backup; no local
+      archive is treated as a recovery point.
+
+- name: Karakeep backup | Resolve its persistent paths
+  ansible.builtin.set_fact:
+    _karakeep_backup_data_path: "{{ app_config.app.data_path }}"
+    _karakeep_backup_search_path: "{{ karakeep_meilisearch_data_path }}"
+
+- name: Karakeep backup | Assert the data paths do not overlap
+  ansible.builtin.assert:
+    that:
+      - _karakeep_backup_data_path is match('^/[^/].*')
+      - _karakeep_backup_data_path != '/'
+      - _karakeep_backup_search_path is match('^/[^/].*')
+      - _karakeep_backup_search_path != '/'
+      - _karakeep_backup_data_path != _karakeep_backup_search_path
+      - not _karakeep_backup_data_path.startswith(_karakeep_backup_search_path.rstrip('/') ~ '/')
+      - not _karakeep_backup_search_path.startswith(_karakeep_backup_data_path.rstrip('/') ~ '/')
+    fail_msg: >-
+      Karakeep's data and Meilisearch paths must be separate absolute directories; refusing
+      to archive an overlapping or root path.
+
+- name: Karakeep backup | Inspect persistent paths
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ _karakeep_backup_data_path }}"
+    - "{{ _karakeep_backup_search_path }}"
+  register: _karakeep_backup_paths
+  changed_when: false
+
+- name: Karakeep backup | Require existing persistent directories
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+      - not item.stat.islnk
+    fail_msg: >-
+      Karakeep persistent path {{ item.item }} is not an existing directory; refusing to
+      create a recovery point without all application state.
+  loop: "{{ _karakeep_backup_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Karakeep backup | Inspect the SQLite database
+  ansible.builtin.stat:
+    path: "{{ _karakeep_backup_data_path }}/db.db"
+  register: _karakeep_backup_sqlite_database
+  changed_when: false
+
+- name: Karakeep backup | Require a non-empty SQLite database before backup
+  ansible.builtin.assert:
+    that:
+      - _karakeep_backup_sqlite_database.stat.exists
+      - _karakeep_backup_sqlite_database.stat.isreg
+      - not _karakeep_backup_sqlite_database.stat.islnk
+      - _karakeep_backup_sqlite_database.stat.size | int > 0
+    fail_msg: >-
+      No non-empty Karakeep SQLite database exists in the configured data volume; refusing
+      to create an incomplete recovery point.
+
+- name: Karakeep backup | Stop only this instance's services
+  community.docker.docker_compose_v2:
+    project_src: "{{ karakeep_project_dir }}"
+    state: stopped
+    services: [web, chrome, meilisearch]
+
+- name: Karakeep backup | Archive the quiesced application state to PBS
+  block:
+    - name: Karakeep backup | Push one data archive and retain the newest points
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _karakeep_backup_data_path }}:/source/data:ro"
+          - --volume
+          - "{{ _karakeep_backup_search_path }}:/source/meilisearch:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - >-
+            PBS_APT_REPO={{ app_config.backup.client.repository }}
+            {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup data.pxar:/source --all-file-systems true \
+              --backup-id "$BACKUP_ID"
+            # Keep the two newest points, plus the configured daily retention window.
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
+            echo "backup complete: host/$BACKUP_ID (data.pxar)"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+      no_log: true
+      changed_when: true
+
+    - name: Karakeep backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: Karakeep backup | Start only this instance's services
+      community.docker.docker_compose_v2:
+        project_src: "{{ karakeep_project_dir }}"
+        state: present
+        services: [web, chrome, meilisearch]

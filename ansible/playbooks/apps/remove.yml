@@ -363,6 +363,13 @@
           nothing to stop. Unwiring completed; {{ instance }} is fully removed.
       when: _rm_hosts | length == 0
 
+    # Keep the app identity on localhost. Passing conditional Jinja expressions as
+    # add_host vars defers their evaluation until the remote host context, where `app`
+    # and `instance` can resolve to unrelated inventory values.
+    - name: Resolve removal identity for the app host
+      ansible.builtin.set_fact:
+        _rm_app_name: "{{ app | default(instance) }}"
+
     - name: Add the app host to the removal group
       ansible.builtin.add_host:
         name: "{{ _rm_hosts[0] }}"
@@ -374,13 +381,6 @@
         app_config: "{{ app_config }}"
         homelabinfra_config: "{{ homelabinfra_config }}"
         remove_kind: "{{ _rm_kind }}"
-        remove_app: "{{ app | default(instance) }}"
-        remove_database_config: "{{ _rm_plane_database_config | default({}) }}"
-        remove_database_backend: "{{ _rm_plane_database_backend | default({}) }}"
-        remove_database_backend_target: >-
-          {{ 'plane_database_removal_target'
-             if (app | default(instance)) == 'plane' and delete_data | default(false) | bool
-             else '' }}
       when: _rm_hosts | length > 0
       # Inventory bookkeeping, not a lab change — the same reason
       # tasks/stack/find-or-create-host.yml marks its add_host unchanged. Without
@@ -547,7 +547,7 @@
             - "{{ app_config.app.registration_config_path | default(_rm_project_dir ~ '/data/runner-config.yml') }}"
             - "{{ app_config.app.registration_marker_path | default(_rm_project_dir ~ '/data/.homelab-infra-registered') }}"
             - "{{ app_config.app.registration_env_path | default(_rm_project_dir ~ '/runner.env') }}"
-          when: remove_app == 'forgejo-runner'
+          when: hostvars['localhost']._rm_app_name == 'forgejo-runner'
 
         # BookStack's application-consistent backup timer and its root-only runtime
         # credential copy live outside /opt/<instance>. Remove both on every BookStack
@@ -558,13 +558,13 @@
             name: "homelab-infra BookStack backup {{ instance }}"
             cron_file: "homelab-infra-bookstack-{{ instance }}"
             state: absent
-          when: remove_app == 'bookstack'
+          when: hostvars['localhost']._rm_app_name == 'bookstack'
 
         - name: Remove BookStack recovery configuration
           ansible.builtin.file:
             path: "/etc/homelab-infra/bookstack/{{ instance }}.env"
             state: absent
-          when: remove_app == 'bookstack'
+          when: hostvars['localhost']._rm_app_name == 'bookstack'
 
         # WordPress's application-consistent backup timer and root-only runtime
         # credential copy live outside /opt/<instance>. Remove both on every WordPress
@@ -575,13 +575,13 @@
             name: "homelab-infra WordPress backup {{ instance }}"
             cron_file: "homelab-infra-wordpress-{{ instance }}"
             state: absent
-          when: remove_app == 'wordpress'
+          when: hostvars['localhost']._rm_app_name == 'wordpress'
 
         - name: Remove WordPress recovery configuration
           ansible.builtin.file:
             path: "/etc/homelab-infra/wordpress/{{ instance }}.env"
             state: absent
-          when: remove_app == 'wordpress'
+          when: hostvars['localhost']._rm_app_name == 'wordpress'
 
         # Plane's native backup timer and root-only configuration also live outside
         # /opt/<instance>. Remove the per-instance state while retaining its shared helper.
@@ -590,13 +590,13 @@
             name: "homelab-infra Plane backup {{ instance }}"
             cron_file: "homelab-infra-plane-{{ instance }}"
             state: absent
-          when: remove_app == 'plane'
+          when: hostvars['localhost']._rm_app_name == 'plane'
 
         - name: Remove Plane recovery configuration
           ansible.builtin.file:
             path: "/etc/homelab-infra/plane/{{ instance }}.env"
             state: absent
-          when: remove_app == 'plane'
+          when: hostvars['localhost']._rm_app_name == 'plane'
 
         - name: Delete the project directory
           ansible.builtin.file:
@@ -630,18 +630,18 @@
     - name: Remove Plane's named database and role
       when:
         - remove_kind == 'docker'
-        - remove_app == 'plane'
+        - hostvars['localhost']._rm_app_name == 'plane'
         - _rm_delete_data | bool
       block:
         - name: Revalidate Plane's database target before deletion
           ansible.builtin.assert:
             that:
-              - remove_database_backend_target == 'plane_database_removal_target'
-              - remove_database_config.provider | default('') == 'postgresql'
-              - remove_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
-              - remove_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
-              - remove_database_backend.provider | default('') == 'postgresql'
-              - remove_database_backend.port | default(0) | int > 0
+              - "'plane_database_removal_target' in groups['plane_database_removal_targets'] | default([])"
+              - hostvars['localhost']._rm_plane_database_config.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_plane_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_plane_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_plane_database_backend.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_plane_database_backend.port | default(0) | int > 0
             fail_msg: "Refusing to delete Plane data without its validated PostgreSQL target."
           no_log: true
 
@@ -653,11 +653,11 @@
               - --no-align
               - --username=postgres
               - --dbname=postgres
-              - "--port={{ remove_database_backend.port }}"
+              - "--port={{ hostvars['localhost']._rm_plane_database_backend.port }}"
               - >-
                 --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
-                FROM pg_database WHERE datname = '{{ remove_database_config.name }}'), 'missing')
-          delegate_to: "{{ remove_database_backend_target }}"
+                FROM pg_database WHERE datname = '{{ hostvars['localhost']._rm_plane_database_config.name }}'), 'missing')
+          delegate_to: plane_database_removal_target
           become: true
           become_user: postgres
           register: _rm_plane_database_owner
@@ -667,7 +667,7 @@
         - name: Refuse to delete Plane's database with an unexpected owner
           ansible.builtin.assert:
             that:
-              - _rm_plane_database_owner.stdout | trim in ['missing', remove_database_config.role]
+              - _rm_plane_database_owner.stdout | trim in ['missing', hostvars['localhost']._rm_plane_database_config.role]
             fail_msg: "Refusing to delete Plane's named database because its owner is unexpected."
           no_log: true
 
@@ -678,9 +678,9 @@
               - --set=ON_ERROR_STOP=1
               - --username=postgres
               - --dbname=postgres
-              - "--port={{ remove_database_backend.port }}"
-              - "--command=DROP DATABASE {{ remove_database_config.name }}"
-          delegate_to: "{{ remove_database_backend_target }}"
+              - "--port={{ hostvars['localhost']._rm_plane_database_backend.port }}"
+              - "--command=DROP DATABASE {{ hostvars['localhost']._rm_plane_database_config.name }}"
+          delegate_to: plane_database_removal_target
           become: true
           become_user: postgres
           changed_when: true
@@ -695,11 +695,11 @@
               - --no-align
               - --username=postgres
               - --dbname=postgres
-              - "--port={{ remove_database_backend.port }}"
+              - "--port={{ hostvars['localhost']._rm_plane_database_backend.port }}"
               - >-
                 --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles
-                WHERE rolname = '{{ remove_database_config.role }}') THEN 'present' ELSE 'missing' END
-          delegate_to: "{{ remove_database_backend_target }}"
+                WHERE rolname = '{{ hostvars['localhost']._rm_plane_database_config.role }}') THEN 'present' ELSE 'missing' END
+          delegate_to: plane_database_removal_target
           become: true
           become_user: postgres
           register: _rm_plane_database_role
@@ -713,9 +713,9 @@
               - --set=ON_ERROR_STOP=1
               - --username=postgres
               - --dbname=postgres
-              - "--port={{ remove_database_backend.port }}"
-              - "--command=DROP ROLE {{ remove_database_config.role }}"
-          delegate_to: "{{ remove_database_backend_target }}"
+              - "--port={{ hostvars['localhost']._rm_plane_database_backend.port }}"
+              - "--command=DROP ROLE {{ hostvars['localhost']._rm_plane_database_config.role }}"
+          delegate_to: plane_database_removal_target
           become: true
           become_user: postgres
           changed_when: true
@@ -733,7 +733,7 @@
           mapping: "{{ app_config.app.usb_mapping | default('', true) }}"
       when:
         - remove_kind == 'docker'
-        - (remove_app | default(instance)) == 'home-assistant'
+        - hostvars['localhost']._rm_app_name == 'home-assistant'
         - app_config.app.usb_mapping | default('', true) | length > 0
 
     # ComfyUI's GPU is a dedicated PCI assignment. Detach it only after the Compose
@@ -747,7 +747,7 @@
           id: "{{ app_config.app.pci_device }}"
       when:
         - remove_kind == 'docker'
-        - (remove_app | default(instance)) == 'comfyui'
+        - hostvars['localhost']._rm_app_name == 'comfyui'
         - app_config.app.pci_device | default('') | length > 0
 
     # Ollama's GPU is a dedicated PCI assignment. Detach it only after the Compose
@@ -761,7 +761,7 @@
           id: "{{ app_config.app.pci_device }}"
       when:
         - remove_kind == 'docker'
-        - (remove_app | default(instance)) == 'ollama'
+        - hostvars['localhost']._rm_app_name == 'ollama'
         - app_config.app.pci_device | default('') | length > 0
 
     # A shared render-node bind is detached only after its Compose services stop.

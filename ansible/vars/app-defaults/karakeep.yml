@@ -5,6 +5,12 @@
 karakeep_defaults:
   stack: services
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     image: ghcr.io/karakeep-app/karakeep:0.33.2
     chrome_image: ghcr.io/karakeep-app/karakeep-chrome:release
@@ -28,9 +34,25 @@ karakeep_defaults:
     # catalog tile but does not become an authentication dependency for the app.
     identity: catalog
 
-  # Docker applications are covered by the services stack host's PBS guest backup.
-  # The Compose project, Karakeep data path, and Meilisearch path below /opt/<instance>
-  # are one recovery unit; restore the stack guest before starting the project again.
+  # Link previews may fetch ordinary HTTP URLs as well as HTTPS ones.
+  firewall:
+    egress:
+      - name: bookmark-fetch-http
+        protocol: TCP
+        port: 80
+
+  # Backup App stops this instance's three Compose services and archives the SQLite
+  # database, assets and Meilisearch index together as one application-consistent point.
   backup:
     enabled: true
+    application_consistent: true
     schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
