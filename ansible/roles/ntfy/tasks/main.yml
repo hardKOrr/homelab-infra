@@ -246,9 +246,7 @@
   ansible.builtin.command:
     cmd: "ntfy token add --label {{ ntfy_token_label }} {{ _ntfy_user }}"
   register: _ntfy_token_add
-  when:
-    - homelabinfra_infra.notifications.token | default('') | length == 0
-    - _ntfy_existing_token | length == 0
+  when: _ntfy_existing_token | length == 0
   changed_when: true
   no_log: true
 
@@ -257,14 +255,13 @@
     # Conditional chain rather than chained `| default(..., true)`: a regex_search
     # that matches nothing returns None, which would propagate through default()
     # and make the assert below fail on `None | length` instead of on an empty
-    # string. The explicit `''` fallback keeps the failure legible.
+    # string. The guest's labeled token is authoritative: a previously recorded
+    # token may refer to an earlier disposable guest, so only use a token that
+    # `ntfy token list` found on this guest. If none exists, use the one just minted.
     _ntfy_token: >-
-      {{ _ntfy_recorded if _ntfy_recorded | length > 0
-         else (_ntfy_existing_token if _ntfy_existing_token | length > 0
-               else (_ntfy_token_add.stdout | default('')
-                     | regex_search('tk_[A-Za-z0-9]+') | default('', true))) }}
-  vars:
-    _ntfy_recorded: "{{ homelabinfra_infra.notifications.token | default('') }}"
+      {{ _ntfy_existing_token if _ntfy_existing_token | length > 0
+         else (_ntfy_token_add.stdout | default('')
+               | regex_search('tk_[A-Za-z0-9]+') | default('', true)) }}
   no_log: true
 
 - name: Assert a publish token is available
