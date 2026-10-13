@@ -190,11 +190,12 @@
 - name: VM host mounts | Resolve existing and missing device slots
   ansible.builtin.set_fact:
     _vmfs_existing_device_ids: >-
-      {{ _vmfs_device_lines
-         | map('regex_replace', '^virtiofs[0-9]+:\\s*(?:dirid=)?([^,]+).*$', '\\1') | list }}
+      {{ _vmfs_device_lines | map('split', ':') | map('last') | map('trim')
+         | map('split', ',') | map('first')
+         | map('regex_replace', '^dirid=', '') | list }}
     _vmfs_used_device_indexes: >-
-      {{ _vmfs_device_lines
-         | map('regex_replace', '^virtiofs([0-9]+):.*$', '\\1') | map('int') | list }}
+      {{ _vmfs_device_lines | map('split', ':') | map('first')
+         | map('regex_replace', '^virtiofs', '') | map('int') | list }}
   vars:
     _vmfs_device_lines: >-
       {{ _vmfs_guest_config.stdout_lines | select('match', '^virtiofs[0-9]+:') | list }}

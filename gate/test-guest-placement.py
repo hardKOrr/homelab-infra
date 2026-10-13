@@ -40,6 +40,14 @@ def verify_virtiofs_mount_contract():
         task for task in tasks
         if task.get("name") == "VM host mounts | Refuse an existing mapping with a different compute path"
     )
+    device_scan_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Resolve existing and missing device slots"
+    )
+    device_assign_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Assign free virtiofs device slots"
+    )
     task_names = [task.get("name") for task in tasks]
     ssh_wait = next(
         task for task in tasks
@@ -177,6 +185,41 @@ def verify_virtiofs_mount_contract():
     assert "different or incomplete compute-node paths" in normalized_output, (
         "conflicting virtiofs path did not report the expected refusal\n" + output
     )
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        playbook = root / "device-slots.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": {
+                "_vmfs_guest_config": {"stdout_lines": [
+                    "virtiofs0: dirid=d123,cache=auto",
+                    "virtiofs4: d456,cache=auto",
+                ]},
+                "_vmfs_directory_mappings": [{"id": "d123", "host": "/mnt/media"}],
+            },
+            "tasks": [device_scan_task, device_assign_task, {
+                "ansible.builtin.assert": {
+                    "that": [
+                        "_vmfs_existing_device_ids == ['d123', 'd456']",
+                        "_vmfs_used_device_indexes == [0, 4]",
+                        "_vmfs_missing_devices | length == 0",
+                    ]
+                }
+            }],
+        }]))
+        inventory = root / "inventory.ini"
+        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        result = subprocess.run(
+            [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+            env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"existing virtiofs device was not recognized\n{output}"
 
 
 def node(name, status="online"):
