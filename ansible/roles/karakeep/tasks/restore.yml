@@ -202,7 +202,6 @@
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
         PBS_PASSWORD: "{{ k8s_pbs_password }}"
         SNAPSHOT: "{{ restore_snapshot }}"
-      register: _karakeep_restore_extract_result
       no_log: true
       changed_when: true
 
@@ -334,89 +333,6 @@
       delay: 5
       changed_when: false
 
-    - name: Karakeep restore | Summarize recovered SQLite canaries when requested
-      ansible.builtin.command:
-        argv:
-          - python3
-          - -c
-          - |
-            import pathlib, sqlite3, sys
-
-            def summarize(root, title):
-                databases = []
-                files = [path for path in root.rglob('*') if path.is_file()]
-                for path in root.rglob('*'):
-                    if not path.is_file():
-                        continue
-                    try:
-                        with path.open('rb') as stream:
-                            if stream.read(16) == b'SQLite format 3\x00':
-                                databases.append(path)
-                    except OSError:
-                        pass
-                metrics = {'files': len(files),
-                           'entries': ','.join(sorted(path.name for path in root.iterdir())) or '-',
-                           'sqlite_files': len(databases), 'bookmark_rows': 0,
-                           'list_rows': 0, 'canary_bookmark_rows': 0,
-                           'canary_list_rows': 0, 'database_errors': 0}
-                schemas = set()
-                for path in databases:
-                    try:
-                        connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
-                        tables = [row[0] for row in connection.execute(
-                            "SELECT name FROM sqlite_master WHERE type='table'")]
-                        for table in tables:
-                            lower = table.lower()
-                            if not any(part in lower for part in ('bookmark', 'list', 'user', 'apikey')):
-                                continue
-                            identifier = '"' + table.replace('"', '""') + '"'
-                            columns = {row[1] for row in connection.execute(
-                                'PRAGMA table_info(' + identifier + ')')}
-                            schemas.add('{}({})'.format(table, ','.join(sorted(columns))))
-                            rows = connection.execute('SELECT COUNT(*) FROM ' + identifier).fetchone()[0]
-                            if lower == 'bookmarks':
-                                metrics['bookmark_rows'] += rows
-                                if 'title' in columns:
-                                    metrics['canary_bookmark_rows'] += connection.execute(
-                                        'SELECT COUNT(*) FROM ' + identifier + ' WHERE title=?',
-                                        (title,)).fetchone()[0]
-                            if lower == 'bookmarklists' and 'name' in columns:
-                                metrics['list_rows'] += rows
-                                metrics['canary_list_rows'] += connection.execute(
-                                    'SELECT COUNT(*) FROM ' + identifier + ' WHERE name=?',
-                                    (title,)).fetchone()[0]
-                        connection.close()
-                    except sqlite3.Error:
-                        metrics['database_errors'] += 1
-                metrics['tables'] = ','.join(sorted(schemas)) or '-'
-                return metrics
-
-            title = sys.argv[3]
-            for name, root in (('archive_tree', pathlib.Path(sys.argv[1])),
-                               ('archive_data', pathlib.Path(sys.argv[1]) / 'data'),
-                               ('restored', pathlib.Path(sys.argv[2]))):
-                metrics = summarize(root, title)
-                print('{} {}'.format(name, ' '.join(
-                    '{}={}'.format(key, value) for key, value in metrics.items())))
-          - "{{ _karakeep_restore_tmp.path }}"
-          - "{{ _karakeep_restore_data_path }}"
-          - "{{ karakeep_restore_diagnostic_canary_title | default('') }}"
-      register: _karakeep_restore_sqlite_summary
-      changed_when: false
-      when:
-        - karakeep_restore_diagnostics | default(false) | bool
-        - karakeep_restore_diagnostic_canary_title | default('') | length > 0
-
-    - name: Karakeep restore | Report recovered SQLite canaries when requested
-      ansible.builtin.assert:
-        that: _karakeep_restore_sqlite_summary.rc == 0
-        success_msg: >-
-          Recovered SQLite summary: {{ _karakeep_restore_sqlite_summary.stdout }}
-        fail_msg: "Could not inspect the recovered Karakeep SQLite database."
-      when:
-        - karakeep_restore_diagnostics | default(false) | bool
-        - karakeep_restore_diagnostic_canary_title | default('') | length > 0
-
     - name: Karakeep restore | Mark the recovery complete
       ansible.builtin.set_fact:
         _application_restore_complete: true
@@ -470,20 +386,6 @@
           Karakeep restore failed. Both original data directories were retained or put
           back; services remain stopped if replacement had started. Inspect the job output
           and retry after correcting the failure.
-          {% if karakeep_restore_diagnostics | default(false) | bool
-                and _karakeep_restore_extract_result is defined %}
-          PBS extraction diagnostics (redacted): exit={{ _karakeep_restore_extract_result.rc | default('unknown') }};
-          stdout={{ _karakeep_restore_extract_result.stdout | default('')
-                    | replace(k8s_pbs_repository | default('__missing_repository__'), '<PBS_REPOSITORY>')
-                    | replace(restore_snapshot | default('__missing_snapshot__'), '<PBS_SNAPSHOT>')
-                    | replace(k8s_pbs_password | default('__missing_password__'), '<PBS_PASSWORD>')
-                    | replace(k8s_pbs_fingerprint | default('__missing_fingerprint__'), '<PBS_FINGERPRINT>') }};
-          stderr={{ _karakeep_restore_extract_result.stderr | default('')
-                    | replace(k8s_pbs_repository | default('__missing_repository__'), '<PBS_REPOSITORY>')
-                    | replace(restore_snapshot | default('__missing_snapshot__'), '<PBS_SNAPSHOT>')
-                    | replace(k8s_pbs_password | default('__missing_password__'), '<PBS_PASSWORD>')
-                    | replace(k8s_pbs_fingerprint | default('__missing_fingerprint__'), '<PBS_FINGERPRINT>') }}
-          {% endif %}
   always:
     - name: Karakeep restore | Remove data rollback space when safe
       ansible.builtin.file:

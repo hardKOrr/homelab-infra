@@ -92,7 +92,7 @@ def make_stubs(root):
     (root / "bin").mkdir()
     scripts = {
         "docker": r'''#!/usr/bin/env python3
-import os,sqlite3,sys
+import os,sys
 from pathlib import Path
 args=sys.argv[1:]
 case=os.environ['KARAKEEP_TEST_CASE']
@@ -123,14 +123,6 @@ stage=Path(mount[:-9])
 assert stage.parent == Path(os.environ['KARAKEEP_TEST_ROOT']), stage
 (stage/'data').mkdir()
 (stage/'data'/'restored.sqlite').write_text('recovered database and assets\n')
-if case!='incomplete-archive':
-    connection=sqlite3.connect(stage/'data'/'db.sqlite')
-    connection.execute('CREATE TABLE bookmarks (title TEXT)')
-    connection.execute('INSERT INTO bookmarks VALUES (?)', ('karakeep-gate-canary',))
-    connection.execute('CREATE TABLE bookmarkLists (name TEXT)')
-    connection.execute('INSERT INTO bookmarkLists VALUES (?)', ('karakeep-gate-canary',))
-    connection.commit()
-    connection.close()
 if case!='incomplete-archive':
     (stage/'meilisearch').mkdir()
     (stage/'meilisearch'/'restored-index').write_text('recovered search index\n')
@@ -247,24 +239,11 @@ def restore_check(case, server):
                                       "component": "test"}},
             },
         }
-        variables["karakeep_restore_diagnostics"] = case in ["extract-failure", "success"]
-        variables["karakeep_restore_diagnostic_canary_title"] = "karakeep-gate-canary"
         result = run_play(root, restore_source, variables, case)
         success = case in ["plan", "success"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
 
         if case == "success":
-            for fragment in [
-                "archive_tree files=3 entries=data,meilisearch sqlite_files=1",
-                "archive_data files=2 entries=db.sqlite,restored.sqlite sqlite_files=1",
-                "archive_data files=2 entries=db.sqlite,restored.sqlite sqlite_files=1 "
-                "bookmark_rows=1 list_rows=1 canary_bookmark_rows=1 canary_list_rows=1",
-                "tables=bookmarkLists(name),bookmarks(title)",
-                "restored files=2 entries=db.sqlite,restored.sqlite sqlite_files=1 "
-                "bookmark_rows=1 list_rows=1 "
-                "canary_bookmark_rows=1 canary_list_rows=1",
-            ]:
-                assert fragment in result.stdout, result.stdout
             assert not (data / "original.sqlite").exists()
             assert (data / "restored.sqlite").read_text() == "recovered database and assets\n"
             assert not (search / "original-index").exists()
@@ -289,9 +268,6 @@ def restore_check(case, server):
             for secret in ["pbs-user@pbs.example.invalid:archive", "pbs-fingerprint-secret",
                            "pbs-password-secret", snapshot]:
                 assert secret not in result.stdout, result.stdout
-            for marker in ["<PBS_REPOSITORY>", "<PBS_FINGERPRINT>",
-                           "<PBS_PASSWORD>", "<PBS_SNAPSHOT>"]:
-                assert marker in result.stdout, result.stdout
 
 
 def main():
