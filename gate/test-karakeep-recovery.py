@@ -106,7 +106,8 @@ if 'proxmox-backup-client backup' in script:
     assert volumes == [str(root/'data')+':/source/data:ro',
                        str(root/'meilisearch')+':/source/meilisearch:ro'], volumes
     assert script.count('proxmox-backup-client backup ') == 1, script
-    assert 'proxmox-backup-client backup data.pxar:/source --backup-id' in script, script
+    assert 'proxmox-backup-client backup data.pxar:/source --all-file-systems true' in script, script
+    assert '--backup-id' in script, script
     assert 'proxmox-backup-client prune "host/' in script and '--keep-last 2' in script, script
     raise SystemExit(7 if case=='backup-failure' else 0)
 if 'SNAPSHOT' not in os.environ:
@@ -193,6 +194,8 @@ def backup_check(case):
         data.mkdir()
         search.mkdir()
         (data / "original.sqlite").write_text("original app state\n")
+        if case != "backup-missing-database":
+            (data / "db.db").write_text("SQLite database\n")
         (search / "original-index").write_text("original index\n")
         variables = {
             "instance": "karakeep", "karakeep_project_dir": str(root / "project"),
@@ -210,8 +213,11 @@ def backup_check(case):
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         assert (data / "original.sqlite").read_text() == "original app state\n"
         assert (search / "original-index").read_text() == "original index\n"
-        states = (root / "services").read_text().splitlines()
-        assert states == ["stopped", "present"], states
+        if case == "backup-missing-database":
+            assert not (root / "services").exists(), "missing database stopped the app"
+        else:
+            states = (root / "services").read_text().splitlines()
+            assert states == ["stopped", "present"], states
 
 
 def restore_check(case, server):
@@ -303,6 +309,10 @@ def main():
                        if task.get("name") == "Karakeep backup | Push one data archive and retain the newest points")
     assert backup_task["environment"] and backup_task["changed_when"] is True
     assert backup_task["no_log"] is True
+    assert "--all-file-systems true" in backup_task["ansible.builtin.command"]["argv"][-1]
+    backup_guard = next(task for task in all_tasks(backup_source)
+                        if task.get("name") == "Karakeep backup | Require a non-empty SQLite database before backup")
+    assert backup_guard["ansible.builtin.assert"]["that"]
     deploy = yaml.safe_load((repo / "ansible/playbooks/apps/karakeep.yml").read_text())
     firewall_play = next(play for play in deploy if play.get("name") == "Karakeep | Open network access")
     assert any("open-app-access.yml" in task.get("ansible.builtin.include_tasks", "")
@@ -312,7 +322,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["backup-success", "backup-failure"]:
+        for case in ["backup-success", "backup-failure", "backup-missing-database"]:
             backup_check(case)
         for case in ["plan", "foreign-group", "extract-failure", "incomplete-archive",
                      "second-move-failure", "data-copy-failure", "search-copy-failure",

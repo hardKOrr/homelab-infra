@@ -64,6 +64,23 @@
   loop_control:
     label: "{{ item.item }}"
 
+- name: Karakeep backup | Inspect the SQLite database
+  ansible.builtin.stat:
+    path: "{{ _karakeep_backup_data_path }}/db.db"
+  register: _karakeep_backup_sqlite_database
+  changed_when: false
+
+- name: Karakeep backup | Require a non-empty SQLite database before backup
+  ansible.builtin.assert:
+    that:
+      - _karakeep_backup_sqlite_database.stat.exists
+      - _karakeep_backup_sqlite_database.stat.isreg
+      - not _karakeep_backup_sqlite_database.stat.islnk
+      - _karakeep_backup_sqlite_database.stat.size | int > 0
+    fail_msg: >-
+      No non-empty Karakeep SQLite database exists in the configured data volume; refusing
+      to create an incomplete recovery point.
+
 - name: Karakeep backup | Stop only this instance's services
   community.docker.docker_compose_v2:
     project_src: "{{ karakeep_project_dir }}"
@@ -113,7 +130,8 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
+            proxmox-backup-client backup data.pxar:/source --all-file-systems true \
+              --backup-id "$BACKUP_ID"
             # Keep the two newest points, plus the configured daily retention window.
             proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
             echo "backup complete: host/$BACKUP_ID (data.pxar)"
