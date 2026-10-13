@@ -50,6 +50,7 @@ templates.
 - `test-deemix-restore.py`: read-only preview, group guard and rollback after extraction, move, copy, ownership, start or health failures.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available to the Docker dispatch play.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
+- `test-guest-placement.py`: database pinning, ordered floating node selection, class storage and placement refusal paths.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
 - `test-orphan-stack-tag.py`: the orphan stack tag repair's plan, execute, repeat and refusal cases.
 - `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.

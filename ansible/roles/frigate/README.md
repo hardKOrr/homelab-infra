@@ -1,6 +1,6 @@
 # Frigate recovery contract
 
-Frigate runs in the dedicated stack-frigate Docker-on-LXC guest. The guest PBS snapshot
+Frigate runs in the dedicated stack-frigate Docker-on-VM guest. The guest PBS snapshot
 covers the Compose project, /opt/<instance>/config, and the generated Frigate config.
 The web host port is `app.port`; RTSP and WebRTC host ports derive from it (+1 and +2)
 unless `rtsp_port` and `webrtc_port` are explicitly set. Give a second instance a distinct
@@ -14,14 +14,13 @@ The role does not discover cameras, Coral devices, or GPUs.
 
 ## Recovery
 
-1. Restore the named stack-frigate LXC from its PBS snapshot, or create it again with the
+1. Restore the named stack-frigate VM from its PBS snapshot, or create it again with the
    same instance config.
 2. Restore the recording-storage snapshot to the declared host path and verify free space
    still satisfies minimum_free_gb and the path is mounted into the guest as recordings_path.
-3. Reconnect the Coral to the same mapped USB port. Re-run the Frigate deploy; the LXC USB
-   seam resolves the mapping to the current `/dev/bus/usb/<bus>/<device>` node and forwards
-   only that node to Compose without adopting another device.
-4. Re-run the deploy to verify the version endpoint, camera config, shared render node and
+3. Reconnect the Coral to the same mapped USB port. Re-run the Frigate deploy; the VM USB
+   mapping attaches it to the dedicated VM before Docker receives that VM's USB bus.
+4. Re-run the deploy to verify the version endpoint, camera config, passed-through render node and
    recording path converge. If a device must be removed, run Remove App first while the Coral
    is connected; it detaches only bindings carrying this platform's provenance tag. If the
    Coral is disconnected, Remove App leaves the exact bind for a reconnect-and-retry rather

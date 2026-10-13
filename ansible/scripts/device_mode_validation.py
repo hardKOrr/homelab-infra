@@ -1,5 +1,7 @@
 """Validation shared by config-doctor and the device passthrough contract gate."""
 
+import re
+
 DEVICE_KINDS = {"igpu", "gpu", "usb", "other"}
 DEVICE_MODES = {"shared", "dedicated"}
 
@@ -52,6 +54,22 @@ def validate_device_modes(proxmox, report):
         if kind not in DEVICE_KINDS:
             report("%s.kind" % key,
                    "%r is not recognised -- one of igpu | gpu | usb | other" % kind)
+
+        if mode == "dedicated" and kind in {"igpu", "gpu"}:
+            device_node = declaration.get("node")
+            if not isinstance(device_node, str) or not device_node.strip():
+                report("%s.node" % key,
+                       "a dedicated GPU declaration must name the node that owns the PCI device")
+            pci_ids = [identifier for identifier in identifiers or []
+                       if isinstance(identifier, str)
+                       and re.fullmatch(r"[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]", identifier)]
+            if len(pci_ids) != 1:
+                report("%s.identifiers" % key,
+                       "a dedicated GPU declaration must include exactly one PCI identifier")
+            mapping_id = declaration.get("pci_mapping", name)
+            if not isinstance(mapping_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", mapping_id):
+                report("%s.pci_mapping" % key,
+                       "must be a valid Proxmox PCI resource mapping ID")
 
         node = declaration.get("node", target_node)
         if node in (None, ""):

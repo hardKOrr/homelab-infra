@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""Exercise the guest placement resolver with a local pvesh fixture."""
+
+import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parents[1]
+ANSIBLE = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
+RESOLVER = REPO / "ansible/tasks/proxmox/resolve-guest-placement.yml"
+
+
+def node(name, status="online"):
+    return {"type": "node", "node": name, "status": status}
+
+
+def config(compute=None, cpu="x86-64-v2-AES", devices=None):
+    compute = compute or ["compute-3", "compute-2"]
+    proxmox = {
+        "node": "localhost",
+        "node_roles": {"storage": "storage-1", "compute": compute},
+        "storage_ids": {
+            "database_vm": "local-mirror",
+            "floating_vm": "iscsi-shared",
+            "floating_lxc": "nfs-shared",
+        },
+        "floating_vm_cpu_model": cpu,
+    }
+    if devices is not None:
+        proxmox["devices"] = devices
+    return {"proxmox": proxmox}
+
+
+def run_case(name, placement_class, resources, expected=None, preferred=None,
+             cpu="x86-64-v2-AES", expected_error=None, devices=None,
+             pci_mapping=None, device=None):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        stub = root / "pvesh"
+        stub.write_text(
+            f"#!{ANSIBLE.parent / 'python'}\n"
+            "import os, sys\n"
+            "if any(arg.startswith('/cluster/mapping/pci/') for arg in sys.argv):\n"
+            "    print(os.environ['GUEST_PLACEMENT_PCI_MAPPING'])\n"
+            "else:\n"
+            "    print(os.environ['GUEST_PLACEMENT_RESOURCES'])\n"
+        )
+        stub.chmod(0o755)
+
+        resolver_vars = {"guest_placement_class": placement_class}
+        if preferred is not None:
+            resolver_vars["guest_placement_preferred_node"] = preferred
+        if device is not None:
+            resolver_vars["guest_placement_device"] = device
+        tasks = [
+            {"ansible.builtin.include_tasks": str(RESOLVER), "vars": resolver_vars}
+        ]
+        if expected_error:
+            tasks.append({
+                "ansible.builtin.fail": {"msg": "Expected placement rejection was not raised"}
+            })
+        else:
+            placement = expected
+            assertions = [
+                f"_guest_placement.node == {json.dumps(placement['node'])}",
+                f"_guest_placement.storage == {json.dumps(placement['storage'])}",
+                f"_guest_placement.guest_type == {json.dumps(placement['guest_type'])}",
+                f"homelabinfra_config.proxmox.node == {json.dumps(placement['node'])}",
+            ]
+            for key in ("device", "pci_mapping", "pci_id"):
+                if key in placement:
+                    assertions.append(
+                        f"_guest_placement.{key} == {json.dumps(placement[key])}"
+                    )
+            if placement["guest_type"] == "qemu":
+                assertions.append(
+                    f"homelabinfra_config.proxmox.vm.storage == {json.dumps(placement['storage'])}"
+                )
+                if placement["cpu_model"]:
+                    assertions.append(
+                        "homelabinfra_config.proxmox.vm.cpu == "
+                        f"{json.dumps(placement['cpu_model'])}"
+                    )
+            else:
+                assertions.append(
+                    "homelabinfra_config.proxmox.lxc.disk_volume.storage == "
+                    f"{json.dumps(placement['storage'])}"
+                )
+            tasks.append({
+                "ansible.builtin.assert": {
+                    "that": assertions + [
+                        f"_guest_placement.cpu_model == {json.dumps(placement['cpu_model'])}"
+                    ]
+                }
+            })
+        if expected_error:
+            tasks = [{
+                "block": tasks,
+                "rescue": [{
+                    "ansible.builtin.assert": {
+                        "that": [
+                            f"ansible_failed_result.msg is search({json.dumps(expected_error)})"
+                        ]
+                    }
+                }],
+            }]
+
+        playbook = root / "placement.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": {"homelabinfra_config": config(cpu=cpu, devices=devices)},
+            "environment": {"PATH": str(root) + os.pathsep + os.environ["PATH"]},
+            "tasks": tasks,
+        }]))
+        inventory = root / "inventory.ini"
+        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        env = os.environ | {
+            "ANSIBLE_STDOUT_CALLBACK": "default",
+            "ANSIBLE_NOCOLOR": "1",
+            "GUEST_PLACEMENT_RESOURCES": json.dumps(resources),
+            "GUEST_PLACEMENT_PCI_MAPPING": json.dumps(pci_mapping or {"map": []}),
+        }
+        result = subprocess.run(
+            [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        if expected_error:
+            assert result.returncode == 0, f"{name}: expected guarded failure\n{output}"
+            assert expected_error in output, f"{name}: missing refusal reason\n{output}"
+        else:
+            assert result.returncode == 0, f"{name}: placement failed\n{output}"
+
+
+def main():
+    run_case(
+        "database pinned to storage role",
+        "database_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "storage-1", "storage": "local-mirror", "guest_type": "qemu", "cpu_model": ""},
+    )
+    run_case(
+        "floating VM follows online compute preference",
+        "floating_vm",
+        [node("storage-1"), node("compute-3", "offline"), node("compute-2")],
+        {"node": "compute-2", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+    )
+    run_case(
+        "floating LXC follows online compute preference",
+        "floating_lxc",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "nfs-shared", "guest_type": "lxc", "cpu_model": ""},
+    )
+    run_case(
+        "cluster member may request an eligible compute node",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        preferred="compute-2",
+    )
+    run_case(
+        "cluster member cannot request the pinned database node",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        preferred="storage-1",
+        expected_error="not an online member of proxmox.node_roles.compute",
+    )
+    run_case(
+        "floating guests refuse an offline compute pool",
+        "floating_lxc",
+        [node("storage-1"), node("compute-3", "offline"), node("compute-2", "offline")],
+        expected_error="None of the ordered nodes in proxmox.node_roles.compute is online",
+    )
+    run_case(
+        "database placement refuses an offline pinned node",
+        "database_vm",
+        [node("storage-1", "offline"), node("compute-3"), node("compute-2")],
+        expected_error="configured storage node is offline",
+    )
+    gpu_device = {
+        "mode": "dedicated",
+        "kind": "igpu",
+        "node": "compute-3",
+        "pci_mapping": "compute-3-igpu",
+        "identifiers": ["0000:00:02.0"],
+    }
+    run_case(
+        "GPU VM is pinned to its declared compute node and mapping",
+        "gpu_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {
+            "node": "compute-3",
+            "storage": "iscsi-shared",
+            "guest_type": "qemu",
+            "cpu_model": "x86-64-v2-AES",
+            "device": "intel-igpu",
+            "pci_mapping": "compute-3-igpu",
+            "pci_id": "0000:00:02.0",
+        },
+        devices={"intel-igpu": gpu_device},
+        pci_mapping={"map": [{"node": "compute-3", "id": "0000:00:02.0"}]},
+        device="intel-igpu",
+    )
+    run_case(
+        "GPU VM refuses a node outside the compute role",
+        "gpu_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        expected_error="not in proxmox.node_roles.compute",
+        devices={"intel-igpu": {**gpu_device, "node": "storage-1"}},
+        pci_mapping={"map": [{"node": "storage-1", "id": "0000:00:02.0"}]},
+        device="intel-igpu",
+    )
+    run_case(
+        "GPU VM refuses a mismatched PCI resource mapping",
+        "gpu_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        expected_error="must map exactly",
+        devices={"intel-igpu": gpu_device},
+        pci_mapping={"map": [{"node": "compute-3", "id": "0000:00:02.1"}]},
+        device="intel-igpu",
+    )
+    run_case(
+        "floating VM refuses host CPU model",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        cpu="host",
+        expected_error="floating_vm_cpu_model | lower != 'host'",
+    )
+    print("Guest placement: class storage, pinned node, ordered floating selection, GPU mapping and safety refusals")
+
+
+if __name__ == "__main__":
+    main()

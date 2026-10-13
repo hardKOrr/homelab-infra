@@ -337,6 +337,25 @@
                    if _rm_kind == 'docker'
                    else ([instance] if instance in (groups['all'] | default([])) else [])) }}
 
+    - name: Resolve the Proxmox node for the app guest
+      ansible.builtin.set_fact:
+        _rm_guest_node: "{{ hostvars[_rm_hosts[0]].proxmox_node | default('') }}"
+      when: _rm_hosts | length > 0
+
+    - name: Require the app guest's Proxmox node
+      ansible.builtin.assert:
+        that: _rm_guest_node | length > 0
+        fail_msg: >-
+          Proxmox inventory did not provide the node for {{ _rm_hosts[0] }}. Removal of
+          node-local device assignments requires the guest's actual node.
+      when: _rm_hosts | length > 0
+
+    - name: Use the app guest's Proxmox node for removal operations
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'node': _rm_guest_node}}, recursive=True) }}
+      when: _rm_hosts | length > 0
+
     # This is the Kubernetes equivalent of Play 2's compose-down, and it sits here because
     # there is no guest for Play 2 to run on. It runs AFTER the unwiring above, which is
     # this playbook's deliberate order: the route is withdrawn and the uptime monitor is
@@ -378,6 +397,8 @@
           {{ hostvars[_rm_hosts[0]].ansible_host
              | default(hostvars[_rm_hosts[0]].ansible_default_ipv4.address | default('')) }}
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        proxmox_vmtype: "{{ hostvars[_rm_hosts[0]].proxmox_vmtype }}"
+        proxmox_node: "{{ _rm_guest_node }}"
         app_config: "{{ app_config }}"
         homelabinfra_config: "{{ homelabinfra_config }}"
         remove_kind: "{{ _rm_kind }}"
@@ -397,34 +418,6 @@
     # stamped it on every node of the cluster, and the withdrawal has to reach exactly the
     # same set. Withdrawing from one node would leave the other two claiming to host an app
     # that no longer exists.
-    # Frigate owns two project-tagged LXC device binds. Detach them before the generic
-    # Docker stop so Remove App is also the recovery path; untagged operator bindings are
-    # left by the detach seams. The recording mount is deliberately not removed: it is
-    # existing node storage and remains a restore point until the operator removes it.
-    - name: Detach Frigate shared iGPU binding
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-shared-device.yml
-      vars:
-        shared_device_guest: "{{ _rm_hosts[0] }}"
-        shared_device_list:
-          - host: "{{ app_config.app.igpu_render_node }}"
-      when:
-        - _rm_kind == 'docker'
-        - (app | default(instance)) == 'frigate'
-        - _rm_hosts | length > 0
-        - app_config.app.igpu_render_node | default('') | length > 0
-
-    - name: Detach Frigate Coral USB binding
-      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough-lxc.yml
-      vars:
-        usb_lxc_guest: "{{ _rm_hosts[0] }}"
-        usb_lxc_device:
-          mapping: "{{ app_config.app.coral_usb_mapping }}"
-      when:
-        - _rm_kind == 'docker'
-        - (app | default(instance)) == 'frigate'
-        - _rm_hosts | length > 0
-        - app_config.app.coral_usb_mapping | default('') | length > 0
-
     # This runs before Play 2 stops the service and tears down PostgreSQL's cluster. A
     # PostgreSQL guest survives Remove App, so retain its record/tag for that whole time;
     # its next Deploy will find the same owned guest and create a fresh cluster if needed.
@@ -736,19 +729,25 @@
         - hostvars['localhost']._rm_app_name == 'home-assistant'
         - app_config.app.usb_mapping | default('', true) | length > 0
 
-    # ComfyUI's GPU is a dedicated PCI assignment. Detach it only after the Compose
-    # service has stopped, and only when the passthrough seam can prove this platform
-    # created the exact hostpciN entry. An untagged operator assignment remains in place.
+    # These dedicated assignments are detached only after their app's containers stop.
+    # Stack devices are detached only for the two one-app GPU stacks; media stack GPUs may
+    # still be used by another app on the shared VM.
     - name: Detach ComfyUI's project-owned PCI GPU
       ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
       vars:
         pci_passthrough_guest: "{{ inventory_hostname }}"
         pci_passthrough_device:
-          id: "{{ app_config.app.pci_device }}"
+          id: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+               | list | first }}
+          mapping: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+               | default(app_config.app.gpu_device) }}
       when:
         - remove_kind == 'docker'
         - hostvars['localhost']._rm_app_name == 'comfyui'
-        - app_config.app.pci_device | default('') | length > 0
+        - app_config.app.gpu_device | default('') | length > 0
 
     # Ollama's GPU is a dedicated PCI assignment. Detach it only after the Compose
     # service has stopped, and only when the passthrough seam can prove this platform
@@ -758,15 +757,65 @@
       vars:
         pci_passthrough_guest: "{{ inventory_hostname }}"
         pci_passthrough_device:
-          id: "{{ app_config.app.pci_device }}"
+          id: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+               | list | first }}
+          mapping: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+               | default(app_config.app.gpu_device) }}
       when:
         - remove_kind == 'docker'
         - hostvars['localhost']._rm_app_name == 'ollama'
-        - app_config.app.pci_device | default('') | length > 0
+        - app_config.app.gpu_device | default('') | length > 0
 
-    # A shared render-node bind is detached only after its Compose services stop.
-    # The attach task's provenance tag protects an unowned/pre-existing bind from removal.
-    # The durable media mount is operator-owned and deliberately remains in place.
+    - name: Detach Frigate's project-owned PCI iGPU
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
+      vars:
+        pci_passthrough_guest: "{{ inventory_hostname }}"
+        pci_passthrough_device:
+          id: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+               | list | first }}
+          mapping: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+               | default(app_config.app.gpu_device) }}
+      when:
+        - remove_kind == 'docker'
+        - (remove_app | default(instance)) == 'frigate'
+        - app_config.app.gpu_device | default('') | length > 0
+
+    - name: Detach Frigate's project-owned Coral USB mapping
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough.yml
+      vars:
+        usb_passthrough_guest: "{{ inventory_hostname }}"
+        usb_passthrough_device:
+          mapping: "{{ app_config.app.coral_usb_mapping }}"
+      when:
+        - remove_kind == 'docker'
+        - (remove_app | default(instance)) == 'frigate'
+        - app_config.app.coral_usb_mapping | default('') | length > 0
+
+    - name: Detach Immich's project-owned PCI iGPU
+      ansible.builtin.include_tasks: ../../tasks/proxmox/detach-pci-passthrough.yml
+      vars:
+        pci_passthrough_guest: "{{ inventory_hostname }}"
+        pci_passthrough_device:
+          id: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+               | list | first }}
+          mapping: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+               | default(app_config.app.gpu_device) }}
+      when:
+        - remove_kind == 'docker'
+        - (remove_app | default(instance)) == 'immich'
+        - app_config.app.gpu_device | default('') | length > 0
+
+    # Legacy shared device declarations remain accepted for non-GPU users. GPU-capable
+    # apps no longer call this LXC bind seam.
     - name: Detach the app's project-owned shared device
       ansible.builtin.include_tasks: ../../tasks/proxmox/detach-shared-device.yml
       vars:

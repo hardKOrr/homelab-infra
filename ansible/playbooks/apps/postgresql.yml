@@ -47,15 +47,25 @@
       vars:
         ensure_guest_host: "{{ _existing_hosts[0] }}"
       when: _existing_hosts | length > 0
-    - name: Provision PostgreSQL LXC
+    - name: Provision PostgreSQL VM
       when: _existing_hosts | length == 0
       block:
-        - name: Set LXC identity
+        - name: Set PostgreSQL VM identity and sizing
           ansible.builtin.set_fact:
             homelabinfra_config: >-
-              {{ homelabinfra_config | combine({'proxmox': {'lxc': app_config.proxmox | combine({
-                'hostname': instance, 'tags': (app_config.proxmox.tags + ['_' ~ instance]) | unique
-              }, recursive=True)}}, recursive=True) }}
+              {{ homelabinfra_config | combine({'proxmox': {'vm':
+                 (app_config.proxmox.vm | default({})) | combine({
+                   'name': instance,
+                   'cores': app_config.proxmox.cores | default(app_config.proxmox.vm.cores | default(2)) | int,
+                   'memory': app_config.proxmox.memory | default(app_config.proxmox.vm.memory | default(2048)) | int,
+                   'disk_size': app_config.proxmox.disk_size
+                     | default(app_config.proxmox.vm.disk_size
+                     | default((app_config.proxmox.disk_volume | default({})).size | default(32))) | int,
+                   'boot_order': app_config.proxmox.boot_order
+                     | default(app_config.proxmox.vm.boot_order | default(40)) | int,
+                   'tags': ((app_config.proxmox.vm.tags | default(app_config.proxmox.tags
+                     | default(['_+lab', '_-debian']))) + ['_' ~ instance]) | unique
+                 }, recursive=True)}}, recursive=True) }}
         - name: Resolve backend network
           ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
           vars:
@@ -67,18 +77,30 @@
             network_name: "{{ app_config.proxmox.network | default('', true) }}"
             pool_name: "{{ app_config.proxmox.pool | default('') }}"
             requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
-        - name: Set LXC IP
+        - name: Set PostgreSQL VM IP
           ansible.builtin.set_fact:
-            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
+            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'vm': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
         - name: Derive VMID
           ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
-        - name: Create LXC
-          ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
-        - name: Add PostgreSQL guest to deploy group
+        - name: Ensure the Debian cloud-init template exists
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
+          vars:
+            proxmox_placement_class: database_vm
+            cloud_template_name: "{{ app_config.proxmox.cloud_template.name | default('debian-12-cloud') }}"
+            cloud_template_image_url: >-
+              {{ app_config.proxmox.cloud_template.image_url
+                 | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
+            cloud_template_storage: "{{ app_config.proxmox.cloud_template.storage | default(homelabinfra_config.proxmox.storage_ids.database_vm, true) }}"
+            cloud_template_bridge: "{{ network_effective.bridge }}"
+        - name: Clone PostgreSQL VM
+          ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
+          vars:
+            proxmox_placement_class: database_vm
+        - name: Add PostgreSQL VM to deploy group
           ansible.builtin.add_host:
-            name: "{{ homelabinfra_instance.lxc.hostname }}"
+            name: "{{ homelabinfra_instance.vm.name }}"
             groups: "deploy_{{ instance }}"
-            ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+            ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
 

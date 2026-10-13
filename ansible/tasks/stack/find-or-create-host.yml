@@ -4,13 +4,12 @@
 #
 # The create path is an implicit state machine: it mutates homelabinfra_config
 # step by step, and each mutation feeds the next include. Order matters:
-#   1. set proxmox.lxc.hostname / .tags / .features from stack_name
+#   1. set proxmox.vm.name / .tags from stack_name
 #   2. generate-ip.yml — reads homelabinfra_config.networks[...], writes
 #      homelabinfra_instance.network.*
-#   3. set proxmox.lxc.ip_address from homelabinfra_instance.network.ip_address
-#   4. ip-to-vmid.yml — derives proxmox.lxc.vmid from that IP (static IPs only)
-#   5. lxc-create.yml — reads homelabinfra_config.proxmox.* and
-#      homelabinfra_instance.network.*, writes homelabinfra_instance.lxc.*
+#   3. set proxmox.vm.ip_address from homelabinfra_instance.network.ip_address
+#   4. ip-to-vmid.yml — derives proxmox.vm.vmid from that IP (static IPs only)
+#   5. ensure-cloud-template.yml and vm-clone.yml create the VM
 #
 # Inputs (required before calling):
 #   stack_name                          — the logical stack, a bare concept: media, sso,
@@ -32,7 +31,7 @@
 #                                         its Play 3 would read [0], the FIRST app's host.
 #   app_config                          — merged app config (handed to Play 2 via add_host)
 #   homelabinfra_config.ansible.ssh_user
-#   homelabinfra_config.proxmox.*       — API connection + lxc defaults (create path)
+#   homelabinfra_config.proxmox.*       — API connection + floating VM placement
 #   homelabinfra_config.networks.*      — for generate-ip.yml (create path)
 #   homelabinfra_config.infrastructure.stacks.<stack_name>
 #                                       — optional; sizing, `shared: true`, plus `network`,
@@ -43,9 +42,9 @@
 #   homelabinfra_infra                  — optional; forwarded to the host if defined
 #
 # Mutates (create path only, except .stack):
-#   homelabinfra_config.proxmox.lxc.{hostname,tags,stack_tag,stack_id,features,ip_address,
-#                                    vmid,vmid_source_ip}
-#   homelabinfra_instance.{network,lxc}                — via generate-ip / lxc-create
+#   homelabinfra_config.proxmox.vm.{name,tags,stack_tag,stack_id,ip_address,vmid,
+#                                  vmid_source_ip}
+#   homelabinfra_instance.{network,vm}                  — via generate-ip / vm-clone
 #   homelabinfra_instance.stack.{hostname,ip_address}  — both paths
 #
 # Output (for Play 2 to consume):
@@ -54,7 +53,7 @@
 #   homelabinfra_stack_host_created         — hostvar on the added host; true only on create
 #   deploy_group                            — host added so Play 2 can target it
 #
-# One-shot per play: it sets _stack_hosts and rewrites proxmox.lxc in place, so a
+# One-shot per play: it sets _stack_hosts and rewrites proxmox.vm in place, so a
 # second call in the same play reads stale state. Call once per app deploy.
 
 # default('') also absorbs an undefined app_config.stack behind the template's
@@ -79,8 +78,8 @@
 # Resolved BEFORE the existence check rather than inside the create branch, because
 # `shared:` lives here and it decides which host this app is even looking for.
 #
-# The global lxc defaults (1 core / 512M / 8G) size a single native service and are nowhere
-# near a Docker host: Authentik alone runs a server, a worker, Postgres and Redis.
+# The global native-guest defaults are nowhere near a Docker host: Authentik alone runs a
+# server, a worker, Postgres and Redis.
 #
 # Not tolerant of absence, unlike the optional config/ loads elsewhere: this file is
 # git-managed and always present, and silently falling back would create the stack host at
@@ -123,6 +122,8 @@
 - name: Resolve the stack's estate and effective identity
   ansible.builtin.set_fact:
     _stack_shared: "{{ _stack_sizing.shared | default(false) | bool }}"
+    _stack_gpu_device: >-
+      {{ (app_config.app | default({})).gpu_device | default('', true) | string | trim }}
     _stack_id: >-
       {{ stack_name
          if (_stack_sizing.shared | default(false) | bool) or _stack_estates | length < 2
@@ -135,6 +136,25 @@
            | map(attribute='key') | list) | first)
          | default(_stack_estates | list | first | default(''), true) }}
     _stack_estate: "{{ (stack_estate | default('', true)) or _stack_default_estate }}"
+
+- name: Resolve the stack host's placement class
+  ansible.builtin.set_fact:
+    _stack_placement_class: "{{ 'gpu_vm' if _stack_gpu_device | length > 0 else 'floating_vm' }}"
+
+- name: Validate the stack's GPU device declaration
+  ansible.builtin.assert:
+    that:
+      - _stack_gpu_device in (homelabinfra_config.proxmox.devices | default({}))
+      - homelabinfra_config.proxmox.devices[_stack_gpu_device].mode == 'dedicated'
+      - homelabinfra_config.proxmox.devices[_stack_gpu_device].kind in ['igpu', 'gpu']
+      - >-
+        homelabinfra_config.proxmox.devices[_stack_gpu_device].identifiers
+        | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+        | list | length == 1
+    fail_msg: >-
+      Stack GPU placement requires app.gpu_device to name a proxmox.devices declaration
+      with mode: dedicated, kind: igpu|gpu, and one exact PCI identifier.
+  when: _stack_gpu_device | length > 0
 
 # The tag is the identity; the group name is what Ansible sanitised it into. One seam does
 # that conversion for the whole repository — see tasks/proxmox/tag-group.yml.
@@ -163,12 +183,35 @@
       }, recursive=True) }}
   when: _stack_hosts | length > 0
 
+- name: Resolve the existing stack host's Proxmox node
+  ansible.builtin.set_fact:
+    _stack_existing_node: "{{ hostvars[_stack_hosts[0]].proxmox_node | default('') }}"
+  when: _stack_hosts | length > 0
+
+- name: Require the existing stack host's Proxmox node
+  ansible.builtin.assert:
+    that:
+      - _stack_existing_node | length > 0
+      - hostvars[_stack_hosts[0]].proxmox_vmtype | default('') == 'qemu'
+    fail_msg: >-
+      Existing stack host {{ _stack_hosts[0] }} must be a VM with a known Proxmox node.
+      Stack guests are now VMs; this playbook does not convert an existing LXC in place.
+  when: _stack_hosts | length > 0
+
+- name: Use the existing stack host's node for its operations
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {'node': _stack_existing_node}}, recursive=True) }}
+  when: _stack_hosts | length > 0
+
 - name: Add existing stack host to deploy group
   ansible.builtin.add_host:
     name: "{{ homelabinfra_instance.stack.hostname }}"
     groups: "{{ deploy_group | default('app_deploy') }}"
     ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
     ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+    proxmox_vmtype: "{{ hostvars[_stack_hosts[0]].proxmox_vmtype }}"
+    proxmox_node: "{{ _stack_existing_node }}"
     app_config: "{{ app_config }}"
     homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
     homelabinfra_stack_host_created: false
@@ -190,19 +233,18 @@
 - name: Provision new stack host
   when: _stack_hosts | length == 0
   block:
-    - name: Set stack hostname and Docker LXC features
+    - name: Set stack VM identity and sizing
       ansible.builtin.set_fact:
         homelabinfra_config: >-
           {{
             homelabinfra_config | combine(
               {
                 'proxmox': {
-                  'lxc': _stack_sizing | combine({
-                    'hostname': 'stack-' ~ _stack_id,
+                  'vm': _stack_sizing | combine({
+                    'name': 'stack-' ~ _stack_id,
                     'tags': _stack_tags,
                     'stack_tag': _stack_tag,
-                    'stack_id': _stack_id,
-                    'features': _stack_lxc_features
+                    'stack_id': _stack_id
                   }, recursive=True)
                 }
               },
@@ -210,15 +252,15 @@
             )
           }}
       vars:
-        # Runtime lxc state survives chained plays and may contain a preceding native
+        # Runtime VM state survives chained plays and may contain a preceding guest's
         # application's tag or another stack's identity. Start from authored lab tags
         # and repository defaults instead. Application records add this stack's actual
         # instances after deployment; they must never inherit another guest's instances.
         # Sharing is still declared by this stack, not inherited from authored tags.
         _stack_tag: "_.stack+{{ _stack_id }}"
         _stack_base_tags: >-
-          {{ (_config_proxmox | default({})).get('proxmox', {}).get('lxc', {}).get('tags',
-               (homelabinfra_defaults | default({})).get('proxmox', {}).get('lxc', {}).get(
+          {{ (_config_proxmox | default({})).get('proxmox', {}).get('vm', {}).get('tags',
+               (homelabinfra_defaults | default({})).get('proxmox', {}).get('vm', {}).get(
                  'tags', ['_+lab', '_-debian']))
              | reject('eq', '_.shared') | list }}
         # `_-docker` is a declared machine fact, not a probe: this task is the one that
@@ -226,14 +268,6 @@
         _stack_tags: >-
           {{ (_stack_base_tags + ['_-docker', _stack_tag]
               + (['_.shared'] if _stack_shared | bool else [])) | unique }}
-        _stack_existing_lxc_features: >-
-          {{ homelabinfra_config.proxmox.lxc.features | default([]) }}
-        _stack_lxc_features: >-
-          {{
-            _stack_existing_lxc_features | combine({'keyctl': true})
-            if _stack_existing_lxc_features is mapping
-            else (_stack_existing_lxc_features + ['keyctl=1']) | unique
-          }}
 
     # A stack host sits on ONE estate's network, or on the shared one when the stack
     # declares `shared: true` — the same boundary its hostname and its `_.stack+<id>` tag
@@ -244,7 +278,7 @@
         resolve_network_estate: "{{ stack_estate | default('', true) }}"
         resolve_network_shared: "{{ _stack_shared }}"
 
-    # Address selection reads from _stack_sizing, not from homelabinfra_config.proxmox.lxc,
+    # Address selection reads from _stack_sizing, not from homelabinfra_config.proxmox.vm,
     # for the same reason `stack_tag` exists above: that dict survives between chained plays,
     # so a `pool` or `ip_address` left there by an earlier app's stack host would silently
     # steer this one. _stack_sizing is rebuilt per call from stack-defaults plus this lab's
@@ -266,21 +300,36 @@
       ansible.builtin.set_fact:
         homelabinfra_config: >-
           {{ homelabinfra_config | combine({
-            'proxmox': { 'lxc': { 'ip_address': homelabinfra_instance.network.ip_address } }
+            'proxmox': { 'vm': { 'ip_address': homelabinfra_instance.network.ip_address } }
           }, recursive=True) }}
 
     - name: Derive VMID from IP
       ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
 
-    - name: Create stack host LXC
-      ansible.builtin.include_tasks: ../proxmox/lxc-create.yml
+    - name: Ensure the Debian cloud-init template exists for the stack VM
+      ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
+      vars:
+        proxmox_placement_class: "{{ _stack_placement_class }}"
+        proxmox_placement_device: "{{ _stack_gpu_device }}"
+        cloud_template_name: "{{ homelabinfra_config.proxmox.cloud_template.name | default('debian-12-cloud') }}"
+        cloud_template_image_url: >-
+          {{ homelabinfra_config.proxmox.cloud_template.image_url
+             | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
+        cloud_template_storage: "{{ homelabinfra_config.proxmox.storage }}"
+        cloud_template_bridge: "{{ network_effective.bridge }}"
+
+    - name: Clone the stack host VM
+      ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+      vars:
+        proxmox_placement_class: "{{ _stack_placement_class }}"
+        proxmox_placement_device: "{{ _stack_gpu_device }}"
 
     - name: Set facts from new stack host
       ansible.builtin.set_fact:
         homelabinfra_instance: >-
           {{ homelabinfra_instance | combine({
             'stack': {
-              'hostname': homelabinfra_instance.lxc.hostname,
+              'hostname': homelabinfra_instance.vm.name,
               'ip_address': homelabinfra_instance.network.ip_address
             }
           }, recursive=True) }}
@@ -291,6 +340,24 @@
         groups: "{{ deploy_group | default('app_deploy') }}"
         ansible_host: "{{ homelabinfra_instance.stack.ip_address }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        proxmox_vmtype: qemu
+        proxmox_node: "{{ homelabinfra_config.proxmox.node }}"
+        proxmox_vmid: "{{ homelabinfra_instance.vm.vmid }}"
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
         homelabinfra_stack_host_created: true
+
+- name: Attach the stack's declared GPU through its PCI resource mapping
+  ansible.builtin.include_tasks: ../proxmox/attach-pci-passthrough.yml
+  vars:
+    pci_passthrough_guest: "{{ homelabinfra_instance.stack.hostname }}"
+    pci_passthrough_device:
+      id: >-
+        {{ homelabinfra_config.proxmox.devices[_stack_gpu_device].identifiers
+           | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+           | list | first }}
+      mapping: >-
+        {{ homelabinfra_config.proxmox.devices[_stack_gpu_device].pci_mapping
+           | default(_stack_gpu_device) }}
+      pcie: "{{ homelabinfra_config.proxmox.devices[_stack_gpu_device].pcie | default(true) | bool }}"
+  when: _stack_gpu_device | length > 0

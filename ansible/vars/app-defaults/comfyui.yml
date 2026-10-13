@@ -30,11 +30,9 @@ comfyui_defaults:
     image: ghcr.io/ai-dock/comfyui:latest-cuda
     port: 8188
     service_name: comfyui
-    # A blank PCI address is deliberate: the deploy must name the exact GPU in the
-    # instance config and the matching proxmox.devices declaration before it can mutate a
-    # guest. This is not a "first free GPU" selector.
-    pci_device: ""
-    pci_device_pcie: true
+    # A blank mapping name is deliberate: the deploy must name the dedicated GPU
+    # declaration in proxmox.devices. No device is selected automatically.
+    gpu_device: ""
     storage_path: "/opt/{{ instance }}/storage"
     models_path: "/opt/{{ instance }}/storage/models"
     config_path: "/opt/{{ instance }}/storage/user"

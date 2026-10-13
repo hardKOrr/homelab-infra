@@ -24,14 +24,13 @@
 #
 # Inputs:
 #   pci_passthrough_guest — VM guest hostname to assign the device to
-#   pci_passthrough_device — {id: "0000:01:00.0", pcie: true}
+#   pci_passthrough_device — {id: "0000:01:00.0", mapping: intel-igpu, pcie: true}
 #                            `id` is the PCI address exactly as `lspci`/`pvesh` reports it.
-#                            `pcie` defaults to true (PCI Express); set false for a legacy
-#                            PCI device.
+#                            `mapping` is an existing /cluster/mapping/pci resource map.
+#                            `pcie` defaults to true (PCI Express).
 #   homelabinfra_config.proxmox.devices — named physical-device declarations. The matching
-#                                        declaration must explicitly say `mode: dedicated`;
-#                                        its `identifiers` list includes this PCI address, and
-#                                        its optional `node` matches the selected target node.
+#                                        declaration must say mode: dedicated, kind: igpu|gpu,
+#                                        include the PCI ID and map to the selected node.
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -41,6 +40,8 @@
       - pci_passthrough_guest is defined
       - pci_passthrough_device is defined
       - pci_passthrough_device.id is defined
+      - pci_passthrough_device.mapping is defined
+      - pci_passthrough_device.mapping | string is match('^[A-Za-z0-9_.-]+$')
     fail_msg: >-
       attach-pci-passthrough.yml needs pci_passthrough_guest and
       pci_passthrough_device.id.
@@ -55,10 +56,13 @@
     that:
       - _pci_device_declarations | length == 1
       - (_pci_device_declarations | map(attribute='value.mode') | first | default('', true)) == 'dedicated'
+      - (_pci_device_declarations | map(attribute='value.kind') | first | default('', true)) in ['igpu', 'gpu']
+      - (_pci_device_declarations | map(attribute='value.pci_mapping') | first
+         | default(_pci_device_declarations[0].key, true)) == pci_passthrough_device.mapping
     fail_msg: >-
       PCI device {{ pci_passthrough_device.id }} must match exactly one physical-device
-      declaration with mode: dedicated in homelabinfra_config.proxmox.devices. A device
-      declared shared cannot be assigned exclusively to a VM.
+      declaration with mode: dedicated, kind: igpu or gpu, and the requested PCI mapping
+      in homelabinfra_config.proxmox.devices.
   vars:
     _pci_device_candidates: >-
       {{ (homelabinfra_config.proxmox.devices | default({})) | dict2items
@@ -75,6 +79,32 @@
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _pci_hardware
   changed_when: false
+
+- name: PCI passthrough | Read the declared resource mapping
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/pci/{{ pci_passthrough_device.mapping }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pci_mapping
+  changed_when: false
+
+- name: PCI passthrough | Assert the mapping names this device on this node
+  ansible.builtin.assert:
+    that:
+      - _pci_map_entries | length == 1
+      - _pci_map_entries[0].id == pci_passthrough_device.id
+    fail_msg: >-
+      PCI resource mapping {{ pci_passthrough_device.mapping }} must map
+      {{ pci_passthrough_device.id }} on {{ homelabinfra_config.proxmox.node }}. The
+      mapping is operator-owned; this platform does not create or alter PCI mappings.
+  vars:
+    _pci_map_entries: >-
+      {{ (_pci_mapping.stdout | from_json).map | default([])
+         | selectattr('node', 'equalto', homelabinfra_config.proxmox.node) | list }}
 
 - name: PCI passthrough | Assert the device exists on the node
   ansible.builtin.assert:
@@ -141,12 +171,12 @@
 # the guest that already has it may not be the one asking.
 - name: PCI passthrough | Resolve device holders per guest
   ansible.builtin.set_fact:
-    _pci_claims_by_vmid: "{{ _pci_claims_by_vmid | default({}) | combine({item.item.vmid | string: _pci_ids_for_guest}) }}"
+    _pci_claims_by_vmid: "{{ _pci_claims_by_vmid | default({}) | combine({item.item.vmid | string: _pci_tokens_for_guest}) }}"
   loop: "{{ _pci_all_configs.results }}"
   loop_control:
     label: "{{ item.item.vmid }}"
   vars:
-    _pci_ids_for_guest: >-
+    _pci_tokens_for_guest: >-
       {{ item.stdout_lines | select('match', '^hostpci[0-9]+:')
          | map('regex_replace', '^hostpci[0-9]+:\s*([^,]+).*$', '\1') | list }}
 
@@ -160,15 +190,22 @@
       {{ pci_passthrough_guest }}. A dedicated PCIe device cannot be assigned to a second
       guest at once — detach it there first.
   vars:
-    _pci_holders: >-
+    _pci_holders_by_id: >-
       {{ _pci_claims_by_vmid | dict2items
          | selectattr('value', 'contains', pci_passthrough_device.id)
          | map(attribute='key') | list }}
+    _pci_holders_by_mapping: >-
+      {{ _pci_claims_by_vmid | dict2items
+         | selectattr('value', 'contains', 'mapping=' ~ pci_passthrough_device.mapping)
+         | map(attribute='key') | list }}
+    _pci_holders: "{{ (_pci_holders_by_id + _pci_holders_by_mapping) | unique | list }}"
 
 - name: PCI passthrough | Resolve whether this guest already has the device
   ansible.builtin.set_fact:
     _pci_already_present: >-
-      {{ pci_passthrough_device.id in (_pci_claims_by_vmid[_pci_vmid] | default([])) }}
+      {{ (pci_passthrough_device.id in (_pci_claims_by_vmid[_pci_vmid] | default([])))
+         or ('mapping=' ~ pci_passthrough_device.mapping
+             in (_pci_claims_by_vmid[_pci_vmid] | default([]))) }}
 
 - name: PCI passthrough | Resolve the next free hostpci index for this guest
   ansible.builtin.set_fact:
@@ -216,17 +253,19 @@
     # pending: either both land, or the block below fails and rescue restores the guest.
     - name: PCI passthrough | Assign the device and its provenance tag
       ansible.builtin.command:
-        cmd: >-
-          qm set {{ _pci_vmid }}
-          -hostpci{{ _pci_next_index }} {{ pci_passthrough_device.id }}{{
-            ',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else '' }}
-          -tags {{ (_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';') }}
+        argv: >-
+          {{ ['qm', 'set', _pci_vmid,
+              '-hostpci' ~ (_pci_next_index | string),
+              'mapping=' ~ pci_passthrough_device.mapping
+                ~ (',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else ''),
+              '-tags',
+              ((_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';'))] }}
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
       changed_when: true
       vars:
         _pci_current_tags: "{{ _pci_tags | reject('equalto', '') | list }}"
         _pci_provenance_tag: >-
-          _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
+          _.dev+{{ pci_passthrough_device.mapping | lower | regex_replace('[^a-z0-9]+', '-')
                    | regex_replace('^-+|-+$', '') }}
 
     - name: PCI passthrough | Start the guest again

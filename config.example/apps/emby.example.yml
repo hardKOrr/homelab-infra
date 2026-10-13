@@ -18,7 +18,9 @@ stack: media
 #     - name: Music
 #       collection_type: music
 #       subpath: music
-#   devices: []         # e.g. ["/dev/dri"] for hardware transcoding when present.
+#   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.
+#   # It pins the media stack VM to that node and adds /dev/dri to Emby's container.
+#   gpu_device: intel-igpu
 #   # image: lscr.io/linuxserver/emby:latest
 #   # config_path: /opt/emby/config
 #

@@ -65,6 +65,15 @@
       ansible.builtin.set_fact:
         _immich_media_path: "{{ app_config.media_storage.mounts[0].path }}"
 
+    - name: Require Immich's dedicated iGPU mapping
+      ansible.builtin.assert:
+        that:
+          - app_config.app.gpu_device | default('') | length > 0
+          - app_config.app.gpu_render_node | default('') is match('^/dev/dri/renderD[0-9]+$')
+        fail_msg: >-
+          Immich machine learning requires a dedicated iGPU mapping in proxmox.devices and
+          a render node path inside the VM.
+
     - name: Resolve the estate this app belongs to
       ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
       vars:
@@ -105,18 +114,21 @@
       vars:
         attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
         attach_mounts_list: "{{ app_config.media_storage.mounts }}"
-        attach_mounts_owner: "{{ app_config.media_storage.owner }}"
+        attach_mounts_nodes:
+          - "{{ hostvars[homelabinfra_instance.stack.hostname].proxmox_node }}"
 
-    - name: Bind the declared shared iGPU render node
-      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-shared-device.yml
-      vars:
-        shared_device_guest: "{{ homelabinfra_instance.stack.hostname }}"
-        shared_device_list:
-          - host: "{{ app_config.app.shared_device }}"
-            mode: "{{ app_config.app.shared_device_mode }}"
-      # This task is intentionally never replaced with attach-pci-passthrough.yml:
-      # Immich's inference device is shared between LXC guests.
-      when: app_config.app.shared_device | default('') | length > 0
+    - name: Verify the dedicated iGPU render node exists inside the Immich VM
+      ansible.builtin.stat:
+        path: "{{ app_config.app.gpu_render_node }}"
+      delegate_to: "{{ homelabinfra_instance.stack.hostname }}"
+      register: _immich_render_node
+
+    - name: Require the VM's Immich render node to be a device
+      ansible.builtin.assert:
+        that: _immich_render_node.stat.ischr | default(false)
+        fail_msg: >-
+          {{ app_config.app.gpu_render_node }} is not a device inside the Immich VM. Check
+          the dedicated PCI resource mapping and guest iGPU driver.
 
 - name: "Immich | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"

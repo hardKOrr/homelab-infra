@@ -5,10 +5,12 @@
 # that short-lived secret in this file.
 
 # app:
+#   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.
+#   # It pins the media stack VM to that node and adds /dev/dri to Plex's container.
+#   gpu_device: intel-igpu
 #   # Plex tells clients this route in bridge-network mode. Keep the explicit
 #   # port: Plex rejects an incomplete custom access URL.
 #   advertise_url: https://plex.example.test:443
-#   # devices: ["/dev/dri"]  # optional hardware-transcoding device
 
 # routing:
 #   identity: catalog  # Plex owns client authentication; do not use forward_auth.

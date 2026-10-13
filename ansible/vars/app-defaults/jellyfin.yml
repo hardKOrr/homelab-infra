@@ -48,13 +48,10 @@ jellyfin_defaults:
         collection_type: music
         subpath: music
 
-    # Host devices passed to the container for hardware transcoding — normally
-    # ["/dev/dri"] for Intel QuickSync or AMD VAAPI. Empty by default and it has
-    # to be: the device is absent on plenty of hosts, and Docker refuses to start
-    # a container whose declared device does not exist, so a non-empty default
-    # would break the deploy on every lab without a GPU. Passing the device is
-    # also only half the job — the codecs still have to be enabled in Jellyfin's
-    # playback settings, which is the operator's call, not the platform's.
+    # Optional dedicated GPU declaration from proxmox.devices. When set, the stack
+    # VM is pinned to that device's node and /dev/dri is exposed to Jellyfin.
+    # Codecs still need enabling in Jellyfin's playback settings.
+    gpu_device: ""
     devices: []
 
     # Matches media_storage.owner in infrastructure.yml, and must: this is the id

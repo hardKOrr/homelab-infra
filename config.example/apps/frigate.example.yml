@@ -1,5 +1,5 @@
-# Frigate is a dedicated Docker-on-LXC guest, not a tenant of media/services.
-# Copy this to config/apps/<instance>.yml after naming the exact target devices and mount.
+# Frigate is a dedicated Docker-on-VM stack, not a tenant of media/services.
+# Copy this to config/apps/<instance>.yml after declaring its dedicated GPU/Coral and mount.
 # Store camera credentials as one JSON value in hidden Vaultwarden field
 # camera_credentials on homelab-infra/apps/<instance>, for example:
 #   {"front":{"username":"camera-user","password":"..."}}
@@ -7,9 +7,12 @@
 # in this file or in a camera URL.
 
 app:
-  # The exact shared iGPU render node declared under proxmox.devices with mode: shared.
+  # The key of a proxmox.devices declaration with kind: igpu, mode: dedicated and a
+  # matching PCI resource mapping on its declared node.
+  gpu_device: intel-igpu
+  # This is the render node inside the VM after full PCI passthrough.
   igpu_render_node: /dev/dri/renderD128
-  # The exact Proxmox USB resource mapping declared under proxmox.devices with mode: shared.
+  # The exact Proxmox USB resource mapping declared dedicated under proxmox.devices.
   coral_usb_mapping: frigate-coral
   # A second instance on the shared frigate guest needs a distinct app.port. Auxiliary
   # host ports default to app.port + 1 (RTSP) and +2 (WebRTC); override them if needed.
@@ -42,6 +45,6 @@ backup:
   enabled: true
   schedule: "0 3 * * *"
 
-# Recovery: the LXC PBS snapshot covers config; the external recording-storage owner must
+# Recovery: the VM PBS snapshot covers config; the external recording-storage owner must
 # snapshot/restore its mount separately before Frigate is redeployed. See
 # ansible/roles/frigate/README.md.

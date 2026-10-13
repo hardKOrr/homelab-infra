@@ -1,7 +1,6 @@
 ---
-# Frigate is deliberately a one-tenant Docker-on-LXC stack. Its recording workload is
-# continuously writing and its iGPU is shared with other LXC guests, so it must not land
-# on media/services or be changed to a VM for convenience.
+# Frigate is deliberately a one-tenant Docker-on-VM stack. Its GPU is dedicated to this
+# VM, and its recordings stay on the existing external storage mount.
 frigate_defaults:
   stack: frigate
 
@@ -19,9 +18,11 @@ frigate_defaults:
     minimum_free_gb: 256
     retention_days: 7
     shm_size: "256m"
-    # Both are intentionally empty. A deployment must name the exact shared render node
-    # and the exact Proxmox USB mapping; no device is discovered or adopted by default.
-    igpu_render_node: ""
+    # A deployment must name the dedicated GPU declaration from proxmox.devices.
+    # The render node is a path inside the VM after PCI passthrough, not a host bind.
+    gpu_device: ""
+    igpu_render_node: /dev/dri/renderD128
+    # The exact dedicated Proxmox USB mapping is an operator-owned declaration.
     coral_usb_mapping: ""
     hwaccel_args: "preset-intel-qsv-h264"
     # Camera endpoint metadata is not a credential. Per-camera username/password pairs

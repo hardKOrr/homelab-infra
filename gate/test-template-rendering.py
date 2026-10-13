@@ -960,10 +960,10 @@ def flaresolverr_rendering():
     assert environment["LOG_LEVEL"] == "debug", "configured log level reaches pod"
 
 
-def immich_machine_learning_device_is_optional():
+def immich_machine_learning_uses_only_a_declared_gpu_device():
     template = read("ansible/roles/immich/templates/docker-compose.yml.j2")
 
-    def machine_learning_service(shared_device, image):
+    def machine_learning_service(gpu_device, render_node, image):
         rendered = render(
             template,
             {
@@ -977,7 +977,8 @@ def immich_machine_learning_device_is_optional():
                         "machine_learning_image": image,
                         "model_cache_path": "/opt/immich/model-cache",
                         "port": 2283,
-                        "shared_device": shared_device,
+                        "gpu_device": gpu_device,
+                        "gpu_render_node": render_node,
                     },
                     "media_storage": {"owner": {"uid": 1313, "gid": 1313}},
                 },
@@ -989,30 +990,31 @@ def immich_machine_learning_device_is_optional():
         return services["immich-machine-learning"]
 
     cpu = machine_learning_service(
-        "", "ghcr.io/immich-app/immich-machine-learning:v3.1.0"
+        "", "/dev/dri/renderD128", "ghcr.io/immich-app/immich-machine-learning:v3.1.0"
     )
     assert "devices" not in cpu, cpu
     assert cpu["image"] == "ghcr.io/immich-app/immich-machine-learning:v3.1.0", cpu
 
     hardware = machine_learning_service(
+        "intel-igpu",
         "/dev/dri/renderD128",
         "ghcr.io/immich-app/immich-machine-learning:v3.1.0-openvino",
     )
     assert hardware["devices"] == ["/dev/dri/renderD128:/dev/dri/renderD128"], hardware
 
 
-def immich_task_defaults_missing_shared_device_to_empty():
+def immich_task_defaults_missing_gpu_device_to_empty():
     tasks = yaml.safe_load(read("ansible/roles/immich/tasks/main.yml"))
     task = task_named(tasks, "Immich | Store the backend and device contract in Vaultwarden")
-    expression = task["vars"]["vault_item_fields"]["shared_device"]
+    expression = task["vars"]["vault_item_fields"]["gpu_device"]
 
     assert render(expression, {"app_config": {"app": {}}}) == ""
     assert (
         render(
             expression,
-            {"app_config": {"app": {"shared_device": "/dev/dri/renderD128"}}},
+            {"app_config": {"app": {"gpu_device": "intel-igpu"}}},
         )
-        == "/dev/dri/renderD128"
+        == "intel-igpu"
     )
 
 
@@ -1298,8 +1300,8 @@ if __name__ == "__main__":
     mautic_rendering()
     mail_consumers_open_smtp_egress()
     flaresolverr_rendering()
-    immich_machine_learning_device_is_optional()
-    immich_task_defaults_missing_shared_device_to_empty()
+    immich_machine_learning_uses_only_a_declared_gpu_device()
+    immich_task_defaults_missing_gpu_device_to_empty()
     print("Template rendering: Immich CPU mode omits device binds and hardware mode retains its declared device")
     wireguard_opens_its_udp_forward_before_deploy()
     apps_open_access_through_the_shared_task()

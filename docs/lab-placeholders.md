@@ -21,7 +21,9 @@ in is a lookup, not a guess.
 | `<pve-cluster>` | Proxmox cluster name | `pvesh get /cluster/status` |
 | `<pve-node>`, `<pve-node-N>` | Proxmox node name | `config/proxmox.yml` → `proxmox.node`, or a key of `proxmox.nodes` |
 | `<pve-node-ip>`, `<pve-node-N-ip>` | Proxmox node address | `config/proxmox.yml` → `proxmox.api_host`, or a value of `proxmox.nodes` |
-| `<pve-storage>` | Guest storage pool | `config/proxmox.yml` → `proxmox.storage` |
+| `<pve-storage>` | Proxmox storage pool ID, such as the database VM pool | `config/proxmox.yml` → `proxmox.storage` or `proxmox.storage_ids.database_vm` |
+| `<pve-storage-iscsi>` | Shared ZFS over iSCSI VM storage ID | `config/proxmox.yml` → `proxmox.storage_ids.floating_vm` |
+| `<pve-storage-nfs>` | Shared NFS container storage ID | `config/proxmox.yml` → `proxmox.storage_ids.floating_lxc` |
 | `<lab-cidr>` | A network's subnet | `config/proxmox.yml` → `networks.<name>.cidr` |
 | `<lab-gateway>` | A network's gateway | `config/proxmox.yml` → `networks.<name>.gateway` |
 | `<runner-ip>` | Rundeck runner address | `config/apps/rundeck.yml` → `proxmox.ip` |

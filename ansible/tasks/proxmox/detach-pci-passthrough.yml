@@ -2,12 +2,10 @@
 # Remove a dedicated PCI device assignment from a VM guest — the recovery half of
 # attach-pci-passthrough.yml.
 #
-# A hostpciN entry is removed only when BOTH are true: its device id equals
-# pci_passthrough_device.id, AND the guest carries the `_.dev+<slug>` provenance tag
-# attach-pci-passthrough.yml wrote for that same id. Content alone does not prove this
-# platform assigned the device — an operator can passthrough the identical address by
-# hand — so a content match with no provenance tag is left in place and reported, never
-# deleted.
+# A hostpciN entry is removed only when BOTH are true: its resource mapping equals
+# pci_passthrough_device.mapping, AND the guest carries the `_.dev+<slug>` provenance tag
+# attach-pci-passthrough.yml wrote for that mapping. Content alone does not prove this
+# platform assigned the device, so an untagged operator assignment remains in place.
 #
 # Idempotent: a device already absent, or assigned but not project-owned, is a no-op, not
 # a failure. Detaching gives the device back to the node, where `lspci`/`pvesh` shows it as
@@ -20,8 +18,7 @@
 #
 # Inputs:
 #   pci_passthrough_guest — VM guest hostname to detach the device from
-#   pci_passthrough_device — {id: "0000:01:00.0"} — same shape as
-#                            attach-pci-passthrough.yml; only `id` is read here
+#   pci_passthrough_device — {id: "0000:01:00.0", mapping: intel-igpu}
 #
 # Runs on localhost, delegating node commands to the node itself.
 
@@ -31,6 +28,7 @@
       - pci_passthrough_guest is defined
       - pci_passthrough_device is defined
       - pci_passthrough_device.id is defined
+      - pci_passthrough_device.mapping is defined
     fail_msg: >-
       detach-pci-passthrough.yml needs pci_passthrough_guest and
       pci_passthrough_device.id.
@@ -89,7 +87,7 @@
     _dpci_matched_index: >-
       {{ (_dpci_hostpci_lines
           | map('regex_replace', '^hostpci([0-9]+):\s*([^,]+).*$', '\1|\2')
-          | select('search', '\|' ~ (pci_passthrough_device.id | regex_escape) ~ '$')
+          | select('search', '\|mapping=' ~ (pci_passthrough_device.mapping | regex_escape) ~ '$')
           | map('regex_replace', '^([0-9]+)\|.*$', '\1')
           | list | first) | default('') }}
   vars:
@@ -102,11 +100,11 @@
 - name: Detach PCI passthrough | Resolve whether this platform actually owns the assignment
   ansible.builtin.set_fact:
     _dpci_provenance_tag: >-
-      _.dev+{{ pci_passthrough_device.id | lower | regex_replace('[^a-z0-9]+', '-')
+      _.dev+{{ pci_passthrough_device.mapping | lower | regex_replace('[^a-z0-9]+', '-')
                | regex_replace('^-+|-+$', '') }}
     _dpci_owned: >-
       {{ (_dpci_matched_index | length > 0)
-         and (('_.dev+' ~ (pci_passthrough_device.id | lower
+         and (('_.dev+' ~ (pci_passthrough_device.mapping | lower
                             | regex_replace('[^a-z0-9]+', '-')
                             | regex_replace('^-+|-+$', ''))) in _dpci_tags) }}
 
@@ -169,7 +167,7 @@
 - name: Detach PCI passthrough | Report what was removed
   ansible.builtin.debug:
     msg: >-
-      {{ pci_passthrough_guest }} (vmid {{ _dpci_vmid }}): {{ pci_passthrough_device.id }}
+      {{ pci_passthrough_guest }} (vmid {{ _dpci_vmid }}): {{ pci_passthrough_device.mapping }}
       {{ 'detached this run, host and device state are inspectable via lspci/pvesh'
          if _dpci_owned | bool
          else ('assigned here but NOT project-owned — left in place'

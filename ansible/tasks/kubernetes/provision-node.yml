@@ -119,6 +119,8 @@
 - name: k3s node | Ensure this Proxmox node has the cloud-init template
   ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
   vars:
+    proxmox_placement_class: floating_vm
+    guest_placement_preferred_node: "{{ k8s_node.proxmox_node }}"
     cloud_template_vmid: "{{ k8s_node.template_vmid | default('', true) }}"
     cloud_template_name: "{{ k8s_cluster_config.proxmox.cloud_template.name }}"
     cloud_template_image_url: "{{ k8s_cluster_config.proxmox.cloud_template.image_url }}"
@@ -138,6 +140,9 @@
 
 - name: k3s node | Clone the node VM from the template
   ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+  vars:
+    proxmox_placement_class: floating_vm
+    guest_placement_preferred_node: "{{ k8s_node.proxmox_node }}"
 
 # A CPU model is not hot-pluggable. `qm set --cpu` on a running guest writes the config and
 # changes nothing about the process already running, so a node provisioned before this
@@ -149,9 +154,9 @@
 # cycled at a time and a three-member etcd keeps quorum throughout.
 - name: k3s node | Power-cycle the node when its CPU model changed
   when:
-    - k8s_cluster_config.proxmox.vm.cpu is defined
+    - homelabinfra_config.proxmox.vm.cpu is defined
     - _k8sn_cpu_before.rc == 0
-    - not (_k8sn_cpu_before.stdout is search('^cpu:\s*' ~ (k8s_cluster_config.proxmox.vm.cpu | regex_escape) ~ '\s*$', multiline=True))
+    - not (_k8sn_cpu_before.stdout is search('^cpu:\s*' ~ (homelabinfra_config.proxmox.vm.cpu | regex_escape) ~ '\s*$', multiline=True))
   block:
     # `qm shutdown`, not `qm stop`: this is an etcd member, and an ACPI shutdown lets it
     # leave the cluster and flush rather than being cut mid-write. The guest agent is on

@@ -143,6 +143,7 @@
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
           vars:
+            proxmox_placement_class: floating_vm
             cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
             cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
             cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
@@ -185,6 +186,8 @@
 
         - name: Clone the VM from the cloud-init template
           ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
+          vars:
+            proxmox_placement_class: floating_vm
 
         # ansible_host here is the PBS VM's own IP — Play 3 reads it as the wiring upstream.
         - name: Add VM to deploy group

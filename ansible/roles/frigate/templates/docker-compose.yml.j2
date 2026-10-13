@@ -11,13 +11,14 @@ services:
     volumes:
       - "{{ app_config.app.config_path }}:/config"
       - "{{ app_config.app.recordings_path }}:/media/frigate"
+      # The Coral is attached to this dedicated VM by Proxmox USB resource mapping.
+      # This exposes only devices already assigned to the VM, not the Proxmox host bus.
+      - "{{ app_config.app.coral_usb_device_path }}:/dev/bus/usb"
       # Only the exact node resolved from the named Proxmox mapping reaches this container.
       - "/etc/localtime:/etc/localtime:ro"
     devices:
-      # Shared render-node access; this is never PCI passthrough.
+      # The dedicated PCI iGPU appears inside this VM before Docker binds the render node.
       - "{{ app_config.app.igpu_render_node }}:{{ app_config.app.igpu_render_node }}"
-      # Exact Coral node from the LXC USB resource-mapping seam; no USB directory bind.
-      - "{{ app_config.app.coral_usb_device_path }}:{{ app_config.app.coral_usb_device_path }}"
     ports:
       - "{{ app_config.app.port }}:8971"
       - "{{ rtsp_host_port }}:8554"
