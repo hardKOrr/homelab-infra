@@ -40,6 +40,17 @@ def verify_virtiofs_mount_contract():
         task for task in tasks
         if task.get("name") == "VM host mounts | Refuse an existing mapping with a different compute path"
     )
+    task_names = [task.get("name") for task in tasks]
+    ssh_wait = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Wait for guest SSH after virtiofs device changes"
+    )
+    assert task_names.index(ssh_wait["name"]) < task_names.index(
+        "VM host mounts | Verify existing guest fstab entry for each path"
+    )
+    assert "ansible.builtin.wait_for" in ssh_wait
+    assert "hostvars[attach_mounts_guest].ansible_host" in ssh_wait["ansible.builtin.wait_for"]["host"]
+    assert "_vmfs_missing_devices | length > 0" in ssh_wait["when"]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         stub = root / "pvesh"

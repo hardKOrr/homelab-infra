@@ -280,6 +280,23 @@
              if _vmfs_vm_entry.status | default('') == 'running' else '' }}.
           Original error: {{ ansible_failed_result.msg | default(ansible_failed_result) }}
 
+- name: VM host mounts | Wait for guest SSH after virtiofs device changes
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[attach_mounts_guest].ansible_host | default(attach_mounts_guest) }}"
+    port: "{{ hostvars[attach_mounts_guest].ansible_port | default(22) }}"
+    state: started
+    connect_timeout: 5
+    delay: 2
+    sleep: 5
+    timeout: 300
+    msg: >-
+      SSH readiness timed out after 300 seconds for VM {{ attach_mounts_guest }}
+      ({{ _vmfs_vmid }}) after assigning virtiofs devices. The VM was started, but
+      guest-side mounts cannot continue.
+  when:
+    - _vmfs_missing_devices | length > 0
+    - _vmfs_vm_entry.status | default('') == 'running'
+
 - name: VM host mounts | Verify existing guest fstab entry for each path
   ansible.builtin.command:
     argv:
