@@ -23,6 +23,17 @@ for required in PLANE_PROJECT_DIR PLANE_DATA_PATH PLANE_OBJECT_STORAGE_PATH \
   [[ -n "${!required:-}" ]] || { echo "Plane recovery configuration is incomplete: $required" >&2; exit 1; }
 done
 
+# The client containers use their conventional variable names. Keep the values out of
+# Docker's argv by exporting aliases and passing only the variable names with --env.
+export DB_HOST="$PLANE_DB_HOST"
+export DB_PORT="$PLANE_DB_PORT"
+export DB_NAME="$PLANE_DB_NAME"
+export DB_USER="$PLANE_DB_USER"
+export DB_PASSWORD="$PLANE_DB_PASSWORD"
+export REDIS_HOST="$PLANE_REDIS_HOST"
+export REDIS_PORT="$PLANE_REDIS_PORT"
+export REDISCLI_AUTH="$PLANE_REDIS_PASSWORD"
+
 [[ "$PLANE_BACKUP_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || {
   echo "Plane recovery backup id is unsafe" >&2
   exit 1

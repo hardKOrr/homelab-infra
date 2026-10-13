@@ -1126,6 +1126,25 @@ def plane_restore_environment_renders_the_canonical_hostname():
     assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
 
 
+def plane_backup_maps_root_only_database_and_redis_config_for_containers():
+    script = read("ansible/roles/plane/files/plane-recovery")
+    mappings = {
+        "DB_HOST": "PLANE_DB_HOST",
+        "DB_PORT": "PLANE_DB_PORT",
+        "DB_NAME": "PLANE_DB_NAME",
+        "DB_USER": "PLANE_DB_USER",
+        "DB_PASSWORD": "PLANE_DB_PASSWORD",
+        "REDIS_HOST": "PLANE_REDIS_HOST",
+        "REDIS_PORT": "PLANE_REDIS_PORT",
+        "REDISCLI_AUTH": "PLANE_REDIS_PASSWORD",
+    }
+
+    for container_var, config_var in mappings.items():
+        assert f'export {container_var}="${config_var}"' in script
+        assert f"--env {container_var}" in script
+        assert f"--env {container_var}=" not in script
+
+
 def plane_compose_provides_the_proxy_upstream_aliases():
     template = read("ansible/roles/plane/templates/docker-compose.yml.j2")
     output = render(
@@ -1228,6 +1247,10 @@ if __name__ == "__main__":
     print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
     plane_restore_environment_renders_the_canonical_hostname()
     print("Template rendering: Plane restore environment renders the canonical hostname")
+    plane_backup_maps_root_only_database_and_redis_config_for_containers()
+    print(
+        "Template rendering: Plane backup maps database and Redis credentials to client containers"
+    )
     plane_compose_provides_the_proxy_upstream_aliases()
     print("Template rendering: Plane Compose provides the bundled Caddy upstream aliases")
     plane_health_probes_do_not_follow_the_unwired_https_hostname()
