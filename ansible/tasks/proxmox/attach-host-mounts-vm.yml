@@ -100,7 +100,9 @@
       {{ ['pvesh', 'create', '/cluster/mapping/dir', '--id', item.id]
          + (_vmfs_compute_nodes
             | map('regex_replace', '$', ',path=' ~ item.host)
-            | map('regex_replace', '^', '--map node=') | list) }}
+            | map('regex_replace', '^', 'node=')
+            | map('regex_replace', '^', '--map ')
+            | map('split', ' ') | flatten) }}
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   loop: "{{ _vmfs_directory_mappings }}"
   loop_control:

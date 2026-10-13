@@ -26,6 +26,57 @@ def verify_virtiofs_mount_contract():
     assert "ansible.builtin.mount:" not in task_source
     assert "ansible.posix" in BOOTSTRAP.read_text()
 
+    tasks = yaml.safe_load(task_source)
+    mapping_task = next(
+        task for task in tasks
+        if task.get("name") == "VM host mounts | Create only missing directory mappings"
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        stub = root / "pvesh"
+        record = root / "argv.json"
+        stub.write_text(
+            f"#!{ANSIBLE.parent / 'python'}\n"
+            "import json, os, sys\n"
+            "json.dump(sys.argv[1:], open(os.environ['GUEST_MAPPING_ARGV_FILE'], 'w'))\n"
+            "print('[]')\n"
+        )
+        stub.chmod(0o755)
+        playbook = root / "mapping.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": {
+                "_vmfs_directory_mappings": [{"id": "d123", "host": "/mnt/media"}],
+                "_vmfs_compute_nodes": ["compute-3", "compute-2"],
+                "_vmfs_mapping_list": {"stdout": "[]"},
+                "homelabinfra_config": {"proxmox": {"node": "localhost"}},
+            },
+            "environment": {"PATH": str(root) + os.pathsep + os.environ["PATH"]},
+            "tasks": [mapping_task],
+        }]))
+        inventory = root / "inventory.ini"
+        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        env = os.environ | {
+            "ANSIBLE_STDOUT_CALLBACK": "default",
+            "ANSIBLE_NOCOLOR": "1",
+            "GUEST_MAPPING_ARGV_FILE": str(record),
+        }
+        result = subprocess.run(
+            [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"virtiofs mapping command failed\n{output}"
+        assert json.loads(record.read_text()) == [
+            "create", "/cluster/mapping/dir", "--id", "d123",
+            "--map", "node=compute-3,path=/mnt/media",
+            "--map", "node=compute-2,path=/mnt/media",
+        ], "virtiofs directory mapping arguments were not passed separately"
+
 
 def node(name, status="online"):
     return {"type": "node", "node": name, "status": status}
