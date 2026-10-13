@@ -34,11 +34,16 @@ def fixture_tasks(tasks, root):
             # Test values are synthetic; unhide this boundary so a stub failure is useful.
             task["no_log"] = False
         if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
+            restore_resolver = task.get("name", "").startswith("Karakeep restore")
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
             task["ansible.builtin.set_fact"] = {
-                "k8s_pbs_available": True, "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test", "k8s_pbs_password": "test",
+                "k8s_pbs_available": True,
+                "k8s_pbs_repository": ("pbs-user@pbs.example.invalid:archive"
+                                       if restore_resolver else "test"),
+                "k8s_pbs_fingerprint": ("pbs-fingerprint-secret"
+                                         if restore_resolver else "test"),
+                "k8s_pbs_password": ("pbs-password-secret" if restore_resolver else "test"),
             }
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
@@ -88,7 +93,9 @@ import os,sys
 from pathlib import Path
 args=sys.argv[1:]
 case=os.environ['KARAKEEP_TEST_CASE']
-assert os.environ.get('PBS_REPOSITORY') == 'test'
+expected_repository = ('test' if case.startswith('backup-')
+                       else 'pbs-user@pbs.example.invalid:archive')
+assert os.environ.get('PBS_REPOSITORY') == expected_repository
 script=args[-1]
 if 'proxmox-backup-client backup' in script:
     volumes=[args[i+1] for i,value in enumerate(args[:-1]) if value=='--volume']
@@ -103,6 +110,8 @@ if 'SNAPSHOT' not in os.environ:
     print('host/karakeep/2026-10-12T00:00:00Z')
     raise SystemExit(0)
 if case=='extract-failure':
+    print(os.environ['PBS_REPOSITORY'], os.environ['SNAPSHOT'], os.environ['PBS_PASSWORD'],
+          os.environ['PBS_FINGERPRINT'], file=sys.stderr)
     raise SystemExit(7)
 mount=args[args.index('--volume')+1]
 assert mount.endswith(':/restore'), mount
@@ -221,6 +230,7 @@ def restore_check(case, server):
                                       "component": "test"}},
             },
         }
+        variables["karakeep_restore_diagnostics"] = case == "extract-failure"
         result = run_play(root, restore_source, variables, case)
         success = case in ["plan", "success"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
@@ -246,6 +256,13 @@ def restore_check(case, server):
             assert states[-1] == ("present" if success else "stopped"), states
         if case == "foreign-group":
             assert "must belong to host/karakeep/" in result.stdout
+        if case == "extract-failure":
+            for secret in ["pbs-user@pbs.example.invalid:archive", "pbs-fingerprint-secret",
+                           "pbs-password-secret", snapshot]:
+                assert secret not in result.stdout, result.stdout
+            for marker in ["<PBS_REPOSITORY>", "<PBS_FINGERPRINT>",
+                           "<PBS_PASSWORD>", "<PBS_SNAPSHOT>"]:
+                assert marker in result.stdout, result.stdout
 
 
 def main():

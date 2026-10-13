@@ -202,6 +202,7 @@
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
         PBS_PASSWORD: "{{ k8s_pbs_password }}"
         SNAPSHOT: "{{ restore_snapshot }}"
+      register: _karakeep_restore_extract_result
       no_log: true
       changed_when: true
 
@@ -386,6 +387,20 @@
           Karakeep restore failed. Both original data directories were retained or put
           back; services remain stopped if replacement had started. Inspect the job output
           and retry after correcting the failure.
+          {% if karakeep_restore_diagnostics | default(false) | bool
+                and _karakeep_restore_extract_result is defined %}
+          PBS extraction diagnostics (redacted): exit={{ _karakeep_restore_extract_result.rc | default('unknown') }};
+          stdout={{ _karakeep_restore_extract_result.stdout | default('')
+                    | replace(k8s_pbs_repository | default('__missing_repository__'), '<PBS_REPOSITORY>')
+                    | replace(restore_snapshot | default('__missing_snapshot__'), '<PBS_SNAPSHOT>')
+                    | replace(k8s_pbs_password | default('__missing_password__'), '<PBS_PASSWORD>')
+                    | replace(k8s_pbs_fingerprint | default('__missing_fingerprint__'), '<PBS_FINGERPRINT>') }};
+          stderr={{ _karakeep_restore_extract_result.stderr | default('')
+                    | replace(k8s_pbs_repository | default('__missing_repository__'), '<PBS_REPOSITORY>')
+                    | replace(restore_snapshot | default('__missing_snapshot__'), '<PBS_SNAPSHOT>')
+                    | replace(k8s_pbs_password | default('__missing_password__'), '<PBS_PASSWORD>')
+                    | replace(k8s_pbs_fingerprint | default('__missing_fingerprint__'), '<PBS_FINGERPRINT>') }}
+          {% endif %}
   always:
     - name: Karakeep restore | Remove data rollback space when safe
       ansible.builtin.file:
