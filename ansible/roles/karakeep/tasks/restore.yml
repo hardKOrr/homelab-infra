@@ -276,13 +276,13 @@
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
-        owner: "1000"
-        group: "1000"
         mode: "0750"
       loop:
         - "{{ _karakeep_restore_data_path }}"
         - "{{ _karakeep_restore_search_path }}"
 
+    # Ownership is applied to the complete recovered trees after their archived contents
+    # have been copied into these temporary empty directories.
     - name: Karakeep restore | Copy the archived SQLite and assets data
       ansible.builtin.command:
         argv:
