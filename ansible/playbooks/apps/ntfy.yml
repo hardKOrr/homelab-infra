@@ -188,17 +188,34 @@
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
-    # Unconditional, unlike the guest bootstrap above: its Ntfy notify hook depends
-    # on homelabinfra_infra.notifications, which does not exist yet when the first
-    # baseline guests are created. Running it every deploy is what gives them the
-    # hook once Ntfy is up. Idempotent copy/file tasks only.
-    - name: Configure OS update notifications
-      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
-
     # ── App Deployment ─────────────────────────────────────────────────────────
     - name: Deploy Ntfy
       ansible.builtin.include_role:
         name: ntfy
+
+    # A recreated guest may need a new token, so the registry loaded above can still
+    # name the previous guest's credential. Merge the role's live token before writing
+    # this guest's OS-update hook; the next Deploy then writes the same content.
+    - name: Merge the current Ntfy credentials into guest infrastructure facts
+      ansible.builtin.set_fact:
+        homelabinfra_infra: >-
+          {{ (homelabinfra_infra | default({}))
+             | combine({
+                 'notifications': ((homelabinfra_infra | default({})).get('notifications', {})
+                   | combine({
+                       'provider': 'ntfy',
+                       'instance': instance,
+                       'host': 'http://' ~ (ansible_host | default(ansible_default_ipv4.address))
+                               ~ ':' ~ (app_config.app.port | string),
+                       'topic': app_config.app.topic,
+                       'token': ntfy_publish_token
+                     }, recursive=True))
+               }, recursive=True) }}
+
+    # Unconditional, unlike guest bootstrap: every deploy gives this guest the current
+    # notification hook. The role above exports the token just verified against Ntfy.
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
 
 
 # ── Play 3: Record facts + wire ────────────────────────────────────────────────
