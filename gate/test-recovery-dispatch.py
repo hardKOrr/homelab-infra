@@ -213,7 +213,37 @@ def main():
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
-    print("Recovery: backup/restore input publication across plays passed")
+    remove_playbook = yaml.safe_load(
+        (repo / "ansible/playbooks/apps/remove.yml").read_text()
+    )
+    compose_remove = next(
+        task["block"]
+        for task in remove_playbook[1]["tasks"]
+        if task.get("name") == "Remove the Compose project"
+    )
+    plane_schedule = next(
+        task for task in compose_remove
+        if task.get("name") == "Remove Plane recovery schedule"
+    )
+    assert plane_schedule["ansible.builtin.cron"]["name"] == (
+        "homelab-infra Plane backup {{ instance }}"
+    )
+    assert plane_schedule["ansible.builtin.cron"]["cron_file"] == (
+        "homelab-infra-plane-{{ instance }}"
+    )
+    assert plane_schedule["ansible.builtin.cron"]["state"] == "absent"
+    assert plane_schedule["when"] == "remove_app == 'plane'"
+
+    plane_config = next(
+        task for task in compose_remove
+        if task.get("name") == "Remove Plane recovery configuration"
+    )
+    assert plane_config["ansible.builtin.file"]["path"] == (
+        "/etc/homelab-infra/plane/{{ instance }}.env"
+    )
+    assert plane_config["ansible.builtin.file"]["state"] == "absent"
+    assert plane_config["when"] == "remove_app == 'plane'"
+    print("Recovery: backup/restore dispatch and Plane removal cleanup passed")
 
 
 if __name__ == "__main__":
