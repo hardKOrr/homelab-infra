@@ -107,6 +107,7 @@ if case=='extract-failure':
 mount=args[args.index('--volume')+1]
 assert mount.endswith(':/restore'), mount
 stage=Path(mount[:-9])
+assert stage.parent == Path(os.environ['KARAKEEP_TEST_ROOT']), stage
 (stage/'data').mkdir()
 (stage/'data'/'restored.sqlite').write_text('recovered database and assets\n')
 if case!='incomplete-archive':

@@ -124,13 +124,6 @@
       {{ _karakeep_restore_search_path }} (the search index) from one data.pxar archive.
   when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
 
-- name: Karakeep restore | Create private extraction space
-  ansible.builtin.tempfile:
-    state: directory
-    prefix: "{{ instance }}-karakeep-restore-"
-  register: _karakeep_restore_tmp
-  when: restore_overwrite | bool
-
 - name: Karakeep restore | Inspect overwrite target paths
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -153,6 +146,14 @@
   loop: "{{ _karakeep_restore_target_paths.results | default([]) }}"
   loop_control:
     label: "{{ item.item }}"
+  when: restore_overwrite | bool
+
+- name: Karakeep restore | Create private extraction space beside the app data
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ _karakeep_restore_data_path | dirname }}"
+    prefix: "{{ instance }}-karakeep-restore-"
+  register: _karakeep_restore_tmp
   when: restore_overwrite | bool
 
 - name: Karakeep restore | Replace the selected application archive
