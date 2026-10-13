@@ -213,7 +213,86 @@ def main():
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
-    print("Recovery: backup/restore input publication across plays passed")
+    remove_playbook = yaml.safe_load(
+        (repo / "ansible/playbooks/apps/remove.yml").read_text()
+    )
+    compose_remove = next(
+        task["block"]
+        for task in remove_playbook[1]["tasks"]
+        if task.get("name") == "Remove the Compose project"
+    )
+    plane_schedule = next(
+        task for task in compose_remove
+        if task.get("name") == "Remove Plane recovery schedule"
+    )
+    assert plane_schedule["ansible.builtin.cron"]["name"] == (
+        "homelab-infra Plane backup {{ instance }}"
+    )
+    assert plane_schedule["ansible.builtin.cron"]["cron_file"] == (
+        "homelab-infra-plane-{{ instance }}"
+    )
+    assert plane_schedule["ansible.builtin.cron"]["state"] == "absent"
+    assert plane_schedule["when"] == "remove_app == 'plane'"
+
+    plane_config = next(
+        task for task in compose_remove
+        if task.get("name") == "Remove Plane recovery configuration"
+    )
+    assert plane_config["ansible.builtin.file"]["path"] == (
+        "/etc/homelab-infra/plane/{{ instance }}.env"
+    )
+    assert plane_config["ansible.builtin.file"]["state"] == "absent"
+    assert plane_config["when"] == "remove_app == 'plane'"
+
+    remove_pretasks = remove_playbook[0]["pre_tasks"]
+    plane_db_inputs = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Resolve Plane's named database removal inputs"
+    )
+    assert plane_db_inputs["when"] == [
+        "(app | default(instance)) == 'plane'",
+        "delete_data | default(false) | bool",
+    ]
+    plane_db_sharing = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Check Plane's database and role are not shared by another app"
+    )
+    sharing_facts = plane_db_sharing["ansible.builtin.set_fact"]
+    assert "_rm_plane_shared_database_consumers" in sharing_facts
+    assert "_rm_plane_shared_role_consumers" in sharing_facts
+    assert plane_db_sharing["no_log"] is True
+
+    plane_db_remove = next(
+        task for task in remove_playbook[1]["tasks"]
+        if task.get("name") == "Remove Plane's named database and role"
+    )
+    assert plane_db_remove["when"] == [
+        "remove_kind == 'docker'",
+        "remove_app == 'plane'",
+        "_rm_delete_data | bool",
+    ]
+    plane_db_tasks = plane_db_remove["block"]
+    owner = next(task for task in plane_db_tasks
+                 if task.get("name") == "Read the owner of Plane's named PostgreSQL database")
+    assert "pg_get_userbyid" in owner["ansible.builtin.command"]["argv"][-1]
+    assert owner["delegate_to"] == "{{ remove_database_backend_target }}"
+    assert owner["no_log"] is True
+    owner_guard = next(task for task in plane_db_tasks
+                       if task.get("name") == "Refuse to delete Plane's database with an unexpected owner")
+    assert "remove_database_config.role" in owner_guard["ansible.builtin.assert"]["that"][0]
+    drop_database = next(task for task in plane_db_tasks
+                         if task.get("name") == "Drop Plane's named PostgreSQL database")
+    assert "DROP DATABASE {{ remove_database_config.name }}" in drop_database[
+        "ansible.builtin.command"
+    ]["argv"][-1]
+    assert drop_database["no_log"] is True
+    drop_role = next(task for task in plane_db_tasks
+                     if task.get("name") == "Drop Plane's named PostgreSQL role")
+    assert "DROP ROLE {{ remove_database_config.role }}" in drop_role[
+        "ansible.builtin.command"
+    ]["argv"][-1]
+    assert drop_role["no_log"] is True
+    print("Recovery: backup/restore dispatch and Plane database/removal cleanup passed")
 
 
 if __name__ == "__main__":

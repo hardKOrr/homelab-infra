@@ -1032,6 +1032,239 @@ def backup_prune_keeps_the_previous_point():
                 assert "--keep-last 2 --keep-daily" in line, f"{script} prunes without --keep-last 2"
 
 
+def plane_environment_context(plane_fqdn):
+    return {
+        "ansible_managed": "Managed by gate test",
+        "plane_fqdn": plane_fqdn,
+        "app_config": {
+            "app": {
+                "release": "v1.4.2",
+                "object_storage": {"bucket": "plane"},
+                "database": {"name": "plane"},
+                "database_user": "fixture-db-user",
+                "database_password": "fixture-db-password",
+                "database_host": "postgresql-plane",
+                "database_port": 5432,
+                "rabbitmq": {
+                    "user": "plane",
+                    "host": "plane-mq",
+                    "port": 5672,
+                    "vhost": "plane",
+                },
+            }
+        },
+        "_plane_redis_backend": {"host": "redis-plane", "port": 6379},
+        "_plane_redis_password": "fixture-redis-password",
+        "_plane_rabbitmq_password": "fixture-rabbitmq-password",
+        "_plane_object_storage_access_key": "fixture-access-key",
+        "_plane_object_storage_secret_key": "fixture-object-storage-secret",
+        "_plane_secret_key": "fixture-plane-secret",
+        "_plane_live_server_secret_key": "fixture-live-secret",
+    }
+
+
+def plane_env_matches_the_bundled_proxy_and_api_contract():
+    template = read("ansible/roles/plane/templates/plane.env.j2")
+    output = render(template, plane_environment_context("plane.example.test"))
+    environment = {
+        line.split("=", 1)[0]: line.split("=", 1)[1]
+        for line in output.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+
+    assert environment["APP_DOMAIN"] == "plane.example.test"
+    assert environment["BUCKET_NAME"] == "plane"
+    assert environment["AWS_S3_BUCKET_NAME"] == "plane"
+    assert environment["GUNICORN_WORKERS"] == "1"
+    assert environment["WEB_URL"] == "https://plane.example.test"
+    assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
+
+
+def plane_restore_environment_renders_the_canonical_hostname():
+    restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore.yml"))
+
+    def find_task(value, name):
+        if isinstance(value, dict):
+            if value.get("name") == name:
+                return value
+            for child in value.values():
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        return None
+
+    render_task = find_task(
+        restore_tasks, "Plane restore | Render the target environment with restored keys"
+    )
+    assert render_task is not None, "restore task does not render the target environment"
+    plane_fqdn = render(
+        render_task["vars"]["plane_fqdn"],
+        {
+            "app_config": {"routing": {"subdomain": "plane"}},
+            "restore_target": "plane",
+            "homelabinfra_infra": {"domain": "example.test"},
+        },
+    )
+    assert plane_fqdn == "plane.example.test", repr(plane_fqdn)
+
+    output = render(
+        read("ansible/roles/plane/templates/plane.env.j2"),
+        plane_environment_context(plane_fqdn),
+    )
+    environment = {
+        line.split("=", 1)[0]: line.split("=", 1)[1]
+        for line in output.splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    assert environment["APP_DOMAIN"] == "plane.example.test"
+    assert environment["WEB_URL"] == "https://plane.example.test"
+    assert environment["CORS_ALLOWED_ORIGINS"] == "https://plane.example.test"
+
+
+def plane_restore_snapshot_extraction_uses_task_level_options():
+    restore_tasks = yaml.safe_load(read("ansible/roles/plane/tasks/restore.yml"))
+
+    def find_task(value, name):
+        if isinstance(value, dict):
+            if value.get("name") == name:
+                return value
+            for child in value.values():
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        return None
+
+    task = find_task(restore_tasks, "Plane restore | Extract the selected PBS snapshot")
+    assert task is not None, "restore task does not extract the selected PBS snapshot"
+    command = task["ansible.builtin.command"]
+    assert set(command) == {"argv"}, "command module options must stay under argv"
+    assert set(task["environment"]) == {
+        "PBS_REPOSITORY",
+        "PBS_FINGERPRINT",
+        "PBS_PASSWORD",
+        "PBS_SNAPSHOT",
+        "PBS_KEY_URL",
+        "PBS_APT_REPO",
+    }
+    assert task["no_log"] is True
+    assert task["changed_when"] is True
+
+
+def plane_backup_maps_root_only_database_and_redis_config_for_containers():
+    script = read("ansible/roles/plane/files/plane-recovery")
+    mappings = {
+        "DB_HOST": "PLANE_DB_HOST",
+        "DB_PORT": "PLANE_DB_PORT",
+        "DB_NAME": "PLANE_DB_NAME",
+        "DB_USER": "PLANE_DB_USER",
+        "DB_PASSWORD": "PLANE_DB_PASSWORD",
+        "REDIS_HOST": "PLANE_REDIS_HOST",
+        "REDIS_PORT": "PLANE_REDIS_PORT",
+        "REDISCLI_AUTH": "PLANE_REDIS_PASSWORD",
+    }
+
+    for container_var, config_var in mappings.items():
+        assert f'export {container_var}="${config_var}"' in script
+        assert f"--env {container_var}" in script
+        assert f"--env {container_var}=" not in script
+
+
+def plane_compose_provides_the_proxy_upstream_aliases():
+    template = read("ansible/roles/plane/templates/docker-compose.yml.j2")
+    output = render(
+        template,
+        {
+            "ansible_managed": "Managed by gate test",
+            "instance": "plane",
+            "plane_env_file": "/opt/plane/plane.env",
+            "app_config": {
+                "app": {
+                    "release": "v1.4.2",
+                    "data_path": "/opt/plane/data",
+                    "object_storage_path": "/opt/plane/object-storage",
+                    "port": 8093,
+                }
+            },
+        },
+    )
+    compose = yaml.safe_load(output)
+    services = compose["services"]
+
+    silo_image = "docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z"
+    assert services["plane-minio"]["image"] == silo_image
+    assert services["plane-minio-init"]["image"] == silo_image
+
+    # Plane's bundled Caddyfile uses these short upstream names.
+    for service, alias in (
+        ("plane-web", "web"),
+        ("plane-space", "space"),
+        ("plane-admin", "admin"),
+        ("plane-live", "live"),
+        ("plane-api", "api"),
+    ):
+        assert services[service]["networks"]["default"]["aliases"] == [alias]
+
+    assert set(services["plane-proxy"]["depends_on"]) == {
+        "plane-web",
+        "plane-space",
+        "plane-admin",
+        "plane-live",
+        "plane-api",
+    }
+    assert "default" in compose["networks"]
+
+
+def plane_health_probes_do_not_follow_the_unwired_https_hostname():
+    accepted_statuses = [200, 301, 302, 303, 307, 308]
+
+    def find_task(value, name):
+        if isinstance(value, dict):
+            if value.get("name") == name:
+                return value
+            for child in value.values():
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_task(child, name)
+                if found is not None:
+                    return found
+        return None
+
+    for path, task_name, register in (
+        (
+            "ansible/roles/plane/tasks/main.yml",
+            "Plane | Wait for the recovery unit health endpoint",
+            "_plane_health",
+        ),
+        (
+            "ansible/roles/plane/tasks/restore.yml",
+            "Plane restore | Wait for the restored Plane health endpoint",
+            "_plane_restore_health",
+        ),
+    ):
+        task = find_task(yaml.safe_load(read(path)), task_name)
+        assert task is not None, f"{path} has no {task_name} task"
+        request = task["ansible.builtin.uri"]
+        assert request["follow_redirects"] == "none"
+        assert request["status_code"] == accepted_statuses
+        assert task["until"] == (
+            f"{register}.status | default(0) in "
+            "[200, 301, 302, 303, 307, 308]"
+        )
+
+
 if __name__ == "__main__":
     caddy = CaddyRendering()
     caddy.setup()
@@ -1044,6 +1277,20 @@ if __name__ == "__main__":
         caddy
     )
     caddy_missing_or_invalid_resolvers_fail_without_external_fallback(caddy)
+    plane_env_matches_the_bundled_proxy_and_api_contract()
+    print("Template rendering: Plane proxy hostname, bucket routing and API worker settings passed")
+    plane_restore_environment_renders_the_canonical_hostname()
+    print("Template rendering: Plane restore environment renders the canonical hostname")
+    plane_restore_snapshot_extraction_uses_task_level_options()
+    print("Template rendering: Plane restore extraction keeps task options at task scope")
+    plane_backup_maps_root_only_database_and_redis_config_for_containers()
+    print(
+        "Template rendering: Plane backup maps database and Redis credentials to client containers"
+    )
+    plane_compose_provides_the_proxy_upstream_aliases()
+    print("Template rendering: Plane Compose provides the bundled Caddy upstream aliases")
+    plane_health_probes_do_not_follow_the_unwired_https_hostname()
+    print("Template rendering: Plane deploy and restore probes keep canonical redirects local")
     emby_rendering()
     unpackerr_rendering()
     navidrome_rendering()

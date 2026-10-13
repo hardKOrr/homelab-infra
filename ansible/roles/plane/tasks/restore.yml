@@ -278,17 +278,17 @@
             test -s /restore/redis/dump.rdb
             test -d /restore/data
             test -d /restore/object-storage
-        environment:
-          PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
-          PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
-          PBS_PASSWORD: "{{ k8s_pbs_password }}"
-          PBS_SNAPSHOT: "{{ restore_snapshot }}"
-          PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
-          PBS_APT_REPO: >-
-            {{ app_config.backup.client.repository }}
-            {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
-        no_log: true
-        changed_when: true
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        PBS_SNAPSHOT: "{{ restore_snapshot }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: >-
+          {{ app_config.backup.client.repository }}
+          {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
+      no_log: true
+      changed_when: true
 
     - name: Plane restore | Read the selected artifact's release identity
       ansible.builtin.command:
@@ -530,9 +530,7 @@
         instance: "{{ restore_target }}"
         plane_project_dir: "/opt/{{ restore_target }}"
         plane_env_file: "/opt/{{ restore_target }}/plane.env"
-        plane_fqdn: >-
-          {{ app_config.routing.subdomain | default(restore_target, true) }}
-          .{{ homelabinfra_infra.domain }}
+        plane_fqdn: "{{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}"
         _plane_env_database_backend: "{{ _plane_restore_database_backend }}"
         _plane_env_database_user: "{{ _plane_restore_database_user }}"
         _plane_env_database_password: "{{ _plane_restore_database_password }}"
@@ -554,9 +552,14 @@
     - name: Plane restore | Wait for the restored Plane health endpoint
       ansible.builtin.uri:
         url: "http://localhost:{{ app_config.app.port }}/"
-        status_code: 200
+        headers:
+          Host: >-
+            {{ app_config.routing.subdomain | default(restore_target, true) }}.{{ homelabinfra_infra.domain }}
+        # Keep the readiness request local; the isolated target is not wired yet.
+        follow_redirects: none
+        status_code: [200, 301, 302, 303, 307, 308]
       register: _plane_restore_health
-      until: _plane_restore_health.status | default(0) == 200
+      until: _plane_restore_health.status | default(0) in [200, 301, 302, 303, 307, 308]
       retries: 90
       delay: 5
       changed_when: false
