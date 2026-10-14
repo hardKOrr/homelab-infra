@@ -234,8 +234,10 @@
     - name: Wire Caddy | Reject duplicate routes for this instance
       ansible.builtin.assert:
         that: _caddy_route_matches | length <= 1
-        fail_msg: "Caddy has multiple routes with id {{ _caddy_route_id }}."
-      no_log: true
+        fail_msg: >-
+          Caddy has multiple routes with id '{{ _caddy_route_id }}'. Remove the stale route
+          with DELETE /id/{{ _caddy_route_id }} through the Caddy admin API, then rerun this
+          application's Deploy.
 
     - name: Wire Caddy | Check for existing route
       ansible.builtin.uri:
@@ -290,5 +292,7 @@
              | selectattr('@id', 'defined')
              | selectattr('@id', 'equalto', _caddy_route_id)
              | list | length) == 1
-        fail_msg: "Caddy must have exactly one route with id {{ _caddy_route_id }}."
-      no_log: true
+        fail_msg: >-
+          Caddy did not end with exactly one route with id '{{ _caddy_route_id }}'. Inspect
+          that route through the Caddy admin API, remove any stale duplicate with
+          DELETE /id/{{ _caddy_route_id }}, then rerun this application's Deploy.

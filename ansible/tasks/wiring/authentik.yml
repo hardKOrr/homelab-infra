@@ -162,8 +162,10 @@
         - name: Wire Authentik | Reject duplicate proxy providers
           ansible.builtin.assert:
             that: _ak_provider_matches | length <= 1
-            fail_msg: Authentik has multiple proxy providers for this application.
-          no_log: true
+            fail_msg: >-
+              Authentik has multiple proxy providers named '{{ wiring_app_name }}'. In
+              Authentik Admin > Applications > Providers > Proxy Providers, remove the
+              stale duplicate, then rerun this application's Deploy.
 
         # Single dict expression so pks stay ints and flags stay bools in the JSON body.
         # forward_single = one app, one domain.
@@ -226,8 +228,11 @@
                 (_ak_provider_verify.json.results | default([])
                  | selectattr('name', 'equalto', wiring_app_name)
                  | list | length) == 1
-            fail_msg: Authentik must have exactly one proxy provider for this application.
-          no_log: true
+            fail_msg: >-
+              Authentik did not end with exactly one proxy provider named
+              '{{ wiring_app_name }}'. Inspect Authentik Admin > Applications > Providers
+              > Proxy Providers, remove any stale duplicate, then rerun this application's
+              Deploy.
 
         - name: Wire Authentik | Resolve provider pk
           ansible.builtin.set_fact:
@@ -262,8 +267,10 @@
         - name: Wire Authentik | Reject duplicate OAuth2 providers
           ansible.builtin.assert:
             that: _ak_oauth_matches | length <= 1
-            fail_msg: Authentik has multiple OAuth2 providers for this application.
-          no_log: true
+            fail_msg: >-
+              Authentik has multiple OAuth2 providers named '{{ wiring_app_name }}'. In
+              Authentik Admin > Applications > Providers > OAuth2/OpenID Providers, remove
+              the stale duplicate, then rerun this application's Deploy.
 
         # RS256 needs a signing key; the stock install ships a self-signed one.
         # Absent (renamed) key → provider is created without and Authentik falls
@@ -342,8 +349,11 @@
                 (_ak_oauth_verify.json.results | default([])
                  | selectattr('name', 'equalto', wiring_app_name)
                  | list | length) == 1
-            fail_msg: Authentik must have exactly one OAuth2 provider for this application.
-          no_log: true
+            fail_msg: >-
+              Authentik did not end with exactly one OAuth2 provider named
+              '{{ wiring_app_name }}'. Inspect Authentik Admin > Applications > Providers
+              > OAuth2/OpenID Providers, remove any stale duplicate, then rerun this
+              application's Deploy.
 
         - name: Wire Authentik | Resolve provider pk
           ansible.builtin.set_fact:
@@ -437,8 +447,10 @@
     - name: Wire Authentik | Reject duplicate application slugs
       ansible.builtin.assert:
         that: _ak_app_matches | length <= 1
-        fail_msg: Authentik has multiple applications with this slug.
-      no_log: true
+        fail_msg: >-
+          Authentik has multiple applications with slug '{{ wiring_app_name }}'. In
+          Authentik Admin > Applications > Applications, remove the stale duplicate, then
+          rerun this application's Deploy.
 
     - name: Wire Authentik | Create application
       ansible.builtin.uri:
@@ -485,8 +497,10 @@
             (_ak_app_verify.json.results | default([])
              | selectattr('slug', 'equalto', wiring_app_name)
              | list | length) == 1
-        fail_msg: Authentik must have exactly one application with this slug.
-      no_log: true
+        fail_msg: >-
+          Authentik did not end with exactly one application with slug
+          '{{ wiring_app_name }}'. Inspect Authentik Admin > Applications > Applications,
+          remove any stale duplicate, then rerun this application's Deploy.
 
     - name: Wire Authentik | Re-read application for its pk
       ansible.builtin.uri:
