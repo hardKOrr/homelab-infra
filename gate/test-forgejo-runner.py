@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Forgejo Runner entrypoint access and removal API scopes."""
+"""Check Forgejo Runner startup and removal API scopes."""
 
 import http.server
 import json
@@ -130,8 +130,24 @@ def check_non_root_entrypoint_access():
     assert 'entrypoint: ["/opt/runner/register-and-run.sh"]' in compose
 
 
+def check_daemon_readiness_retries():
+    role_tasks = yaml.safe_load(
+        (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
+    )
+    check = next(
+        task
+        for task in role_tasks
+        if task.get("name") == "Forgejo Runner | Check that the runner daemon is connected"
+    )
+    assert check["retries"] == 12
+    assert check["delay"] == 5
+    assert "runner" in check["until"]
+    assert "stdout_lines" in check["until"]
+
+
 def main():
     check_non_root_entrypoint_access()
+    check_daemon_readiness_retries()
     run_removal("user", "runner_api_token", include_admin_fallback=True)
     run_removal("admin", "admin_api_token")
     print("Forgejo Runner removal checks passed")
