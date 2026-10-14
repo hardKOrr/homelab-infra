@@ -179,7 +179,8 @@
             test -d /archive/forgejo
             proxmox-backup-client backup data.pxar:/archive --all-file-systems true \
               --backup-id "$BACKUP_ID"
-            # Keep the pre-restore safety point as well as the two newest ordinary points.
+            # Keep the two newest snapshots plus the configured daily points; restore keeps
+            # its pre-restore safety copy in local scratch, not as a PBS snapshot.
             proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
             echo "backup complete: host/$BACKUP_ID (Forgejo database and data)"
         expand_argument_vars: false
