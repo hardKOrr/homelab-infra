@@ -38,7 +38,6 @@
       Forgejo backup needs its named PostgreSQL backend, database credential, non-root
       data path, and a configured PBS target before an application-consistent archive can
       run.
-  no_log: true
 
 - name: Forgejo backup | Resolve the PBS client target
   ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
@@ -134,7 +133,17 @@
         DB_USER: "{{ _forgejo_backup_database_user }}"
         DB_PASSWORD: "{{ _forgejo_backup_database_password }}"
       no_log: true
+      register: _forgejo_backup_database_dump
+      failed_when: false
       changed_when: true
+
+    - name: Forgejo backup | Report a failed database dump
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _forgejo_backup_database_dump }}"
+        scrub_failure_secrets:
+          - "{{ _forgejo_backup_database_password }}"
+        scrub_failure_context: Forgejo backup | PostgreSQL database dump failed
 
     - name: Forgejo backup | Push one database and data archive to PBS
       ansible.builtin.command:
@@ -196,7 +205,18 @@
           {{ app_config.backup.client.suite }}
           {{ app_config.backup.client.component }}
       no_log: true
+      register: _forgejo_backup_pbs_upload
+      failed_when: false
       changed_when: true
+
+    - name: Forgejo backup | Report a failed PBS archive upload
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _forgejo_backup_pbs_upload }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+        scrub_failure_context: Forgejo backup | PBS archive upload failed
 
     - name: Forgejo backup | Mark the paired recovery artifact complete
       ansible.builtin.set_fact:

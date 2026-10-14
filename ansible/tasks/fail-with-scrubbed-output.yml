@@ -1,0 +1,21 @@
+---
+- name: Fail with scrubbed command output
+  ansible.builtin.fail:
+    msg: |-
+      {%- set scrubbed = namespace(
+        stderr=scrub_failure_result.stderr | default('', true) | string,
+        stdout=scrub_failure_result.stdout | default('', true) | string
+      ) -%}
+      {%- for secret in scrub_failure_secrets | default([]) -%}
+      {%- if secret is not none and (secret | string | length > 0) -%}
+      {%- set secret_text = secret | string -%}
+      {%- set scrubbed.stderr = scrubbed.stderr | replace(secret_text, '***') -%}
+      {%- set scrubbed.stdout = scrubbed.stdout | replace(secret_text, '***') -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ scrub_failure_context | default('Command failed') }} (exit code {{ scrub_failure_result.rc | default('unknown') }}).
+      stderr:
+      {{ scrubbed.stderr }}
+      stdout:
+      {{ scrubbed.stdout }}
+  when: scrub_failure_result.rc | default(0) | int != 0

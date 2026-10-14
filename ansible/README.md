@@ -254,6 +254,7 @@ that ownership boundary and leave untagged guests alone.
 ## Local conventions
 
 - Keep playbooks focused on orchestration. Put reusable behavior in a task file or role.
+- Use `no_log` only on tasks that carry secrets; failures print stderr and stdout with secret values scrubbed.
 - Preserve sibling keys when updating shared `homelabinfra_*` mappings. Follow
   `vars/CONTRACT.md` for merge and namespace rules.
 - Treat `config/.generated/facts.yml` as generated topology, not a secret store.
