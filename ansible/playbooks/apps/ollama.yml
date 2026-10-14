@@ -205,7 +205,7 @@
           mapping: >-
             {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
                | default(app_config.app.gpu_device) }}
-          pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(true) | bool }}"
+          pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(false) | bool }}"
 
 - name: "Ollama | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"

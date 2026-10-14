@@ -77,7 +77,7 @@
 
 - name: Detach PCI passthrough | Read the guest's current configuration
   ansible.builtin.command:
-    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ _dpci_vmid }}/config"
+    cmd: "qm config {{ _dpci_vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _dpci_config
   changed_when: false

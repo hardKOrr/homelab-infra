@@ -133,7 +133,7 @@
 
 - name: USB passthrough | Read every VM's configuration on the node
   ansible.builtin.command:
-    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ item.vmid }}/config"
+    cmd: "qm config {{ item.vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _usb_all_configs
   loop: "{{ _usb_vm_list.stdout | from_json }}"
@@ -161,7 +161,7 @@
       (_usb_holders | length == 0) or (_usb_holders == [_usb_vmid])
     fail_msg: >-
       USB mapping {{ usb_passthrough_device.mapping }} is already assigned to guest vmid
-      {{ _usb_holders | difference([_usb_vmid]) | first }}, not
+      {{ _usb_holders | difference([_usb_vmid]) | join(', ') }}, not
       {{ usb_passthrough_guest }}. A dedicated USB device cannot be assigned to a second
       guest at once — detach it there first, with detach-usb-passthrough.yml.
   vars:

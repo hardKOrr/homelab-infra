@@ -73,7 +73,7 @@
 
 - name: Detach USB passthrough | Read the guest's current configuration
   ansible.builtin.command:
-    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ _dusb_vmid }}/config"
+    cmd: "qm config {{ _dusb_vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _dusb_config
   changed_when: false
