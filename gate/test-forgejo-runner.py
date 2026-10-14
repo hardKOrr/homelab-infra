@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise Forgejo Runner removal with user and global registrations."""
+"""Check Forgejo Runner entrypoint access and removal API scopes."""
 
 import http.server
 import json
@@ -111,7 +111,27 @@ def run_removal(scope, token_field, include_admin_fallback=False):
         server.server_close()
 
 
+def check_non_root_entrypoint_access():
+    role_tasks = yaml.safe_load(
+        (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
+    )
+    entrypoint = next(
+        task["ansible.builtin.copy"]
+        for task in role_tasks
+        if task.get("name") == "Forgejo Runner | Install idempotent registration entrypoint"
+    )
+    compose = (
+        repo / "ansible/roles/forgejo-runner/templates/docker-compose.yml.j2"
+    ).read_text()
+    assert entrypoint["owner"] == "1000"
+    assert entrypoint["group"] == "1000"
+    assert entrypoint["mode"] == "0550"
+    assert 'user: "1000:1000"' in compose
+    assert 'entrypoint: ["/opt/runner/register-and-run.sh"]' in compose
+
+
 def main():
+    check_non_root_entrypoint_access()
     run_removal("user", "runner_api_token", include_admin_fallback=True)
     run_removal("admin", "admin_api_token")
     print("Forgejo Runner removal checks passed")

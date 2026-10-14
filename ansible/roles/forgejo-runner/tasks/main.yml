@@ -60,9 +60,9 @@
   ansible.builtin.copy:
     src: register-and-run.sh
     dest: "{{ forgejo_runner_entrypoint }}"
-    owner: root
-    group: root
-    mode: "0750"
+    owner: "1000"
+    group: "1000"
+    mode: "0550"
   notify: Restart Forgejo Runner
 
 - name: Forgejo Runner | Render Compose project
