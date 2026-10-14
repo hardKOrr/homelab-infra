@@ -166,6 +166,11 @@
 
         - name: Wire Uptime Kuma | Select the existing monitor and build the payload
           ansible.builtin.set_fact:
+            _kuma_existing_matches: >-
+              {{ (_kuma_monitors.values() | list)
+                 | selectattr('name', 'defined')
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list }}
             _kuma_existing: >-
               {{ (_kuma_monitors.values() | list)
                  | selectattr('name', 'defined')
@@ -201,6 +206,13 @@
           vars:
             # Uptime Kuma rejects anything below 20 seconds.
             _kuma_interval: "{{ [wiring_interval | default(60) | int, 20] | max }}"
+          no_log: true
+
+        - name: Wire Uptime Kuma | Reject duplicate monitors for this instance
+          ansible.builtin.assert:
+            that: _kuma_existing_matches | length <= 1
+            fail_msg: Uptime Kuma has multiple monitors with this application name.
+          no_log: true
 
         - name: Wire Uptime Kuma | Add the monitor
           ansible.builtin.include_tasks: ../kuma/call.yml
@@ -256,17 +268,22 @@
           vars:
             kuma_call_event: getMonitorList
             kuma_call_ack_id: 4
-          when: _kuma_wrote | bool
 
-        - name: Wire Uptime Kuma | Assert the monitor is present
+        - name: Wire Uptime Kuma | Record the verified monitor matches
+          ansible.builtin.set_fact:
+            _kuma_verified_matches: >-
+              {{ (((kuma_session_frames | select('match', '42\["monitorList",') | list
+                    | last | default('42["monitorList",{}]'))
+                   | regex_replace('^42', '') | from_json | last).values() | list)
+                 | selectattr('name', 'defined')
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list }}
+          no_log: true
+
+        - name: Wire Uptime Kuma | Assert exactly one monitor is active
           ansible.builtin.assert:
             that:
-              - >-
-                ((kuma_session_frames | select('match', '42\["monitorList",') | list
-                  | last | default('42["monitorList",{}]'))
-                 | regex_replace('^42', '') | from_json | last).values() | list
-                | selectattr('name', 'defined')
-                | selectattr('name', 'equalto', wiring_app_name)
-                | list | length > 0
-            fail_msg: "Uptime Kuma has no monitor named {{ wiring_app_name }} after wiring."
-          when: _kuma_wrote | bool
+              - _kuma_verified_matches | length == 1
+              - _kuma_verified_matches[0].url == wiring_monitor_url
+            fail_msg: Uptime Kuma must have exactly one monitor with the configured URL.
+          no_log: true

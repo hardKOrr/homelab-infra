@@ -66,7 +66,7 @@
 
 - name: Forgejo | Wait for health endpoint
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/-/health"
+    url: "http://localhost:{{ app_config.app.port }}/api/healthz"
     status_code: 200
   register: _forgejo_health
   until: _forgejo_health.status | default(0) == 200

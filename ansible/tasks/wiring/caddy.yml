@@ -213,6 +213,30 @@
           routing.identity to catalog.
       when: _caddy_forward_auth | bool
 
+    - name: Wire Caddy | List existing routes
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0/routes"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: _caddy_route_list
+      no_log: true
+
+    - name: Wire Caddy | Select routes with this instance id
+      ansible.builtin.set_fact:
+        _caddy_route_matches: >-
+          {{ (_caddy_route_list.json | default([]))
+             | selectattr('@id', 'defined')
+             | selectattr('@id', 'equalto', _caddy_route_id)
+             | list }}
+      no_log: true
+
+    - name: Wire Caddy | Reject duplicate routes for this instance
+      ansible.builtin.assert:
+        that: _caddy_route_matches | length <= 1
+        fail_msg: "Caddy has multiple routes with id {{ _caddy_route_id }}."
+      no_log: true
+
     - name: Wire Caddy | Check for existing route
       ansible.builtin.uri:
         url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
@@ -248,3 +272,23 @@
         url: "{{ _caddy_admin_url }}/id/{{ _caddy_route_id }}"
         method: GET
         status_code: 200
+
+    - name: Wire Caddy | Read routes after reconciliation
+      ansible.builtin.uri:
+        url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0/routes"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: _caddy_route_list_after
+      no_log: true
+
+    - name: Wire Caddy | Assert exactly one route is active
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_caddy_route_list_after.json | default([])
+             | selectattr('@id', 'defined')
+             | selectattr('@id', 'equalto', _caddy_route_id)
+             | list | length) == 1
+        fail_msg: "Caddy must have exactly one route with id {{ _caddy_route_id }}."
+      no_log: true

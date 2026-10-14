@@ -149,10 +149,21 @@
 
         - name: Wire Authentik | Select existing provider
           ansible.builtin.set_fact:
+            _ak_provider_matches: >-
+              {{ (_ak_provider_list.json.results | default([]))
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list }}
             _ak_provider: >-
               {{ (_ak_provider_list.json.results | default([]))
                  | selectattr('name', 'equalto', wiring_app_name)
                  | list | first | default({}) }}
+          no_log: true
+
+        - name: Wire Authentik | Reject duplicate proxy providers
+          ansible.builtin.assert:
+            that: _ak_provider_matches | length <= 1
+            fail_msg: Authentik has multiple proxy providers for this application.
+          no_log: true
 
         # Single dict expression so pks stay ints and flags stay bools in the JSON body.
         # forward_single = one app, one domain.
@@ -199,6 +210,25 @@
           changed_when: true
           no_log: true
 
+        - name: Wire Authentik | Read proxy providers after reconciliation
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/providers/proxy/?name={{ wiring_app_name | urlencode }}"
+            method: GET
+            headers: "{{ _ak_headers }}"
+            status_code: 200
+          register: _ak_provider_verify
+          no_log: true
+
+        - name: Wire Authentik | Assert exactly one proxy provider is active
+          ansible.builtin.assert:
+            that:
+              - >-
+                (_ak_provider_verify.json.results | default([])
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list | length) == 1
+            fail_msg: Authentik must have exactly one proxy provider for this application.
+          no_log: true
+
         - name: Wire Authentik | Resolve provider pk
           ansible.builtin.set_fact:
             _ak_provider_pk: >-
@@ -219,10 +249,21 @@
 
         - name: Wire Authentik | Select existing OAuth2 provider
           ansible.builtin.set_fact:
+            _ak_oauth_matches: >-
+              {{ (_ak_oauth_list.json.results | default([]))
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list }}
             _ak_oauth: >-
               {{ (_ak_oauth_list.json.results | default([]))
                  | selectattr('name', 'equalto', wiring_app_name)
                  | list | first | default({}) }}
+          no_log: true
+
+        - name: Wire Authentik | Reject duplicate OAuth2 providers
+          ansible.builtin.assert:
+            that: _ak_oauth_matches | length <= 1
+            fail_msg: Authentik has multiple OAuth2 providers for this application.
+          no_log: true
 
         # RS256 needs a signing key; the stock install ships a self-signed one.
         # Absent (renamed) key → provider is created without and Authentik falls
@@ -283,6 +324,25 @@
               _ak_oauth.client_type | default('') != 'confidential'
               or _ak_oauth.redirect_uris | default([]) != _ak_oauth_payload.redirect_uris
           changed_when: true
+          no_log: true
+
+        - name: Wire Authentik | Read OAuth2 providers after reconciliation
+          ansible.builtin.uri:
+            url: "{{ _ak_api }}/providers/oauth2/?name={{ wiring_app_name | urlencode }}"
+            method: GET
+            headers: "{{ _ak_headers }}"
+            status_code: 200
+          register: _ak_oauth_verify
+          no_log: true
+
+        - name: Wire Authentik | Assert exactly one OAuth2 provider is active
+          ansible.builtin.assert:
+            that:
+              - >-
+                (_ak_oauth_verify.json.results | default([])
+                 | selectattr('name', 'equalto', wiring_app_name)
+                 | list | length) == 1
+            fail_msg: Authentik must have exactly one OAuth2 provider for this application.
           no_log: true
 
         - name: Wire Authentik | Resolve provider pk
@@ -355,6 +415,10 @@
 
     - name: Wire Authentik | Select existing application and build payload
       ansible.builtin.set_fact:
+        _ak_app_matches: >-
+          {{ (_ak_app_list.json.results | default([]))
+             | selectattr('slug', 'equalto', wiring_app_name)
+             | list }}
         _ak_app: >-
           {{ (_ak_app_list.json.results | default([]))
              | selectattr('slug', 'equalto', wiring_app_name)
@@ -368,6 +432,13 @@
              | combine({'provider': _ak_provider_pk | int}
                        if _ak_mode in ['oidc', 'forward_auth']
                        else {'provider': none}) }}
+      no_log: true
+
+    - name: Wire Authentik | Reject duplicate application slugs
+      ansible.builtin.assert:
+        that: _ak_app_matches | length <= 1
+        fail_msg: Authentik has multiple applications with this slug.
+      no_log: true
 
     - name: Wire Authentik | Create application
       ansible.builtin.uri:
@@ -396,6 +467,25 @@
           or _ak_app.name | default('') != _ak_display
           or _ak_app.meta_launch_url | default('') != _ak_external_url
       changed_when: true
+      no_log: true
+
+    - name: Wire Authentik | Read applications after reconciliation
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/applications/?slug={{ wiring_app_name | urlencode }}&superuser_full_list=true"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_app_verify
+      no_log: true
+
+    - name: Wire Authentik | Assert exactly one application is active
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_ak_app_verify.json.results | default([])
+             | selectattr('slug', 'equalto', wiring_app_name)
+             | list | length) == 1
+        fail_msg: Authentik must have exactly one application with this slug.
       no_log: true
 
     - name: Wire Authentik | Re-read application for its pk

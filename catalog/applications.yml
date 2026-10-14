@@ -462,6 +462,7 @@ applications:
     category: Developer Tools
     type: Source Control
     scope: estate
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   forgejo-runner:
     name: Forgejo Runner

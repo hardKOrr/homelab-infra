@@ -205,6 +205,14 @@ Failure puts the original state back and leaves the service stopped. Deploy pres
 recovered preferences and torrents and registers only this client in deployed torrent
 consumers. Remove withdraws only entries that address the owned client.
 
+Forgejo native recovery stops only the selected service and stores a PostgreSQL dump and
+the complete data directory (repositories, LFS, attachments, and `app.ini` secrets) in
+one PBS `data.pxar` under `host/<instance>`. The service stays stopped while the database
+and files are captured. Restore stages and validates both parts, keeps the existing data
+directory beside its original path and a database dump until Forgejo passes its health
+check, and restores both originals on failure. It leaves Forgejo stopped after a failed
+restore and retains the two newest recovery points alongside daily retention.
+
 ### Application data port
 
 The issue names the source, destination, capture method, required path or address

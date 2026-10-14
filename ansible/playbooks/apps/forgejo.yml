@@ -84,6 +84,21 @@
       vars:
         forgejo_fqdn: "{{ hostvars['localhost'].forgejo_fqdn }}"
 
+- name: "Forgejo | Open the app's network access"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _forgejo_fw_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _forgejo_fw_host.ansible_host }}"
+    wiring_firewall: "{{ _forgejo_fw_host.app_config.firewall | default({}) }}"
+  tasks:
+    - name: Open Forgejo's declared network access
+      ansible.builtin.include_tasks: ../../tasks/firewall/open-app-access.yml
+      vars:
+        firewall_inbound_ports:
+          forgejo-ssh: "{{ _forgejo_fw_host.app_config.app.ssh_port }}"
+
 - name: "Forgejo | Wire"
   hosts: localhost
   gather_facts: false
@@ -95,7 +110,7 @@
     wiring_subdomain: "{{ hostvars['localhost'].forgejo_subdomain }}"
     wiring_domain: "{{ hostvars['localhost'].forgejo_fqdn }}"
     wiring_app_display: "Forgejo ({{ instance }})"
-    wiring_monitor_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}/-/health"
+    wiring_monitor_url: "https://{{ hostvars['localhost'].forgejo_fqdn }}/api/healthz"
     wiring_auth_group: homelab-users
     wiring_identity_mode: "{{ _forgejo_host.app_config.routing.identity | default('catalog') }}"
     wiring_access: "{{ _forgejo_host.app_config.routing.access | default('internal') }}"
