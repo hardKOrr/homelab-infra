@@ -16,7 +16,6 @@ forgejo_defaults:
     database:
       provider: postgresql
       instance: postgresql-forgejo
-      version: "16"
       name: forgejo
       role: forgejo
   routing:
