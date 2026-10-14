@@ -4,7 +4,6 @@ services:
     image: {{ app_config.app.image }}
     container_name: "{{ instance }}-forgejo"
     restart: unless-stopped
-    user: "1000:1000"
     env_file:
       - "{{ forgejo_env_file }}"
     ports:
