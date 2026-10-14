@@ -26,6 +26,7 @@
       {{ (homelabinfra_infra.databases | default({})).get(
            (restore_source_database | default({})).get('instance', ''), {}) }}
     _application_restore_complete: false
+    _forgejo_restore_service_stopped: false
     _forgejo_restore_data_moved: false
     _forgejo_restore_database_mutated: false
     _forgejo_restore_rollback_complete: false
