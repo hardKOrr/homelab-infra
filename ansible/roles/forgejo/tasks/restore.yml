@@ -226,22 +226,15 @@
           - -ceu
           - |
             export DEBIAN_FRONTEND=noninteractive
-            printf 'FORGEJO_RESTORE_STAGE=apt-update\n' >&2
             apt-get update -qq
-            printf 'FORGEJO_RESTORE_STAGE=bootstrap-install\n' >&2
             apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings /restore/archive
-            printf 'FORGEJO_RESTORE_STAGE=fetch-apt-key\n' >&2
+            install -d -m 0755 /etc/apt/keyrings
             curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
             echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
               > /etc/apt/sources.list.d/pbs-client.list
-            printf 'FORGEJO_RESTORE_STAGE=pbs-repo-update\n' >&2
             apt-get update -qq
-            printf 'FORGEJO_RESTORE_STAGE=pbs-client-install\n' >&2
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            printf 'FORGEJO_RESTORE_STAGE=archive-restore\n' >&2
             proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/archive
-            printf 'FORGEJO_RESTORE_STAGE=archive-validation\n' >&2
             test -s /restore/archive/database/forgejo.dump
             test -s /restore/archive/forgejo/gitea/conf/app.ini
         expand_argument_vars: false
@@ -256,65 +249,6 @@
           {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
       no_log: true
       changed_when: true
-      failed_when: false
-      register: _forgejo_restore_archive_result
-
-    - name: Forgejo restore | Classify archive extraction failures safely
-      vars:
-        _forgejo_restore_safe_error_words: [
-          unable, cannot, failed, error, open, read, write, permission, denied, access,
-          unauthorized, forbidden, not, found, missing, snapshot, archive, file, chunk, index,
-          manifest, certificate, fingerprint, connection, authentication, password, wrong,
-          encryption, key, network, timeout, invalid, argument, parameter, target, directory,
-          exists, unsupported, server, client, restore, no, such, does, exist, to, for, the,
-          with, in, is, was, from, valid, decrypt, data, pxar, repository, datastore, expected,
-          unexpected, got, response, status, request, code, group, type, format
-        ]
-      ansible.builtin.set_fact:
-        _forgejo_restore_archive_failure_stage: >-
-          {% set error = _forgejo_restore_archive_result.stderr | default('') %}
-          {% set stages = error | regex_findall('FORGEJO_RESTORE_STAGE=([a-z-]+)') %}
-          {{ stages | last if stages | length > 0 else 'unknown' }}
-        _forgejo_restore_archive_failure_class: >-
-          {% set error = _forgejo_restore_archive_result.stderr | default('') | lower %}
-          {{ 'pbs-access' if ('permission denied' in error or 'unauthorized' in error
-                              or 'forbidden' in error or 'authentication' in error
-                              or '401' in error)
-             else 'pbs-connection' if ('unable to connect' in error or 'connection' in error
-                                       or 'timed out' in error or 'resolve' in error
-                                       or 'network unreachable' in error)
-             else 'snapshot-or-archive' if ('no such file' in error or 'not found' in error
-                                            or 'does not exist' in error or 'snapshot' in error
-                                            or 'archive' in error)
-             else 'client-setup' if ('apt-get' in error or 'curl' in error
-                                     or 'package' in error or 'certificate' in error)
-             else 'unclassified' }}
-        _forgejo_restore_archive_safe_stdout: >-
-          {% set output = _forgejo_restore_archive_result.stdout | default('') | lower %}
-          {% set tokens = output | regex_findall('[a-z]+')
-             | select('in', _forgejo_restore_safe_error_words) | unique | list %}
-          {{ tokens | join(' ') if tokens | length > 0 else 'no safe signature words' }}
-        _forgejo_restore_archive_safe_stderr: >-
-          {% set error = _forgejo_restore_archive_result.stderr | default('') | lower
-                         | regex_replace('forgejo_restore_stage=[a-z-]+', '') %}
-          {% set tokens = error | regex_findall('[a-z]+')
-             | select('in', _forgejo_restore_safe_error_words) | unique | list %}
-          {{ tokens | join(' ') if tokens | length > 0 else 'no safe signature words' }}
-      when: _forgejo_restore_archive_result.rc | default(255) | int != 0
-      no_log: true
-
-    - name: Forgejo restore | Require the selected archive to be extracted
-      ansible.builtin.assert:
-        that:
-          - _forgejo_restore_archive_result.rc | default(255) | int == 0
-        fail_msg: >-
-          PBS archive extraction failed (exit code
-          {{ _forgejo_restore_archive_result.rc | default('unknown') }};
-          stage {{ _forgejo_restore_archive_failure_stage | default('unknown') }};
-          class {{ _forgejo_restore_archive_failure_class | default('unclassified') }};
-          safe-stdout={{ _forgejo_restore_archive_safe_stdout | default('unavailable') }};
-          safe-stderr={{ _forgejo_restore_archive_safe_stderr | default('unavailable') }}).
-          No live Forgejo data was changed.
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
       ansible.builtin.command:
