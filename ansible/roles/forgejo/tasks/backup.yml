@@ -216,6 +216,11 @@
         scrub_failure_secrets:
           - "{{ k8s_pbs_password }}"
           - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+          - "{{ app_config.backup.client.key_url }}"
+          - "{{ app_config.backup.client.repository }}"
+          - "{{ homelabinfra_infra.backups.host }}"
+          - "host/{{ app_config.backup.backup_id | default('', true) or instance }}"
         scrub_failure_context: Forgejo backup | PBS archive upload failed
 
     - name: Forgejo backup | Mark the paired recovery artifact complete

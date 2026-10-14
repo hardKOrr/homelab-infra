@@ -4,18 +4,31 @@
     msg: |-
       {%- set scrubbed = namespace(
         stderr=scrub_failure_result.stderr | default('', true) | string,
-        stdout=scrub_failure_result.stdout | default('', true) | string
+        stdout=scrub_failure_result.stdout | default('', true) | string,
+        msg=scrub_failure_result.msg | default('', true) | string
       ) -%}
       {%- for secret in scrub_failure_secrets | default([]) -%}
       {%- if secret is not none and (secret | string | length > 0) -%}
       {%- set secret_text = secret | string -%}
       {%- set scrubbed.stderr = scrubbed.stderr | replace(secret_text, '***') -%}
       {%- set scrubbed.stdout = scrubbed.stdout | replace(secret_text, '***') -%}
+      {%- set scrubbed.msg = scrubbed.msg | replace(secret_text, '***') -%}
       {%- endif -%}
       {%- endfor -%}
+      {%- set scrubbed.stderr = scrubbed.stderr | regex_replace('/config/[^ ]+', '[config path redacted]') -%}
+      {%- set scrubbed.stdout = scrubbed.stdout | regex_replace('/config/[^ ]+', '[config path redacted]') -%}
+      {%- set scrubbed.msg = scrubbed.msg | regex_replace('/config/[^ ]+', '[config path redacted]') -%}
       {{ scrub_failure_context | default('Command failed') }} (exit code {{ scrub_failure_result.rc | default('unknown') }}).
+      message:
+      {{ scrubbed.msg }}
       stderr:
       {{ scrubbed.stderr }}
       stdout:
       {{ scrubbed.stdout }}
-  when: scrub_failure_result.rc | default(0) | int != 0
+  when: >-
+    not (scrub_failure_result.skipped | default(false) | bool)
+    and (
+      scrub_failure_result.rc is not defined
+      or scrub_failure_result.failed | default(false) | bool
+      or scrub_failure_result.rc | int != 0
+    )

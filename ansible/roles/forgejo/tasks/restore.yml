@@ -147,6 +147,11 @@
     scrub_failure_secrets:
       - "{{ k8s_pbs_password }}"
       - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+      - "{{ app_config.backup.client.key_url }}"
+      - "{{ app_config.backup.client.repository }}"
+      - "{{ homelabinfra_infra.backups.host }}"
+      - "host/{{ _forgejo_restore_backup_id }}"
     scrub_failure_context: FORGEJO_RESTORE_STAGE=snapshot-list | PBS snapshot listing failed
 
 - name: Forgejo restore | Print the available recovery points
@@ -274,6 +279,11 @@
         scrub_failure_secrets:
           - "{{ k8s_pbs_password }}"
           - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+          - "{{ restore_snapshot }}"
+          - "{{ app_config.backup.client.key_url }}"
+          - "{{ app_config.backup.client.repository }}"
+          - "{{ homelabinfra_infra.backups.host }}"
         scrub_failure_context: FORGEJO_RESTORE_STAGE=archive-extraction | PBS archive extraction failed
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
