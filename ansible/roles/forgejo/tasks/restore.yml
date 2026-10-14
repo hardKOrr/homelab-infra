@@ -249,6 +249,38 @@
           {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
       no_log: true
       changed_when: true
+      failed_when: false
+      register: _forgejo_restore_archive_result
+
+    - name: Forgejo restore | Classify archive extraction failures safely
+      ansible.builtin.set_fact:
+        _forgejo_restore_archive_failure_class: >-
+          {% set error = ((_forgejo_restore_archive_result.stdout | default('')) ~ ' '
+                          ~ (_forgejo_restore_archive_result.stderr | default(''))) | lower %}
+          {{ 'pbs-access' if ('permission denied' in error or 'unauthorized' in error
+                              or 'forbidden' in error or 'authentication' in error
+                              or '401' in error)
+             else 'pbs-connection' if ('unable to connect' in error or 'connection' in error
+                                       or 'timed out' in error or 'resolve' in error
+                                       or 'network unreachable' in error)
+             else 'snapshot-or-archive' if ('no such file' in error or 'not found' in error
+                                            or 'does not exist' in error or 'snapshot' in error
+                                            or 'archive' in error)
+             else 'client-setup' if ('apt-get' in error or 'curl' in error
+                                     or 'package' in error or 'certificate' in error)
+             else 'unclassified' }}
+      when: _forgejo_restore_archive_result.rc | default(255) | int != 0
+      no_log: true
+
+    - name: Forgejo restore | Require the selected archive to be extracted
+      ansible.builtin.assert:
+        that:
+          - _forgejo_restore_archive_result.rc | default(255) | int == 0
+        fail_msg: >-
+          PBS archive extraction failed (exit code
+          {{ _forgejo_restore_archive_result.rc | default('unknown') }};
+          class {{ _forgejo_restore_archive_failure_class | default('unclassified') }}).
+          No live Forgejo data was changed.
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
       ansible.builtin.command:
@@ -394,7 +426,7 @@
 
     - name: Forgejo restore | Wait for the restored Forgejo health endpoint
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/-/health"
+        url: "http://localhost:{{ app_config.app.port }}/api/healthz"
         status_code: 200
       register: _forgejo_restore_health
       until: _forgejo_restore_health.status | default(0) == 200

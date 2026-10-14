@@ -16,7 +16,8 @@ ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 defaults_source = yaml.safe_load((repo / "ansible/vars/app-defaults/forgejo.yml").read_text())
 catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
-restore_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/restore.yml").read_text())
+restore_tasks_source = (repo / "ansible/roles/forgejo/tasks/restore.yml").read_text()
+restore_source = yaml.safe_load(restore_tasks_source)
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
 forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/main.yml").read_text()
 
@@ -185,6 +186,9 @@ def static_contract():
     assert not any(line.strip().startswith("user:") for line in compose_template.splitlines())
     assert "http://localhost:3000/api/healthz" in compose_template
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in forgejo_tasks_source
+    assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
+    assert "Classify archive extraction failures safely" in restore_tasks_source
+    assert "No live Forgejo data was changed." in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
