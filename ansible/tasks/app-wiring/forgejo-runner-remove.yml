@@ -1,8 +1,8 @@
 ---
 # Forgejo Runner has no supported unregister command. Remove exactly the named runner
-# through Forgejo's admin API before its Compose project is stopped. The admin token is a
-# separate Vaultwarden-only field on homelab-infra/apps/<forgejo-instance>; this file never
-# accepts it from config/apps or generated topology facts.
+# through Forgejo's API before its Compose project is stopped. User-scoped registrations
+# use runner_api_token; global registrations can use admin_api_token. Both are separate
+# Vaultwarden-only fields on homelab-infra/apps/<forgejo-instance>.
 
 - name: Forgejo Runner removal | Resolve named Forgejo endpoint
   ansible.builtin.set_fact:
@@ -10,31 +10,45 @@
       {{ (homelabinfra_infra.apps | default({})).get(runner_remove_forgejo_instance, {}) }}
   no_log: true
 
-- name: Forgejo Runner removal | Resolve Forgejo admin token from Vaultwarden
+- name: Forgejo Runner removal | Resolve API tokens from Vaultwarden
   ansible.builtin.set_fact:
-    _runner_remove_admin_token: >-
-      {{ (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).admin_api_token
+    _runner_remove_api_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).runner_api_token
+         | default((homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).admin_api_token, true)
          | default('', true) }}
+    _runner_remove_api_scope: >-
+      {{ 'user'
+         if (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).runner_api_token
+            | default('', true) | length > 0
+         else 'admin' }}
   no_log: true
 
-- name: Forgejo Runner removal | Require the Vaultwarden-only admin token
+- name: Forgejo Runner removal | Resolve the runner API base URL
+  ansible.builtin.set_fact:
+    _runner_remove_api_base: >-
+      {{ _runner_remove_endpoint.url | default('') | regex_replace('/+$', '')
+         }}/api/v1/{{ 'admin' if _runner_remove_api_scope == 'admin' else 'user' }}/actions/runners
+  no_log: true
+
+- name: Forgejo Runner removal | Require a Vaultwarden API token
   ansible.builtin.assert:
     that:
       - _runner_remove_endpoint.url | default('') | length > 0
-      - _runner_remove_admin_token | length > 0
+      - _runner_remove_api_token | length > 0
     fail_msg: >-
       Cannot deregister runner {{ runner_remove_instance }}: named Forgejo instance
-      {{ runner_remove_forgejo_instance }} or its Vaultwarden-only admin_api_token is
-      unavailable. Store admin_api_token in homelab-infra/apps/{{ runner_remove_forgejo_instance }};
-      do not add it to config/apps or generated facts.
+      {{ runner_remove_forgejo_instance }} or its Vaultwarden-only API token is
+      unavailable. Store runner_api_token for a user-scoped runner or admin_api_token
+      for a global runner in homelab-infra/apps/{{ runner_remove_forgejo_instance }};
+      do not add either token to config/apps or generated facts.
   no_log: true
 
 - name: Forgejo Runner removal | List registered runners
   ansible.builtin.uri:
-    url: "{{ _runner_remove_endpoint.url | regex_replace('/+$', '') }}/api/v1/admin/actions/runners"
+    url: "{{ _runner_remove_api_base }}"
     method: GET
     headers:
-      Authorization: "token {{ _runner_remove_admin_token }}"
+      Authorization: "token {{ _runner_remove_api_token }}"
     status_code: 200
     return_content: true
   register: _runner_remove_listing
@@ -52,10 +66,10 @@
 
 - name: Forgejo Runner removal | Delete exact runner registrations
   ansible.builtin.uri:
-    url: "{{ _runner_remove_endpoint.url | regex_replace('/+$', '') }}/api/v1/admin/actions/runners/{{ item }}"
+    url: "{{ _runner_remove_api_base }}/{{ item }}"
     method: DELETE
     headers:
-      Authorization: "token {{ _runner_remove_admin_token }}"
+      Authorization: "token {{ _runner_remove_api_token }}"
     status_code: [204, 404]
   loop: "{{ _runner_remove_matches }}"
   register: _runner_remove_result

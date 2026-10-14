@@ -234,8 +234,8 @@
         - homelabinfra_infra.firewall.provider | default('none') != 'none'
 
     # The runner is an app-to-app registration, not a proxy route. Remove exactly this
-    # named registration while the Forgejo endpoint and its admin credential still exist;
-    # the shared Forgejo instance and all other runners are left untouched.
+    # named registration while its Forgejo API credential still exists; the shared
+    # Forgejo instance and all other runners are left untouched.
     - name: Deregister Forgejo Runner
       ansible.builtin.include_tasks: ../../tasks/app-wiring/forgejo-runner-remove.yml
       vars:
