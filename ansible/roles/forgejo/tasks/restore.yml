@@ -207,6 +207,8 @@
           - --rm
           - --network
           - host
+          # Keep PBS temporary and cache paths off the Docker overlay; this avoids the
+          # unsupported temporary-file operation reported by the client during restore.
           - --tmpfs
           - /tmp
           - --tmpfs
@@ -225,10 +227,6 @@
           - PBS_KEY_URL
           - --env
           - PBS_APT_REPO
-          - --env
-          - PBS_LOG=debug
-          - --env
-          - PXAR_LOG=debug
           - "{{ app_config.backup.client.image }}"
           - /bin/sh
           - -ceu
@@ -242,16 +240,8 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            if proxmox-backup-client restore --allow-existing-dirs true \
-              --ignore-acls true --ignore-xattrs true \
-              "$SNAPSHOT" data.pxar /restore/archive \
-              >/tmp/forgejo-restore.log 2>&1; then
-              cat /tmp/forgejo-restore.log
-            else
-              restore_rc=$?
-              tail -n 30 /tmp/forgejo-restore.log
-              exit "$restore_rc"
-            fi
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$SNAPSHOT" data.pxar /restore/archive
             test -s /restore/archive/database/forgejo.dump
             test -s /restore/archive/forgejo/gitea/conf/app.ini
         expand_argument_vars: false
