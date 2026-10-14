@@ -359,5 +359,5 @@
       mapping: >-
         {{ homelabinfra_config.proxmox.devices[_stack_gpu_device].pci_mapping
            | default(_stack_gpu_device) }}
-      pcie: "{{ homelabinfra_config.proxmox.devices[_stack_gpu_device].pcie | default(true) | bool }}"
+      pcie: "{{ homelabinfra_config.proxmox.devices[_stack_gpu_device].pcie | default(false) | bool }}"
   when: _stack_gpu_device | length > 0

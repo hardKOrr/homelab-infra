@@ -24,10 +24,11 @@
 #
 # Inputs:
 #   pci_passthrough_guest — VM guest hostname to assign the device to
-#   pci_passthrough_device — {id: "0000:01:00.0", mapping: intel-igpu, pcie: true}
+#   pci_passthrough_device — {id: "0000:01:00.0", mapping: intel-igpu, pcie: false}
 #                            `id` is the PCI address exactly as `lspci`/`pvesh` reports it.
 #                            `mapping` is an existing /cluster/mapping/pci resource map.
-#                            `pcie` defaults to true (PCI Express).
+#                            `pcie` defaults to false: pcie=1 needs a q35 machine and the
+#                            cloned VMs use the default i440fx, which refuses to start.
 #   homelabinfra_config.proxmox.devices — named physical-device declarations. The matching
 #                                        declaration must say mode: dedicated, kind: igpu|gpu,
 #                                        include the PCI ID and map to the selected node.
@@ -263,7 +264,7 @@
           {{ ['qm', 'set', _pci_vmid,
               '-hostpci' ~ (_pci_next_index | string),
               'mapping=' ~ pci_passthrough_device.mapping
-                ~ (',pcie=1' if (pci_passthrough_device.pcie | default(true) | bool) else ''),
+                ~ (',pcie=1' if (pci_passthrough_device.pcie | default(false) | bool) else ''),
               '-tags',
               ((_pci_current_tags | union([_pci_provenance_tag])) | unique | sort | join(';'))] }}
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
