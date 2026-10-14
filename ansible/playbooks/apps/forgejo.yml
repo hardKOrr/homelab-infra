@@ -120,14 +120,17 @@
       vars:
         generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
         generated_facts_service: apps
+        # Build the mapping key as a Jinja expression; Ansible leaves templated YAML keys literal.
         generated_facts_data:
-          "{{ instance }}":
-            provider: forgejo
-            instance: "{{ instance }}"
-            host: "http://{{ _forgejo_host.ansible_host }}"
-            port: "{{ _forgejo_host.app_config.app.port }}"
-            url: "http://{{ _forgejo_host.ansible_host }}:{{ _forgejo_host.app_config.app.port }}/"
-            ssh_port: "{{ _forgejo_host.app_config.app.ssh_port }}"
+          >-
+          {{ {instance: {
+               'provider': 'forgejo',
+               'instance': instance,
+               'host': 'http://' ~ _forgejo_host.ansible_host,
+               'port': _forgejo_host.app_config.app.port,
+               'url': 'http://' ~ _forgejo_host.ansible_host ~ ':' ~ (_forgejo_host.app_config.app.port | string) ~ '/',
+               'ssh_port': _forgejo_host.app_config.app.ssh_port
+             }} }}
     - name: Wire reverse proxy (HTTP only)
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when: homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
