@@ -260,6 +260,16 @@
       register: _forgejo_restore_archive_result
 
     - name: Forgejo restore | Classify archive extraction failures safely
+      vars:
+        _forgejo_restore_safe_error_words: [
+          unable, cannot, failed, error, open, read, write, permission, denied, access,
+          unauthorized, forbidden, not, found, missing, snapshot, archive, file, chunk, index,
+          manifest, certificate, fingerprint, connection, authentication, password, wrong,
+          encryption, key, network, timeout, invalid, argument, parameter, target, directory,
+          exists, unsupported, server, client, restore, no, such, does, exist, to, for, the,
+          with, in, is, was, from, valid, decrypt, data, pxar, repository, datastore, expected,
+          unexpected, got, response, status, request, code, group, type, format
+        ]
       ansible.builtin.set_fact:
         _forgejo_restore_archive_failure_stage: >-
           {% set error = _forgejo_restore_archive_result.stderr | default('') %}
@@ -279,21 +289,16 @@
              else 'client-setup' if ('apt-get' in error or 'curl' in error
                                      or 'package' in error or 'certificate' in error)
              else 'unclassified' }}
-        _forgejo_restore_archive_safe_signature: >-
+        _forgejo_restore_archive_safe_stdout: >-
+          {% set output = _forgejo_restore_archive_result.stdout | default('') | lower %}
+          {% set tokens = output | regex_findall('[a-z]+')
+             | select('in', _forgejo_restore_safe_error_words) | unique | list %}
+          {{ tokens | join(' ') if tokens | length > 0 else 'no safe signature words' }}
+        _forgejo_restore_archive_safe_stderr: >-
           {% set error = _forgejo_restore_archive_result.stderr | default('') | lower
                          | regex_replace('forgejo_restore_stage=[a-z-]+', '') %}
-          {% set allowed = ['unable', 'cannot', 'failed', 'open', 'read', 'write', 'permission',
-                            'denied', 'access', 'unauthorized', 'forbidden', 'not', 'found',
-                            'missing', 'snapshot', 'archive', 'file', 'chunk', 'index', 'manifest',
-                            'tls', 'certificate', 'fingerprint', 'connection', 'authentication',
-                            'password', 'wrong', 'encryption', 'key', 'network', 'timeout', 'timed',
-                            'out', 'digest', 'corrupt', 'invalid', 'argument', 'parameter', 'target',
-                            'directory', 'already', 'exists', 'eof', 'unsupported', 'server', 'client',
-                            'restore', 'error', 'no', 'such', 'does', 'exist', 'to', 'for', 'the',
-                            'with', 'in', 'by', 'and', 'is', 'was', 'your', 'provided', 'required',
-                            'use', 'using', 'from', 'as', 'when', 'could', 'should', 'must', 'valid',
-                            'decrypt', 'verify', 'check', 'load', 'retrieve', 'required', 'keyfile'] %}
-          {% set tokens = error | regex_findall('[a-z]+') | select('in', allowed) | unique | list %}
+          {% set tokens = error | regex_findall('[a-z]+')
+             | select('in', _forgejo_restore_safe_error_words) | unique | list %}
           {{ tokens | join(' ') if tokens | length > 0 else 'no safe signature words' }}
       when: _forgejo_restore_archive_result.rc | default(255) | int != 0
       no_log: true
@@ -307,7 +312,8 @@
           {{ _forgejo_restore_archive_result.rc | default('unknown') }};
           stage {{ _forgejo_restore_archive_failure_stage | default('unknown') }};
           class {{ _forgejo_restore_archive_failure_class | default('unclassified') }};
-          safe-signature={{ _forgejo_restore_archive_safe_signature | default('unavailable') }}).
+          safe-stdout={{ _forgejo_restore_archive_safe_stdout | default('unavailable') }};
+          safe-stderr={{ _forgejo_restore_archive_safe_stderr | default('unavailable') }}).
           No live Forgejo data was changed.
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation

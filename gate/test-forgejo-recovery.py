@@ -193,7 +193,7 @@ def static_contract():
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
     assert "Classify archive extraction failures safely" in restore_tasks_source
     assert "FORGEJO_RESTORE_STAGE=archive-restore" in restore_tasks_source
-    assert "safe-signature=" in restore_tasks_source
+    assert "safe-stderr=" in restore_tasks_source
     assert "No live Forgejo data was changed." in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
@@ -295,7 +295,7 @@ def check_restore(case, server):
 
         if case == "archive-extraction-failure":
             output = " ".join((result.stdout + result.stderr).split())
-            signatures = re.findall(r"safe-signature=([^)]*)", output)
+            signatures = re.findall(r"safe-stderr=([^)]*)", output)
             assert len(signatures) == 1
             assert " ".join(signatures[0].split()) == "restore error unable to read archive for"
             assert "private-path-secret" not in output
