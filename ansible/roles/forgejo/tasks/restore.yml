@@ -226,15 +226,22 @@
           - -ceu
           - |
             export DEBIAN_FRONTEND=noninteractive
+            printf 'FORGEJO_RESTORE_STAGE=apt-update\n' >&2
             apt-get update -qq
+            printf 'FORGEJO_RESTORE_STAGE=bootstrap-install\n' >&2
             apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
             install -d -m 0755 /etc/apt/keyrings /restore/archive
+            printf 'FORGEJO_RESTORE_STAGE=fetch-apt-key\n' >&2
             curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
             echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
               > /etc/apt/sources.list.d/pbs-client.list
+            printf 'FORGEJO_RESTORE_STAGE=pbs-repo-update\n' >&2
             apt-get update -qq
+            printf 'FORGEJO_RESTORE_STAGE=pbs-client-install\n' >&2
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            printf 'FORGEJO_RESTORE_STAGE=archive-restore\n' >&2
             proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/archive
+            printf 'FORGEJO_RESTORE_STAGE=archive-validation\n' >&2
             test -s /restore/archive/database/forgejo.dump
             test -s /restore/archive/forgejo/gitea/conf/app.ini
         expand_argument_vars: false
@@ -254,6 +261,10 @@
 
     - name: Forgejo restore | Classify archive extraction failures safely
       ansible.builtin.set_fact:
+        _forgejo_restore_archive_failure_stage: >-
+          {% set error = _forgejo_restore_archive_result.stderr | default('') %}
+          {% set stages = error | regex_findall('FORGEJO_RESTORE_STAGE=([a-z-]+)') %}
+          {{ stages | last if stages | length > 0 else 'unknown' }}
         _forgejo_restore_archive_failure_class: >-
           {% set error = ((_forgejo_restore_archive_result.stdout | default('')) ~ ' '
                           ~ (_forgejo_restore_archive_result.stderr | default(''))) | lower %}
@@ -279,6 +290,7 @@
         fail_msg: >-
           PBS archive extraction failed (exit code
           {{ _forgejo_restore_archive_result.rc | default('unknown') }};
+          stage {{ _forgejo_restore_archive_failure_stage | default('unknown') }};
           class {{ _forgejo_restore_archive_failure_class | default('unclassified') }}).
           No live Forgejo data was changed.
 

@@ -188,6 +188,7 @@ def static_contract():
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in forgejo_tasks_source
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
     assert "Classify archive extraction failures safely" in restore_tasks_source
+    assert "FORGEJO_RESTORE_STAGE=archive-restore" in restore_tasks_source
     assert "No live Forgejo data was changed." in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
