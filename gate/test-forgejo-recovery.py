@@ -199,6 +199,8 @@ def static_contract():
     assert "install -d -m 0755 /etc/apt/keyrings /restore/archive" in restore_tasks_source
     assert "--allow-existing-dirs true" in restore_tasks_source
     assert "--ignore-acls true --ignore-xattrs true" in restore_tasks_source
+    assert "PBS_LOG=debug" in restore_tasks_source
+    assert "PXAR_LOG=debug" in restore_tasks_source
     assert "Report a redacted archive extraction failure" in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"

@@ -221,6 +221,10 @@
           - PBS_KEY_URL
           - --env
           - PBS_APT_REPO
+          - --env
+          - PBS_LOG=debug
+          - --env
+          - PXAR_LOG=debug
           - "{{ app_config.backup.client.image }}"
           - /bin/sh
           - -ceu
@@ -234,9 +238,18 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore --allow-existing-dirs true \
+            if proxmox-backup-client restore --allow-existing-dirs true \
               --ignore-acls true --ignore-xattrs true \
-              "$SNAPSHOT" data.pxar /restore/archive
+              "$SNAPSHOT" data.pxar /restore/archive \
+              >/tmp/forgejo-restore.log 2>&1; then
+              cat /tmp/forgejo-restore.log
+            else
+              restore_rc=$?
+              if ! grep -Ei 'error|failed|unsupported|os error 95' /tmp/forgejo-restore.log; then
+                tail -n 8 /tmp/forgejo-restore.log
+              fi
+              exit "$restore_rc"
+            fi
             test -s /restore/archive/database/forgejo.dump
             test -s /restore/archive/forgejo/gitea/conf/app.ini
         expand_argument_vars: false
