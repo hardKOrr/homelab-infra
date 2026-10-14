@@ -202,6 +202,8 @@ def static_contract():
     include = firewall_play["tasks"][0]
     assert include["ansible.builtin.include_tasks"].endswith("firewall/open-app-access.yml")
     assert include["vars"]["firewall_inbound_ports"]["forgejo-ssh"] == "{{ _forgejo_fw_host.app_config.app.ssh_port }}"
+    wire_play = next(play for play in playbook if play["name"] == "Forgejo | Wire")
+    assert wire_play["vars"]["wiring_monitor_url"] == "https://{{ hostvars['localhost'].forgejo_fqdn }}/api/healthz"
 
 
 def app_variables(root, server=None):
