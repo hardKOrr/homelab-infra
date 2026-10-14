@@ -4,6 +4,7 @@
 import copy
 import http.server
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -138,6 +139,9 @@ if 'proxmox-backup-client snapshot list' in script:
     raise SystemExit(0)
 if 'proxmox-backup-client restore' in script:
     scratch=Path(next(v.split(':',1)[0] for v in volumes if v.endswith(':/restore')))
+    if case=='archive-extraction-failure':
+        print('PBS restore error: unable to read archive for private-path-secret', file=sys.stderr)
+        raise SystemExit(7)
     archive=scratch/'archive'
     (archive/'database').mkdir(parents=True,exist_ok=True)
     (archive/'database/forgejo.dump').write_text('recovered database\n')
@@ -189,6 +193,7 @@ def static_contract():
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
     assert "Classify archive extraction failures safely" in restore_tasks_source
     assert "FORGEJO_RESTORE_STAGE=archive-restore" in restore_tasks_source
+    assert "safe-signature=" in restore_tasks_source
     assert "No live Forgejo data was changed." in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
@@ -288,6 +293,13 @@ def check_restore(case, server):
         success = case in ["plan", "success"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
 
+        if case == "archive-extraction-failure":
+            output = " ".join((result.stdout + result.stderr).split())
+            signatures = re.findall(r"safe-signature=([^)]*)", output)
+            assert len(signatures) == 1
+            assert " ".join(signatures[0].split()) == "restore unable read archive"
+            assert "private-path-secret" not in output
+
         if case == "success":
             assert not (data / "forgejo-repositories/original.git").exists()
             assert (data / "forgejo-repositories/canary.git/HEAD").read_text() == 'recovered commit\n'
@@ -324,7 +336,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["plan", "foreign-group", "success", "db-failure-after-move",
+        for case in ["plan", "foreign-group", "success", "archive-extraction-failure", "db-failure-after-move",
                      "health-failure", "rollback-database-failure"]:
             check_restore(case, server)
     finally:

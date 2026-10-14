@@ -280,6 +280,19 @@
              else 'client-setup' if ('apt-get' in error or 'curl' in error
                                      or 'package' in error or 'certificate' in error)
              else 'unclassified' }}
+        _forgejo_restore_archive_safe_signature: >-
+          {% set error = ((_forgejo_restore_archive_result.stdout | default('')) ~ ' '
+                          ~ (_forgejo_restore_archive_result.stderr | default(''))) | lower %}
+          {% set allowed = ['unable', 'cannot', 'failed', 'open', 'read', 'write', 'permission',
+                            'denied', 'access', 'unauthorized', 'forbidden', 'not', 'found',
+                            'missing', 'snapshot', 'archive', 'file', 'chunk', 'index', 'manifest',
+                            'tls', 'certificate', 'fingerprint', 'connection', 'authentication',
+                            'password', 'wrong', 'encryption', 'key', 'network', 'timeout', 'timed',
+                            'out', 'digest', 'corrupt', 'invalid', 'argument', 'parameter', 'target',
+                            'directory', 'already', 'exists', 'eof', 'unsupported', 'server', 'client',
+                            'restore'] %}
+          {% set tokens = error | regex_findall('[a-z]+') | select('in', allowed) | unique | list %}
+          {{ tokens | join(' ') if tokens | length > 0 else 'no safe signature words' }}
       when: _forgejo_restore_archive_result.rc | default(255) | int != 0
       no_log: true
 
@@ -291,7 +304,8 @@
           PBS archive extraction failed (exit code
           {{ _forgejo_restore_archive_result.rc | default('unknown') }};
           stage {{ _forgejo_restore_archive_failure_stage | default('unknown') }};
-          class {{ _forgejo_restore_archive_failure_class | default('unclassified') }}).
+          class {{ _forgejo_restore_archive_failure_class | default('unclassified') }};
+          safe-signature={{ _forgejo_restore_archive_safe_signature | default('unavailable') }}).
           No live Forgejo data was changed.
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
