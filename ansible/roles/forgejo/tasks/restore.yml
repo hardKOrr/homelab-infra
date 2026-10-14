@@ -245,9 +245,7 @@
               cat /tmp/forgejo-restore.log
             else
               restore_rc=$?
-              if ! grep -Ei 'error|failed|unsupported|os error 95' /tmp/forgejo-restore.log; then
-                tail -n 8 /tmp/forgejo-restore.log
-              fi
+              tail -n 30 /tmp/forgejo-restore.log
               exit "$restore_rc"
             fi
             test -s /restore/archive/database/forgejo.dump
@@ -284,7 +282,8 @@
              | replace(homelabinfra_infra.backups.host | default('unused-no-host', true), '[PBS host redacted]')
              | regex_replace('https?://[^ ]+', '[URL redacted]')
              | regex_replace('(?:[0-9]{1,3}[.]){3}[0-9]{1,3}', '[IP redacted]')
-             | regex_replace('/config/[^ ]+', '[config path redacted]')
+             | regex_replace('(?:[a-zA-Z0-9._-]+/){2,}[a-zA-Z0-9._-]+', '[relative path redacted]')
+             | regex_replace('/[^ ]+', '[path redacted]')
              | regex_replace('(?i)(?:[a-z0-9-]+[.])+[a-z]{2,}', '[host or file redacted]') }}
       when: _forgejo_restore_extract_result.rc | default(255) | int != 0
 
