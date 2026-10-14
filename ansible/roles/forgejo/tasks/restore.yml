@@ -207,6 +207,10 @@
           - --rm
           - --network
           - host
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _forgejo_restore_scratch.path }}:/restore"
           - --env
