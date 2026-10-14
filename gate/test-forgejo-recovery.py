@@ -297,7 +297,7 @@ def check_restore(case, server):
             output = " ".join((result.stdout + result.stderr).split())
             signatures = re.findall(r"safe-signature=([^)]*)", output)
             assert len(signatures) == 1
-            assert " ".join(signatures[0].split()) == "restore unable read archive"
+            assert " ".join(signatures[0].split()) == "restore error unable to read archive for"
             assert "private-path-secret" not in output
 
         if case == "success":

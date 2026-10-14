@@ -266,8 +266,7 @@
           {% set stages = error | regex_findall('FORGEJO_RESTORE_STAGE=([a-z-]+)') %}
           {{ stages | last if stages | length > 0 else 'unknown' }}
         _forgejo_restore_archive_failure_class: >-
-          {% set error = ((_forgejo_restore_archive_result.stdout | default('')) ~ ' '
-                          ~ (_forgejo_restore_archive_result.stderr | default(''))) | lower %}
+          {% set error = _forgejo_restore_archive_result.stderr | default('') | lower %}
           {{ 'pbs-access' if ('permission denied' in error or 'unauthorized' in error
                               or 'forbidden' in error or 'authentication' in error
                               or '401' in error)
@@ -281,8 +280,8 @@
                                      or 'package' in error or 'certificate' in error)
              else 'unclassified' }}
         _forgejo_restore_archive_safe_signature: >-
-          {% set error = ((_forgejo_restore_archive_result.stdout | default('')) ~ ' '
-                          ~ (_forgejo_restore_archive_result.stderr | default(''))) | lower %}
+          {% set error = _forgejo_restore_archive_result.stderr | default('') | lower
+                         | regex_replace('forgejo_restore_stage=[a-z-]+', '') %}
           {% set allowed = ['unable', 'cannot', 'failed', 'open', 'read', 'write', 'permission',
                             'denied', 'access', 'unauthorized', 'forbidden', 'not', 'found',
                             'missing', 'snapshot', 'archive', 'file', 'chunk', 'index', 'manifest',
@@ -290,7 +289,10 @@
                             'password', 'wrong', 'encryption', 'key', 'network', 'timeout', 'timed',
                             'out', 'digest', 'corrupt', 'invalid', 'argument', 'parameter', 'target',
                             'directory', 'already', 'exists', 'eof', 'unsupported', 'server', 'client',
-                            'restore'] %}
+                            'restore', 'error', 'no', 'such', 'does', 'exist', 'to', 'for', 'the',
+                            'with', 'in', 'by', 'and', 'is', 'was', 'your', 'provided', 'required',
+                            'use', 'using', 'from', 'as', 'when', 'could', 'should', 'must', 'valid',
+                            'decrypt', 'verify', 'check', 'load', 'retrieve', 'required', 'keyfile'] %}
           {% set tokens = error | regex_findall('[a-z]+') | select('in', allowed) | unique | list %}
           {{ tokens | join(' ') if tokens | length > 0 else 'no safe signature words' }}
       when: _forgejo_restore_archive_result.rc | default(255) | int != 0
