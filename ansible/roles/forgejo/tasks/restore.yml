@@ -250,6 +250,29 @@
           {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}
       no_log: true
       changed_when: true
+      failed_when: false
+      register: _forgejo_restore_extract_result
+
+    - name: Forgejo restore | Report a redacted archive extraction failure
+      ansible.builtin.fail:
+        msg: >-
+          PBS archive extraction failed with exit code
+          {{ _forgejo_restore_extract_result.rc | default('unknown') }}. Redacted error:
+          {% set error = (_forgejo_restore_extract_result.stdout | default('')) ~ ' '
+                          ~ (_forgejo_restore_extract_result.stderr | default('')) %}
+          {{ error
+             | replace(k8s_pbs_password, '[PBS password redacted]')
+             | replace(k8s_pbs_repository, '[PBS repository redacted]')
+             | replace(k8s_pbs_fingerprint, '[PBS fingerprint redacted]')
+             | replace(restore_snapshot, '[snapshot redacted]')
+             | replace(app_config.backup.client.key_url, '[key URL redacted]')
+             | replace(app_config.backup.client.repository, '[apt repository redacted]')
+             | replace(homelabinfra_infra.backups.host | default('unused-no-host', true), '[PBS host redacted]')
+             | regex_replace('https?://[^ ]+', '[URL redacted]')
+             | regex_replace('(?:[0-9]{1,3}[.]){3}[0-9]{1,3}', '[IP redacted]')
+             | regex_replace('/config/[^ ]+', '[config path redacted]')
+             | regex_replace('(?i)(?:[a-z0-9-]+[.])+[a-z]{2,}', '[host or file redacted]') }}
+      when: _forgejo_restore_extract_result.rc | default(255) | int != 0
 
     - name: Forgejo restore | Validate the PostgreSQL dump before mutation
       ansible.builtin.command:

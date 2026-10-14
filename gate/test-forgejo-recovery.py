@@ -138,6 +138,9 @@ if 'proxmox-backup-client snapshot list' in script:
     raise SystemExit(0)
 if 'proxmox-backup-client restore' in script:
     scratch=Path(next(v.split(':',1)[0] for v in volumes if v.endswith(':/restore')))
+    if case=='archive-extraction-failure':
+        print('PBS error: test-only at https://pbs.example.invalid:8007 using repository test and snapshot host/forgejo/2026-10-13T00:00:00Z from 10.1.2.3 /config/private/client.key', file=sys.stderr)
+        raise SystemExit(7)
     archive=scratch/'archive'
     if 'install -d -m 0755 /etc/apt/keyrings /restore/archive' in script:
         archive.mkdir(parents=True,exist_ok=True)
@@ -195,6 +198,7 @@ def static_contract():
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
     assert "install -d -m 0755 /etc/apt/keyrings /restore/archive" in restore_tasks_source
     assert "--allow-existing-dirs true" in restore_tasks_source
+    assert "Report a redacted archive extraction failure" in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
@@ -293,6 +297,20 @@ def check_restore(case, server):
         success = case in ["plan", "success"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
 
+        if case == "archive-extraction-failure":
+            output = result.stdout + result.stderr
+            assert "PBS password redacted" in output
+            assert "PBS repository redacted" in output
+            assert "snapshot redacted" in output
+            assert "URL redacted" in output
+            assert "IP redacted" in output
+            assert "config path redacted" in output
+            assert "test-only" not in output
+            assert "pbs.example.invalid" not in output
+            assert "2026-10-13T00:00:00Z" not in output
+            assert "10.1.2.3" not in output
+            assert "/config/private" not in output
+
         if case == "success":
             assert not (data / "forgejo-repositories/original.git").exists()
             assert (data / "forgejo-repositories/canary.git/HEAD").read_text() == 'recovered commit\n'
@@ -329,7 +347,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["plan", "foreign-group", "success", "db-failure-after-move",
+        for case in ["plan", "foreign-group", "success", "archive-extraction-failure", "db-failure-after-move",
                      "health-failure", "rollback-database-failure"]:
             check_restore(case, server)
     finally:
