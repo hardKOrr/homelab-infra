@@ -211,8 +211,10 @@
         - name: Wire Uptime Kuma | Reject duplicate monitors for this instance
           ansible.builtin.assert:
             that: _kuma_existing_matches | length <= 1
-            fail_msg: Uptime Kuma has multiple monitors with this application name.
-          no_log: true
+            fail_msg: >-
+              Uptime Kuma has multiple monitors named '{{ wiring_app_name }}'. In the Uptime
+              Kuma dashboard, remove the stale duplicate, then rerun this application's
+              Deploy.
 
         - name: Wire Uptime Kuma | Add the monitor
           ansible.builtin.include_tasks: ../kuma/call.yml
@@ -285,5 +287,7 @@
             that:
               - _kuma_verified_matches | length == 1
               - _kuma_verified_matches[0].url == wiring_monitor_url
-            fail_msg: Uptime Kuma must have exactly one monitor with the configured URL.
-          no_log: true
+            fail_msg: >-
+              Uptime Kuma did not verify exactly one monitor named '{{ wiring_app_name }}'
+              with the configured URL. Inspect that monitor in the Uptime Kuma dashboard,
+              remove any stale duplicate, then rerun this application's Deploy.

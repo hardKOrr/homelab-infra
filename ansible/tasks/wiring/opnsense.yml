@@ -172,8 +172,10 @@
     - name: Wire OPNsense | Reject duplicate exact host overrides
       ansible.builtin.assert:
         that: _opn_existing_matches | length <= 1
-        fail_msg: OPNsense has multiple host overrides for this application hostname.
-      no_log: true
+        fail_msg: >-
+          OPNsense has duplicate exact Unbound host overrides for this application. In
+          Services > Unbound DNS > Overrides, remove the extra
+          'homelab-infra: {{ wiring_app_name }}' row, then rerun this application's Deploy.
 
     - name: Wire OPNsense | Add host override
       ansible.builtin.uri:
@@ -252,8 +254,11 @@
           - _opn_verified_matches | length == 1
           - _opn_verified_matches[0].server | default('') == _opn_ip
           - _opn_verified_matches[0].enabled | default('0') | string == '1'
-        fail_msg: OPNsense must have exactly one enabled host override for this application.
-      no_log: true
+        fail_msg: >-
+          OPNsense did not verify exactly one enabled Unbound host override for this
+          application. Inspect the 'homelab-infra: {{ wiring_app_name }}' row under
+          Services > Unbound DNS > Overrides, remove any stale duplicate, then rerun this
+          application's Deploy.
 
     # Unbound serves the old zone until it is reconfigured — but a reconfigure restarts
     # the resolver, so it runs only when this task file actually changed something.
