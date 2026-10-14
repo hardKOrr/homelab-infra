@@ -228,13 +228,14 @@
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
+            install -d -m 0755 /etc/apt/keyrings /restore/archive
             curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
             echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/archive
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$SNAPSHOT" data.pxar /restore/archive
             test -s /restore/archive/database/forgejo.dump
             test -s /restore/archive/forgejo/gitea/conf/app.ini
         expand_argument_vars: false

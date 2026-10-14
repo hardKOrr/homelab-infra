@@ -141,10 +141,10 @@ if 'proxmox-backup-client restore' in script:
     archive=scratch/'archive'
     if 'install -d -m 0755 /etc/apt/keyrings /restore/archive' in script:
         archive.mkdir(parents=True,exist_ok=True)
-    if archive.exists():
+    if archive.exists() and '--allow-existing-dirs true' not in script:
         print('restore target already exists', file=sys.stderr)
         raise SystemExit(7)
-    archive.mkdir()
+    archive.mkdir(exist_ok=True)
     (archive/'database').mkdir(parents=True,exist_ok=True)
     (archive/'database/forgejo.dump').write_text('recovered database\n')
     data=archive/'forgejo'
@@ -193,7 +193,8 @@ def static_contract():
     assert "http://localhost:3000/api/healthz" in compose_template
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in forgejo_tasks_source
     assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in restore_tasks_source
-    assert "install -d -m 0755 /etc/apt/keyrings /restore/archive" not in restore_tasks_source
+    assert "install -d -m 0755 /etc/apt/keyrings /restore/archive" in restore_tasks_source
+    assert "--allow-existing-dirs true" in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
