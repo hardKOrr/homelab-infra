@@ -31,7 +31,7 @@ class Health(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def fixture_tasks(tasks, root):
+def fixture_tasks(tasks, root, case):
     """Stub PBS and Compose boundaries while running the production filesystem flow."""
     tasks = copy.deepcopy(tasks)
     for task in tasks:
@@ -41,9 +41,9 @@ def fixture_tasks(tasks, root):
             task.pop("vars", None)
             task["ansible.builtin.set_fact"] = {
                 "k8s_pbs_available": True,
-                "k8s_pbs_repository": "test",
-                "k8s_pbs_fingerprint": "test",
-                "k8s_pbs_password": "test-only",
+                "k8s_pbs_repository": "forgejo-user@pbs.example.invalid:forgejo",
+                "k8s_pbs_fingerprint": "pbs-fingerprint-123",
+                "k8s_pbs_password": "" if case == "archive-extraction-empty-password" else "test-only",
             }
         if "community.docker.docker_compose_v2" in task:
             compose = task.pop("community.docker.docker_compose_v2")
@@ -56,7 +56,7 @@ def fixture_tasks(tasks, root):
             task["delay"] = 0
         for key in ["block", "rescue", "always"]:
             if key in task:
-                task[key] = fixture_tasks(task[key], root)
+                task[key] = fixture_tasks(task[key], root, case)
     return tasks
 
 
@@ -76,7 +76,7 @@ def run_play(root, tasks, variables, case, server=None):
         "hosts": "localhost",
         "gather_facts": False,
         "vars": variables,
-        "tasks": fixture_tasks(tasks, root),
+        "tasks": fixture_tasks(tasks, root, case),
     }]))
     if server is not None:
         server.response_status = 503 if case == "health-failure" else 200
@@ -85,7 +85,7 @@ def run_play(root, tasks, variables, case, server=None):
             "hosts": "localhost",
             "gather_facts": False,
             "vars": variables,
-            "tasks": fixture_tasks(tasks, root),
+            "tasks": fixture_tasks(tasks, root, case),
         }]))
     return subprocess.run(
         [str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
@@ -138,8 +138,13 @@ if 'proxmox-backup-client snapshot list' in script:
     raise SystemExit(0)
 if 'proxmox-backup-client restore' in script:
     scratch=Path(next(v.split(':',1)[0] for v in volumes if v.endswith(':/restore')))
-    if case=='archive-extraction-failure':
-        print('PBS error: test-only at https://pbs.example.invalid:8007 using repository test and snapshot host/forgejo/2026-10-13T00:00:00Z from 10.1.2.3 /config/private/client.key at forgejo/repositories/alice/canary.git', file=sys.stderr)
+    if case in ['archive-extraction-failure', 'archive-extraction-empty-password']:
+        print('old stderr line should be omitted', file=sys.stderr)
+        password='test-only' if case == 'archive-extraction-failure' else ''
+        print(f'credentials={password} repository=forgejo-user@pbs.example.invalid:forgejo fingerprint=pbs-fingerprint-123 snapshot=host/forgejo/2026-10-13T00:00:00Z key=https://pbs.example.invalid:8007/proxmox-backup/file-restore.gpg apt=https://apt.example.invalid/debian/pbs endpoint=pbs.example.invalid config=/config/private/client.key relative=forgejo/repositories/alice/canary.git', file=sys.stderr)
+        print('diagnostic URL=https://diagnostics.example.invalid/details and file=/var/lib/forgejo/archive', file=sys.stderr)
+        print('final stderr detail: HTTP 503 from worker-7', file=sys.stderr)
+        print('EXTRACTION STDOUT MUST NOT APPEAR')
         raise SystemExit(7)
     archive=scratch/'archive'
     if 'install -d -m 0755 /etc/apt/keyrings /restore/archive' in script:
@@ -238,7 +243,7 @@ def app_variables(root, server=None):
         "restore_snapshot": "host/forgejo/2026-10-13T00:00:00Z",
         "restore_overwrite": True,
         "homelabinfra_infra": {
-            "backups": {},
+            "backups": {"host": "pbs.example.invalid"},
             "databases": {"postgresql-forgejo": {
                 "provider": "postgresql", "host": "postgres.example.invalid", "port": 5432,
             }},
@@ -251,8 +256,10 @@ def app_variables(root, server=None):
             "backup": {
                 "enabled": True, "application_consistent": True,
                 "backup_id": "", "retention_days": 14,
-                "client": {"image": "test-pbs", "key_url": "test", "repository": "test",
-                           "suite": "test", "component": "test"},
+                "client": {"image": "test-pbs",
+                           "key_url": "https://pbs.example.invalid:8007/proxmox-backup/file-restore.gpg",
+                           "repository": "https://apt.example.invalid/debian/pbs",
+                           "suite": "bookworm", "component": "main"},
                 "postgres_client_image": "test-postgres",
             },
         },
@@ -299,21 +306,33 @@ def check_restore(case, server):
         success = case in ["plan", "success"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
 
-        if case == "archive-extraction-failure":
+        if case in ["archive-extraction-failure", "archive-extraction-empty-password"]:
             output = result.stdout + result.stderr
-            assert "PBS password redacted" in output
+            assert "exit code 7" in output
+            assert "Last stderr lines" in output
+            if case == "archive-extraction-failure":
+                assert "PBS password redacted" in output
+            else:
+                assert "PBS password redacted" not in output
             assert "PBS repository redacted" in output
+            assert "PBS fingerprint redacted" in output
             assert "snapshot redacted" in output
-            assert "URL redacted" in output
-            assert "IP redacted" in output
-            assert "path redacted" in output
-            assert "relative path redacted" in output
-            assert "test-only" not in output
+            assert "key URL redacted" in output
+            assert "apt repository redacted" in output
+            assert "PBS host redacted" in output
+            assert "test-only" not in output, "\n".join(
+                line for line in output.splitlines() if "test-only" in line
+            )
             assert "pbs.example.invalid" not in output
             assert "2026-10-13T00:00:00Z" not in output
-            assert "10.1.2.3" not in output
             assert "/config/private" not in output
-            assert "forgejo/repositories/alice" not in output
+            assert "[config path redacted]" in output
+            assert "forgejo/repositories/alice/canary.git" in output
+            assert "https://diagnostics.example.invalid/details" in output
+            assert "/var/lib/forgejo/archive" in output
+            assert "EXTRACTION STDOUT MUST NOT APPEAR" not in output
+            assert "old stderr line should be omitted" not in output
+            assert "final stderr detail: HTTP 503 from worker-7" in output
 
         if case == "success":
             assert not (data / "forgejo-repositories/original.git").exists()
@@ -351,7 +370,8 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for case in ["plan", "foreign-group", "success", "archive-extraction-failure", "db-failure-after-move",
+        for case in ["plan", "foreign-group", "success", "archive-extraction-failure",
+                     "archive-extraction-empty-password", "db-failure-after-move",
                      "health-failure", "rollback-database-failure"]:
             check_restore(case, server)
     finally:
