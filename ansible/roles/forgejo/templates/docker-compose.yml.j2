@@ -13,7 +13,7 @@ services:
     volumes:
       - "{{ app_config.app.data_path }}:/data"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/-/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10

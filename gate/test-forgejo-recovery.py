@@ -18,6 +18,7 @@ catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
 restore_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/restore.yml").read_text())
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
+forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/main.yml").read_text()
 
 
 class Health(http.server.BaseHTTPRequestHandler):
@@ -182,6 +183,8 @@ def static_contract():
     # in forgejo.env selects the application user after init. A Compose user override
     # prevents s6 from creating its lock and leaves the container unhealthy.
     assert not any(line.strip().startswith("user:") for line in compose_template.splitlines())
+    assert "http://localhost:3000/api/healthz" in compose_template
+    assert 'url: "http://localhost:{{ app_config.app.port }}/api/healthz"' in forgejo_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
