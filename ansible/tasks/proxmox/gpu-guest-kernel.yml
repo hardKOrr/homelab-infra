@@ -1,0 +1,43 @@
+---
+# Give a VM with a passed-through GPU a kernel that can drive it.
+#
+# The VM template is Debian's genericcloud image, whose cloud kernel leaves out drivers
+# for physical hardware (i915 among them), so a passed-through iGPU never gets a
+# /dev/dri render node. This installs the standard Debian kernel, removes the cloud one
+# so the bootloader cannot pick it again, and reboots once. A guest already on the
+# standard kernel changes nothing.
+#
+# Inputs:
+#   gpu_guest_kernel_host — inventory hostname of the VM (reachable over SSH)
+
+- name: GPU guest kernel | Install the standard Debian kernel
+  ansible.builtin.apt:
+    name: linux-image-amd64
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  delegate_to: "{{ gpu_guest_kernel_host }}"
+  register: _ggk_install
+
+- name: GPU guest kernel | Remove the cloud kernel
+  ansible.builtin.apt:
+    name:
+      - linux-image-cloud-amd64
+      - "linux-image-*-cloud-amd64"
+    state: absent
+    purge: true
+  delegate_to: "{{ gpu_guest_kernel_host }}"
+  register: _ggk_remove
+
+- name: GPU guest kernel | Read the running kernel
+  ansible.builtin.command:
+    cmd: uname -r
+  delegate_to: "{{ gpu_guest_kernel_host }}"
+  register: _ggk_running
+  changed_when: false
+
+- name: GPU guest kernel | Reboot into the standard kernel
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  delegate_to: "{{ gpu_guest_kernel_host }}"
+  when: _ggk_running.stdout is search('cloud')
