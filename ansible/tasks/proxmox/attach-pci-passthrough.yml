@@ -164,7 +164,7 @@
 
 - name: PCI passthrough | Read every VM's configuration on the node
   ansible.builtin.command:
-    cmd: "pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ item.vmid }}/config"
+    cmd: "qm config {{ item.vmid }}"
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _pci_all_configs
   loop: "{{ _pci_vm_list.stdout | from_json }}"
@@ -192,7 +192,7 @@
       (_pci_holders | length == 0) or (_pci_holders == [_pci_vmid])
     fail_msg: >-
       {{ pci_passthrough_device.id }} is already assigned to guest vmid
-      {{ _pci_holders | difference([_pci_vmid]) | first }}, not
+      {{ _pci_holders | difference([_pci_vmid]) | join(', ') }}, not
       {{ pci_passthrough_guest }}. A dedicated PCIe device cannot be assigned to a second
       guest at once — detach it there first.
   vars:
