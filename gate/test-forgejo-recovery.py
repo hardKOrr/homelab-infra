@@ -18,6 +18,7 @@ catalog_source = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/forgejo/tasks/backup.yml").read_text())
 restore_tasks_source = (repo / "ansible/roles/forgejo/tasks/restore.yml").read_text()
 restore_source = yaml.safe_load(restore_tasks_source)
+scrub_failure_task = repo / "ansible/tasks/fail-with-scrubbed-output.yml"
 compose_template = (repo / "ansible/roles/forgejo/templates/docker-compose.yml.j2").read_text()
 forgejo_tasks_source = (repo / "ansible/roles/forgejo/tasks/main.yml").read_text()
 
@@ -36,6 +37,13 @@ def fixture_tasks(tasks, root, case):
     tasks = copy.deepcopy(tasks)
     for task in tasks:
         task.pop("no_log", None)
+        if (case == "archive-extraction-launch-failure"
+                and task.get("name") == "Forgejo restore | Extract the selected PBS archive"):
+            task["ansible.builtin.command"]["argv"][0] = str(root / "bin/missing-pbs-client")
+        if task.get("ansible.builtin.include_tasks", "").endswith(
+            "fail-with-scrubbed-output.yml"
+        ):
+            task["ansible.builtin.include_tasks"] = str(scrub_failure_task)
         if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
@@ -144,7 +152,7 @@ if 'proxmox-backup-client restore' in script:
         print(f'credentials={password} repository=forgejo-user@pbs.example.invalid:forgejo fingerprint=pbs-fingerprint-123 snapshot=host/forgejo/2026-10-13T00:00:00Z key=https://pbs.example.invalid:8007/proxmox-backup/file-restore.gpg apt=https://apt.example.invalid/debian/pbs endpoint=pbs.example.invalid config=/config/private/client.key relative=forgejo/repositories/alice/canary.git', file=sys.stderr)
         print('diagnostic URL=https://diagnostics.example.invalid/details and file=/var/lib/forgejo/archive', file=sys.stderr)
         print('final stderr detail: HTTP 503 from worker-7', file=sys.stderr)
-        print('EXTRACTION STDOUT MUST NOT APPEAR')
+        print('EXTRACTION STDOUT MUST APPEAR')
         raise SystemExit(7)
     archive=scratch/'archive'
     if 'install -d -m 0755 /etc/apt/keyrings /restore/archive' in script:
@@ -205,7 +213,9 @@ def static_contract():
     assert "--allow-existing-dirs true" in restore_tasks_source
     assert "--tmpfs" in restore_tasks_source
     assert "/root/.cache" in restore_tasks_source
-    assert "Report a redacted archive extraction failure" in restore_tasks_source
+    assert "FORGEJO_RESTORE_STAGE=archive-extraction" in restore_tasks_source
+    assert "_forgejo_restore_archive_failure_class" not in restore_tasks_source
+    assert "_forgejo_restore_archive_safe_signature" not in restore_tasks_source
     assert defaults["recovery"]["methods"] == ["native"]
     assert defaults["recovery"]["native"]["backup_playbook"] == "backup-app.yml"
     assert defaults["recovery"]["native"]["restore_playbook"] == "restore-app.yml"
@@ -285,6 +295,59 @@ def check_backup(case):
         assert (root / "services").read_text().splitlines() == ["stopped", "present"]
 
 
+def check_scrubbed_failure_output():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        make_stubs(root)
+        secret = "literal-test-secret-435"
+        variables = {
+            "scrub_failure_result": {
+                "rc": 7,
+                "stderr": (
+                    f"pg_restore: could not read {secret}: archive member is corrupt\n"
+                    "second stderr line"
+                ),
+                "stdout": f"restore started with {secret}\nprogress: 50%",
+            },
+            "scrub_failure_secrets": [secret],
+            "scrub_failure_context": "FORGEJO_RESTORE_STAGE=archive-extraction",
+        }
+        result = run_play(
+            root,
+            [{"ansible.builtin.include_tasks": str(scrub_failure_task)}],
+            variables,
+            "scrubbed-failure-output",
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "FORGEJO_RESTORE_STAGE=archive-extraction (exit code 7)" in output
+        assert "pg_restore: could not read ***: archive member is corrupt" in output
+        assert "second stderr line" in output
+        assert "restore started with ***" in output
+        assert "progress: 50%" in output
+        assert secret not in output, output
+
+        launch_failure = {
+            "scrub_failure_result": {
+                "failed": True,
+                "msg": f"Unable to execute missing command with argument {secret}",
+            },
+            "scrub_failure_secrets": [secret],
+            "scrub_failure_context": "FORGEJO_RESTORE_STAGE=archive-extraction",
+        }
+        result = run_play(
+            root,
+            [{"ansible.builtin.include_tasks": str(scrub_failure_task)}],
+            launch_failure,
+            "scrubbed-launch-failure",
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "FORGEJO_RESTORE_STAGE=archive-extraction (exit code unknown)" in output
+        assert "Unable to execute missing command with argument ***" in output
+        assert secret not in output, output
+
+
 def check_restore(case, server):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -309,30 +372,40 @@ def check_restore(case, server):
         if case in ["archive-extraction-failure", "archive-extraction-empty-password"]:
             output = result.stdout + result.stderr
             assert "exit code 7" in output
-            assert "Last stderr lines" in output
+            assert "FORGEJO_RESTORE_STAGE=archive-extraction" in output
             if case == "archive-extraction-failure":
-                assert "PBS password redacted" in output
+                assert "credentials=***" in output
             else:
-                assert "PBS password redacted" not in output
-            assert "PBS repository redacted" in output
-            assert "PBS fingerprint redacted" in output
-            assert "snapshot redacted" in output
-            assert "key URL redacted" in output
-            assert "apt repository redacted" in output
-            assert "PBS host redacted" in output
+                assert "credentials= repository=***" in output
+            assert "fingerprint=***" in output
             assert "test-only" not in output, "\n".join(
                 line for line in output.splitlines() if "test-only" in line
             )
-            assert "pbs.example.invalid" not in output
-            assert "2026-10-13T00:00:00Z" not in output
-            assert "/config/private" not in output
-            assert "[config path redacted]" in output
+            assert "repository=***" in output
+            assert "snapshot=***" in output
+            assert "key=***" in output
+            assert "apt=***" in output
+            assert "endpoint=***" in output
+            assert "config=[config path redacted]" in output
+            assert "forgejo-user@pbs.example.invalid:forgejo" not in output
+            assert "host/forgejo/2026-10-13T00:00:00Z" not in output
+            assert "/config/private/client.key" not in output
             assert "forgejo/repositories/alice/canary.git" in output
             assert "https://diagnostics.example.invalid/details" in output
             assert "/var/lib/forgejo/archive" in output
-            assert "EXTRACTION STDOUT MUST NOT APPEAR" not in output
-            assert "old stderr line should be omitted" not in output
+            assert "EXTRACTION STDOUT MUST APPEAR" in output
+            assert "old stderr line should be omitted" in output
             assert "final stderr detail: HTTP 503 from worker-7" in output
+
+        if case == "archive-extraction-launch-failure":
+            output = result.stdout + result.stderr
+            assert "FORGEJO_RESTORE_STAGE=archive-extraction" in output
+            assert "exit code 2" in output
+            assert "No such file or directory" in output
+            assert (data / "gitea/conf/app.ini").read_text() == 'original config secret\n'
+            assert (data / "forgejo-repositories/original.git").read_text() == 'original repository\n'
+            assert (root / "db-state").read_text() == 'original database\n'
+            assert not (root / "services").exists(), "launch failure proceeded to mutation"
 
         if case == "success":
             assert not (data / "forgejo-repositories/original.git").exists()
@@ -355,7 +428,7 @@ def check_restore(case, server):
             assert len(retained) == 1
             assert retained[0].read_text() == 'original database\n'
             assert (root / "db-state").read_text() == 'partial recovered database\n'
-        else:
+        elif case != "archive-extraction-launch-failure":
             assert (data / "gitea/conf/app.ini").read_text() == 'original config secret\n'
             assert (data / "forgejo-repositories/original.git").read_text() == 'original repository\n'
             assert (root / "db-state").read_text() == 'original database\n'
@@ -364,6 +437,7 @@ def check_restore(case, server):
 
 def main():
     static_contract()
+    check_scrubbed_failure_output()
     check_backup("backup-success")
     check_backup("backup-upload-failure")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
@@ -371,6 +445,7 @@ def main():
     thread.start()
     try:
         for case in ["plan", "foreign-group", "success", "archive-extraction-failure",
+                     "archive-extraction-launch-failure",
                      "archive-extraction-empty-password", "db-failure-after-move",
                      "health-failure", "rollback-database-failure"]:
             check_restore(case, server)
