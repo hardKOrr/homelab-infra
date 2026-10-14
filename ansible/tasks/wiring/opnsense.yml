@@ -146,6 +146,11 @@
 
     - name: Wire OPNsense | Select existing override and build payload
       ansible.builtin.set_fact:
+        _opn_existing_matches: >-
+          {{ (_opn_search.json.rows | default([]))
+             | selectattr('hostname', 'equalto', _opn_hostname)
+             | selectattr('domain', 'equalto', _opn_zone)
+             | list }}
         _opn_existing: >-
           {{ (_opn_search.json.rows | default([]))
              | selectattr('hostname', 'equalto', _opn_hostname)
@@ -162,6 +167,13 @@
                'server': _opn_ip,
                'description': 'homelab-infra: ' ~ (wiring_app_name | default(_opn_hostname)),
              }} }}
+      no_log: true
+
+    - name: Wire OPNsense | Reject duplicate exact host overrides
+      ansible.builtin.assert:
+        that: _opn_existing_matches | length <= 1
+        fail_msg: OPNsense has multiple host overrides for this application hostname.
+      no_log: true
 
     - name: Wire OPNsense | Add host override
       ansible.builtin.uri:
@@ -208,6 +220,40 @@
           OPNsense rejected the host override for {{ _opn_hostname }}.{{ _opn_zone }}
           (add: {{ _opn_add.json.result | default('skipped') }},
           set: {{ _opn_set.json.result | default('skipped') }}).
+
+    - name: Wire OPNsense | Read the host override after reconciliation
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
+        method: POST
+        url_username: "{{ homelabinfra_infra.dns.api_key }}"
+        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: >-
+          {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_hostname} }}
+        status_code: 200
+      register: _opn_verify_search
+      changed_when: false
+      no_log: true
+
+    - name: Wire OPNsense | Select the verified host override
+      ansible.builtin.set_fact:
+        _opn_verified_matches: >-
+          {{ (_opn_verify_search.json.rows | default([]))
+             | selectattr('hostname', 'equalto', _opn_hostname)
+             | selectattr('domain', 'equalto', _opn_zone)
+             | list }}
+      no_log: true
+
+    - name: Wire OPNsense | Assert exactly one host override is active
+      ansible.builtin.assert:
+        that:
+          - _opn_verified_matches | length == 1
+          - _opn_verified_matches[0].server | default('') == _opn_ip
+          - _opn_verified_matches[0].enabled | default('0') | string == '1'
+        fail_msg: OPNsense must have exactly one enabled host override for this application.
+      no_log: true
 
     # Unbound serves the old zone until it is reconfigured — but a reconfigure restarts
     # the resolver, so it runs only when this task file actually changed something.
