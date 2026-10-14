@@ -228,7 +228,7 @@
   block:
     - name: VM host mounts | Stop the VM for virtiofs configuration
       ansible.builtin.command:
-        cmd: "qm shutdown {{ _vmfs_vmid }} --timeout 120"
+        cmd: "qm shutdown {{ _vmfs_vmid }} --forceStop 1 --timeout 120"
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
       when: _vmfs_vm_entry.status | default('') == 'running'
       changed_when: true
