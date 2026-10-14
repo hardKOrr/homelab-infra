@@ -15,7 +15,6 @@
     name: linux-image-amd64
     state: present
     update_cache: true
-    cache_valid_time: 3600
   delegate_to: "{{ gpu_guest_kernel_host }}"
   register: _ggk_install
 
