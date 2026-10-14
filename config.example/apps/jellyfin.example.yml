@@ -28,12 +28,10 @@ stack: media     # which Docker stack host this app runs on
 #       collection_type: tvshows
 #       subpath: tv
 #
-#   # Hardware transcoding. Pass the render device through, then enable the codecs
-#   # in Jellyfin's playback settings — the platform passes the device and makes no
-#   # decision about which codecs your GPU should be trusted with.
-#   # Docker refuses to start the container if a device listed here is not present
-#   # on the stack host.
-#   devices: ["/dev/dri"]
+#   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.
+#   # It pins the media stack VM to that node and adds /dev/dri to Jellyfin's container.
+#   # Enable codecs in Jellyfin's playback settings after deployment.
+#   gpu_device: intel-igpu
 #
 #   # port: 8096                 # the HTTP port the stack host publishes. Change
 #   #                            # it when another app on this stack already has it.

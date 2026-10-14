@@ -1,15 +1,15 @@
-# Immich is a Docker application on the dedicated photos stack.
+# Immich is a Docker application on the dedicated photos GPU VM.
 #
 # Before a live deployment, name and verify all three authority points in the change
 # record: the Immich instance (for example, immich), the Proxmox photos-stack target
-# (for example, stack-photos), and the exact host directory/render node below. This
+# (for example, stack-photos), its dedicated GPU mapping and the exact host directory. This
 # example deliberately does not inherit infrastructure.media_storage: doing so could
 # adopt an existing photo library that this deployment does not own.
 #
 # Dependencies to deploy first:
 #   - PostgreSQL instance `postgresql-immich` (with pgvector)
 #   - Redis instance `redis-immich`
-#   - proxmox.devices entry for `/dev/dri/renderD128` with mode: shared
+#   - proxmox.devices entry with kind: igpu, mode: dedicated, and a PCI resource mapping
 #
 # The mount host directory must already exist and be authorized for this new Immich
 # instance. The playbook attaches it with media_storage.owner and refuses an empty or
@@ -25,9 +25,9 @@ app:
     extensions: [vector]
   redis:
     instance: redis-immich
-  # Shared render-node bind only; never replace this with dedicated PCI passthrough.
-  shared_device: /dev/dri/renderD128
-  shared_device_mode: "0666"
+  # Name of the dedicated iGPU declaration in proxmox.devices.
+  gpu_device: intel-igpu
+  gpu_render_node: /dev/dri/renderD128
 
 media_storage:
   mounts:
@@ -53,6 +53,6 @@ backup:
 # overwrite mode validates both archives, replaces the database and media, and leaves
 # services stopped if any destructive step fails. Test in a disposable target first.
 #
-# Removal detaches only the shared device bind tagged as Immich-owned. An unowned/pre-
-# existing bind is left in place. The durable mount remains operator-owned and is not
+# Removal detaches only the project-owned PCI mapping. An unowned/pre-existing assignment
+# is left in place. The durable mount remains operator-owned and is not
 # adopted or deleted by one-click removal; handle its retention/deletion separately.

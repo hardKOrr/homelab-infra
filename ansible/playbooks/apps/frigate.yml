@@ -1,10 +1,11 @@
 ---
-# Deploy Frigate as its own Docker-on-LXC guest. The dedicated frigate stack host is
+# Deploy Frigate as its own Docker-on-VM guest. The dedicated frigate stack host is
 # intentionally not shared with media or services: recording writes and device ownership
 # are application-specific.
 #
 # Before a live run, name the instance, Proxmox node, recording mount, Coral mapping and
-# iGPU render node in config. This playbook refuses empty or ambiguous device inputs.
+# dedicated GPU, Coral mapping and recording mount in config. This playbook refuses
+# empty or ambiguous device inputs.
 
 - name: "Frigate | Provision"
   hosts: localhost
@@ -51,6 +52,7 @@
       ansible.builtin.assert:
         that:
           - app_config.stack == 'frigate'
+          - app_config.app.gpu_device | default('') | length > 0
           - app_config.app.igpu_render_node | default('') | length > 0
           - app_config.app.coral_usb_mapping | default('') | length > 0
           - app_config.app.recordings_path | default('') | length > 0
@@ -58,13 +60,13 @@
           - app_config.recording_storage.mounts | default([]) | length > 0
           - app_config.recording_storage.owner | default({}) | length > 0
         fail_msg: >-
-          Frigate needs its own frigate stack, an exact shared iGPU render node, an exact
-          Coral USB resource mapping, positive retention_days, and a declared
+          Frigate needs its own frigate GPU VM, a dedicated iGPU mapping, an exact
+          dedicated Coral USB resource mapping, positive retention_days, and a declared
           infrastructure.frigate_storage mount with owner. The playbook never discovers
           or adopts devices or storage.
 
   tasks:
-    - name: Find or create the dedicated Frigate Docker-on-LXC host
+    - name: Find or create the dedicated Frigate Docker-on-VM host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
@@ -111,26 +113,31 @@
       vars:
         attach_mounts_guest: "{{ homelabinfra_instance.stack.hostname }}"
         attach_mounts_list: "{{ app_config.recording_storage.mounts }}"
-        attach_mounts_owner: "{{ app_config.recording_storage.owner }}"
+        attach_mounts_nodes:
+          - "{{ hostvars[homelabinfra_instance.stack.hostname].proxmox_node }}"
 
-    - name: Bind the declared shared iGPU render node
-      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-shared-device.yml
-      vars:
-        shared_device_guest: "{{ homelabinfra_instance.stack.hostname }}"
-        shared_device_list:
-          - host: "{{ app_config.app.igpu_render_node }}"
-            mode: "0666"
+    - name: Verify the passed-through render node is present inside the Frigate VM
+      ansible.builtin.stat:
+        path: "{{ app_config.app.igpu_render_node }}"
+      delegate_to: "{{ homelabinfra_instance.stack.hostname }}"
+      register: _frigate_render_node
 
-    - name: Bind the declared Coral through its USB resource-mapping seam
-      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough-lxc.yml
+    - name: Require the VM's render node to be a device
+      ansible.builtin.assert:
+        that: _frigate_render_node.stat.ischr | default(false)
+        fail_msg: >-
+          {{ app_config.app.igpu_render_node }} is not a device inside the Frigate VM.
+          Check its dedicated PCI resource mapping and guest iGPU driver.
+
+    - name: Attach the declared Coral through its dedicated USB mapping
+      ansible.builtin.include_tasks: ../../tasks/proxmox/attach-usb-passthrough.yml
       vars:
-        usb_lxc_guest: "{{ homelabinfra_instance.stack.hostname }}"
-        usb_lxc_device:
+        usb_passthrough_guest: "{{ homelabinfra_instance.stack.hostname }}"
+        usb_passthrough_device:
           mapping: "{{ app_config.app.coral_usb_mapping }}"
 
-    # The mapping seam resolved a reconnect-safe bus/device path. Forward that exact
-    # node to the guest's Compose config; mounting the whole /dev/bus/usb directory would
-    # expose unrelated USB devices and break the non-adoption boundary.
+    # The Coral is already isolated to this dedicated VM by its Proxmox USB mapping.
+    # Docker can then see the VM's USB bus without exposing any host-side USB devices.
     - name: Forward the resolved Coral node to the Frigate guest
       ansible.builtin.add_host:
         name: "{{ homelabinfra_instance.stack.hostname }}"
@@ -139,7 +146,7 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: >-
           {{ app_config | combine({
-               'app': {'coral_usb_device_path': _usb_lxc_path.stdout | trim}
+               'app': {'coral_usb_device_path': '/dev/bus/usb'}
              }, recursive=True) }}
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
         homelabinfra_stack_host_created: >-

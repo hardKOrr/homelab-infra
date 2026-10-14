@@ -1,0 +1,395 @@
+---
+# Share the lab's already-mounted host directories with a VM through Proxmox directory
+# mappings and virtiofs. The mapping is cluster-wide, but every eligible compute node must
+# expose the same host path before the mapping can be created or used. Existing mappings
+# are read-only inputs: they are never updated or replaced.
+##
+# Inputs match attach-host-mounts.yml:
+#   attach_mounts_guest — VM inventory hostname
+#   attach_mounts_list  — [{host: /host/path, path: /guest/path}, ...]
+#   attach_mounts_owner — accepted for call-site compatibility; VMs use the filesystem's
+#                         native uid/gid and need no LXC idmap or Proxmox host account.
+
+- name: VM host mounts | Validate the requested directories
+  ansible.builtin.assert:
+    that:
+      - attach_mounts_guest is defined
+      - attach_mounts_list is sequence
+      - attach_mounts_list is not string
+      - attach_mounts_list | length > 0
+      - item.host | default('') is match('^/')
+      - item.host | default('') != '/'
+      - item.path | default('') is match('^/')
+      - item.host is not search(',')
+      - item.host is not search('\\n')
+    fail_msg: >-
+      Each VM host mount needs absolute host and guest paths. Host paths cannot contain a
+      comma or newline because Proxmox directory mapping options use comma-separated fields.
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.host | default('missing host') }}"
+
+- name: VM host mounts | Register Proxmox nodes for delegation
+  ansible.builtin.import_tasks: register-nodes.yml
+
+- name: VM host mounts | Resolve eligible compute nodes and unique host paths
+  ansible.builtin.set_fact:
+    _vmfs_compute_nodes: >-
+      {{ attach_mounts_nodes
+         | default(homelabinfra_config.proxmox.node_roles.compute | default([])) | list }}
+    _vmfs_host_paths: >-
+      {{ attach_mounts_list | map(attribute='host')
+         | map('regex_replace', '/+$', '') | unique | list }}
+    _vmfs_directory_mappings: []
+
+- name: VM host mounts | Require eligible compute nodes
+  ansible.builtin.assert:
+    that:
+      - _vmfs_compute_nodes | length > 0
+      - _vmfs_compute_nodes | unique | list | length == _vmfs_compute_nodes | length
+      - >-
+        _vmfs_compute_nodes
+        | difference(homelabinfra_config.proxmox.node_roles.compute | default([]))
+        | length == 0
+    fail_msg: >-
+      VM host mounts may target only a non-empty, unique subset of
+      proxmox.node_roles.compute. A GPU VM may narrow the set to its declared device node.
+
+- name: VM host mounts | Verify every host path exists on every compute node
+  ansible.builtin.stat:
+    path: "{{ item.0 }}"
+  delegate_to: "{{ item.1 }}"
+  register: _vmfs_host_path_stats
+  loop: "{{ _vmfs_host_paths | product(_vmfs_compute_nodes) | list }}"
+  loop_control:
+    label: "{{ item.0 }} on {{ item.1 }}"
+
+- name: VM host mounts | Require each host path on every compute node
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.isdir
+    fail_msg: >-
+      {{ item.item.0 }} is not an existing directory on {{ item.item.1 }}. Virtiofs mappings
+      are cluster-wide, so every node in proxmox.node_roles.compute must expose the same
+      host path before the VM can use it.
+  loop: "{{ _vmfs_host_path_stats.results }}"
+  loop_control:
+    label: "{{ item.item.0 }} on {{ item.item.1 }}"
+
+- name: VM host mounts | Build stable directory mapping IDs
+  ansible.builtin.set_fact:
+    _vmfs_directory_mappings: >-
+      {{ _vmfs_directory_mappings + [
+           {'id': 'd' ~ (((item ~ '|' ~ (_vmfs_compute_nodes | sort | join('|')))
+                         | hash('sha1'))[:12]),
+            'host': item}
+         ] }}
+  loop: "{{ _vmfs_host_paths }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: VM host mounts | Read existing directory mappings
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/mapping/dir, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmfs_mapping_list
+  changed_when: false
+
+- name: VM host mounts | Create only missing directory mappings
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'create', '/cluster/mapping/dir', '--id', item.id]
+         + (_vmfs_compute_nodes
+            | map('regex_replace', '$', ',path=' ~ item.host)
+            | map('regex_replace', '^', 'node=')
+            | map('regex_replace', '^', '--map ')
+            | map('split', ' ') | flatten) }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  loop: "{{ _vmfs_directory_mappings }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: >-
+    item.id not in ((_vmfs_mapping_list.stdout | from_json)
+                    | map(attribute='id') | list)
+  changed_when: true
+
+- name: VM host mounts | Read each directory mapping without changing it
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/dir/{{ item.id }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmfs_mapping_details
+  loop: "{{ _vmfs_directory_mappings }}"
+  loop_control:
+    label: "{{ item.id }}"
+  changed_when: false
+
+- name: VM host mounts | Refuse an existing mapping with a different compute path
+  ansible.builtin.assert:
+    that:
+      - _vmfs_map_compute_nodes | sort == _vmfs_compute_nodes | sort
+      - _vmfs_map_compute_paths | length == _vmfs_compute_nodes | length
+      - _vmfs_map_compute_paths | unique | length == 1
+      - _vmfs_map_compute_paths | first == (item.item.host | regex_replace('/+$', ''))
+    fail_msg: >-
+      Directory mapping {{ item.item.id }} already exists with different or incomplete
+      compute-node paths. Existing mappings are left unchanged; correct the operator-owned
+      mapping or update the declared host path before deploying this VM.
+  vars:
+    _vmfs_map_entries: "{{ (item.stdout | from_json).map | default([]) }}"
+    _vmfs_map_compute_nodes: >-
+      {{ _vmfs_map_entries | map('split', ',') | map('first')
+         | map('regex_replace', '^node=', '') | list }}
+    _vmfs_map_compute_paths: >-
+      {{ _vmfs_map_entries | map('split', ',') | map('last')
+         | map('regex_replace', '^path=', '') | map('regex_replace', '/+$', '') | list }}
+  loop: "{{ _vmfs_mapping_details.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+
+- name: VM host mounts | Find this named VM on its selected node
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ homelabinfra_config.proxmox.node }}/qemu"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmfs_vm_list
+  changed_when: false
+
+- name: VM host mounts | Resolve the VMID and running state
+  ansible.builtin.set_fact:
+    _vmfs_vm_entry: >-
+      {{ _vmfs_vm_list.stdout | from_json | selectattr('name', 'equalto', attach_mounts_guest)
+         | list | first | default({}) }}
+    _vmfs_vmid: >-
+      {{ (_vmfs_vm_list.stdout | from_json | selectattr('name', 'equalto', attach_mounts_guest)
+          | map(attribute='vmid') | list | first | default('')) | string }}
+
+- name: VM host mounts | Require an owned VM
+  ansible.builtin.assert:
+    that:
+      - _vmfs_vmid | length > 0
+      - "'_+lab' in ((_vmfs_vm_entry.tags | default('')).split(';'))"
+    fail_msg: >-
+      No _+lab VM named {{ attach_mounts_guest }} exists on
+      {{ homelabinfra_config.proxmox.node }}. Refusing to modify an absent or unmanaged guest.
+
+- name: VM host mounts | Read the VM's current virtiofs devices
+  ansible.builtin.command:
+    cmd: "qm config {{ _vmfs_vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmfs_guest_config
+  changed_when: false
+
+- name: VM host mounts | Resolve existing and missing device slots
+  ansible.builtin.set_fact:
+    _vmfs_existing_device_ids: >-
+      {{ _vmfs_device_lines | map('split', ':') | map('last') | map('trim')
+         | map('split', ',') | map('first')
+         | map('regex_replace', '^dirid=', '') | list }}
+    _vmfs_used_device_indexes: >-
+      {{ _vmfs_device_lines | map('split', ':') | map('first')
+         | map('regex_replace', '^virtiofs', '') | map('int') | list }}
+  vars:
+    _vmfs_device_lines: >-
+      {{ _vmfs_guest_config.stdout_lines | select('match', '^virtiofs[0-9]+:') | list }}
+
+- name: VM host mounts | Assign free virtiofs device slots
+  ansible.builtin.set_fact:
+    _vmfs_missing_devices: >-
+      {{ _vmfs_missing_mappings | zip(_vmfs_free_indexes) | map('list') | list }}
+  vars:
+    _vmfs_missing_mappings: >-
+      {{ _vmfs_directory_mappings
+         | rejectattr('id', 'in', _vmfs_existing_device_ids) | list }}
+    _vmfs_free_indexes: >-
+      {{ (range(0, 10) | list | difference(_vmfs_used_device_indexes))
+         [:(_vmfs_missing_mappings | length)] }}
+
+- name: VM host mounts | Require available virtiofs slots
+  ansible.builtin.assert:
+    that: _vmfs_missing_devices | length == _vmfs_missing_mappings | length
+    fail_msg: >-
+      VM {{ attach_mounts_guest }} has no free virtiofs slot for every requested directory.
+      Proxmox supports virtiofs0 through virtiofs9; existing devices were not changed.
+  vars:
+    _vmfs_missing_mappings: >-
+      {{ _vmfs_directory_mappings
+         | rejectattr('id', 'in', _vmfs_existing_device_ids) | list }}
+
+- name: VM host mounts | Add missing virtiofs devices and restore guest state
+  when: _vmfs_missing_devices | length > 0
+  block:
+    - name: VM host mounts | Stop the VM for virtiofs configuration
+      ansible.builtin.command:
+        cmd: "qm shutdown {{ _vmfs_vmid }} --timeout 120"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _vmfs_vm_entry.status | default('') == 'running'
+      changed_when: true
+
+    - name: VM host mounts | Wait for the VM to stop
+      ansible.builtin.command:
+        cmd: "qm status {{ _vmfs_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _vmfs_stopped
+      until: "'status: stopped' in _vmfs_stopped.stdout"
+      retries: 30
+      delay: 4
+      when: _vmfs_vm_entry.status | default('') == 'running'
+      changed_when: false
+
+    - name: VM host mounts | Add each missing virtiofs device
+      ansible.builtin.command:
+        argv:
+          - qm
+          - set
+          - "{{ _vmfs_vmid }}"
+          - "-virtiofs{{ item.1 }}"
+          - "dirid={{ item.0.id }},cache=auto"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      loop: "{{ _vmfs_missing_devices }}"
+      loop_control:
+        label: "{{ item.0.id }} -> virtiofs{{ item.1 }}"
+      changed_when: true
+
+    - name: VM host mounts | Start the VM again if it was running
+      ansible.builtin.command:
+        cmd: "qm start {{ _vmfs_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _vmfs_vm_entry.status | default('') == 'running'
+      changed_when: true
+
+  rescue:
+    - name: VM host mounts | Restore a previously running VM after failure
+      ansible.builtin.command:
+        cmd: "qm start {{ _vmfs_vmid }}"
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      when: _vmfs_vm_entry.status | default('') == 'running'
+      changed_when: true
+
+    - name: VM host mounts | Re-raise the original virtiofs assignment failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ attach_mounts_guest }}: virtiofs assignment failed
+          {{ '; the VM was restarted to its prior running state'
+             if _vmfs_vm_entry.status | default('') == 'running' else '' }}.
+          Original error: {{ ansible_failed_result.msg | default(ansible_failed_result) }}
+
+- name: VM host mounts | Wait for guest SSH after virtiofs device changes
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[attach_mounts_guest].ansible_host | default(attach_mounts_guest) }}"
+    port: "{{ hostvars[attach_mounts_guest].ansible_port | default(22) }}"
+    state: started
+    connect_timeout: 5
+    delay: 2
+    sleep: 5
+    timeout: 300
+    msg: >-
+      SSH readiness timed out after 300 seconds for VM {{ attach_mounts_guest }}
+      ({{ _vmfs_vmid }}) after assigning virtiofs devices. The VM was started, but
+      guest-side mounts cannot continue.
+  when:
+    - _vmfs_missing_devices | length > 0
+    - _vmfs_vm_entry.status | default('') == 'running'
+
+- name: VM host mounts | Verify existing guest fstab entry for each path
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --fstab
+      - --mountpoint
+      - "{{ item.path }}"
+      - --noheadings
+      - --raw
+      - --output
+      - SOURCE,FSTYPE
+  delegate_to: "{{ attach_mounts_guest }}"
+  register: _vmfs_fstab_entries
+  failed_when: false
+  changed_when: false
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: VM host mounts | Verify the active guest mount before changing it
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --mountpoint
+      - "{{ item.path }}"
+      - --noheadings
+      - --raw
+      - --output
+      - SOURCE,FSTYPE
+  delegate_to: "{{ attach_mounts_guest }}"
+  register: _vmfs_active_mounts
+  failed_when: false
+  changed_when: false
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: VM host mounts | Refuse a conflicting active guest mount
+  ansible.builtin.assert:
+    that:
+      - item.rc != 0 or item.stdout | trim == _vmfs_expected_active_mount
+    fail_msg: >-
+      {{ item.item.path }} is already mounted from a different source or filesystem type
+      in {{ attach_mounts_guest }}. Existing guest mounts are not replaced.
+  vars:
+    _vmfs_expected_active_mount: >-
+      {{ _vmfs_directory_mappings
+         | selectattr('host', 'equalto', item.item.host | regex_replace('/+$', ''))
+         | map(attribute='id') | first }} virtiofs
+  loop: "{{ _vmfs_active_mounts.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: VM host mounts | Refuse a conflicting guest fstab entry
+  ansible.builtin.assert:
+    that:
+      - item.rc != 0 or item.stdout | trim == _vmfs_expected_fstab
+    fail_msg: >-
+      {{ item.item.path }} already has a different /etc/fstab source or filesystem type
+      in {{ attach_mounts_guest }}. Existing guest mounts are not replaced.
+  vars:
+    _vmfs_expected_fstab: >-
+      {{ _vmfs_directory_mappings
+         | selectattr('host', 'equalto', item.item.host | regex_replace('/+$', ''))
+         | map(attribute='id') | first }} virtiofs
+  loop: "{{ _vmfs_fstab_entries.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: VM host mounts | Ensure each guest mount directory exists
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ attach_mounts_guest }}"
+  become: true
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: VM host mounts | Persist and mount virtiofs at the requested guest path
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: >-
+      {{ _vmfs_directory_mappings
+         | selectattr('host', 'equalto', item.host | regex_replace('/+$', ''))
+         | map(attribute='id') | first }}
+    fstype: virtiofs
+    opts: rw,relatime
+    state: mounted
+  delegate_to: "{{ attach_mounts_guest }}"
+  become: true
+  loop: "{{ attach_mounts_list }}"
+  loop_control:
+    label: "{{ item.host }} -> {{ item.path }}"

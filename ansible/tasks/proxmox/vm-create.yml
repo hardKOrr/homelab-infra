@@ -5,6 +5,12 @@
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
+- name: Resolve the declared placement for this VM
+  ansible.builtin.include_tasks: resolve-guest-placement.yml
+  vars:
+    guest_placement_class: "{{ proxmox_placement_class | default('floating_vm') }}"
+    guest_placement_device: "{{ proxmox_placement_device | default('') }}"
+
 - name: Assert homelabinfra instance data is provided
   ansible.builtin.assert:
     that:

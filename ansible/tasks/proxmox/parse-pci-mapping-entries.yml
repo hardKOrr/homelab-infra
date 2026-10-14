@@ -1,0 +1,17 @@
+# Parse the property strings returned by pvesh for /cluster/mapping/pci/<id>.
+# Input: proxmox_pci_mapping_result (the registered pvesh command result).
+# Output: _proxmox_pci_mapping_entries, a list of property dictionaries.
+- name: PCI mapping | Initialize parsed entries
+  ansible.builtin.set_fact:
+    _proxmox_pci_mapping_entries: []
+
+- name: PCI mapping | Parse each property string
+  ansible.builtin.set_fact:
+    _proxmox_pci_mapping_entries: >-
+      {{ _proxmox_pci_mapping_entries
+         + [dict(item | split(',') | map('split', '='))] }}
+  loop: >-
+    {{ (proxmox_pci_mapping_result.stdout | default('{}') | from_json).map
+       | default([]) }}
+  loop_control:
+    label: "{{ item }}"

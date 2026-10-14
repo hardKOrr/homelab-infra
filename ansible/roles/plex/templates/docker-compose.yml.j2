@@ -27,9 +27,13 @@ services:
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(32400) }}"
     networks:
       - media
-{% if (app_config.app.devices | default([])) | length > 0 %}
+{% set plex_devices = app_config.app.devices | default([]) %}
+{% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
+{% set plex_devices = (plex_devices + ['/dev/dri']) | unique | list %}
+{% endif %}
+{% if plex_devices | length > 0 %}
     devices:
-{% for device in app_config.app.devices %}
+{% for device in plex_devices %}
       # Docker requires each configured device to exist on the stack host.
       - "{{ device }}:{{ device }}"
 {% endfor %}

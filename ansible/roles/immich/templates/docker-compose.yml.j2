@@ -30,11 +30,10 @@ services:
       - "{{ immich_env_file }}"
     volumes:
       - "{{ app_config.app.model_cache_path }}:/cache"
-{# A blank shared_device keeps CPU machine-learning images free of an empty device bind. #}
-{% if app_config.app.shared_device | default('', true) | trim | length > 0 %}
+{% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
     devices:
-      # OpenVINO uses the operator-declared shared render node for inference. This
-      # is a Docker device bind inside an LXC, not dedicated PCI passthrough.
-      - "{{ app_config.app.shared_device }}:{{ app_config.app.shared_device }}"
+      # The VM receives the dedicated iGPU through PCI passthrough; only the ML
+      # service binds the render node into its container.
+      - "{{ app_config.app.gpu_render_node }}:{{ app_config.app.gpu_render_node }}"
 {% endif %}
     restart: unless-stopped

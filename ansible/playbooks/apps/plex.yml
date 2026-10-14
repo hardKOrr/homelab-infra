@@ -28,6 +28,21 @@
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
   tasks:
+    - name: Validate Plex GPU placement declaration
+      ansible.builtin.assert:
+        that:
+          - >-
+            (app_config.app.gpu_device | default('', true) | length == 0)
+            or (app_config.app.gpu_device in (homelabinfra_config.proxmox.devices | default({}))
+                and homelabinfra_config.proxmox.devices[app_config.app.gpu_device].mode == 'dedicated'
+                and homelabinfra_config.proxmox.devices[app_config.app.gpu_device].kind == 'igpu')
+          - >-
+            (app_config.app.gpu_device | default('', true) | length > 0)
+            or (app_config.app.devices | default([])
+                | select('match', '^/dev/dri(?:/|$)') | list | length == 0)
+        fail_msg: >-
+          Plex hardware transcoding requires app.gpu_device to name a dedicated iGPU
+          declaration. /dev/dri cannot be shared from a Proxmox host into the VM.
     - name: Find or create the media stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:

@@ -13,6 +13,25 @@ The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.y
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path.
 
+`resolve-guest-placement.yml` is the placement source for those creation seams. The
+`database_vm` class pins PostgreSQL/Redis to `node_roles.storage` and
+`storage_ids.database_vm`; `floating_vm` uses the first online node from the ordered
+`node_roles.compute` list and `storage_ids.floating_vm`; `floating_lxc` uses that same
+compute order and `storage_ids.floating_lxc`. `gpu_vm` uses the iSCSI VM store and the
+common migratable CPU model, but pins the guest to its dedicated device's declared compute
+node. Its `proxmox.devices` declaration must name that node and an existing PCI resource
+mapping. The database template is built on the pinned storage node and storage so its full
+clones inherit the declared local zvol block size. The global
+`proxmox.node` remains the control node for cluster-wide queries and non-classed paths.
+
+`attach-host-mounts.yml` routes stack directories by Proxmox guest type. LXC guests keep
+their existing mountpoint/idmap path. Stack VMs use one cluster directory mapping per
+host path and eligible node set and a `virtiofs` device mounted at each requested guest path. Before
+creating a mapping it checks the path on every node that can run the VM; an existing
+mapping is read-only and must already match those nodes and paths. It persists the guest
+mount in `/etc/fstab`. A VM with virtiofs cannot live-migrate; moving it requires an
+offline migration or an HA restart.
+
 The pinned VM module omits NIC changes on safe updates. `vm-clone.yml` enables NIC
 configuration only after that invocation successfully creates a clone, before its first
 boot, so the declared guest network reaches the VM alongside cloud-init addressing.
@@ -110,27 +129,23 @@ must select at most one guest. Cluster tags may select multiple owned guests.
 
 ## Device passthrough
 
-`attach-shared-device.yml` binds a host device node (an iGPU) into one or more LXC guests —
-several guests may hold it at once. `attach-usb-passthrough-lxc.yml` resolves an operator
-owned Proxmox USB resource mapping to the current `/dev/bus/usb` node and then uses the
-shared LXC seam with a conflict check; the mapping is still exact and no raw
-vendor:product identity is accepted. `attach-pci-passthrough.yml` and
-`attach-usb-passthrough.yml` assign a PCI device, or a Proxmox USB resource mapping, to
-exactly one VM guest, exclusively; the device leaves the node for that guest, so a second
-assignment is a preflight failure, not a reassignment. All four run after `lxc-create.yml` /
-`vm-create.yml`, never in place of them, and each asserts the target guest carries the
-`_+lab` ownership tag before writing anything, then writes a `_.dev+<slug>` tag per bound
-device — durable proof this platform, not an operator by hand, created the binding. Before
-the PCI, shared, and LXC USB seams inspect the node or any guest, the requested identifier must match
-exactly one named entry in `homelabinfra_config.proxmox.devices`, whose explicit `mode`
-must agree with the seam. A declaration's optional `node` statically scopes it to one
-`proxmox.nodes` entry and falls back to `proxmox.node`; it never selects a node
-automatically. Put every identifier for one physical device (such as an iGPU's render node
-and PCI address) in that entry; the declaration, not current bindings, is what keeps shared
-and dedicated mutually exclusive. `kind` defaults to `igpu` for shared declarations
-and to `gpu` for a bare dedicated declaration, preserving the dedicated-only GPU shape;
-a dedicated iGPU must opt in with `kind: igpu`, while dedicated USB or other entries use
-`kind: usb` or `kind: other`.
+`attach-shared-device.yml` binds a host device node into one or more LXC guests; several
+guests may hold it at once. `attach-usb-passthrough-lxc.yml` resolves an operator-owned USB
+resource mapping to the current `/dev/bus/usb` node and then uses the shared LXC seam with
+a conflict check. `attach-pci-passthrough.yml` and `attach-usb-passthrough.yml` assign a
+PCI resource mapping or USB resource mapping to exactly one VM guest, exclusively. All
+seams assert `_+lab` ownership before writing, and platform-created assignments carry a
+`_.dev+<slug>` provenance tag. GPU-capable catalog apps use dedicated GPU VMs; shared
+`/dev/dri` binds are only for LXC callers.
+
+Before inspecting the node or a guest, an attachment request must match exactly one named
+entry in `homelabinfra_config.proxmox.devices`, whose explicit `mode` must agree with the
+seam. A declaration's optional `node` scopes it to one `proxmox.nodes` entry and otherwise
+falls back to `proxmox.node`; it never selects a node automatically. GPU VM declarations
+use kind `igpu` or `gpu`, mode `dedicated`, one exact PCI identifier, and an existing
+`pci_mapping` (defaulting to the declaration key). `kind` defaults to `igpu` for shared
+declarations and `gpu` for a bare dedicated declaration; a dedicated iGPU must say
+`kind: igpu`, while USB or other entries use `kind: usb` or `kind: other`.
 
 Each attach seam has a matching detach seam — `detach-shared-device.yml`,
 `detach-pci-passthrough.yml`, `detach-usb-passthrough.yml` — that also asserts `_+lab`

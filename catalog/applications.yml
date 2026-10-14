@@ -156,7 +156,7 @@ applications:
     type: Photo Management
     scope: estate
     # Immich owns a role-backed database/media recovery path in addition to the generic
-    # Docker actions. Its named external backends and shared iGPU are not sidecars.
+    # Docker actions. Its named external backends and dedicated GPU VM are not sidecars.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   plex:
@@ -503,8 +503,8 @@ applications:
     category: Media & Entertainment
     type: Video Surveillance
     scope: estate
-    # Recordings live on an external retention-sized mount and the guest owns shared
-    # iGPU/Coral device bindings, so this is not a shared media-stack tenant.
+    # Recordings live on an external retention-sized mount; its dedicated GPU VM owns
+    # the iGPU and Coral, so this is not a shared media-stack tenant.
 
   home-assistant:
     name: Home Assistant
@@ -525,8 +525,8 @@ applications:
     category: AI and Machine Learning
     type: Model Serving
     scope: estate
-    # Ollama owns a dedicated Docker VM, an exact PCIe GPU assignment, and a large
-    # application-consistent model/config archive. It must not use the shared ai LXC.
+    # Ollama owns a GPU-class Docker VM with an exact PCI resource mapping and a large
+    # application-consistent model/config archive.
     actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   litellm:
@@ -559,6 +559,6 @@ applications:
     category: AI and Machine Learning
     type: Image Generation
     scope: estate
-    # ComfyUI owns a dedicated Docker VM, an exact PCIe GPU assignment, and a large
-    # application-consistent model/config archive. It must not use the shared ai LXC.
+    # ComfyUI owns a GPU-class Docker VM with an exact PCI resource mapping and a large
+    # application-consistent model/config archive.
     actions: [backup, configure, remove, restart, restore, rollback, tail]

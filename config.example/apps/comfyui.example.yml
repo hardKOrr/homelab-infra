@@ -1,7 +1,7 @@
 ---
 # ComfyUI runs as Docker on its own Debian VM because its GPU is a dedicated PCIe device.
-# The exact PCI address must also appear in config/proxmox.yml under one device declaration
-# with mode: dedicated (the bare declaration defaults to kind: gpu). Do not reuse that
+# Name the matching kind: gpu, mode: dedicated declaration from config/proxmox.yml. Its
+# key (or pci_mapping value) must name an existing Proxmox PCI resource mapping. Do not reuse that
 # device in another guest or place ComfyUI on the shared ai-stack LXC.
 #
 # Before live binding, record the instance, Proxmox node, VM/VMID, PCI address, console
@@ -11,8 +11,7 @@
 app:
   image: ghcr.io/ai-dock/comfyui:latest-cuda
   port: 8188
-  pci_device: "0000:01:00.0" # replace with the exact declared PCI address
-  pci_device_pcie: true
+  gpu_device: comfyui-gpu # replace with the key in proxmox.devices
   # Models, custom nodes, inputs, outputs, and user configuration are all retained here.
   storage_path: /opt/comfyui/storage
   models_path: /opt/comfyui/storage/models

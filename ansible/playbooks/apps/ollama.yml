@@ -49,8 +49,7 @@
         that:
           - app_config.hosting == 'docker'
           - app_config.proxmox.vm is mapping
-          - app_config.app.pci_device | default('') | length > 0
-          - app_config.app.pci_device is match('^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\\.[0-7]$')
+          - app_config.app.gpu_device | default('') | length > 0
           - app_config.app.storage_path | default('') | length > 0
           - app_config.app.models_path | default('') | length > 0
         fail_msg: >-
@@ -70,6 +69,27 @@
       ansible.builtin.set_fact:
         _ollama_existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
+    - name: Resolve the existing Ollama VM node
+      ansible.builtin.set_fact:
+        _ollama_existing_node: "{{ hostvars[_ollama_existing_hosts[0]].proxmox_node | default('') }}"
+      when: _ollama_existing_hosts | length > 0
+
+    - name: Require the existing Ollama guest to be a VM with a known node
+      ansible.builtin.assert:
+        that:
+          - hostvars[_ollama_existing_hosts[0]].proxmox_vmtype | default('') == 'qemu'
+          - _ollama_existing_node | length > 0
+        fail_msg: >-
+          Existing Ollama guest must be a VM with a known Proxmox node. This deployment
+          does not convert an existing guest in place.
+      when: _ollama_existing_hosts | length > 0
+
+    - name: Use the existing Ollama VM node for device operations
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'node': _ollama_existing_node}}, recursive=True) }}
+      when: _ollama_existing_hosts | length > 0
+
     - name: Add the existing VM to the deploy group
       ansible.builtin.add_host:
         name: "{{ _ollama_existing_hosts[0] }}"
@@ -78,6 +98,8 @@
           {{ hostvars[_ollama_existing_hosts[0]].ansible_host
              | default(hostvars[_ollama_existing_hosts[0]].ansible_default_ipv4.address | default('')) }}
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        proxmox_vmtype: qemu
+        proxmox_node: "{{ _ollama_existing_node }}"
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       when: _ollama_existing_hosts | length > 0
@@ -107,6 +129,8 @@
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
           vars:
+            proxmox_placement_class: gpu_vm
+            proxmox_placement_device: "{{ app_config.app.gpu_device }}"
             cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
             cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
             cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
@@ -145,6 +169,9 @@
 
         - name: Clone the Ollama VM from the cloud-init template
           ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
+          vars:
+            proxmox_placement_class: gpu_vm
+            proxmox_placement_device: "{{ app_config.app.gpu_device }}"
 
         - name: Add the new VM to the deploy group
           ansible.builtin.add_host:
@@ -152,6 +179,9 @@
             groups: "deploy_{{ instance }}"
             ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+            proxmox_vmtype: qemu
+            proxmox_node: "{{ homelabinfra_config.proxmox.node }}"
+            proxmox_vmid: "{{ homelabinfra_instance.vm.vmid }}"
             app_config: "{{ app_config }}"
             homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
           changed_when: false
@@ -168,8 +198,14 @@
       vars:
         pci_passthrough_guest: "{{ _ollama_guest }}"
         pci_passthrough_device:
-          id: "{{ app_config.app.pci_device }}"
-          pcie: "{{ app_config.app.pci_device_pcie | default(true) | bool }}"
+          id: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].identifiers
+               | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+               | list | first }}
+          mapping: >-
+            {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
+               | default(app_config.app.gpu_device) }}
+          pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(true) | bool }}"
 
 - name: "Ollama | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"

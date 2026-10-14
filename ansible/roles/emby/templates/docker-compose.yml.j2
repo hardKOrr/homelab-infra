@@ -20,9 +20,13 @@ services:
 {% endfor %}
     ports:
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
-{% if (app_config.app.devices | default([])) | length > 0 %}
+{% set emby_devices = app_config.app.devices | default([]) %}
+{% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
+{% set emby_devices = (emby_devices + ['/dev/dri']) | unique | list %}
+{% endif %}
+{% if emby_devices | length > 0 %}
     devices:
-{% for device in app_config.app.devices %}
+{% for device in emby_devices %}
       - "{{ device }}:{{ device }}"
 {% endfor %}
 {% endif %}

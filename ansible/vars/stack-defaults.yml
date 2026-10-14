@@ -1,14 +1,13 @@
 ---
-# Sizing for the LXC that hosts each Docker stack.
+# Sizing for the VM that hosts each Docker stack.
 #
-# A stack host is shared: several apps land on one container, and the first app to deploy
+# A stack host is shared: several apps land on one guest, and the first app to deploy
 # is the one that creates it. Sizing therefore belongs to the STACK, not to whichever app
 # happened to get there first — otherwise the host's size depends on deploy order, and
 # every app on a stack has to repeat the same numbers to keep that order from mattering.
 #
-# The global lxc defaults in homelabinfra-defaults.yml size a single native service
-# (1 core / 512M / 8G). A stack host runs a Docker engine plus every container its
-# tenants bring, so it starts from here instead.
+# A stack host runs a Docker engine plus every container its tenants bring, so it starts
+# from these VM sizes instead of the smaller native-guest defaults.
 #
 # This file is git-managed — git pull may update these defaults. To override for one lab,
 # add a `stacks:` map to config/infrastructure.yml; it is deep-merged over these:
@@ -50,8 +49,7 @@ stack_defaults:
   _default:
     cores: 2
     memory: 2048
-    disk_volume:
-      size: 16
+    disk_size: 16
 
   # Authentik alone — server, worker, Postgres and Redis. It gets its own host because it
   # carries a database and is the greediest thing the platform runs: a co-tenant's restart
@@ -62,8 +60,7 @@ stack_defaults:
     boot_order: 40
     cores: 4
     memory: 4096
-    disk_volume:
-      size: 32
+    disk_size: 32
 
   # Everything that watches the lab: Uptime Kuma, Prometheus and Grafana. These share
   # willingly — they are read-mostly, none of them carries a database the lab depends on,
@@ -92,16 +89,14 @@ stack_defaults:
     boot_order: 70
     cores: 4
     memory: 4096
-    disk_volume:
-      size: 64
+    disk_size: 64
 
   # The *arr suite, download clients and Bazarr. Many small containers, and the media
   # itself lives on mounted storage rather than the rootfs.
   media:
     cores: 4
     memory: 4096
-    disk_volume:
-      size: 32
+    disk_size: 32
 
   # Actual Budget, Karakeep (with Meilisearch and headless Chrome), n8n and Plane. Plane's
   # API, workers and web front end alone outgrow the 2 GiB default; at that size the host
@@ -109,21 +104,19 @@ stack_defaults:
   services:
     cores: 4
     memory: 8192
-    disk_volume:
-      size: 32
+    disk_size: 32
 
   # Immich's server and OpenVINO worker share a host, while originals and thumbnails
   # live on the explicitly declared media mount rather than the stack rootfs.
   photos:
     cores: 4
     memory: 8192
-  # Frigate gets its own Docker-on-LXC guest. Its recording workload is continuously
+  # Frigate gets its own Docker VM. Its recording workload is continuously
   # writing, and its devices must not be co-tenants of an unrelated stack.
   frigate:
     cores: 4
     memory: 4096
-    disk_volume:
-      size: 32
+    disk_size: 32
 
   # AI applications share a Docker host, while GPU/model ownership stays with the
   # explicitly selected upstream application. Open WebUI itself is light; the extra
@@ -132,5 +125,4 @@ stack_defaults:
   ai:
     cores: 4
     memory: 8192
-    disk_volume:
-      size: 64
+    disk_size: 64

@@ -41,9 +41,13 @@ services:
       # stack host publishes. They differ whenever two apps on one stack would
       # otherwise collide.
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
-{% if (app_config.app.devices | default([])) | length > 0 %}
+{% set jellyfin_devices = app_config.app.devices | default([]) %}
+{% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
+{% set jellyfin_devices = (jellyfin_devices + ['/dev/dri']) | unique | list %}
+{% endif %}
+{% if jellyfin_devices | length > 0 %}
     devices:
-{% for device in app_config.app.devices %}
+{% for device in jellyfin_devices %}
       # Hardware transcoding. Docker refuses to start the container if this does
       # not exist on the host, which is why the default is an empty list.
       - "{{ device }}:{{ device }}"

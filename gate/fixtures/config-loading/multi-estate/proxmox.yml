@@ -8,6 +8,18 @@ proxmox:
   api_token_id: "automation"
   api_token_secret: "fixture-not-a-real-secret"
   storage: "local-lvm"
+  node_roles:
+    storage: "fixture-storage-node"
+    compute: ["fixture-compute-1", "fixture-compute-2"]
+  storage_ids:
+    database_vm: "fixture-zfs-local"
+    floating_vm: "fixture-zfs-iscsi"
+    floating_lxc: "fixture-nfs"
+  floating_vm_cpu_model: "x86-64-v2-AES"
+  nodes:
+    fixture-storage-node: "203.0.113.11"
+    fixture-compute-1: "203.0.113.12"
+    fixture-compute-2: "203.0.113.13"
 
 networks:
   default:

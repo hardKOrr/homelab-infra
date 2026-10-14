@@ -21,6 +21,7 @@ emby_defaults:
     admin_user: admin
     puid: 1313
     pgid: 1313
+    gpu_device: ""
     devices: []
     libraries:
       - name: Movies

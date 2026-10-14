@@ -77,6 +77,12 @@
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
+- name: Resolve the declared placement before ensuring the VM template
+  ansible.builtin.include_tasks: resolve-guest-placement.yml
+  vars:
+    guest_placement_class: "{{ proxmox_placement_class | default('floating_vm') }}"
+    guest_placement_device: "{{ proxmox_placement_device | default('') }}"
+
 - name: Cloud template | Set build facts
   ansible.builtin.set_fact:
     # Empty means "choose one" — see the header. `default(x, true)` so an empty string

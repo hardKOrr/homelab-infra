@@ -186,6 +186,59 @@ else:
         lambda key, message: report("ERROR", "proxmox.yml", key, message),
     )
 
+    # Placement is lab topology. Require it at the config boundary so each guest
+    # creation path cannot silently fall back to the former lab-wide node or storage.
+    pve = proxmox.get("proxmox")
+    if isinstance(pve, dict):
+        roles = pve.get("node_roles")
+        if not isinstance(roles, dict):
+            report("ERROR", "proxmox.yml", "proxmox.node_roles", "must be a mapping")
+            roles = {}
+        storage_node = roles.get("storage")
+        if not isinstance(storage_node, str) or not storage_node.strip():
+            report("ERROR", "proxmox.yml", "proxmox.node_roles.storage", "required")
+            storage_node = ""
+        compute_nodes = roles.get("compute")
+        if not isinstance(compute_nodes, list) or not compute_nodes or any(
+            not isinstance(node, str) or not node.strip() for node in compute_nodes
+        ):
+            report("ERROR", "proxmox.yml", "proxmox.node_roles.compute",
+                   "must be a non-empty ordered list of Proxmox node names")
+            compute_nodes = []
+        elif len(set(compute_nodes)) != len(compute_nodes):
+            report("ERROR", "proxmox.yml", "proxmox.node_roles.compute",
+                   "must not repeat a node")
+        if storage_node and storage_node in compute_nodes:
+            report("ERROR", "proxmox.yml", "proxmox.node_roles",
+                   "the pinned storage node must not be in the compute role")
+        node_addresses = pve.get("nodes")
+        if not isinstance(node_addresses, dict):
+            report("ERROR", "proxmox.yml", "proxmox.nodes",
+                   "must map every placement node name to an address")
+            node_addresses = {}
+        devices = pve.get("devices")
+        device_nodes = ([device.get("node") for device in devices.values()
+                         if isinstance(device, dict) and device.get("node")]
+                        if isinstance(devices, dict) else [])
+        for node in ([storage_node] if isinstance(storage_node, str) else []) + compute_nodes + device_nodes:
+            if node and node not in node_addresses:
+                report("ERROR", "proxmox.yml", "proxmox.nodes",
+                       "must include every node named by node_roles or proxmox.devices")
+
+        storage_ids = pve.get("storage_ids")
+        if not isinstance(storage_ids, dict):
+            report("ERROR", "proxmox.yml", "proxmox.storage_ids", "must be a mapping")
+            storage_ids = {}
+        for key in ("database_vm", "floating_vm", "floating_lxc"):
+            if not isinstance(storage_ids.get(key), str) or not storage_ids[key].strip():
+                report("ERROR", "proxmox.yml", "proxmox.storage_ids." + key, "required")
+        cpu_model = pve.get("floating_vm_cpu_model")
+        if not isinstance(cpu_model, str) or not cpu_model.strip():
+            report("ERROR", "proxmox.yml", "proxmox.floating_vm_cpu_model", "required")
+        elif cpu_model.strip().lower() == "host":
+            report("ERROR", "proxmox.yml", "proxmox.floating_vm_cpu_model",
+                   "must be migratable; host is not permitted")
+
     networks = proxmox.get("networks")
     network_names = set(networks) if isinstance(networks, dict) else set()
     if not isinstance(networks, dict) or not networks:

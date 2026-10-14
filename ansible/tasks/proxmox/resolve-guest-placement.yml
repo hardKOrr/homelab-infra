@@ -1,0 +1,256 @@
+---
+# Resolve the lab's declared guest class before creating a Proxmox guest.
+#
+# Inputs:
+#   guest_placement_class — database_vm | floating_vm | floating_lxc | gpu_vm
+#   guest_placement_preferred_node — optional exact compute node for a member of a
+#                                   deliberately spread cluster (must be in compute)
+#   guest_placement_device — required for gpu_vm; a key in proxmox.devices whose
+#                            PCI mapping and dedicated device declaration pin the VM
+#
+# The compute list is ordered. An ordinary floating guest uses the first online node;
+# a cluster member may request one exact node, but can never escape the compute role.
+# Storage and CPU model come from config/proxmox.yml, not app defaults.
+
+- name: Guest placement | Validate the declared class and role shape
+  ansible.builtin.assert:
+    that:
+      - guest_placement_class in ['database_vm', 'floating_vm', 'floating_lxc', 'gpu_vm']
+      - homelabinfra_config.proxmox.node_roles is mapping
+      - homelabinfra_config.proxmox.storage_ids is mapping
+      - homelabinfra_config.proxmox.node_roles.storage | default('') | string | trim | length > 0
+      - homelabinfra_config.proxmox.node_roles.compute is sequence
+      - homelabinfra_config.proxmox.node_roles.compute is not string
+      - homelabinfra_config.proxmox.node_roles.compute | length > 0
+      - >-
+        (homelabinfra_config.proxmox.node_roles.compute | select('string') | list | length)
+        == (homelabinfra_config.proxmox.node_roles.compute | length)
+      - >-
+        (homelabinfra_config.proxmox.node_roles.compute | unique | list | length)
+        == (homelabinfra_config.proxmox.node_roles.compute | length)
+      - >-
+        homelabinfra_config.proxmox.node_roles.storage
+        not in homelabinfra_config.proxmox.node_roles.compute
+      - >-
+        guest_placement_preferred_node is not defined
+        or guest_placement_class in ['floating_vm', 'floating_lxc']
+    fail_msg: >-
+      config/proxmox.yml must declare node_roles.storage and an ordered, unique
+      node_roles.compute list, and the pinned storage node must not be a compute node.
+
+- name: Guest placement | Resolve the storage and eligible nodes
+  ansible.builtin.set_fact:
+    _guest_placement_storage_key: >-
+      {{ {'database_vm': 'database_vm', 'floating_vm': 'floating_vm',
+          'floating_lxc': 'floating_lxc', 'gpu_vm': 'floating_vm'}[guest_placement_class] }}
+    _guest_placement_compute_nodes: >-
+      {{ homelabinfra_config.proxmox.node_roles.compute | list }}
+
+- name: Guest placement | Require a dedicated declared GPU device
+  ansible.builtin.assert:
+    that:
+      - guest_placement_device is defined
+      - guest_placement_device in (homelabinfra_config.proxmox.devices | default({}))
+      - _guest_gpu_declaration is mapping
+      - _guest_gpu_declaration.mode == 'dedicated'
+      - _guest_gpu_declaration.kind in ['igpu', 'gpu']
+      - _guest_gpu_declaration.node is defined
+      - _guest_gpu_declaration.node | string | trim | length > 0
+      - _guest_gpu_pci_ids | length == 1
+      - _guest_gpu_mapping_id is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: >-
+      GPU VMs require guest_placement_device to name exactly one proxmox.devices
+      declaration with mode: dedicated, kind: igpu or gpu, one exact PCI identifier,
+      an explicit node, and a valid PCI resource mapping ID.
+  vars:
+    _guest_gpu_declaration: >-
+      {{ (homelabinfra_config.proxmox.devices | default({})).get(guest_placement_device | default(''), {}) }}
+    _guest_gpu_pci_ids: >-
+      {{ _guest_gpu_declaration.identifiers | default([])
+         | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$') | list }}
+    _guest_gpu_mapping_id: >-
+      {{ _guest_gpu_declaration.pci_mapping | default(guest_placement_device | default('')) }}
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Resolve the declared GPU node and mapping identity
+  ansible.builtin.set_fact:
+    _guest_gpu_declaration: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device] }}
+    _guest_gpu_node: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device].node }}
+    _guest_gpu_mapping_id: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device].pci_mapping
+         | default(guest_placement_device) }}
+    _guest_gpu_pci_id: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device].identifiers
+         | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$')
+         | list | first }}
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Require a GPU node in the compute role
+  ansible.builtin.assert:
+    that: _guest_gpu_node in _guest_placement_compute_nodes
+    fail_msg: >-
+      GPU device {{ guest_placement_device }} is declared on {{ _guest_gpu_node }}, which is
+      not in proxmox.node_roles.compute. GPU VMs use the floating iSCSI store, so the
+      declared device node must also be a compute member.
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Require the class storage ID
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.storage_ids[_guest_placement_storage_key] | default('') | string | trim | length > 0
+    fail_msg: >-
+      config/proxmox.yml must set proxmox.storage_ids.{{ _guest_placement_storage_key }}
+      to the Proxmox storage ID for this guest class.
+
+- name: Guest placement | Require the common migratable VM CPU model
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.floating_vm_cpu_model | default('') | string | trim | length > 0
+      - homelabinfra_config.proxmox.floating_vm_cpu_model | lower != 'host'
+    fail_msg: >-
+      config/proxmox.yml must set proxmox.floating_vm_cpu_model to one common,
+      migratable model; 'host' is not allowed for floating or GPU VMs.
+  when: guest_placement_class in ['floating_vm', 'gpu_vm']
+
+- name: Guest placement | Read online Proxmox nodes
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/resources --type node --output-format json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _guest_placement_resources
+  changed_when: false
+
+- name: Guest placement | Collect online node names
+  ansible.builtin.set_fact:
+    _guest_placement_online_nodes: >-
+      {{ (_guest_placement_resources.stdout | from_json)
+         | selectattr('type', 'defined')
+         | selectattr('type', 'eq', 'node')
+         | selectattr('status', 'defined')
+         | selectattr('status', 'eq', 'online')
+         | map(attribute='node') | list }}
+
+- name: Guest placement | Assert a requested compute node is eligible
+  ansible.builtin.assert:
+    that:
+      - guest_placement_preferred_node in _guest_placement_compute_nodes
+      - guest_placement_preferred_node in _guest_placement_online_nodes
+    fail_msg: >-
+      Requested guest node is not an online member of proxmox.node_roles.compute.
+      Refusing to create the guest outside the declared compute pool.
+  when:
+    - guest_placement_class in ['floating_vm', 'floating_lxc']
+    - guest_placement_preferred_node is defined
+
+- name: Guest placement | Require an online compute node
+  ansible.builtin.assert:
+    that:
+      - _guest_placement_compute_nodes | select('in', _guest_placement_online_nodes) | list | length > 0
+    fail_msg: >-
+      None of the ordered nodes in proxmox.node_roles.compute is online. No floating
+      guest was created.
+  when:
+    - guest_placement_class in ['floating_vm', 'floating_lxc']
+    - guest_placement_preferred_node is not defined
+
+- name: Guest placement | Require the pinned storage node to be online
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.node_roles.storage in _guest_placement_online_nodes
+    fail_msg: >-
+      The configured storage node is offline. Database placement is pinned there;
+      refusing to create the guest elsewhere.
+  when: guest_placement_class == 'database_vm'
+
+- name: Guest placement | Require the declared GPU node to be online
+  ansible.builtin.assert:
+    that: _guest_gpu_node in _guest_placement_online_nodes
+    fail_msg: >-
+      The node declared for GPU device {{ guest_placement_device }} is offline. GPU
+      placement is pinned to the device node; refusing to place it elsewhere.
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Read the Proxmox PCI resource mapping
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/pci/{{ _guest_gpu_mapping_id }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _guest_gpu_mapping
+  changed_when: false
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Parse the PCI resource mapping properties
+  ansible.builtin.include_tasks: parse-pci-mapping-entries.yml
+  vars:
+    proxmox_pci_mapping_result: "{{ _guest_gpu_mapping }}"
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Verify the PCI mapping names this device on its node
+  ansible.builtin.assert:
+    that:
+      - _guest_gpu_mapping.rc == 0
+      - _guest_gpu_map_entries | length == 1
+      - _guest_gpu_map_entries[0].path == _guest_gpu_pci_id
+    fail_msg: >-
+      PCI resource mapping {{ _guest_gpu_mapping_id }} must map exactly
+      {{ _guest_gpu_pci_id }} on the declared device node. The mapping is operator-owned;
+      this task does not create or alter PCI mappings.
+  vars:
+    _guest_gpu_map_entries: >-
+      {{ _proxmox_pci_mapping_entries
+         | selectattr('node', 'equalto', _guest_gpu_node)
+         | selectattr('path', 'equalto', _guest_gpu_pci_id) | list }}
+  when: guest_placement_class == 'gpu_vm'
+
+- name: Guest placement | Select the ordered node and storage
+  ansible.builtin.set_fact:
+    _guest_placement:
+      class: "{{ guest_placement_class }}"
+      node: >-
+        {{ guest_placement_preferred_node
+           if guest_placement_preferred_node is defined
+              and guest_placement_class in ['floating_vm', 'floating_lxc']
+           else (homelabinfra_config.proxmox.node_roles.storage
+                 if guest_placement_class == 'database_vm'
+                 else (_guest_gpu_node if guest_placement_class == 'gpu_vm'
+                       else (_guest_placement_compute_nodes
+                             | select('in', _guest_placement_online_nodes) | list | first))) }}
+      storage: "{{ homelabinfra_config.proxmox.storage_ids[_guest_placement_storage_key] }}"
+      guest_type: "{{ 'lxc' if guest_placement_class == 'floating_lxc' else 'qemu' }}"
+      cpu_model: >-
+        {{ homelabinfra_config.proxmox.floating_vm_cpu_model
+           if guest_placement_class in ['floating_vm', 'gpu_vm'] else '' }}
+      device: "{{ guest_placement_device if guest_placement_class == 'gpu_vm' else '' }}"
+      pci_mapping: "{{ _guest_gpu_mapping_id if guest_placement_class == 'gpu_vm' else '' }}"
+      pci_id: "{{ _guest_gpu_pci_id if guest_placement_class == 'gpu_vm' else '' }}"
+
+- name: Guest placement | Apply VM target settings
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {
+           'node': _guest_placement.node,
+           'vm': {'storage': _guest_placement.storage}
+         }}, recursive=True) }}
+  when: guest_placement_class in ['database_vm', 'floating_vm', 'gpu_vm']
+
+- name: Guest placement | Apply the common floating VM CPU model
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {'vm': {
+           'cpu': _guest_placement.cpu_model
+         }}}, recursive=True) }}
+  when: guest_placement_class in ['floating_vm', 'gpu_vm']
+
+- name: Guest placement | Apply LXC target settings
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {
+           'node': _guest_placement.node,
+           'lxc': {'disk_volume': {'storage': _guest_placement.storage}}
+         }}, recursive=True) }}
+  when: guest_placement_class == 'floating_lxc'

@@ -83,7 +83,7 @@
       redis_port: "{{ _immich_redis_backend.port }}"
       redis_password: "{{ _immich_redis_password }}"
       media_path: "{{ _immich_media_path }}"
-      shared_device: "{{ app_config.app.shared_device | default('') }}"
+      gpu_device: "{{ app_config.app.gpu_device | default('') }}"
     vault_item_secret_fields: [database_password, redis_password]
   no_log: true
 
@@ -149,8 +149,8 @@
     that: "'immich-machine-learning' in _immich_running_services.stdout_lines"
     fail_msg: >-
       Immich's machine-learning service is not running. Check the configured image
-      {{ app_config.app.machine_learning_image }} and optional shared device
-      {{ app_config.app.shared_device | default('') }} before retrying.
+      {{ app_config.app.machine_learning_image }} and the VM's dedicated GPU mapping
+      {{ app_config.app.gpu_device }} before retrying.
 
 - name: Immich | Export the app URL to the playbook
   ansible.builtin.set_fact:

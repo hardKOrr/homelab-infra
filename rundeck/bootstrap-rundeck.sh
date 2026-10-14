@@ -1411,7 +1411,7 @@ sudo -u rundeck HOME=/var/lib/rundeck \
   -r "$REPO_DIR/ansible/requirements.yml" >/dev/null
 sudo -u rundeck HOME=/var/lib/rundeck \
   "$VENV_DIR/bin/ansible-galaxy" collection list 2>/dev/null \
-  | grep -E 'community.proxmox|ansible.utils|community.docker|community.general' \
+  | grep -E 'ansible.posix|community.proxmox|ansible.utils|community.docker|community.general' \
   | sed 's/^/    /'
 
 # -- ownership + service --------------------------------------------------------

@@ -26,10 +26,10 @@ immich_defaults:
     redis:
       provider: redis
       instance: redis-immich
-    # The exact render node is an operator-declared shared physical device. The
-    # playbook passes this to attach-shared-device.yml; it never requests PCI passthrough.
-    shared_device: /dev/dri/renderD128
-    shared_device_mode: "0666"
+    # The operator declares one dedicated GPU mapping in proxmox.devices. The VM
+    # receives the PCI device; the ML container uses its /dev/dri render node.
+    gpu_device: ""
+    gpu_render_node: /dev/dri/renderD128
     # The ML model cache is disposable and stays on the photos stack rootfs.
     model_cache_path: "/opt/{{ instance }}/model-cache"
 
