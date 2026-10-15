@@ -252,7 +252,10 @@ def static_contract():
                        if task.get("name") == "Mautic | Wait for health endpoint")
     start_background = next(task for task in deploy_tasks
                             if task.get("name") == "Mautic | Start background services")
+    store_credentials = next(task for task in deploy_tasks
+                             if task.get("name") == "Mautic | Store credentials in the canonical Vaultwarden item")
     assert start_web["community.docker.docker_compose_v2"]["services"] == ["mautic_web"]
+    assert store_credentials.get("when") == "not ansible_check_mode"
     runtime_check = " ".join(verify_runtime["ansible.builtin.command"]["argv"])
     assert "--user www-data" in runtime_check
     assert "test -r /var/www/html/config/local.php" in runtime_check

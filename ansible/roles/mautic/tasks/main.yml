@@ -80,6 +80,9 @@
 
 - name: Mautic | Store credentials in the canonical Vaultwarden item
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  # Check mode can use the already-loaded credential snapshot, but must not run a
+  # mutating Vaultwarden upsert (or its command-based readback sequence).
+  when: not ansible_check_mode
   vars:
     vault_item_name: "homelab-infra/apps/{{ instance }}"
     vault_item_merge: true
