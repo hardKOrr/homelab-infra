@@ -19,8 +19,8 @@ remove_tasks = yaml.safe_load(
 
 
 class RunnerApiState:
-    def __init__(self, scope):
-        self.scope = scope
+    def __init__(self, registrations_by_scope):
+        self.registrations_by_scope = registrations_by_scope
         self.deletes = []
         self.authorizations = []
 
@@ -29,43 +29,56 @@ class RunnerApi(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         state = self.server.state
         state.authorizations.append(self.headers.get("Authorization", ""))
-        if self.path == f"/api/v1/{state.scope}/actions/runners":
-            body = json.dumps({
-                "runners": [
-                    {"id": 41, "name": "forgejo-runner"},
-                    {"id": 42, "name": "other-runner"},
-                ]
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        parts = self.path.strip("/").split("/")
+        if len(parts) != 5 or parts[:2] != ["api", "v1"] or parts[3:] != ["actions", "runners"]:
+            self.send_error(404)
             return
-        self.send_error(404)
+        scope = parts[2]
+        body = json.dumps({"runners": state.registrations_by_scope.get(scope, [])}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_DELETE(self):
         state = self.server.state
         state.authorizations.append(self.headers.get("Authorization", ""))
         state.deletes.append(self.path)
-        if self.path == f"/api/v1/{state.scope}/actions/runners/41":
-            self.send_response(204)
-            self.end_headers()
-            return
+        parts = self.path.strip("/").split("/")
+        if len(parts) == 6 and parts[:2] == ["api", "v1"] and parts[3:5] == ["actions", "runners"]:
+            scope, runner_id = parts[2], parts[5]
+            if any(
+                str(runner["id"]) == runner_id and runner["name"] == "forgejo-runner"
+                for runner in state.registrations_by_scope.get(scope, [])
+            ):
+                state.registrations_by_scope[scope] = [
+                    runner for runner in state.registrations_by_scope[scope]
+                    if str(runner["id"]) != runner_id
+                ]
+                self.send_response(204)
+                self.end_headers()
+                return
         self.send_error(404)
 
     def log_message(self, *_args):
         pass
 
 
-def run_removal(scope, token_field, include_admin_fallback=False):
-    token = f"fixture-{scope}-token"
+def run_removal(registration_scope, token_field, include_admin_fallback=False):
+    token = f"fixture-{token_field.removesuffix('_api_token')}-token"
     secrets = {token}
     vault_fields = {token_field: token}
     if include_admin_fallback:
         vault_fields["admin_api_token"] = "fixture-admin-token"
         secrets.add(vault_fields["admin_api_token"])
-    state = RunnerApiState(scope)
+    registrations_by_scope = {
+        "user": ([{"id": 41, "name": "forgejo-runner"}, {"id": 42, "name": "other-runner"}]
+                 if registration_scope == "user" else [{"id": 42, "name": "other-runner"}]),
+        "admin": ([{"id": 41, "name": "forgejo-runner"}, {"id": 42, "name": "other-runner"}]
+                  if registration_scope == "admin" else []),
+    }
+    state = RunnerApiState(registrations_by_scope)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RunnerApi)
     server.state = state
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -102,9 +115,19 @@ def run_removal(scope, token_field, include_admin_fallback=False):
             assert all(secret not in output for secret in secrets), (
                 "API token appeared in Ansible output"
             )
-        expected = f"/api/v1/{scope}/actions/runners/41"
+        expected = f"/api/v1/{registration_scope}/actions/runners/41"
         assert state.deletes == [expected], state.deletes
-        assert state.authorizations == [f"token {token}", f"token {token}"]
+        if registration_scope == "admin" and token_field == "runner_api_token":
+            expected_authorizations = [
+                f"token {token}",
+                "token fixture-admin-token",
+                "token fixture-admin-token",
+            ]
+        elif registration_scope == "admin":
+            expected_authorizations = [f"token {token}", f"token {token}"]
+        else:
+            expected_authorizations = [f"token {token}", f"token {token}"]
+        assert state.authorizations == expected_authorizations, state.authorizations
     finally:
         server.shutdown()
         thread.join()
@@ -150,6 +173,7 @@ def main():
     check_daemon_readiness_retries()
     run_removal("user", "runner_api_token", include_admin_fallback=True)
     run_removal("admin", "admin_api_token")
+    run_removal("admin", "runner_api_token", include_admin_fallback=True)
     print("Forgejo Runner removal checks passed")
 
 

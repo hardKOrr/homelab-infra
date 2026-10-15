@@ -12,15 +12,22 @@
 
 - name: Forgejo Runner removal | Resolve API tokens from Vaultwarden
   ansible.builtin.set_fact:
-    _runner_remove_api_token: >-
+    _runner_remove_user_token: >-
       {{ (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).runner_api_token
-         | default((homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).admin_api_token, true)
          | default('', true) }}
+    _runner_remove_admin_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).admin_api_token
+         | default('', true) }}
+  no_log: true
+
+- name: Forgejo Runner removal | Select preferred API scope
+  ansible.builtin.set_fact:
+    _runner_remove_api_token: >-
+      {{ _runner_remove_user_token
+         if _runner_remove_user_token | length > 0
+         else _runner_remove_admin_token }}
     _runner_remove_api_scope: >-
-      {{ 'user'
-         if (homelabinfra_vault.apps | default({})).get(runner_remove_forgejo_instance, {}).runner_api_token
-            | default('', true) | length > 0
-         else 'admin' }}
+      {{ 'user' if _runner_remove_user_token | length > 0 else 'admin' }}
   no_log: true
 
 - name: Forgejo Runner removal | Resolve the runner API base URL
@@ -62,6 +69,46 @@
            else _runner_remove_listing.json) | default([]))
          | selectattr('name', 'equalto', runner_remove_instance)
          | map(attribute='id') | list }}
+  no_log: true
+
+- name: Forgejo Runner removal | List global registrations when user scope has no exact match
+  ansible.builtin.uri:
+    url: "{{ _runner_remove_endpoint.url | regex_replace('/+$', '') }}/api/v1/admin/actions/runners"
+    method: GET
+    headers:
+      Authorization: "token {{ _runner_remove_admin_token }}"
+    status_code: 200
+    return_content: true
+  register: _runner_remove_admin_listing
+  when:
+    - _runner_remove_api_scope == 'user'
+    - _runner_remove_matches | length == 0
+    - _runner_remove_admin_token | length > 0
+  no_log: true
+
+- name: Forgejo Runner removal | Select exact global runner registrations
+  ansible.builtin.set_fact:
+    _runner_remove_admin_matches: >-
+      {{ ((_runner_remove_admin_listing.json.runners
+           if (_runner_remove_admin_listing.json is mapping and _runner_remove_admin_listing.json.runners is defined)
+           else _runner_remove_admin_listing.json) | default([]))
+         | selectattr('name', 'equalto', runner_remove_instance)
+         | map(attribute='id') | list }}
+  when:
+    - _runner_remove_admin_listing is defined
+    - not (_runner_remove_admin_listing.skipped | default(false))
+  no_log: true
+
+- name: Forgejo Runner removal | Use admin scope for an exact global runner match
+  ansible.builtin.set_fact:
+    _runner_remove_api_scope: admin
+    _runner_remove_api_token: "{{ _runner_remove_admin_token }}"
+    _runner_remove_api_base: >-
+      {{ _runner_remove_endpoint.url | regex_replace('/+$', '') }}/api/v1/admin/actions/runners
+    _runner_remove_matches: "{{ _runner_remove_admin_matches }}"
+  when:
+    - _runner_remove_admin_matches is defined
+    - _runner_remove_admin_matches | length > 0
   no_log: true
 
 - name: Forgejo Runner removal | Delete exact runner registrations
