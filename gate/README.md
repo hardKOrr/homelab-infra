@@ -65,6 +65,9 @@ templates.
   checks only while dropping that database's tables, requires a readable safety snapshot
   no more than one hour old, rejects future and malformed snapshot times, and returns the
   original data and database after an import failure.
+- `test-wordpress-recovery.py`: WordPress Remove guards its unshared named database and
+  login, Restore checks a recent readable safety point and the login endpoint, and a failed
+  replacement restores the original `wp-content` tree and database.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:
