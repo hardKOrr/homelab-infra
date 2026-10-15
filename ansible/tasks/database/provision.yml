@@ -75,8 +75,10 @@
 
 # Persist a generated value before it is applied to a backend. If backend mutation
 # fails, a rerun reuses the exact recorded value instead of losing the only copy.
+# Check mode uses the already-loaded credential snapshot and must not write to Vaultwarden.
 - name: Database | Store application connection fields in Vaultwarden
   ansible.builtin.include_tasks: ../bitwarden/upsert-item.yml
+  when: not ansible_check_mode
   vars:
     vault_item_name: "homelab-infra/apps/{{ database_provision_app_instance }}"
     vault_item_merge: true
