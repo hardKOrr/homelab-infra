@@ -44,15 +44,17 @@ if [[ "$entrypoint" == "mariadb-dump" || "$entrypoint" == "mysqldump" ]]; then
 fi
 [[ "$entrypoint" == "mariadb" || "$entrypoint" == "mysql" ]] || exit 91
 if [[ "$all_args" == *"SELECT CONCAT"* ]]; then
+  [[ "$all_args" == *"REPLACE(TABLE_NAME"* ]] || exit 97
   current=$(cat "$BOOKSTACK_TEST_DB_STATE")
   if [[ -n "$current" && "$current" != "EMPTY" ]]; then
-    printf '%s\\n' "DROP TABLE IF EXISTS test_table;"
+    printf '%s\\n' 'DROP TABLE IF EXISTS `references`;'
   fi
   exit 0
 fi
 input=$(cat)
 if [[ "$input" == *"DROP TABLE IF EXISTS"* ]]; then
   [[ "$input" == *"SET FOREIGN_KEY_CHECKS=0;"* ]] || exit 96
+  [[ "$input" == *'`references`'* ]] || exit 98
   printf 'EMPTY\\n' > "$BOOKSTACK_TEST_DB_STATE"
   exit 0
 fi

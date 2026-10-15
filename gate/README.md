@@ -61,9 +61,9 @@ templates.
 - `test-bookstack-recovery.py`: BookStack validates its default admin address, ensures
   its backup scheduler, selects the matching MariaDB client command, Remove clears only
   its validated, unshared database and login, and Restore separates read-only plan
-  results from overwrite results, disables foreign-key checks only while dropping that
-  database's tables, requires a readable safety snapshot, and returns the original data
-  and database after an import failure.
+  results from overwrite results, quotes table identifiers and disables foreign-key
+  checks only while dropping that database's tables, requires a readable safety snapshot,
+  and returns the original data and database after an import failure.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:
