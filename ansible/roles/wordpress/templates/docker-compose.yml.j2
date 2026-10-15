@@ -26,6 +26,8 @@ services:
   wordpress-cli:
     image: {{ app_config.app.cli_image }}
     profiles: [tools]
+    # The CLI image uses Alpine's www-data (82); the Apache image owns the data bind mount as 33:33.
+    user: "33:33"
     env_file:
       - "{{ wordpress_env_file }}"
     volumes:

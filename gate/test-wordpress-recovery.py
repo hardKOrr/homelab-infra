@@ -163,6 +163,13 @@ def check_wordpress_data_directory_access():
     assert data_directory["mode"] == "0750"
 
 
+def check_wordpress_cli_uses_data_owner():
+    cli_service = WORDPRESS_COMPOSE.split("  wordpress-cli:\n", 1)[1]
+    assert re.search(r'(?m)^    user: ["\']?33:33["\']?$', cli_service), (
+        "the WP-CLI image must run as the owner of the 33:33 mode-0750 data mount"
+    )
+
+
 def check_wordpress_health_redirects():
     health_task = next(item for item in WORDPRESS_ROLE_TASKS
                        if item.get("name") == "WordPress | Wait for login endpoint")
@@ -325,6 +332,7 @@ def main():
     check_playbook_contract()
     check_admin_email_validation()
     check_wordpress_data_directory_access()
+    check_wordpress_cli_uses_data_owner()
     check_wordpress_health_redirects()
     check_remove_contract()
     run_restore("success")
