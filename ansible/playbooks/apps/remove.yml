@@ -255,6 +255,86 @@
         - (app | default(instance)) == 'bookstack'
         - delete_data | default(false) | bool
 
+    # WordPress owns one named MariaDB database and login on its backend. Resolve and
+    # check only those resources before Remove unwires the instance.
+    - name: Resolve WordPress's named database removal inputs
+      ansible.builtin.set_fact:
+        _rm_wordpress_database_config: "{{ app_config.app.database | default({}) }}"
+        _rm_wordpress_database_backend: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.database.instance | default(''), {}) }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'wordpress'
+        - delete_data | default(false) | bool
+
+    - name: Validate WordPress's named database removal inputs
+      ansible.builtin.assert:
+        that:
+          - _rm_wordpress_database_config.provider | default('') == 'mariadb'
+          - _rm_wordpress_database_config.instance | default('') | length > 0
+          - _rm_wordpress_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_wordpress_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_wordpress_database_backend.provider | default('') == 'mariadb'
+          - _rm_wordpress_database_backend.host | default('') | length > 0
+          - _rm_wordpress_database_backend.port | default(0) | int > 0
+          - _rm_wordpress_database_backend.client_hosts | default([]) | length > 0
+        fail_msg: >-
+          Refusing to remove WordPress data because its named MariaDB database or backend
+          is not registered with safe identifiers and client networks.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'wordpress'
+        - delete_data | default(false) | bool
+
+    - name: Check WordPress's database and role are not shared by another app
+      ansible.builtin.set_fact:
+        _rm_wordpress_shared_database_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_wordpress_database_backend.host)
+             | selectattr('value.database_name', 'defined')
+             | selectattr('value.database_name', 'equalto', _rm_wordpress_database_config.name)
+             | list }}
+        _rm_wordpress_shared_role_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_wordpress_database_backend.host)
+             | selectattr('value.database_user', 'defined')
+             | selectattr('value.database_user', 'equalto', _rm_wordpress_database_config.role)
+             | list }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'wordpress'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove a shared WordPress database or role
+      ansible.builtin.assert:
+        that:
+          - _rm_wordpress_shared_database_consumers | length == 0
+          - _rm_wordpress_shared_role_consumers | length == 0
+        fail_msg: >-
+          Refusing to remove WordPress's named database or role because another canonical
+          app item references it.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'wordpress'
+        - delete_data | default(false) | bool
+
+    - name: Add WordPress's named database backend to the removal inventory
+      ansible.builtin.add_host:
+        name: wordpress_database_removal_target
+        ansible_host: "{{ _rm_wordpress_database_backend.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: wordpress_database_removal_targets
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'wordpress'
+        - delete_data | default(false) | bool
+
     # Mautic owns one MariaDB database and login on a shared backend. Resolve and check
     # those exact resources before Remove unwires or deletes the app's files.
     - name: Resolve Mautic's named database removal inputs
@@ -956,6 +1036,47 @@
             login_unix_socket: /run/mysqld/mysqld.sock
           loop: "{{ hostvars['localhost']._rm_bookstack_database_backend.client_hosts }}"
           delegate_to: bookstack_database_removal_target
+          become: true
+          no_log: true
+
+    # WordPress's application tables and login are owned by the app; the MariaDB guest is
+    # not. Remove only the validated, unshared resources so a fresh Deploy starts empty.
+    - name: Remove WordPress's named database and role
+      when:
+        - remove_kind == 'docker'
+        - hostvars['localhost']._rm_app_name == 'wordpress'
+        - _rm_delete_data | bool
+      block:
+        - name: Revalidate WordPress's database target before deletion
+          ansible.builtin.assert:
+            that:
+              - "'wordpress_database_removal_target' in groups['wordpress_database_removal_targets'] | default([])"
+              - hostvars['localhost']._rm_wordpress_database_config.provider | default('') == 'mariadb'
+              - hostvars['localhost']._rm_wordpress_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_wordpress_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_wordpress_database_backend.provider | default('') == 'mariadb'
+              - hostvars['localhost']._rm_wordpress_database_backend.port | default(0) | int > 0
+              - hostvars['localhost']._rm_wordpress_database_backend.client_hosts | default([]) | length > 0
+            fail_msg: "Refusing to delete WordPress data without its validated MariaDB target."
+          no_log: true
+
+        - name: Drop WordPress's named MariaDB database
+          community.mysql.mysql_db:
+            name: "{{ hostvars['localhost']._rm_wordpress_database_config.name }}"
+            state: absent
+            login_unix_socket: /run/mysqld/mysqld.sock
+          delegate_to: wordpress_database_removal_target
+          become: true
+          no_log: true
+
+        - name: Drop WordPress's database login on permitted client networks
+          community.mysql.mysql_user:
+            name: "{{ hostvars['localhost']._rm_wordpress_database_config.role }}"
+            host: "{{ item }}"
+            state: absent
+            login_unix_socket: /run/mysqld/mysqld.sock
+          loop: "{{ hostvars['localhost']._rm_wordpress_database_backend.client_hosts }}"
+          delegate_to: wordpress_database_removal_target
           become: true
           no_log: true
 

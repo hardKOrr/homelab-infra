@@ -4,8 +4,9 @@
 #
 # overwrite=false (the default) is read-only. overwrite=true stops only the named target
 # WordPress service, replaces wp-content and its named database, repairs the target URL and
-# administrator account, then starts it again. The shared backend and other applications
-# remain untouched. A failed restore deliberately leaves the target service stopped.
+# administrator account, then starts it again. A fresh, readable pre-restore point is
+# required; failures roll the target files and database back before restarting WordPress.
+# The shared backend and other applications remain untouched.
 
 - name: "WordPress Restore | Resolve"
   hosts: localhost
@@ -18,11 +19,15 @@
           - source_instance | default(instance) is match('^[A-Za-z0-9_.-]+$')
           - source_backup_id | default('') is match('^[A-Za-z0-9_.-]*$')
           - snapshot | default('') is match('^$|^host/[A-Za-z0-9_.-]+/[A-Za-z0-9T:_.+Z-]+$')
+          - pre_restore_point | default('') is match('^$|^host/[A-Za-z0-9_.-]+/[A-Za-z0-9T:_.+Z-]+$')
           - overwrite | default(false) | string in ['false', 'true', 'False', 'True']
           - not (overwrite | default(false) | bool) or snapshot | default('') | length > 0
+          - not (overwrite | default(false) | bool) or pre_restore_point | default('') | length > 0
+          - not (overwrite | default(false) | bool) or pre_restore_point != snapshot
         fail_msg: >-
           Provide a WordPress target, optional source instance/backup id and PBS snapshot,
-          plus overwrite=false|true.
+          plus overwrite=false|true. An overwrite also requires a distinct, recent
+          pre_restore_point from the target WordPress backup group.
     - ansible.builtin.include_vars:
         file: ../../vars/app-defaults/wordpress.yml
         name: _app_defaults
@@ -57,8 +62,6 @@
   hosts: "wordpress_recovery_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
-  vars:
-    wordpress_restore_port: "{{ hostvars['localhost'].app_config.app.port }}"
   tasks:
     - name: Run the WordPress restore plan
       ansible.builtin.command:
@@ -70,7 +73,7 @@
       environment:
         WORDPRESS_INSTANCE: "{{ instance }}"
         WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
-      register: wordpress_restore_result
+      register: wordpress_restore_plan_result
       changed_when: false
       when: not (overwrite | default(false) | bool)
 
@@ -81,22 +84,13 @@
           - --restore
           - --snapshot
           - "{{ snapshot }}"
+          - --pre-restore-point
+          - "{{ pre_restore_point }}"
       environment:
         WORDPRESS_INSTANCE: "{{ instance }}"
         WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
       register: wordpress_restore_result
       changed_when: true
-      when: overwrite | default(false) | bool
-
-    - name: Verify restored WordPress is usable
-      ansible.builtin.uri:
-        url: "http://localhost:{{ wordpress_restore_port }}/wp-login.php"
-        status_code: 200
-      register: _wordpress_restore_health
-      until: _wordpress_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
-      changed_when: false
       when: overwrite | default(false) | bool
 
 - name: "WordPress Restore | Notify"
@@ -116,9 +110,17 @@
       when:
         - overwrite | default(false) | bool
         - hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
+    - name: Fail if WordPress restore plan did not complete
+      ansible.builtin.assert:
+        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_plan_result.rc | default(1) == 0
+        fail_msg: >-
+          WordPress restore plan failed; inspect its snapshot listing before retrying.
+          No restore was applied.
+      when: not (overwrite | default(false) | bool)
     - name: Fail if WordPress restore did not complete
       ansible.builtin.assert:
         that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
         fail_msg: >-
-          WordPress restore failed; inspect the target service before starting it and no
-          success notification was sent.
+          WordPress restore failed; inspect the helper output for rollback status before
+          retrying. No success notification was sent.
+      when: overwrite | default(false) | bool

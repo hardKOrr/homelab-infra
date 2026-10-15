@@ -3,7 +3,7 @@
   ansible.builtin.assert:
     that:
       - app_config.app.admin_user is match('^[A-Za-z0-9_.-]+$')
-      - app_config.app.admin_email is match('^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$')
+      - app_config.app.admin_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
       - app_config.app.default_theme is match('^[a-z0-9-]+$')
       - app_config.app.table_prefix is match('^[A-Za-z_][A-Za-z0-9_]*$')
     fail_msg: >-
@@ -14,12 +14,14 @@
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
-    owner: root
-    group: root
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
     mode: "{{ item.mode }}"
   loop:
-    - {path: "{{ wordpress_project_dir }}", mode: "0750"}
-    - {path: "{{ app_config.app.data_path }}", mode: "0750"}
+    - {path: "{{ wordpress_project_dir }}", owner: root, group: root, mode: "0750"}
+    # The pinned Apache image serves PHP as www-data (uid/gid 33). The bind-mounted
+    # WordPress tree must let that user read core files and write uploads.
+    - {path: "{{ app_config.app.data_path }}", owner: "33", group: "33", mode: "0750"}
 
 # Read and validate the continuity marker before any Vaultwarden upsert. If an operator
 # accidentally deleted the canonical item, a rerun must fail rather than generate a new
@@ -114,9 +116,10 @@
 - name: WordPress | Wait for login endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/wp-login.php"
-    status_code: 200
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307, 308]
   register: _wordpress_health
-  until: _wordpress_health.status | default(0) == 200
+  until: _wordpress_health.status | default(0) in [200, 301, 302, 303, 307, 308]
   retries: 60
   delay: 5
   changed_when: false

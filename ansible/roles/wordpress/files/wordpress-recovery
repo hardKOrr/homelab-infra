@@ -8,8 +8,9 @@
 # from the target's pinned image and target environment rather than the source archive;
 # this is what makes a source-instance restore safe.
 set -Eeuo pipefail
+readonly PRE_RESTORE_MAX_AGE_SECONDS=3600
 
-CONFIG=/etc/homelab-infra/wordpress/${WORDPRESS_INSTANCE:-wordpress}.env
+CONFIG=${WORDPRESS_RECOVERY_CONFIG:-/etc/homelab-infra/wordpress/${WORDPRESS_INSTANCE:-wordpress}.env}
 if [[ ! -r "$CONFIG" ]]; then
   echo "WordPress recovery is not configured: $CONFIG is absent. Deploy with backup enabled and a PBS target." >&2
   exit 1
@@ -20,7 +21,7 @@ set -a
 set +a
 
 for required in WORDPRESS_PROJECT_DIR WORDPRESS_SERVICE WORDPRESS_DATA_PATH \
-  WORDPRESS_CONTENT_PATH WORDPRESS_FQDN WORDPRESS_CLI_IMAGE \
+  WORDPRESS_CONTENT_PATH WORDPRESS_FQDN WORDPRESS_PORT WORDPRESS_CLI_IMAGE \
   WORDPRESS_ADMIN_USER WORDPRESS_ADMIN_EMAIL WORDPRESS_ADMIN_NAME WORDPRESS_ADMIN_PASSWORD \
   WORDPRESS_DB_HOST WORDPRESS_DB_PORT WORDPRESS_DB_NAME WORDPRESS_DB_USER \
   WORDPRESS_DB_PASSWORD WORDPRESS_DB_CLIENT_IMAGE PBS_REPOSITORY PBS_FINGERPRINT \
@@ -40,12 +41,62 @@ compose=(docker compose --project-directory "$WORDPRESS_PROJECT_DIR" -f "$WORDPR
 work=$(mktemp -d /var/tmp/homelab-wordpress.XXXXXX)
 stopped=0
 restart_on_failure=0
+restore_active=0
+original_content_saved=0
+original_content_path=
+database_restore_started=0
+keep_work=0
 
 finish() {
   local rc=$?
-  rm -rf -- "$work"
-  if [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
+  local rollback_ok=1
+  trap - EXIT
+
+  if [[ "$restore_active" == 1 && "$rc" != 0 ]]; then
+    restart_on_failure=0
+    echo "WordPress restore failed; putting the previous content and database back." >&2
+    if ! "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null 2>&1; then
+      echo "Could not stop WordPress for rollback; rollback files are preserved." >&2
+      rollback_ok=0
+    else
+      stopped=1
+      if [[ "$database_restore_started" == 1 ]] &&
+        ! replace_database_from_dump "$work/original/database.sql"; then
+        echo "Could not restore the original WordPress database; its dump is preserved in $work." >&2
+        rollback_ok=0
+      fi
+      if [[ "$original_content_saved" == 1 ]]; then
+        if rm -rf -- "$WORDPRESS_CONTENT_PATH" &&
+          mv -T -- "$original_content_path" "$WORDPRESS_CONTENT_PATH"; then
+          original_content_saved=0
+          original_content_path=
+        else
+          echo "Could not restore the original WordPress content directory at $original_content_path." >&2
+          rollback_ok=0
+        fi
+      fi
+    fi
+
+    if [[ "$rollback_ok" == 1 ]]; then
+      if "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null; then
+        stopped=0
+        restore_active=0
+        echo "WordPress rollback restored the previous content and database." >&2
+      else
+        echo "WordPress content and database were restored, but the service could not be started." >&2
+        rollback_ok=0
+      fi
+    fi
+    if [[ "$rollback_ok" != 1 ]]; then
+      keep_work=1
+      echo "WordPress rollback is incomplete; preserved rollback files in $work and original content at ${original_content_path:-<restored>}. Inspect the service and files before starting it." >&2
+    fi
+  elif [[ "$stopped" == 1 && "$restart_on_failure" == 1 ]]; then
     "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null 2>&1 || true
+  fi
+
+  if [[ "$keep_work" != 1 ]]; then
+    rm -rf -- "$work"
   fi
   exit "$rc"
 }
@@ -57,6 +108,42 @@ mysql_client() {
   docker run --rm --network host -i \
     -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
     --entrypoint "$command" "$WORDPRESS_DB_CLIENT_IMAGE" "$@"
+}
+
+database_cli_tool=
+database_dump_tool=
+resolve_database_client_tools() {
+  local tools
+  if ! tools=$(docker run --rm --entrypoint /bin/sh "$WORDPRESS_DB_CLIENT_IMAGE" -ec '
+    for tool in mariadb mysql; do
+      if command -v "$tool" >/dev/null 2>&1; then
+        query_tool=$tool
+        break
+      fi
+    done
+    for tool in mariadb-dump mysqldump; do
+      if command -v "$tool" >/dev/null 2>&1; then
+        dump_tool=$tool
+        break
+      fi
+    done
+    if [ -n "${query_tool:-}" ] && [ -n "${dump_tool:-}" ]; then
+      :
+    else
+      exit 1
+    fi
+    printf "%s\n%s\n" "$query_tool" "$dump_tool"
+  '); then
+    echo "WordPress database client image must provide a MariaDB/MySQL client and dump tool." >&2
+    return 1
+  fi
+  database_cli_tool=${tools%%$'\n'*}
+  database_dump_tool=${tools#*$'\n'}
+  [[ "$database_cli_tool" =~ ^(mariadb|mysql)$ &&
+     "$database_dump_tool" =~ ^(mariadb-dump|mysqldump)$ ]] || {
+    echo "WordPress database client image returned invalid client tool names." >&2
+    return 1
+  }
 }
 
 wp_cli() {
@@ -76,19 +163,77 @@ pbs_env() {
   env PBS_REPOSITORY="$PBS_REPOSITORY" PBS_PASSWORD="$PBS_PASSWORD" PBS_FINGERPRINT="$PBS_FINGERPRINT" "$@"
 }
 
+wait_for_login() {
+  local attempt url="http://127.0.0.1:$WORDPRESS_PORT/wp-login.php"
+  for ((attempt=1; attempt<=60; attempt++)); do
+    if python3 - "$url" >/dev/null 2>&1 <<'PY'
+import sys
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, build_opener
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+try:
+    with build_opener(NoRedirect).open(sys.argv[1], timeout=5) as response:
+        status = response.status
+except HTTPError as response:
+    status = response.code
+try:
+    sys.exit(0 if 200 <= status < 400 else 1)
+except Exception:
+    sys.exit(1)
+PY
+    then
+      echo "WordPress login endpoint is healthy after restore."
+      return 0
+    fi
+    if (( attempt < 60 )); then
+      sleep 5
+    fi
+  done
+  echo "WordPress login endpoint did not become healthy after restore." >&2
+  return 1
+}
+
+replace_database_from_dump() {
+  local dump=$1 table_sql
+  table_sql=$(mysql_client "$database_cli_tool" --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" --batch --skip-column-names \
+    --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', CHAR(96), REPLACE(TABLE_NAME, CHAR(96), CONCAT(CHAR(96), CHAR(96))), CHAR(96), ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$WORDPRESS_DB_NAME';") || return
+  if [[ -n "$table_sql" ]]; then
+    {
+      # WordPress's InnoDB tables can reference one another; clear them in one client
+      # session with checks disabled, then import the selected database point.
+      printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\n' "$table_sql"
+    } | mysql_client "$database_cli_tool" \
+      --defaults-extra-file=/run/secrets/my.cnf --host="$WORDPRESS_DB_HOST" \
+      --port="$WORDPRESS_DB_PORT" --database="$WORDPRESS_DB_NAME" || return
+  fi
+  # The dump client's `--databases` option records the source database in a USE
+  # statement. Remove it before importing so cross-instance restores use the target's
+  # named database grant.
+  sed '/^USE `[^`]*`;/d' "$dump" | \
+    mysql_client "$database_cli_tool" --defaults-extra-file=/run/secrets/my.cnf \
+      --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
+      --database="$WORDPRESS_DB_NAME"
+}
+
 backup() {
   write_client_config
   [[ -d "$WORDPRESS_CONTENT_PATH" ]] || {
     echo "WordPress content path is absent: $WORDPRESS_CONTENT_PATH" >&2
     exit 1
   }
+  resolve_database_client_tools
   # WordPress is stopped before the dump and archive. The external backend remains
   # available to every other application on it; only this application's writes pause.
   "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
   stopped=1
   restart_on_failure=1
   mkdir -p "$work/database"
-  mysql_client mysqldump \
+  mysql_client "$database_dump_tool" \
     --defaults-extra-file=/run/secrets/my.cnf \
     --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
     --single-transaction --routines --triggers --events --hex-blob \
@@ -124,43 +269,64 @@ restore() {
     echo "restore requires a snapshot from host/$restore_backup_id" >&2
     exit 1
   }
+  [[ "${PRE_RESTORE_POINT:-}" == host/$PBS_BACKUP_ID/* && "$PRE_RESTORE_POINT" != "$SNAPSHOT" ]] || {
+    echo "restore requires a distinct pre-restore point from the target WordPress backup group host/$PBS_BACKUP_ID" >&2
+    exit 1
+  }
+  local timestamp snapshot_epoch now_epoch
+  timestamp=${PRE_RESTORE_POINT##*/}
+  [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
+    exit 1
+  }
+  if ! snapshot_epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
+    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
+    exit 1
+  fi
+  now_epoch=$(date -u +%s)
+  if (( snapshot_epoch > now_epoch )); then
+    echo "pre-restore point timestamp is in the future" >&2
+    exit 1
+  fi
+  if (( now_epoch - snapshot_epoch > PRE_RESTORE_MAX_AGE_SECONDS )); then
+    echo "pre-restore point must be no more than one hour old" >&2
+    exit 1
+  fi
+  pbs_env proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" >/dev/null
+  [[ -d "$WORDPRESS_CONTENT_PATH" && ! -L "$WORDPRESS_CONTENT_PATH" ]] || {
+    echo "WordPress content path must be an existing directory before restore: $WORDPRESS_CONTENT_PATH" >&2
+    exit 1
+  }
   write_client_config
+  resolve_database_client_tools
   pbs_env proxmox-backup-client restore "$SNAPSHOT" database.pxar "$work/database"
   pbs_env proxmox-backup-client restore "$SNAPSHOT" content.pxar "$work/content"
 
-  # A failed restore leaves the app stopped deliberately: serving half of a recovery
-  # point is worse than a plainly unavailable service. The shared backend is never
-  # stopped, dropped, or changed outside this database.
-  "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
+  # Capture the target database before either live copy changes. Move wp-content beside
+  # itself so the rename stays on the same filesystem and can restore its inode on error.
+  restart_on_failure=1
   stopped=1
-  mkdir -p "$WORDPRESS_CONTENT_PATH"
-  find "$WORDPRESS_CONTENT_PATH" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-  cp -a "$work/content/." "$WORDPRESS_CONTENT_PATH/"
-
-  # The application role has ALL only on this named database. Clear its existing tables
-  # through that grant instead of requesting backend-admin credentials or touching any
-  # other database on the shared MariaDB guest.
-  table_sql=$(mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
-    --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" --batch --skip-column-names \
-    --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', TABLE_NAME, ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$WORDPRESS_DB_NAME';")
-  if [[ -n "$table_sql" ]]; then
-    {
-      printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\nSET FOREIGN_KEY_CHECKS=1;\n' "$table_sql"
-    } | mysql_client mysql \
-      --defaults-extra-file=/run/secrets/my.cnf --host="$WORDPRESS_DB_HOST" \
-      --port="$WORDPRESS_DB_PORT" --database="$WORDPRESS_DB_NAME"
-  fi
-  # `mysqldump --databases` records the source database in a USE statement. Remove that
-  # statement before importing into the target name so an instance may use a different
-  # database name while retaining the same application role grant.
-  sed '/^USE `[^`]*`;/d' "$work/database/database.sql" | \
-    mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
-      --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
-      --database="$WORDPRESS_DB_NAME"
+  "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
+  mkdir -p "$work/original"
+  mysql_client "$database_dump_tool" \
+    --defaults-extra-file=/run/secrets/my.cnf \
+    --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
+    --single-transaction --routines --triggers --events --hex-blob \
+    --no-create-db --databases "$WORDPRESS_DB_NAME" > "$work/original/database.sql"
+  restore_active=1
+  original_content_path=$(mktemp -d "${WORDPRESS_CONTENT_PATH}.pre-restore.XXXXXX")
+  rmdir -- "$original_content_path"
+  mv -T -- "$WORDPRESS_CONTENT_PATH" "$original_content_path"
+  original_content_saved=1
+  cp -a "$work/content" "$WORDPRESS_CONTENT_PATH"
 
   # The target's Compose env points wp-config.php at the target backend credentials.
   # Repair site URLs and administrator access after a cross-instance database restore;
   # these are target identity, not source-instance state.
+  database_restore_started=1
+  # The application role has ALL only on this named database. It never mutates another
+  # database on the shared MariaDB guest.
+  replace_database_from_dump "$work/database/database.sql"
   target_url="https://$WORDPRESS_FQDN"
   wp_cli option update home "$target_url" --skip-plugins --skip-themes >/dev/null
   wp_cli option update siteurl "$target_url" --skip-plugins --skip-themes >/dev/null
@@ -176,7 +342,16 @@ restore() {
   fi
   echo "WordPress database and wp-content restored from $SNAPSHOT"
   "${compose[@]}" start "$WORDPRESS_SERVICE" >/dev/null
+  wait_for_login
   stopped=0
+  restart_on_failure=0
+  restore_active=0
+  if ! rm -rf -- "$original_content_path"; then
+    echo "WordPress restore succeeded; previous content remains at $original_content_path." >&2
+  else
+    original_content_path=
+    original_content_saved=0
+  fi
 }
 
 case "${1:-}" in
@@ -186,9 +361,13 @@ case "${1:-}" in
     plan
     ;;
   --restore)
-    [[ "${2:-}" == --snapshot && -n "${3:-}" ]] || { echo "restore requires --snapshot" >&2; exit 1; }
+    [[ "${2:-}" == --snapshot && -n "${3:-}" && "${4:-}" == --pre-restore-point && -n "${5:-}" ]] || {
+      echo "restore requires --snapshot PBS_SNAPSHOT --pre-restore-point PBS_SNAPSHOT" >&2
+      exit 2
+    }
     SNAPSHOT="$3"
+    PRE_RESTORE_POINT="$5"
     restore
     ;;
-  *) echo "usage: $0 --backup | --plan [--snapshot PBS_SNAPSHOT] | --restore --snapshot PBS_SNAPSHOT" >&2; exit 2 ;;
+  *) echo "usage: $0 --backup | --plan [--snapshot PBS_SNAPSHOT] | --restore --snapshot PBS_SNAPSHOT --pre-restore-point PBS_SNAPSHOT" >&2; exit 2 ;;
 esac

@@ -9,10 +9,11 @@
     source_backup_id when restoring a snapshot made by another WordPress instance.
 
     overwrite=false (recommended) lists and validates the selected snapshot without
-    changing anything. Set overwrite=true only after confirming the snapshot; the named
-    WordPress service is stopped, its wp-content and named database are replaced, target
-    URLs/admin access are repaired, then it is started again. No shared backend guest or
-    other stack application is touched.
+    changing anything. For overwrite=true, first run Backup App for this instance and
+    provide that fresh point as pre_restore_point. The named WordPress service is stopped,
+    its wp-content and named database are replaced, and the original state is restored if
+    any replacement step fails. No shared backend guest or other stack application is
+    touched.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -33,6 +34,10 @@
     value: ''
   - name: snapshot
     description: 'Optional PBS snapshot identifier, for example host/wordpress/2026-09-09T03:00:00Z. Blank lists snapshots and changes nothing.'
+    required: false
+    value: ''
+  - name: pre_restore_point
+    description: 'Fresh WordPress backup from this target, required for overwrite=true; for example host/wordpress/2026-09-09T03:00:00Z.'
     required: false
     value: ''
   - name: overwrite
@@ -58,5 +63,8 @@
           fi
           if [ -n "${RD_OPTION_SNAPSHOT:-}" ]; then
             ARGS+=(-e "snapshot=${RD_OPTION_SNAPSHOT}")
+          fi
+          if [ -n "${RD_OPTION_PRE_RESTORE_POINT:-}" ]; then
+            ARGS+=(-e "pre_restore_point=${RD_OPTION_PRE_RESTORE_POINT}")
           fi
           exec lab-run playbooks/maintenance/wordpress-restore.yml "${ARGS[@]}"
