@@ -73,7 +73,7 @@
       environment:
         WORDPRESS_INSTANCE: "{{ instance }}"
         WORDPRESS_RESTORE_BACKUP_ID: "{{ hostvars['localhost'].wordpress_restore_backup_id }}"
-      register: wordpress_restore_result
+      register: wordpress_restore_plan_result
       changed_when: false
       when: not (overwrite | default(false) | bool)
 
@@ -110,9 +110,17 @@
       when:
         - overwrite | default(false) | bool
         - hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
+    - name: Fail if WordPress restore plan did not complete
+      ansible.builtin.assert:
+        that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_plan_result.rc | default(1) == 0
+        fail_msg: >-
+          WordPress restore plan failed; inspect its snapshot listing before retrying.
+          No restore was applied.
+      when: not (overwrite | default(false) | bool)
     - name: Fail if WordPress restore did not complete
       ansible.builtin.assert:
         that: hostvars[groups['wordpress_recovery_' ~ instance][0]].wordpress_restore_result.rc | default(1) == 0
         fail_msg: >-
           WordPress restore failed; inspect the helper output for rollback status before
           retrying. No success notification was sent.
+      when: overwrite | default(false) | bool

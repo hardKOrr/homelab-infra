@@ -136,6 +136,11 @@ def check_playbook_contract():
         and "length > 0" in str(task.get("ansible.builtin.assert", {}).get("that", []))
         for task in RESTORE_PLAYBOOK[0]["pre_tasks"]
     )
+    plan_task = next(
+        task for task in RESTORE_PLAYBOOK[1]["tasks"]
+        if task.get("name") == "Run the WordPress restore plan"
+    )
+    assert plan_task["register"] == "wordpress_restore_plan_result"
     restore_task = next(
         task for task in RESTORE_PLAYBOOK[1]["tasks"]
         if task.get("name") == "Run the destructive WordPress restore"
@@ -144,6 +149,18 @@ def check_playbook_contract():
     assert "--pre-restore-point" in argv
     assert "{{ pre_restore_point }}" in argv
     assert restore_task["register"] == "wordpress_restore_result"
+    preview_assertion = next(
+        task for task in RESTORE_PLAYBOOK[2]["tasks"]
+        if task.get("name") == "Fail if WordPress restore plan did not complete"
+    )
+    assert preview_assertion["when"] == "not (overwrite | default(false) | bool)"
+    assert "wordpress_restore_plan_result.rc" in str(preview_assertion["ansible.builtin.assert"]["that"])
+    restore_assertion = next(
+        task for task in RESTORE_PLAYBOOK[2]["tasks"]
+        if task.get("name") == "Fail if WordPress restore did not complete"
+    )
+    assert restore_assertion["when"] == "overwrite | default(false) | bool"
+    assert "wordpress_restore_result.rc" in str(restore_assertion["ansible.builtin.assert"]["that"])
     assert any(option["name"] == "pre_restore_point" for option in RUNDECK_RESTORE["options"])
     assert 'pre_restore_point=${RD_OPTION_PRE_RESTORE_POINT}' in str(RUNDECK_RESTORE["sequence"])
 
