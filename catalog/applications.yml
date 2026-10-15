@@ -407,6 +407,7 @@ applications:
     category: Marketing
     type: Email Campaigns
     scope: estate
+    actions: [backup, configure, remove, restart, restore, rollback, tail]
 
   bookstack:
     name: BookStack
