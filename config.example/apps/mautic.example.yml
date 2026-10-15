@@ -16,7 +16,11 @@ routing:
   identity: catalog
 backup:
   enabled: true
+  application_consistent: true
   schedule: "0 3 * * *"
+  # One PBS data.pxar pairs the database with config/local.php and uploaded media.
+  # datastore: ""  # blank uses the lab's configured PBS datastore
+  # backup_id: ""  # blank uses the instance name
 
 # Recovery boundary: restore the MariaDB-mautic database and this instance's data
 # directory from the same recovery point. The MariaDB backend is shared and must not be

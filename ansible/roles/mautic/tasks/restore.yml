@@ -1,0 +1,741 @@
+---
+# Restore Mautic's MariaDB database and file tree from one data.pxar. Extract and validate
+# before mutation, save the target database, then move its original file tree beside the
+# live path. Any later failure restores both originals and leaves Mautic stopped.
+
+- name: Mautic restore | Resolve the target database and paths
+  ansible.builtin.set_fact:
+    _mautic_restore_database_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           app_config.app.database.instance | default(''), {}) }}
+    _mautic_restore_database_name: "{{ app_config.app.database.name | default('') }}"
+    _mautic_restore_database_user: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_user
+         | default(app_config.app.database_user
+           | default(app_config.app.database.role | default('')), true) }}
+    _mautic_restore_database_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(restore_target, {}).database_password
+         | default(app_config.app.database_password | default(''), true) }}
+    _mautic_restore_data_path: "{{ app_config.app.data_path | default('') }}"
+    _mautic_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _mautic_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true) or restore_target, true) }}
+    _mautic_restore_source_backend: >-
+      {{ (homelabinfra_infra.databases | default({})).get(
+           (restore_source_database | default({})).get('instance', ''), {}) }}
+    _mautic_restore_service_stopped: false
+    _mautic_restore_data_moved: false
+    _mautic_restore_database_mutated: false
+    _mautic_restore_complete: false
+    _mautic_restore_rollback_complete: false
+  no_log: true
+
+- name: Mautic restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - restore_target is defined and restore_target | length > 0
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _mautic_restore_database_backend.provider | default('') == 'mariadb'
+      - _mautic_restore_database_backend.host | default('') | length > 0
+      - _mautic_restore_database_backend.port | default(0) | int > 0
+      - _mautic_restore_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - _mautic_restore_database_user is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - _mautic_restore_database_password | length > 0
+      - _mautic_restore_data_path is match('^/[^/].*')
+      - _mautic_restore_data_path != '/'
+      - _mautic_restore_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - _mautic_restore_target_backup_id is match('^[A-Za-z0-9_.-]+$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Mautic restore needs its target, named MariaDB backend, database credential,
+      non-root data path and configured PBS target.
+  no_log: true
+
+- name: Mautic restore | Require a separate database for a new destination
+  ansible.builtin.assert:
+    that:
+      - restore_source_database is mapping
+      - restore_source_database.instance | default('') | length > 0
+      - restore_source_database.name | default('') | length > 0
+      - _mautic_restore_source_backend.host | default('') | length > 0
+      - _mautic_restore_source_backend.port | default(0) | int > 0
+      - >-
+        not (
+          restore_source_database.name == _mautic_restore_database_name
+          and _mautic_restore_source_backend.host == _mautic_restore_database_backend.host
+          and (_mautic_restore_source_backend.port | int) == (_mautic_restore_database_backend.port | int)
+        )
+    fail_msg: >-
+      A new Mautic restore must use a database name or MariaDB backend distinct from the
+      source. Never restore an isolated instance into the source database.
+  when: restore_destination == 'new'
+  no_log: true
+
+- name: Mautic restore | Require the selected point to belong to its backup group
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot.startswith('host/' ~ _mautic_restore_backup_id ~ '/')
+      - restore_snapshot | length > ('host/' ~ _mautic_restore_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Mautic snapshot must belong to host/{{ _mautic_restore_backup_id }}/;
+      refusing to replace application data with another backup group's archive.
+  when: restore_snapshot | default('') | length > 0
+
+- name: Mautic restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Mautic restore | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Mautic. Deploy PBS before listing or restoring its
+      database and uploaded files.
+
+- name: Mautic restore | Verify the independent pre-restore point
+  when:
+    - restore_overwrite | bool
+    - restore_destination == 'existing'
+  block:
+    - name: Mautic restore | Require a distinct target recovery point
+      ansible.builtin.assert:
+        that:
+          - restore_pre_restore_point | default('') | length > 0
+          - restore_pre_restore_point.startswith('host/' ~ _mautic_restore_target_backup_id ~ '/')
+          - restore_pre_restore_point != restore_snapshot
+        fail_msg: >-
+          Replacing Mautic needs a separate pre_restore_point from
+          host/{{ _mautic_restore_target_backup_id }}/. Back up the exact target and
+          verify that point before retrying.
+
+    - name: Mautic restore | Confirm the target recovery point exists in PBS
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client snapshot files "$SNAPSHOT" >/dev/null
+        expand_argument_vars: false
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_pre_restore_point }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: >-
+          {{ app_config.backup.client.repository }}
+          {{ app_config.backup.client.suite }}
+          {{ app_config.backup.client.component }}
+      no_log: true
+      register: _mautic_restore_prepoint_check
+      failed_when: false
+      changed_when: false
+
+    - name: Mautic restore | Report a missing pre-restore point
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _mautic_restore_prepoint_check }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+          - "{{ restore_pre_restore_point }}"
+          - "{{ app_config.backup.client.key_url }}"
+          - "{{ app_config.backup.client.repository }}"
+          - "{{ homelabinfra_infra.backups.host }}"
+        scrub_failure_context: Mautic restore | target pre-restore point is unavailable
+
+- name: Mautic restore | List snapshots when planning without a selection
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - PBS_KEY_URL
+      - --env
+      - PBS_APT_REPO
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+    expand_argument_vars: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _mautic_restore_backup_id }}"
+    PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+    PBS_APT_REPO: >-
+      {{ app_config.backup.client.repository }}
+      {{ app_config.backup.client.suite }}
+      {{ app_config.backup.client.component }}
+  register: _mautic_restore_snapshots
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Mautic restore | Report a failed snapshot listing
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _mautic_restore_snapshots }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+      - "{{ app_config.backup.client.key_url }}"
+      - "{{ app_config.backup.client.repository }}"
+      - "{{ homelabinfra_infra.backups.host }}"
+      - "host/{{ _mautic_restore_backup_id }}"
+    scrub_failure_context: Mautic restore | PBS snapshot listing failed
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Mautic restore | Print the available recovery points
+  ansible.builtin.debug:
+    msg: >-
+      PBS snapshots for host/{{ _mautic_restore_backup_id }}:
+      {{ _mautic_restore_snapshots.stdout }}
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Mautic restore | Explain the selected read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Snapshot {{ restore_snapshot }} contains one data.pxar with
+      the named MariaDB database and Mautic's complete data path
+      {{ _mautic_restore_data_path }}. Re-run with overwrite=true only after verifying an
+      independent pre_restore_point for the exact target.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Mautic restore | Inspect the target data directory
+  ansible.builtin.stat:
+    path: "{{ _mautic_restore_data_path }}"
+  register: _mautic_restore_target_data
+  changed_when: false
+  when: restore_overwrite | bool
+
+- name: Mautic restore | Require an existing owned target data directory
+  ansible.builtin.assert:
+    that:
+      - _mautic_restore_target_data.stat.exists
+      - _mautic_restore_target_data.stat.isdir
+      - not _mautic_restore_target_data.stat.islnk
+    fail_msg: >-
+      Mautic target path {{ _mautic_restore_data_path }} is not an existing real directory;
+      deploy the exact target before replacing its application data.
+  when: restore_overwrite | bool
+
+- name: Mautic restore | Allocate same-filesystem staging and rollback space
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ _mautic_restore_data_path | dirname }}"
+    prefix: ".{{ restore_target }}-mautic-restore-"
+  register: _mautic_restore_scratch
+  changed_when: true
+  when: restore_overwrite | bool
+
+- name: Mautic restore | Require atomic rename on the target filesystem
+  when: restore_overwrite | bool
+  block:
+    - name: Mautic restore | Inspect the staging filesystem
+      ansible.builtin.stat:
+        path: "{{ _mautic_restore_scratch.path }}"
+      register: _mautic_restore_scratch_stat
+      changed_when: false
+
+    - name: Mautic restore | Refuse a cross-filesystem replacement
+      ansible.builtin.assert:
+        that: _mautic_restore_scratch_stat.stat.dev == _mautic_restore_target_data.stat.dev
+        fail_msg: >-
+          Mautic staging must share a filesystem with its data directory so the original
+          can be moved aside and put back atomically. No restore changes were made.
+
+    - name: Mautic restore | Create a private database client file
+      ansible.builtin.copy:
+        dest: "{{ _mautic_restore_scratch.path }}/client.cnf"
+        content: |
+          [client]
+          user={{ _mautic_restore_database_user }}
+          password={{ _mautic_restore_database_password }}
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+- name: Mautic restore | Replace the database and file state
+  when: restore_overwrite | bool
+  block:
+    - name: Mautic restore | Extract and validate the selected data.pxar
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
+          - --volume
+          - "{{ _mautic_restore_scratch.path }}:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - PBS_KEY_URL
+          - --env
+          - PBS_APT_REPO
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings /restore/archive
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$SNAPSHOT" data.pxar /restore/archive
+            test -s /restore/archive/database/mautic.sql
+            grep -q '^CREATE TABLE ' /restore/archive/database/mautic.sql
+            test -s /restore/archive/mautic/config/local.php
+            test -d /restore/archive/mautic/media/files
+            test -d /restore/archive/mautic/media/images
+        expand_argument_vars: false
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+        PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
+        PBS_APT_REPO: >-
+          {{ app_config.backup.client.repository }}
+          {{ app_config.backup.client.suite }}
+          {{ app_config.backup.client.component }}
+      no_log: true
+      register: _mautic_restore_extract
+      failed_when: false
+      changed_when: true
+
+    - name: Mautic restore | Report an invalid or unreadable archive
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _mautic_restore_extract }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+          - "{{ restore_snapshot }}"
+          - "{{ app_config.backup.client.key_url }}"
+          - "{{ app_config.backup.client.repository }}"
+          - "{{ homelabinfra_infra.backups.host }}"
+        scrub_failure_context: Mautic restore | selected data.pxar could not be extracted
+
+    - name: Mautic restore | Stop only the target Mautic services
+      community.docker.docker_compose_v2:
+        project_src: "{{ mautic_project_dir }}"
+        state: stopped
+        services: [mautic_web, mautic_cron, mautic_worker]
+
+    - name: Mautic restore | Record that target services are stopped
+      ansible.builtin.set_fact:
+        _mautic_restore_service_stopped: true
+
+    - name: Mautic restore | Preserve the target database before replacement
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _mautic_restore_scratch.path }}:/work"
+          - --env
+          - DB_HOST
+          - --env
+          - DB_PORT
+          - --env
+          - DB_NAME
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends mariadb-client >/dev/null
+            mariadb-dump --defaults-extra-file=/work/client.cnf \
+              --host="$DB_HOST" --port="$DB_PORT" \
+              --single-transaction --quick --skip-lock-tables --hex-blob --triggers \
+              --no-create-db --databases "$DB_NAME" > /work/database-before.sql
+            test -s /work/database-before.sql
+            grep -q '^CREATE TABLE ' /work/database-before.sql
+        expand_argument_vars: false
+      environment:
+        DB_HOST: "{{ _mautic_restore_database_backend.host }}"
+        DB_PORT: "{{ _mautic_restore_database_backend.port }}"
+        DB_NAME: "{{ _mautic_restore_database_name }}"
+      no_log: true
+      register: _mautic_restore_safety_dump
+      failed_when: false
+      changed_when: true
+
+    - name: Mautic restore | Report a failed database safety dump
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _mautic_restore_safety_dump }}"
+        scrub_failure_secrets:
+          - "{{ _mautic_restore_database_password }}"
+          - "{{ _mautic_restore_database_backend.host }}"
+          - "{{ _mautic_restore_database_name }}"
+        scrub_failure_context: Mautic restore | target MariaDB safety dump failed
+
+    - name: Mautic restore | Move the original data directory aside
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _mautic_restore_data_path }}"
+          - "{{ _mautic_restore_scratch.path }}/original-mautic"
+      register: _mautic_restore_data_move
+      changed_when: _mautic_restore_data_move.rc == 0
+      no_log: true
+
+    - name: Mautic restore | Record the original data move
+      ansible.builtin.set_fact:
+        _mautic_restore_data_moved: true
+
+    - name: Mautic restore | Install the archived data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _mautic_restore_scratch.path }}/archive/mautic"
+          - "{{ _mautic_restore_data_path }}"
+      changed_when: true
+      no_log: true
+
+    - name: Mautic restore | Load the target domain declaration
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/infrastructure.yml"
+        name: _mautic_restore_domain_config
+      failed_when: false
+      no_log: true
+
+    - name: Mautic restore | Resolve the target public hostname
+      ansible.builtin.set_fact:
+        _mautic_restore_domain: >-
+          {{ _mautic_restore_domains.get(
+               _mautic_restore_estate, {}).domain
+             | default((_mautic_restore_domain_config | default({})).domain
+               | default(homelabinfra_infra.domain | default('')), true) }}
+        _mautic_restore_fqdn: >-
+          {{ (app_config.routing.subdomain | default(restore_target, true)) ~ '.' ~
+             (_mautic_restore_domains.get(
+               _mautic_restore_estate, {}).domain
+               | default((_mautic_restore_domain_config | default({})).domain
+                 | default(homelabinfra_infra.domain | default('')), true)) }}
+      vars:
+        _mautic_restore_domains: >-
+          {{ (_mautic_restore_domain_config | default({})).domains | default({}) }}
+        _mautic_restore_default_estates: >-
+          {{ _mautic_restore_domains | dict2items
+             | selectattr('value.default', 'defined')
+             | selectattr('value.default') | map(attribute='key') | list }}
+        _mautic_restore_estate: >-
+          {{ app_config.routing.estate | default('', true)
+             or (_mautic_restore_default_estates | first
+                 | default(_mautic_restore_domains.keys() | first | default(''), true)) }}
+
+    - name: Mautic restore | Require the target hostname
+      ansible.builtin.assert:
+        that:
+          - _mautic_restore_domain | length > 0
+          - _mautic_restore_fqdn | length > 0
+        fail_msg: >-
+          Mautic restore cannot set the target's public URL because its domain is missing.
+
+    - name: Mautic restore | Converge the target database connection and URL
+      ansible.builtin.lineinfile:
+        path: "{{ _mautic_restore_data_path }}/config/local.php"
+        # The restored archive may predate the runtime-readable config permissions.
+        owner: "www-data"
+        group: "www-data"
+        mode: "0640"
+        regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
+        line: >-
+          '{{ item.key }}' => '{{ item.value | string | replace('%', '%%')
+          | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        insertbefore: "^\\);$"
+      loop:
+        - key: db_driver
+          value: pdo_mysql
+        - key: db_host
+          value: "{{ _mautic_restore_database_backend.host }}"
+        - key: db_port
+          value: "{{ _mautic_restore_database_backend.port }}"
+        - key: db_name
+          value: "{{ _mautic_restore_database_name }}"
+        - key: db_user
+          value: "{{ _mautic_restore_database_user }}"
+        - key: db_password
+          value: "{{ _mautic_restore_database_password }}"
+        - key: site_url
+          value: "https://{{ _mautic_restore_fqdn }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+
+    - name: Mautic restore | Mark the MariaDB replacement started
+      ansible.builtin.set_fact:
+        _mautic_restore_database_mutated: true
+
+    - name: Mautic restore | Replace only the named MariaDB database contents
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _mautic_restore_scratch.path }}:/work"
+          - --env
+          - DB_HOST
+          - --env
+          - DB_PORT
+          - --env
+          - DB_NAME
+          - --env
+          - DB_DUMP
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends mariadb-client >/dev/null
+            tables=$(mariadb --defaults-extra-file=/work/client.cnf \
+              --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME" \
+              --batch --skip-column-names \
+              --execute="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()")
+            if [ -n "$tables" ]; then
+              { printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\nSET FOREIGN_KEY_CHECKS=1;\n' "$tables"; } | \
+                mariadb --defaults-extra-file=/work/client.cnf \
+                  --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
+            fi
+            sed '/^USE `[^`]*`;/d' "$DB_DUMP" | \
+              mariadb --defaults-extra-file=/work/client.cnf \
+                --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
+        expand_argument_vars: false
+      environment:
+        DB_HOST: "{{ _mautic_restore_database_backend.host }}"
+        DB_PORT: "{{ _mautic_restore_database_backend.port }}"
+        DB_NAME: "{{ _mautic_restore_database_name }}"
+        DB_DUMP: /work/archive/database/mautic.sql
+      no_log: true
+      register: _mautic_restore_database_replace
+      failed_when: false
+      changed_when: true
+
+    - name: Mautic restore | Report a failed database replacement
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _mautic_restore_database_replace }}"
+        scrub_failure_secrets:
+          - "{{ _mautic_restore_database_password }}"
+          - "{{ _mautic_restore_database_backend.host }}"
+          - "{{ _mautic_restore_database_name }}"
+          - "{{ restore_snapshot }}"
+        scrub_failure_context: Mautic restore | database replacement failed
+
+    - name: Mautic restore | Start the restored Mautic services
+      community.docker.docker_compose_v2:
+        project_src: "{{ mautic_project_dir }}"
+        state: present
+        services: [mautic_web, mautic_cron, mautic_worker]
+
+    - name: Mautic restore | Wait for the restored application
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/"
+        status_code: [200, 302]
+      register: _mautic_restore_health
+      until: _mautic_restore_health.status | default(0) in [200, 302]
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Mautic restore | Mark the paired recovery complete
+      ansible.builtin.set_fact:
+        _mautic_restore_complete: true
+        _mautic_restore_rollback_complete: true
+  rescue:
+    - name: Mautic restore | Stop the target services after failure
+      community.docker.docker_compose_v2:
+        project_src: "{{ mautic_project_dir }}"
+        state: stopped
+        services: [mautic_web, mautic_cron, mautic_worker]
+      failed_when: false
+      when: _mautic_restore_service_stopped | bool
+
+    - name: Mautic restore | Remove the partial replacement file tree
+      ansible.builtin.file:
+        path: "{{ _mautic_restore_data_path }}"
+        state: absent
+      register: _mautic_restore_partial_data_removed
+      failed_when: false
+      when: _mautic_restore_data_moved | bool
+
+    - name: Mautic restore | Put the original file tree back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _mautic_restore_scratch.path }}/original-mautic"
+          - "{{ _mautic_restore_data_path }}"
+      register: _mautic_restore_data_rollback
+      failed_when: false
+      changed_when: true
+      when: _mautic_restore_data_moved | bool
+
+    - name: Mautic restore | Put the original MariaDB database back
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _mautic_restore_scratch.path }}:/work"
+          - --env
+          - DB_HOST
+          - --env
+          - DB_PORT
+          - --env
+          - DB_NAME
+          - --env
+          - DB_DUMP
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends mariadb-client >/dev/null
+            tables=$(mariadb --defaults-extra-file=/work/client.cnf \
+              --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME" \
+              --batch --skip-column-names \
+              --execute="SELECT CONCAT('DROP ', IF(TABLE_TYPE = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.tables WHERE TABLE_SCHEMA=DATABASE()")
+            if [ -n "$tables" ]; then
+              { printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\nSET FOREIGN_KEY_CHECKS=1;\n' "$tables"; } | \
+                mariadb --defaults-extra-file=/work/client.cnf \
+                  --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
+            fi
+            sed '/^USE `[^`]*`;/d' "$DB_DUMP" | \
+              mariadb --defaults-extra-file=/work/client.cnf \
+                --host="$DB_HOST" --port="$DB_PORT" --database="$DB_NAME"
+        expand_argument_vars: false
+      environment:
+        DB_HOST: "{{ _mautic_restore_database_backend.host }}"
+        DB_PORT: "{{ _mautic_restore_database_backend.port }}"
+        DB_NAME: "{{ _mautic_restore_database_name }}"
+        DB_DUMP: /work/database-before.sql
+      register: _mautic_restore_database_rollback
+      failed_when: false
+      changed_when: true
+      no_log: true
+      when: _mautic_restore_database_mutated | bool
+
+    - name: Mautic restore | Record whether both originals were restored
+      ansible.builtin.set_fact:
+        _mautic_restore_rollback_complete: >-
+          {{ (not (_mautic_restore_data_moved | bool)
+              or (_mautic_restore_data_rollback.rc | default(1) | int == 0))
+             and (not (_mautic_restore_database_mutated | bool)
+                  or (_mautic_restore_database_rollback.rc | default(1) | int == 0)) }}
+
+    - name: Mautic restore | Report the failed restore
+      ansible.builtin.fail:
+        msg: >-
+          Mautic restore failed at {{ ansible_failed_task.name | default('an unknown step') }}.
+          {% if _mautic_restore_rollback_complete | bool %}
+          The original file tree and database were restored; Mautic remains stopped.
+          {% else %}
+          Automatic rollback is incomplete. The original data directory and database dump
+          are retained under {{ _mautic_restore_scratch.path }} for repair.
+          {% endif %}
+  always:
+    - name: Mautic restore | Remove staging after success or completed rollback
+      ansible.builtin.file:
+        path: "{{ _mautic_restore_scratch.path }}"
+        state: absent
+      when:
+        - _mautic_restore_scratch.path is defined
+        - _mautic_restore_complete | bool or _mautic_restore_rollback_complete | bool
+
+    - name: Mautic restore | Retain staging after incomplete rollback
+      ansible.builtin.debug:
+        msg: "Mautic rollback material is retained at {{ _mautic_restore_scratch.path }}."
+      when:
+        - _mautic_restore_scratch.path is defined
+        - not (_mautic_restore_complete | bool or _mautic_restore_rollback_complete | bool)

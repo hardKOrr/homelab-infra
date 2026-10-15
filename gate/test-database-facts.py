@@ -109,6 +109,12 @@ def database_producers_resolve_instance_keys():
         assert actual == {instance: expected}, (provider, actual)
 
 
+def database_vault_upsert_skips_check_mode():
+    tasks = yaml.safe_load(read("ansible/tasks/database/provision.yml"))
+    upsert = task_named(tasks, "Database | Store application connection fields in Vaultwarden")
+    assert upsert.get("when") == "not ansible_check_mode"
+
+
 def database_writer_removes_unresolved_keys_and_preserves_other_estates():
     writer = yaml.safe_load(read("ansible/tasks/bootstrap/write-generated-facts.yml"))
     tasks = writer
@@ -407,6 +413,7 @@ def postgresql_delete_and_redeploy_reconcile_cluster_identity():
 
 if __name__ == "__main__":
     database_producers_resolve_instance_keys()
+    database_vault_upsert_skips_check_mode()
     database_writer_removes_unresolved_keys_and_preserves_other_estates()
     database_role_password_sql_uses_psql_stdin()
     postgres_superuser_is_an_explicit_database_request()

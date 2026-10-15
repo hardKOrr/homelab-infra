@@ -11,6 +11,12 @@
 mautic_defaults:
   stack: services
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     # `apache`, not `fpm`: the upstream README says plainly to prefer it — the FPM
     # variant's exemplified nginx.conf has known issues. Pinned to a point release, the
@@ -25,11 +31,10 @@ mautic_defaults:
 
     port: 8091
 
-    # Mautic's own config (config/local.php), logs, and uploaded media — not its
-    # database, which lives entirely on the named MariaDB backend. This is the recovery
-    # unit a guest snapshot backup covers for this instance. Laid out as four
-    # subdirectories rather than one, mirroring the upstream mautic/docker-mautic
-    # example's own volume list (see roles/mautic/defaults/main.yml).
+    # Mautic's config (config/local.php), logs, uploaded files and images. The native
+    # recovery task pairs this tree with the named MariaDB database in one PBS archive.
+    # The four subdirectories mirror the upstream mautic/docker-mautic example's volume
+    # list (see roles/mautic/defaults/main.yml).
     data_path: "/opt/mautic/{{ instance }}/data"
 
     admin_user: admin
@@ -42,8 +47,17 @@ mautic_defaults:
 
   backup:
     enabled: true
+    application_consistent: true
     schedule: "0 3 * * *"
+    datastore: ""
+    backup_id: ""
+    client:
+      image: "buildpack-deps:bookworm-curl"
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main
 
-  # Recovery boundary: restore the MariaDB-mautic database and this instance's data
-  # directory from the same recovery point. The MariaDB backend is shared and must not be
-  # removed as part of Mautic removal.
+  # Recovery boundary: restore the Mautic database and this instance's complete data
+  # directory from the same recovery point. The shared MariaDB guest stays in place when
+  # Remove App deletes only this application's database and login.
