@@ -52,6 +52,7 @@ if [[ "$all_args" == *"SELECT CONCAT"* ]]; then
 fi
 input=$(cat)
 if [[ "$input" == *"DROP TABLE IF EXISTS"* ]]; then
+  [[ "$input" == *"SET FOREIGN_KEY_CHECKS=0;"* ]] || exit 96
   printf 'EMPTY\\n' > "$BOOKSTACK_TEST_DB_STATE"
   exit 0
 fi

@@ -121,7 +121,13 @@ replace_database_from_dump() {
     --host="$BOOKSTACK_DB_HOST" --port="$BOOKSTACK_DB_PORT" --batch --skip-column-names \
     --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', TABLE_NAME, ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$BOOKSTACK_DB_NAME';") || return
   if [[ -n "$table_sql" ]]; then
-    printf '%s\n' "$table_sql" | mysql_client mysql \
+    {
+      # BookStack's InnoDB schema has foreign keys; clear its tables in one client
+      # session with checks disabled so the database's table order cannot block restore
+      # or rollback. The client exits before the known-good dump is imported.
+      printf 'SET FOREIGN_KEY_CHECKS=0;\n'
+      printf '%s\n' "$table_sql"
+    } | mysql_client mysql \
       --defaults-extra-file=/run/secrets/my.cnf --host="$BOOKSTACK_DB_HOST" \
       --port="$BOOKSTACK_DB_PORT" --database="$BOOKSTACK_DB_NAME" || return
   fi
