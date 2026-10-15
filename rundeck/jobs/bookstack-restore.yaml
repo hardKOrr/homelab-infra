@@ -33,7 +33,7 @@
     values: ['false', 'true']
     enforced: true
   - name: pre_restore_point
-    description: 'Required for overwrite=true: a distinct, verified snapshot of this instance taken immediately before restore.'
+    description: 'Required for overwrite=true: a distinct, verified snapshot of this instance created within the past hour.'
     required: false
     value: ''
   sequence:

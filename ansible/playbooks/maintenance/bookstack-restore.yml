@@ -2,11 +2,11 @@
 # Plan or perform a restore of one BookStack instance from its own PBS snapshot.
 #
 # overwrite=false (the default) is read-only. overwrite=true requires a distinct,
-# verified pre_restore_point from a fresh backup of this instance, then stops only the
-# named BookStack service, replaces its /config data and named database, and leaves the
-# shared backend and every other application untouched. On failure the helper restores
-# the original data and database before starting the service; if rollback itself fails,
-# it preserves the rollback files and leaves BookStack stopped for inspection.
+# verified pre_restore_point from a backup of this instance made within the last hour.
+# Restore stops only the named BookStack service, replaces its /config data and named
+# database and leaves the shared backend and every other application untouched. On
+# failure the helper restores the original data and database before starting the service.
+# If rollback fails, it preserves the rollback files and leaves BookStack stopped.
 
 - name: "BookStack Restore | Resolve"
   hosts: localhost

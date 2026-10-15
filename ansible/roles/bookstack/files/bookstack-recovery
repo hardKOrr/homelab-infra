@@ -6,6 +6,7 @@
 # as two archives in ONE PBS snapshot, so a restore cannot accidentally pair page media
 # with a different database point in time.
 set -Eeuo pipefail
+readonly PRE_RESTORE_MAX_AGE_SECONDS=3600
 
 CONFIG=${BOOKSTACK_RECOVERY_CONFIG:-/etc/homelab-infra/bookstack/${BOOKSTACK_INSTANCE:-bookstack}.env}
 if [[ ! -r "$CONFIG" ]]; then
@@ -179,6 +180,28 @@ plan() {
   fi
 }
 
+validate_pre_restore_point_age() {
+  local timestamp snapshot_epoch now_epoch
+  timestamp=${PRE_RESTORE_POINT##*/}
+  [[ "$timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
+    return 1
+  }
+  if ! snapshot_epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
+    echo "pre-restore point must use a valid PBS UTC timestamp" >&2
+    return 1
+  fi
+  now_epoch=$(date -u +%s)
+  if (( snapshot_epoch > now_epoch )); then
+    echo "pre-restore point timestamp is in the future" >&2
+    return 1
+  fi
+  if (( now_epoch - snapshot_epoch > PRE_RESTORE_MAX_AGE_SECONDS )); then
+    echo "pre-restore point must be no more than one hour old" >&2
+    return 1
+  fi
+}
+
 restore() {
   local original_data_owner original_data_mode
   [[ "${SNAPSHOT:-}" == host/$PBS_BACKUP_ID/* ]] || {
@@ -189,6 +212,7 @@ restore() {
     echo "restore requires a distinct pre-restore point from host/$PBS_BACKUP_ID" >&2
     exit 1
   }
+  validate_pre_restore_point_age
   [[ -d "$BOOKSTACK_DATA_PATH" && ! -L "$BOOKSTACK_DATA_PATH" ]] || {
     echo "BookStack data path must be an existing directory before restore: $BOOKSTACK_DATA_PATH" >&2
     exit 1

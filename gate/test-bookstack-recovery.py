@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
@@ -14,7 +15,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
-PRE_RESTORE_POINT = "host/bookstack/2026-10-15T00:10:00Z"
 REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
@@ -195,6 +195,16 @@ def check_restore_result_contract():
 
 
 def check(case):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    pre_restore_time = now
+    if case == "stale-prepoint":
+        pre_restore_time -= timedelta(hours=2)
+    elif case == "future-prepoint":
+        pre_restore_time += timedelta(minutes=5)
+    pre_restore_point = f"host/bookstack/{pre_restore_time.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+    if case == "invalid-time-prepoint":
+        pre_restore_point = "host/bookstack/not-a-timestamp"
+
     with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
         root = Path(temporary)
         bin_dir = root / "bin"
@@ -248,13 +258,13 @@ def check(case):
             "BOOKSTACK_TEST_DB_STATE": str(database),
             "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
             "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
-            "BOOKSTACK_TEST_PRE_RESTORE_POINT": PRE_RESTORE_POINT,
+            "BOOKSTACK_TEST_PRE_RESTORE_POINT": pre_restore_point,
             "BOOKSTACK_TEST_MISSING_PREPOINT": "1" if case == "missing-prepoint" else "0",
             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         }
         result = subprocess.run(
             [str(RECOVERY), "--restore", "--snapshot", SNAPSHOT,
-             "--pre-restore-point", PRE_RESTORE_POINT],
+             "--pre-restore-point", pre_restore_point],
             env=environment,
             text=True,
             capture_output=True,
@@ -288,6 +298,12 @@ def check(case):
         else:
             assert result.returncode != 0, result.stdout + result.stderr
             assert "restore failed" not in result.stderr.lower()
+            if case == "stale-prepoint":
+                assert "must be no more than one hour old" in result.stderr
+            elif case == "future-prepoint":
+                assert "timestamp is in the future" in result.stderr
+            elif case == "invalid-time-prepoint":
+                assert "must use a valid PBS UTC timestamp" in result.stderr
             assert (data / "original.txt").read_text() == "original attachment state\n"
             assert data.stat().st_ino == original_inode
             assert database.read_text() == "ORIGINAL-DATABASE\n"
@@ -305,7 +321,10 @@ def main():
     check("success")
     check("import-failure")
     check("missing-prepoint")
-    print("BookStack: guarded Remove clears its named database; Restore separates plan results and rolls back after import failure")
+    check("stale-prepoint")
+    check("future-prepoint")
+    check("invalid-time-prepoint")
+    print("BookStack: guarded Remove, recent restore points, plan separation, and restore rollback passed")
 
 
 if __name__ == "__main__":
