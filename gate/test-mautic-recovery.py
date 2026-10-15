@@ -269,7 +269,16 @@ def static_contract():
     archive = next(task for task in backup_tasks
                    if task.get("name") == "Mautic backup | Push one database and file archive to PBS")
     assert "mariadb-dump" in backup_dump["ansible.builtin.command"]["argv"][-1]
-    archive_script = archive["ansible.builtin.command"]["argv"][-1]
+    archive_argv = archive["ansible.builtin.command"]["argv"]
+    archive_script = archive_argv[-1]
+    for environment_name in [
+        "PBS_REPOSITORY", "PBS_FINGERPRINT", "PBS_PASSWORD", "BACKUP_ID",
+        "PBS_KEY_URL", "PBS_APT_REPO",
+    ]:
+        assert any(
+            archive_argv[index:index + 2] == ["--env", environment_name]
+            for index in range(len(archive_argv) - 1)
+        ), f"Docker backup upload must pass {environment_name} into the PBS client container"
     assert "data.pxar:/work/payload" in archive_script
     assert "--keep-last 2" in archive_script
     assert "--keep-daily" not in archive_script

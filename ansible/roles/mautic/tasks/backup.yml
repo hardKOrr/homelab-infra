@@ -194,6 +194,7 @@
           - PBS_PASSWORD
           - --env
           - BACKUP_ID
+          - --env
           - PBS_KEY_URL
           - --env
           - PBS_APT_REPO
