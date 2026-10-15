@@ -10,6 +10,8 @@ import threading
 from pathlib import Path
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar
 
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
@@ -235,6 +237,30 @@ def static_contract():
     assert include["vars"]["firewall_inbound_ports"]["forgejo-ssh"] == "{{ _forgejo_fw_host.app_config.app.ssh_port }}"
     wire_play = next(play for play in playbook if play["name"] == "Forgejo | Wire")
     assert wire_play["vars"]["wiring_monitor_url"] == "https://{{ hostvars['localhost'].forgejo_fqdn }}/api/healthz"
+    endpoint_task = next(
+        task for task in wire_play["tasks"]
+        if task.get("name") == "Record Forgejo endpoint for app-to-app consumers"
+    )
+    endpoint = Templar(
+        loader=DataLoader(),
+        variables={
+            "instance": "forgejo-test",
+            "_forgejo_host": {
+                "ansible_host": "192.0.2.45",
+                "app_config": {"app": {"port": 3000, "ssh_port": 2222}},
+            },
+        },
+    ).template(endpoint_task["vars"]["generated_facts_data"])
+    assert endpoint == {
+        "forgejo-test": {
+            "provider": "forgejo",
+            "instance": "forgejo-test",
+            "host": "http://192.0.2.45",
+            "port": 3000,
+            "url": "http://192.0.2.45:3000/",
+            "ssh_port": 2222,
+        }
+    }, endpoint
 
 
 def app_variables(root, server=None):

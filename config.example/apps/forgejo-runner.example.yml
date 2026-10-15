@@ -13,6 +13,7 @@ backup:
   enabled: true
   schedule: "0 3 * * *"
 
-# Store runner_token only in Vaultwarden item homelab-infra/apps/<instance>. The runner
-# deregistration path uses Forgejo's admin_api_token from the named Forgejo Vaultwarden
-# item; neither token is accepted from tracked configuration.
+# Store runner_token only in Vaultwarden item homelab-infra/apps/<instance>. Runner
+# deregistration uses runner_api_token for a user-scoped registration or admin_api_token
+# for a global registration from the named Forgejo Vaultwarden item; neither credential
+# is accepted from tracked configuration.

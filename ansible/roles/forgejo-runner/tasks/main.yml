@@ -60,9 +60,9 @@
   ansible.builtin.copy:
     src: register-and-run.sh
     dest: "{{ forgejo_runner_entrypoint }}"
-    owner: root
-    group: root
-    mode: "0750"
+    owner: "1000"
+    group: "1000"
+    mode: "0550"
   notify: Restart Forgejo Runner
 
 - name: Forgejo Runner | Render Compose project
@@ -88,7 +88,7 @@
 - name: Forgejo Runner | Apply pending restart
   ansible.builtin.meta: flush_handlers
 
-- name: Forgejo Runner | Check that the runner daemon is connected
+- name: Forgejo Runner | Check that the runner service is running
   ansible.builtin.command:
     argv:
       - docker
@@ -101,6 +101,8 @@
       - --services
   register: _forgejo_runner_services
   changed_when: false
-  failed_when: >-
-    _forgejo_runner_services.rc != 0
-    or 'runner' not in (_forgejo_runner_services.stdout_lines | default([]))
+  retries: 12
+  delay: 5
+  until: >-
+    _forgejo_runner_services.rc == 0
+    and 'runner' in (_forgejo_runner_services.stdout_lines | default([]))
