@@ -64,9 +64,11 @@
   ansible.builtin.template:
     src: odoo.conf.j2
     dest: "{{ odoo_config_file }}"
-    owner: root
-    group: root
-    mode: "0600"
+    # The config contains database and master-password secrets. The official image runs
+    # as the configured Odoo UID, so that account must own the private, read-only file.
+    owner: "{{ app_config.app.puid }}"
+    group: "{{ app_config.app.pgid }}"
+    mode: "0400"
   no_log: true
   notify: Restart odoo
 

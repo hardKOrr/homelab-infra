@@ -175,6 +175,13 @@
       - /bin/sh
       - -ceu
       - |
+        # The container overlay's /tmp and /root/.cache reject O_TMPFILE. The
+        # mounted restore scratch supports it, so keep the client's temp and cache there.
+        install -d -m 0700 /restore/tmp /restore/home/.cache /restore/home/.config
+        export TMPDIR=/restore/tmp
+        export HOME=/restore/home
+        export XDG_CACHE_HOME=/restore/home/.cache
+        export XDG_CONFIG_HOME=/restore/home/.config
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null

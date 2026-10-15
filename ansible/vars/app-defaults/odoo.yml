@@ -11,7 +11,9 @@ odoo_defaults:
   app:
     image: docker.io/odoo:18.0
     port: 8069
-    puid: 101
+    # The official Odoo 18 image runs as uid 100, gid 101. Keep its filestore and
+    # private configuration owned by that container account.
+    puid: 100
     pgid: 101
     database:
       provider: postgresql
