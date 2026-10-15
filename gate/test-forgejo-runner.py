@@ -153,24 +153,27 @@ def check_non_root_entrypoint_access():
     assert 'entrypoint: ["/opt/runner/register-and-run.sh"]' in compose
 
 
-def check_daemon_readiness_retries():
+def check_runner_service_running_retries():
     role_tasks = yaml.safe_load(
         (repo / "ansible/roles/forgejo-runner/tasks/main.yml").read_text()
     )
     check = next(
         task
         for task in role_tasks
-        if task.get("name") == "Forgejo Runner | Check that the runner daemon is connected"
+        if task.get("name") == "Forgejo Runner | Check that the runner service is running"
     )
     assert check["retries"] == 12
     assert check["delay"] == 5
+    assert check["ansible.builtin.command"]["argv"][-4:] == [
+        "ps", "--status", "running", "--services"
+    ]
     assert "runner" in check["until"]
     assert "stdout_lines" in check["until"]
 
 
 def main():
     check_non_root_entrypoint_access()
-    check_daemon_readiness_retries()
+    check_runner_service_running_retries()
     run_removal("user", "runner_api_token", include_admin_fallback=True)
     run_removal("admin", "admin_api_token")
     run_removal("admin", "runner_api_token", include_admin_fallback=True)

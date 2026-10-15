@@ -88,7 +88,7 @@
 - name: Forgejo Runner | Apply pending restart
   ansible.builtin.meta: flush_handlers
 
-- name: Forgejo Runner | Check that the runner daemon is connected
+- name: Forgejo Runner | Check that the runner service is running
   ansible.builtin.command:
     argv:
       - docker
