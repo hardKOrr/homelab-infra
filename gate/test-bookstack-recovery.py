@@ -179,6 +179,18 @@ def check_pre_restore_point_contract():
     assert "app_config.backup.backup_id" in str(group_check["ansible.builtin.assert"]["that"])
 
 
+def check_restore_result_contract():
+    tasks = list(tasks_recursive(BOOKSTACK_RESTORE))
+    plan = next(task for task in tasks if task.get("name") == "Run the BookStack restore plan")
+    restore = next(task for task in tasks if task.get("name") == "Run the destructive BookStack restore")
+    check = next(task for task in tasks if task.get("name") == "Fail if BookStack restore did not complete")
+    assert plan["register"] == "bookstack_restore_plan_result"
+    assert restore["register"] == "bookstack_restore_result"
+    assertion = str(check["ansible.builtin.assert"]["that"])
+    assert "bookstack_restore_plan_result.rc" in assertion
+    assert "bookstack_restore_result.rc" in assertion
+
+
 def check(case):
     with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
         root = Path(temporary)
@@ -286,10 +298,11 @@ def main():
     check_admin_email_contract()
     check_backup_scheduler_contract()
     check_pre_restore_point_contract()
+    check_restore_result_contract()
     check("success")
     check("import-failure")
     check("missing-prepoint")
-    print("BookStack: guarded Remove clears its named database; Restore requires a readable safety point and rolls back after import failure")
+    print("BookStack: guarded Remove clears its named database; Restore separates plan results and rolls back after import failure")
 
 
 if __name__ == "__main__":

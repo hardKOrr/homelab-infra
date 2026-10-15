@@ -68,7 +68,7 @@
           - "{{ snapshot | default('') }}"
       environment:
         BOOKSTACK_INSTANCE: "{{ instance }}"
-      register: bookstack_restore_result
+      register: bookstack_restore_plan_result
       changed_when: false
       when: not (overwrite | default(false) | bool)
 
@@ -106,7 +106,12 @@
         - hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
     - name: Fail if BookStack restore did not complete
       ansible.builtin.assert:
-        that: hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
+        that: >-
+          (overwrite | default(false) | bool and
+          hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
+          or
+          (not (overwrite | default(false) | bool) and
+          hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_plan_result.rc | default(1) == 0)
         fail_msg: >-
           BookStack restore did not complete. It either rejected the recovery inputs before
           changing the target or restored the original data and database after an in-place
