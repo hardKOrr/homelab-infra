@@ -14,8 +14,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
+PRE_RESTORE_POINT = "host/bookstack/2026-10-15T00:10:00Z"
 REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
+BOOKSTACK_RESTORE = yaml.safe_load((ROOT / "ansible/playbooks/maintenance/bookstack-restore.yml").read_text())
 
 
 DOCKER = """#!/bin/bash
@@ -61,6 +63,11 @@ printf '%s\\n' "$input" > "$BOOKSTACK_TEST_DB_STATE"
 
 PBS = """#!/bin/bash
 set -eu
+if [[ "$1" == "snapshot" && "$2" == "files" ]]; then
+  [[ "$3" == "$BOOKSTACK_TEST_PRE_RESTORE_POINT" ]] || exit 94
+  [[ "${BOOKSTACK_TEST_MISSING_PREPOINT:-0}" != 1 ]] || exit 95
+  exit 0
+fi
 if [[ "$1" == "restore" ]]; then
   destination="$4"
   mkdir -p "$destination"
@@ -155,6 +162,22 @@ def check_backup_scheduler_contract():
     assert names.index(service["name"]) < names.index(schedule["name"])
 
 
+def check_pre_restore_point_contract():
+    run = next(task for task in tasks_recursive(BOOKSTACK_RESTORE)
+               if task.get("name") == "Run the destructive BookStack restore")
+    argv = run["ansible.builtin.command"]["argv"]
+    assert "--pre-restore-point" in argv
+    assert "{{ pre_restore_point }}" in argv
+    validate = next(task for task in BOOKSTACK_RESTORE[0]["pre_tasks"]
+                    if task.get("ansible.builtin.assert"))
+    requirements = validate["ansible.builtin.assert"]["that"]
+    assert any("pre_restore_point" in item and "length > 0" in item for item in requirements)
+    assert any("pre_restore_point != snapshot" in item for item in requirements)
+    group_check = next(task for task in tasks_recursive(BOOKSTACK_RESTORE)
+                       if task.get("name") == "Validate the BookStack safety snapshot belongs to this recovery group")
+    assert "app_config.backup.backup_id" in str(group_check["ansible.builtin.assert"]["that"])
+
+
 def check(case):
     with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
         root = Path(temporary)
@@ -206,16 +229,19 @@ def check(case):
             "BOOKSTACK_TEST_DB_STATE": str(database),
             "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
             "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
+            "BOOKSTACK_TEST_PRE_RESTORE_POINT": PRE_RESTORE_POINT,
+            "BOOKSTACK_TEST_MISSING_PREPOINT": "1" if case == "missing-prepoint" else "0",
             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         }
         result = subprocess.run(
-            [str(RECOVERY), "--restore", "--snapshot", SNAPSHOT],
+            [str(RECOVERY), "--restore", "--snapshot", SNAPSHOT,
+             "--pre-restore-point", PRE_RESTORE_POINT],
             env=environment,
             text=True,
             capture_output=True,
             check=False,
         )
-        compose_actions = compose_log.read_text().splitlines()
+        compose_actions = compose_log.read_text().splitlines() if compose_log.exists() else []
         if case == "success":
             assert result.returncode == 0, result.stdout + result.stderr
             assert (data / "restored.txt").read_text() == "restored attachment state\n"
@@ -224,7 +250,7 @@ def check(case):
             assert data.stat().st_mode & 0o777 == 0o750
             assert database.read_text() == "SNAPSHOT-DATABASE\n"
             assert compose_actions == ["stop", "start"], compose_actions
-        else:
+        elif case == "import-failure":
             assert result.returncode != 0, result.stdout + result.stderr
             assert "BookStack rollback restored the previous data and database." in result.stderr
             assert (data / "original.txt").read_text() == "original attachment state\n"
@@ -233,6 +259,13 @@ def check(case):
             assert data.stat().st_mode & 0o777 == 0o750
             assert database.read_text() == "ORIGINAL-DATABASE\n"
             assert compose_actions == ["stop", "stop", "start"], compose_actions
+        else:
+            assert result.returncode != 0, result.stdout + result.stderr
+            assert "restore failed" not in result.stderr.lower()
+            assert (data / "original.txt").read_text() == "original attachment state\n"
+            assert data.stat().st_ino == original_inode
+            assert database.read_text() == "ORIGINAL-DATABASE\n"
+            assert compose_actions == [], compose_actions
         assert not list(root.glob("app-data.pre-restore.*")), "completed restore must remove its rollback tree"
 
 
@@ -240,9 +273,11 @@ def main():
     check_remove_contract()
     check_admin_email_contract()
     check_backup_scheduler_contract()
+    check_pre_restore_point_contract()
     check("success")
     check("import-failure")
-    print("BookStack: guarded Remove clears its named database; Restore replaces the recovery point and rolls back after import failure")
+    check("missing-prepoint")
+    print("BookStack: guarded Remove clears its named database; Restore requires a readable safety point and rolls back after import failure")
 
 
 if __name__ == "__main__":

@@ -60,7 +60,8 @@ templates.
   rollback after either original directory moves.
 - `test-bookstack-recovery.py`: BookStack validates its default admin address, ensures
   its backup scheduler, Remove clears only its validated, unshared database and login,
-  and Restore returns the original data and database after an import failure.
+  and Restore requires a readable safety snapshot and returns the original data and
+  database after an import failure.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:
