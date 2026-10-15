@@ -143,6 +143,20 @@ def check_admin_email_validation():
     assert not re.match(pattern, "not-an-email")
 
 
+def check_wordpress_data_directory_access():
+    task = next(
+        item for item in WORDPRESS_ROLE_TASKS
+        if item.get("name") == "WordPress | Create project and durable data directories"
+    )
+    file_task = task["ansible.builtin.file"]
+    assert file_task["owner"] == "{{ item.owner }}"
+    assert file_task["group"] == "{{ item.group }}"
+    data_directory = next(item for item in task["loop"] if "app_config.app.data_path" in item["path"])
+    assert data_directory["owner"] == "33"
+    assert data_directory["group"] == "33"
+    assert data_directory["mode"] == "0750"
+
+
 def check_remove_contract():
     pre_tasks = REMOVE_PLAYBOOK[0]["pre_tasks"]
     resolve = next(task for task in pre_tasks
@@ -285,6 +299,7 @@ def run_restore(case):
 def main():
     check_playbook_contract()
     check_admin_email_validation()
+    check_wordpress_data_directory_access()
     check_remove_contract()
     run_restore("success")
     run_restore("database-dump-failure")
