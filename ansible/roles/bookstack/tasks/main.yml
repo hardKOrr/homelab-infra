@@ -234,6 +234,19 @@
   no_log: true
   when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
 
+- name: BookStack | Install cron for recovery scheduling
+  ansible.builtin.apt:
+    name: cron
+    state: present
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: BookStack | Ensure cron is running for recovery scheduling
+  ansible.builtin.service:
+    name: cron
+    state: started
+    enabled: true
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
 - name: BookStack | Schedule application-consistent backup
   ansible.builtin.cron:
     name: "homelab-infra BookStack backup {{ instance }}"

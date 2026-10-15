@@ -137,6 +137,24 @@ def check_admin_email_contract():
         assert not re.fullmatch(pattern, invalid), invalid
 
 
+def check_backup_scheduler_contract():
+    names = [task.get("name") for task in BOOKSTACK_ROLE]
+    install = next(task for task in BOOKSTACK_ROLE
+                   if task.get("name") == "BookStack | Install cron for recovery scheduling")
+    service = next(task for task in BOOKSTACK_ROLE
+                   if task.get("name") == "BookStack | Ensure cron is running for recovery scheduling")
+    schedule = next(task for task in BOOKSTACK_ROLE
+                    if task.get("name") == "BookStack | Schedule application-consistent backup")
+    assert install["ansible.builtin.apt"] == {"name": "cron", "state": "present"}
+    assert service["ansible.builtin.service"] == {"name": "cron", "state": "started", "enabled": True}
+    backup_condition = "bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool"
+    assert install["when"] == backup_condition
+    assert service["when"] == backup_condition
+    assert schedule["when"] == backup_condition
+    assert names.index(install["name"]) < names.index(schedule["name"])
+    assert names.index(service["name"]) < names.index(schedule["name"])
+
+
 def check(case):
     with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
         root = Path(temporary)
@@ -221,6 +239,7 @@ def check(case):
 def main():
     check_remove_contract()
     check_admin_email_contract()
+    check_backup_scheduler_contract()
     check("success")
     check("import-failure")
     print("BookStack: guarded Remove clears its named database; Restore replaces the recovery point and rolls back after import failure")
