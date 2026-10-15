@@ -19,7 +19,6 @@
     _mautic_backup_data_path: "{{ app_config.app.data_path | default('') }}"
     _mautic_backup_id: >-
       {{ app_config.backup.backup_id | default('', true) or instance }}
-    _mautic_backup_service_stopped: false
     _mautic_backup_restart_failed: false
     _application_backup_complete: false
   no_log: true
@@ -118,10 +117,6 @@
         project_src: "{{ mautic_project_dir }}"
         state: stopped
         services: [mautic_web, mautic_cron, mautic_worker]
-
-    - name: Mautic backup | Record that Mautic is stopped
-      ansible.builtin.set_fact:
-        _mautic_backup_service_stopped: true
 
     - name: Mautic backup | Dump the stopped instance's MariaDB database
       ansible.builtin.command:
@@ -262,7 +257,6 @@
             project_src: "{{ mautic_project_dir }}"
             state: present
             services: [mautic_web, mautic_cron, mautic_worker]
-          when: _mautic_backup_service_stopped | bool
       rescue:
         - name: Mautic backup | Record a failed service restart
           ansible.builtin.set_fact:

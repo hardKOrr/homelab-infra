@@ -264,6 +264,15 @@ def static_contract():
     assert deploy_names.index(wait_health["name"]) < deploy_names.index(start_background["name"])
 
     backup_tasks = list(tasks_recursive(backup_source))
+    backup_block = next(task for task in backup_source
+                        if task.get("name") == "Mautic backup | Quiesce Mautic and publish one paired recovery point")
+    backup_restart = next(task for task in tasks_recursive(backup_block.get("always", []))
+                          if task.get("name") == "Mautic backup | Start this instance's services")
+    assert backup_restart["community.docker.docker_compose_v2"]["state"] == "present"
+    assert backup_restart["community.docker.docker_compose_v2"]["services"] == [
+        "mautic_web", "mautic_cron", "mautic_worker"
+    ]
+    assert "when" not in backup_restart, "always must restart services after a partial stop failure"
     backup_dump = next(task for task in backup_tasks
                        if task.get("name") == "Mautic backup | Dump the stopped instance's MariaDB database")
     archive = next(task for task in backup_tasks
