@@ -172,6 +172,9 @@ def check_wordpress_health_redirects():
     assert health_uri["status_code"] == accepted_statuses
     assert all(str(status) in health_task["until"] for status in accepted_statuses)
     assert '\\"follow_location\\"=>0' in WORDPRESS_COMPOSE
+    assert "$$context" in WORDPRESS_COMPOSE
+    assert "$$status" in WORDPRESS_COMPOSE
+    assert "$$http_response_header" in WORDPRESS_COMPOSE
     assert "[23][0-9]{2}" in WORDPRESS_COMPOSE
     recovery = RECOVERY.read_text()
     assert "class NoRedirect(HTTPRedirectHandler):" in recovery
