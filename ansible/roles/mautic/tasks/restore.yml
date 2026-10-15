@@ -518,6 +518,10 @@
     - name: Mautic restore | Converge the target database connection and URL
       ansible.builtin.lineinfile:
         path: "{{ _mautic_restore_data_path }}/config/local.php"
+        # The restored archive may predate the runtime-readable config permissions.
+        owner: "www-data"
+        group: "www-data"
+        mode: "0640"
         regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
         line: >-
           '{{ item.key }}' => '{{ item.value | string | replace('%', '%%')

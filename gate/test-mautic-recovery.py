@@ -15,6 +15,7 @@ defaults = yaml.safe_load((repo / "ansible/vars/app-defaults/mautic.yml").read_t
 catalog = yaml.safe_load((repo / "catalog/applications.yml").read_text())
 backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").read_text())
 restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore.yml").read_text())
+deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/main.yml").read_text())
 remove_source = yaml.safe_load((repo / "ansible/playbooks/apps/remove.yml").read_text())
 
 
@@ -37,6 +38,11 @@ def fixture_tasks(tasks, root, case):
             # but let this local fixture write as the unprivileged gate user.
             task["ansible.builtin.copy"].pop("owner", None)
             task["ansible.builtin.copy"].pop("group", None)
+        if task.get("name") == "Mautic restore | Converge the target database connection and URL":
+            # The production play runs as root on the Docker host. Keep the mode check,
+            # but let this local fixture write as the unprivileged gate user.
+            task["ansible.builtin.lineinfile"].pop("owner", None)
+            task["ansible.builtin.lineinfile"].pop("group", None)
         if task.get("ansible.builtin.include_tasks", "").endswith("resolve-pbs-target.yml"):
             del task["ansible.builtin.include_tasks"]
             task.pop("vars", None)
@@ -227,6 +233,17 @@ def static_contract():
     assert config["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])
 
+    deploy_tasks = list(tasks_recursive(deploy_source))
+    seed_config = next(task for task in deploy_tasks
+                       if task.get("name") == "Mautic | Seed configuration on first deploy")
+    converge_config = next(task for task in deploy_tasks
+                           if task.get("name") == "Mautic | Converge platform-owned configuration fields")
+    for config_task, module in [(seed_config, "ansible.builtin.template"),
+                                (converge_config, "ansible.builtin.lineinfile")]:
+        assert config_task[module]["owner"] == "www-data"
+        assert config_task[module]["group"] == "www-data"
+        assert config_task[module]["mode"] == "0640"
+
     backup_tasks = list(tasks_recursive(backup_source))
     backup_dump = next(task for task in backup_tasks
                        if task.get("name") == "Mautic backup | Dump the stopped instance's MariaDB database")
@@ -242,6 +259,11 @@ def static_contract():
     assert "mautic_media_images_dir" in str(backup_source)
 
     restore_tasks = list(tasks_recursive(restore_source))
+    restore_config = next(task for task in restore_tasks
+                          if task.get("name") == "Mautic restore | Converge the target database connection and URL")
+    assert restore_config["ansible.builtin.lineinfile"]["owner"] == "www-data"
+    assert restore_config["ansible.builtin.lineinfile"]["group"] == "www-data"
+    assert restore_config["ansible.builtin.lineinfile"]["mode"] == "0640"
     client_file = next(task for task in restore_tasks
                        if task.get("name") == "Mautic restore | Create a private database client file")
     assert client_file["ansible.builtin.copy"]["owner"] == "root"

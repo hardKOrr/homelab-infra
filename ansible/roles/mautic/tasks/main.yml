@@ -117,9 +117,10 @@
   ansible.builtin.template:
     src: local.php.j2
     dest: "{{ mautic_config_file }}"
-    owner: root
-    group: root
-    mode: "0600"
+    # Mautic's PHP process reads and updates this file through the admin UI.
+    owner: "www-data"
+    group: "www-data"
+    mode: "0640"
   no_log: true
   when: not _mautic_local_php_stat.stat.exists
   notify: Restart mautic
@@ -162,6 +163,10 @@
 - name: Mautic | Converge platform-owned configuration fields
   ansible.builtin.lineinfile:
     path: "{{ mautic_config_file }}"
+    # Keep Mautic's own config writes working and limit reads to its service account.
+    owner: "www-data"
+    group: "www-data"
+    mode: "0640"
     regexp: "^\\s*'{{ item.key }}'\\s*=>.*,$"
     line: >-
       '{{ item.key }}' => '{{ item.value | replace('%', '%%') | replace('\\', '\\\\') | replace("'", "\\'") }}',
