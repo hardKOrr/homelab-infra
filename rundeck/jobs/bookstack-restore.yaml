@@ -8,9 +8,10 @@
     Plan or perform a restore of this BookStack instance from its own PBS snapshots.
 
     overwrite=false (recommended) lists and validates the selected snapshot without
-    changing anything. Set overwrite=true only after confirming the snapshot; the named
-    BookStack service is stopped, its /config data and named database are replaced, then
-    it is started again. No shared backend guest or other stack application is touched.
+    changing anything. Set overwrite=true only after confirming the snapshot and backing
+    up the current instance; provide that snapshot as pre_restore_point. The named BookStack
+    service is stopped, its /config data and named database are replaced, then it is started
+    again. No shared backend guest or other stack application is touched.
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false
@@ -31,6 +32,10 @@
     value: 'false'
     values: ['false', 'true']
     enforced: true
+  - name: pre_restore_point
+    description: 'Required for overwrite=true: a distinct, verified snapshot of this instance created within the past hour.'
+    required: false
+    value: ''
   sequence:
     keepgoing: false
     strategy: node-first
@@ -44,5 +49,8 @@
           ARGS=(-e "instance=${RD_OPTION_INSTANCE}" -e "overwrite=${RD_OPTION_OVERWRITE}")
           if [ -n "${RD_OPTION_SNAPSHOT:-}" ]; then
             ARGS+=(-e "snapshot=${RD_OPTION_SNAPSHOT}")
+          fi
+          if [ -n "${RD_OPTION_PRE_RESTORE_POINT:-}" ]; then
+            ARGS+=(-e "pre_restore_point=${RD_OPTION_PRE_RESTORE_POINT}")
           fi
           exec lab-run playbooks/maintenance/bookstack-restore.yml "${ARGS[@]}"

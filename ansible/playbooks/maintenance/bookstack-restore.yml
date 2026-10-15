@@ -1,10 +1,12 @@
 ---
 # Plan or perform a restore of one BookStack instance from its own PBS snapshot.
 #
-# overwrite=false (the default) is read-only. overwrite=true stops only the named
-# BookStack service, replaces its /config data and named database, and leaves the shared
-# backend and every other application untouched. A failed restore deliberately leaves the
-# service stopped for operator inspection.
+# overwrite=false (the default) is read-only. overwrite=true requires a distinct,
+# verified pre_restore_point from a backup of this instance made within the last hour.
+# Restore stops only the named BookStack service, replaces its /config data and named
+# database and leaves the shared backend and every other application untouched. On
+# failure the helper restores the original data and database before starting the service.
+# If rollback fails, it preserves the rollback files and leaves BookStack stopped.
 
 - name: "BookStack Restore | Resolve"
   hosts: localhost
@@ -15,9 +17,14 @@
         that:
           - instance is defined and instance is match('^[A-Za-z0-9_.-]+$')
           - snapshot | default('') is match('^$|^host/[A-Za-z0-9_.-]+/[A-Za-z0-9T:_.+Z-]+$')
+          - pre_restore_point | default('') is match('^$|^host/[A-Za-z0-9_.-]+/[A-Za-z0-9T:_.+Z-]+$')
           - overwrite | default(false) | string in ['false', 'true', 'False', 'True']
           - not (overwrite | default(false) | bool) or snapshot | default('') | length > 0
-        fail_msg: "Provide a BookStack instance, an optional PBS snapshot, and overwrite=false|true."
+          - not (overwrite | default(false) | bool) or pre_restore_point | default('') | length > 0
+          - not (overwrite | default(false) | bool) or pre_restore_point != snapshot
+        fail_msg: >-
+          Provide a BookStack instance and a valid PBS snapshot. An overwrite also needs
+          a distinct pre_restore_point from host/<instance>/ captured by a fresh backup.
     - ansible.builtin.include_vars:
         file: ../../vars/app-defaults/bookstack.yml
         name: _app_defaults
@@ -31,6 +38,13 @@
       failed_when: false
     - ansible.builtin.set_fact:
         app_config: "{{ _app_defaults.bookstack_defaults | combine(_instance_config | default({}), recursive=True) }}"
+    - name: Validate the BookStack safety snapshot belongs to this recovery group
+      ansible.builtin.assert:
+        that:
+          - not (overwrite | default(false) | bool) or pre_restore_point.startswith('host/' ~ (app_config.backup.backup_id | default('', true) or instance) ~ '/')
+        fail_msg: >-
+          The pre_restore_point must be a readable snapshot from this BookStack instance's
+          configured backup group. Back up this exact target and pass that recovery point.
   tasks:
     - name: Resolve the existing services stack host
       ansible.builtin.include_tasks: ../../tasks/stack/resolve-existing-host.yml
@@ -54,7 +68,7 @@
           - "{{ snapshot | default('') }}"
       environment:
         BOOKSTACK_INSTANCE: "{{ instance }}"
-      register: bookstack_restore_result
+      register: bookstack_restore_plan_result
       changed_when: false
       when: not (overwrite | default(false) | bool)
 
@@ -65,6 +79,8 @@
           - --restore
           - --snapshot
           - "{{ snapshot }}"
+          - --pre-restore-point
+          - "{{ pre_restore_point }}"
       environment:
         BOOKSTACK_INSTANCE: "{{ instance }}"
       register: bookstack_restore_result
@@ -90,7 +106,14 @@
         - hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
     - name: Fail if BookStack restore did not complete
       ansible.builtin.assert:
-        that: hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
+        that: >-
+          (overwrite | default(false) | bool and
+          hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0)
+          or
+          (not (overwrite | default(false) | bool) and
+          hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_plan_result.rc | default(1) == 0)
         fail_msg: >-
-          BookStack restore failed; inspect the target service before starting it and no
-          success notification was sent.
+          BookStack restore did not complete. It either rejected the recovery inputs before
+          changing the target or restored the original data and database after an in-place
+          failure. Inspect the target service before starting it; no success notification
+          was sent.

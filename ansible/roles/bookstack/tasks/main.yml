@@ -2,7 +2,7 @@
 - name: BookStack | Validate administrator email
   ansible.builtin.assert:
     that:
-      - app_config.app.admin_user is match('^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$')
+      - app_config.app.admin_user is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
     fail_msg: "app.admin_user must be a valid email address for the initial BookStack administrator."
 
 - name: BookStack | Create project and durable data directories
@@ -232,6 +232,19 @@
     group: root
     mode: "0600"
   no_log: true
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: BookStack | Install cron for recovery scheduling
+  ansible.builtin.apt:
+    name: cron
+    state: present
+  when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
+
+- name: BookStack | Ensure cron is running for recovery scheduling
+  ansible.builtin.service:
+    name: cron
+    state: started
+    enabled: true
   when: bookstack_pbs_available | default(false) | bool and app_config.backup.enabled | default(false) | bool
 
 - name: BookStack | Schedule application-consistent backup
