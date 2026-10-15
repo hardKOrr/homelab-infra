@@ -3,8 +3,9 @@
 #
 # overwrite=false (the default) is read-only. overwrite=true stops only the named
 # BookStack service, replaces its /config data and named database, and leaves the shared
-# backend and every other application untouched. A failed restore deliberately leaves the
-# service stopped for operator inspection.
+# backend and every other application untouched. On failure the helper restores the
+# original data and database before starting the service; if rollback itself fails, it
+# preserves the rollback files and leaves BookStack stopped for inspection.
 
 - name: "BookStack Restore | Resolve"
   hosts: localhost
@@ -92,5 +93,6 @@
       ansible.builtin.assert:
         that: hostvars[groups['bookstack_recovery_' ~ instance][0]].bookstack_restore_result.rc | default(1) == 0
         fail_msg: >-
-          BookStack restore failed; inspect the target service before starting it and no
-          success notification was sent.
+          BookStack restore failed; the helper attempted to restore the original data and
+          database. Inspect the target service before starting it; no success notification
+          was sent.

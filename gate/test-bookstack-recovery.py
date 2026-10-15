@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Exercise BookStack restore and its rollback with isolated command shims."""
+
+import os
+import shlex
+import subprocess
+import tempfile
+from pathlib import Path
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
+SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
+REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+
+
+DOCKER = """#!/bin/bash
+set -eu
+if [[ "$1" == "compose" ]]; then
+  action=
+  for arg in "$@"; do
+    if [[ "$arg" == "stop" || "$arg" == "start" ]]; then action="$arg"; fi
+  done
+  printf '%s\\n' "$action" >> "$BOOKSTACK_TEST_COMPOSE_LOG"
+  exit 0
+fi
+[[ "$1" == "run" ]] || exit 90
+shift
+all_args="$*"
+entrypoint=
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "--entrypoint" ]]; then entrypoint="$2"; shift 2; else shift; fi
+done
+if [[ "$entrypoint" == "mysqldump" ]]; then
+  cat "$BOOKSTACK_TEST_DB_STATE"
+  exit 0
+fi
+[[ "$entrypoint" == "mysql" ]] || exit 91
+if [[ "$all_args" == *"SELECT CONCAT"* ]]; then
+  current=$(cat "$BOOKSTACK_TEST_DB_STATE")
+  if [[ -n "$current" && "$current" != "EMPTY" ]]; then
+    printf '%s\\n' "DROP TABLE IF EXISTS test_table;"
+  fi
+  exit 0
+fi
+input=$(cat)
+if [[ "$input" == *"DROP TABLE IF EXISTS"* ]]; then
+  printf 'EMPTY\\n' > "$BOOKSTACK_TEST_DB_STATE"
+  exit 0
+fi
+if [[ "$BOOKSTACK_TEST_CASE" == "import-failure" && "$input" == *"SNAPSHOT-DATABASE"* ]]; then
+  printf 'PARTIAL-DATABASE\\n' > "$BOOKSTACK_TEST_DB_STATE"
+  exit 17
+fi
+printf '%s\\n' "$input" > "$BOOKSTACK_TEST_DB_STATE"
+"""
+
+PBS = """#!/bin/bash
+set -eu
+if [[ "$1" == "restore" ]]; then
+  destination="$4"
+  mkdir -p "$destination"
+  case "$3" in
+    database.pxar) cp -a "$BOOKSTACK_TEST_SNAPSHOT_DB/." "$destination/" ;;
+    storage.pxar) cp -a "$BOOKSTACK_TEST_SNAPSHOT_STORAGE/." "$destination/" ;;
+    *) exit 92 ;;
+  esac
+  exit 0
+fi
+exit 93
+"""
+
+
+def write_executable(path, content):
+    path.write_text(content)
+    path.chmod(0o700)
+
+
+def tasks_recursive(value):
+    if isinstance(value, list):
+        for item in value:
+            yield from tasks_recursive(item)
+    elif isinstance(value, dict):
+        if "name" in value:
+            yield value
+        for key in ["pre_tasks", "tasks", "block", "rescue", "always"]:
+            yield from tasks_recursive(value.get(key, []))
+
+
+def check_remove_contract():
+    tasks = list(tasks_recursive(REMOVE))
+    resolve = next(task for task in tasks
+                   if task.get("name") == "Resolve BookStack's named database removal inputs")
+    assert "bookstack" in str(resolve["when"])
+    assert "delete_data" in str(resolve["when"])
+
+    validate = next(task for task in tasks
+                    if task.get("name") == "Validate BookStack's named database removal inputs")
+    requirements = validate["ansible.builtin.assert"]["that"]
+    assert any("provider" in item and "mariadb" in item for item in requirements)
+    assert any("database_config.name" in item and "is match" in item for item in requirements)
+    assert any("database_config.role" in item and "is match" in item for item in requirements)
+    assert any("database_backend.client_hosts" in item for item in requirements)
+
+    consumers = next(task for task in tasks
+                     if task.get("name") == "Check BookStack's database and role are not shared by another app")
+    assert "database_name" in str(consumers["ansible.builtin.set_fact"])
+    assert "database_user" in str(consumers["ansible.builtin.set_fact"])
+    assert "rejectattr('key', 'equalto', instance)" in str(consumers["ansible.builtin.set_fact"])
+
+    removal = next(task for task in tasks
+                   if task.get("name") == "Remove BookStack's named database and role")
+    assert "bookstack" in str(removal["when"])
+    assert "_rm_delete_data" in str(removal["when"])
+    drop_database = next(task for task in tasks
+                         if task.get("name") == "Drop BookStack's named MariaDB database")
+    assert drop_database["community.mysql.mysql_db"]["state"] == "absent"
+    drop_role = next(task for task in tasks
+                     if task.get("name") == "Drop BookStack's database login on permitted client networks")
+    assert drop_role["community.mysql.mysql_user"]["state"] == "absent"
+    assert drop_role["loop"] == "{{ hostvars['localhost']._rm_bookstack_database_backend.client_hosts }}"
+
+
+def check(case):
+    with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
+        root = Path(temporary)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        write_executable(bin_dir / "docker", DOCKER)
+        write_executable(bin_dir / "proxmox-backup-client", PBS)
+
+        project = root / "project"
+        project.mkdir()
+        data = root / "app-data"
+        data.mkdir()
+        data.chmod(0o750)
+        (data / "original.txt").write_text("original attachment state\n")
+        original_inode = data.stat().st_ino
+        database = root / "database-state.sql"
+        database.write_text("ORIGINAL-DATABASE\n")
+
+        snapshot_database = root / "snapshot-database"
+        snapshot_database.mkdir()
+        (snapshot_database / "database.sql").write_text("SNAPSHOT-DATABASE\n")
+        snapshot_storage = root / "snapshot-storage"
+        snapshot_storage.mkdir()
+        (snapshot_storage / "restored.txt").write_text("restored attachment state\n")
+
+        compose_log = root / "compose.log"
+        config = root / "bookstack.env"
+        values = {
+            "BOOKSTACK_PROJECT_DIR": str(project),
+            "BOOKSTACK_SERVICE": "bookstack",
+            "BOOKSTACK_DATA_PATH": str(data),
+            "BOOKSTACK_DB_HOST": "127.0.0.1",
+            "BOOKSTACK_DB_PORT": "3306",
+            "BOOKSTACK_DB_NAME": "bookstack",
+            "BOOKSTACK_DB_USER": "bookstack",
+            "BOOKSTACK_DB_PASSWORD": "test-only",
+            "BOOKSTACK_DB_CLIENT_IMAGE": "mysql-client:test",
+            "PBS_REPOSITORY": "test:store",
+            "PBS_FINGERPRINT": "test",
+            "PBS_PASSWORD": "test-only",
+            "PBS_BACKUP_ID": "bookstack",
+            "PBS_RETENTION_DAYS": "14",
+        }
+        config.write_text("\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items()) + "\n")
+        environment = os.environ | {
+            "BOOKSTACK_RECOVERY_CONFIG": str(config),
+            "BOOKSTACK_TEST_CASE": case,
+            "BOOKSTACK_TEST_COMPOSE_LOG": str(compose_log),
+            "BOOKSTACK_TEST_DB_STATE": str(database),
+            "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
+            "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
+            "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+        }
+        result = subprocess.run(
+            [str(RECOVERY), "--restore", "--snapshot", SNAPSHOT],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        compose_actions = compose_log.read_text().splitlines()
+        if case == "success":
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert (data / "restored.txt").read_text() == "restored attachment state\n"
+            assert not (data / "original.txt").exists()
+            assert data.stat().st_ino != original_inode, "successful restore must replace the old tree"
+            assert data.stat().st_mode & 0o777 == 0o750
+            assert database.read_text() == "SNAPSHOT-DATABASE\n"
+            assert compose_actions == ["stop", "start"], compose_actions
+        else:
+            assert result.returncode != 0, result.stdout + result.stderr
+            assert "BookStack rollback restored the previous data and database." in result.stderr
+            assert (data / "original.txt").read_text() == "original attachment state\n"
+            assert not (data / "restored.txt").exists()
+            assert data.stat().st_ino == original_inode, "rollback must rename the original tree back"
+            assert data.stat().st_mode & 0o777 == 0o750
+            assert database.read_text() == "ORIGINAL-DATABASE\n"
+            assert compose_actions == ["stop", "stop", "start"], compose_actions
+        assert not list(root.glob("app-data.pre-restore.*")), "completed restore must remove its rollback tree"
+
+
+def main():
+    check_remove_contract()
+    check("success")
+    check("import-failure")
+    print("BookStack: guarded Remove clears its named database; Restore replaces the recovery point and rolls back after import failure")
+
+
+if __name__ == "__main__":
+    main()

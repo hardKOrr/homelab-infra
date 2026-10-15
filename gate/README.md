@@ -58,6 +58,9 @@ templates.
 - `test-plex-restore.py`, `test-tautulli-restore.py`, `test-qbittorrent-restore.py`: read-only preview, group guard, restore and rollback.
 - `test-karakeep-recovery.py`: one-archive backup of both persistent volumes and restore
   rollback after either original directory moves.
+- `test-bookstack-recovery.py`: BookStack Remove clears only its validated, unshared
+  database and login; Restore replaces its database and attachment files together, and
+  restores the original database and data directory after an import failure.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
 
 On a Windows checkout accessed through WSL, wrap each command:
