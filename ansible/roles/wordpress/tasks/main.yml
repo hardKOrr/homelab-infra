@@ -3,7 +3,7 @@
   ansible.builtin.assert:
     that:
       - app_config.app.admin_user is match('^[A-Za-z0-9_.-]+$')
-      - app_config.app.admin_email is match('^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$')
+      - app_config.app.admin_email is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
       - app_config.app.default_theme is match('^[a-z0-9-]+$')
       - app_config.app.table_prefix is match('^[A-Za-z_][A-Za-z0-9_]*$')
     fail_msg: >-

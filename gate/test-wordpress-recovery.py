@@ -2,6 +2,7 @@
 """Exercise WordPress's pre-restore guard and transactional native restore."""
 
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ RESTORE_PLAYBOOK = yaml.safe_load(
 )
 RUNDECK_RESTORE = yaml.safe_load((ROOT / "rundeck/jobs/wordpress-restore.yaml").read_text())[0]
 REMOVE_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+WORDPRESS_ROLE_TASKS = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/main.yml").read_text())
 
 
 DOCKER = r'''#!/usr/bin/env python3
@@ -126,6 +128,19 @@ def check_playbook_contract():
     assert restore_task["register"] == "wordpress_restore_result"
     assert any(option["name"] == "pre_restore_point" for option in RUNDECK_RESTORE["options"])
     assert 'pre_restore_point=${RD_OPTION_PRE_RESTORE_POINT}' in str(RUNDECK_RESTORE["sequence"])
+
+
+def check_admin_email_validation():
+    assertions = WORDPRESS_ROLE_TASKS[0]["ansible.builtin.assert"]["that"]
+    expression = next(item for item in assertions if "admin_email" in item)
+    match = re.search(r"match\('(.+)'\)", expression)
+    assert match, "administrator email validation must use a readable regex"
+    pattern = match.group(1)
+    assert re.match(pattern, "admin@example.invalid")
+    assert re.match(pattern, "admin+canary@example.invalid")
+    assert not re.match(pattern, "admin @example.invalid")
+    assert not re.match(pattern, "admin@example invalid")
+    assert not re.match(pattern, "not-an-email")
 
 
 def check_remove_contract():
@@ -269,6 +284,7 @@ def run_restore(case):
 
 def main():
     check_playbook_contract()
+    check_admin_email_validation()
     check_remove_contract()
     run_restore("success")
     run_restore("database-dump-failure")
