@@ -267,11 +267,29 @@
   community.docker.docker_compose_v2_pull:
     project_src: "{{ mautic_project_dir }}"
 
-- name: Mautic | Start service
+- name: Mautic | Start web service
   community.docker.docker_compose_v2:
     project_src: "{{ mautic_project_dir }}"
     state: present
+    services: [mautic_web]
     remove_orphans: true
+
+- name: Mautic | Verify the web runtime can access its configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ mautic_project_dir }}"
+      - exec
+      - -T
+      - --user
+      - www-data
+      - mautic_web
+      - sh
+      - -c
+      - test -r /var/www/html/config/local.php && test -w /var/www/html/config/local.php
+  changed_when: false
 
 - name: Mautic | Apply pending restart
   ansible.builtin.meta: flush_handlers
@@ -285,6 +303,12 @@
   retries: 60
   delay: 5
   changed_when: false
+
+- name: Mautic | Start background services
+  community.docker.docker_compose_v2:
+    project_src: "{{ mautic_project_dir }}"
+    state: present
+    services: [mautic_cron, mautic_worker]
 
 # Mautic's schema and admin user are created once, non-interactively, through its own
 # console installer rather than the browser-based setup wizard — the same reasoning as
