@@ -234,6 +234,10 @@ def main():
         task for task in unwire_play["pre_tasks"]
         if task.get("name") == "Resolve Plane's named database removal inputs"
     )
+    odoo_db_inputs = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Resolve Odoo's named database removal inputs"
+    )
     identity_facts = removal_identity["ansible.builtin.set_fact"]
     assert identity_facts["_rm_app_name"] == "{{ app | default(instance) }}"
     add_host = next(
@@ -245,17 +249,17 @@ def main():
 
     # Exercise the exact values copied by add_host in another play. They must be plain
     # values after crossing that boundary, so a Karakeep removal cannot inherit a
-    # stack-host app name and a Plane removal still gets its explicit DB target.
+    # stack-host app name and named-database apps keep their explicit DB target.
     removal_plays = []
-    for app_name in ("karakeep", "plane"):
+    for app_name in ("karakeep", "plane", "odoo"):
         expected_database_config = (
             {"provider": "postgresql", "instance": "dbtest",
              "name": "drill_test", "role": "drill_test"}
-            if app_name == "plane" else {}
+            if app_name in ("plane", "odoo") else {}
         )
         expected_database_backend = (
             {"provider": "postgresql", "host": "127.0.0.1", "port": 5432}
-            if app_name == "plane" else {}
+            if app_name in ("plane", "odoo") else {}
         )
         host = f"remove_test_{app_name}"
         removal_plays.extend([
@@ -281,6 +285,7 @@ def main():
                 },
                 "tasks": [
                     plane_db_inputs,
+                    odoo_db_inputs,
                     removal_identity,
                     {"ansible.builtin.add_host": {
                         "name": host,
@@ -296,6 +301,8 @@ def main():
                     f"hostvars['localhost']._rm_app_name == {json.dumps(app_name)}",
                     f"hostvars['localhost']._rm_plane_database_config | default({{}}) == {json.dumps(expected_database_config)}",
                     f"hostvars['localhost']._rm_plane_database_backend | default({{}}) == {json.dumps(expected_database_backend)}",
+                    f"hostvars['localhost']._rm_odoo_database_config | default({{}}) == {json.dumps(expected_database_config if app_name == 'odoo' else {})}",
+                    f"hostvars['localhost']._rm_odoo_database_backend | default({{}}) == {json.dumps(expected_database_backend if app_name == 'odoo' else {})}",
                 ]}}],
             },
         ])
@@ -348,6 +355,10 @@ def main():
         "(app | default(instance)) == 'plane'",
         "delete_data | default(false) | bool",
     ]
+    assert odoo_db_inputs["when"] == [
+        "(app | default(instance)) == 'odoo'",
+        "delete_data | default(false) | bool",
+    ]
     plane_db_sharing = next(
         task for task in remove_pretasks
         if task.get("name") == "Check Plane's database and role are not shared by another app"
@@ -356,6 +367,22 @@ def main():
     assert "_rm_plane_shared_database_consumers" in sharing_facts
     assert "_rm_plane_shared_role_consumers" in sharing_facts
     assert plane_db_sharing["no_log"] is True
+
+    odoo_db_sharing = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Check Odoo's database and role are not shared by another app"
+    )
+    odoo_sharing_facts = odoo_db_sharing["ansible.builtin.set_fact"]
+    assert "_rm_odoo_shared_database_consumers" in odoo_sharing_facts
+    assert "_rm_odoo_shared_role_consumers" in odoo_sharing_facts
+    assert odoo_db_sharing["no_log"] is True
+    odoo_db_target = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Add Odoo's named database backend to the removal inventory"
+    )
+    assert odoo_db_target["ansible.builtin.add_host"]["name"] == "odoo_database_removal_target"
+    assert odoo_db_target["ansible.builtin.add_host"]["groups"] == "odoo_database_removal_targets"
+    assert odoo_db_target["no_log"] is True
 
     plane_db_remove = next(
         task for task in remove_playbook[1]["tasks"]
@@ -389,7 +416,37 @@ def main():
         "ansible.builtin.command"
     ]["argv"][-1]
     assert drop_role["no_log"] is True
-    print("Recovery: backup/restore dispatch and Plane database/removal cleanup passed")
+
+    odoo_db_remove = next(
+        task for task in remove_playbook[1]["tasks"]
+        if task.get("name") == "Remove Odoo's named database and role"
+    )
+    assert odoo_db_remove["when"] == [
+        "remove_kind == 'docker'",
+        "hostvars['localhost']._rm_app_name == 'odoo'",
+        "_rm_delete_data | bool",
+    ]
+    odoo_db_tasks = odoo_db_remove["block"]
+    odoo_owner = next(task for task in odoo_db_tasks
+                      if task.get("name") == "Read the owner of Odoo's named PostgreSQL database")
+    assert "pg_get_userbyid" in odoo_owner["ansible.builtin.command"]["argv"][-1]
+    assert odoo_owner["delegate_to"] == "odoo_database_removal_target"
+    assert odoo_owner["no_log"] is True
+    odoo_owner_guard = next(task for task in odoo_db_tasks
+                            if task.get("name") == "Refuse to delete Odoo's database with an unexpected owner")
+    assert "hostvars['localhost']._rm_odoo_database_config.role" in odoo_owner_guard[
+        "ansible.builtin.assert"]["that"][0]
+    odoo_drop_database = next(task for task in odoo_db_tasks
+                              if task.get("name") == "Drop Odoo's named PostgreSQL database")
+    assert "DROP DATABASE {{ hostvars['localhost']._rm_odoo_database_config.name }}" in odoo_drop_database[
+        "ansible.builtin.command"]["argv"][-1]
+    assert odoo_drop_database["no_log"] is True
+    odoo_drop_role = next(task for task in odoo_db_tasks
+                          if task.get("name") == "Drop Odoo's named PostgreSQL role")
+    assert "DROP ROLE {{ hostvars['localhost']._rm_odoo_database_config.role }}" in odoo_drop_role[
+        "ansible.builtin.command"]["argv"][-1]
+    assert odoo_drop_role["no_log"] is True
+    print("Recovery: backup/restore dispatch and named database removal safety passed")
 
 
 if __name__ == "__main__":

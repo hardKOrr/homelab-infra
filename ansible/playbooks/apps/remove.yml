@@ -175,6 +175,85 @@
         - (app | default(instance)) == 'plane'
         - delete_data | default(false) | bool
 
+    # Odoo's application database is stored on its separately managed PostgreSQL guest.
+    # Resolve and guard that exact database and role before Remove unwires the instance.
+    - name: Resolve Odoo's named database removal inputs
+      ansible.builtin.set_fact:
+        _rm_odoo_database_config: "{{ app_config.app.database | default({}) }}"
+        _rm_odoo_database_backend: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.database.instance | default(''), {}) }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'odoo'
+        - delete_data | default(false) | bool
+
+    - name: Validate Odoo's named database removal inputs
+      ansible.builtin.assert:
+        that:
+          - _rm_odoo_database_config.provider | default('') == 'postgresql'
+          - _rm_odoo_database_config.instance | default('') | length > 0
+          - _rm_odoo_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_odoo_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_odoo_database_backend.provider | default('') == 'postgresql'
+          - _rm_odoo_database_backend.host | default('') | length > 0
+          - _rm_odoo_database_backend.port | default(0) | int > 0
+        fail_msg: >-
+          Refusing to remove Odoo data because its named PostgreSQL database or backend
+          is not registered with safe identifiers.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'odoo'
+        - delete_data | default(false) | bool
+
+    - name: Check Odoo's database and role are not shared by another app
+      ansible.builtin.set_fact:
+        _rm_odoo_shared_database_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_odoo_database_backend.host)
+             | selectattr('value.database_name', 'defined')
+             | selectattr('value.database_name', 'equalto', _rm_odoo_database_config.name)
+             | list }}
+        _rm_odoo_shared_role_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_odoo_database_backend.host)
+             | selectattr('value.database_user', 'defined')
+             | selectattr('value.database_user', 'equalto', _rm_odoo_database_config.role)
+             | list }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'odoo'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove a shared Odoo database or role
+      ansible.builtin.assert:
+        that:
+          - _rm_odoo_shared_database_consumers | length == 0
+          - _rm_odoo_shared_role_consumers | length == 0
+        fail_msg: >-
+          Refusing to remove Odoo's named database or role because another canonical app
+          item references it.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'odoo'
+        - delete_data | default(false) | bool
+
+    - name: Add Odoo's named database backend to the removal inventory
+      ansible.builtin.add_host:
+        name: odoo_database_removal_target
+        ansible_host: "{{ _rm_odoo_database_backend.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: odoo_database_removal_targets
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'odoo'
+        - delete_data | default(false) | bool
+
     # BookStack owns one named MariaDB database and login on its shared backend.
     # Resolve and check only those resources before Remove unwires the instance.
     - name: Resolve BookStack's named database removal inputs
@@ -954,6 +1033,104 @@
           changed_when: true
           no_log: true
           when: _rm_plane_database_role.stdout | trim == 'present'
+
+    # Odoo's database and login are application-owned even though the PostgreSQL guest
+    # is shared with other services. Remove only its validated, unshared resources after
+    # stopping Compose and deleting the filestore, so the next Deploy starts from scratch.
+    - name: Remove Odoo's named database and role
+      when:
+        - remove_kind == 'docker'
+        - hostvars['localhost']._rm_app_name == 'odoo'
+        - _rm_delete_data | bool
+      block:
+        - name: Revalidate Odoo's database target before deletion
+          ansible.builtin.assert:
+            that:
+              - "'odoo_database_removal_target' in groups['odoo_database_removal_targets'] | default([])"
+              - hostvars['localhost']._rm_odoo_database_config.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_odoo_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_odoo_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_odoo_database_backend.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_odoo_database_backend.port | default(0) | int > 0
+            fail_msg: "Refusing to delete Odoo data without its validated PostgreSQL target."
+          no_log: true
+
+        - name: Read the owner of Odoo's named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_odoo_database_backend.port }}"
+              - >-
+                --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
+                FROM pg_database WHERE datname = '{{ hostvars['localhost']._rm_odoo_database_config.name }}'), 'missing')
+          delegate_to: odoo_database_removal_target
+          become: true
+          become_user: postgres
+          register: _rm_odoo_database_owner
+          changed_when: false
+          no_log: true
+
+        - name: Refuse to delete Odoo's database with an unexpected owner
+          ansible.builtin.assert:
+            that:
+              - _rm_odoo_database_owner.stdout | trim in ['missing', hostvars['localhost']._rm_odoo_database_config.role]
+            fail_msg: "Refusing to delete Odoo's named database because its owner is unexpected."
+          no_log: true
+
+        - name: Drop Odoo's named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_odoo_database_backend.port }}"
+              - "--command=DROP DATABASE {{ hostvars['localhost']._rm_odoo_database_config.name }}"
+          delegate_to: odoo_database_removal_target
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_odoo_database_owner.stdout | trim != 'missing'
+
+        - name: Read whether Odoo's named PostgreSQL role exists
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_odoo_database_backend.port }}"
+              - >-
+                --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = '{{ hostvars['localhost']._rm_odoo_database_config.role }}') THEN 'present' ELSE 'missing' END
+          delegate_to: odoo_database_removal_target
+          become: true
+          become_user: postgres
+          register: _rm_odoo_database_role
+          changed_when: false
+          no_log: true
+
+        - name: Drop Odoo's named PostgreSQL role
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_odoo_database_backend.port }}"
+              - "--command=DROP ROLE {{ hostvars['localhost']._rm_odoo_database_config.role }}"
+          delegate_to: odoo_database_removal_target
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_odoo_database_role.stdout | trim == 'present'
 
     # Mautic's application tables and login are owned by the app; the shared MariaDB
     # service is not. Drop only the validated, unshared Mautic resources after Compose and
