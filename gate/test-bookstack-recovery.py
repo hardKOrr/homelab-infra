@@ -37,11 +37,12 @@ entrypoint=
 while [[ "$#" -gt 0 ]]; do
   if [[ "$1" == "--entrypoint" ]]; then entrypoint="$2"; shift 2; else shift; fi
 done
-if [[ "$entrypoint" == "mysqldump" ]]; then
+printf '%s\\n' "$entrypoint" >> "$BOOKSTACK_TEST_CLIENT_LOG"
+if [[ "$entrypoint" == "mariadb-dump" || "$entrypoint" == "mysqldump" ]]; then
   cat "$BOOKSTACK_TEST_DB_STATE"
   exit 0
 fi
-[[ "$entrypoint" == "mysql" ]] || exit 91
+[[ "$entrypoint" == "mariadb" || "$entrypoint" == "mysql" ]] || exit 91
 if [[ "$all_args" == *"SELECT CONCAT"* ]]; then
   current=$(cat "$BOOKSTACK_TEST_DB_STATE")
   if [[ -n "$current" && "$current" != "EMPTY" ]]; then
@@ -204,12 +205,14 @@ def check(case):
         (snapshot_storage / "restored.txt").write_text("restored attachment state\n")
 
         compose_log = root / "compose.log"
+        client_log = root / "client.log"
         config = root / "bookstack.env"
         values = {
             "BOOKSTACK_PROJECT_DIR": str(project),
             "BOOKSTACK_SERVICE": "bookstack",
             "BOOKSTACK_DATA_PATH": str(data),
             "BOOKSTACK_DB_HOST": "127.0.0.1",
+            "BOOKSTACK_DB_PROVIDER": "mariadb",
             "BOOKSTACK_DB_PORT": "3306",
             "BOOKSTACK_DB_NAME": "bookstack",
             "BOOKSTACK_DB_USER": "bookstack",
@@ -226,6 +229,7 @@ def check(case):
             "BOOKSTACK_RECOVERY_CONFIG": str(config),
             "BOOKSTACK_TEST_CASE": case,
             "BOOKSTACK_TEST_COMPOSE_LOG": str(compose_log),
+            "BOOKSTACK_TEST_CLIENT_LOG": str(client_log),
             "BOOKSTACK_TEST_DB_STATE": str(database),
             "BOOKSTACK_TEST_SNAPSHOT_DB": str(snapshot_database),
             "BOOKSTACK_TEST_SNAPSHOT_STORAGE": str(snapshot_storage),
@@ -242,6 +246,7 @@ def check(case):
             check=False,
         )
         compose_actions = compose_log.read_text().splitlines() if compose_log.exists() else []
+        client_commands = client_log.read_text().splitlines() if client_log.exists() else []
         if case == "success":
             assert result.returncode == 0, result.stdout + result.stderr
             assert (data / "restored.txt").read_text() == "restored attachment state\n"
@@ -250,6 +255,9 @@ def check(case):
             assert data.stat().st_mode & 0o777 == 0o750
             assert database.read_text() == "SNAPSHOT-DATABASE\n"
             assert compose_actions == ["stop", "start"], compose_actions
+            assert client_commands.count("mariadb-dump") == 1, client_commands
+            assert "mariadb" in client_commands, client_commands
+            assert all(command in {"mariadb", "mariadb-dump"} for command in client_commands), client_commands
         elif case == "import-failure":
             assert result.returncode != 0, result.stdout + result.stderr
             assert "BookStack rollback restored the previous data and database." in result.stderr
@@ -259,6 +267,9 @@ def check(case):
             assert data.stat().st_mode & 0o777 == 0o750
             assert database.read_text() == "ORIGINAL-DATABASE\n"
             assert compose_actions == ["stop", "stop", "start"], compose_actions
+            assert client_commands.count("mariadb-dump") == 1, client_commands
+            assert "mariadb" in client_commands, client_commands
+            assert all(command in {"mariadb", "mariadb-dump"} for command in client_commands), client_commands
         else:
             assert result.returncode != 0, result.stdout + result.stderr
             assert "restore failed" not in result.stderr.lower()
@@ -266,6 +277,7 @@ def check(case):
             assert data.stat().st_ino == original_inode
             assert database.read_text() == "ORIGINAL-DATABASE\n"
             assert compose_actions == [], compose_actions
+            assert client_commands == [], client_commands
         assert not list(root.glob("app-data.pre-restore.*")), "completed restore must remove its rollback tree"
 
 

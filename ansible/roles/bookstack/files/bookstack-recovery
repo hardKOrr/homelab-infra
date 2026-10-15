@@ -18,7 +18,7 @@ set -a
 set +a
 
 for required in BOOKSTACK_PROJECT_DIR BOOKSTACK_SERVICE BOOKSTACK_DATA_PATH \
-  BOOKSTACK_DB_HOST BOOKSTACK_DB_PORT BOOKSTACK_DB_NAME BOOKSTACK_DB_USER \
+  BOOKSTACK_DB_PROVIDER BOOKSTACK_DB_HOST BOOKSTACK_DB_PORT BOOKSTACK_DB_NAME BOOKSTACK_DB_USER \
   BOOKSTACK_DB_PASSWORD BOOKSTACK_DB_CLIENT_IMAGE PBS_REPOSITORY PBS_FINGERPRINT \
   PBS_PASSWORD PBS_BACKUP_ID PBS_RETENTION_DAYS; do
   [[ -n "${!required:-}" ]] || { echo "BookStack recovery configuration is incomplete: $required" >&2; exit 1; }
@@ -95,6 +95,12 @@ trap finish EXIT
 mysql_client() {
   local command=$1
   shift
+  if [[ "$BOOKSTACK_DB_PROVIDER" == mariadb ]]; then
+    case "$command" in
+      mysql) command=mariadb ;;
+      mysqldump) command=mariadb-dump ;;
+    esac
+  fi
   docker run --rm --network host -i \
     -v "$work/my.cnf:/run/secrets/my.cnf:ro" \
     --entrypoint "$command" "$BOOKSTACK_DB_CLIENT_IMAGE" "$@"
