@@ -2,6 +2,7 @@
 """Exercise BookStack restore and its rollback with isolated command shims."""
 
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "ansible/roles/bookstack/files/bookstack-recovery"
 SNAPSHOT = "host/bookstack/2026-10-15T00:00:00Z"
 REMOVE = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
+BOOKSTACK_ROLE = yaml.safe_load((ROOT / "ansible/roles/bookstack/tasks/main.yml").read_text())
 
 
 DOCKER = """#!/bin/bash
@@ -123,6 +125,18 @@ def check_remove_contract():
     assert drop_role["loop"] == "{{ hostvars['localhost']._rm_bookstack_database_backend.client_hosts }}"
 
 
+def check_admin_email_contract():
+    task = next(task for task in BOOKSTACK_ROLE
+                if task.get("name") == "BookStack | Validate administrator email")
+    expression = task["ansible.builtin.assert"]["that"][0]
+    match = re.search(r"match\('([^']+)'\)", expression)
+    assert match
+    pattern = match.group(1).replace("\\\\", "\\")
+    assert re.fullmatch(pattern, "admin@example.invalid"), "the documented default must pass"
+    for invalid in ["admin", "admin@invalid", "admin user@example.invalid"]:
+        assert not re.fullmatch(pattern, invalid), invalid
+
+
 def check(case):
     with tempfile.TemporaryDirectory(prefix="bookstack-recovery-test-") as temporary:
         root = Path(temporary)
@@ -206,6 +220,7 @@ def check(case):
 
 def main():
     check_remove_contract()
+    check_admin_email_contract()
     check("success")
     check("import-failure")
     print("BookStack: guarded Remove clears its named database; Restore replaces the recovery point and rolls back after import failure")

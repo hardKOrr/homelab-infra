@@ -2,7 +2,7 @@
 - name: BookStack | Validate administrator email
   ansible.builtin.assert:
     that:
-      - app_config.app.admin_user is match('^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$')
+      - app_config.app.admin_user is match('^[^@\s]+@[^@\s]+\.[^@\s]+$')
     fail_msg: "app.admin_user must be a valid email address for the initial BookStack administrator."
 
 - name: BookStack | Create project and durable data directories
