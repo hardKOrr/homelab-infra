@@ -132,11 +132,20 @@ wait_for_login() {
   for ((attempt=1; attempt<=60; attempt++)); do
     if python3 - "$url" >/dev/null 2>&1 <<'PY'
 import sys
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, build_opener
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
 
 try:
-    with urlopen(sys.argv[1], timeout=5) as response:
-        sys.exit(0 if response.status == 200 else 1)
+    with build_opener(NoRedirect).open(sys.argv[1], timeout=5) as response:
+        status = response.status
+except HTTPError as response:
+    status = response.code
+try:
+    sys.exit(0 if 200 <= status < 400 else 1)
 except Exception:
     sys.exit(1)
 PY

@@ -13,7 +13,7 @@ services:
       # wp-config.php alongside the core installed by the image.
       - "{{ app_config.app.data_path }}:/var/www/html"
     healthcheck:
-      test: ["CMD-SHELL", "php -r '$body=@file_get_contents(\"http://127.0.0.1:{{ app_config.app.container_port }}/wp-login.php\"); exit($body === false ? 1 : 0);'"]
+      test: ["CMD-SHELL", "php -r '$context=stream_context_create([\"http\"=>[\"follow_location\"=>0,\"ignore_errors\"=>true]]); @file_get_contents(\"http://127.0.0.1:{{ app_config.app.container_port }}/wp-login.php\", false, $context); $status=$http_response_header[0] ?? \"\"; exit(preg_match(\"~^HTTP/[0-9.]+ [23][0-9]{2}~\", $status) ? 0 : 1);'"]
       interval: 30s
       timeout: 10s
       retries: 10

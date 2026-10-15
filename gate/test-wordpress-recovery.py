@@ -22,6 +22,7 @@ RESTORE_PLAYBOOK = yaml.safe_load(
 RUNDECK_RESTORE = yaml.safe_load((ROOT / "rundeck/jobs/wordpress-restore.yaml").read_text())[0]
 REMOVE_PLAYBOOK = yaml.safe_load((ROOT / "ansible/playbooks/apps/remove.yml").read_text())
 WORDPRESS_ROLE_TASKS = yaml.safe_load((ROOT / "ansible/roles/wordpress/tasks/main.yml").read_text())
+WORDPRESS_COMPOSE = (ROOT / "ansible/roles/wordpress/templates/docker-compose.yml.j2").read_text()
 
 
 DOCKER = r'''#!/usr/bin/env python3
@@ -100,6 +101,11 @@ raise SystemExit(93)
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if os.environ.get("WORDPRESS_TEST_CASE") == "health-redirect" and self.path == "/wp-login.php":
+            self.send_response(302)
+            self.send_header("Location", "http://unresolvable.invalid/wp-login.php")
+            self.end_headers()
+            return
         self.send_response(200 if self.path == "/wp-login.php" else 404)
         self.end_headers()
 
@@ -157,6 +163,21 @@ def check_wordpress_data_directory_access():
     assert data_directory["mode"] == "0750"
 
 
+def check_wordpress_health_redirects():
+    health_task = next(item for item in WORDPRESS_ROLE_TASKS
+                       if item.get("name") == "WordPress | Wait for login endpoint")
+    health_uri = health_task["ansible.builtin.uri"]
+    accepted_statuses = [200, 301, 302, 303, 307, 308]
+    assert health_uri["follow_redirects"] == "none"
+    assert health_uri["status_code"] == accepted_statuses
+    assert all(str(status) in health_task["until"] for status in accepted_statuses)
+    assert '\\"follow_location\\"=>0' in WORDPRESS_COMPOSE
+    assert "[23][0-9]{2}" in WORDPRESS_COMPOSE
+    recovery = RECOVERY.read_text()
+    assert "class NoRedirect(HTTPRedirectHandler):" in recovery
+    assert "200 <= status < 400" in recovery
+
+
 def check_remove_contract():
     pre_tasks = REMOVE_PLAYBOOK[0]["pre_tasks"]
     resolve = next(task for task in pre_tasks
@@ -195,6 +216,7 @@ def run_restore(case):
         bin_dir.mkdir()
         write_executable(bin_dir / "docker", DOCKER)
         write_executable(bin_dir / "proxmox-backup-client", PBS)
+        write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
 
         project = root / "project"
         project.mkdir()
@@ -272,7 +294,7 @@ def run_restore(case):
             server.server_close()
             thread.join()
         compose_actions = (root / "compose.log").read_text().splitlines() if (root / "compose.log").exists() else []
-        success = case == "success"
+        success = case in {"success", "health-redirect"}
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         assert content.is_dir()
         if success:
@@ -300,8 +322,10 @@ def main():
     check_playbook_contract()
     check_admin_email_validation()
     check_wordpress_data_directory_access()
+    check_wordpress_health_redirects()
     check_remove_contract()
     run_restore("success")
+    run_restore("health-redirect")
     run_restore("database-dump-failure")
     run_restore("database-import-failure")
     run_restore("wp-cli-failure")

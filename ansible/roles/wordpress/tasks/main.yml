@@ -116,9 +116,10 @@
 - name: WordPress | Wait for login endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/wp-login.php"
-    status_code: 200
+    follow_redirects: none
+    status_code: [200, 301, 302, 303, 307, 308]
   register: _wordpress_health
-  until: _wordpress_health.status | default(0) == 200
+  until: _wordpress_health.status | default(0) in [200, 301, 302, 303, 307, 308]
   retries: 60
   delay: 5
   changed_when: false
