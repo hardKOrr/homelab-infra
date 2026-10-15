@@ -110,6 +110,42 @@ mysql_client() {
     --entrypoint "$command" "$WORDPRESS_DB_CLIENT_IMAGE" "$@"
 }
 
+database_cli_tool=
+database_dump_tool=
+resolve_database_client_tools() {
+  local tools
+  if ! tools=$(docker run --rm --entrypoint /bin/sh "$WORDPRESS_DB_CLIENT_IMAGE" -ec '
+    for tool in mariadb mysql; do
+      if command -v "$tool" >/dev/null 2>&1; then
+        query_tool=$tool
+        break
+      fi
+    done
+    for tool in mariadb-dump mysqldump; do
+      if command -v "$tool" >/dev/null 2>&1; then
+        dump_tool=$tool
+        break
+      fi
+    done
+    if [ -n "${query_tool:-}" ] && [ -n "${dump_tool:-}" ]; then
+      :
+    else
+      exit 1
+    fi
+    printf "%s\n%s\n" "$query_tool" "$dump_tool"
+  '); then
+    echo "WordPress database client image must provide a MariaDB/MySQL client and dump tool." >&2
+    return 1
+  fi
+  database_cli_tool=${tools%%$'\n'*}
+  database_dump_tool=${tools#*$'\n'}
+  [[ "$database_cli_tool" =~ ^(mariadb|mysql)$ &&
+     "$database_dump_tool" =~ ^(mariadb-dump|mysqldump)$ ]] || {
+    echo "WordPress database client image returned invalid client tool names." >&2
+    return 1
+  }
+}
+
 wp_cli() {
   "${compose[@]}" run --rm --no-deps wordpress-cli "$@" --allow-root
 }
@@ -163,7 +199,7 @@ PY
 
 replace_database_from_dump() {
   local dump=$1 table_sql
-  table_sql=$(mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
+  table_sql=$(mysql_client "$database_cli_tool" --defaults-extra-file=/run/secrets/my.cnf \
     --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" --batch --skip-column-names \
     --execute="SELECT CONCAT('DROP TABLE IF EXISTS ', CHAR(96), REPLACE(TABLE_NAME, CHAR(96), CONCAT(CHAR(96), CHAR(96))), CHAR(96), ';') FROM information_schema.tables WHERE TABLE_SCHEMA='$WORDPRESS_DB_NAME';") || return
   if [[ -n "$table_sql" ]]; then
@@ -171,14 +207,15 @@ replace_database_from_dump() {
       # WordPress's InnoDB tables can reference one another; clear them in one client
       # session with checks disabled, then import the selected database point.
       printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\n' "$table_sql"
-    } | mysql_client mysql \
+    } | mysql_client "$database_cli_tool" \
       --defaults-extra-file=/run/secrets/my.cnf --host="$WORDPRESS_DB_HOST" \
       --port="$WORDPRESS_DB_PORT" --database="$WORDPRESS_DB_NAME" || return
   fi
-  # `mysqldump --databases` records the source database in a USE statement. Remove it
-  # before importing so cross-instance restores use the target's named database grant.
+  # The dump client's `--databases` option records the source database in a USE
+  # statement. Remove it before importing so cross-instance restores use the target's
+  # named database grant.
   sed '/^USE `[^`]*`;/d' "$dump" | \
-    mysql_client mysql --defaults-extra-file=/run/secrets/my.cnf \
+    mysql_client "$database_cli_tool" --defaults-extra-file=/run/secrets/my.cnf \
       --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
       --database="$WORDPRESS_DB_NAME"
 }
@@ -189,13 +226,14 @@ backup() {
     echo "WordPress content path is absent: $WORDPRESS_CONTENT_PATH" >&2
     exit 1
   }
+  resolve_database_client_tools
   # WordPress is stopped before the dump and archive. The external backend remains
   # available to every other application on it; only this application's writes pause.
   "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
   stopped=1
   restart_on_failure=1
   mkdir -p "$work/database"
-  mysql_client mysqldump \
+  mysql_client "$database_dump_tool" \
     --defaults-extra-file=/run/secrets/my.cnf \
     --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
     --single-transaction --routines --triggers --events --hex-blob \
@@ -260,6 +298,7 @@ restore() {
     exit 1
   }
   write_client_config
+  resolve_database_client_tools
   pbs_env proxmox-backup-client restore "$SNAPSHOT" database.pxar "$work/database"
   pbs_env proxmox-backup-client restore "$SNAPSHOT" content.pxar "$work/content"
 
@@ -269,7 +308,7 @@ restore() {
   stopped=1
   "${compose[@]}" stop "$WORDPRESS_SERVICE" >/dev/null
   mkdir -p "$work/original"
-  mysql_client mysqldump \
+  mysql_client "$database_dump_tool" \
     --defaults-extra-file=/run/secrets/my.cnf \
     --host="$WORDPRESS_DB_HOST" --port="$WORDPRESS_DB_PORT" \
     --single-transaction --routines --triggers --events --hex-blob \

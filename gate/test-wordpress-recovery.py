@@ -49,6 +49,18 @@ if args[0]!='run':
     raise SystemExit(90)
 entrypoint=args[args.index('--entrypoint')+1]
 database=root/'database-state.sql'
+if entrypoint=='/bin/sh':
+    if case=='missing-database-client-tools':
+        raise SystemExit(1)
+    if case=='mysql-client-tools':
+        print('mysql')
+        print('mysqldump')
+    else:
+        print('mariadb')
+        print('mariadb-dump')
+    raise SystemExit(0)
+with (root/'database-client.log').open('a') as log:
+    log.write(entrypoint+'\n')
 if entrypoint in ['mysqldump','mariadb-dump']:
     if case=='database-dump-failure':
         raise SystemExit(16)
@@ -304,7 +316,7 @@ def run_restore(case):
             server.server_close()
             thread.join()
         compose_actions = (root / "compose.log").read_text().splitlines() if (root / "compose.log").exists() else []
-        success = case in {"success", "health-redirect"}
+        success = case in {"success", "health-redirect", "mysql-client-tools"}
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         assert content.is_dir()
         if success:
@@ -314,13 +326,21 @@ def run_restore(case):
             assert content.stat().st_ino != original_inode
             assert (root / "database-state.sql").read_text() == "SNAPSHOT-DATABASE\n"
             assert compose_actions == ["stop", "start"], compose_actions
+            database_tools = (root / "database-client.log").read_text().splitlines()
+            if case == "mysql-client-tools":
+                assert "mysql" in database_tools and "mysqldump" in database_tools
+            else:
+                assert "mariadb" in database_tools and "mariadb-dump" in database_tools
         else:
             assert (content / "original.txt").read_text() == "original media state\n"
             assert not (content / "restored.txt").exists()
             assert content.stat().st_ino == original_inode, "rollback must rename the original tree back"
             assert content.stat().st_mode == original_mode
             assert (root / "database-state.sql").read_text() == "ORIGINAL-DATABASE\n"
-            if case == "database-dump-failure":
+            if case == "missing-database-client-tools":
+                assert compose_actions == [], compose_actions
+                assert "must provide a MariaDB/MySQL client and dump tool" in result.stderr
+            elif case == "database-dump-failure":
                 assert compose_actions == ["stop", "start"], compose_actions
             else:
                 assert "WordPress rollback restored the previous content and database." in result.stderr
@@ -336,6 +356,8 @@ def main():
     check_wordpress_health_redirects()
     check_remove_contract()
     run_restore("success")
+    run_restore("mysql-client-tools")
+    run_restore("missing-database-client-tools")
     run_restore("health-redirect")
     run_restore("database-dump-failure")
     run_restore("database-import-failure")
