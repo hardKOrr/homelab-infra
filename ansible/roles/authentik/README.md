@@ -30,6 +30,26 @@ applied by the task file named after it, each a no-op when absent:
 | `sources.oauth` | `tasks/sources.yml` | "Sign in with Google / GitHub / …" login sources |
 | `brands` | `tasks/brands.yml` | per-domain login page identity and its flows |
 
+## Native recovery
+
+Backup App stops this instance's Compose project and archives the complete
+`app.data_path` tree as one application-consistent PBS `data.pxar`. That includes
+PostgreSQL, Redis, media, certificates and custom templates. It restarts the project
+after the upload, including when the upload fails, and retains two recent points plus
+the configured daily history.
+
+The generated Postgres password, Authentik signing key, bootstrap password and API token
+are stored in the estate-scoped Vaultwarden SSO item. Re-deploy reuses those values after
+Remove deletes the local compose environment. If an initialized database remains but its
+credentials are missing from both places, deployment stops before replacing them.
+
+Restore App first verifies the selected source archive and an independent target
+safety point. Its preview mode is read-only. Overwrite restore stages the archive
+beside the target path, keeps the current data on the same filesystem, replaces the
+tree, and waits for Authentik's ready endpoint. A failure restores the original data
+and restarts this instance. Native restore currently replaces an existing instance;
+it does not restore an estate into a new instance name.
+
 They share the directory's contract exactly: declared is created and kept correct,
 undeclared is never touched and never deleted. The one exception is `stages_exact:
 true` on a flow, which deletes bindings the declaration does not list — off by

@@ -1,0 +1,235 @@
+---
+# Quiesce this Authentik Compose project and archive every persistent path together.
+- name: Authentik backup | Resolve the instance paths and recovery identity
+  ansible.builtin.set_fact:
+    _authentik_backup_data_path: "{{ app_config.app.data_path | default('') }}"
+    _authentik_backup_project_dir: "{{ authentik_project_dir | default('/opt/' ~ instance) }}"
+    _authentik_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _authentik_backup_expected_services: [postgresql, redis, server, worker]
+    _application_backup_complete: false
+
+- name: Authentik backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _authentik_backup_data_path.startswith(_authentik_backup_project_dir ~ '/')
+      - "'..' not in _authentik_backup_data_path.split('/')"
+      - _authentik_backup_data_path != '/'
+      - _authentik_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Authentik backup needs its application-consistent contract, an instance-owned data
+      path, a safe backup id and a configured PBS target.
+
+- name: Authentik backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Authentik backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Authentik. Deploy PBS and retry; a local archive is
+      not treated as a recovery point.
+
+- name: Authentik backup | Require the installed PBS client
+  ansible.builtin.stat:
+    path: /usr/bin/proxmox-backup-client
+  register: _authentik_backup_client
+  changed_when: false
+
+- name: Authentik backup | Require the client binary
+  ansible.builtin.assert:
+    that: _authentik_backup_client.stat.exists and _authentik_backup_client.stat.isreg
+    fail_msg: >-
+      Authentik has no installed PBS client. Deploy this instance with the current role
+      before requesting an application backup.
+
+- name: Authentik backup | Check the project and data paths
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ _authentik_backup_project_dir }}"
+    - "{{ _authentik_backup_data_path }}"
+  register: _authentik_backup_paths
+  changed_when: false
+
+- name: Authentik backup | Require real project and data directories
+  ansible.builtin.assert:
+    that:
+      - _authentik_backup_paths.results | length == 2
+      - _authentik_backup_paths.results | map(attribute='stat.isdir') | list | unique == [true]
+      - _authentik_backup_paths.results | map(attribute='stat.islnk') | select('equalto', true) | list | length == 0
+    fail_msg: >-
+      Authentik backup requires a real Compose project and a real data directory under
+      that instance's owned project path.
+
+- name: Authentik backup | Check the PostgreSQL database marker
+  ansible.builtin.stat:
+    path: "{{ _authentik_backup_data_path }}/database/PG_VERSION"
+  register: _authentik_backup_database
+  changed_when: false
+
+- name: Authentik backup | Require a PostgreSQL database
+  ansible.builtin.assert:
+    that:
+      - _authentik_backup_database.stat.exists
+      - _authentik_backup_database.stat.isreg
+      - not (_authentik_backup_database.stat.islnk | default(false))
+    fail_msg: >-
+      Authentik's database is missing from {{ _authentik_backup_data_path }}; refusing to
+      create an incomplete recovery point.
+
+- name: Authentik backup | Read the running Compose services
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ _authentik_backup_project_dir }}"
+      - ps
+      - --services
+      - --status
+      - running
+  register: _authentik_backup_running
+  failed_when: false
+  changed_when: false
+
+- name: Authentik backup | Require all four services to be running
+  ansible.builtin.assert:
+    that:
+      - _authentik_backup_running.rc == 0
+      - _authentik_backup_running.stdout_lines | sort == _authentik_backup_expected_services | sort
+    fail_msg: >-
+      Authentik backup requires the instance's PostgreSQL, Redis, server and worker
+      services to be running before the application is quiesced.
+
+- name: Authentik backup | Quiesce and archive the application
+  block:
+    - name: Authentik backup | Stop only this instance's Compose project
+      community.docker.docker_compose_v2:
+        project_src: "{{ _authentik_backup_project_dir }}"
+        state: stopped
+
+    - name: Authentik backup | Upload the complete data directory to PBS
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - backup
+          - "data.pxar:{{ _authentik_backup_data_path }}"
+          - --backup-id
+          - "{{ _authentik_backup_id }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _authentik_backup_upload
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: Authentik backup | Report a failed PBS upload
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _authentik_backup_upload }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Authentik backup | PBS archive upload failed
+
+    - name: Authentik backup | Verify and list the recovery points
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - list
+          - "host/{{ _authentik_backup_id }}"
+          - --output-format
+          - text
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _authentik_backup_snapshots
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Authentik backup | Report an unreadable recovery point listing
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _authentik_backup_snapshots }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Authentik backup | recovery points could not be verified
+
+    - name: Authentik backup | Confirm PBS has a recovery point
+      ansible.builtin.assert:
+        that:
+          - _authentik_backup_snapshots.stdout | length > 0
+          - _authentik_backup_id in _authentik_backup_snapshots.stdout
+        fail_msg: >-
+          Authentik backup completed without a verifiable snapshot in
+          host/{{ _authentik_backup_id }}.
+
+    - name: Authentik backup | Show the verified recovery points
+      ansible.builtin.debug:
+        msg: "PBS recovery points for host/{{ _authentik_backup_id }}:\n{{ _authentik_backup_snapshots.stdout }}"
+
+    - name: Authentik backup | Retain the two newest points and daily history
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - prune
+          - "host/{{ _authentik_backup_id }}"
+          - --keep-last
+          - "2"
+          - --keep-daily
+          - "{{ app_config.backup.retention_days | default(14) | int }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _authentik_backup_prune
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: Authentik backup | Report a failed retention update
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _authentik_backup_prune }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Authentik backup | PBS retention update failed
+
+    - name: Authentik backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: Authentik backup | Restart only this instance when it was running
+      community.docker.docker_compose_v2:
+        project_src: "{{ _authentik_backup_project_dir }}"
+        state: present
+      when: _authentik_backup_running.stdout_lines | default([]) | length > 0
+
+    - name: Authentik backup | Wait for this instance to become ready
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/-/health/ready/"
+        status_code: [200, 204]
+      register: _authentik_backup_health
+      until: _authentik_backup_health.status | default(0) in [200, 204]
+      retries: 60
+      delay: 5
+      changed_when: false
+      when: _authentik_backup_running.stdout_lines | default([]) | length > 0

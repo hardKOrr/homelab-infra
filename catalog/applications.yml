@@ -44,6 +44,7 @@ applications:
     root: Platform
     category: Access and Identity
     scope: estate
+    extra: [backup, restore]
     # Authentik is a four-service Compose project. The generic rollback seam can only
     # select and pin one image, so presenting Rollback Authentik would actually roll back
     # PostgreSQL (the first service) and then claim the application was rolled back.
