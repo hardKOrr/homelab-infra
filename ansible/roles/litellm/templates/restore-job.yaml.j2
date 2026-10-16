@@ -35,7 +35,8 @@ spec:
               export DEBIAN_FRONTEND=noninteractive
               # Never set -x: PBS_PASSWORD and PGPASSWORD are secrets.
               apt-get update -qq
-              install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config
+              # PBS creates each archive target directory; pre-creating it makes restore fail.
+              install -d -m 0755 /etc/apt/keyrings
               curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
               echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                 > /etc/apt/sources.list.d/pbs-client.list
@@ -60,8 +61,10 @@ spec:
               fi
 {% else %}
               echo "=== restoring ${SNAPSHOT} ==="
-              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database
-              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /restore/config
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database \
+                --ignore-acls true --ignore-xattrs true
+              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /restore/config \
+                --ignore-acls true --ignore-xattrs true
               pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
                 --dbname="postgresql://${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}" \
                 /restore/database/litellm.dump

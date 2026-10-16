@@ -1049,6 +1049,9 @@ def litellm_recovery_jobs_use_the_database_client_major():
     restore = read(templates[1])
     assert 'value: "{{ app_config.app.database.version | int }}"' in backup
     assert 'value: "{{ restore_target_config.app.database.version | int }}"' in restore
+    assert "install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config" not in restore
+    assert 'database.pxar /restore/database \\\n                --ignore-acls true --ignore-xattrs true' in restore
+    assert 'config.pxar /restore/config \\\n                --ignore-acls true --ignore-xattrs true' in restore
     restore_tasks = yaml.safe_load(read("ansible/roles/litellm/tasks/restore.yml"))
     contract = task_named(restore_tasks, "Restore | Require matching PostgreSQL state contracts")
     assert any(
