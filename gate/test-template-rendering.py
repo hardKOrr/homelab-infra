@@ -1034,6 +1034,30 @@ def backup_prune_keeps_the_previous_point():
                 assert "--keep-last 2 --keep-daily" in line, f"{script} prunes without --keep-last 2"
 
 
+def litellm_recovery_jobs_use_the_database_client_major():
+    templates = (
+        "ansible/roles/litellm/templates/backup-cronjob.yaml.j2",
+        "ansible/roles/litellm/templates/restore-job.yaml.j2",
+    )
+    for path in templates:
+        template = read(path)
+        assert "https://www.postgresql.org/media/keys/ACCC4CF8.asc" in template, path
+        assert "${VERSION_CODENAME}-pgdg main" in template, path
+        assert '"postgresql-client-${PG_CLIENT_VERSION}"' in template, path
+        assert "name: PG_CLIENT_VERSION" in template, path
+    backup = read(templates[0])
+    restore = read(templates[1])
+    assert 'value: "{{ app_config.app.database.version | int }}"' in backup
+    assert 'value: "{{ restore_target_config.app.database.version | int }}"' in restore
+    restore_tasks = yaml.safe_load(read("ansible/roles/litellm/tasks/restore.yml"))
+    contract = task_named(restore_tasks, "Restore | Require matching PostgreSQL state contracts")
+    assert any(
+        "app_config.app.database.version" in expression
+        and "restore_target_config.app.database.version" in expression
+        for expression in contract["ansible.builtin.assert"]["that"]
+    )
+
+
 def plane_environment_context(plane_fqdn):
     return {
         "ansible_managed": "Managed by gate test",
@@ -1312,4 +1336,5 @@ if __name__ == "__main__":
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
     backup_prune_keeps_the_previous_point()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags passed and backup pruning passed")
+    litellm_recovery_jobs_use_the_database_client_major()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags, backup pruning and LiteLLM recovery clients passed")

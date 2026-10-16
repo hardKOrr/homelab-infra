@@ -59,10 +59,11 @@
       - (app_config.app.database_provider | default(app_config.app.database.provider))
         == (restore_target_config.app.database_provider
             | default(restore_target_config.app.database.provider))
+      - app_config.app.database.version | int == restore_target_config.app.database.version | int
     fail_msg: >-
-      Source and target LiteLLM instances must use the same database name and provider.
-      A PostgreSQL dump must land in the target's named LiteLLM database, not a silently
-      different backend.
+      Source and target LiteLLM instances must use the same database name, provider and
+      PostgreSQL major version. A dump must land in the target's compatible named database,
+      not a silently different backend.
 
 - name: Restore | Resolve the lab's PBS target
   ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml

@@ -39,8 +39,14 @@ spec:
               curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
               echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                 > /etc/apt/sources.list.d/pbs-client.list
+              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+                -o /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+              . /etc/os-release
+              echo "deb http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+                > /etc/apt/sources.list.d/postgresql.list
               apt-get update -qq
-              apt-get install -y -qq --no-install-recommends proxmox-backup-client postgresql-client >/dev/null
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client \
+                "postgresql-client-${PG_CLIENT_VERSION}" >/dev/null
 {% if _litellm_r_mode == 'plan' %}
               echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
               proxmox-backup-client snapshot list "host/${BACKUP_ID}" || proxmox-backup-client snapshot list
@@ -89,6 +95,8 @@ spec:
               value: "{{ _litellm_r_target_name }}"
             - name: PGUSER
               value: "{{ _litellm_r_target_user }}"
+            - name: PG_CLIENT_VERSION
+              value: "{{ restore_target_config.app.database.version | int }}"
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef: { name: {{ _litellm_r_secret }}, key: db-password }
