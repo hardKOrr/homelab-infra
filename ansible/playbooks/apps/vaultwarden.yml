@@ -87,7 +87,7 @@
 
     - name: Select the retained LXC when the instance tag was withdrawn
       ansible.builtin.set_fact:
-        _existing_hosts: "{{ _retained_lxc_hosts | default([]) }}"
+        _existing_hosts: "{{ retained_lxc_hosts | default([]) }}"
       when: _existing_hosts | length == 0
       changed_when: false
 

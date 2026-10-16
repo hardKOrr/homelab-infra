@@ -70,7 +70,7 @@ def check_contract_and_dispatch():
     assert retained["ansible.builtin.include_tasks"] == "../../tasks/proxmox/resolve-retained-lxc.yml"
     assert retained["when"] == "_existing_hosts | length == 0"
     select_retained = task_named(deploy_tasks, "Select the retained LXC when the instance tag was withdrawn")
-    assert select_retained["ansible.builtin.set_fact"]["_existing_hosts"] == "{{ _retained_lxc_hosts | default([]) }}"
+    assert select_retained["ansible.builtin.set_fact"]["_existing_hosts"] == "{{ retained_lxc_hosts | default([]) }}"
     assert select_retained["when"] == "_existing_hosts | length == 0"
     provision = task_named(deploy_tasks, "Provision new LXC")
     assert provision["when"] == "_existing_hosts | length == 0"
