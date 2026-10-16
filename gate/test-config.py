@@ -1078,6 +1078,41 @@ def doctor_and_secret_shape():
             "multi-estate map must declare exactly one default: true"
             in result.stdout + result.stderr
         )
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory)
+        (target / "proxmox.yml").write_text(
+            (fixtures / "multi-estate/proxmox.yml").read_text()
+        )
+        infra = yaml.safe_load(
+            (fixtures / "multi-estate/infrastructure.yml").read_text()
+        )
+        infra["domains"]["personal"]["legacy_instances"] = ["authentik", "radarr-2"]
+        (target / "infrastructure.yml").write_text(yaml.safe_dump(infra))
+        apps = target / "apps"
+        apps.mkdir()
+        (apps / "authentik.yml").write_text("{}\n")
+        (apps / "radarr-2.yml").write_text("{}\n")
+        result = doctor(target)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        (apps / "radarr-2.yml").unlink()
+        result = doctor(target)
+        assert result.returncode != 0, "a stale legacy instance declaration was accepted"
+        assert "config/apps/radarr-2.yml does not exist" in result.stdout + result.stderr
+
+        (apps / "radarr-2.yml").write_text("{}\n")
+        (apps / "authentik.yml").write_text("routing:\n  estate: foxglove\n")
+        result = doctor(target)
+        assert result.returncode != 0, "a legacy default name was allowed on another estate"
+        assert "must be named authentik-foxglove" in result.stdout + result.stderr
+
+        infra["domains"]["personal"].pop("legacy_instances")
+        infra["domains"]["foxglove"]["legacy_instances"] = ["authentik"]
+        (target / "infrastructure.yml").write_text(yaml.safe_dump(infra))
+        (apps / "authentik.yml").write_text("{}\n")
+        result = doctor(target)
+        assert result.returncode != 0, "a non-default estate was allowed legacy instances"
+        assert "only to the default estate" in result.stdout + result.stderr
     for document, code in (
         (
             {

@@ -280,6 +280,7 @@ else:
 INFRA_FILE = os.path.join(CONFIG_DIR, "infrastructure.yml")
 infra, found = load(INFRA_FILE)
 default_estate = ""
+legacy_instance_names = []
 if not found:
     report("ERROR", "infrastructure.yml", "-",
            "does not exist at %s -- bootstrap-rundeck.sh writes it; "
@@ -363,6 +364,45 @@ else:
                         require_identity=True,
                     )
 
+                legacy_instances = (
+                    estate.get("legacy_instances", [])
+                    if isinstance(estate, dict) else []
+                )
+                if isinstance(estate, dict) and "legacy_instances" in estate:
+                    key = "domains.%s.legacy_instances" % name
+                    if name != default_estate:
+                        report("ERROR", "infrastructure.yml", key,
+                               "legacy instances may be assigned only to the default estate")
+                    if len(domains) < 2:
+                        report("ERROR", "infrastructure.yml", key,
+                               "only valid when the lab declares multiple estates")
+                    if not isinstance(legacy_instances, list):
+                        report("ERROR", "infrastructure.yml", key,
+                               "must be a list of exact existing config/apps instance names")
+                    else:
+                        invalid_names = [
+                            instance for instance in legacy_instances
+                            if not isinstance(instance, str)
+                            or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", instance)
+                        ]
+                        if invalid_names:
+                            report("ERROR", "infrastructure.yml", key,
+                                   "entries must use lowercase letters, digits and hyphens")
+                        duplicates = sorted({
+                            instance for instance in legacy_instances
+                            if isinstance(instance, str)
+                            and legacy_instances.count(instance) > 1
+                        })
+                        if duplicates:
+                            report("ERROR", "infrastructure.yml", key,
+                                   "duplicate instance name(s): %s"
+                                   % ", ".join(duplicates))
+                        if name == default_estate:
+                            legacy_instance_names.extend(
+                                instance for instance in legacy_instances
+                                if isinstance(instance, str)
+                            )
+
     provider = enum(infra, "infrastructure.yml", "reverse_proxy.provider",
                     ["caddy", "nginx", "none"])
     if provider and provider != "none":
@@ -431,6 +471,7 @@ IDENTITY_MODES = ["none", "catalog", "oidc", "forward_auth"]
 MAPPING_KEYS = ["proxmox", "app", "routing", "update", "resources", "network", "firewall"]
 
 app_files = sorted(glob.glob(os.path.join(CONFIG_DIR, "apps", "*.yml")))
+seen_app_instances = set()
 estate_names = set((infra.get("domains") or {}).keys()) if isinstance(infra, dict) else set()
 catalog, catalog_found = load(os.path.join(REPO_ROOT, "catalog", "applications.yml"))
 catalog_apps = catalog.get("applications", {}) if catalog_found else {}
@@ -442,6 +483,7 @@ estate_scoped_slugs = sorted(
 for path in app_files:
     where = "apps/" + os.path.basename(path)
     instance = os.path.basename(path)[:-4]
+    seen_app_instances.add(instance)
     data, _ = load(path)
     if not isinstance(data, dict):
         continue
@@ -491,15 +533,43 @@ for path in app_files:
             routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
             selected_estate = routing.get("estate") or default_estate
             expected = "%s-%s" % (owner, selected_estate)
-            if instance != expected and not instance.startswith(expected + "-"):
+            is_legacy_default = (
+                instance in legacy_instance_names
+                and selected_estate == default_estate
+            )
+            if (instance != expected and not instance.startswith(expected + "-")
+                    and not is_legacy_default):
                 report("ERROR", where, "-",
-                       "multi-estate instance for estate %s must be named %s[-<variant>]"
+                       "multi-estate instance for estate %s must be named %s[-<variant>] "
+                       "or be an explicitly listed legacy default-estate instance"
                        % (selected_estate, expected))
 
     if instance != instance.strip() or "/" in instance or " " in instance:
         report("ERROR", where, "-",
                "the filename is the instance name and becomes a hostname -- "
                "use lowercase letters, digits and hyphens only")
+
+for instance in legacy_instance_names:
+    key = "domains.%s.legacy_instances" % default_estate
+    owner = max(
+        (slug for slug in estate_scoped_slugs
+         if instance == slug or instance.startswith(slug + "-")),
+        key=len,
+        default=None,
+    )
+    if owner is None:
+        report("ERROR", "infrastructure.yml", key,
+               "%s does not name an estate-scoped application instance" % instance)
+        continue
+    canonical_prefixes = ["%s-%s" % (owner, estate) for estate in estate_names]
+    if any(instance == prefix or instance.startswith(prefix + "-")
+           for prefix in canonical_prefixes):
+        report("ERROR", "infrastructure.yml", key,
+               "%s already uses a canonical estate name; remove it from the legacy list"
+               % instance)
+    if instance not in seen_app_instances:
+        report("ERROR", "infrastructure.yml", key,
+               "config/apps/%s.yml does not exist" % instance)
 
 
 # ── Report ────────────────────────────────────────────────────────────────────
