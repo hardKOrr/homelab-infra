@@ -222,7 +222,7 @@
   ansible.builtin.assert:
     that:
       - not _vw_restore_target_data.stat.exists or _vw_restore_target_data.stat.isdir
-      - not _vw_restore_target_data.stat.islnk
+      - not (_vw_restore_target_data.stat.islnk | default(false))
     fail_msg: >-
       Vaultwarden restore target {{ _vw_restore_data_path }} is not a real directory.
   when: restore_overwrite | bool
@@ -401,12 +401,18 @@
       ansible.builtin.set_fact:
         _vw_restore_rollback_complete: true
 
+    - name: Vaultwarden restore | Restart the service after a successful rollback
+      ansible.builtin.systemd_service:
+        name: "{{ _vw_restore_service_name }}"
+        state: started
+      when: _vw_restore_rollback_complete | bool
+
     - name: Vaultwarden restore | Report the failed restore
       ansible.builtin.fail:
         msg: >-
-          Vaultwarden restore failed. The service remains stopped and the original data
-          was restored or left in place. If rollback itself failed, inspect the retained
-          directory beside {{ _vw_restore_data_path }} before retrying.
+          Vaultwarden restore failed. Rollback completed and the service was restarted.
+          If rollback itself failed, inspect the retained directory beside
+          {{ _vw_restore_data_path }} before retrying.
   always:
     - name: Vaultwarden restore | Remove rollback data after success or rollback
       ansible.builtin.file:

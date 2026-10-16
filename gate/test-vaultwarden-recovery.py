@@ -155,6 +155,10 @@ def check_restore_transaction():
     rescue_names = [task.get("name") for task in replace["rescue"]]
     assert rescue_names.index("Vaultwarden restore | Remove the failed replacement data") < rescue_names.index(
         "Vaultwarden restore | Put the original data back")
+    restart = task_named(replace["rescue"], "Vaultwarden restore | Restart the service after a successful rollback")
+    assert restart["ansible.builtin.systemd_service"]["state"] == "started"
+    assert "_vw_restore_rollback_complete" in str(restart["when"])
+    assert rescue_names.index(restart["name"]) < rescue_names.index("Vaultwarden restore | Report the failed restore")
     assert rescue_names[-1] == "Vaultwarden restore | Report the failed restore"
     cleanup = task_named(replace["always"], "Vaultwarden restore | Remove rollback data after success or rollback")
     assert "_vw_restore_old_data_moved" in str(cleanup["when"])
@@ -228,14 +232,16 @@ def check_restore_runtime(case, server):
         root = Path(directory)
         (root / "bin").mkdir()
         data = root / "data"
-        data.mkdir(mode=0o750)
-        (data / "db.sqlite3").write_bytes(b"original database\n")
-        (data / "config.json").write_text('{"signups_allowed":false}\n', encoding="utf-8")
-        before_inode = data.stat().st_ino
-        before = {
+        has_original = case != "no-original-health-failure"
+        if has_original:
+            data.mkdir(mode=0o750)
+            (data / "db.sqlite3").write_bytes(b"original database\n")
+            (data / "config.json").write_text('{"signups_allowed":false}\n', encoding="utf-8")
+        before_inode = data.stat().st_ino if has_original else None
+        before = ({
             path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mode)
             for path in data.iterdir() if path.is_file()
-        }
+        } if has_original else {})
         scripts = {
             "proxmox-backup-client": """#!/usr/bin/env python3
 import json, os, sys
@@ -278,7 +284,7 @@ raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
 
         snapshot = ("host/foreign/2026-10-09T00:00:00Z" if case == "foreign-group"
                     else "host/vaultwarden-family/2026-10-09T00:00:00Z")
-        server.response_status = 503 if case == "health-failure" else 200
+        server.response_status = 503 if "health-failure" in case else 200
         play = {
             "hosts": "localhost",
             "gather_facts": False,
@@ -316,16 +322,19 @@ raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
         )
         succeeds = case in ["plan", "success"]
         assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
-        assert data.exists()
-        after = {
+        after = ({
             path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mode)
             for path in data.iterdir() if path.is_file()
-        }
+        } if data.exists() else {})
         if case == "success":
+            assert data.exists()
             assert (data / "db.sqlite3").read_bytes() == b"restored database\n"
             assert before != after
             assert not (root / "services").read_text().endswith("stopped\n")
+        elif case == "no-original-health-failure":
+            assert not data.exists(), "rollback must not leave the failed replacement behind"
         else:
+            assert data.exists()
             assert data.stat().st_ino == before_inode, "rollback must move the original directory back"
             assert after == before, "a failed or read-only restore must preserve the original data"
         assert not list(root.glob(".vaultwarden-pre-restore-*")), result.stdout + result.stderr
@@ -333,9 +342,10 @@ raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
         if case in ["plan", "foreign-group"]:
             assert not (root / "services").exists(), "read-only/rejected restore stopped the service"
         else:
+            assert (root / "services").exists(), f"{case} did not record a service transition: {result.stdout}{result.stderr}"
             states = (root / "services").read_text(encoding="utf-8").splitlines()
             assert states[0] == "stopped"
-            assert states[-1] == ("started" if succeeds else "stopped")
+            assert states[-1] == "started", "a completed rollback must restart the original service state"
         if case == "foreign-group":
             assert "must belong to" in result.stdout
 
@@ -349,7 +359,7 @@ def main():
     thread.start()
     try:
         for case in ["plan", "foreign-group", "extract-failure", "ownership-failure",
-                     "health-failure", "success"]:
+                     "health-failure", "no-original-health-failure", "success"]:
             check_restore_runtime(case, server)
     finally:
         server.shutdown()
