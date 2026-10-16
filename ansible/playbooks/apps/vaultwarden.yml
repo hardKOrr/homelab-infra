@@ -76,6 +76,21 @@
       ansible.builtin.set_fact:
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
+    # Remove withdraws the instance tag but retains the owned guest. Reuse only one
+    # exact, unclaimed lab LXC with this hostname; ambiguous or shared identities fail
+    # before the creation path, whose own collision guard remains authoritative.
+    - name: Resolve an exact retained Vaultwarden LXC after Remove
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-retained-lxc.yml
+      vars:
+        retained_lxc_name: "{{ instance }}"
+      when: _existing_hosts | length == 0
+
+    - name: Select the retained LXC when the instance tag was withdrawn
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ _retained_lxc_hosts | default([]) }}"
+      when: _existing_hosts | length == 0
+      changed_when: false
+
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"

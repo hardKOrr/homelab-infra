@@ -66,6 +66,18 @@ def check_contract_and_dispatch():
 
     deploy = read_yaml(ROOT / "ansible/playbooks/apps/vaultwarden.yml")
     deploy_tasks = list(tasks_recursive(deploy))
+    retained = task_named(deploy_tasks, "Resolve an exact retained Vaultwarden LXC after Remove")
+    assert retained["ansible.builtin.include_tasks"] == "../../tasks/proxmox/resolve-retained-lxc.yml"
+    assert retained["when"] == "_existing_hosts | length == 0"
+    select_retained = task_named(deploy_tasks, "Select the retained LXC when the instance tag was withdrawn")
+    assert select_retained["ansible.builtin.set_fact"]["_existing_hosts"] == "{{ _retained_lxc_hosts | default([]) }}"
+    assert select_retained["when"] == "_existing_hosts | length == 0"
+    provision = task_named(deploy_tasks, "Provision new LXC")
+    assert provision["when"] == "_existing_hosts | length == 0"
+    create_guard = read_yaml(ROOT / "ansible/tasks/proxmox/lxc-create.yml")
+    identity_guard = task_named(create_guard, "Refuse existing identity at the LXC creation seam")
+    identity_checks = str(identity_guard["ansible.builtin.assert"]["that"])
+    assert "proxmox_vmid" in identity_checks and "proxmox_hostname" in identity_checks
     second_play = deploy[1]
     resolver = task_named(tasks_recursive(second_play), "Resolve the estate domain for this Vaultwarden instance")
     assert resolver["ansible.builtin.import_tasks"] == "../../tasks/resolve-estate.yml"
@@ -102,6 +114,65 @@ def check_contract_and_dispatch():
     repository = task_named(pbs_tasks, "Vaultwarden PBS client | Configure the signed client repository")
     assert "{{ ansible_distribution_release }}" in repository["ansible.builtin.copy"]["content"]
     assert "{{ _vaultwarden_pbs_keyring }}" in repository["ansible.builtin.copy"]["content"]
+
+
+def check_retained_lxc_resolution():
+    resolver = ROOT / "ansible/tasks/proxmox/resolve-retained-lxc.yml"
+
+    def guest(name, vmtype="lxc", tags=None):
+        return {
+            "proxmox_name": "vaultwarden-family",
+            "proxmox_vmtype": vmtype,
+            "proxmox_vmid": 402,
+            "proxmox_node": "pve-a",
+            "proxmox_tags_parsed": tags if tags is not None else ["_+lab", "_-debian"],
+        }
+
+    def run_case(guests, expected=None, failure=None):
+        with tempfile.TemporaryDirectory(prefix="homelab-vaultwarden-retained.") as directory:
+            root = Path(directory)
+            inventory = {
+                "all": {
+                    "vars": {"homelabinfra_proxmox_inventory_complete": True},
+                    "hosts": {"localhost": {"ansible_connection": "local"}},
+                    "children": {"lab_managed": {"hosts": guests}},
+                }
+            }
+            inventory_path = root / "inventory.yml"
+            inventory_path.write_text(yaml.safe_dump(inventory), encoding="utf-8")
+            playbook = root / "resolve.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {"retained_lxc_name": "vaultwarden-family"},
+                "tasks": [
+                    {"ansible.builtin.include_tasks": str(resolver)},
+                    {"ansible.builtin.assert": {"that": [
+                        f"retained_lxc_hosts == {expected!r}",
+                    ]}},
+                ],
+            }]), encoding="utf-8")
+            result = subprocess.run(
+                [str(ANSIBLE_PLAYBOOK), "-i", str(inventory_path), str(playbook)],
+                env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
+                text=True, capture_output=True, check=False,
+            )
+            output = result.stdout + result.stderr
+            if failure is not None:
+                assert result.returncode != 0 and failure in output, output
+            else:
+                assert result.returncode == 0, output
+
+    run_case({"retained-family": guest("retained-family")}, ["retained-family"])
+    run_case({"different-name": {**guest("different-name"), "proxmox_name": "vaultwarden-other"}}, [])
+    run_case({
+        "retained-one": guest("retained-one"),
+        "retained-two": guest("retained-two"),
+    }, failure="Multiple lab-owned guests have the exact retained identity")
+    run_case({"retained-qemu": guest("retained-qemu", vmtype="qemu")},
+             failure="Refusing reuse.")
+    run_case({"retained-claimed": guest("retained-claimed", tags=["_+lab", "_-debian", "_another-app"])},
+             failure="Refusing reuse.")
 
 
 def check_backup_role():
@@ -352,6 +423,7 @@ raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
 
 def main():
     check_contract_and_dispatch()
+    check_retained_lxc_resolution()
     check_backup_role()
     check_restore_transaction()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), VaultwardenHealth)
