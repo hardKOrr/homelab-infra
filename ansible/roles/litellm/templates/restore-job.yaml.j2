@@ -36,8 +36,8 @@ spec:
               # Never set -x: PBS_PASSWORD and PGPASSWORD are secrets.
               apt-get update -qq
               # PBS creates each archive target directory; pre-creating it makes restore fail.
-              # Archives are unpacked into disposable scratch, where only file contents are used.
-              install -d -m 0755 /etc/apt/keyrings
+              # Keep PBS temporary files on pod scratch and its cache off the container overlay.
+              install -d -m 0755 /etc/apt/keyrings /restore/tmp
               curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
               echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                 > /etc/apt/sources.list.d/pbs-client.list
@@ -108,10 +108,18 @@ spec:
                 secretKeyRef: { name: {{ _litellm_r_secret }}, key: db-password }
             - name: TARGET_DATABASE_NAME
               value: "{{ _litellm_r_target_name }}"
+            - name: TMPDIR
+              value: /restore/tmp
           volumeMounts:
             - name: restore
               mountPath: /restore
+            - name: pbs-cache
+              mountPath: /root/.cache
       volumes:
         - name: restore
           emptyDir:
             sizeLimit: {{ app_config.backup.scratch_size | int }}Gi
+        - name: pbs-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

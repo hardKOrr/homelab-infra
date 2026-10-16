@@ -1052,6 +1052,9 @@ def litellm_recovery_jobs_use_the_database_client_major():
     assert "install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config" not in restore
     for option in ("--ignore-acls true", "--ignore-xattrs true", "--ignore-ownership true", "--ignore-permissions true"):
         assert restore.count(option) == 2, f"LiteLLM restore must ignore scratch metadata: {option}"
+    assert "mountPath: /root/.cache" in restore
+    assert "medium: Memory" in restore
+    assert 'name: TMPDIR\n              value: /restore/tmp' in restore
     restore_tasks = yaml.safe_load(read("ansible/roles/litellm/tasks/restore.yml"))
     contract = task_named(restore_tasks, "Restore | Require matching PostgreSQL state contracts")
     assert any(
