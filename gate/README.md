@@ -48,7 +48,7 @@ templates.
 - `test-sabnzbd-restore.py`: authenticated recovery, read-only preview, group guard and rollback after extraction, move, copy, ownership, start, health or credential publication failures.
 - `test-bazarr-restore.py`: authenticated recovery, read-only preview, group guard and rollback after copy, ownership, start, health or credential publication failures.
 - `test-deemix-restore.py`: read-only preview, group guard and rollback after extraction, move, copy, ownership, start or health failures.
-- `test-recovery-dispatch.py`: backup and restore inputs remain available to the Docker dispatch play.
+- `test-recovery-dispatch.py`: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-guest-placement.py`: database pinning, ordered floating node selection, class storage and placement refusal paths.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.

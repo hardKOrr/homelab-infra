@@ -1034,6 +1034,49 @@ def backup_prune_keeps_the_previous_point():
                 assert "--keep-last 2 --keep-daily" in line, f"{script} prunes without --keep-last 2"
 
 
+def litellm_recovery_jobs_use_the_database_client_major():
+    templates = (
+        "ansible/roles/litellm/templates/backup-cronjob.yaml.j2",
+        "ansible/roles/litellm/templates/restore-job.yaml.j2",
+    )
+    for path in templates:
+        template = read(path)
+        assert "https://www.postgresql.org/media/keys/ACCC4CF8.asc" in template, path
+        assert "${VERSION_CODENAME}-pgdg main" in template, path
+        assert '"postgresql-client-${PG_CLIENT_VERSION}"' in template, path
+        assert "name: PG_CLIENT_VERSION" in template, path
+    backup = read(templates[0])
+    restore = read(templates[1])
+    assert 'value: "{{ app_config.app.database.version | int }}"' in backup
+    assert 'value: "{{ restore_target_config.app.database.version | int }}"' in restore
+    assert "install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config" not in restore
+    for option in ("--ignore-acls true", "--ignore-xattrs true", "--ignore-ownership true", "--ignore-permissions true"):
+        assert restore.count(option) == 2, f"LiteLLM restore must ignore scratch metadata: {option}"
+    assert "mountPath: /root/.cache" in restore
+    assert "medium: Memory" in restore
+    assert 'name: TMPDIR\n              value: /restore/tmp' in restore
+    restore_tasks = yaml.safe_load(read("ansible/roles/litellm/tasks/restore.yml"))
+    contract = task_named(restore_tasks, "Restore | Require matching PostgreSQL state contracts")
+    assert any(
+        "app_config.app.database.version" in expression
+        and "restore_target_config.app.database.version" in expression
+        for expression in contract["ansible.builtin.assert"]["that"]
+    )
+    replace = task_named(restore_tasks, "Restore | Replace LiteLLM state from PBS")
+    extract_config = task_named(
+        replace["block"], "Restore | Extract the archived routing ConfigMap"
+    )
+    extract_expression = extract_config["ansible.builtin.set_fact"][
+        "_litellm_restored_config_b64"
+    ]
+    assert render(
+        extract_expression, {"k8s_job_log": "ROUTING_CONFIG_B64=YWJj\n"}
+    ) == "YWJj"
+    assert render(
+        extract_expression, {"k8s_job_log": "database restore complete\n"}
+    ) == ""
+
+
 def plane_environment_context(plane_fqdn):
     return {
         "ansible_managed": "Managed by gate test",
@@ -1312,4 +1355,5 @@ if __name__ == "__main__":
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
     backup_prune_keeps_the_previous_point()
-    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags passed and backup pruning passed")
+    litellm_recovery_jobs_use_the_database_client_major()
+    print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags, backup pruning and LiteLLM recovery clients passed")

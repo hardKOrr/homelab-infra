@@ -238,6 +238,10 @@ def main():
         task for task in unwire_play["pre_tasks"]
         if task.get("name") == "Resolve Odoo's named database removal inputs"
     )
+    litellm_db_inputs = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Resolve LiteLLM's named database removal inputs"
+    )
     identity_facts = removal_identity["ansible.builtin.set_fact"]
     assert identity_facts["_rm_app_name"] == "{{ app | default(instance) }}"
     add_host = next(
@@ -251,17 +255,41 @@ def main():
     # values after crossing that boundary, so a Karakeep removal cannot inherit a
     # stack-host app name and named-database apps keep their explicit DB target.
     removal_plays = []
-    for app_name in ("karakeep", "plane", "odoo"):
+    for app_name in ("karakeep", "plane", "odoo", "litellm"):
         expected_database_config = (
             {"provider": "postgresql", "instance": "dbtest",
              "name": "drill_test", "role": "drill_test"}
-            if app_name in ("plane", "odoo") else {}
+            if app_name in ("plane", "odoo", "litellm") else {}
         )
         expected_database_backend = (
             {"provider": "postgresql", "host": "127.0.0.1", "port": 5432}
-            if app_name in ("plane", "odoo") else {}
+            if app_name in ("plane", "odoo", "litellm") else {}
         )
         host = f"remove_test_{app_name}"
+        identity_assertions = [
+            f"hostvars['localhost']._rm_app_name == {json.dumps(app_name)}",
+        ]
+        if app_name == "karakeep":
+            identity_assertions.extend([
+                "hostvars['localhost']._rm_plane_database_config | default({}) == {}",
+                "hostvars['localhost']._rm_plane_database_backend | default({}) == {}",
+                "hostvars['localhost']._rm_odoo_database_config | default({}) == {}",
+                "hostvars['localhost']._rm_odoo_database_backend | default({}) == {}",
+            ])
+        elif app_name in ("plane", "odoo"):
+            identity_assertions.extend([
+                f"hostvars['localhost']._rm_plane_database_config | default({{}}) == {json.dumps(expected_database_config)}",
+                f"hostvars['localhost']._rm_plane_database_backend | default({{}}) == {json.dumps(expected_database_backend)}",
+                f"hostvars['localhost']._rm_odoo_database_config | default({{}}) == {json.dumps(expected_database_config if app_name == 'odoo' else {})}",
+                f"hostvars['localhost']._rm_odoo_database_backend | default({{}}) == {json.dumps(expected_database_backend if app_name == 'odoo' else {})}",
+            ])
+        elif app_name == "litellm":
+            identity_assertions.extend([
+                f"hostvars['localhost']._rm_litellm_database_config == {json.dumps(expected_database_config)}",
+                f"hostvars['localhost']._rm_litellm_database_backend == {json.dumps(expected_database_backend)}",
+                "hostvars['localhost']._rm_litellm_database_credentials == {'database_provider': 'postgresql', 'database_host': '127.0.0.1', 'database_name': 'drill_test', 'database_user': 'drill_test'}",
+                "'litellm_database_removal_target' in groups['litellm_database_removal_targets']",
+            ])
         removal_plays.extend([
             {
                 "name": "Resolve and register removal identity",
@@ -282,10 +310,25 @@ def main():
                         "host": "127.0.0.1",
                         "port": 5432,
                     }}},
+                    "homelabinfra_vault": {"apps": {"litellm": {
+                        "database_provider": "postgresql",
+                        "database_host": "127.0.0.1",
+                        "database_name": "drill_test",
+                        "database_user": "drill_test",
+                    }}},
                 },
                 "tasks": [
                     plane_db_inputs,
                     odoo_db_inputs,
+                    litellm_db_inputs,
+                    next(task for task in unwire_play["pre_tasks"]
+                         if task.get("name") == "Validate LiteLLM's named database removal inputs"),
+                    next(task for task in unwire_play["pre_tasks"]
+                         if task.get("name") == "Check LiteLLM's database and role are not shared by another app"),
+                    next(task for task in unwire_play["pre_tasks"]
+                         if task.get("name") == "Refuse to remove a shared LiteLLM database or role"),
+                    next(task for task in unwire_play["pre_tasks"]
+                         if task.get("name") == "Add LiteLLM's named database backend to the removal inventory"),
                     removal_identity,
                     {"ansible.builtin.add_host": {
                         "name": host,
@@ -298,11 +341,7 @@ def main():
                 "hosts": f"remove_test_group_{app_name}",
                 "gather_facts": False,
                 "tasks": [{"ansible.builtin.assert": {"that": [
-                    f"hostvars['localhost']._rm_app_name == {json.dumps(app_name)}",
-                    f"hostvars['localhost']._rm_plane_database_config | default({{}}) == {json.dumps(expected_database_config)}",
-                    f"hostvars['localhost']._rm_plane_database_backend | default({{}}) == {json.dumps(expected_database_backend)}",
-                    f"hostvars['localhost']._rm_odoo_database_config | default({{}}) == {json.dumps(expected_database_config if app_name == 'odoo' else {})}",
-                    f"hostvars['localhost']._rm_odoo_database_backend | default({{}}) == {json.dumps(expected_database_backend if app_name == 'odoo' else {})}",
+                    *identity_assertions,
                 ]}}],
             },
         ])
@@ -384,6 +423,82 @@ def main():
     assert odoo_db_target["ansible.builtin.add_host"]["groups"] == "odoo_database_removal_targets"
     assert odoo_db_target["no_log"] is True
 
+    litellm_db_validate = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Validate LiteLLM's named database removal inputs"
+    )
+    litellm_requirements = litellm_db_validate["ansible.builtin.assert"]["that"]
+    assert any("database_backend.provider" in item and "postgresql" in item for item in litellm_requirements)
+    assert any("database_backend.host" in item for item in litellm_requirements)
+    assert any("database_credentials.database_host" in item for item in litellm_requirements)
+    assert any("database_credentials.database_name" in item for item in litellm_requirements)
+    assert any("database_credentials.database_user" in item for item in litellm_requirements)
+    assert litellm_db_validate["no_log"] is True
+    litellm_db_sharing = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Check LiteLLM's database and role are not shared by another app"
+    )
+    assert "_rm_litellm_shared_database_consumers" in litellm_db_sharing["ansible.builtin.set_fact"]
+    assert "_rm_litellm_shared_role_consumers" in litellm_db_sharing["ansible.builtin.set_fact"]
+    assert "rejectattr('key', 'equalto', instance)" in str(litellm_db_sharing["ansible.builtin.set_fact"])
+    assert litellm_db_sharing["no_log"] is True
+    litellm_db_target = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Add LiteLLM's named database backend to the removal inventory"
+    )
+    assert litellm_db_target["ansible.builtin.add_host"]["name"] == "litellm_database_removal_target"
+    assert litellm_db_target["ansible.builtin.add_host"]["groups"] == "litellm_database_removal_targets"
+    assert litellm_db_target["no_log"] is True
+    litellm_inventory_refresh = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Refresh inventory before checking LiteLLM's database guest ownership"
+    )
+    assert litellm_inventory_refresh["ansible.builtin.meta"] == "refresh_inventory"
+    assert "delete_data | default(false) | bool" in litellm_inventory_refresh["when"]
+    litellm_guest_group = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Resolve LiteLLM's PostgreSQL guest ownership group"
+    )
+    assert litellm_guest_group["ansible.builtin.include_tasks"] == "../../tasks/proxmox/tag-group.yml"
+    assert litellm_guest_group["vars"]["tag_group_tag"] == "_{{ _rm_litellm_database_config.instance }}"
+    litellm_guest_guard = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Require LiteLLM's PostgreSQL backend to be one owned guest"
+    )
+    assert any("^lab_app_" in item for item in litellm_guest_guard["ansible.builtin.assert"]["that"])
+    assert any("groups[_rm_litellm_database_guest_group]" in item
+               for item in litellm_guest_guard["ansible.builtin.assert"]["that"])
+    assert litellm_guest_guard["no_log"] is True
+    litellm_guest_address = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Require LiteLLM's PostgreSQL backend address to match its owned guest"
+    )
+    assert "ansible_host" in litellm_guest_address["ansible.builtin.assert"]["that"][0]
+    assert "_rm_litellm_database_backend.host" in litellm_guest_address["ansible.builtin.assert"]["that"][0]
+    assert litellm_guest_address["no_log"] is True
+    litellm_owner = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Read the owner of LiteLLM's named PostgreSQL database"
+    )
+    assert "pg_get_userbyid" in litellm_owner["ansible.builtin.command"]["argv"][-1]
+    assert litellm_owner["delegate_to"] == "litellm_database_removal_target"
+    assert litellm_owner["no_log"] is True
+    litellm_owner_guard = next(
+        task for task in remove_pretasks
+        if task.get("name") == "Refuse to remove LiteLLM's database with an unexpected owner"
+    )
+    assert "_rm_litellm_database_config.role" in str(litellm_owner_guard["ansible.builtin.assert"]["that"])
+    assert litellm_owner_guard["no_log"] is True
+    assert (remove_pretasks.index(litellm_db_inputs)
+            < remove_pretasks.index(litellm_db_validate)
+            < remove_pretasks.index(litellm_db_sharing)
+            < remove_pretasks.index(litellm_inventory_refresh)
+            < remove_pretasks.index(litellm_guest_group)
+            < remove_pretasks.index(litellm_guest_guard)
+            < remove_pretasks.index(litellm_guest_address)
+            < remove_pretasks.index(litellm_db_target)
+            < remove_pretasks.index(litellm_owner_guard))
+
     plane_db_remove = next(
         task for task in remove_playbook[1]["tasks"]
         if task.get("name") == "Remove Plane's named database and role"
@@ -446,6 +561,38 @@ def main():
     assert "DROP ROLE {{ hostvars['localhost']._rm_odoo_database_config.role }}" in odoo_drop_role[
         "ansible.builtin.command"]["argv"][-1]
     assert odoo_drop_role["no_log"] is True
+
+    k8s_remove_index = next(
+        i for i, task in enumerate(unwire_play["tasks"])
+        if task.get("name") == "Remove the app's Kubernetes resources"
+    )
+    litellm_db_remove = next(
+        task for task in unwire_play["tasks"]
+        if task.get("name") == "Remove LiteLLM's named PostgreSQL database and role"
+    )
+    assert litellm_db_remove["when"] == [
+        "_rm_kind == 'kubernetes'",
+        "(app | default(instance)) == 'litellm'",
+        "delete_data | default(false) | bool",
+    ]
+    assert unwire_play["tasks"].index(litellm_db_remove) > k8s_remove_index
+    litellm_db_tasks = litellm_db_remove["block"]
+    litellm_drop_database = next(
+        task for task in litellm_db_tasks
+        if task.get("name") == "Drop LiteLLM's named PostgreSQL database"
+    )
+    assert "DROP DATABASE {{ hostvars['localhost']._rm_litellm_database_config.name }}" in litellm_drop_database[
+        "ansible.builtin.command"]["argv"][-1]
+    assert litellm_drop_database["delegate_to"] == "litellm_database_removal_target"
+    assert litellm_drop_database["no_log"] is True
+    litellm_drop_role = next(
+        task for task in litellm_db_tasks
+        if task.get("name") == "Drop LiteLLM's named PostgreSQL role"
+    )
+    assert "DROP ROLE {{ hostvars['localhost']._rm_litellm_database_config.role }}" in litellm_drop_role[
+        "ansible.builtin.command"]["argv"][-1]
+    assert litellm_drop_role["delegate_to"] == "litellm_database_removal_target"
+    assert litellm_drop_role["no_log"] is True
     print("Recovery: backup/restore dispatch and named database removal safety passed")
 
 

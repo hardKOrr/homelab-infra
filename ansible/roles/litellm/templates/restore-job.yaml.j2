@@ -35,12 +35,20 @@ spec:
               export DEBIAN_FRONTEND=noninteractive
               # Never set -x: PBS_PASSWORD and PGPASSWORD are secrets.
               apt-get update -qq
-              install -d -m 0755 /etc/apt/keyrings /restore/database /restore/config
+              # PBS creates each archive target directory; pre-creating it makes restore fail.
+              # Keep PBS temporary files on pod scratch and its cache off the container overlay.
+              install -d -m 0755 /etc/apt/keyrings /restore/tmp
               curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
               echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                 > /etc/apt/sources.list.d/pbs-client.list
+              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+                -o /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+              . /etc/os-release
+              echo "deb http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+                > /etc/apt/sources.list.d/postgresql.list
               apt-get update -qq
-              apt-get install -y -qq --no-install-recommends proxmox-backup-client postgresql-client >/dev/null
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client \
+                "postgresql-client-${PG_CLIENT_VERSION}" >/dev/null
 {% if _litellm_r_mode == 'plan' %}
               echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
               proxmox-backup-client snapshot list "host/${BACKUP_ID}" || proxmox-backup-client snapshot list
@@ -54,8 +62,12 @@ spec:
               fi
 {% else %}
               echo "=== restoring ${SNAPSHOT} ==="
-              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database
-              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /restore/config
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database \
+                --ignore-acls true --ignore-xattrs true \
+                --ignore-ownership true --ignore-permissions true
+              proxmox-backup-client restore "${SNAPSHOT}" config.pxar /restore/config \
+                --ignore-acls true --ignore-xattrs true \
+                --ignore-ownership true --ignore-permissions true
               pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
                 --dbname="postgresql://${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}" \
                 /restore/database/litellm.dump
@@ -89,15 +101,25 @@ spec:
               value: "{{ _litellm_r_target_name }}"
             - name: PGUSER
               value: "{{ _litellm_r_target_user }}"
+            - name: PG_CLIENT_VERSION
+              value: "{{ restore_target_config.app.database.version | int }}"
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef: { name: {{ _litellm_r_secret }}, key: db-password }
             - name: TARGET_DATABASE_NAME
               value: "{{ _litellm_r_target_name }}"
+            - name: TMPDIR
+              value: /restore/tmp
           volumeMounts:
             - name: restore
               mountPath: /restore
+            - name: pbs-cache
+              mountPath: /root/.cache
       volumes:
         - name: restore
           emptyDir:
             sizeLimit: {{ app_config.backup.scratch_size | int }}Gi
+        - name: pbs-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
