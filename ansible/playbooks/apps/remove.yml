@@ -494,6 +494,173 @@
         - (app | default(instance)) == 'mautic'
         - delete_data | default(false) | bool
 
+    # LiteLLM's virtual keys and usage live in its named PostgreSQL database. Resolve the
+    # exact registered backend and validate its canonical Vaultwarden connection and
+    # tagged guest before Remove unwires the route or deletes the Kubernetes namespace.
+    - name: Resolve LiteLLM's named database removal inputs
+      ansible.builtin.set_fact:
+        _rm_litellm_database_config: "{{ app_config.app.database | default({}) }}"
+        _rm_litellm_database_backend: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.database.instance | default(''), {}) }}
+        _rm_litellm_database_credentials: >-
+          {{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Validate LiteLLM's named database removal inputs
+      ansible.builtin.assert:
+        that:
+          - _rm_litellm_database_config.provider | default('') == 'postgresql'
+          - _rm_litellm_database_config.instance | default('') | length > 0
+          - _rm_litellm_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_litellm_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_litellm_database_backend.provider | default('') == 'postgresql'
+          - _rm_litellm_database_backend.host | default('') | length > 0
+          - _rm_litellm_database_backend.port | default(0) | int > 0
+          - _rm_litellm_database_credentials.database_provider | default('') == 'postgresql'
+          - _rm_litellm_database_credentials.database_host | default('') == _rm_litellm_database_backend.host
+          - _rm_litellm_database_credentials.database_name | default('') == _rm_litellm_database_config.name
+          - _rm_litellm_database_credentials.database_user | default('') == _rm_litellm_database_config.role
+        fail_msg: >-
+          Refusing to remove LiteLLM data because its named PostgreSQL database, backend
+          or canonical Vaultwarden connection is not registered and consistent.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Check LiteLLM's database and role are not shared by another app
+      ansible.builtin.set_fact:
+        _rm_litellm_shared_database_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_litellm_database_backend.host)
+             | selectattr('value.database_name', 'defined')
+             | selectattr('value.database_name', 'equalto', _rm_litellm_database_config.name)
+             | list }}
+        _rm_litellm_shared_role_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_litellm_database_backend.host)
+             | selectattr('value.database_user', 'defined')
+             | selectattr('value.database_user', 'equalto', _rm_litellm_database_config.role)
+             | list }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove a shared LiteLLM database or role
+      ansible.builtin.assert:
+        that:
+          - _rm_litellm_shared_database_consumers | length == 0
+          - _rm_litellm_shared_role_consumers | length == 0
+        fail_msg: >-
+          Refusing to remove LiteLLM's named database or role because another canonical
+          app item references it.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Refresh inventory before checking LiteLLM's database guest ownership
+      ansible.builtin.meta: refresh_inventory
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Resolve LiteLLM's PostgreSQL guest ownership group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ _rm_litellm_database_config.instance }}"
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Record LiteLLM's PostgreSQL guest ownership group
+      ansible.builtin.set_fact:
+        _rm_litellm_database_guest_group: "{{ tag_group_name }}"
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Require LiteLLM's PostgreSQL backend to be one owned guest
+      ansible.builtin.assert:
+        that:
+          - _rm_litellm_database_guest_group is match('^lab_app_')
+          - groups[_rm_litellm_database_guest_group] | default([]) | length == 1
+        fail_msg: >-
+          Refusing to remove LiteLLM data because its registered PostgreSQL backend does
+          not resolve to one tagged, homelab-infra-owned guest.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Require LiteLLM's PostgreSQL backend address to match its owned guest
+      ansible.builtin.assert:
+        that:
+          - hostvars[groups[_rm_litellm_database_guest_group][0]].ansible_host | default('') == _rm_litellm_database_backend.host
+        fail_msg: >-
+          Refusing to remove LiteLLM data because its registered PostgreSQL address does
+          not match its tagged guest.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Add LiteLLM's named database backend to the removal inventory
+      ansible.builtin.add_host:
+        name: litellm_database_removal_target
+        ansible_host: "{{ _rm_litellm_database_backend.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: litellm_database_removal_targets
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Read the owner of LiteLLM's named PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - psql
+          - --tuples-only
+          - --no-align
+          - --username=postgres
+          - --dbname=postgres
+          - "--port={{ _rm_litellm_database_backend.port }}"
+          - >-
+            --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
+            FROM pg_database WHERE datname = '{{ _rm_litellm_database_config.name }}'), 'missing')
+      delegate_to: litellm_database_removal_target
+      become: true
+      become_user: postgres
+      register: _rm_litellm_database_owner
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove LiteLLM's database with an unexpected owner
+      ansible.builtin.assert:
+        that:
+          - _rm_litellm_database_owner.stdout | trim in ['missing', _rm_litellm_database_config.role]
+        fail_msg: >-
+          Refusing to remove LiteLLM's named database because its owner is unexpected.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+
     - name: Resolve estate scope
       ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
       vars:
@@ -685,6 +852,77 @@
       vars:
         unwire_delete_data: "{{ delete_data | default(false) | bool }}"
       when: _rm_kind == 'kubernetes'
+
+    # The namespace removal stops LiteLLM before its external state is dropped. Keep the
+    # PostgreSQL guest and only remove this app's validated, unshared database and role.
+    - name: Remove LiteLLM's named PostgreSQL database and role
+      when:
+        - _rm_kind == 'kubernetes'
+        - (app | default(instance)) == 'litellm'
+        - delete_data | default(false) | bool
+      block:
+        - name: Revalidate LiteLLM's database target before deletion
+          ansible.builtin.assert:
+            that:
+              - "'litellm_database_removal_target' in groups['litellm_database_removal_targets'] | default([])"
+              - hostvars['localhost']._rm_litellm_database_config.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_litellm_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_litellm_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_litellm_database_backend.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_litellm_database_backend.port | default(0) | int > 0
+            fail_msg: "Refusing to delete LiteLLM data without its validated PostgreSQL target."
+          no_log: true
+
+        - name: Drop LiteLLM's named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_litellm_database_backend.port }}"
+              - "--command=DROP DATABASE {{ hostvars['localhost']._rm_litellm_database_config.name }}"
+          delegate_to: litellm_database_removal_target
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: hostvars['localhost']._rm_litellm_database_owner.stdout | trim != 'missing'
+
+        - name: Read whether LiteLLM's named PostgreSQL role exists
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_litellm_database_backend.port }}"
+              - >-
+                --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = '{{ hostvars['localhost']._rm_litellm_database_config.role }}') THEN 'present' ELSE 'missing' END
+          delegate_to: litellm_database_removal_target
+          become: true
+          become_user: postgres
+          register: _rm_litellm_database_role
+          changed_when: false
+          no_log: true
+
+        - name: Drop LiteLLM's named PostgreSQL role
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_litellm_database_backend.port }}"
+              - "--command=DROP ROLE {{ hostvars['localhost']._rm_litellm_database_config.role }}"
+          delegate_to: litellm_database_removal_target
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_litellm_database_role.stdout | trim == 'present'
 
     # DEGRADATION BY DESIGN — and in fact not a degradation at all: a host that is not
     # there is the success case for a removal. The guest may already be gone, or never
