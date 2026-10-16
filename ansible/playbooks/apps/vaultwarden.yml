@@ -76,6 +76,21 @@
       ansible.builtin.set_fact:
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
+    # Remove withdraws the instance tag but retains the owned guest. Reuse only one
+    # exact, unclaimed lab LXC with this hostname; ambiguous or shared identities fail
+    # before the creation path, whose own collision guard remains authoritative.
+    - name: Resolve an exact retained Vaultwarden LXC after Remove
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-retained-lxc.yml
+      vars:
+        retained_lxc_name: "{{ instance }}"
+      when: _existing_hosts | length == 0
+
+    - name: Select the retained LXC when the instance tag was withdrawn
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ retained_lxc_hosts | default([]) }}"
+      when: _existing_hosts | length == 0
+      changed_when: false
+
     - name: Add existing instance host to deploy group
       ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"
@@ -182,6 +197,11 @@
         name: homelabinfra_infra
       failed_when: false
 
+    - name: Resolve the estate domain for this Vaultwarden instance
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
   tasks:
     # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
@@ -230,6 +250,9 @@
         generated_facts_data:
           host: "http://{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
           port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port | int }}"
+      # The canonical `vaultwarden` fact is the platform credential server. Additional
+      # instances wire from their own deploy group but must never replace that root entry.
+      when: instance == 'vaultwarden'
 
     # Belt-and-braces only. The key just written is already in the live
     # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there

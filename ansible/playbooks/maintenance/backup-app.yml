@@ -13,8 +13,9 @@
 #
 # For Kubernetes it runs the CronJob the deploy already installed, with
 # `kubectl create job --from=cronjob/…`, so the on-demand backup and the scheduled one are
-# byte-for-byte the same pod template. An explicitly selected Docker application instead
-# dispatches to its role-owned recovery task. Two copies of a backup definition is how the
+# byte-for-byte the same pod template. An explicitly selected Docker or native-LXC
+# application instead dispatches to its role-owned recovery task. Two copies of a backup
+# definition is how the
 # tested one and the nightly one quietly stop matching, and the difference is discovered on
 # the night the wrong one runs.
 #
@@ -108,17 +109,17 @@
           - >-
             (_ba_kind == 'kubernetes' and app_config.backup.enabled | default(false) | bool)
             or
-            (_ba_kind == 'docker'
+            (_ba_kind in ['docker', 'native']
              and app_config.backup.enabled | default(false) | bool
              and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
           {{ instance }} has no application backup to run. Kubernetes apps use their
-          declared backup CronJob; a Docker app must explicitly own an
+          declared backup CronJob; a Docker or native-LXC app must explicitly own an
           application-consistent backup task.
 
-    - name: Resolve the Docker application target
+    - name: Resolve the Docker or native-LXC application target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
-      when: _ba_kind == 'docker'
+      when: _ba_kind in ['docker', 'native']
 
   tasks:
     - name: Resolve the cluster and its API host
@@ -210,15 +211,15 @@
       vars:
         degradation_scope: "the {{ instance }} backup"
 
-- name: "Backup App | Run the Docker application backup"
+- name: "Backup App | Run the application-owned backup"
   hosts: "apptarget_{{ instance | default('_instance_unset') }}"
   become: true
   gather_facts: false
   tasks:
-    # A dispatched Docker recovery task must set this generic completion fact only after
+    # A dispatched application recovery task must set this generic completion fact only after
     # its archive is complete. Keeping the contract generic prevents a future role from
     # silently skipping the notification and degradation gate.
-    - name: Run the application-owned Docker backup
+    - name: Run the application-owned backup
       ansible.builtin.include_role:
         name: "{{ hostvars['localhost'].recovery_capability.role | default(hostvars['localhost']._ba_app) }}"
         tasks_from: backup
@@ -226,9 +227,9 @@
         app_config: "{{ hostvars['localhost'].app_config }}"
         homelabinfra_infra: "{{ hostvars['localhost'].homelabinfra_infra }}"
         homelabinfra_vault: "{{ hostvars['localhost'].homelabinfra_vault }}"
-      when: app_target_kind | default('native') == 'docker'
+      when: app_target_kind | default('native') in ['docker', 'native']
 
-    - name: Notify Docker backup
+    - name: Notify application backup
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
         notify_title: "{{ app_target_instance }} backed up"
@@ -237,7 +238,7 @@
           pushed to the lab's PBS datastore. Restore it with the Restore App job.
       when: _application_backup_complete | default(false) | bool
 
-    - name: Fail if Docker backup degraded
+    - name: Fail if application backup degraded
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ app_target_instance }} backup"

@@ -100,6 +100,13 @@ backups, vaultwarden) are global: one instance serves every estate. The default 
 (and every lab without a `domains:` map) reads and writes only the top-level keys —
 unchanged behavior.
 
+When a single-estate lab adds a second estate, existing estate-scoped instance filenames
+can remain unchanged if their exact names are listed in the default estate's optional
+`legacy_instances` list. Those names stay assigned to the default estate; every new
+estate-scoped instance must use `<app>-<estate>[-<variant>]`. The list is validated against
+the catalog and existing `config/apps/<instance>.yml` files so it cannot silently assign a
+lab-scoped app, a missing file, or a non-default instance.
+
 Provider-specific optional fields are written by the application that deploys the provider
 and read only by that provider's wiring tasks:
 

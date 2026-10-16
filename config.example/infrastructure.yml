@@ -34,6 +34,8 @@ domain: "homelab.example.com"
 #   personal:
 #     domain: "homelab.example.com"
 #     default: true                # required when two or more estates exist
+#     legacy_instances:             # optional exact old filenames kept on the default estate
+#       - authentik                 # remove entries when those instances are retired
 #   foxglove:
 #     domain: "second-domain.example.com"
 #     network: "foxglove"          # optional — which network (and therefore which VLAN)

@@ -26,8 +26,9 @@ there cannot be one: nothing deploys the runner from the runner. So it is skippe
 rather than reported as an instance file matching no application.
 
 MULTI-ESTATE IDENTITY. Applications whose catalog scope is `estate` default to
-`<app>-<default-estate>` once infrastructure.yml declares two or more estates. Every such
-instance is named `<app>-<estate>[-<variant>]`; there is no unnamed primary estate.
+`<app>-<default-estate>` once infrastructure.yml declares two or more estates. New
+instances are named `<app>-<estate>[-<variant>]`; exact pre-existing names can be retained
+on the default estate only when listed under its `legacy_instances` declaration.
 
 Usage:
     app-instances.py --repo /path/to/checkout --out /var/lib/rundeck/app-instances
@@ -59,7 +60,7 @@ def load_applications(catalog: Path) -> dict[str, dict]:
 
 def load_estates(infrastructure: Path) -> dict:
     if not infrastructure.is_file():
-        return {"names": [], "default": "", "multiple": False}
+        return {"names": [], "default": "", "multiple": False, "legacy_instances": []}
     with infrastructure.open(encoding="utf-8") as handle:
         document = yaml.safe_load(handle) or {}
     domains = document.get("domains") or {}
@@ -75,7 +76,17 @@ def load_estates(infrastructure: Path) -> dict:
             f"{infrastructure}: estate names must use lowercase letters, digits and hyphens"
         )
     if len(names) < 2:
-        return {"names": names, "default": names[0] if names else "", "multiple": False}
+        estate = domains.get(names[0]) if names else None
+        if isinstance(estate, dict) and estate.get("legacy_instances"):
+            raise ValueError(
+                f"{infrastructure}: legacy_instances requires a multi-estate domains map"
+            )
+        return {
+            "names": names,
+            "default": names[0] if names else "",
+            "multiple": False,
+            "legacy_instances": [],
+        }
     defaults = [
         name for name, value in domains.items()
         if isinstance(value, dict) and value.get("default") is True
@@ -84,7 +95,23 @@ def load_estates(infrastructure: Path) -> dict:
         raise ValueError(
             f"{infrastructure}: a multi-estate domains map must declare exactly one default: true"
         )
-    return {"names": names, "default": defaults[0], "multiple": True}
+    legacy_instances = domains[defaults[0]].get("legacy_instances", [])
+    if not isinstance(legacy_instances, list) or any(
+        not isinstance(instance, str)
+        or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", instance)
+        for instance in legacy_instances
+    ):
+        raise ValueError(
+            f"{infrastructure}: default estate legacy_instances must be a list of instance names"
+        )
+    if len(legacy_instances) != len(set(legacy_instances)):
+        raise ValueError(f"{infrastructure}: legacy_instances entries must be unique")
+    return {
+        "names": names,
+        "default": defaults[0],
+        "multiple": True,
+        "legacy_instances": legacy_instances,
+    }
 
 
 def owning_slug(instance: str, slugs: list[str]) -> str | None:
@@ -136,7 +163,12 @@ def collect(repo: Path, applications: dict[str, dict], estates: dict) \
                 )
                 continue
             prefix = f"{slug}-{selected}"
-            if instance != prefix and not instance.startswith(f"{prefix}-"):
+            is_legacy_default = (
+                instance in estates.get("legacy_instances", [])
+                and selected == estates["default"]
+            )
+            if (instance != prefix and not instance.startswith(f"{prefix}-")
+                    and not is_legacy_default):
                 noncanonical.append(
                     f"config/apps/{instance}.yml belongs to estate {selected}; new names use "
                     f"{prefix}[-<variant>]"

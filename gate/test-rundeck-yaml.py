@@ -211,6 +211,12 @@ def check_jobs_and_instances(work):
     applications = app_instances.load_applications(
         repo / "catalog" / "applications.yml"
     )
+    estate_infrastructure = yaml.safe_load((work / "infrastructure.yml").read_text())
+    estate_infrastructure["domains"]["personal"]["legacy_instances"] = [
+        "radarr",
+        "radarr-2",
+    ]
+    (work / "infrastructure.yml").write_text(yaml.safe_dump(estate_infrastructure))
     estates = app_instances.load_estates(work / "infrastructure.yml")
     fixture = work / "fixture"
     (fixture / "config" / "apps").mkdir(parents=True)
@@ -220,6 +226,8 @@ def check_jobs_and_instances(work):
     (fixture / "config" / "apps" / "radarr-foxglove-4k.yml").write_text(
         "routing:\n  estate: foxglove\n", encoding="utf-8"
     )
+    (fixture / "config" / "apps" / "radarr.yml").write_text("{}\n", encoding="utf-8")
+    (fixture / "config" / "apps" / "radarr-2.yml").write_text("{}\n", encoding="utf-8")
     instances, unmatched, invalid = app_instances.collect(
         fixture, applications, estates
     )
@@ -227,15 +235,19 @@ def check_jobs_and_instances(work):
     assert {entry["value"] for entry in instances["radarr"]} == {
         "radarr-personal",
         "radarr-foxglove-4k",
+        "radarr",
+        "radarr-2",
     }, "{entry['value'] for entry in instances['radarr']} == {'radarr-personal', 'radarr-foxglove-4k'}"
     assert {entry["name"] for entry in instances["radarr"]} == {
         "radarr-personal — personal",
         "radarr-foxglove-4k — foxglove",
-    }, "{entry['name'] for entry in instances['radarr']} == {'radarr-personal — personal', 'radarr-foxglove-4k — foxglove'}"
-    (fixture / "config" / "apps" / "radarr.yml").write_text("{}\n", encoding="utf-8")
+        "radarr — personal",
+        "radarr-2 — personal",
+    }, "estate labels include canonical and declared legacy instance names"
+    (fixture / "config" / "apps" / "radarr-legacy.yml").write_text("{}\n", encoding="utf-8")
     _, _, invalid = app_instances.collect(fixture, applications, estates)
     assert (
-        invalid and "radarr-personal" in invalid[0]
+        invalid and "radarr-legacy" in invalid[0]
     ), "invalid and 'radarr-personal' in invalid[0]"
     error_target = work / "instances" / "radarr.json"
     error_output = io.StringIO()

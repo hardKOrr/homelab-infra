@@ -1029,9 +1029,42 @@ def backup_prune_keeps_the_previous_point():
                if path.is_file() and "--keep-daily" in path.read_text(errors="ignore")]
     assert len(scripts) > len(templates), scripts
     for script in scripts:
-        for line in script.read_text().splitlines():
+        contents = script.read_text()
+        command_argvs = []
+        if script.suffix in {".yml", ".yaml"}:
+            document = yaml.safe_load(contents)
+
+            def collect_argvs(value):
+                if isinstance(value, dict):
+                    for key in ("ansible.builtin.command", "command"):
+                        command = value.get(key)
+                        if isinstance(command, dict) and isinstance(command.get("argv"), list):
+                            command_argvs.append(command["argv"])
+                    for child in value.values():
+                        collect_argvs(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        collect_argvs(child)
+
+            collect_argvs(document)
+
+        has_prune_argv = any("prune" in [str(token) for token in argv] for argv in command_argvs)
+        for line in contents.splitlines():
             if "--keep-daily" in line and not line.lstrip().startswith("#"):
+                if has_prune_argv and script.suffix in {".yml", ".yaml"}:
+                    continue
                 assert "--keep-last 2 --keep-daily" in line, f"{script} prunes without --keep-last 2"
+
+        for argv in command_argvs:
+            tokens = [str(token) for token in argv]
+            if "prune" not in tokens:
+                continue
+            prune_options = tokens[tokens.index("prune") + 1:]
+            keep_last = prune_options.index("--keep-last") if "--keep-last" in prune_options else -1
+            keep_daily = prune_options.index("--keep-daily") if "--keep-daily" in prune_options else -1
+            assert keep_last >= 0 and keep_daily > keep_last + 1 and prune_options[keep_last + 1] == "2", (
+                f"{script} prunes without --keep-last 2 before --keep-daily"
+            )
 
 
 def litellm_recovery_jobs_use_the_database_client_major():
