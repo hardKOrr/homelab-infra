@@ -296,6 +296,19 @@ def check_backup_and_restore_contract():
     assert "is match('^authentik(?:-|$)')" in str(unwire["when"]), (
         "removing an Authentik instance must not query or mutate another SSO provider")
 
+    target = read_yaml(ROOT / "ansible/tasks/maintenance/resolve-app-target.yml")
+    target_tasks = list(tasks_recursive(target))
+    stack_target = task_named(target_tasks, "Resolve app target | Resolve the estate-scoped stack host")
+    assert stack_target["ansible.builtin.include_tasks"] == "../stack/resolve-existing-host.yml"
+    stack_vars = stack_target["vars"]
+    assert stack_vars["stack_name"] == "{{ _rat_stack }}"
+    assert "routing" in stack_vars["stack_estate"] and "estate" in stack_vars["stack_estate"]
+    assert stack_vars["resolve_stack_app_instance"] == "{{ _rat_instance }}"
+    selected_stack = task_named(target_tasks, "Resolve app target | Select the Docker stack target host")
+    assert selected_stack["ansible.builtin.set_fact"]["_rat_host"] == "{{ resolve_stack_host }}"
+    selected_vm = task_named(target_tasks, "Resolve app target | Select the Docker-on-VM target host")
+    assert "groups[tag_group_name]" in selected_vm["ansible.builtin.set_fact"]["_rat_host"]
+
 
 def check_transactional_restore_fixtures():
     restore_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
@@ -372,7 +385,7 @@ def main():
     check_backup_and_restore_contract()
     check_backup_restarts_the_instance()
     check_transactional_restore_fixtures()
-    print("Authentik native recovery: contract, secret continuity and transactional restore passed.")
+    print("Authentik native recovery: contract, estate-scoped target, secret continuity and transactional restore passed.")
 
 
 if __name__ == "__main__":

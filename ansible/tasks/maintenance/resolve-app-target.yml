@@ -22,7 +22,7 @@
 #
 # Outputs, on localhost:
 #   _rat_kind         native | docker
-#   _rat_stack        the stack tag for a Docker app, else ''
+#   _rat_stack        the logical stack for a Docker app, else ''
 #   _rat_host         the inventory host the action must run on
 #   group apptarget_<instance>, holding that one host, with these facts attached:
 #     app_target_kind, app_target_stack, app_target_instance, app_target_project_dir
@@ -87,18 +87,17 @@
 - name: Resolve app target | Refresh inventory to get current Proxmox state
   ansible.builtin.meta: refresh_inventory
 
-# Resolved by the APPLICATION tag, not by the stack tag. `_<instance>` means "the logical
-# hosting unit this guest belongs to hosts that instance", which is exactly the question a
-# day-2 action is asking — and it answers it without re-deriving which estate's stack host
-# the deploy chose. A stack tag lookup would have to repeat that arithmetic here, in a third
-# place, and get it identical.
-# A Docker app with a stack is hosted by the stack tag. Docker on VM has no shared
-# stack: its own VM carries the application tag, just like a native app's guest. Both
-# paths still resolve to one target host and keep the action role backend as `docker`.
-- name: Resolve app target | Resolve the stack host inventory group
-  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+# A Docker stack identity includes its estate when the lab declares multiple estates.
+# Reuse the deploy/remove resolver so a day-2 action selects the same host that owns this
+# instance, even when another estate has a stack with the same logical name.
+- name: Resolve app target | Resolve the estate-scoped stack host
+  ansible.builtin.include_tasks: ../stack/resolve-existing-host.yml
   vars:
-    tag_group_tag: "_.stack+{{ _rat_stack }}"
+    stack_name: "{{ _rat_stack }}"
+    stack_estate: >-
+      {{ (_rat_instance_config | default({})).get('routing', {}).get('estate', '') }}
+    resolve_stack_deploy_group: "app_target_stack_{{ _rat_instance }}"
+    resolve_stack_app_instance: "{{ _rat_instance }}"
   when:
     - _rat_kind == 'docker'
     - _rat_stack | length > 0
@@ -111,10 +110,19 @@
     - _rat_kind == 'docker'
     - _rat_stack | length == 0
 
-- name: Resolve app target | Select the Docker target host
+- name: Resolve app target | Select the Docker stack target host
+  ansible.builtin.set_fact:
+    _rat_host: "{{ resolve_stack_host }}"
+  when:
+    - _rat_kind == 'docker'
+    - _rat_stack | length > 0
+
+- name: Resolve app target | Select the Docker-on-VM target host
   ansible.builtin.set_fact:
     _rat_host: "{{ (groups[tag_group_name] | default([])) | first | default('') }}"
-  when: _rat_kind == 'docker'
+  when:
+    - _rat_kind == 'docker'
+    - _rat_stack | length == 0
 
 - name: Resolve app target | A native app owns the guest that carries its name
   ansible.builtin.set_fact:
