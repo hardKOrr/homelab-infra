@@ -86,6 +86,23 @@ def check_contract_and_dispatch():
     assert registry_module.prune(registry, "vaultwarden-family") == {
         "vaultwarden": {"host": "http://root-vault.invalid", "port": 80}}
 
+    pbs_client = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/install-pbs-client.yml")
+    pbs_tasks = list(tasks_recursive(pbs_client))
+    supported = task_named(pbs_tasks, "Vaultwarden PBS client | Require a supported Debian release")
+    assert supported["ansible.builtin.assert"]["that"] == [
+        "ansible_distribution == 'Debian'",
+        "ansible_distribution_release in ['bookworm', 'trixie']",
+    ]
+    bookworm_key = task_named(pbs_tasks, "Vaultwarden PBS client | Select the Debian Bookworm signing key")
+    assert bookworm_key["ansible.builtin.set_fact"]["_vaultwarden_pbs_keyring"].endswith(
+        "proxmox-release-bookworm.gpg")
+    trixie_key = task_named(pbs_tasks, "Vaultwarden PBS client | Select the Debian Trixie signing key")
+    assert trixie_key["ansible.builtin.set_fact"]["_vaultwarden_pbs_key_url"].endswith(
+        "proxmox-archive-keyring-trixie.gpg")
+    repository = task_named(pbs_tasks, "Vaultwarden PBS client | Configure the signed client repository")
+    assert "{{ ansible_distribution_release }}" in repository["ansible.builtin.copy"]["content"]
+    assert "{{ _vaultwarden_pbs_keyring }}" in repository["ansible.builtin.copy"]["content"]
+
 
 def check_backup_role():
     tasks = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/backup.yml")

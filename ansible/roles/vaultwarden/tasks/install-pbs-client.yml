@@ -2,10 +2,31 @@
 # Native LXC recovery runs proxmox-backup-client on the application guest. The
 # repository is signed with Proxmox's published release key; credentials are supplied
 # only to the client process by the backup and restore tasks.
+- name: Vaultwarden PBS client | Require a supported Debian release
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - ansible_distribution_release in ['bookworm', 'trixie']
+    fail_msg: >-
+      Vaultwarden's PBS client repository supports Debian Bookworm and Trixie guests;
+      this guest reports {{ ansible_distribution }} {{ ansible_distribution_release }}.
+
+- name: Vaultwarden PBS client | Select the Debian Bookworm signing key
+  ansible.builtin.set_fact:
+    _vaultwarden_pbs_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+    _vaultwarden_pbs_keyring: /usr/share/keyrings/proxmox-release-bookworm.gpg
+  when: ansible_distribution_release == 'bookworm'
+
+- name: Vaultwarden PBS client | Select the Debian Trixie signing key
+  ansible.builtin.set_fact:
+    _vaultwarden_pbs_key_url: "https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg"
+    _vaultwarden_pbs_keyring: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  when: ansible_distribution_release == 'trixie'
+
 - name: Vaultwarden PBS client | Install the Proxmox repository key
   ansible.builtin.get_url:
-    url: "{{ app_config.backup.client.key_url }}"
-    dest: "/usr/share/keyrings/proxmox-release-{{ app_config.backup.client.suite }}.gpg"
+    url: "{{ _vaultwarden_pbs_key_url }}"
+    dest: "{{ _vaultwarden_pbs_keyring }}"
     owner: root
     group: root
     mode: "0644"
@@ -17,6 +38,6 @@
     group: root
     mode: "0644"
     content: >-
-      deb [signed-by=/usr/share/keyrings/proxmox-release-{{ app_config.backup.client.suite }}.gpg]
-      {{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }}
+      deb [signed-by={{ _vaultwarden_pbs_keyring }}]
+      {{ app_config.backup.client.repository }} {{ ansible_distribution_release }}
       {{ app_config.backup.client.component }}
