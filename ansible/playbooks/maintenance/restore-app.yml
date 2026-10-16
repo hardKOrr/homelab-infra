@@ -94,9 +94,8 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Only apps whose role ships a `restore.yml` can be restored this way. Kubernetes roles
-# use their namespaced restore job; application-consistent Docker roles such as Actual Budget,
-# ComfyUI, Home Assistant, Immich, Navidrome, n8n, Odoo and Ollama own their recovery mechanism. Native
-# apps and Docker apps without one remain on whole-guest PBS recovery.
+# use their namespaced restore job; application-consistent Docker and native-LXC roles own
+# their recovery mechanism. Apps without one remain on whole-guest PBS recovery.
 
 # Immich's Docker restore replaces its named PostgreSQL database and explicitly attached
 # durable originals/thumbnails from one application-consistent PBS snapshot. Plan mode lists
@@ -456,12 +455,12 @@
           - >-
             (_ra_kind == 'kubernetes' and app_config.backup is defined)
             or
-            (_ra_kind == 'docker'
+            (_ra_kind in ['docker', 'native']
              and app_config.backup.enabled | default(false) | bool
              and app_config.backup.application_consistent | default(false) | bool)
         fail_msg: >-
           {{ _ra_app }} has no declared application restore path. Kubernetes roles use their
-          backup contract; a declared Docker native/project-managed role owns its
+          backup contract; a declared Docker or native-LXC role owns its
           application-consistent archive and restore tasks. Other applications remain on
           whole-guest PBS recovery.
 
@@ -615,22 +614,22 @@
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
 
-    - name: Resolve the Docker target
+    - name: Resolve the Docker or native-LXC target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
         app: "{{ _ra_app }}"
         resolve_app_target_instance: "{{ _ra_target }}"
       when:
-        - _ra_kind == 'docker'
+        - _ra_kind in ['docker', 'native']
         - recovery_destination_resolved == 'existing'
 
-    - name: Resolve the newly provisioned Docker target
+    - name: Resolve the newly provisioned Docker or native-LXC target
       ansible.builtin.include_tasks: ../../tasks/maintenance/resolve-app-target.yml
       vars:
         app: "{{ _ra_app }}"
         resolve_app_target_instance: "{{ _ra_target }}"
       when:
-        - _ra_kind == 'docker'
+        - _ra_kind in ['docker', 'native']
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool
 
@@ -689,15 +688,15 @@
         degradation_scope: "the {{ _ra_target }} restore"
       when: _ra_kind == 'kubernetes'
 
-- name: "Restore App | Restore Docker application data from PBS"
+- name: "Restore App | Restore Docker or native-LXC application data from PBS"
   hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"
   become: true
   gather_facts: false
   tasks:
-    # A dispatched Docker recovery task must set this generic completion fact only after
+    # A dispatched application recovery task must set this generic completion fact only after
     # its restore and health check are complete; the notification and degradation gate
-    # below must not silently skip a future Docker role.
-    - name: Restore the application-owned Docker archive
+    # below must not silently skip a future native-LXC or Docker role.
+    - name: Restore the application-owned archive
       ansible.builtin.include_role:
         name: "{{ hostvars['localhost'].recovery_capability.role | default(hostvars['localhost']._ra_app) }}"
         tasks_from: "{{ hostvars['localhost'].recovery_capability.restore_role_task | default('restore') }}"
@@ -758,9 +757,9 @@
         restore_pre_restore_point: "{{ hostvars['localhost']._ra_pre_restore_point }}"
         restore_overwrite: "{{ hostvars['localhost']._ra_overwrite }}"
         restore_backup_id: "{{ hostvars['localhost']._ra_backup_id }}"
-      when: app_target_kind | default('native') == 'docker'
+      when: app_target_kind | default('native') in ['docker', 'native']
 
-    - name: Notify Docker restore
+    - name: Notify application restore
       ansible.builtin.include_tasks: ../../tasks/notify.yml
       vars:
         notify_title: "{{ app_target_instance }} restored from backup"
@@ -771,7 +770,7 @@
           directory was replaced. Verify the application before trusting it.
       when: _application_restore_complete | default(false) | bool
 
-    - name: Fail if Docker restore degraded
+    - name: Fail if application restore degraded
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
         degradation_scope: "the {{ app_target_instance }} restore"

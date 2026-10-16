@@ -1,0 +1,22 @@
+---
+# Native LXC recovery runs proxmox-backup-client on the application guest. The
+# repository is signed with Proxmox's published release key; credentials are supplied
+# only to the client process by the backup and restore tasks.
+- name: Vaultwarden PBS client | Install the Proxmox repository key
+  ansible.builtin.get_url:
+    url: "{{ app_config.backup.client.key_url }}"
+    dest: "/usr/share/keyrings/proxmox-release-{{ app_config.backup.client.suite }}.gpg"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Vaultwarden PBS client | Configure the signed client repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: >-
+      deb [signed-by=/usr/share/keyrings/proxmox-release-{{ app_config.backup.client.suite }}.gpg]
+      {{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }}
+      {{ app_config.backup.client.component }}

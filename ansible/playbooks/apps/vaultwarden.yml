@@ -182,6 +182,11 @@
         name: homelabinfra_infra
       failed_when: false
 
+    - name: Resolve the estate domain for this Vaultwarden instance
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
+
   tasks:
     # ── Guest Bootstrap (runs once — skipped if already bootstrapped) ──────────
     - name: Bootstrap guest
@@ -230,6 +235,9 @@
         generated_facts_data:
           host: "http://{{ hostvars[groups['deploy_' ~ instance][0]].ansible_host }}"
           port: "{{ hostvars[groups['deploy_' ~ instance][0]].app_config.app.port | int }}"
+      # The canonical `vaultwarden` fact is the platform credential server. Additional
+      # instances wire from their own deploy group but must never replace that root entry.
+      when: instance == 'vaultwarden'
 
     # Belt-and-braces only. The key just written is already in the live
     # homelabinfra_infra — tasks/bootstrap/write-generated-facts.yml merges it there

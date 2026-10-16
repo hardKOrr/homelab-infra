@@ -16,7 +16,7 @@ ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 def check(playbook, task_name, inputs, expected):
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance" / playbook).read_text())[0]
     publish = next(task for task in source["pre_tasks"] if task["name"] == task_name)
-    # Play two deliberately receives none of play one's vars. This is the Docker
+    # Play two deliberately receives none of play one's vars. This is the app recovery
     # dispatch boundary that syntax checks and single-play templating cannot exercise.
     plays = [
         {"name": "Resolve recovery inputs", "hosts": "localhost", "gather_facts": False,
@@ -128,7 +128,7 @@ def main():
     # target must receive its own config path, while an authored custom path survives.
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
     dispatch = next(play for play in source if play["name"] ==
-                    "Restore App | Restore Docker application data from PBS")["tasks"][0]
+                    "Restore App | Restore Docker or native-LXC application data from PBS")["tasks"][0]
     for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "prowlarr", "sonarr", "radarr", "lidarr"]:
         for config_path, expected_path in [(f"/opt/{app}/config", f"/opt/{app}-copy/config"),
                                            ("/srv/custom/config", "/srv/custom/config")]:
