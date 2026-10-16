@@ -208,7 +208,7 @@
     - name: Restore | Extract the archived routing ConfigMap
       ansible.builtin.set_fact:
         _litellm_restored_config_b64: >-
-          {{ k8s_job_log | regex_search('ROUTING_CONFIG_B64=([A-Za-z0-9+/=]+)', '\\1')
+          {{ k8s_job_log | regex_findall('ROUTING_CONFIG_B64=([A-Za-z0-9+/=]+)')
              | first | default('') }}
 
     - name: Restore | Require archived routing configuration

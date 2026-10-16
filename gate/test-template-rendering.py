@@ -1062,6 +1062,19 @@ def litellm_recovery_jobs_use_the_database_client_major():
         and "restore_target_config.app.database.version" in expression
         for expression in contract["ansible.builtin.assert"]["that"]
     )
+    replace = task_named(restore_tasks, "Restore | Replace LiteLLM state from PBS")
+    extract_config = task_named(
+        replace["block"], "Restore | Extract the archived routing ConfigMap"
+    )
+    extract_expression = extract_config["ansible.builtin.set_fact"][
+        "_litellm_restored_config_b64"
+    ]
+    assert render(
+        extract_expression, {"k8s_job_log": "ROUTING_CONFIG_B64=YWJj\n"}
+    ) == "YWJj"
+    assert render(
+        extract_expression, {"k8s_job_log": "database restore complete\n"}
+    ) == ""
 
 
 def plane_environment_context(plane_fqdn):
