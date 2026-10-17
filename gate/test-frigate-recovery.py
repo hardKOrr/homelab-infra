@@ -286,13 +286,17 @@ if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': 
             assert not (root / "services").exists(), "read-only/rejected restore stopped service"
         else:
             states = (root / "services").read_text().splitlines()
-            assert states[0] == "stopped"
             pre_move_failure = case in [
                 "extract-failure", "archive-missing-config", "archive-missing-db",
                 "integrity-failure", "move-failure",
             ]
-            expected_final_state = "present" if success or pre_move_failure else "stopped"
-            assert states[-1] == expected_final_state, states
+            if success or pre_move_failure:
+                expected_states = ["stopped", "present"]
+            elif case in ["start-failure", "health-failure"]:
+                expected_states = ["stopped", "present", "stopped"]
+            else:
+                expected_states = ["stopped", "stopped"]
+            assert states == expected_states, states
         if case == "foreign-group":
             assert "must belong to host/frigate/" in result.stdout
 
