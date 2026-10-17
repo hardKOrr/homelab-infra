@@ -83,12 +83,21 @@
     BACKUP_ID: "{{ _navidrome_restore_backup_id }}"
   no_log: true
 
-- name: Navidrome restore | Report the read-only plan
+- name: Navidrome restore | Report the selected recovery point in plan mode
+  ansible.builtin.debug:
+    msg: "No data was changed. Selected recovery point: {{ restore_snapshot }}"
+  when:
+    - not (restore_overwrite | bool)
+    - restore_snapshot | default('', true) | length > 0
+
+- name: Navidrome restore | Report available recovery points in plan mode
   ansible.builtin.debug:
     msg: >-
       No data was changed. PBS snapshots for host/{{ _navidrome_restore_backup_id }}:
-      {{ _navidrome_restore_snapshots.stdout | default('provide snapshot=<id> to select one') }}
-  when: not (restore_overwrite | bool)
+      {{ _navidrome_restore_snapshots.stdout | default('No snapshots were found.', true) }}
+  when:
+    - not (restore_overwrite | bool)
+    - restore_snapshot | default('', true) | length == 0
 
 - name: Navidrome restore | Create private staging space
   ansible.builtin.tempfile:
@@ -141,7 +150,11 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            # /restore is the existing tempfile bind mount, and this Docker engine
+            # runs inside an unprivileged LXC. Allow the empty mount root, skip PBS
+            # ownership changes, then assign the configured owner after copying.
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore \
+              --allow-existing-dirs true --ignore-ownership true
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
