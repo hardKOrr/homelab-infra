@@ -267,6 +267,7 @@
 - name: Observability restore | Create a private staging directory
   ansible.builtin.tempfile:
     state: directory
+    path: "{{ app_config.app.data_path | dirname }}"
     prefix: "{{ instance }}-observability-restore-"
   register: _observability_restore_tmp
   when: restore_overwrite | bool

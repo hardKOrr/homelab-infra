@@ -260,6 +260,9 @@ def check_contract():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["extra"])
+    staging = next(task for task in all_tasks(restore_source) if task.get("name") ==
+                   "Observability restore | Create a private staging directory")
+    assert staging["ansible.builtin.tempfile"]["path"] == "{{ app_config.app.data_path | dirname }}"
     backup_task = next(task for task in all_tasks(backup_source) if task.get("name") ==
                        "Observability backup | Push one application archive and retain the newest points")
     assert backup_task.get("no_log") is True
