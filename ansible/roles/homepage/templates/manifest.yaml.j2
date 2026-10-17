@@ -40,6 +40,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: homepage
@@ -59,6 +60,10 @@ spec:
               mountPath: /app/config/settings.yaml
               subPath: settings.yaml
               readOnly: true
+            # Homepage creates /app/config/logs on startup even though all input config
+            # is supplied by ConfigMap. Keep that runtime directory writable and ephemeral.
+            - name: logs
+              mountPath: /app/config/logs
             - name: tmp
               mountPath: /tmp
           readinessProbe:
@@ -68,6 +73,9 @@ spec:
       volumes:
         - name: config
           configMap: { name: {{ instance }}-config }
+        - name: logs
+          emptyDir:
+            sizeLimit: 64Mi
         - name: tmp
           emptyDir: {}
 ---
