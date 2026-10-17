@@ -102,8 +102,7 @@
 - name: Navidrome restore | Create private staging space
   ansible.builtin.tempfile:
     state: directory
-    # PBS can carry filesystem-specific quota IDs; stage beside data so restore
-    # sees the same filesystem capabilities as the destination.
+    # Keep the archive outside the directory being replaced and close to its data.
     path: "{{ app_config.app.data_path | dirname }}"
     prefix: "{{ instance }}-navidrome-restore-"
   register: _navidrome_restore_tmp
@@ -126,6 +125,10 @@
           - --rm
           - --network
           - host
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _navidrome_restore_tmp.path }}:/restore"
           - --env
@@ -153,10 +156,11 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            # /restore is the existing tempfile bind mount, and this Docker engine
-            # runs inside an unprivileged LXC. Allow the empty mount root and skip
-            # ownership, permission, ACL and xattr changes unsupported by its
-            # filesystem; the task below assigns the configured Navidrome owner.
+            # /restore is the existing tempfile bind mount. PBS's internal temporary
+            # files use /tmp and ~/.cache; tmpfs avoids unsupported anonymous-file
+            # operations on the nested Docker overlay inside this unprivileged LXC.
+            # Ignore metadata that cannot be applied here; the task below assigns
+            # the configured Navidrome owner.
             proxmox-backup-client restore --allow-existing-dirs true \
               --ignore-acls true --ignore-ownership true --ignore-permissions true \
               --ignore-xattrs true \

@@ -31,8 +31,11 @@ extract_task = next(
     task for task in all_tasks
     if task.get("name") == "Navidrome restore | Extract the selected archive"
 )
+extract_argv = extract_task["ansible.builtin.command"]["argv"]
 extract_script = " ".join(extract_task["ansible.builtin.command"]["argv"][-1].split())
 extract_script = extract_script.replace(" \\ ", " ")
+assert ("--tmpfs", "/tmp") in list(zip(extract_argv, extract_argv[1:]))
+assert ("--tmpfs", "/root/.cache") in list(zip(extract_argv, extract_argv[1:]))
 assert (
     "proxmox-backup-client restore --allow-existing-dirs true" in extract_script
 )
