@@ -106,6 +106,9 @@
           - --rm
           - --network
           - host
+          # pxar extraction needs a writable temporary filesystem inside this nested Docker container.
+          - --tmpfs
+          - /tmp
           - --volume
           - "{{ _emby_restore_tmp.path }}:/restore"
           - --env
