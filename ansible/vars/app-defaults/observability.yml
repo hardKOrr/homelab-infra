@@ -15,6 +15,12 @@ observability_defaults:
   # compete for disk with the login path on sso.
   stack: monitoring
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     # The user-facing piece is Grafana, so app.port is Grafana's — it is what the
     # reverse proxy routes to and what the uptime monitor checks.
@@ -41,3 +47,19 @@ observability_defaults:
     access: internal            # LAN-only: Grafana exposes metrics for every guest
     identity: catalog           # catalog tile only — Grafana has its own login and user
                                 # model; set forward_auth to put Authentik in front as well
+
+  # One stopped archive captures Grafana's saved dashboards and alert rules, and
+  # Prometheus's TSDB. The configuration files are regenerated on Deploy.
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

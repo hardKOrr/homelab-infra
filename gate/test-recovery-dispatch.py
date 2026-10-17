@@ -149,7 +149,28 @@ def main():
                 result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                         env=env, text=True, capture_output=True, check=False)
                 assert result.returncode == 0, result.stdout + result.stderr
-    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli"]:
+    for data_path, expected_path in [
+        ("/opt/observability/data", "/opt/observability-copy/data"),
+        ("/srv/custom/observability-data", "/srv/custom/observability-data"),
+    ]:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "target-data-path.yml"
+            path.write_text(yaml.safe_dump([
+                {"hosts": "localhost", "gather_facts": False, "tasks": [
+                    {"ansible.builtin.set_fact": {
+                        "_ra_app": "observability", "_ra_source_instance": "observability",
+                        "_ra_target": "observability-copy",
+                        "restore_target_config": {"app": {"data_path": data_path}}}}]},
+                {"hosts": "localhost", "gather_facts": False, "tasks": [
+                    {"vars": dispatch["vars"], "ansible.builtin.assert": {"that": [
+                        "instance == 'observability-copy'",
+                        f"app_config.app.data_path == '{expected_path}'"]}}]},
+            ]))
+            env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
+            result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                    env=env, text=True, capture_output=True, check=False)
+            assert result.returncode == 0, result.stdout + result.stderr
+    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli", "observability"]:
         for inputs in ({"instance": app}, {"instance": app + "-copy", "app": app}):
             check("backup-app.yml", "Publish the application backup dispatch across plays",
                   inputs, {"_ba_app": app})
@@ -183,7 +204,7 @@ def main():
             })
         for app in [
             "qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr",
-            "deemix", "tautulli", "servarr", "karakeep",
+            "deemix", "tautulli", "servarr", "karakeep", "observability",
         ]:
             for operation in ["backup", "restore"]:
                 tasks.append({
@@ -194,7 +215,7 @@ def main():
                         "ansible_failed_result.msg is search('No usable PBS')",
                         "not k8s_pbs_available"]}}],
                 })
-        for app in ["tautulli", "deemix"]:
+        for app in ["tautulli", "deemix", "observability"]:
             tasks.append({
                 "vars": {"restore_overwrite": True, "restore_snapshot": ""},
                 "block": [{"ansible.builtin.include_role": {
