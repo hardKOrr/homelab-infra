@@ -446,31 +446,56 @@ def emby_rendering():
     assert '"18096:8096"' in compose, "'\"18096:8096\"' in compose"
     assert ":/config:ro" not in compose, "':/config:ro' not in compose"
     role_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/main.yml"))
+    mount_check = task_named(
+        role_tasks,
+        "Resolve whether each Emby library path is under a declared media mount",
+    )
     mount_guard = next(
         (
-            task["ansible.builtin.assert"]["that"]
+            task
             for task in role_tasks
-            if task.get("name")
-            == "Assert each Emby library is inside a declared media mount"
+            if task.get("name") == "Assert each Emby library is inside a declared media mount"
         )
     )
-    guard_template = mount_guard
-    mounted = render(
-        guard_template,
-        {
-            "item": {"_root": "/srv/fixtures/media", "subpath": "movies"},
-            "_emby_mounts": [{"path": "/srv/fixtures/media"}],
-        },
+    mount_result_template = mount_check["vars"]["_emby_library_mount_result"]
+    mount_fact_template = mount_check["ansible.builtin.set_fact"][
+        "_emby_library_mount_valid"
+    ]
+    mount_assertions = mount_guard["ansible.builtin.assert"]["that"]
+    assert "{%" not in str(mount_assertions) and "{{" not in str(mount_assertions), (
+        "the mount guard must evaluate a typed fact, not a Jinja control block"
     )
-    unmounted = render(
-        guard_template,
-        {
-            "item": {"_root": "/srv/fixtures/media", "subpath": "movies"},
-            "_emby_mounts": [{"path": "/srv/fixtures/other"}],
-        },
+
+    def mount_is_valid(mounts):
+        item = {"_root": "/srv/fixtures/media", "subpath": "movies"}
+        rendered = render(
+            mount_result_template,
+            {"item": item, "_emby_mounts": mounts},
+        )
+        fact = render(
+            mount_fact_template,
+            {"_emby_library_mount_result": rendered},
+        )
+        assert isinstance(fact, bool), f"mount membership must be typed, got {fact!r}"
+        condition = render(
+            "{{ " + mount_assertions[0] + " }}",
+            {
+                "item": {
+                    "ansible_facts": {
+                        "_emby_library_mount_valid": fact,
+                    }
+                }
+            },
+        )
+        assert isinstance(condition, bool), f"assert input must stay typed, got {condition!r}"
+        return condition
+
+    assert mount_is_valid([{"path": "/srv/fixtures/media"}]), "declared parent mount"
+    assert mount_is_valid([{"path": "/srv/fixtures"}]), "nested library under parent mount"
+    assert not mount_is_valid([{"path": "/srv/fixtures/other"}]), "unmounted library"
+    assert not mount_is_valid([{"path": "/srv/fixtures/mediasomething"}]), (
+        "a shared prefix must not count as a containing mount"
     )
-    assert str(mounted).strip().lower() == "true", "mounted is True"
-    assert str(unmounted).strip().lower() == "false", "unmounted is False"
 
 
 def unpackerr_rendering():

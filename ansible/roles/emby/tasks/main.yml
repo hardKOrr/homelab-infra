@@ -58,9 +58,11 @@
       {{ app_config.app.libraries | default([], true)
          | map('combine', {'_root': _emby_library_root}) | list }}
 
-- name: Assert each Emby library is inside a declared media mount
-  ansible.builtin.assert:
-    that: >-
+- name: Resolve whether each Emby library path is under a declared media mount
+  ansible.builtin.set_fact:
+    _emby_library_mount_valid: "{{ _emby_library_mount_result | trim | bool }}"
+  vars:
+    _emby_library_mount_result: >-
       {% set library_path = item._root ~ '/' ~ item.subpath %}
       {% set mounted = namespace(value=false) %}
       {% for mount in _emby_mounts %}
@@ -70,12 +72,22 @@
       {% endif %}
       {% endfor %}
       {{ mounted.value }}
-    fail_msg: >-
-      Emby library {{ item.name }} at {{ item._root }}/{{ item.subpath }} is not under a
-      declared media_storage.mounts path.
   loop: "{{ _emby_libraries }}"
   loop_control:
     label: "{{ item._root }}/{{ item.subpath }}"
+  register: _emby_library_mount_checks
+  changed_when: false
+
+- name: Assert each Emby library is inside a declared media mount
+  ansible.builtin.assert:
+    that:
+      - item.ansible_facts._emby_library_mount_valid | bool
+    fail_msg: >-
+      Emby library {{ item.item.name }} at {{ item.item._root }}/{{ item.item.subpath }} is not under a
+      declared media_storage.mounts path.
+  loop: "{{ _emby_library_mount_checks.results }}"
+  loop_control:
+    label: "{{ item.item._root }}/{{ item.item.subpath }}"
 
 - name: Ensure each Emby library path exists
   ansible.builtin.file:
