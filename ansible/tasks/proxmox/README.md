@@ -181,6 +181,16 @@ repair. The playbook saves original configs privately on the delegation node, us
 config digest to reject concurrent changes and verifies every other config field and tag
 is preserved. It removes no guest, application record or application data.
 
+**Repair Missing Stack Tag** at
+[`repair-missing-stack-tag.yml`](../../playbooks/maintenance/repair-missing-stack-tag.yml)
+handles the inverse case: an explicitly reviewed owned guest has no stack identity tag.
+Supply its exact VMID, the authored stack name, and the estate when a multi-estate lab
+needs one. The playbook derives the tag from repository and lab configuration, requires
+the guest name to match that identity, and plans by default. Execution requires the
+literal `ADD STACK TAG` confirmation, saves each original config privately, checks the
+PVE config digest, and verifies every other config field and tag is preserved. It does
+not start or remove a guest.
+
 ## Creation provenance for decommission
 
 New PBS registrations and dedicated bootstrap API roles/users/tokens/ACL edges are
