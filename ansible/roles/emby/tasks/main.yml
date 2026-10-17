@@ -58,9 +58,11 @@
       {{ app_config.app.libraries | default([], true)
          | map('combine', {'_root': _emby_library_root}) | list }}
 
-- name: Assert each Emby library is inside a declared media mount
-  ansible.builtin.assert:
-    that: >-
+- name: Resolve whether each Emby library path is under a declared media mount
+  ansible.builtin.set_fact:
+    _emby_library_mount_valid: "{{ _emby_library_mount_result | trim | bool }}"
+  vars:
+    _emby_library_mount_result: >-
       {% set library_path = item._root ~ '/' ~ item.subpath %}
       {% set mounted = namespace(value=false) %}
       {% for mount in _emby_mounts %}
@@ -70,12 +72,22 @@
       {% endif %}
       {% endfor %}
       {{ mounted.value }}
-    fail_msg: >-
-      Emby library {{ item.name }} at {{ item._root }}/{{ item.subpath }} is not under a
-      declared media_storage.mounts path.
   loop: "{{ _emby_libraries }}"
   loop_control:
     label: "{{ item._root }}/{{ item.subpath }}"
+  register: _emby_library_mount_checks
+  changed_when: false
+
+- name: Assert each Emby library is inside a declared media mount
+  ansible.builtin.assert:
+    that:
+      - item.ansible_facts._emby_library_mount_valid | bool
+    fail_msg: >-
+      Emby library {{ item.item.name }} at {{ item.item._root }}/{{ item.item.subpath }} is not under a
+      declared media_storage.mounts path.
+  loop: "{{ _emby_library_mount_checks.results }}"
+  loop_control:
+    label: "{{ item.item._root }}/{{ item.item.subpath }}"
 
 - name: Ensure each Emby library path exists
   ansible.builtin.file:
@@ -108,9 +120,9 @@
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
   no_log: true
 
-# Save a generated credential before changing Emby's initial user or password. If
-# a later first-run API call or library validation fails, the next idempotent run
-# must reuse it rather than locking the Emby account out.
+# Save the generated password before setup. The first-run wizard replaces the
+# provisional username with Emby's server-assigned administrator name and updates
+# this canonical item before setting that user's password.
 - name: Persist Emby's app-owned admin credentials before setup
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
@@ -145,27 +157,66 @@
 - name: Apply pending Emby restarts before checks
   ansible.builtin.meta: flush_handlers
 
-- name: Wait for Emby's public identity endpoint
+- name: Wait for Emby's public system-info endpoint
   ansible.builtin.uri:
     url: "{{ _emby_base }}/System/Info/Public"
     return_content: true
     status_code: 200
   register: _emby_public
-  until: _emby_public.status | default(0) == 200
+  until:
+    - _emby_public.status | default(0) == 200
+    - (_emby_public.json | default({})).Id | default('') | length > 0
+    - (_emby_public.json | default({})).ServerName | default('') | length > 0
+    - (_emby_public.json | default({})).Version | default('') | length > 0
   retries: "{{ emby_http_retries }}"
   delay: "{{ emby_http_delay }}"
   changed_when: false
 
-- name: Assert the service identifies itself as Emby
+- name: Assert Emby returns its public system information
   ansible.builtin.assert:
-    that: (_emby_public.json.ProductName | default('')) is search('Emby')
+    that:
+      - (_emby_public.json | default({})).Id | default('') | length > 0
+      - (_emby_public.json | default({})).ServerName | default('') | length > 0
+      - (_emby_public.json | default({})).Version | default('') | length > 0
     fail_msg: >-
-      Port {{ app_config.app.port }} is not serving Emby. Check app.image and whether
-      another application already owns that stack-host port.
+      Port {{ app_config.app.port }} is not returning Emby's public system information.
+      Check app.image and whether another application already owns that stack-host port.
+
+- name: Read Emby's unauthenticated startup endpoint state
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/User"
+    status_code: [200, 401]
+  register: _emby_setup_state
+  until: _emby_setup_state.status in [200, 401]
+  retries: "{{ emby_http_retries }}"
+  delay: "{{ emby_http_delay }}"
+  changed_when: false
+  no_log: true
 
 - name: Complete Emby's first-run wizard
   ansible.builtin.include_tasks: setup-wizard.yml
-  when: not (_emby_public.json.StartupWizardCompleted | default(false) | bool)
+  when: _emby_setup_state.status == 200
+
+- name: Try Emby's app-owned admin credentials
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/AuthenticateByName"
+    method: POST
+    headers:
+      X-Emby-Authorization: >-
+        MediaBrowser Client="{{ emby_client_name }}", Device="{{ emby_device_name }}",
+        DeviceId="{{ emby_client_name }}-{{ instance }}", Version="1.0.0"
+    body_format: json
+    body:
+      Username: "{{ _emby_user }}"
+      Pw: "{{ _emby_password }}"
+    status_code: [200, 401]
+  register: _emby_auth_attempt
+  changed_when: false
+  no_log: true
+
+- name: Recover Emby's passwordless administrator after interrupted first run
+  ansible.builtin.include_tasks: set-admin-password.yml
+  when: _emby_auth_attempt.status == 401
 
 - name: Authenticate to Emby with its own admin account
   ansible.builtin.uri:

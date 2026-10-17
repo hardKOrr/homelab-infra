@@ -446,31 +446,209 @@ def emby_rendering():
     assert '"18096:8096"' in compose, "'\"18096:8096\"' in compose"
     assert ":/config:ro" not in compose, "':/config:ro' not in compose"
     role_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/main.yml"))
+    identity_wait = task_named(
+        role_tasks, "Wait for Emby's public system-info endpoint"
+    )
+    identity_guard = task_named(
+        role_tasks, "Assert Emby returns its public system information"
+    )
+    identity_conditions = identity_wait["until"] + identity_guard[
+        "ansible.builtin.assert"
+    ]["that"]
+    assert all("ProductName" not in condition for condition in identity_conditions), (
+        "Emby's public system-info response does not define ProductName"
+    )
+
+    def has_public_system_info(response):
+        variables = {"_emby_public": response}
+        return all(
+            render("{{ " + condition + " }}", variables)
+            for condition in identity_conditions
+        )
+
+    assert has_public_system_info(
+        {
+            "status": 200,
+            "json": {
+                "Id": "emby-server-id",
+                "ServerName": "Emby Server",
+                "Version": "4.10.1.0",
+            },
+        }
+    ), "documented Emby public system-info fields"
+    assert not has_public_system_info(
+        {"status": 200, "json": {"ProductName": "Emby Server"}}
+    ), "incomplete public system-info response"
+
+    restore_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/restore.yml"))
+    restore_block = task_named(
+        restore_tasks, "Emby restore | Replace the application config from PBS"
+    )["block"]
+    restore_health = task_named(
+        restore_block, "Emby restore | Wait for the restored service"
+    )
+    restore_identity = task_named(
+        restore_block, "Emby restore | Assert the restored service is Emby"
+    )
+    restore_extract = task_named(
+        restore_block, "Emby restore | Extract the selected archive"
+    )
+    restore_extract_argv = restore_extract["ansible.builtin.command"]["argv"]
+    assert any(
+        restore_extract_argv[index : index + 2] == ["--tmpfs", "/tmp"]
+        for index in range(len(restore_extract_argv) - 1)
+    ), "Emby PBS extraction gets a writable temporary filesystem"
+    restore_identity_conditions = restore_health["until"] + restore_identity[
+        "ansible.builtin.assert"
+    ]["that"]
+    assert all("ProductName" not in condition for condition in restore_identity_conditions), (
+        "Emby restore validates documented public system-info fields"
+    )
+
+    def has_restore_system_info(response):
+        variables = {"_emby_restore_health": response}
+        return all(
+            render("{{ " + condition + " }}", variables)
+            for condition in restore_identity_conditions
+        )
+
+    assert has_restore_system_info(
+        {
+            "status": 200,
+            "json": {
+                "Id": "emby-server-id",
+                "ServerName": "Emby Server",
+                "Version": "4.10.1.0",
+            },
+        }
+    ), "restored Emby public system-info response"
+    assert not has_restore_system_info(
+        {"status": 200, "json": {"ProductName": "Emby Server"}}
+    ), "restore rejects an unsupported Emby info field"
+
+    wizard_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/setup-wizard.yml"))
+    setup_state = task_named(
+        role_tasks, "Read Emby's unauthenticated startup endpoint state"
+    )
+    assert setup_state["ansible.builtin.uri"]["url"] == (
+        "{{ _emby_base }}/Startup/User"
+    ), "deploy detects first-run state through Emby's startup endpoint"
+    assert setup_state["ansible.builtin.uri"]["status_code"] == [200, 401], (
+        "the startup endpoint is public during setup and protected after completion"
+    )
+    assert setup_state["no_log"] is True, "startup endpoint response stays private"
+    wizard_include = task_named(role_tasks, "Complete Emby's first-run wizard")
+    assert wizard_include["when"] == "_emby_setup_state.status == 200", (
+        "only an unauthenticated startup endpoint runs the setup wizard"
+    )
+    assert "StartupWizardCompleted" not in read(
+        "ansible/roles/emby/tasks/main.yml"
+    ) + read("ansible/roles/emby/tasks/setup-wizard.yml"), (
+        "Emby public system info does not expose StartupWizardCompleted"
+    )
+
+    startup_user_read = task_named(
+        wizard_tasks, "First run | Read the existing Emby administrator account"
+    )
+    assert startup_user_read["ansible.builtin.uri"]["url"] == (
+        "{{ _emby_base }}/Startup/User"
+    ), "first-run username comes from Emby's Startup/User endpoint"
+    assert startup_user_read["no_log"] is True, "startup account details stay private"
+    startup_user_set = task_named(
+        wizard_tasks, "First run | Use Emby's existing administrator account"
+    )
+    assert "_emby_startup_user.json.Name" in str(
+        startup_user_set["ansible.builtin.set_fact"]["_emby_user"]
+    ), "the canonical login uses Emby's existing first account"
+    assert not any(
+        task.get("ansible.builtin.uri", {}).get("url") == "{{ _emby_base }}/Startup/User"
+        and task.get("ansible.builtin.uri", {}).get("method", "GET") == "POST"
+        for task in wizard_tasks
+    ), "the passwordless Emby account is not renamed during first-run setup"
+    setup_closed = task_named(
+        wizard_tasks,
+        "First run | Confirm Emby's startup endpoint now requires authentication",
+    )
+    assert setup_closed["until"] == "_emby_setup_closed.status == 401", (
+        "first-run completion is verified with the protected startup endpoint"
+    )
+    password_setup = yaml.safe_load(
+        read("ansible/roles/emby/tasks/set-admin-password.yml")
+    )
+    password_auth = task_named(
+        password_setup,
+        "Emby | Authenticate the initial administrator without a password",
+    )
+    assert password_auth["ansible.builtin.uri"]["body"]["Pw"] == "", (
+        "recovery authenticates only an initial passwordless administrator"
+    )
+    password_set = task_named(
+        password_setup,
+        "Emby | Set the app-owned administrator password through its API",
+    )
+    assert password_set["ansible.builtin.uri"]["body"]["ResetPassword"] is False, (
+        "setting the new password does not invoke Emby's password-clear operation"
+    )
+    assert password_set["ansible.builtin.uri"]["body"]["CurrentPw"] == "", (
+        "first-run password setting authenticates the passwordless account"
+    )
+    assert task_named(
+        role_tasks,
+        "Recover Emby's passwordless administrator after interrupted first run",
+    )["when"] == "_emby_auth_attempt.status == 401", (
+        "passwordless recovery is attempted only when canonical credentials fail"
+    )
+
+    mount_check = task_named(
+        role_tasks,
+        "Resolve whether each Emby library path is under a declared media mount",
+    )
     mount_guard = next(
         (
-            task["ansible.builtin.assert"]["that"]
+            task
             for task in role_tasks
-            if task.get("name")
-            == "Assert each Emby library is inside a declared media mount"
+            if task.get("name") == "Assert each Emby library is inside a declared media mount"
         )
     )
-    guard_template = mount_guard
-    mounted = render(
-        guard_template,
-        {
-            "item": {"_root": "/srv/fixtures/media", "subpath": "movies"},
-            "_emby_mounts": [{"path": "/srv/fixtures/media"}],
-        },
+    mount_result_template = mount_check["vars"]["_emby_library_mount_result"]
+    mount_fact_template = mount_check["ansible.builtin.set_fact"][
+        "_emby_library_mount_valid"
+    ]
+    mount_assertions = mount_guard["ansible.builtin.assert"]["that"]
+    assert "{%" not in str(mount_assertions) and "{{" not in str(mount_assertions), (
+        "the mount guard must evaluate a typed fact, not a Jinja control block"
     )
-    unmounted = render(
-        guard_template,
-        {
-            "item": {"_root": "/srv/fixtures/media", "subpath": "movies"},
-            "_emby_mounts": [{"path": "/srv/fixtures/other"}],
-        },
+
+    def mount_is_valid(mounts):
+        item = {"_root": "/srv/fixtures/media", "subpath": "movies"}
+        rendered = render(
+            mount_result_template,
+            {"item": item, "_emby_mounts": mounts},
+        )
+        fact = render(
+            mount_fact_template,
+            {"_emby_library_mount_result": rendered},
+        )
+        assert isinstance(fact, bool), f"mount membership must be typed, got {fact!r}"
+        condition = render(
+            "{{ " + mount_assertions[0] + " }}",
+            {
+                "item": {
+                    "ansible_facts": {
+                        "_emby_library_mount_valid": fact,
+                    }
+                }
+            },
+        )
+        assert isinstance(condition, bool), f"assert input must stay typed, got {condition!r}"
+        return condition
+
+    assert mount_is_valid([{"path": "/srv/fixtures/media"}]), "declared parent mount"
+    assert mount_is_valid([{"path": "/srv/fixtures"}]), "nested library under parent mount"
+    assert not mount_is_valid([{"path": "/srv/fixtures/other"}]), "unmounted library"
+    assert not mount_is_valid([{"path": "/srv/fixtures/mediasomething"}]), (
+        "a shared prefix must not count as a containing mount"
     )
-    assert str(mounted).strip().lower() == "true", "mounted is True"
-    assert str(unmounted).strip().lower() == "false", "unmounted is False"
 
 
 def unpackerr_rendering():

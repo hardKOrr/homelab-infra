@@ -106,6 +106,9 @@
           - --rm
           - --network
           - host
+          # pxar extraction needs a writable temporary filesystem inside this nested Docker container.
+          - --tmpfs
+          - /tmp
           - --volume
           - "{{ _emby_restore_tmp.path }}:/restore"
           - --env
@@ -189,16 +192,24 @@
     - name: Emby restore | Wait for the restored service
       ansible.builtin.uri:
         url: "http://localhost:{{ app_config.app.port }}/emby/System/Info/Public"
+        return_content: true
         status_code: 200
       register: _emby_restore_health
-      until: _emby_restore_health.status | default(0) == 200
+      until:
+        - _emby_restore_health.status | default(0) == 200
+        - (_emby_restore_health.json | default({})).Id | default('') | length > 0
+        - (_emby_restore_health.json | default({})).ServerName | default('') | length > 0
+        - (_emby_restore_health.json | default({})).Version | default('') | length > 0
       retries: 60
       delay: 5
       changed_when: false
 
     - name: Emby restore | Assert the restored service is Emby
       ansible.builtin.assert:
-        that: (_emby_restore_health.json.ProductName | default('')) is search('Emby')
+        that:
+          - (_emby_restore_health.json | default({})).Id | default('') | length > 0
+          - (_emby_restore_health.json | default({})).ServerName | default('') | length > 0
+          - (_emby_restore_health.json | default({})).Version | default('') | length > 0
         fail_msg: "The restored endpoint did not identify as Emby."
 
     - name: Emby restore | Authenticate with the source app-owned account
