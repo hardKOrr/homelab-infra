@@ -536,6 +536,16 @@ def emby_rendering():
     assert password_auth["ansible.builtin.uri"]["body"]["Pw"] == "", (
         "recovery authenticates only an initial passwordless administrator"
     )
+    password_set = task_named(
+        password_setup,
+        "Emby | Set the app-owned administrator password through its API",
+    )
+    assert password_set["ansible.builtin.uri"]["body"]["ResetPassword"] is False, (
+        "setting the new password does not invoke Emby's password-clear operation"
+    )
+    assert password_set["ansible.builtin.uri"]["body"]["CurrentPw"] == "", (
+        "first-run password setting authenticates the passwordless account"
+    )
     assert task_named(
         role_tasks,
         "Recover Emby's passwordless administrator after interrupted first run",
