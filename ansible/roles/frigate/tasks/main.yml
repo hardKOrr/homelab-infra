@@ -185,7 +185,9 @@
   retries: "{{ frigate_http_retries }}"
   delay: "{{ frigate_http_delay }}"
   changed_when: false
-  no_log: true
+  # This public endpoint only returns Frigate's version; keep its status and response
+  # visible so a failed startup check can be diagnosed without exposing app secrets.
+  no_log: false
 
 - name: Frigate | Assert the health response identifies a version
   ansible.builtin.assert:
