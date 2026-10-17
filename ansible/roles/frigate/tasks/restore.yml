@@ -254,6 +254,7 @@
         project_src: "{{ frigate_project_dir }}"
         state: stopped
         services: ["{{ instance }}"]
+      when: _frigate_restore_moved.rc | default(1) == 0
 
     - name: Frigate restore | Remove the failed replacement config
       ansible.builtin.file:
@@ -268,16 +269,27 @@
       no_log: true
       when: _frigate_restore_moved.rc | default(1) == 0
 
+    - name: Frigate restore | Restart Frigate when the original config was untouched
+      community.docker.docker_compose_v2:
+        project_src: "{{ frigate_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
+      when: _frigate_restore_moved.rc | default(1) != 0
+
     - name: Frigate restore | Record that rollback completed
       ansible.builtin.set_fact:
         _frigate_restore_rolled_back: true
 
-    - name: Frigate restore | State that the service remains stopped
+    - name: Frigate restore | Report the restore failure
       ansible.builtin.fail:
         msg: >-
-          Frigate restore failed. The service was left stopped rather than serving partial
-          state. The original config was retained or put back; inspect the job output and
-          rerun the restore after correcting it.
+          Frigate restore failed.
+          {% if _frigate_restore_moved.rc | default(1) != 0 %}
+          The original config was untouched and Frigate was restarted.
+          {% else %}
+          The original config was put back and Frigate was left stopped.
+          {% endif %}
+          Inspect the job output and rerun the restore after correcting it.
   always:
     - name: Frigate restore | Remove rollback space only after health or rollback succeeded
       ansible.builtin.file:

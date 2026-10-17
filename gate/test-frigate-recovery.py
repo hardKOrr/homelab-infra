@@ -199,17 +199,22 @@ if 'snapshot list' in args[-1]:
 else:
     assert os.environ['SNAPSHOT'] == 'host/frigate/2026-10-09T00:00:00Z'
     assert args[args.index('--tmpfs')+1] == '/tmp:rw,noexec,nosuid,nodev,size=256m'
-    if os.environ['FRIGATE_TEST_CASE']=='extract-failure':
+    case=os.environ['FRIGATE_TEST_CASE']
+    if case=='extract-failure':
         raise SystemExit(7)
     mount=args[args.index('--volume')+1]
     assert mount.endswith(':/restore')
     target=Path(mount[:-9])
     target.mkdir(parents=True,exist_ok=True)
-    (target/'config.yml').write_text('detectors: {}\\n')
-    db=sqlite3.connect(target/'frigate.db')
-    db.execute('create table canary(name text)')
-    db.execute("insert into canary values ('p2-canary-frigate-test')")
-    db.commit();db.close()
+    if case!='archive-missing-config':
+        (target/'config.yml').write_text('detectors: {}\\n')
+    if case=='integrity-failure':
+        (target/'frigate.db').write_text('not a sqlite database')
+    elif case!='archive-missing-db':
+        db=sqlite3.connect(target/'frigate.db')
+        db.execute('create table canary(name text)')
+        db.execute("insert into canary values ('p2-canary-frigate-test')")
+        db.commit();db.close()
 """,
             "cp": """#!/usr/bin/env python3
 import os,subprocess,sys
@@ -282,7 +287,12 @@ if sys.argv[1]=='present' and os.environ['FRIGATE_TEST_CASE']=='start-failure': 
         else:
             states = (root / "services").read_text().splitlines()
             assert states[0] == "stopped"
-            assert states[-1] == ("present" if success else "stopped")
+            pre_move_failure = case in [
+                "extract-failure", "archive-missing-config", "archive-missing-db",
+                "integrity-failure", "move-failure",
+            ]
+            expected_final_state = "present" if success or pre_move_failure else "stopped"
+            assert states[-1] == expected_final_state, states
         if case == "foreign-group":
             assert "must belong to host/frigate/" in result.stdout
 
@@ -345,6 +355,7 @@ def main():
     thread.start()
     try:
         for case in ["plan", "foreign-group", "missing-prepoint", "extract-failure",
+                     "archive-missing-config", "archive-missing-db", "integrity-failure",
                      "move-failure", "copy-failure", "start-failure", "health-failure", "success"]:
             check_restore(case, server)
     finally:
