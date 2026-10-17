@@ -12,7 +12,6 @@
          or restore_target | default(instance, true), true) }}
     _authentik_restore_snapshot: "{{ restore_snapshot | default('') }}"
     _authentik_restore_destination: "{{ restore_destination | default('existing', true) }}"
-    _authentik_restore_expected_services: [postgresql, redis, server, worker]
     _application_restore_complete: false
     _authentik_restore_old_data_moved: false
     _authentik_restore_replacement_installed: false
@@ -230,7 +229,7 @@
       existing target; deploy it before restoring.
   when: restore_overwrite | bool
 
-- name: Authentik restore | Read the running Compose services
+- name: Authentik restore | Inspect running Compose services for diagnostics
   ansible.builtin.command:
     argv:
       - docker
@@ -246,14 +245,12 @@
   changed_when: false
   when: restore_overwrite | bool
 
-- name: Authentik restore | Require all four target services to be running
-  ansible.builtin.assert:
-    that:
-      - _authentik_restore_running.rc == 0
-      - _authentik_restore_running.stdout_lines | sort == _authentik_restore_expected_services | sort
-    fail_msg: >-
-      Authentik overwrite restore requires the target's PostgreSQL, Redis, server and
-      worker services to be running before replacement.
+- name: Authentik restore | Report service status without gating recovery
+  ansible.builtin.debug:
+    msg: >-
+      Current running services: {{ _authentik_restore_running.stdout_lines | join(', ')
+      if _authentik_restore_running.rc == 0 else 'unavailable' }}. The verified source
+      archive and independent target safety point permit overwrite restore.
   when: restore_overwrite | bool
 
 - name: Authentik restore | Create private staging beside the target data

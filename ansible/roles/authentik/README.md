@@ -47,8 +47,10 @@ Restore App first verifies the selected source archive and an independent target
 safety point. Its preview mode is read-only. Overwrite restore stages the archive
 beside the target path, keeps the current data on the same filesystem, replaces the
 tree, and waits for Authentik's ready endpoint. A failure restores the original data
-and restarts this instance. Native restore currently replaces an existing instance;
-it does not restore an estate into a new instance name.
+and restarts this instance. The target services do not need to be healthy before an
+overwrite restore; the verified source archive and independent target safety point
+are the recovery guards. Native restore currently replaces an existing instance; it
+does not restore an estate into a new instance name.
 
 They share the directory's contract exactly: declared is created and kept correct,
 undeclared is never touched and never deleted. The one exception is `stages_exact:

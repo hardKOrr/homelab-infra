@@ -83,7 +83,7 @@ def fixture_tasks(tasks, root, case):
             task["ansible.builtin.stat"]["path"] = str(root / "bin/proxmox-backup-client")
         if task.get("name") in [
             "Authentik backup | Read the running Compose services",
-            "Authentik restore | Read the running Compose services",
+            "Authentik restore | Inspect running Compose services for diagnostics",
         ]:
             task["ansible.builtin.command"]["argv"][0] = str(root / "bin/docker")
         if task.get("name") == "Authentik restore | Wait for the restored instance to become ready" and case == "health-failure":
@@ -115,10 +115,18 @@ with Path(os.environ['AUTHENTIK_TEST_ROOT'],'services').open('a') as log:
     log.write(sys.argv[1]+'\n')
 ''',
         "docker": r'''#!/usr/bin/env python3
-import sys
+import os,sys
+from pathlib import Path
+case=os.environ['AUTHENTIK_TEST_CASE']
+root=Path(os.environ['AUTHENTIK_TEST_ROOT'])
 assert sys.argv[1:2] == ['compose']
 if 'ps' in sys.argv:
-    print('postgresql\nredis\nserver\nworker')
+    if case=='postgresql-down':
+        services='redis\nserver\nworker'
+    else:
+        services='postgresql\nredis\nserver\nworker'
+    (root/'running-services').write_text(services,encoding='utf-8')
+    print(services)
 ''',
         "proxmox-backup-client": r'''#!/usr/bin/env python3
 import json,os,shutil,sys
@@ -140,6 +148,9 @@ if args[:2]==['snapshot','list']:
     print(json.dumps(snapshots))
     raise SystemExit(0)
 if args[:2]==['snapshot','files']:
+    if case=='safety-point-missing' and '00:30:00Z' in args[2]:
+        print(json.dumps([]))
+        raise SystemExit(0)
     print(json.dumps(['data.pxar']))
     raise SystemExit(0)
 if args[0]=='prune':
@@ -299,6 +310,16 @@ def check_backup_and_restore_contract():
     assert "state: present" in yaml.safe_dump(restore)
     assert "not (restore_overwrite | bool)" in str(restore)
     assert "No Authentik data was changed" in str(restore)
+    assert not any(
+        task.get("name") == "Authentik restore | Require all four target services to be running"
+        for task in restore_tasks
+    )
+    assert task_named(
+        restore_tasks, "Authentik restore | Report service status without gating recovery"
+    )
+    assert task_named(
+        restore_tasks, "Authentik restore | Require the independent safety archive"
+    )
     for task in restore_tasks:
         argv = task.get("ansible.builtin.command", {}).get("argv", [])
         if len(argv) > 2 and argv[:2] == ["proxmox-backup-client", "snapshot"] and "files" in argv:
@@ -326,7 +347,13 @@ def check_backup_and_restore_contract():
 
 def check_transactional_restore_fixtures():
     restore_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
-    for case in ["success", "health-failure", "extract-failure"]:
+    for case in [
+        "success",
+        "postgresql-down",
+        "health-failure",
+        "extract-failure",
+        "safety-point-missing",
+    ]:
         with tempfile.TemporaryDirectory(prefix="authentik-recovery-") as tmp:
             root = Path(tmp)
             write_fixture_scripts(root)
@@ -343,20 +370,26 @@ def check_transactional_restore_fixtures():
                 marker = (current / "marker.txt").read_text(encoding="utf-8")
                 events_path = root / "services"
                 events = events_path.read_text(encoding="utf-8").splitlines() if events_path.exists() else []
-                if case == "success":
+                if case in ["success", "postgresql-down"]:
                     assert result.returncode == 0, result.stdout + result.stderr
                     assert marker == "restored"
                     assert events == ["stopped", "present"]
+                    if case == "postgresql-down":
+                        assert (root / "running-services").read_text(encoding="utf-8") == (
+                            "redis\nserver\nworker"
+                        )
                 else:
                     assert result.returncode != 0, result.stdout + result.stderr
                     assert marker == "original"
-                    expected_events = (
-                        ["stopped", "present", "stopped", "present"]
-                        if case == "health-failure"
-                        else ["stopped", "stopped", "present"]
-                    )
+                    if case == "safety-point-missing":
+                        expected_events = []
+                    elif case == "health-failure":
+                        expected_events = ["stopped", "present", "stopped", "present"]
+                    else:
+                        expected_events = ["stopped", "stopped", "present"]
                     assert events == expected_events
-                    assert "rollback" in result.stdout.lower() or "rollback" in result.stderr.lower()
+                    if case != "safety-point-missing":
+                        assert "rollback" in result.stdout.lower() or "rollback" in result.stderr.lower()
             finally:
                 server.shutdown()
                 server.server_close()
