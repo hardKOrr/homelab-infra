@@ -175,22 +175,16 @@
 - name: Frigate | Apply pending restart
   ansible.builtin.meta: flush_handlers
 
-- name: Frigate | Wait for the version endpoint
+- name: Frigate | Wait for the public API endpoint
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/version"
-    return_content: true
+    # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
+    url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
+    return_content: false
     status_code: 200
   register: _frigate_health
   until: _frigate_health.status | default(0) == 200
   retries: "{{ frigate_http_retries }}"
   delay: "{{ frigate_http_delay }}"
   changed_when: false
-  # This public endpoint only returns Frigate's version; keep its status and response
-  # visible so a failed startup check can be diagnosed without exposing app secrets.
+  # This public endpoint returns no app secrets; keep the status visible for diagnosis.
   no_log: false
-
-- name: Frigate | Assert the health response identifies a version
-  ansible.builtin.assert:
-    that:
-      - _frigate_health.content | default('') is search('version')
-    fail_msg: Frigate answered its health endpoint without a version response.

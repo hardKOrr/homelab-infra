@@ -228,22 +228,18 @@
         state: present
         services: ["{{ instance }}"]
 
-    - name: Frigate restore | Wait for the restored version endpoint
+    - name: Frigate restore | Wait for the restored public API endpoint
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_config.app.port }}/api/version"
-        return_content: true
+        # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
+        url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
+        return_content: false
         status_code: 200
       register: _frigate_restore_health
       until: _frigate_restore_health.status | default(0) == 200
       retries: "{{ frigate_http_retries | default(60) }}"
       delay: "{{ frigate_http_delay | default(5) }}"
       changed_when: false
-      no_log: true
-
-    - name: Frigate restore | Require a version response
-      ansible.builtin.assert:
-        that: _frigate_restore_health.content | default('') is search('version')
-        fail_msg: Frigate restored but did not return a valid version response.
+      no_log: false
 
     - name: Frigate restore | Mark the recovery complete
       ansible.builtin.set_fact:

@@ -20,10 +20,11 @@ backup_source = yaml.safe_load((repo / "ansible/roles/frigate/tasks/backup.yml")
 
 class Health(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        assert self.path == "/api/version"
+        assert self.path == "/api/auth/first_time_login"
         self.send_response(self.server.response_status)
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"version":"test"}')
+        self.wfile.write(b"true")
 
     def log_message(self, *_args):
         pass
@@ -117,6 +118,33 @@ def test_cpu_templates():
     config_template = next(item for item in render["loop"]
                            if item["dest"].endswith("/config.yml"))
     assert config_template["force"] is False
+
+
+def test_public_health_endpoints():
+    deploy_tasks = yaml.safe_load((repo / "ansible/roles/frigate/tasks/main.yml").read_text())
+
+    def find_task(tasks, name):
+        for task in tasks:
+            if task.get("name") == name:
+                return task
+            for section in ["block", "rescue", "always"]:
+                if section in task:
+                    found = find_task(task[section], name)
+                    if found:
+                        return found
+        raise AssertionError(f"Missing health task: {name}")
+
+    contracts = [
+        (deploy_tasks, "Frigate | Wait for the public API endpoint"),
+        (restore_source, "Frigate restore | Wait for the restored public API endpoint"),
+    ]
+    for tasks, name in contracts:
+        task = find_task(tasks, name)
+        uri = task["ansible.builtin.uri"]
+        assert uri["url"].endswith("/api/auth/first_time_login")
+        assert uri["status_code"] == 200
+        assert uri["return_content"] is False
+        assert task["no_log"] is False
 
 
 def test_deploy_preflight():
@@ -309,6 +337,7 @@ with Path(os.environ['FRIGATE_TEST_ROOT'],'services').open('a') as log:
 
 def main():
     test_cpu_templates()
+    test_public_health_endpoints()
     test_deploy_preflight()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

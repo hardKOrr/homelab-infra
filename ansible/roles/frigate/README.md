@@ -21,6 +21,9 @@ recovery unit. Backup stops only the Frigate service, archives that directory to
 `host/<instance>/data.pxar`, and starts it again. Recordings stay outside the archive.
 The seed disables Frigate's own TLS because Caddy terminates TLS before proxying to port
 8971; Frigate's reverse-proxy guide requires this for the internal HTTP connection.
+Deploy and Restore check the public `/api/auth/first_time_login` endpoint because port
+8971 requires authentication for `/api/version` before the operator can log in. See
+Frigate's [first-time login API](https://docs.frigate.video/integrations/api/first-time-login-auth-first-time-login-get/).
 Restore previews by default, validates the selected snapshot group and staged config and
 database, then keeps the original directory beside the live path on the same filesystem
 until the restored service passes health checks. Any later failure puts the original
