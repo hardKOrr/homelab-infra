@@ -705,7 +705,8 @@
 - name: "Restore App | Restore Docker or native-LXC application data from PBS"
   hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"
   become: true
-  gather_facts: false
+  # Application role dependencies can require host facts before their task runs.
+  gather_facts: true
   tasks:
     # A dispatched application recovery task must set this generic completion fact only after
     # its restore and health check are complete; the notification and degradation gate
