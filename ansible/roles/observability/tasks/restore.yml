@@ -315,6 +315,13 @@
           - /bin/sh
           - -ceu
           - |
+            # The client overlay rejects O_TMPFILE. Keep its cache and temporary files on
+            # the mounted scratch directory; PBS also needs a new archive target directory.
+            install -d -m 0700 /restore/tmp /restore/home/.cache /restore/home/.config
+            export TMPDIR=/restore/tmp
+            export HOME=/restore/home
+            export XDG_CACHE_HOME=/restore/home/.cache
+            export XDG_CONFIG_HOME=/restore/home/.config
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends ca-certificates >/dev/null
@@ -324,7 +331,7 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/data
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
@@ -335,13 +342,13 @@
 
     - name: Observability restore | Check the staged Grafana database
       ansible.builtin.stat:
-        path: "{{ _observability_restore_tmp.path }}/grafana/grafana.db"
+        path: "{{ _observability_restore_tmp.path }}/data/grafana/grafana.db"
       register: _observability_restore_staged_grafana_db
       changed_when: false
 
     - name: Observability restore | Check the staged Prometheus data directory
       ansible.builtin.stat:
-        path: "{{ _observability_restore_tmp.path }}/prometheus"
+        path: "{{ _observability_restore_tmp.path }}/data/prometheus"
       register: _observability_restore_staged_prometheus_data
       changed_when: false
 
@@ -383,7 +390,7 @@
         argv:
           - cp
           - -a
-          - "{{ _observability_restore_tmp.path }}/."
+          - "{{ _observability_restore_tmp.path }}/data/."
           - "{{ app_config.app.data_path }}/"
       changed_when: true
       no_log: true

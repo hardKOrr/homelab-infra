@@ -156,11 +156,12 @@ if 'proxmox-backup-client restore' in script:
     mount=args[args.index('--volume')+1]
     assert mount.endswith(':/restore'), mount
     stage=Path(mount[:-9])
-    (stage/'grafana').mkdir()
-    (stage/'grafana/grafana.db').write_text('restored grafana database\n')
+    extracted=stage/'data'
+    (extracted/'grafana').mkdir(parents=True)
+    (extracted/'grafana/grafana.db').write_text('restored grafana database\n')
     if case != 'incomplete-archive':
-        (stage/'prometheus').mkdir()
-        (stage/'prometheus/marker').write_text('restored prometheus data\n')
+        (extracted/'prometheus').mkdir()
+        (extracted/'prometheus/marker').write_text('restored prometheus data\n')
     raise SystemExit(0)
 raise AssertionError(script)
 ''',
@@ -267,6 +268,24 @@ def check_contract():
     assert restored_path["ansible.builtin.file"]["owner"] == "root"
     assert restored_path["ansible.builtin.file"]["group"] == "root"
     assert restored_path["ansible.builtin.file"]["mode"] == "0755"
+    extract_task = next(task for task in all_tasks(restore_source) if task.get("name") ==
+                        "Observability restore | Extract the selected archive into staging")
+    extract_command = extract_task["ansible.builtin.command"]
+    extract_script = extract_command["argv"][-1]
+    assert extract_command["argv"][extract_command["argv"].index("--volume") + 1].endswith(":/restore")
+    for line in [
+        "install -d -m 0700 /restore/tmp /restore/home/.cache /restore/home/.config",
+        "export TMPDIR=/restore/tmp",
+        "export HOME=/restore/home",
+        "export XDG_CACHE_HOME=/restore/home/.cache",
+        "export XDG_CONFIG_HOME=/restore/home/.config",
+        'proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore/data',
+    ]:
+        assert line in extract_script, line
+    assert '{{ _observability_restore_tmp.path }}/data/.' in next(
+        task for task in all_tasks(restore_source)
+        if task.get("name") == "Observability restore | Copy the archived application state into place"
+    )["ansible.builtin.command"]["argv"]
     for task in all_tasks(restore_source):
         if task.get("ansible.builtin.command", {}).get("argv", [None])[0] == "docker":
             assert task.get("no_log") is True, task.get("name")
