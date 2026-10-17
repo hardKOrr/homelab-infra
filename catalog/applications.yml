@@ -284,6 +284,7 @@ applications:
     root: Platform
     category: Monitoring and Notifications
     scope: lab                          # one metrics and dashboard stack covers every guest
+    extra: [backup, restore]
     # Prometheus and Grafana are separate services. The generic rollback seam cannot
     # truthfully roll this application back as one unit.
     exclude: [rollback]

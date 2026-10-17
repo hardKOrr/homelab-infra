@@ -179,6 +179,14 @@ an authenticated settings check and canonical API-key publication succeed. A fai
 puts the original state back and leaves Bazarr stopped. The final Deploy keeps the
 restored API key, language profiles and settings.
 
+Observability native recovery stops only its Prometheus and Grafana Compose services and
+archives the complete data directory, preserving the Prometheus TSDB and Grafana's saved
+dashboards and alert rules together. Deploy regenerates the config and provisioning files.
+Restore checks the selected PBS point and, for an existing target, a separate pre-restore
+point; it stages the archive and keeps the original data directory on the same filesystem
+until both services pass health checks. A failed replacement puts the original data back
+and leaves Observability stopped.
+
 SABnzbd Deploy registers only that client in each deployed Usenet consumer and creates
 missing consumer categories. Existing categories and other client entries are preserved.
 Consumer failures are recorded while the remaining connections are attempted; the play's
