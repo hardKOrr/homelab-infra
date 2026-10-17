@@ -36,9 +36,11 @@ extract_script = extract_script.replace(" \\ ", " ")
 assert (
     "proxmox-backup-client restore --allow-existing-dirs true" in extract_script
 )
-assert '--ignore-ownership true "$SNAPSHOT" data.pxar /restore' in extract_script
 assert "--allow-existing-dirs true" in extract_script
+assert "--ignore-acls true" in extract_script
 assert "--ignore-ownership true" in extract_script
+assert "--ignore-xattrs true" in extract_script
+assert extract_script.index("--ignore-xattrs true") < extract_script.index('"$SNAPSHOT"')
 assert extract_task["no_log"] is True
 assert extract_task["register"] == "_navidrome_restore_extract"
 diagnostic_task = next(
