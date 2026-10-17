@@ -7,6 +7,10 @@
 #   {"front":{"username":"camera-user","password":"..."}}
 # Store the optional MQTT password in hidden field mqtt_password. Never put either secret
 # in this file or in a camera URL.
+# Deploy seeds config.yml only when it is absent. Later changes to cameras, detector or
+# MQTT here, or camera/MQTT credentials in Vaultwarden, do not update Frigate's existing
+# config. Make those edits in Frigate's UI/API, or remove the instance config.yml before
+# Deploy to seed it again; reseeding replaces UI-managed settings.
 
 app:
   detector: coral # Use cpu when no Coral is deployed.

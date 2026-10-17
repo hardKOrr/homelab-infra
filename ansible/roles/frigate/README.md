@@ -14,10 +14,16 @@ deletes it. Camera-less instances can leave `recordings_path` empty and need no 
 storage. Any configured recording mount remains outside native application recovery and
 needs its storage owner's own snapshot or backup.
 
-Ansible seeds `/opt/<instance>/config/config.yml` on first deploy. After that, Frigate's UI
-owns configuration edits; Deploy preserves the file so a normal convergence does not
-erase saved settings. The whole config directory includes `frigate.db` and is the native
-recovery unit. Backup stops only the Frigate service, archives that directory to PBS as
+Ansible seeds `/opt/<instance>/config/config.yml` only when the file is absent
+(`force: false`). After first deploy, changing `app.cameras`, `app.detector`, `app.mqtt`,
+or the camera and MQTT credentials in Vaultwarden's homelab-infra fields does not update
+the existing Frigate config, even though the role continues to validate those inputs.
+Make those changes in Frigate's UI or API, or deliberately remove the instance's
+`config.yml` before Deploy to seed it again from homelab-infra. Reseeding replaces
+UI-managed configuration. This lets Deploy preserve saved settings during normal
+convergence. The whole config directory
+includes `frigate.db` and is the native recovery unit. Backup stops only the Frigate
+service, archives that directory to PBS as
 `host/<instance>/data.pxar`, and starts it again. Recordings stay outside the archive.
 The seed disables Frigate's own TLS because Caddy terminates TLS before proxying to port
 8971; Frigate's reverse-proxy guide requires this for the internal HTTP connection.
