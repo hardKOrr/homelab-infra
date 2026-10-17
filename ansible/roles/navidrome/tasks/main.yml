@@ -38,18 +38,25 @@
       Navidrome runs as {{ _navidrome_uid }}:{{ _navidrome_gid }}, which must match
       media_storage.owner.uid/gid so it can read the existing music library.
 
+- name: Initialize Navidrome music mount match
+  ansible.builtin.set_fact:
+    _navidrome_music_path_mounted: false
+  changed_when: false
+
+- name: Match Navidrome music path against declared media mounts
+  ansible.builtin.set_fact:
+    _navidrome_music_path_mounted: true
+  loop: "{{ _navidrome_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: >-
+    _navidrome_music_path == item.path.rstrip('/')
+    or _navidrome_music_path.startswith(item.path.rstrip('/') ~ '/')
+  changed_when: false
+
 - name: Assert Navidrome music path is inside a declared media mount
   ansible.builtin.assert:
-    that: >-
-      {% set target = _navidrome_music_path.rstrip('/') %}
-      {% set mounted = namespace(value=false) %}
-      {% for mount in _navidrome_mounts %}
-      {% set mount_path = mount.path.rstrip('/') %}
-      {% if target == mount_path or target.startswith(mount_path ~ '/') %}
-      {% set mounted.value = true %}
-      {% endif %}
-      {% endfor %}
-      {{ mounted.value }}
+    that: _navidrome_music_path_mounted | bool
     fail_msg: >-
       Navidrome music path {{ _navidrome_music_path }} is not under a declared
       media_storage.mounts path. Refusing to expose an arbitrary host directory.
