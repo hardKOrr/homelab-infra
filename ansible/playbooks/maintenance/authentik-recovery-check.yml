@@ -71,19 +71,9 @@
         _authentik_drill_sso: "{{ homelabinfra_infra.sso | default({}) }}"
         _authentik_drill_api: >-
           {{ (_authentik_drill_sso.host | default('') | regex_replace('/+$', '')) ~ '/api/v3' }}
-        _authentik_drill_token: "{{ _authentik_drill_sso.token | default('') }}"
+        _authentik_drill_token: "{{ ((homelabinfra_vault.estates | default({})).get(app_config.routing.estate, {})).get('sso', {}).get('token', '') }}"
         _authentik_drill_brand_domain: "{{ app_config.routing.subdomain }}.{{ homelabinfra_infra.domain }}"
       no_log: true
-
-    - name: Report API contract presence without values
-      ansible.builtin.debug:
-        msg:
-          estate_sso_present: "{{ _authentik_drill_sso | length > 0 }}"
-          provider_is_authentik: "{{ homelabinfra_infra.sso.provider | default('') == 'authentik' }}"
-          api_host_present: "{{ _authentik_drill_sso.host | default('') | length > 0 }}"
-          api_token_present: "{{ _authentik_drill_token | length > 0 }}"
-          domain_present: "{{ homelabinfra_infra.domain | default('') | length > 0 }}"
-          subdomain_present: "{{ app_config.routing.subdomain | default('') | length > 0 }}"
 
     - name: Require the endpoint and canary domain
       ansible.builtin.assert:
