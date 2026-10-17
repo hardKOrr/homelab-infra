@@ -239,6 +239,18 @@
           - "target_exists={{ 'file exists' in (_navidrome_restore_extract.stderr | default('') | lower) or 'already exists' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
           - "unsupported_option={{ 'unknown option' in (_navidrome_restore_extract.stderr | default('') | lower) or 'unexpected argument' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
           - "authentication_or_acl={{ 'permission check failed' in (_navidrome_restore_extract.stderr | default('') | lower) or 'authentication failed' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
+          - >-
+            sanitized_stderr={{ (_navidrome_restore_extract.stderr | default('')
+            | regex_replace('(?i)pbs_password=[^ ]+', 'PBS_PASSWORD=<redacted>')
+            | regex_replace('(?i)(password|token|secret|key|fingerprint)[=: ]+[^ ]+', '<sensitive-field>=<redacted>')
+            | regex_replace('https?://[^ ]+', '<url>')
+            | regex_replace('host/navidrome/[^ ]+', '<recovery-point>')
+            | regex_replace('[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+(:[0-9]+)?(:[A-Za-z0-9_-]+)?', '<repository>')
+            | regex_replace('([0-9]{1,3}\\.){3}[0-9]{1,3}', '<ip>')
+            | regex_replace('([A-Za-z0-9-]+\\.)+[A-Za-z]{2,}', '<host>')
+            | regex_replace('[A-Za-z0-9_-]{24,}', '<opaque>')
+            | regex_replace('/tmp/[^ ]+', '<staging-path>')
+            | replace('\n', ' '))[:500] }}
       when:
         - _navidrome_restore_extract is defined
         - (_navidrome_restore_extract.rc | default(0) | int) != 0
