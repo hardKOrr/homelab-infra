@@ -19,6 +19,8 @@ owns configuration edits; Deploy preserves the file so a normal convergence does
 erase saved settings. The whole config directory includes `frigate.db` and is the native
 recovery unit. Backup stops only the Frigate service, archives that directory to PBS as
 `host/<instance>/data.pxar`, and starts it again. Recordings stay outside the archive.
+The seed disables Frigate's own TLS because Caddy terminates TLS before proxying to port
+8971; Frigate's reverse-proxy guide requires this for the internal HTTP connection.
 Restore previews by default, validates the selected snapshot group and staged config and
 database, then keeps the original directory beside the live path on the same filesystem
 until the restored service passes health checks. Any later failure puts the original

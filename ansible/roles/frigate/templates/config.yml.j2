@@ -4,6 +4,9 @@ ffmpeg:
   hwaccel_args: {{ app_config.app.hwaccel_args | to_json }}
 {% endif %}
 
+tls:
+  enabled: false
+
 {% if app_config.app.detector == 'coral' %}
 detectors:
   coral:

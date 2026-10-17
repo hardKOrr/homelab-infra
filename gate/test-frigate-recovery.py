@@ -100,6 +100,7 @@ def test_cpu_templates():
         assert result.returncode == 0, result.stdout + result.stderr
         rendered_config = yaml.safe_load(config_path.read_text())
         rendered_compose = yaml.safe_load(compose_path.read_text())["services"]["frigate"]
+        assert rendered_config["tls"] == {"enabled": False}
         assert rendered_config["detectors"] == {"cpu1": {"type": "cpu"}}
         assert rendered_config["cameras"] == {}
         assert "/dev/bus/usb" not in rendered_compose["volumes"]
