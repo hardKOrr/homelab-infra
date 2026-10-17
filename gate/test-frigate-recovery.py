@@ -198,6 +198,7 @@ if 'snapshot list' in args[-1]:
     print('host/frigate/2026-10-09T00:00:00Z')
 else:
     assert os.environ['SNAPSHOT'] == 'host/frigate/2026-10-09T00:00:00Z'
+    assert args[args.index('--tmpfs')+1] == '/tmp:rw,noexec,nosuid,nodev,size=256m'
     if os.environ['FRIGATE_TEST_CASE']=='extract-failure':
         raise SystemExit(7)
     mount=args[args.index('--volume')+1]

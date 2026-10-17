@@ -135,6 +135,10 @@
           - --rm
           - --network
           - host
+          # PBS client restore needs writable scratch space; an explicit tmpfs
+          # avoids EOPNOTSUPP from the container's writable overlay filesystem.
+          - --tmpfs
+          - /tmp:rw,noexec,nosuid,nodev,size=256m
           - --volume
           - "{{ _frigate_restore_tmp.path }}:/restore"
           - --env
