@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Navidrome Restore plan output for list and selected-point modes."""
+"""Check Navidrome Restore plans and ownership-safe archive extraction."""
 
 import copy
 import os
@@ -12,10 +12,36 @@ import yaml
 repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 source = yaml.safe_load((repo / "ansible/roles/navidrome/tasks/restore.yml").read_text())
+
+
+def tasks_recursive(tasks):
+    for task in tasks:
+        yield task
+        for section in ("block", "rescue", "always"):
+            if section in task:
+                yield from tasks_recursive(task[section])
+
+
+all_tasks = list(tasks_recursive(source))
 report_tasks = [
     task for task in source
     if task.get("name", "").startswith("Navidrome restore | Report ")
 ]
+extract_task = next(
+    task for task in all_tasks
+    if task.get("name") == "Navidrome restore | Extract the selected archive"
+)
+extract_script = " ".join(extract_task["ansible.builtin.command"]["argv"][-1].split())
+assert (
+    'proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore --ignore-ownership true'
+    in extract_script
+)
+ownership_task = next(
+    task for task in all_tasks
+    if task.get("name") == "Navidrome restore | Set data ownership for the container user"
+)
+assert all_tasks.index(ownership_task) > all_tasks.index(extract_task)
+assert ownership_task["ansible.builtin.file"]["recurse"] is True
 
 
 def run_report(snapshot, snapshots_output):
@@ -62,7 +88,7 @@ def main():
     run_report(selected, "")
     run_report("", "snapshot-list-output")
 
-    print("Navidrome Restore: selected-point and snapshot-list plan output passed")
+    print("Navidrome Restore: plan output and ownership-safe archive extraction passed")
 
 
 if __name__ == "__main__":

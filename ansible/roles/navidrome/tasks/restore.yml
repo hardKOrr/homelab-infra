@@ -150,7 +150,10 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            # The Docker engine runs inside an unprivileged LXC, so the PBS client
+            # cannot apply the archive's uid/gid while extracting into scratch space.
+            # The task below assigns the configured Navidrome owner after copying.
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore --ignore-ownership true
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
