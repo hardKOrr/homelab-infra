@@ -33,9 +33,11 @@ extract_task = next(
 )
 extract_script = " ".join(extract_task["ansible.builtin.command"]["argv"][-1].split())
 assert (
-    'proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore --ignore-ownership true'
-    in extract_script
+    'proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore' in extract_script
 )
+assert "--allow-existing-dirs true" in extract_script
+assert "--ignore-ownership true" in extract_script
+assert extract_task["no_log"] is True
 ownership_task = next(
     task for task in all_tasks
     if task.get("name") == "Navidrome restore | Set data ownership for the container user"
