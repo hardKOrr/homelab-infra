@@ -2,7 +2,7 @@
 # Create and verify a disposable Authentik recovery canary through its API.
 #
 # Usage (the caller supplies the dated canary values):
-#   ansible-playbook playbooks/maintenance/authentik-drill.yml \
+#   ansible-playbook playbooks/maintenance/authentik-recovery-check.yml \
 #     -e instance=<estate-authentik-instance> \
 #     -e authentik_drill_mode=seed|present|absent \
 #     -e authentik_drill_user=<dated-user> \
