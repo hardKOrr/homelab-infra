@@ -1,8 +1,10 @@
 ---
-# Emby's first-run wizard names its pre-created first user; it does not accept a
-# password in Startup/User. After completing the wizard, authenticate that user
-# with its initial empty password and set the persistent app-owned password through
-# Emby's /Users/{Id}/Password API. No Authentik credentials are involved.
+# Emby creates its initial administrator before completing the wizard. Keep that
+# server-assigned name: renaming the passwordless account through Startup/User can
+# fail while its password hash is null. After completing the wizard, authenticate
+# that user with its initial empty password and set the persistent app-owned
+# password through Emby's /Users/{Id}/Password API. No Authentik credentials are
+# involved.
 - name: First run | Configure the Emby wizard
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/Configuration"
@@ -14,20 +16,37 @@
       PreferredMetadataLanguage: "{{ app_config.app.metadata_language | default('en') }}"
     status_code: [200, 204]
 
-- name: First run | Open the account step
+- name: First run | Read the existing Emby administrator account
   ansible.builtin.uri:
     url: "{{ _emby_base }}/Startup/User"
+    return_content: true
     status_code: 200
+  register: _emby_startup_user
   changed_when: false
+  no_log: true
 
-- name: First run | Name Emby's initial admin account
-  ansible.builtin.uri:
-    url: "{{ _emby_base }}/Startup/User"
-    method: POST
-    body_format: json
-    body:
-      Name: "{{ _emby_user }}"
-    status_code: [200, 204]
+- name: First run | Assert Emby has an initial administrator name
+  ansible.builtin.assert:
+    that: (_emby_startup_user.json.Name | default('') | trim | length) > 0
+    fail_msg: >-
+      Emby did not return the name of its initial administrator from Startup/User.
+      Check the app config directory before continuing setup.
+  no_log: true
+
+- name: First run | Use Emby's existing administrator account
+  ansible.builtin.set_fact:
+    _emby_user: "{{ _emby_startup_user.json.Name }}"
+  no_log: true
+
+- name: First run | Persist the canonical Emby credentials
+  ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+  vars:
+    vault_item_name: "homelab-infra/media/{{ instance }}"
+    vault_item_fields:
+      username: "{{ _emby_user }}"
+      password: "{{ _emby_password }}"
+    vault_item_secret_fields: [password]
+  no_log: true
 
 - name: First run | Enable remote access without router port mapping
   ansible.builtin.uri:

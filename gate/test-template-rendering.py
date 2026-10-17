@@ -480,6 +480,26 @@ def emby_rendering():
         {"status": 200, "json": {"ProductName": "Emby Server"}}
     ), "incomplete public system-info response"
 
+    wizard_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/setup-wizard.yml"))
+    startup_user_read = task_named(
+        wizard_tasks, "First run | Read the existing Emby administrator account"
+    )
+    assert startup_user_read["ansible.builtin.uri"]["url"] == (
+        "{{ _emby_base }}/Startup/User"
+    ), "first-run username comes from Emby's Startup/User endpoint"
+    assert startup_user_read["no_log"] is True, "startup account details stay private"
+    startup_user_set = task_named(
+        wizard_tasks, "First run | Use Emby's existing administrator account"
+    )
+    assert "_emby_startup_user.json.Name" in str(
+        startup_user_set["ansible.builtin.set_fact"]["_emby_user"]
+    ), "the canonical login uses Emby's existing first account"
+    assert not any(
+        task.get("ansible.builtin.uri", {}).get("url") == "{{ _emby_base }}/Startup/User"
+        and task.get("ansible.builtin.uri", {}).get("method", "GET") == "POST"
+        for task in wizard_tasks
+    ), "the passwordless Emby account is not renamed during first-run setup"
+
     mount_check = task_named(
         role_tasks,
         "Resolve whether each Emby library path is under a declared media mount",

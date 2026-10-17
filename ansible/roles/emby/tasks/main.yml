@@ -120,9 +120,9 @@
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
   no_log: true
 
-# Save a generated credential before changing Emby's initial user or password. If
-# a later first-run API call or library validation fails, the next idempotent run
-# must reuse it rather than locking the Emby account out.
+# Save the generated password before setup. The first-run wizard replaces the
+# provisional username with Emby's server-assigned administrator name and updates
+# this canonical item before setting that user's password.
 - name: Persist Emby's app-owned admin credentials before setup
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
