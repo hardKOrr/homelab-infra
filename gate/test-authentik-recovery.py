@@ -130,9 +130,14 @@ if args[0]=='backup':
     if case=='backup-failure':
         print('fixture upload failed',file=sys.stderr)
         raise SystemExit(8)
+    if case!='backup-no-new-snapshot':
+        (root/'new-snapshot-created').touch()
     raise SystemExit(0)
 if args[:2]==['snapshot','list']:
-    print('host/authentik/2026-10-16T01:00:00Z')
+    snapshots=[{'backup-time':1792112400}]
+    if (root/'new-snapshot-created').exists():
+        snapshots.append({'backup-time':1792116000})
+    print(json.dumps(snapshots))
     raise SystemExit(0)
 if args[:2]==['snapshot','files']:
     print(json.dumps(['data.pxar']))
@@ -271,6 +276,15 @@ def check_backup_and_restore_contract():
     assert task_named(backup_tasks, "Authentik backup | Report a failed PBS upload")["ansible.builtin.include_tasks"].endswith(
         "fail-with-scrubbed-output.yml"
     )
+    baseline = task_named(backup_tasks, "Authentik backup | Read the existing recovery points")
+    assert baseline["ansible.builtin.command"]["argv"][-2:] == ["--output-format", "json"]
+    verify_new_snapshot = task_named(
+        backup_tasks, "Authentik backup | Confirm PBS recorded a new recovery point"
+    )
+    assert any("_authentik_backup_snapshots_before.stdout" in condition
+               and "_authentik_backup_snapshots.stdout" in condition
+               and "length" in condition
+               for condition in verify_new_snapshot["ansible.builtin.assert"]["that"])
 
     restore = read_yaml(ROOT / "ansible/roles/authentik/tasks/restore.yml")
     restore_tasks = list(tasks_recursive(restore))
@@ -351,7 +365,7 @@ def check_transactional_restore_fixtures():
 
 def check_backup_restarts_the_instance():
     backup_tasks = read_yaml(ROOT / "ansible/roles/authentik/tasks/backup.yml")
-    for case in ["success", "backup-failure"]:
+    for case in ["success", "backup-failure", "backup-no-new-snapshot"]:
         with tempfile.TemporaryDirectory(prefix="authentik-backup-") as tmp:
             root = Path(tmp)
             write_fixture_scripts(root)
@@ -373,7 +387,11 @@ def check_backup_restarts_the_instance():
                     assert result.returncode == 0, result.stdout + result.stderr
                 else:
                     assert result.returncode != 0, result.stdout + result.stderr
-                    assert "backup" in result.stdout.lower() or "backup" in result.stderr.lower()
+                    output = result.stdout.lower() + result.stderr.lower()
+                    if case == "backup-no-new-snapshot":
+                        assert "new pbs recovery point" in output, output
+                    else:
+                        assert "backup" in output, output
             finally:
                 server.shutdown()
                 server.server_close()

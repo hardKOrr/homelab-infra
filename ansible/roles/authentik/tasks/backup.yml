@@ -113,6 +113,42 @@
         project_src: "{{ _authentik_backup_project_dir }}"
         state: stopped
 
+    - name: Authentik backup | Read the existing recovery points
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - list
+          - "host/{{ _authentik_backup_id }}"
+          - --output-format
+          - json
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _authentik_backup_snapshots_before
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Authentik backup | Report an unreadable baseline recovery point listing
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _authentik_backup_snapshots_before }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Authentik backup | baseline recovery points could not be verified
+
+    - name: Authentik backup | Validate the baseline recovery point listing
+      ansible.builtin.assert:
+        that:
+          - (_authentik_backup_snapshots_before.stdout | from_json | type_debug) == 'list'
+        fail_msg: Authentik backup could not parse the baseline PBS recovery point list.
+      no_log: true
+
     - name: Authentik backup | Upload the complete data directory to PBS
       ansible.builtin.command:
         expand_argument_vars: false
@@ -150,7 +186,7 @@
           - list
           - "host/{{ _authentik_backup_id }}"
           - --output-format
-          - text
+          - json
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
@@ -170,14 +206,15 @@
           - "{{ k8s_pbs_repository }}"
         scrub_failure_context: Authentik backup | recovery points could not be verified
 
-    - name: Authentik backup | Confirm PBS has a recovery point
+    - name: Authentik backup | Confirm PBS recorded a new recovery point
       ansible.builtin.assert:
         that:
-          - _authentik_backup_snapshots.stdout | length > 0
-          - _authentik_backup_id in _authentik_backup_snapshots.stdout
+          - (_authentik_backup_snapshots.stdout | from_json | type_debug) == 'list'
+          - (_authentik_backup_snapshots.stdout | from_json | length) > (_authentik_backup_snapshots_before.stdout | from_json | length)
         fail_msg: >-
-          Authentik backup completed without a verifiable snapshot in
+          Authentik backup completed without adding a new PBS recovery point to
           host/{{ _authentik_backup_id }}.
+      no_log: true
 
     - name: Authentik backup | Show the verified recovery points
       ansible.builtin.debug:
