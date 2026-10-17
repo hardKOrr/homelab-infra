@@ -40,10 +40,12 @@ def homepage_uses_ephemeral_writable_logs_with_read_only_inputs():
     container = pod["containers"][0]
     mounts = {mount["mountPath"]: mount for mount in container["volumeMounts"]}
     volumes = {volume["name"]: volume for volume in pod["volumes"]}
+    environment = {entry["name"]: entry["value"] for entry in container["env"]}
 
     assert pod["securityContext"]["runAsUser"] == 1000
     assert pod["securityContext"]["fsGroup"] == 1000
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    assert environment["HOMEPAGE_ALLOWED_HOSTS"] == "homepage.example.test"
     assert mounts["/app/config"]["name"] == "config-runtime"
     assert volumes["config-runtime"]["emptyDir"]["sizeLimit"] == "64Mi"
     for path, sub_path in (

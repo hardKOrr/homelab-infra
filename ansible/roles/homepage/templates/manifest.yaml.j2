@@ -45,6 +45,9 @@ spec:
       containers:
         - name: homepage
           image: {{ app_config.app.image }}
+          env:
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: "{{ homepage_fqdn }}"
           ports:
             - containerPort: {{ app_config.app.port }}
           securityContext:
