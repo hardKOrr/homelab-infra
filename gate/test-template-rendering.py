@@ -446,6 +446,40 @@ def emby_rendering():
     assert '"18096:8096"' in compose, "'\"18096:8096\"' in compose"
     assert ":/config:ro" not in compose, "':/config:ro' not in compose"
     role_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/main.yml"))
+    identity_wait = task_named(
+        role_tasks, "Wait for Emby's public system-info endpoint"
+    )
+    identity_guard = task_named(
+        role_tasks, "Assert Emby returns its public system information"
+    )
+    identity_conditions = identity_wait["until"] + identity_guard[
+        "ansible.builtin.assert"
+    ]["that"]
+    assert all("ProductName" not in condition for condition in identity_conditions), (
+        "Emby's public system-info response does not define ProductName"
+    )
+
+    def has_public_system_info(response):
+        variables = {"_emby_public": response}
+        return all(
+            render("{{ " + condition + " }}", variables)
+            for condition in identity_conditions
+        )
+
+    assert has_public_system_info(
+        {
+            "status": 200,
+            "json": {
+                "Id": "emby-server-id",
+                "ServerName": "Emby Server",
+                "Version": "4.10.1.0",
+            },
+        }
+    ), "documented Emby public system-info fields"
+    assert not has_public_system_info(
+        {"status": 200, "json": {"ProductName": "Emby Server"}}
+    ), "incomplete public system-info response"
+
     mount_check = task_named(
         role_tasks,
         "Resolve whether each Emby library path is under a declared media mount",

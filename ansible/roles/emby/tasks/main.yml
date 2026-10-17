@@ -157,23 +157,30 @@
 - name: Apply pending Emby restarts before checks
   ansible.builtin.meta: flush_handlers
 
-- name: Wait for Emby's public identity endpoint
+- name: Wait for Emby's public system-info endpoint
   ansible.builtin.uri:
     url: "{{ _emby_base }}/System/Info/Public"
     return_content: true
     status_code: 200
   register: _emby_public
-  until: _emby_public.status | default(0) == 200
+  until:
+    - _emby_public.status | default(0) == 200
+    - (_emby_public.json | default({})).Id | default('') | length > 0
+    - (_emby_public.json | default({})).ServerName | default('') | length > 0
+    - (_emby_public.json | default({})).Version | default('') | length > 0
   retries: "{{ emby_http_retries }}"
   delay: "{{ emby_http_delay }}"
   changed_when: false
 
-- name: Assert the service identifies itself as Emby
+- name: Assert Emby returns its public system information
   ansible.builtin.assert:
-    that: (_emby_public.json.ProductName | default('')) is search('Emby')
+    that:
+      - (_emby_public.json | default({})).Id | default('') | length > 0
+      - (_emby_public.json | default({})).ServerName | default('') | length > 0
+      - (_emby_public.json | default({})).Version | default('') | length > 0
     fail_msg: >-
-      Port {{ app_config.app.port }} is not serving Emby. Check app.image and whether
-      another application already owns that stack-host port.
+      Port {{ app_config.app.port }} is not returning Emby's public system information.
+      Check app.image and whether another application already owns that stack-host port.
 
 - name: Complete Emby's first-run wizard
   ansible.builtin.include_tasks: setup-wizard.yml
