@@ -102,6 +102,9 @@
 - name: Navidrome restore | Create private staging space
   ansible.builtin.tempfile:
     state: directory
+    # PBS can carry filesystem-specific quota IDs; stage beside data so restore
+    # sees the same filesystem capabilities as the destination.
+    path: "{{ app_config.app.data_path | dirname }}"
     prefix: "{{ instance }}-navidrome-restore-"
   register: _navidrome_restore_tmp
   when: restore_overwrite | bool

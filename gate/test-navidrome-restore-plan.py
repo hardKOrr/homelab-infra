@@ -44,6 +44,11 @@ assert "--ignore-xattrs true" in extract_script
 assert extract_script.index("--ignore-xattrs true") < extract_script.index('"$SNAPSHOT"')
 assert extract_task["no_log"] is True
 assert extract_task["register"] == "_navidrome_restore_extract"
+staging_task = next(
+    task for task in all_tasks
+    if task.get("name") == "Navidrome restore | Create private staging space"
+)
+assert staging_task["ansible.builtin.tempfile"]["path"] == "{{ app_config.app.data_path | dirname }}"
 diagnostic_task = next(
     task for task in all_tasks
     if task.get("name") == "Navidrome restore | Report safe archive extraction diagnostics"
