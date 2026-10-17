@@ -32,8 +32,8 @@
 - name: Assert Navidrome storage owner matches its container user
   ansible.builtin.assert:
     that:
-      - ((app_config.media_storage | default({})).owner.uid | default(-1) | int) == _navidrome_uid
-      - ((app_config.media_storage | default({})).owner.gid | default(-1) | int) == _navidrome_gid
+      - ((app_config.media_storage | default({})).owner.uid | default(-1) | int) == (_navidrome_uid | int)
+      - ((app_config.media_storage | default({})).owner.gid | default(-1) | int) == (_navidrome_gid | int)
     fail_msg: >-
       Navidrome runs as {{ _navidrome_uid }}:{{ _navidrome_gid }}, which must match
       media_storage.owner.uid/gid so it can read the existing music library.

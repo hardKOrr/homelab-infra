@@ -749,6 +749,22 @@ def navidrome_rendering():
     assert ":rw" not in compose, "':rw' not in compose"
     assert '"14533:4533"' in compose, "'\"14533:4533\"' in compose"
     role_tasks = yaml.safe_load(read("ansible/roles/navidrome/tasks/main.yml"))
+    ownership_guard = task_named(
+        role_tasks, "Assert Navidrome storage owner matches its container user"
+    )["ansible.builtin.assert"]["that"]
+    ownership_context = {
+        "app_config": {
+            "media_storage": {"owner": {"uid": 1313, "gid": 1313}},
+        },
+        # Ansible's set_fact currently exposes these values as unsafe text even when
+        # the source expression used the int filter.
+        "_navidrome_uid": "1313",
+        "_navidrome_gid": "1313",
+    }
+    for expression in ownership_guard:
+        assert (
+            render("{{ " + expression + " }}", ownership_context) is True
+        ), "matching media ownership survives Ansible's stringified set_fact ids"
     mount_guard = next(
         (
             task["ansible.builtin.assert"]["that"]
