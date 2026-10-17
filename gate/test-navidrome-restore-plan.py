@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check Navidrome Restore plan output for list and selected-point modes."""
 
+import copy
 import os
 import subprocess
 import tempfile
@@ -20,6 +21,20 @@ report_tasks = [
 def run_report(snapshot, snapshots_output):
     with tempfile.TemporaryDirectory() as directory:
         playbook = Path(directory) / "restore-plan.yml"
+        tasks = copy.deepcopy(report_tasks)
+        tasks[0]["register"] = "_selected_plan_report"
+        tasks[1]["register"] = "_available_plan_report"
+        if snapshot:
+            expected = [
+                "_selected_plan_report.msg == 'No data was changed. Selected recovery point: ' ~ restore_snapshot",
+                "_available_plan_report.skipped | default(false) | bool",
+            ]
+        else:
+            expected = [
+                "_selected_plan_report.skipped | default(false) | bool",
+                "'snapshot-list-output' in _available_plan_report.msg",
+            ]
+        tasks.append({"ansible.builtin.assert": {"that": expected}})
         playbook.write_text(yaml.safe_dump([{
             "hosts": "localhost",
             "gather_facts": False,
@@ -29,7 +44,7 @@ def run_report(snapshot, snapshots_output):
                 "_navidrome_restore_backup_id": "navidrome",
                 "_navidrome_restore_snapshots": {"stdout": snapshots_output},
             },
-            "tasks": report_tasks,
+            "tasks": tasks,
         }]))
         result = subprocess.run(
             [str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
@@ -39,19 +54,13 @@ def run_report(snapshot, snapshots_output):
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        return result.stdout
 
 
 def main():
     assert len(report_tasks) == 2
     selected = "host/navidrome/fixture-recovery-point"
-    selected_output = run_report(selected, "")
-    assert f"Selected recovery point: {selected}" in selected_output
-    assert "provide snapshot=<id>" not in selected_output
-
-    listed_output = run_report("", "snapshot-list-output")
-    assert "PBS snapshots for host/navidrome:" in listed_output
-    assert "snapshot-list-output" in listed_output
+    run_report(selected, "")
+    run_report("", "snapshot-list-output")
 
     print("Navidrome Restore: selected-point and snapshot-list plan output passed")
 
