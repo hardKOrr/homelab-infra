@@ -1,0 +1,317 @@
+---
+# Create and verify a disposable Authentik recovery canary through its API.
+#
+# Usage (the caller supplies the dated canary values):
+#   ansible-playbook playbooks/maintenance/authentik-drill.yml \
+#     -e instance=<estate-authentik-instance> \
+#     -e authentik_drill_mode=seed|present|absent \
+#     -e authentik_drill_user=<dated-user> \
+#     -e authentik_drill_group=<dated-group> \
+#     -e authentik_drill_brand_title=<non-default-title>
+#
+# `seed` creates missing objects and verifies the result. `present` and `absent`
+# are read-only. The API token is resolved only from the instance's estate-scoped
+# Vaultwarden SSO item, and the brand domain comes from the instance routing.
+- name: Verify Authentik recovery canaries through the API
+  hosts: localhost
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Require the drill inputs
+      ansible.builtin.assert:
+        that:
+          - instance is defined and instance | length > 0
+          - authentik_drill_mode | default('') in ['seed', 'present', 'absent']
+          - authentik_drill_user is defined and authentik_drill_user | length > 0
+          - authentik_drill_group is defined and authentik_drill_group | length > 0
+          - authentik_drill_brand_title is defined and authentik_drill_brand_title | length > 0
+        fail_msg: >-
+          Provide instance, authentik_drill_mode (seed|present|absent),
+          authentik_drill_user, authentik_drill_group and authentik_drill_brand_title.
+
+    - name: Load Authentik defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/authentik.yml
+        name: _authentik_app_defaults
+
+    - name: Load the selected Authentik instance config
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _authentik_instance_config
+      failed_when: false
+
+    - name: Load infrastructure facts
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: homelabinfra_infra
+      failed_when: false
+
+    - name: Merge the selected Authentik config
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _authentik_app_defaults.authentik_defaults
+             | combine(_authentik_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({}),
+                         'routing': {'estate': ((_authentik_instance_config | default({}))
+                                                 .get('routing', {})).get('estate', '')}},
+                       recursive=True) }}
+
+    - name: Require a non-default estate-scoped instance
+      ansible.builtin.assert:
+        that:
+          - app_config.routing.estate | default('', true) | length > 0
+        fail_msg: >-
+          This drill is for a named estate. Set routing.estate in
+          config/apps/{{ instance }}.yml.
+
+    - name: Resolve the selected estate facts
+      ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ app_config.routing.estate }}"
+
+    - name: Require the estate-scoped Authentik API token
+      ansible.builtin.import_tasks: ../../tasks/bitwarden/required-item.yml
+      vars:
+        vault_required_item: "homelab-infra/estates/{{ app_config.routing.estate }}/sso"
+        vault_required_fields: [token]
+
+    - name: Resolve the API endpoint, token and canary brand domain
+      ansible.builtin.set_fact:
+        _authentik_drill_api: "{{ homelabinfra_infra.sso.host | regex_replace('/+$', '') }}/api/v3"
+        _authentik_drill_token: "{{ _vault_required_value.token }}"
+        _authentik_drill_brand_domain: "{{ app_config.routing.subdomain }}.{{ homelabinfra_infra.domain }}"
+      no_log: true
+
+    - name: Require the endpoint and canary domain
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_infra.sso.provider | default('') == 'authentik'
+          - _authentik_drill_api | length > 0
+          - _authentik_drill_token | length > 0
+          - _authentik_drill_brand_domain | length > 0
+        fail_msg: The selected estate does not have a complete Authentik API contract.
+      no_log: true
+
+  tasks:
+    - name: List Authentik groups
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/groups/?page_size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        status_code: 200
+      register: _authentik_drill_groups
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the canary group
+      ansible.builtin.set_fact:
+        _authentik_drill_group_matches: >-
+          {{ _authentik_drill_groups.json.results | default([])
+             | selectattr('name', 'equalto', authentik_drill_group) | list }}
+      no_log: true
+
+    - name: Create the API canary group when seeding
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/groups/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        body_format: json
+        body:
+          name: "{{ authentik_drill_group }}"
+          is_superuser: false
+          attributes: {}
+        status_code: 201
+      when:
+        - authentik_drill_mode == 'seed'
+        - _authentik_drill_group_matches | length == 0
+      changed_when: true
+      no_log: true
+
+    - name: Re-read Authentik groups after seeding
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/groups/?page_size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        status_code: 200
+      register: _authentik_drill_groups
+      changed_when: false
+      no_log: true
+      when: authentik_drill_mode == 'seed'
+
+    - name: Resolve the final canary group
+      ansible.builtin.set_fact:
+        _authentik_drill_group_matches: >-
+          {{ _authentik_drill_groups.json.results | default([])
+             | selectattr('name', 'equalto', authentik_drill_group) | list }}
+      no_log: true
+
+    - name: Require exactly one non-superuser canary group
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_authentik_drill_group_matches | length == 0)
+            if authentik_drill_mode == 'absent'
+            else (_authentik_drill_group_matches | length == 1
+                  and not (_authentik_drill_group_matches[0].is_superuser | default(false) | bool))
+        fail_msg: The Authentik canary group is missing, duplicated or has unexpected privileges.
+      no_log: true
+
+    - name: List Authentik users
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/users/?page_size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        status_code: 200
+      register: _authentik_drill_users
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the API canary user
+      ansible.builtin.set_fact:
+        _authentik_drill_user_matches: >-
+          {{ _authentik_drill_users.json.results | default([])
+             | selectattr('username', 'equalto', authentik_drill_user) | list }}
+      no_log: true
+
+    - name: Create the API canary user in its group
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/users/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        body_format: json
+        body:
+          username: "{{ authentik_drill_user }}"
+          name: "{{ authentik_drill_user }}"
+          email: ""
+          is_active: true
+          type: internal
+          path: users
+          attributes: {}
+          groups: "{{ [_authentik_drill_group_matches[0].pk] }}"
+        status_code: 201
+      when:
+        - authentik_drill_mode == 'seed'
+        - _authentik_drill_user_matches | default([]) | length == 0
+      changed_when: true
+      no_log: true
+
+    - name: Re-read Authentik users after seeding
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/users/?page_size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        status_code: 200
+      register: _authentik_drill_users
+      changed_when: false
+      no_log: true
+      when: authentik_drill_mode == 'seed'
+
+    - name: Resolve the final API canary user
+      ansible.builtin.set_fact:
+        _authentik_drill_user_matches: >-
+          {{ _authentik_drill_users.json.results | default([])
+             | selectattr('username', 'equalto', authentik_drill_user) | list }}
+      no_log: true
+
+    - name: Require exactly one user with exact group membership
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_authentik_drill_user_matches | default([]) | length == 0)
+            if authentik_drill_mode == 'absent'
+            else (_authentik_drill_user_matches | length == 1
+                  and (_authentik_drill_user_matches[0].groups | default([]) | map('string') | list)
+                      == [_authentik_drill_group_matches[0].pk | string])
+        fail_msg: The Authentik canary user is missing, duplicated or outside its exact group.
+      no_log: true
+
+    - name: List Authentik brands
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/brands/?page_size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        status_code: 200
+      register: _authentik_drill_brands
+      changed_when: false
+      no_log: true
+
+    - name: Resolve the configuration canary brand
+      ansible.builtin.set_fact:
+        _authentik_drill_brand_matches: >-
+          {{ _authentik_drill_brands.json.results | default([])
+             | selectattr('domain', 'equalto', _authentik_drill_brand_domain) | list }}
+      no_log: true
+
+    - name: Create the API brand canary when seeding
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/brands/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        body_format: json
+        body:
+          domain: "{{ _authentik_drill_brand_domain }}"
+          branding_title: "{{ authentik_drill_brand_title }}"
+        status_code: 201
+      when:
+        - authentik_drill_mode == 'seed'
+        - _authentik_drill_brand_matches | length == 0
+      changed_when: true
+      no_log: true
+
+    - name: Re-read Authentik brands after seeding
+      ansible.builtin.uri:
+        url: "{{ _authentik_drill_api }}/core/brands/?page_size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ _authentik_drill_token }}"
+          Accept: application/json
+        status_code: 200
+      register: _authentik_drill_brands
+      changed_when: false
+      no_log: true
+      when: authentik_drill_mode == 'seed'
+
+    - name: Resolve the final configuration canary brand
+      ansible.builtin.set_fact:
+        _authentik_drill_brand_matches: >-
+          {{ _authentik_drill_brands.json.results | default([])
+             | selectattr('domain', 'equalto', _authentik_drill_brand_domain) | list }}
+      no_log: true
+
+    - name: Require exactly one brand with the non-default title
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_authentik_drill_brand_matches | length == 0)
+            if authentik_drill_mode == 'absent'
+            else (_authentik_drill_brand_matches | length == 1
+                  and _authentik_drill_brand_matches[0].branding_title == authentik_drill_brand_title)
+        fail_msg: The Authentik configuration canary is missing, duplicated or has the wrong title.
+      no_log: true
+
+    - name: Summarise verified canary counts
+      ansible.builtin.debug:
+        msg:
+          mode: "{{ authentik_drill_mode }}"
+          groups: "{{ 0 if authentik_drill_mode == 'absent' and _authentik_drill_group_matches | length == 0 else 1 }}"
+          users: "{{ 0 if authentik_drill_mode == 'absent' and (_authentik_drill_user_matches | default([]) | length == 0) else 1 }}"
+          brands: "{{ 0 if authentik_drill_mode == 'absent' and _authentik_drill_brand_matches | length == 0 else 1 }}"
