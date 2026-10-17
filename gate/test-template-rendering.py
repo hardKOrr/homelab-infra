@@ -481,6 +481,26 @@ def emby_rendering():
     ), "incomplete public system-info response"
 
     wizard_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/setup-wizard.yml"))
+    setup_state = task_named(
+        role_tasks, "Read Emby's unauthenticated startup endpoint state"
+    )
+    assert setup_state["ansible.builtin.uri"]["url"] == (
+        "{{ _emby_base }}/Startup/User"
+    ), "deploy detects first-run state through Emby's startup endpoint"
+    assert setup_state["ansible.builtin.uri"]["status_code"] == [200, 401], (
+        "the startup endpoint is public during setup and protected after completion"
+    )
+    assert setup_state["no_log"] is True, "startup endpoint response stays private"
+    wizard_include = task_named(role_tasks, "Complete Emby's first-run wizard")
+    assert wizard_include["when"] == "_emby_setup_state.status == 200", (
+        "only an unauthenticated startup endpoint runs the setup wizard"
+    )
+    assert "StartupWizardCompleted" not in read(
+        "ansible/roles/emby/tasks/main.yml"
+    ) + read("ansible/roles/emby/tasks/setup-wizard.yml"), (
+        "Emby public system info does not expose StartupWizardCompleted"
+    )
+
     startup_user_read = task_named(
         wizard_tasks, "First run | Read the existing Emby administrator account"
     )
@@ -499,6 +519,29 @@ def emby_rendering():
         and task.get("ansible.builtin.uri", {}).get("method", "GET") == "POST"
         for task in wizard_tasks
     ), "the passwordless Emby account is not renamed during first-run setup"
+    setup_closed = task_named(
+        wizard_tasks,
+        "First run | Confirm Emby's startup endpoint now requires authentication",
+    )
+    assert setup_closed["until"] == "_emby_setup_closed.status == 401", (
+        "first-run completion is verified with the protected startup endpoint"
+    )
+    password_setup = yaml.safe_load(
+        read("ansible/roles/emby/tasks/set-admin-password.yml")
+    )
+    password_auth = task_named(
+        password_setup,
+        "Emby | Authenticate the initial administrator without a password",
+    )
+    assert password_auth["ansible.builtin.uri"]["body"]["Pw"] == "", (
+        "recovery authenticates only an initial passwordless administrator"
+    )
+    assert task_named(
+        role_tasks,
+        "Recover Emby's passwordless administrator after interrupted first run",
+    )["when"] == "_emby_auth_attempt.status == 401", (
+        "passwordless recovery is attempted only when canonical credentials fail"
+    )
 
     mount_check = task_named(
         role_tasks,

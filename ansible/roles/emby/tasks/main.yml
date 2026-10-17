@@ -182,9 +182,41 @@
       Port {{ app_config.app.port }} is not returning Emby's public system information.
       Check app.image and whether another application already owns that stack-host port.
 
+- name: Read Emby's unauthenticated startup endpoint state
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Startup/User"
+    status_code: [200, 401]
+  register: _emby_setup_state
+  until: _emby_setup_state.status in [200, 401]
+  retries: "{{ emby_http_retries }}"
+  delay: "{{ emby_http_delay }}"
+  changed_when: false
+  no_log: true
+
 - name: Complete Emby's first-run wizard
   ansible.builtin.include_tasks: setup-wizard.yml
-  when: not (_emby_public.json.StartupWizardCompleted | default(false) | bool)
+  when: _emby_setup_state.status == 200
+
+- name: Try Emby's app-owned admin credentials
+  ansible.builtin.uri:
+    url: "{{ _emby_base }}/Users/AuthenticateByName"
+    method: POST
+    headers:
+      X-Emby-Authorization: >-
+        MediaBrowser Client="{{ emby_client_name }}", Device="{{ emby_device_name }}",
+        DeviceId="{{ emby_client_name }}-{{ instance }}", Version="1.0.0"
+    body_format: json
+    body:
+      Username: "{{ _emby_user }}"
+      Pw: "{{ _emby_password }}"
+    status_code: [200, 401]
+  register: _emby_auth_attempt
+  changed_when: false
+  no_log: true
+
+- name: Recover Emby's passwordless administrator after interrupted first run
+  ansible.builtin.include_tasks: set-admin-password.yml
+  when: _emby_auth_attempt.status == 401
 
 - name: Authenticate to Emby with its own admin account
   ansible.builtin.uri:
