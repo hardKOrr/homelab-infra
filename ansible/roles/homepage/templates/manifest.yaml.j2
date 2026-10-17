@@ -52,6 +52,11 @@ spec:
             capabilities: { drop: [ALL] }
             readOnlyRootFilesystem: true
           volumeMounts:
+            # Homepage creates /app/config/logs at startup. The image's config directory
+            # is absent here, so provide an ephemeral parent and overlay its generated
+            # ConfigMap files below as read-only subpaths.
+            - name: config-runtime
+              mountPath: /app/config
             - name: config
               mountPath: /app/config/services.yaml
               subPath: services.yaml
@@ -60,10 +65,6 @@ spec:
               mountPath: /app/config/settings.yaml
               subPath: settings.yaml
               readOnly: true
-            # Homepage creates /app/config/logs on startup even though all input config
-            # is supplied by ConfigMap. Keep that runtime directory writable and ephemeral.
-            - name: logs
-              mountPath: /app/config/logs
             - name: tmp
               mountPath: /tmp
           readinessProbe:
@@ -71,11 +72,11 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
-        - name: config
-          configMap: { name: {{ instance }}-config }
-        - name: logs
+        - name: config-runtime
           emptyDir:
             sizeLimit: 64Mi
+        - name: config
+          configMap: { name: {{ instance }}-config }
         - name: tmp
           emptyDir: {}
 ---

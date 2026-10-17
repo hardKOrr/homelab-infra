@@ -38,21 +38,26 @@ def homepage_uses_ephemeral_writable_logs_with_read_only_inputs():
     )
     pod = deployment["spec"]["template"]["spec"]
     container = pod["containers"][0]
-    mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+    mounts = {mount["mountPath"]: mount for mount in container["volumeMounts"]}
     volumes = {volume["name"]: volume for volume in pod["volumes"]}
 
     assert pod["securityContext"]["runAsUser"] == 1000
     assert pod["securityContext"]["fsGroup"] == 1000
     assert container["securityContext"]["readOnlyRootFilesystem"] is True
-    assert mounts["config"]["readOnly"] is True
-    assert mounts["logs"]["mountPath"] == "/app/config/logs"
-    assert volumes["logs"]["emptyDir"]["sizeLimit"] == "64Mi"
-    assert "persistentVolumeClaim" not in str(volumes["logs"])
-    assert all(
-        "persistentVolumeClaim" not in document
-        for document in documents
-        if document["kind"] in {"Deployment", "PersistentVolumeClaim"}
-    )
+    assert mounts["/app/config"]["name"] == "config-runtime"
+    assert volumes["config-runtime"]["emptyDir"]["sizeLimit"] == "64Mi"
+    for path, sub_path in (
+        ("/app/config/services.yaml", "services.yaml"),
+        ("/app/config/settings.yaml", "settings.yaml"),
+    ):
+        assert mounts[path]["subPath"] == sub_path
+        assert mounts[path]["readOnly"] is True
+    assert {document["kind"] for document in documents} == {
+        "ConfigMap",
+        "Deployment",
+        "Service",
+        "Ingress",
+    }
 
 
 if __name__ == "__main__":
