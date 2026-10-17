@@ -43,12 +43,6 @@
         name: _authentik_instance_config
       failed_when: false
 
-    - name: Load infrastructure facts
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
-        name: homelabinfra_infra
-      failed_when: false
-
     - name: Merge the selected Authentik config
       ansible.builtin.set_fact:
         app_config: >-
@@ -72,16 +66,12 @@
       vars:
         resolve_estate_name: "{{ app_config.routing.estate }}"
 
-    - name: Require the estate-scoped Authentik API token
-      ansible.builtin.import_tasks: ../../tasks/bitwarden/required-item.yml
-      vars:
-        vault_required_item: "homelab-infra/estates/{{ app_config.routing.estate }}/sso"
-        vault_required_fields: [token]
-
     - name: Resolve the API endpoint, token and canary brand domain
       ansible.builtin.set_fact:
-        _authentik_drill_api: "{{ homelabinfra_infra.sso.host | regex_replace('/+$', '') }}/api/v3"
-        _authentik_drill_token: "{{ _vault_required_value.token }}"
+        _authentik_drill_sso: "{{ ((homelabinfra_infra.estates | default({})).get(app_config.routing.estate, {})).get('sso', {}) }}"
+        _authentik_drill_api: >-
+          {{ (_authentik_drill_sso.host | default('') | regex_replace('/+$', '')) ~ '/api/v3' }}
+        _authentik_drill_token: "{{ _authentik_drill_sso.token | default('') }}"
         _authentik_drill_brand_domain: "{{ app_config.routing.subdomain }}.{{ homelabinfra_infra.domain }}"
       no_log: true
 
