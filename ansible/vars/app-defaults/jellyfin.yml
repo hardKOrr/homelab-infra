@@ -7,6 +7,15 @@
 jellyfin_defaults:
   stack: media
 
+  # Jellyfin keeps its users, libraries and server settings in its application
+  # database. Back up the quiesced config directory as one native recovery point;
+  # the media library and disposable cache remain outside it.
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     # NO media_kind, deliberately. That key enrols an app in the media registry,
     # and wire-media-stack.yml fails on a registry entry whose kind it cannot
@@ -72,3 +81,17 @@ jellyfin_defaults:
     # catalog publishes it in the Authentik catalog and leaves Jellyfin to
     # authenticate its own callers.
     identity: catalog
+
+  backup:
+    enabled: true
+    application_consistent: true
+    schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

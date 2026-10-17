@@ -1,0 +1,454 @@
+---
+# The complete Jellyfin config directory is one application-consistent recovery
+# unit. Keep the current target beside it on the same filesystem until the
+# restored database authenticates and the library API answers.
+- name: Jellyfin restore | Assert the restore contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - restore_overwrite is defined
+      - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
+      - >-
+        not (restore_overwrite | bool)
+        or restore_source_jellyfin_user | default('') | length > 0
+      - >-
+        not (restore_overwrite | bool)
+        or restore_source_jellyfin_password | default('') | length > 0
+      - >-
+        not (restore_overwrite | bool)
+        or (restore_destination | default('existing') != 'existing')
+        or restore_pre_restore_point | default('', true) | length > 0
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Jellyfin restore needs its PBS-backed recovery contract and source account.
+      Keep overwrite=false to list snapshots; replacing an existing target also
+      requires an independent pre_restore_point.
+
+- name: Jellyfin restore | Resolve source and target backup identities
+  ansible.builtin.set_fact:
+    _jellyfin_restore_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _jellyfin_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _application_restore_complete: false
+    _jellyfin_restore_rolled_back: false
+    _jellyfin_restore_moved: {rc: 1}
+  no_log: true
+
+- name: Jellyfin restore | Require the selected point to belong to the source group
+  ansible.builtin.assert:
+    that:
+      - restore_snapshot.startswith('host/' ~ _jellyfin_restore_backup_id ~ '/')
+      - restore_snapshot | length > ('host/' ~ _jellyfin_restore_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Jellyfin snapshot must belong to
+      host/{{ _jellyfin_restore_backup_id }}/; refusing another application's archive.
+  when: restore_snapshot | default('') | length > 0
+
+- name: Jellyfin restore | Require the pre-restore point to belong to the target group
+  ansible.builtin.assert:
+    that:
+      - restore_pre_restore_point.startswith('host/' ~ _jellyfin_restore_target_backup_id ~ '/')
+      - restore_pre_restore_point | length > ('host/' ~ _jellyfin_restore_target_backup_id ~ '/') | length
+      - restore_pre_restore_point != restore_snapshot
+    fail_msg: >-
+      The Jellyfin pre_restore_point must be an independent snapshot from
+      host/{{ _jellyfin_restore_target_backup_id }}/.
+  when:
+    - restore_overwrite | bool
+    - restore_destination | default('existing') == 'existing'
+
+- name: Jellyfin restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Jellyfin restore | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Jellyfin. Deploy PBS before listing or restoring
+      application data.
+
+- name: Jellyfin restore | List snapshots in read-only plan mode
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - host
+      - --env
+      - PBS_REPOSITORY
+      - --env
+      - PBS_FINGERPRINT
+      - --env
+      - PBS_PASSWORD
+      - --env
+      - BACKUP_ID
+      - --env
+      - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+      - --env
+      - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+      - "{{ app_config.backup.client.image }}"
+      - /bin/sh
+      - -ceu
+      - |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+          > /etc/apt/sources.list.d/pbs-client.list
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+        proxmox-backup-client snapshot list "host/$BACKUP_ID"
+  register: _jellyfin_restore_snapshots
+  changed_when: false
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+    BACKUP_ID: "{{ _jellyfin_restore_backup_id }}"
+  no_log: true
+
+- name: Jellyfin restore | Report the read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. PBS snapshots for host/{{ _jellyfin_restore_backup_id }}:
+      {{ _jellyfin_restore_snapshots.stdout | default('provide recovery_point=<id> to select one') }}
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length == 0)
+
+- name: Jellyfin restore | Explain the selected read-only plan
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with this recovery point and overwrite=true to replace
+      {{ app_config.app.config_path }} from one Jellyfin data.pxar archive.
+  when: not (restore_overwrite | bool) and (restore_snapshot | default('') | length > 0)
+
+- name: Jellyfin restore | Require an existing config directory for replacement
+  ansible.builtin.stat:
+    path: "{{ app_config.app.config_path }}"
+  register: _jellyfin_restore_config
+  changed_when: false
+  when: restore_overwrite | bool
+
+- name: Jellyfin restore | Assert the target is ready for replacement
+  ansible.builtin.assert:
+    that:
+      - _jellyfin_restore_config.stat.isdir | default(false)
+    fail_msg: >-
+      Jellyfin target config {{ app_config.app.config_path }} is missing; deploy the target
+      before restoring so the pre-restore recovery point can be preserved.
+  when: restore_overwrite | bool
+
+- name: Jellyfin restore | Create private staging space beside the config directory
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ app_config.app.config_path | dirname }}"
+    prefix: .jellyfin-restore-
+  register: _jellyfin_restore_tmp
+  when: restore_overwrite | bool
+
+- name: Jellyfin restore | Replace application state from PBS
+  when: restore_overwrite | bool
+  block:
+    - name: Jellyfin restore | Create the archive extraction directory
+      ansible.builtin.file:
+        path: "{{ _jellyfin_restore_tmp.path }}/recovered"
+        state: directory
+        mode: "0700"
+
+    - name: Jellyfin restore | Stop only Jellyfin
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Jellyfin restore | Extract the selected archive
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --tmpfs
+          - /tmp:rw,noexec,nosuid,nodev,size=256m
+          - --volume
+          - "{{ _jellyfin_restore_tmp.path }}/recovered:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ restore_snapshot }}"
+      no_log: true
+      changed_when: true
+
+    - name: Jellyfin restore | Locate the recovered database
+      ansible.builtin.find:
+        paths: "{{ _jellyfin_restore_tmp.path }}/recovered"
+        patterns: jellyfin.db
+        recurse: true
+        file_type: file
+      register: _jellyfin_restore_databases
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin restore | Require the restored users and library database
+      ansible.builtin.assert:
+        that:
+          - _jellyfin_restore_databases.matched | default(0) | int == 1
+        fail_msg: >-
+          The selected Jellyfin archive must contain exactly one jellyfin.db;
+          refusing to replace the target with an incomplete recovery point.
+
+    - name: Jellyfin restore | Record the discovered database path
+      ansible.builtin.set_fact:
+        _jellyfin_restore_database_path: "{{ _jellyfin_restore_databases.files[0].path }}"
+      no_log: true
+
+    - name: Jellyfin restore | Check the archived database integrity
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - >-
+            import sqlite3,sys;
+            c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);
+            result=c.execute('PRAGMA integrity_check').fetchone()[0];
+            c.close();
+            sys.exit(0 if result == 'ok' else 1)
+          - "{{ _jellyfin_restore_database_path }}"
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin restore | Move the original config into same-filesystem rollback space
+      ansible.builtin.command:
+        argv: [mv, "{{ app_config.app.config_path }}", "{{ _jellyfin_restore_tmp.path }}/original"]
+      register: _jellyfin_restore_moved
+      changed_when: _jellyfin_restore_moved.rc == 0
+      no_log: true
+
+    - name: Jellyfin restore | Recreate the config directory
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        mode: "0750"
+
+    - name: Jellyfin restore | Copy the archived application state into place
+      ansible.builtin.command:
+        argv: [cp, -a, "{{ _jellyfin_restore_tmp.path }}/recovered/.", "{{ app_config.app.config_path }}/"]
+      changed_when: true
+      no_log: true
+
+    - name: Jellyfin restore | Set config ownership for the container user
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        recurse: true
+
+    - name: Jellyfin restore | Start only Jellyfin
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
+
+    - name: Jellyfin restore | Wait for the restored server
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/System/Info/Public"
+        return_content: true
+        status_code: 200
+      register: _jellyfin_restore_health
+      until: _jellyfin_restore_health.status | default(0) == 200
+      retries: 60
+      delay: 5
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin restore | Assert the server is configured and healthy
+      ansible.builtin.assert:
+        that:
+          - (_jellyfin_restore_health.json.ProductName | default('')) is search('Jellyfin')
+          - _jellyfin_restore_health.json.StartupWizardCompleted | default(false) | bool
+        fail_msg: >-
+          The restored config did not return a completed Jellyfin server. The original
+          config will be restored and Jellyfin restarted.
+
+    - name: Jellyfin restore | Authenticate with the source app-owned account
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/Users/AuthenticateByName"
+        method: POST
+        headers:
+          Authorization: >-
+            MediaBrowser Client="{{ jellyfin_client_name }}",
+            Device="{{ jellyfin_device_name }}",
+            DeviceId="{{ jellyfin_client_name }}-{{ instance }}", Version="1.0.0"
+        body_format: json
+        body:
+          Username: "{{ restore_source_jellyfin_user }}"
+          Pw: "{{ restore_source_jellyfin_password }}"
+        status_code: [200, 401]
+      register: _jellyfin_restore_auth
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin restore | Assert the restored account authenticates
+      ansible.builtin.assert:
+        that:
+          - _jellyfin_restore_auth.status == 200
+          - (_jellyfin_restore_auth.json.AccessToken | default('')) | length > 0
+        fail_msg: >-
+          The restored Jellyfin database did not accept the source app-owned account.
+
+    - name: Jellyfin restore | Read the restored users
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/Users"
+        headers:
+          Authorization: 'MediaBrowser Token="{{ _jellyfin_restore_auth.json.AccessToken }}"'
+        return_content: true
+        status_code: 200
+      register: _jellyfin_restore_users
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin restore | Assert the app-owned account is present
+      ansible.builtin.assert:
+        that: >-
+          restore_source_jellyfin_user in
+          (_jellyfin_restore_users.json | map(attribute='Name') | list)
+        fail_msg: >-
+          The restored Jellyfin database does not contain its app-owned account.
+
+    - name: Jellyfin restore | Read the restored libraries
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/Library/VirtualFolders"
+        headers:
+          Authorization: 'MediaBrowser Token="{{ _jellyfin_restore_auth.json.AccessToken }}"'
+        return_content: true
+        status_code: 200
+      register: _jellyfin_restore_libraries
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin restore | Assert a library was restored
+      ansible.builtin.assert:
+        that: (_jellyfin_restore_libraries.json | default([]) | length) > 0
+        fail_msg: "The restored Jellyfin account has no configured media libraries."
+
+    - name: Jellyfin restore | Publish the restored account for the target instance
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/media/{{ instance }}"
+        vault_item_fields:
+          username: "{{ restore_source_jellyfin_user }}"
+          password: "{{ restore_source_jellyfin_password }}"
+        vault_item_secret_fields: [password]
+      no_log: true
+
+    - name: Jellyfin restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Jellyfin restore | Stop the replacement after failure
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+      when: _jellyfin_restore_moved.rc | default(1) == 0
+
+    - name: Jellyfin restore | Remove the failed replacement config
+      ansible.builtin.file:
+        path: "{{ app_config.app.config_path }}"
+        state: absent
+      when: _jellyfin_restore_moved.rc | default(1) == 0
+
+    - name: Jellyfin restore | Put the original config back
+      ansible.builtin.command:
+        argv: [mv, "{{ _jellyfin_restore_tmp.path }}/original", "{{ app_config.app.config_path }}"]
+      changed_when: true
+      no_log: true
+      when: _jellyfin_restore_moved.rc | default(1) == 0
+
+    - name: Jellyfin restore | Record completed rollback
+      ansible.builtin.set_fact:
+        _jellyfin_restore_rolled_back: true
+      when: _jellyfin_restore_moved.rc | default(1) == 0
+
+    - name: Jellyfin restore | Restart Jellyfin after a successful rollback
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
+      when: _jellyfin_restore_rolled_back | default(false) | bool
+
+    - name: Jellyfin restore | Restart the untouched config after an early failure
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
+      when: _jellyfin_restore_moved.rc | default(1) != 0
+
+    - name: Jellyfin restore | Record the untouched-config recovery
+      ansible.builtin.set_fact:
+        _jellyfin_restore_rolled_back: true
+      when: _jellyfin_restore_moved.rc | default(1) != 0
+
+    - name: Jellyfin restore | Report the failed recovery
+      ansible.builtin.fail:
+        msg: >-
+          Jellyfin restore failed.
+          {% if _jellyfin_restore_moved.rc | default(1) != 0 %}
+          The original config was untouched and Jellyfin was restarted.
+          {% else %}
+          The original config was put back and Jellyfin was restarted.
+          {% endif %}
+          Inspect the job output and retry after correcting the failure.
+  always:
+    # If rollback itself fails, preserve the private staging directory with the original
+    # config in it for recovery. It is removed only after success or a completed rollback.
+    - name: Jellyfin restore | Remove rollback space after success or completed rollback
+      ansible.builtin.file:
+        path: "{{ _jellyfin_restore_tmp.path }}"
+        state: absent
+      when:
+        - _jellyfin_restore_tmp.path is defined
+        - >-
+          (_application_restore_complete | default(false) | bool)
+          or (_jellyfin_restore_rolled_back | default(false) | bool)
+          or (_jellyfin_restore_moved.rc | default(1) != 0)

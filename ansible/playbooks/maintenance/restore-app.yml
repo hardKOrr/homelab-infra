@@ -264,6 +264,20 @@
       no_log: true
       when: _ra_app == 'emby'
 
+    # Jellyfin's users and server configuration live in the same /config archive.
+    # Keep the source account available to the role so it can verify the restored
+    # database and publish the matching credential for a new target.
+    - name: Resolve source Jellyfin credentials without exposing them
+      ansible.builtin.set_fact:
+        restore_source_jellyfin_user: >-
+          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).username
+             | default('') }}
+        restore_source_jellyfin_password: >-
+          {{ (homelabinfra_vault.media | default({})).get(_ra_source_instance, {}).password
+             | default('') }}
+      no_log: true
+      when: _ra_app == 'jellyfin'
+
     # Emby's config directory is target-owned. Rebind the defaulted source path when
     # restoring to a differently named instance; external media paths are never changed.
     - name: Normalize the target Emby config path
@@ -691,7 +705,8 @@
 - name: "Restore App | Restore Docker or native-LXC application data from PBS"
   hosts: "apptarget_{{ target | default(instance if instance is defined else '_instance_unset', true) }}"
   become: true
-  gather_facts: false
+  # Application role dependencies can require host facts before their task runs.
+  gather_facts: true
   tasks:
     # A dispatched application recovery task must set this generic completion fact only after
     # its restore and health check are complete; the notification and degradation gate
@@ -743,7 +758,7 @@
                                                    | replace('/opt/' ~ hostvars['localhost']._ra_source_instance ~ '/',
                                                              '/opt/' ~ hostvars['localhost']._ra_target ~ '/'))
                                  }}, recursive=True)
-                               if hostvars['localhost']._ra_app in ['home-assistant', 'qbittorrent', 'sabnzbd', 'bazarr', 'deemix', 'tautulli', 'prowlarr', 'sonarr', 'radarr', 'lidarr', 'frigate']
+                               if hostvars['localhost']._ra_app in ['home-assistant', 'qbittorrent', 'sabnzbd', 'bazarr', 'deemix', 'tautulli', 'prowlarr', 'sonarr', 'radarr', 'lidarr', 'frigate', 'jellyfin']
                                else hostvars['localhost'].restore_target_config))))) }}
         home_assistant_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
         frigate_project_dir: "/opt/{{ hostvars['localhost']._ra_target }}"
@@ -759,6 +774,8 @@
         restore_source_plane_secrets: "{{ hostvars['localhost'].restore_source_plane_secrets | default({}) }}"
         restore_source_emby_user: "{{ hostvars['localhost'].restore_source_emby_user | default('') }}"
         restore_source_emby_password: "{{ hostvars['localhost'].restore_source_emby_password | default('') }}"
+        restore_source_jellyfin_user: "{{ hostvars['localhost'].restore_source_jellyfin_user | default('') }}"
+        restore_source_jellyfin_password: "{{ hostvars['localhost'].restore_source_jellyfin_password | default('') }}"
         restore_target_backup_id: >-
           {{ hostvars['localhost'].restore_target_config.backup.backup_id | default('', true)
              or hostvars['localhost']._ra_target }}

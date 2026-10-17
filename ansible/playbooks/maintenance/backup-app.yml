@@ -214,7 +214,8 @@
 - name: "Backup App | Run the application-owned backup"
   hosts: "apptarget_{{ instance | default('_instance_unset') }}"
   become: true
-  gather_facts: false
+  # Application role dependencies can require host facts before their task runs.
+  gather_facts: true
   tasks:
     # A dispatched application recovery task must set this generic completion fact only after
     # its archive is complete. Keeping the contract generic prevents a future role from

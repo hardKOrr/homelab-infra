@@ -36,6 +36,19 @@ def check(playbook, task_name, inputs, expected):
 
 
 def main():
+    # Role metadata dependencies run before the selected backup/restore task file.
+    # The Docker dependency consumes host architecture facts, so both app target plays
+    # must gather facts before Ansible dispatches into an application role.
+    for playbook, play_name in [
+        ("backup-app.yml", "Backup App | Run the application-owned backup"),
+        ("restore-app.yml", "Restore App | Restore Docker or native-LXC application data from PBS"),
+    ]:
+        plays = yaml.safe_load(
+            (repo / "ansible/playbooks/maintenance" / playbook).read_text()
+        )
+        target_play = next(play for play in plays if play.get("name") == play_name)
+        assert target_play.get("gather_facts") is True, play_name
+
     # Role includes resolve from the calling maintenance playbook directory. Keep the
     # Immich backup and restore roles pointed at the shared PBS resolver from that root.
     maintenance_dir = repo / "ansible/playbooks/maintenance"

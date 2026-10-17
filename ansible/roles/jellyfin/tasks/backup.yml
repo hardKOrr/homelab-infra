@@ -1,0 +1,141 @@
+---
+# Jellyfin's database contains its users, libraries and UI-managed server
+# settings. Stop only this Compose service and archive all of /config; the media
+# library is external and the transcode cache is already on its own path.
+- name: Jellyfin backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Jellyfin needs its declared application-consistent backup contract and a
+      configured PBS before an on-demand backup can run.
+
+- name: Jellyfin backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Jellyfin backup | Assert PBS is available
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Jellyfin. Deploy PBS and re-run this backup;
+      no local archive is treated as a recovery point.
+
+- name: Jellyfin backup | Check the config directory
+  ansible.builtin.stat:
+    path: "{{ app_config.app.config_path }}"
+  register: _jellyfin_backup_config
+  changed_when: false
+
+- name: Jellyfin backup | Locate the application database
+  ansible.builtin.find:
+    paths: "{{ app_config.app.config_path }}"
+    patterns: jellyfin.db
+    recurse: true
+    file_type: file
+  register: _jellyfin_backup_databases
+  changed_when: false
+  when: _jellyfin_backup_config.stat.isdir | default(false)
+  no_log: true
+
+- name: Jellyfin backup | Require the application database before backup
+  ansible.builtin.assert:
+    that:
+      - _jellyfin_backup_config.stat.isdir | default(false)
+      - _jellyfin_backup_databases.matched | default(0) | int == 1
+    fail_msg: >-
+      Jellyfin's config directory must contain exactly one jellyfin.db; refusing
+      to publish a recovery point without its users and library configuration.
+
+- name: Jellyfin backup | Record the discovered database path
+  ansible.builtin.set_fact:
+    _jellyfin_backup_database_path: "{{ _jellyfin_backup_databases.files[0].path }}"
+  no_log: true
+
+- name: Jellyfin backup | Stop and archive only Jellyfin
+  block:
+    - name: Jellyfin backup | Stop only Jellyfin
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: stopped
+        services: ["{{ instance }}"]
+
+    - name: Jellyfin backup | Check the stopped database integrity
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - >-
+            import sqlite3,sys;
+            c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);
+            result=c.execute('PRAGMA integrity_check').fetchone()[0];
+            c.close();
+            sys.exit(0 if result == 'ok' else 1)
+          - "{{ _jellyfin_backup_database_path }}"
+      changed_when: false
+      no_log: true
+
+    - name: Jellyfin backup | Push the config directory to PBS
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ app_config.app.config_path }}:/source:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
+            # Keep the current point and its pre-restore safety point on the same day.
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
+            echo "backup complete: host/$BACKUP_ID"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+        RETENTION_DAYS: "{{ app_config.backup.retention_days | default(14) | int }}"
+      no_log: true
+      changed_when: true
+
+    - name: Jellyfin backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    # A failed archive must never leave Jellyfin stopped.
+    - name: Jellyfin backup | Start only Jellyfin
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
