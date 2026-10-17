@@ -83,12 +83,21 @@
     BACKUP_ID: "{{ _navidrome_restore_backup_id }}"
   no_log: true
 
-- name: Navidrome restore | Report the read-only plan
+- name: Navidrome restore | Report the selected recovery point in plan mode
+  ansible.builtin.debug:
+    msg: "No data was changed. Selected recovery point: {{ restore_snapshot }}"
+  when:
+    - not (restore_overwrite | bool)
+    - restore_snapshot | default('', true) | length > 0
+
+- name: Navidrome restore | Report available recovery points in plan mode
   ansible.builtin.debug:
     msg: >-
       No data was changed. PBS snapshots for host/{{ _navidrome_restore_backup_id }}:
-      {{ _navidrome_restore_snapshots.stdout | default('provide snapshot=<id> to select one') }}
-  when: not (restore_overwrite | bool)
+      {{ _navidrome_restore_snapshots.stdout | default('No snapshots were found.', true) }}
+  when:
+    - not (restore_overwrite | bool)
+    - restore_snapshot | default('', true) | length == 0
 
 - name: Navidrome restore | Create private staging space
   ansible.builtin.tempfile:
