@@ -480,6 +480,44 @@ def emby_rendering():
         {"status": 200, "json": {"ProductName": "Emby Server"}}
     ), "incomplete public system-info response"
 
+    restore_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/restore.yml"))
+    restore_block = task_named(
+        restore_tasks, "Emby restore | Replace the application config from PBS"
+    )["block"]
+    restore_health = task_named(
+        restore_block, "Emby restore | Wait for the restored service"
+    )
+    restore_identity = task_named(
+        restore_block, "Emby restore | Assert the restored service is Emby"
+    )
+    restore_identity_conditions = restore_health["until"] + restore_identity[
+        "ansible.builtin.assert"
+    ]["that"]
+    assert all("ProductName" not in condition for condition in restore_identity_conditions), (
+        "Emby restore validates documented public system-info fields"
+    )
+
+    def has_restore_system_info(response):
+        variables = {"_emby_restore_health": response}
+        return all(
+            render("{{ " + condition + " }}", variables)
+            for condition in restore_identity_conditions
+        )
+
+    assert has_restore_system_info(
+        {
+            "status": 200,
+            "json": {
+                "Id": "emby-server-id",
+                "ServerName": "Emby Server",
+                "Version": "4.10.1.0",
+            },
+        }
+    ), "restored Emby public system-info response"
+    assert not has_restore_system_info(
+        {"status": 200, "json": {"ProductName": "Emby Server"}}
+    ), "restore rejects an unsupported Emby info field"
+
     wizard_tasks = yaml.safe_load(read("ansible/roles/emby/tasks/setup-wizard.yml"))
     setup_state = task_named(
         role_tasks, "Read Emby's unauthenticated startup endpoint state"
