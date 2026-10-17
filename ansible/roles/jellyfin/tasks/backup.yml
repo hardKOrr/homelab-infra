@@ -24,23 +24,36 @@
       No usable PBS is recorded for Jellyfin. Deploy PBS and re-run this backup;
       no local archive is treated as a recovery point.
 
-- name: Jellyfin backup | Check the config directory and database
+- name: Jellyfin backup | Check the config directory
   ansible.builtin.stat:
-    path: "{{ item }}"
-  loop:
-    - "{{ app_config.app.config_path }}"
-    - "{{ app_config.app.config_path }}/data/jellyfin.db"
-  register: _jellyfin_backup_state
+    path: "{{ app_config.app.config_path }}"
+  register: _jellyfin_backup_config
   changed_when: false
+
+- name: Jellyfin backup | Locate the application database
+  ansible.builtin.find:
+    paths: "{{ app_config.app.config_path }}"
+    patterns: jellyfin.db
+    recurse: true
+    file_type: file
+  register: _jellyfin_backup_databases
+  changed_when: false
+  when: _jellyfin_backup_config.stat.isdir | default(false)
+  no_log: true
 
 - name: Jellyfin backup | Require the application database before backup
   ansible.builtin.assert:
     that:
-      - _jellyfin_backup_state.results[0].stat.isdir | default(false)
-      - _jellyfin_backup_state.results[1].stat.isreg | default(false)
+      - _jellyfin_backup_config.stat.isdir | default(false)
+      - _jellyfin_backup_databases.matched | default(0) | int == 1
     fail_msg: >-
-      Jellyfin's config directory or data/jellyfin.db is missing; refusing to
-      publish a recovery point without its users and library configuration.
+      Jellyfin's config directory must contain exactly one jellyfin.db; refusing
+      to publish a recovery point without its users and library configuration.
+
+- name: Jellyfin backup | Record the discovered database path
+  ansible.builtin.set_fact:
+    _jellyfin_backup_database_path: "{{ _jellyfin_backup_databases.files[0].path }}"
+  no_log: true
 
 - name: Jellyfin backup | Stop and archive only Jellyfin
   block:
@@ -61,7 +74,7 @@
             result=c.execute('PRAGMA integrity_check').fetchone()[0];
             c.close();
             sys.exit(0 if result == 'ok' else 1)
-          - "{{ app_config.app.config_path }}/data/jellyfin.db"
+          - "{{ _jellyfin_backup_database_path }}"
       changed_when: false
       no_log: true
 

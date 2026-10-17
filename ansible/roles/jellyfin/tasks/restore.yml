@@ -216,19 +216,28 @@
       no_log: true
       changed_when: true
 
-    - name: Jellyfin restore | Inspect the recovered database
-      ansible.builtin.stat:
-        path: "{{ _jellyfin_restore_tmp.path }}/recovered/data/jellyfin.db"
-      register: _jellyfin_restore_database
+    - name: Jellyfin restore | Locate the recovered database
+      ansible.builtin.find:
+        paths: "{{ _jellyfin_restore_tmp.path }}/recovered"
+        patterns: jellyfin.db
+        recurse: true
+        file_type: file
+      register: _jellyfin_restore_databases
       changed_when: false
+      no_log: true
 
     - name: Jellyfin restore | Require the restored users and library database
       ansible.builtin.assert:
         that:
-          - _jellyfin_restore_database.stat.isreg | default(false)
+          - _jellyfin_restore_databases.matched | default(0) | int == 1
         fail_msg: >-
-          The selected Jellyfin archive has no data/jellyfin.db; refusing to replace
-          the target with an incomplete recovery point.
+          The selected Jellyfin archive must contain exactly one jellyfin.db;
+          refusing to replace the target with an incomplete recovery point.
+
+    - name: Jellyfin restore | Record the discovered database path
+      ansible.builtin.set_fact:
+        _jellyfin_restore_database_path: "{{ _jellyfin_restore_databases.files[0].path }}"
+      no_log: true
 
     - name: Jellyfin restore | Check the archived database integrity
       ansible.builtin.command:
@@ -241,7 +250,7 @@
             result=c.execute('PRAGMA integrity_check').fetchone()[0];
             c.close();
             sys.exit(0 if result == 'ok' else 1)
-          - "{{ _jellyfin_restore_tmp.path }}/recovered/data/jellyfin.db"
+          - "{{ _jellyfin_restore_database_path }}"
       changed_when: false
       no_log: true
 

@@ -118,13 +118,13 @@ def test_defaults_and_dispatch():
     assert "'jellyfin']" in restore_dispatch
 
 
-def check_backup(fail_upload):
+def check_backup(fail_upload, db_relative="data/jellyfin.db"):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "bin").mkdir()
         config = root / "config"
-        (config / "data").mkdir(parents=True)
-        with sqlite3.connect(config / "data/jellyfin.db") as db:
+        (config / db_relative).parent.mkdir(parents=True)
+        with sqlite3.connect(config / db_relative) as db:
             db.execute("create table canary(value text)")
             db.execute("insert into canary values ('library-user-config')")
         write_script(root, "docker", """#!/usr/bin/env python3
@@ -166,14 +166,14 @@ with Path(os.environ['JELLYFIN_TEST_ROOT'],'services').open('a') as log:
         assert (root / "services").read_text().splitlines() == ["stopped", "present"]
 
 
-def check_restore(case, server):
+def check_restore(case, server, db_relative="data/jellyfin.db"):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "bin").mkdir()
         config = root / "opt/jellyfin/config"
-        (config / "data").mkdir(parents=True)
+        (config / db_relative).parent.mkdir(parents=True)
         (config / "original.txt").write_text("fresh deploy state\n")
-        with sqlite3.connect(config / "data/jellyfin.db") as db:
+        with sqlite3.connect(config / db_relative) as db:
             db.execute("create table original(value text)")
         write_script(root, "docker", """#!/usr/bin/env python3
 import os,sqlite3,sys
@@ -189,12 +189,14 @@ else:
     mount=args[args.index('--volume')+1]
     assert mount.endswith(':/restore')
     target=Path(mount[:-9])
+    relative=Path(os.environ['JELLYFIN_TEST_DB_RELATIVE'])
+    database=target/relative
     if os.environ['JELLYFIN_TEST_CASE']!='archive-missing-db':
-        (target/'data').mkdir(parents=True,exist_ok=True)
+        database.parent.mkdir(parents=True,exist_ok=True)
         if os.environ['JELLYFIN_TEST_CASE']=='integrity-failure':
-            (target/'data/jellyfin.db').write_text('not a sqlite database')
+            database.write_text('not a sqlite database')
         else:
-            with sqlite3.connect(target/'data/jellyfin.db') as db:
+            with sqlite3.connect(database) as db:
                 db.execute('create table restored(value text)')
                 db.execute("insert into restored values ('canary')")
     (target/'restored.txt').write_text('restored state\\n')
@@ -258,15 +260,16 @@ raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='publish-failure' else 0
             "ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
             "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
             "JELLYFIN_TEST_CASE": case, "JELLYFIN_TEST_ROOT": str(root),
+            "JELLYFIN_TEST_DB_RELATIVE": db_relative,
         }
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(playbook)],
                                 env=env, text=True, capture_output=True, check=False)
-        success = case in ["plan", "success"]
+        success = case in ["plan", "success", "success-nested-db"]
         assert (result.returncode == 0) == success, result.stdout + result.stderr
-        if case == "success":
+        if case in ["success", "success-nested-db"]:
             assert not (config / "original.txt").exists()
             assert (config / "restored.txt").read_text() == "restored state\n"
-            with sqlite3.connect(config / "data/jellyfin.db") as db:
+            with sqlite3.connect(config / db_relative) as db:
                 assert db.execute("select value from restored").fetchone()[0] == "canary"
         else:
             assert (config / "original.txt").read_text() == "fresh deploy state\n"
@@ -277,7 +280,7 @@ raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='publish-failure' else 0
             states = (root / "services").read_text().splitlines()
             if case in ["extract-failure", "archive-missing-db", "integrity-failure", "move-failure"]:
                 assert states == ["stopped", "present"], states
-            elif case == "success":
+            elif case in ["success", "success-nested-db"]:
                 assert states == ["stopped", "present"], states
             elif case in ["copy-failure", "start-failure", "health-failure", "auth-failure",
                           "library-failure", "publish-failure"]:
@@ -303,12 +306,14 @@ def main():
             "library-failure", "publish-failure", "success",
         ]:
             check_restore(case, server)
+        check_restore("success-nested-db", server, "data/data/jellyfin.db")
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
     check_backup(False)
     check_backup(True)
+    check_backup(False, "data/data/jellyfin.db")
     print("Jellyfin: native PBS backup, read-only planning, app/group guards, API verification, and restore rollback passed")
 
 
