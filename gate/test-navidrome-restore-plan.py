@@ -64,8 +64,21 @@ ownership_task = next(
     task for task in all_tasks
     if task.get("name") == "Navidrome restore | Set data ownership for the container user"
 )
+mode_task = next(
+    task for task in all_tasks
+    if task.get("name") == "Navidrome restore | Normalize the data directory mode"
+)
+start_task = next(
+    task for task in all_tasks
+    if task.get("name") == "Navidrome restore | Start the named service"
+)
 assert all_tasks.index(ownership_task) > all_tasks.index(extract_task)
 assert ownership_task["ansible.builtin.file"]["recurse"] is True
+assert all_tasks.index(mode_task) > all_tasks.index(ownership_task)
+assert all_tasks.index(mode_task) < all_tasks.index(start_task)
+assert mode_task["ansible.builtin.file"]["path"] == "{{ app_config.app.data_path }}"
+assert mode_task["ansible.builtin.file"]["mode"] == "0750"
+assert mode_task["ansible.builtin.file"].get("recurse", False) is False
 
 
 def run_report(snapshot, snapshots_output):

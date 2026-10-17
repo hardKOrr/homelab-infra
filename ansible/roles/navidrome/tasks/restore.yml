@@ -214,6 +214,15 @@
         group: "{{ app_config.app.pgid | default(1313) }}"
         recurse: true
 
+    - name: Navidrome restore | Normalize the data directory mode
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        # cp -a applies the archive root's mode to this directory. Keep Deploy a no-op.
+        mode: "0750"
+
     - name: Navidrome restore | Start the named service
       community.docker.docker_compose_v2:
         project_src: "{{ navidrome_project_dir }}"
