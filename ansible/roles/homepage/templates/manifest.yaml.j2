@@ -40,10 +40,14 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: homepage
           image: {{ app_config.app.image }}
+          env:
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: "{{ homepage_fqdn }}"
           ports:
             - containerPort: {{ app_config.app.port }}
           securityContext:
@@ -51,6 +55,11 @@ spec:
             capabilities: { drop: [ALL] }
             readOnlyRootFilesystem: true
           volumeMounts:
+            # Homepage creates /app/config/logs at startup. The image's config directory
+            # is absent here, so provide an ephemeral parent and overlay its generated
+            # ConfigMap files below as read-only subpaths.
+            - name: config-runtime
+              mountPath: /app/config
             - name: config
               mountPath: /app/config/services.yaml
               subPath: services.yaml
@@ -66,6 +75,9 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
+        - name: config-runtime
+          emptyDir:
+            sizeLimit: 64Mi
         - name: config
           configMap: { name: {{ instance }}-config }
         - name: tmp
