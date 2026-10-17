@@ -54,6 +54,7 @@ templates.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
 - `test-orphan-stack-tag.py`: the orphan stack tag repair's plan, execute, repeat and refusal cases.
 - `test-repair-missing-stack-tag.py`: the missing stack identity repair's plan, execute, repeat and refusal cases.
+- `test-start-owned-guest.py`: exact owned stack guest start, readiness, repeat and refusal cases.
 - `test-orphan-postgresql-tag.py`: exact owned-guest selection, plan, tag-only repair, repeat and refusal cases.
 - `test-qbittorrent-clients.py`: unique client wiring, convergence and selected-client removal.
 - `test-plex-restore.py`, `test-tautulli-restore.py`, `test-qbittorrent-restore.py`: read-only preview, group guard, restore and rollback.

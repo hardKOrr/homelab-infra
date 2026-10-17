@@ -191,6 +191,13 @@ literal `ADD STACK TAG` confirmation, saves each original config privately, chec
 PVE config digest, and verifies every other config field and tag is preserved. It does
 not start or remove a guest.
 
+**Start Owned Guest** at
+[`start-owned-guest.yml`](../../playbooks/maintenance/start-owned-guest.yml) plans or
+starts one exact `_+lab`-owned stack guest. It checks the VMID, name, type, current state,
+and absence of a Proxmox operation lock before delegating to the shared start-and-readiness
+task. Planning is the default; execution requires the exact VMID confirmation. It does not
+change guest configuration, tags, applications, or data.
+
 ## Creation provenance for decommission
 
 New PBS registrations and dedicated bootstrap API roles/users/tokens/ACL edges are
