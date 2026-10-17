@@ -308,7 +308,7 @@
           - _jellyfin_restore_health.json.StartupWizardCompleted | default(false) | bool
         fail_msg: >-
           The restored config did not return a completed Jellyfin server. The original
-          config will be restored and the service left stopped.
+          config will be restored and Jellyfin restarted.
 
     - name: Jellyfin restore | Authenticate with the source app-owned account
       ansible.builtin.uri:
@@ -410,6 +410,13 @@
         _jellyfin_restore_rolled_back: true
       when: _jellyfin_restore_moved.rc | default(1) == 0
 
+    - name: Jellyfin restore | Restart Jellyfin after a successful rollback
+      community.docker.docker_compose_v2:
+        project_src: "{{ jellyfin_project_dir }}"
+        state: present
+        services: ["{{ instance }}"]
+      when: _jellyfin_restore_rolled_back | default(false) | bool
+
     - name: Jellyfin restore | Restart the untouched config after an early failure
       community.docker.docker_compose_v2:
         project_src: "{{ jellyfin_project_dir }}"
@@ -429,7 +436,7 @@
           {% if _jellyfin_restore_moved.rc | default(1) != 0 %}
           The original config was untouched and Jellyfin was restarted.
           {% else %}
-          The original config was put back and Jellyfin was left stopped.
+          The original config was put back and Jellyfin was restarted.
           {% endif %}
           Inspect the job output and retry after correcting the failure.
   always:

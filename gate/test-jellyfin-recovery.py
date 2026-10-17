@@ -205,19 +205,24 @@ else:
 import os,sys
 from pathlib import Path
 assert sys.argv[2:] == ['jellyfin']
-with Path(os.environ['JELLYFIN_TEST_ROOT'],'services').open('a') as log:
+log_path = Path(os.environ['JELLYFIN_TEST_ROOT'],'services')
+previous = log_path.read_text().splitlines() if log_path.exists() else []
+with log_path.open('a') as log:
     log.write(sys.argv[1]+'\\n')
-if sys.argv[1]=='present' and os.environ['JELLYFIN_TEST_CASE']=='start-failure': raise SystemExit(7)
+if (sys.argv[1]=='present' and os.environ['JELLYFIN_TEST_CASE']=='start-failure'
+        and 'present' not in previous): raise SystemExit(7)
 """)
         write_script(root, "cp", """#!/usr/bin/env python3
 import os,subprocess,sys
 result=subprocess.run(['/bin/cp',*sys.argv[1:]])
-raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='copy-failure' else result.returncode)
+raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE'] in ['copy-failure','rollback-failure']
+                 else result.returncode)
 """)
         write_script(root, "mv", """#!/usr/bin/env python3
 import os,subprocess,sys
 args=sys.argv[1:]
 if os.environ['JELLYFIN_TEST_CASE']=='move-failure' and args[0].endswith('/config'): raise SystemExit(7)
+if os.environ['JELLYFIN_TEST_CASE']=='rollback-failure' and args[0].endswith('/original'): raise SystemExit(7)
 raise SystemExit(subprocess.run(['/bin/mv',*args]).returncode)
 """)
         write_script(root, "publish", """#!/usr/bin/env python3
@@ -271,11 +276,20 @@ raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='publish-failure' else 0
             assert (config / "restored.txt").read_text() == "restored state\n"
             with sqlite3.connect(config / db_relative) as db:
                 assert db.execute("select value from restored").fetchone()[0] == "canary"
+        elif case == "rollback-failure":
+            assert not config.exists()
         else:
             assert (config / "original.txt").read_text() == "fresh deploy state\n"
-        assert not list(config.parent.glob(".jellyfin-restore-*")), result.stdout + result.stderr
+        staging = list(config.parent.glob(".jellyfin-restore-*"))
+        if case == "rollback-failure":
+            assert len(staging) == 1, result.stdout + result.stderr
+            assert (staging[0] / "original" / "original.txt").read_text() == "fresh deploy state\n"
+        else:
+            assert not staging, result.stdout + result.stderr
         if case in ["plan", "foreign-group", "foreign-prepoint", "missing-prepoint"]:
             assert not (root / "services").exists(), "plan/rejected restore stopped Jellyfin"
+        elif case == "rollback-failure":
+            assert (root / "services").read_text().splitlines() == ["stopped", "stopped"]
         else:
             states = (root / "services").read_text().splitlines()
             if case in ["extract-failure", "archive-missing-db", "integrity-failure", "move-failure"]:
@@ -284,8 +298,10 @@ raise SystemExit(7 if os.environ['JELLYFIN_TEST_CASE']=='publish-failure' else 0
                 assert states == ["stopped", "present"], states
             elif case in ["copy-failure", "start-failure", "health-failure", "auth-failure",
                           "library-failure", "publish-failure"]:
-                assert states == (["stopped", "present", "stopped"]
-                                  if case != "copy-failure" else ["stopped", "stopped"]), states
+                assert states == (["stopped", "stopped", "present"]
+                                  if case == "copy-failure" else
+                                  ["stopped", "present", "stopped", "present"]), states
+                assert "The original config was put back and Jellyfin was restarted." in result.stdout
             else:
                 raise AssertionError(f"unhandled restore case {case}")
 
@@ -302,7 +318,7 @@ def main():
         for case in [
             "plan", "foreign-group", "foreign-prepoint", "missing-prepoint",
             "extract-failure", "archive-missing-db", "integrity-failure", "move-failure",
-            "copy-failure", "start-failure", "health-failure", "auth-failure",
+            "copy-failure", "rollback-failure", "start-failure", "health-failure", "auth-failure",
             "library-failure", "publish-failure", "success",
         ]:
             check_restore(case, server)
