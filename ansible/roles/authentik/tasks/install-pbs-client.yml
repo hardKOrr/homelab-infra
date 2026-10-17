@@ -1,0 +1,61 @@
+---
+# Backup and Restore App run on the Authentik stack host. Install the signed PBS client
+# there so the application-owned archive stays on the same network and storage path.
+- name: Authentik PBS client | Require a supported Debian release
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - ansible_distribution_release in ['bookworm', 'trixie']
+    fail_msg: >-
+      Authentik's PBS client repository supports Debian Bookworm and Trixie hosts;
+      this stack host reports {{ ansible_distribution }} {{ ansible_distribution_release }}.
+
+- name: Authentik PBS client | Select the Debian Bookworm signing key
+  ansible.builtin.set_fact:
+    _authentik_pbs_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+    _authentik_pbs_keyring: /usr/share/keyrings/proxmox-release-bookworm.gpg
+  when: ansible_distribution_release == 'bookworm'
+
+- name: Authentik PBS client | Select the Debian Trixie signing key
+  ansible.builtin.set_fact:
+    _authentik_pbs_key_url: "https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg"
+    _authentik_pbs_keyring: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  when: ansible_distribution_release == 'trixie'
+
+- name: Authentik PBS client | Install the Proxmox repository key
+  ansible.builtin.get_url:
+    url: "{{ _authentik_pbs_key_url }}"
+    dest: "{{ _authentik_pbs_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Authentik PBS client | Configure the signed client repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: >-
+      deb [signed-by={{ _authentik_pbs_keyring }}]
+      {{ app_config.backup.client.repository }} {{ ansible_distribution_release }}
+      {{ app_config.backup.client.component }}
+  register: _authentik_pbs_repository
+
+- name: Authentik PBS client | Check whether the client is installed
+  ansible.builtin.stat:
+    path: /usr/bin/proxmox-backup-client
+  register: _authentik_pbs_client
+  changed_when: false
+
+- name: Authentik PBS client | Refresh package metadata when required
+  ansible.builtin.apt:
+    update_cache: true
+  when: _authentik_pbs_repository.changed or not _authentik_pbs_client.stat.exists
+  changed_when: false
+
+- name: Authentik PBS client | Install the client
+  ansible.builtin.apt:
+    name: proxmox-backup-client
+    state: present
+  when: not _authentik_pbs_client.stat.exists

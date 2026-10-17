@@ -4,6 +4,22 @@
 # This file is git-managed — git pull may update these defaults.
 
 authentik_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      component: main
+
   # Docker app: no `proxmox:` block. The stack host is found or created by tag on
   # first deploy and reused afterwards (tasks/stack/find-or-create-host.yml).
   # Authentik gets its own stack: it carries a database, and a shared host would

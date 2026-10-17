@@ -41,6 +41,9 @@
 #   authentik_api_url, authentik_api_token
 
 # ── Resolve the image tag ─────────────────────────────────────────────────────
+- name: Install the PBS client for Authentik recovery
+  ansible.builtin.include_tasks: install-pbs-client.yml
+
 - name: Get latest Authentik release
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ app_config['update'].github_repo }}/releases/latest"
@@ -163,16 +166,52 @@
          if _authentik_env_current.content is defined else {} }}
   no_log: true
 
+- name: Check whether this instance already has a PostgreSQL database
+  ansible.builtin.stat:
+    path: "{{ app_config.app.data_path }}/database/PG_VERSION"
+  register: _authentik_database_marker
+  changed_when: false
+
+# Remove with delete_data=true deletes /opt/<instance>, including the local compose
+# environment. A later Deploy must therefore recover every database and signing
+# credential from this estate's canonical Vaultwarden SSO item. If both copies of an
+# initialized instance's credentials are missing, fail before writing new ones.
+- name: Refuse to replace credentials for an initialized database
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_authentik_env_existing.PG_PASS | default('', true) | length > 0)
+        or (_authentik_recorded_sso.postgres_password | default('', true) | length > 0)
+      - >-
+        (_authentik_env_existing.AUTHENTIK_SECRET_KEY | default('', true) | length > 0)
+        or (_authentik_recorded_sso.secret_key | default('', true) | length > 0)
+      - >-
+        (_authentik_env_existing.AUTHENTIK_BOOTSTRAP_PASSWORD | default('', true) | length > 0)
+        or (_authentik_recorded_sso.admin_password | default('', true) | length > 0)
+      - >-
+        (_authentik_env_existing.AUTHENTIK_BOOTSTRAP_TOKEN | default('', true) | length > 0)
+        or (_authentik_recorded_sso.token | default('', true) | length > 0)
+    fail_msg: >-
+      Authentik {{ instance }} already has a PostgreSQL database but one or more
+      credentials are missing from both its compose environment and its estate-scoped
+      Vaultwarden SSO item. Restore that item before deploying; generating replacements
+      would strand the database and every credential-dependent client.
+  when: _authentik_database_marker.stat.exists
+  no_log: true
+
 - name: Resolve secrets (reuse what exists, generate only what is missing)
   ansible.builtin.set_fact:
     _authentik_pg_pass: >-
       {{ _authentik_env_existing.PG_PASS
+         | default(_authentik_recorded_sso.postgres_password | default(''), true)
          | default(lookup('password', '/dev/null length=40 chars=ascii_letters,digits'), true) }}
     _authentik_secret_key: >-
       {{ _authentik_env_existing.AUTHENTIK_SECRET_KEY
+         | default(_authentik_recorded_sso.secret_key | default(''), true)
          | default(lookup('password', '/dev/null length=60 chars=ascii_letters,digits'), true) }}
     _authentik_admin_password: >-
       {{ _authentik_env_existing.AUTHENTIK_BOOTSTRAP_PASSWORD
+         | default(_authentik_recorded_sso.admin_password | default(''), true)
          | default(lookup('password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}
     _authentik_api_token: >-
       {{ _authentik_recorded_sso.token

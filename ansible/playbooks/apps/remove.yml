@@ -698,6 +698,10 @@
         - homelabinfra_infra.sso is defined
         - homelabinfra_infra.sso.provider | default('none') == 'authentik'
         - homelabinfra_infra.sso.token | default('') | length > 0
+        # Authentik is the identity provider, with routing.identity=none. Removing an
+        # Authentik instance must not send its slug to another provider's API, where an
+        # unrelated same-named application could be deleted.
+        - not ((app | default(instance)) is match('^authentik(?:-|$)'))
 
     - name: Unregister uptime monitor
       ansible.builtin.include_tasks: ../../tasks/unwiring/uptime-kuma.yml
