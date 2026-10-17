@@ -38,14 +38,27 @@
 - name: Frigate | Assert the device and recording contract reached the role
   ansible.builtin.assert:
     that:
-      - app_config.app.igpu_render_node | default('') | length > 0
-      - app_config.app.coral_usb_mapping | default('') | length > 0
-      - app_config.app.coral_usb_device_path | default('') | length > 0
-      - app_config.app.recordings_path | default('') | length > 0
+      - app_config.app.detector in ['cpu', 'coral']
+      - >-
+        (app_config.app.cameras | default({}) | length == 0)
+        or app_config.app.recordings_path | default('', true) | length > 0
       - app_config.app.retention_days | int > 0
+      - >-
+        (app_config.app.detector == 'cpu'
+         and app_config.app.gpu_device | default('', true) | length == 0
+         and app_config.app.igpu_render_node | default('', true) | length == 0
+         and app_config.app.coral_usb_mapping | default('', true) | length == 0
+         and app_config.app.coral_usb_device_path | default('', true) | length == 0
+         and app_config.app.hwaccel_args | default('', true) | length == 0)
+        or
+        (app_config.app.detector == 'coral'
+         and app_config.app.igpu_render_node | default('', true) | length > 0
+         and app_config.app.coral_usb_mapping | default('', true) | length > 0
+         and app_config.app.coral_usb_device_path | default('', true) | length > 0)
     fail_msg: >-
-      Frigate requires an explicitly named shared iGPU render node, Coral USB mapping,
-      recording mount path, and positive retention_days. No device discovery is allowed.
+      Frigate requires a complete CPU-only or Coral detector declaration, positive
+      retention_days, and external recording storage whenever cameras are configured.
+      Device discovery is never allowed.
 
 - name: Frigate | Assert every configured camera has Vaultwarden credentials
   ansible.builtin.assert:
@@ -93,19 +106,29 @@
   loop:
     - "{{ frigate_project_dir }}"
     - "{{ app_config.app.config_path }}"
-    - "{{ app_config.app.recordings_path }}"
+
+- name: Frigate | Create the configured recording mount path
+  ansible.builtin.file:
+    path: "{{ app_config.app.recordings_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when: app_config.app.recordings_path | default('', true) | length > 0
 
 - name: Frigate | Verify the recording mount is visible in the Docker LXC
   ansible.builtin.stat:
     path: "{{ app_config.app.recordings_path }}"
   register: _frigate_recordings_path
+  when: app_config.app.recordings_path | default('', true) | length > 0
 
 - name: Frigate | Assert the recording mount is a directory
   ansible.builtin.assert:
     that: _frigate_recordings_path.stat.exists and _frigate_recordings_path.stat.isdir
     fail_msg: >-
       {{ app_config.app.recordings_path }} is not visible as a directory inside the
-      Frigate LXC. Attach the declared recording-storage mount before deploying.
+      Frigate VM. Attach the declared recording-storage mount before deploying.
+  when: app_config.app.recordings_path | default('', true) | length > 0
 
 - name: Frigate | Verify the recording path is an actual mountpoint
   ansible.builtin.command:
@@ -113,6 +136,7 @@
   register: _frigate_mountpoint
   changed_when: false
   failed_when: false
+  when: app_config.app.recordings_path | default('', true) | length > 0
 
 - name: Frigate | Refuse to write recordings to the guest root filesystem
   ansible.builtin.assert:
@@ -120,6 +144,7 @@
     fail_msg: >-
       {{ app_config.app.recordings_path }} is a directory but not a mounted recording
       volume. Frigate refuses to write continuous recordings into the guest rootfs.
+  when: app_config.app.recordings_path | default('', true) | length > 0
 
 - name: Frigate | Render the redacted Compose project and application config
   ansible.builtin.template:
@@ -128,9 +153,10 @@
     owner: root
     group: root
     mode: "{{ item.mode }}"
+    force: "{{ item.force | default(true) | bool }}"
   loop:
     - {src: docker-compose.yml.j2, dest: "{{ frigate_project_dir }}/docker-compose.yml", mode: "0640"}
-    - {src: config.yml.j2, dest: "{{ app_config.app.config_path }}/config.yml", mode: "0600"}
+    - {src: config.yml.j2, dest: "{{ app_config.app.config_path }}/config.yml", mode: "0600", force: false}
   loop_control:
     label: "{{ item.dest }}"
   no_log: true
@@ -149,20 +175,16 @@
 - name: Frigate | Apply pending restart
   ansible.builtin.meta: flush_handlers
 
-- name: Frigate | Wait for the version endpoint
+- name: Frigate | Wait for the public API endpoint
   ansible.builtin.uri:
-    url: "http://localhost:{{ app_config.app.port }}/api/version"
-    return_content: true
+    # Port 8971 is authenticated; Frigate keeps this onboarding endpoint public.
+    url: "http://localhost:{{ app_config.app.port }}/api/auth/first_time_login"
+    return_content: false
     status_code: 200
   register: _frigate_health
   until: _frigate_health.status | default(0) == 200
   retries: "{{ frigate_http_retries }}"
   delay: "{{ frigate_http_delay }}"
   changed_when: false
-  no_log: true
-
-- name: Frigate | Assert the health response identifies a version
-  ansible.builtin.assert:
-    that:
-      - _frigate_health.content | default('') is search('version')
-    fail_msg: Frigate answered its health endpoint without a version response.
+  # This public endpoint returns no app secrets; keep the status visible for diagnosis.
+  no_log: false

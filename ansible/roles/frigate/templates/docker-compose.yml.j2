@@ -10,15 +10,21 @@ services:
     shm_size: "{{ app_config.app.shm_size }}"
     volumes:
       - "{{ app_config.app.config_path }}:/config"
+{% if app_config.app.recordings_path | default('') | length > 0 %}
       - "{{ app_config.app.recordings_path }}:/media/frigate"
+{% endif %}
+{% if app_config.app.coral_usb_device_path | default('') | length > 0 %}
       # The Coral is attached to this dedicated VM by Proxmox USB resource mapping.
       # This exposes only devices already assigned to the VM, not the Proxmox host bus.
       - "{{ app_config.app.coral_usb_device_path }}:/dev/bus/usb"
+{% endif %}
       # Only the exact node resolved from the named Proxmox mapping reaches this container.
       - "/etc/localtime:/etc/localtime:ro"
+{% if app_config.app.igpu_render_node | default('') | length > 0 %}
     devices:
       # The dedicated PCI iGPU appears inside this VM before Docker binds the render node.
       - "{{ app_config.app.igpu_render_node }}:{{ app_config.app.igpu_render_node }}"
+{% endif %}
     ports:
       - "{{ app_config.app.port }}:8971"
       - "{{ rtsp_host_port }}:8554"

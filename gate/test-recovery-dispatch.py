@@ -129,7 +129,7 @@ def main():
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())
     dispatch = next(play for play in source if play["name"] ==
                     "Restore App | Restore Docker or native-LXC application data from PBS")["tasks"][0]
-    for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "prowlarr", "sonarr", "radarr", "lidarr"]:
+    for app in ["qbittorrent", "sabnzbd", "bazarr", "deemix", "tautulli", "prowlarr", "sonarr", "radarr", "lidarr", "frigate"]:
         for config_path, expected_path in [(f"/opt/{app}/config", f"/opt/{app}-copy/config"),
                                            ("/srv/custom/config", "/srv/custom/config")]:
             with tempfile.TemporaryDirectory() as directory:
@@ -170,7 +170,7 @@ def main():
             result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                     env=env, text=True, capture_output=True, check=False)
             assert result.returncode == 0, result.stdout + result.stderr
-    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli", "observability"]:
+    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli", "observability", "frigate"]:
         for inputs in ({"instance": app}, {"instance": app + "-copy", "app": app}):
             check("backup-app.yml", "Publish the application backup dispatch across plays",
                   inputs, {"_ba_app": app})
@@ -192,7 +192,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "karakeep"]:
+        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "karakeep", "frigate"]:
             defaults = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[f"{app}_defaults"]
             tasks.append({
                 "vars": {"recovery_app_config": defaults, "recovery_app": app,
@@ -204,7 +204,7 @@ def main():
             })
         for app in [
             "qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr",
-            "deemix", "tautulli", "servarr", "karakeep", "observability",
+            "deemix", "tautulli", "servarr", "karakeep", "observability", "frigate",
         ]:
             for operation in ["backup", "restore"]:
                 tasks.append({
