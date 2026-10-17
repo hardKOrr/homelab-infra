@@ -39,6 +39,7 @@ assert (
 assert "--allow-existing-dirs true" in extract_script
 assert "--ignore-acls true" in extract_script
 assert "--ignore-ownership true" in extract_script
+assert "--ignore-permissions true" in extract_script
 assert "--ignore-xattrs true" in extract_script
 assert extract_script.index("--ignore-xattrs true") < extract_script.index('"$SNAPSHOT"')
 assert extract_task["no_log"] is True
@@ -50,6 +51,7 @@ diagnostic_task = next(
 diagnostic_message = " ".join(diagnostic_task["ansible.builtin.debug"]["msg"])
 assert "sanitized_output=" in diagnostic_message
 assert "regex_replace" in diagnostic_message
+assert "operation_not_supported=" in diagnostic_message
 ownership_task = next(
     task for task in all_tasks
     if task.get("name") == "Navidrome restore | Set data ownership for the container user"
