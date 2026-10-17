@@ -233,14 +233,14 @@
       ansible.builtin.debug:
         msg:
           - "PBS extraction exit code: {{ _navidrome_restore_extract.rc | default('unknown') }}"
-          - "permission_denied={{ 'permission denied' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
-          - "operation_not_permitted={{ 'operation not permitted' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
-          - "no_space_left={{ 'no space left on device' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
-          - "target_exists={{ 'file exists' in (_navidrome_restore_extract.stderr | default('') | lower) or 'already exists' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
-          - "unsupported_option={{ 'unknown option' in (_navidrome_restore_extract.stderr | default('') | lower) or 'unexpected argument' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
-          - "authentication_or_acl={{ 'permission check failed' in (_navidrome_restore_extract.stderr | default('') | lower) or 'authentication failed' in (_navidrome_restore_extract.stderr | default('') | lower) }}"
+          - "permission_denied={{ 'permission denied' in _navidrome_restore_extract_output_lower }}"
+          - "operation_not_permitted={{ 'operation not permitted' in _navidrome_restore_extract_output_lower }}"
+          - "no_space_left={{ 'no space left on device' in _navidrome_restore_extract_output_lower }}"
+          - "target_exists={{ 'file exists' in _navidrome_restore_extract_output_lower or 'already exists' in _navidrome_restore_extract_output_lower }}"
+          - "unsupported_option={{ 'unknown option' in _navidrome_restore_extract_output_lower or 'unexpected argument' in _navidrome_restore_extract_output_lower }}"
+          - "authentication_or_acl={{ 'permission check failed' in _navidrome_restore_extract_output_lower or 'authentication failed' in _navidrome_restore_extract_output_lower }}"
           - >-
-            sanitized_stderr={{ (_navidrome_restore_extract.stderr | default('')
+            sanitized_output={{ (_navidrome_restore_extract_output
             | regex_replace('(?i)pbs_password=[^ ]+', 'PBS_PASSWORD=<redacted>')
             | regex_replace('(?i)(password|token|secret|key|fingerprint)[=: ]+[^ ]+', '<sensitive-field>=<redacted>')
             | regex_replace('https?://[^ ]+', '<url>')
@@ -251,6 +251,11 @@
             | regex_replace('[A-Za-z0-9_-]{24,}', '<opaque>')
             | regex_replace('/tmp/[^ ]+', '<staging-path>')
             | replace('\n', ' '))[:500] }}
+      vars:
+        _navidrome_restore_extract_output: >-
+          {{ (_navidrome_restore_extract.stdout | default('')) ~ ' ' ~
+             (_navidrome_restore_extract.stderr | default('')) }}
+        _navidrome_restore_extract_output_lower: "{{ _navidrome_restore_extract_output | lower }}"
       when:
         - _navidrome_restore_extract is defined
         - (_navidrome_restore_extract.rc | default(0) | int) != 0

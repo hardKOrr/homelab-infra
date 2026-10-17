@@ -46,7 +46,7 @@ diagnostic_task = next(
     if task.get("name") == "Navidrome restore | Report safe archive extraction diagnostics"
 )
 diagnostic_message = " ".join(diagnostic_task["ansible.builtin.debug"]["msg"])
-assert "sanitized_stderr=" in diagnostic_message
+assert "sanitized_output=" in diagnostic_message
 assert "regex_replace" in diagnostic_message
 ownership_task = next(
     task for task in all_tasks
