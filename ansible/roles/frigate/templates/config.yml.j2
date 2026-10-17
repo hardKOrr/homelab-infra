@@ -4,10 +4,16 @@ ffmpeg:
   hwaccel_args: {{ app_config.app.hwaccel_args | to_json }}
 {% endif %}
 
+{% if app_config.app.detector == 'coral' %}
 detectors:
   coral:
     type: edgetpu
     device: usb
+{% elif app_config.app.detector == 'cpu' %}
+detectors:
+  cpu1:
+    type: cpu
+{% endif %}
 
 {% set mqtt = app_config.app.mqtt | default({}) %}
 {% if mqtt.host | default('') | length > 0 %}

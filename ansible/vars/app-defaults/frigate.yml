@@ -4,6 +4,12 @@
 frigate_defaults:
   stack: frigate
 
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   app:
     image: "ghcr.io/blakeblackshear/frigate:stable"
     # app.port is the per-instance base host port. Blank auxiliary values derive from
@@ -24,6 +30,9 @@ frigate_defaults:
     igpu_render_node: /dev/dri/renderD128
     # The exact dedicated Proxmox USB mapping is an operator-owned declaration.
     coral_usb_mapping: ""
+    # Existing hardware deployments use Coral. CPU-only deployments explicitly select
+    # cpu and leave all device declarations and hardware decode disabled.
+    detector: coral
     hwaccel_args: "preset-intel-qsv-h264"
     # Camera endpoint metadata is not a credential. Per-camera username/password pairs
     # are the hidden camera_credentials JSON field in Vaultwarden.
@@ -44,4 +53,15 @@ frigate_defaults:
   # before live binding.
   backup:
     enabled: true
+    application_consistent: true
     schedule: "0 3 * * *"
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+
+    client:
+      image: buildpack-deps:bookworm-curl
+      key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      suite: bookworm
+      component: main

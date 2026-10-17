@@ -1,5 +1,7 @@
 # Frigate is a dedicated Docker-on-VM stack, not a tenant of media/services.
-# Copy this to config/apps/<instance>.yml after declaring its dedicated GPU/Coral and mount.
+# Copy this to config/apps/<instance>.yml after declaring its recording-storage mount.
+# For a camera-less CPU-only instance, select detector: cpu and leave device paths,
+# hwaccel_args and recordings_path blank.
 # Store camera credentials as one JSON value in hidden Vaultwarden field
 # camera_credentials on homelab-infra/apps/<instance>, for example:
 #   {"front":{"username":"camera-user","password":"..."}}
@@ -7,6 +9,9 @@
 # in this file or in a camera URL.
 
 app:
+  detector: coral # Use cpu when no Coral is deployed.
+  # CPU-only: set detector to cpu and set gpu_device, igpu_render_node,
+  # coral_usb_mapping and hwaccel_args to empty strings.
   # The key of a proxmox.devices declaration with kind: igpu, mode: dedicated and a
   # matching PCI resource mapping on its declared node.
   gpu_device: intel-igpu
