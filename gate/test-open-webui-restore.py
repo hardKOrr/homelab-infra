@@ -27,7 +27,17 @@ def open_webui_restore_prepoint_diagnostics():
     assert verify["failed_when"] is False
     assert verify["register"] == "_open_webui_restore_b_validation"
     script = verify["ansible.builtin.command"]["argv"][-1]
-    assert "proxmox-backup-client restore \"$SNAPSHOT\" data.pxar /pre-restore || exit 82" in script
+    assert "proxmox-backup-client restore \"$SNAPSHOT\" data.pxar /pre-restore >\"$pbs_error_log\" 2>&1" in script
+    for exit_code in [82, 85, 86, 87, 88, 89]:
+        assert f"exit {exit_code}" in script
+    for pattern in [
+        "authentication|permission denied|unauthorized|unauthorised|forbidden|401|403",
+        "connection|timed out|timeout|no route|resolve|tls|certificate|ssl",
+        "not found|no such file|does not exist|unknown archive|missing archive",
+        "decrypt|encryption|wrong key|key.*invalid",
+        "checksum|digest|corrupt|chunk",
+    ]:
+        assert pattern in script
     assert "test -s /pre-restore/webui.db || exit 83" in script
     assert "PRAGMA integrity_check;\")\" = ok || exit 84" in script
 
@@ -36,10 +46,7 @@ def open_webui_restore_prepoint_diagnostics():
     )
     assert classify["changed_when"] is False
     assert classify["no_log"] is True
-    assert classify["when"] == "_open_webui_restore_b_validation.rc | default(1) | int == 82"
-    failure_text = classify["vars"]["_open_webui_restore_b_failure_text"]
-    assert "_open_webui_restore_b_validation.stderr" in failure_text
-    assert "_open_webui_restore_b_validation.stdout" in failure_text
+    assert classify["when"] == "(_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89]"
     classification = classify["ansible.builtin.set_fact"][
         "_open_webui_restore_b_failure_class"
     ]
@@ -70,6 +77,7 @@ def open_webui_restore_prepoint_diagnostics():
         assert reason in message
     assert "cause=" in message
     assert "_open_webui_restore_b_validation.stderr" not in message
+    assert "_open_webui_restore_b_validation.stdout" not in message
 
 
 if __name__ == "__main__":

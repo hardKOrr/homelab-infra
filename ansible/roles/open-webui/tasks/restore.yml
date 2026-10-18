@@ -219,7 +219,7 @@
           - |
             export DEBIAN_FRONTEND=noninteractive
             if ! apt-get update -qq \
-              || ! apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null \
+              || ! apt-get install -y -qq --no-install-recommends ca-certificates curl grep sqlite3 >/dev/null \
               || ! install -d -m 0755 /etc/apt/keyrings \
               || ! curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg \
               || ! echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
@@ -228,7 +228,25 @@
               || ! apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null; then
               exit 81
             fi
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore || exit 82
+            umask 077
+            pbs_error_log=/tmp/open-webui-pre-restore-pbs-error.log
+            trap 'rm -f "$pbs_error_log"' EXIT
+            if proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore >"$pbs_error_log" 2>&1; then
+              :
+            elif grep -Eqi 'authentication|permission denied|unauthorized|unauthorised|forbidden|401|403' "$pbs_error_log"; then
+              exit 85
+            elif grep -Eqi 'connection|timed out|timeout|no route|resolve|tls|certificate|ssl' "$pbs_error_log"; then
+              exit 86
+            elif grep -Eqi 'not found|no such file|does not exist|unknown archive|missing archive' "$pbs_error_log"; then
+              exit 87
+            elif grep -Eqi 'decrypt|encryption|wrong key|key.*invalid' "$pbs_error_log"; then
+              exit 88
+            elif grep -Eqi 'checksum|digest|corrupt|chunk' "$pbs_error_log"; then
+              exit 89
+            else
+              exit 82
+            fi
+            rm -f "$pbs_error_log"
             test -s /pre-restore/webui.db || exit 83
             test "$(sqlite3 -readonly /pre-restore/webui.db "PRAGMA integrity_check;")" = ok || exit 84
       register: _open_webui_restore_b_validation
@@ -245,31 +263,22 @@
       when: restore_destination | default('existing') == 'existing'
 
     - name: Open WebUI restore | Classify the existing-target B archive error
-      vars:
-        _open_webui_restore_b_failure_text: >-
-          {{ ((_open_webui_restore_b_validation.stderr | default('')) ~ ' '
-             ~ (_open_webui_restore_b_validation.stdout | default(''))) | lower }}
       ansible.builtin.set_fact:
         _open_webui_restore_b_failure_class: >-
           {{ 'PBS authorization or credentials'
-             if _open_webui_restore_b_failure_text
-                is search('authentication|permission denied|unauthorized|unauthorised|forbidden|401|403')
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 85
              else 'PBS transport or TLS'
-             if _open_webui_restore_b_failure_text
-                is search('connection|timed out|timeout|no route|resolve|tls|certificate|ssl')
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 86
              else 'snapshot archive is missing'
-             if _open_webui_restore_b_failure_text
-                is search('not found|no such file|does not exist|unknown archive|missing archive')
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 87
              else 'archive encryption key error'
-             if _open_webui_restore_b_failure_text
-                is search('decrypt|encryption|wrong key|key.*invalid')
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 88
              else 'archive chunk or integrity error'
-             if _open_webui_restore_b_failure_text
-                is search('checksum|digest|corrupt|chunk')
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 89
              else 'unclassified PBS archive extraction error' }}
       changed_when: false
       no_log: true
-      when: _open_webui_restore_b_validation.rc | default(1) | int == 82
+      when: (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89]
 
     - name: Open WebUI restore | Assert the existing-target B point verified
       ansible.builtin.assert:
@@ -278,7 +287,7 @@
         fail_msg: >-
           Open WebUI restore could not verify the independent existing-target B point
           (stage={{ 'PBS client setup' if _open_webui_restore_b_validation.rc | default(1) | int == 81
-            else 'PBS archive extraction' if _open_webui_restore_b_validation.rc | default(1) | int == 82
+            else 'PBS archive extraction' if (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89]
             else 'webui.db missing at archive root' if _open_webui_restore_b_validation.rc | default(1) | int == 83
             else 'SQLite integrity check' if _open_webui_restore_b_validation.rc | default(1) | int == 84
             else 'client execution' }},
