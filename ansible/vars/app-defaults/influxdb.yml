@@ -22,7 +22,7 @@ influxdb_defaults:
   app:
     port: 8086
     service_name: influxdb
-    data_path: /var/lib/influxdb2
+    data_path: /var/lib/influxdb
     admin_user: homelab
     organization: homelab
     bucket: default

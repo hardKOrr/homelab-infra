@@ -41,7 +41,7 @@ def check_contract_and_wiring():
     }
     assert DEFAULTS["backup"]["enabled"] is True
     assert DEFAULTS["backup"]["application_consistent"] is True
-    assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb2"
+    assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb"
     assert DEFAULTS["routing"]["proxy"] == "internal"
     assert DEFAULTS["routing"]["identity"] == "none"
 
@@ -116,14 +116,20 @@ def write_executable(path: Path, content: str):
 
 
 def run_transaction(case: str, server: InfluxFixture):
-    ansible_playbook = shutil.which("ansible-playbook")
-    assert ansible_playbook, "ansible-playbook is required for the InfluxDB recovery gate"
+    ansible_playbook = (
+        os.environ.get("GATE_ANSIBLE_PLAYBOOK")
+        or shutil.which("ansible-playbook")
+        or str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook")
+    )
+    assert Path(ansible_playbook).is_file(), (
+        "ansible-playbook is required for the InfluxDB recovery gate"
+    )
 
     with tempfile.TemporaryDirectory(prefix="homelab-influxdb-recovery.") as directory:
         root = Path(directory)
         fake_bin = root / "bin"
         fake_bin.mkdir()
-        live = root / "var/lib/influxdb2"
+        live = root / "var/lib/influxdb"
         live.mkdir(parents=True)
         (live / "influxd.bolt").write_text("original-token", encoding="utf-8")
         (live / "engine").mkdir()
