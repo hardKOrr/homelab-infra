@@ -1,9 +1,9 @@
 ---
-# ComfyUI is Docker on its own Debian VM. The VM boundary is required by the dedicated
-# PCIe GPU: the guest owns the device exclusively and no shared ai-stack LXC can bind it.
-# The VM root disk is intentionally large enough for the model storage tree; the role
-# exposes that tree as separate Compose mounts so checkpoints, custom nodes, inputs, and
-# outputs survive image replacement and are covered by the application archive.
+# ComfyUI is Docker on its own Debian VM. CUDA mode uses a dedicated PCIe GPU; CPU mode
+# uses ordinary floating-VM placement and never requests a GPU in Compose. The VM root disk
+# is intentionally large enough for the model storage tree; the role exposes that tree as
+# separate Compose mounts so checkpoints, custom nodes, inputs, and outputs survive image
+# replacement and are covered by the application archive.
 comfyui_defaults:
   hosting: docker
 
@@ -27,6 +27,7 @@ comfyui_defaults:
       image_url: "https://cloud.debian.org/images/cloud/bookworm/20260821-2577/debian-12-genericcloud-amd64-20260821-2577.qcow2"
 
   app:
+    accelerator: cuda
     image: ghcr.io/ai-dock/comfyui:latest-cuda
     port: 8188
     service_name: comfyui

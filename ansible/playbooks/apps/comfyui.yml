@@ -44,17 +44,20 @@
              | combine(_instance_config | default({}), recursive=True) }}
       no_log: true
 
-    - name: Assert the explicit VM, PCI, and model-storage contract
+    - name: Assert the VM, accelerator, and model-storage contract
       ansible.builtin.assert:
         that:
           - app_config.hosting == 'docker'
           - app_config.proxmox.vm is mapping
-          - app_config.app.gpu_device | default('') | length > 0
+          - app_config.app.accelerator | default('cuda') in ['cuda', 'cpu']
+          - >-
+            app_config.app.accelerator | default('cuda') != 'cuda'
+            or app_config.app.gpu_device | default('') | length > 0
           - app_config.app.storage_path | default('') | length > 0
           - app_config.app.models_path | default('') | length > 0
         fail_msg: >-
-          ComfyUI requires its own Docker-capable VM, an exact PCI address declared
-          dedicated in proxmox.devices, and an explicit persistent model-storage path.
+          ComfyUI requires its own Docker-capable VM, accelerator cuda or cpu, a dedicated
+          proxmox.devices mapping in cuda mode, and an explicit persistent model-storage path.
 
   tasks:
     - name: Refresh inventory to get current Proxmox state
@@ -129,7 +132,9 @@
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
           vars:
-            proxmox_placement_class: gpu_vm
+            proxmox_placement_class: >-
+              {{ 'gpu_vm' if app_config.app.accelerator | default('cuda') == 'cuda'
+                 else 'floating_vm' }}
             proxmox_placement_device: "{{ app_config.app.gpu_device }}"
             cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
             cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
@@ -170,7 +175,9 @@
         - name: Clone the ComfyUI VM from the cloud-init template
           ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
           vars:
-            proxmox_placement_class: gpu_vm
+            proxmox_placement_class: >-
+              {{ 'gpu_vm' if app_config.app.accelerator | default('cuda') == 'cuda'
+                 else 'floating_vm' }}
             proxmox_placement_device: "{{ app_config.app.gpu_device }}"
 
         - name: Add the new VM to the deploy group
@@ -206,6 +213,7 @@
             {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
                | default(app_config.app.gpu_device) }}
           pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(false) | bool }}"
+      when: app_config.app.accelerator | default('cuda') == 'cuda'
 
 - name: "ComfyUI | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
