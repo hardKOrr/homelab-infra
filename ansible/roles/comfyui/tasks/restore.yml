@@ -188,11 +188,15 @@
     - name: ComfyUI restore | Wait for the restored service
       ansible.builtin.uri:
         url: "http://localhost:{{ app_config.app.port }}/system_stats"
-        status_code: 200
+        follow_redirects: none
+        status_code: [200, 302]
       register: _comfyui_restore_health
-      until: _comfyui_restore_health.status | default(0) == 200
-      retries: 60
-      delay: 5
+      until: _comfyui_restore_health.status | default(0) | int in [200, 302]
+      retries: >-
+        {{ comfyui_cpu_http_retries
+           if app_config.app.accelerator | default('cuda') == 'cpu'
+           else comfyui_http_retries }}
+      delay: "{{ comfyui_http_delay }}"
       changed_when: false
 
     - name: ComfyUI restore | Mark the application restore complete
