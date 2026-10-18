@@ -31,6 +31,24 @@ def open_webui_restore_prepoint_diagnostics():
     assert "test -s /pre-restore/webui.db || exit 83" in script
     assert "PRAGMA integrity_check;\")\" = ok || exit 84" in script
 
+    classify = task_named(
+        block, "Open WebUI restore | Classify the existing-target B archive error"
+    )
+    assert classify["changed_when"] is False
+    assert classify["when"] == "_open_webui_restore_b_validation.rc | default(1) | int == 82"
+    classification = classify["ansible.builtin.set_fact"][
+        "_open_webui_restore_b_failure_class"
+    ]
+    for reason in [
+        "PBS authorization or credentials",
+        "PBS transport or TLS",
+        "snapshot archive is missing",
+        "archive encryption key error",
+        "archive chunk or integrity error",
+        "unclassified PBS archive extraction error",
+    ]:
+        assert reason in classification
+
     result = task_named(
         block, "Open WebUI restore | Assert the existing-target B point verified"
     )
@@ -46,6 +64,8 @@ def open_webui_restore_prepoint_diagnostics():
         "No target data was replaced.",
     ]:
         assert reason in message
+    assert "cause=" in message
+    assert "_open_webui_restore_b_validation.stderr" not in message
 
 
 if __name__ == "__main__":
