@@ -95,6 +95,91 @@
           config/apps/{{ instance }}.yml exists. If the instance was deployed under
           a different app name, pass it: -e app=<app>.
 
+    # Hi.Events owns one named database and role on a separately managed PostgreSQL
+    # guest. Resolve that exact pair before unwiring; deleting the app must never touch
+    # another registered consumer or the shared backend guest.
+    - name: Resolve Hi.Events' named database removal inputs
+      ansible.builtin.set_fact:
+        _rm_hi_events_database_config: "{{ app_config.app.database | default({}) }}"
+        _rm_hi_events_database_backend: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.database.instance | default(''), {}) }}
+        _rm_hi_events_database_item: >-
+          {{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'hi-events'
+        - delete_data | default(false) | bool
+
+    - name: Validate Hi.Events' named database removal inputs
+      ansible.builtin.assert:
+        that:
+          - _rm_hi_events_database_config.provider | default('') == 'postgresql'
+          - _rm_hi_events_database_config.instance | default('') | length > 0
+          - _rm_hi_events_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_hi_events_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_hi_events_database_backend.provider | default('') == 'postgresql'
+          - _rm_hi_events_database_backend.host | default('') | length > 0
+          - _rm_hi_events_database_backend.port | default(0) | int > 0
+          - _rm_hi_events_database_item.database_host | default('') == _rm_hi_events_database_backend.host
+          - _rm_hi_events_database_item.database_name | default('') == _rm_hi_events_database_config.name
+          - _rm_hi_events_database_item.database_user | default('') == _rm_hi_events_database_config.role
+        fail_msg: >-
+          Refusing to remove Hi.Events data without a registered PostgreSQL backend and
+          safe database and role names.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'hi-events'
+        - delete_data | default(false) | bool
+
+    - name: Check Hi.Events' database and role are not shared by another app
+      ansible.builtin.set_fact:
+        _rm_hi_events_shared_databases: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_hi_events_database_backend.host)
+             | selectattr('value.database_name', 'defined')
+             | selectattr('value.database_name', 'equalto', _rm_hi_events_database_config.name)
+             | list }}
+        _rm_hi_events_shared_roles: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_hi_events_database_backend.host)
+             | selectattr('value.database_user', 'defined')
+             | selectattr('value.database_user', 'equalto', _rm_hi_events_database_config.role)
+             | list }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'hi-events'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove a shared Hi.Events database or role
+      ansible.builtin.assert:
+        that:
+          - _rm_hi_events_shared_databases | length == 0
+          - _rm_hi_events_shared_roles | length == 0
+        fail_msg: >-
+          Refusing to remove Hi.Events' named database or role because another canonical
+          app item references it.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'hi-events'
+        - delete_data | default(false) | bool
+
+    - name: Add Hi.Events' database backend as a removal target
+      ansible.builtin.add_host:
+        name: hi_events_database_removal_target
+        ansible_host: "{{ _rm_hi_events_database_backend.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: hi_events_database_removal_targets
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'hi-events'
+        - delete_data | default(false) | bool
+
     # Plane uses a named PostgreSQL database outside its Compose project. Resolve and
     # validate that exact resource before unwiring anything; delete_data must never turn
     # into dropping an unregistered backend or a database shared with another app.
@@ -1677,7 +1762,107 @@
             - app_config.app.data_path | default('') | length > 0
 
 
-# ── Play 3: Notify ─────────────────────────────────────────────────────────────
+# ── Play 3: Remove Hi.Events' named database after its namespace is gone ────────
+- name: "Remove Hi.Events | Delete its named database"
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Remove Hi.Events' named PostgreSQL database and role
+      when:
+        - (app | default(instance)) == 'hi-events'
+        - delete_data | default(false) | bool
+      block:
+        - name: Revalidate Hi.Events' database target before deletion
+          ansible.builtin.assert:
+            that:
+              - "'hi_events_database_removal_target' in groups['hi_events_database_removal_targets'] | default([])"
+              - hostvars['localhost']._rm_hi_events_database_config.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_hi_events_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_hi_events_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+              - hostvars['localhost']._rm_hi_events_database_backend.provider | default('') == 'postgresql'
+              - hostvars['localhost']._rm_hi_events_database_backend.port | default(0) | int > 0
+            fail_msg: "Refusing to delete Hi.Events data without its validated PostgreSQL target."
+          no_log: true
+
+        - name: Read the owner of Hi.Events' named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_hi_events_database_backend.port }}"
+              - >-
+                --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
+                FROM pg_database WHERE datname = '{{ hostvars['localhost']._rm_hi_events_database_config.name }}'), 'missing')
+          delegate_to: hi_events_database_removal_target
+          become: true
+          become_user: postgres
+          register: _rm_hi_events_database_owner
+          changed_when: false
+          no_log: true
+
+        - name: Refuse to delete Hi.Events' database with an unexpected owner
+          ansible.builtin.assert:
+            that:
+              - _rm_hi_events_database_owner.stdout | trim in ['missing', hostvars['localhost']._rm_hi_events_database_config.role]
+            fail_msg: "Refusing to delete Hi.Events' database because its owner is unexpected."
+          no_log: true
+
+        - name: Drop Hi.Events' named PostgreSQL database
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_hi_events_database_backend.port }}"
+              - "--command=DROP DATABASE {{ hostvars['localhost']._rm_hi_events_database_config.name }}"
+          delegate_to: hi_events_database_removal_target
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_hi_events_database_owner.stdout | trim != 'missing'
+
+        - name: Read whether Hi.Events' named PostgreSQL role exists
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --tuples-only
+              - --no-align
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_hi_events_database_backend.port }}"
+              - >-
+                --command=SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = '{{ hostvars['localhost']._rm_hi_events_database_config.role }}') THEN 'present' ELSE 'missing' END
+          delegate_to: hi_events_database_removal_target
+          become: true
+          become_user: postgres
+          register: _rm_hi_events_database_role
+          changed_when: false
+          no_log: true
+
+        - name: Drop Hi.Events' named PostgreSQL role
+          ansible.builtin.command:
+            argv:
+              - psql
+              - --set=ON_ERROR_STOP=1
+              - --username=postgres
+              - --dbname=postgres
+              - "--port={{ hostvars['localhost']._rm_hi_events_database_backend.port }}"
+              - "--command=DROP ROLE {{ hostvars['localhost']._rm_hi_events_database_config.role }}"
+          delegate_to: hi_events_database_removal_target
+          become: true
+          become_user: postgres
+          changed_when: true
+          no_log: true
+          when: _rm_hi_events_database_role.stdout | trim == 'present'
+
+# ── Play 4: Notify ─────────────────────────────────────────────────────────────
 - name: "Remove App | Notify"
   hosts: localhost
   gather_facts: false

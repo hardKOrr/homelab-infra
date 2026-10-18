@@ -11,8 +11,9 @@
 #   1. Postgres-backed, not a private sidecar. roles/hi_events/tasks/main.yml provisions
 #      its database on the named PostgreSQL backend through tasks/database/provision.yml
 #      — the same seam roles/odoo already proved for a Docker consumer, now proved for a
-#      Kubernetes one. Its own PersistentVolumeClaim holds only uploaded event/ticket
-#      media, never the database.
+#      Kubernetes one. One application snapshot contains that named database and the
+#      instance's uploaded event/ticket media; the backend guest and its other databases
+#      remain independently managed.
 #   2. `routing.access: public`, by default, not internal-then-widened. An event page and
 #      its checkout flow have to be reachable by attendees who hold no Authentik account
 #      and never will — that is the application, not an exception to it. `identity:
@@ -99,7 +100,6 @@ hi_events_defaults:
       suite: bookworm
       component: main
 
-  # Recovery boundary: restore the PostgreSQL-hi-events database (through that backend's
-  # own restore procedure) and this instance's storage volume (through the `Restore App`
-  # job) from the same recovery point. The PostgreSQL backend is shared and must not be
-  # removed as part of Hi.Events removal.
+  # Recovery boundary: the `Restore App` job restores this instance's database and storage
+  # volume from the same recovery point. The PostgreSQL backend guest and its other
+  # databases are shared infrastructure and are never removed by this app's recovery.

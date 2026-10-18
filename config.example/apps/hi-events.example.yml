@@ -36,7 +36,7 @@ backup:
   enabled: true
   schedule: "0 3 * * *"
 
-# Recovery boundary: restore the PostgreSQL-hi-events database (through that backend's
-# own restore procedure) and this instance's storage volume (the `Restore App` job) from
-# the same recovery point. The PostgreSQL backend is shared and must not be removed as
-# part of Hi.Events removal.
+# Recovery boundary: the `Restore App` job restores this instance's named PostgreSQL
+# database and storage volume from the same recovery point. The PostgreSQL backend guest
+# and its other databases are shared infrastructure and are never removed by this app's
+# recovery.
