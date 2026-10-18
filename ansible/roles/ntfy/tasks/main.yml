@@ -31,6 +31,14 @@
          | default(homelabinfra_config.infrastructure.domain, true) }}
 
 # ── Install ───────────────────────────────────────────────────────────────────
+- name: Install the PBS client repository when this lab declares app backups
+  ansible.builtin.include_tasks: install-pbs-client.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
 - name: Install dependencies
   ansible.builtin.apt:
     name:
@@ -38,6 +46,17 @@
       - ca-certificates
     state: present
     update_cache: true
+
+- name: Install the PBS backup client
+  ansible.builtin.apt:
+    name: proxmox-backup-client
+    state: present
+    update_cache: false
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
 
 - name: Check installed ntfy version
   ansible.builtin.command:

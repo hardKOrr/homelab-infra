@@ -4,6 +4,12 @@
 # This file is git-managed — git pull may update these defaults.
 
 ntfy_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   proxmox:
     type: lxc                   # native LXC — single Go binary, no Docker needed
     # Boot tier 30 — notifications come up before the things that report to them, so
@@ -48,3 +54,15 @@ ntfy_defaults:
                                 # notifications off-LAN without a VPN
     identity: catalog           # catalog tile only — Ntfy has its own token/user auth;
                                 # forward_auth would break every publisher's token POST
+
+  # Ntfy's auth database and cached messages/attachments form one recovery point.
+  # The app is stopped while both directories are archived to PBS.
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      component: main
