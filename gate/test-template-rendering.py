@@ -1301,6 +1301,33 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
         for task in gpu_checks
     ), gpu_checks
 
+    role_defaults = yaml.safe_load(read("ansible/roles/comfyui/defaults/main.yml"))
+    health = next(
+        task for task in role_tasks if task["name"] == "ComfyUI | Wait for the system stats endpoint"
+    )
+    assert health["ansible.builtin.uri"]["follow_redirects"] == "none"
+    assert health["ansible.builtin.uri"]["status_code"] == [200, 302]
+    assert health["until"] == "_comfyui_health.status | default(0) in [200, 302]"
+    assert role_defaults["comfyui_cpu_http_retries"] == 120
+    assert role_defaults["comfyui_http_retries"] == 60
+    retries = health["retries"]
+    assert render(
+        retries,
+        {
+            "comfyui_cpu_http_retries": 120,
+            "comfyui_http_retries": 60,
+            "app_config": {"app": {"accelerator": "cpu"}},
+        },
+    ) == "120"
+    assert render(
+        retries,
+        {
+            "comfyui_cpu_http_retries": 120,
+            "comfyui_http_retries": 60,
+            "app_config": {"app": {"accelerator": "cuda"}},
+        },
+    ) == "60"
+
     playbook = yaml.safe_load(read("ansible/playbooks/apps/comfyui.yml"))
 
     def find_task(tasks, name):

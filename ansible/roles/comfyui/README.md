@@ -11,6 +11,11 @@ Select the matching AI-Dock image explicitly. CUDA configurations keep the exist
 `v2-cpu-22.04-v0.2.7`; the unpinned `latest-cpu` tag is not in AI-Dock's current tag
 scheme. Leave `app.gpu_device` empty in a CPU-only configuration.
 
+AI-Dock protects the ComfyUI endpoint with its login service. The deploy health probe
+does not follow that login redirect; it accepts the redirect as an available auth gate,
+while the recovery drill verifies the actual login and API. A first CPU start may take
+longer to initialize, so it gets a ten-minute health window.
+
 `app.models_path` is the large model-storage mount exposed to the container. The role also
 keeps user configuration, custom nodes, inputs, and outputs under `app.storage_path`.
 The application-consistent PBS archive covers that whole storage tree, including downloaded

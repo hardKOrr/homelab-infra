@@ -101,16 +101,22 @@
 - name: ComfyUI | Wait for the system stats endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/system_stats"
-    status_code: 200
+    follow_redirects: none
+    status_code: [200, 302]
   register: _comfyui_health
-  until: _comfyui_health.status | default(0) == 200
-  retries: "{{ comfyui_http_retries }}"
+  until: _comfyui_health.status | default(0) in [200, 302]
+  retries: >-
+    {{ comfyui_cpu_http_retries
+       if app_config.app.accelerator | default('cuda') == 'cpu'
+       else comfyui_http_retries }}
   delay: "{{ comfyui_http_delay }}"
   changed_when: false
 
 - name: ComfyUI | Assert the health response includes system information
   ansible.builtin.assert:
     that:
-      - _comfyui_health.json is defined
-      - _comfyui_health.json.system is defined
-    fail_msg: ComfyUI answered its health endpoint without system information.
+      - >-
+        _comfyui_health.status | int == 302 or
+        (_comfyui_health.json is defined and _comfyui_health.json.system is defined)
+    fail_msg: >-
+      ComfyUI did not return its system information or the expected AI-Dock login redirect.
