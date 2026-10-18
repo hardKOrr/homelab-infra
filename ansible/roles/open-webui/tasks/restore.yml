@@ -199,6 +199,12 @@
           - --rm
           - --network
           - host
+          # PBS uses temporary files and its root cache; keep those writes off the nested
+          # Docker overlay used by this unprivileged LXC.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _open_webui_restore_tmp.path }}/pre-restore:/pre-restore"
           - --env
@@ -272,6 +278,12 @@
           - --rm
           - --network
           - host
+          # PBS uses temporary files and its root cache; keep those writes off the nested
+          # Docker overlay used by this unprivileged LXC.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _open_webui_restore_tmp.path }}/selected:/restore"
           - --env
