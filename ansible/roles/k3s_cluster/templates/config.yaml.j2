@@ -15,6 +15,9 @@ cluster-init: true
 # etcd peers identify each other by address.
 node-ip: "{{ k8s_node_spec.ip_address }}"
 node-name: "{{ inventory_hostname }}"
+{% if k8s_node_spec.snapshotter | default('') | length > 0 %}
+snapshotter: "{{ k8s_node_spec.snapshotter }}"
+{% endif %}
 
 # ServiceLB (klipper-lb) is replaced by MetalLB. It binds its port on every node's own
 # address, so it yields one address per node and none of them move when a node fails.
