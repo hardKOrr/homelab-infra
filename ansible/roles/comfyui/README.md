@@ -7,9 +7,9 @@ the guest and Docker expose NVIDIA support. CPU mode uses a CPU image and floati
 placement, skips NVIDIA checks, and omits GPU requests from Compose.
 
 Select the matching AI-Dock image explicitly. CUDA configurations keep the existing
-`latest-cuda` default. For CPU, use a published CPU version tag such as
-`v2-cpu-22.04-v0.2.7`; the unpinned `latest-cpu` tag is not in AI-Dock's current tag
-scheme. Leave `app.gpu_device` empty in a CPU-only configuration.
+`latest-cuda` default. For CPU, use the tested, pinned image tag
+`v2-cpu-22.04-v0.2.2`; the `v0.2.7` tag failed to launch its supervisor in the CPU
+deployment check. Leave `app.gpu_device` empty in a CPU-only configuration.
 
 AI-Dock protects the ComfyUI endpoint with its login service. The deploy health probe
 does not follow that login redirect; it accepts the redirect as an available auth gate,
