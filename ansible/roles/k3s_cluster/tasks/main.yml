@@ -27,6 +27,13 @@
       The k3s_cluster role is driven by playbooks/apps/k3s-cluster.yml and needs
       k8s_cluster_config, k8s_node_spec and k8s_first_node from its add_host handoff.
 
+- name: k3s | Validate the node snapshotter
+  ansible.builtin.assert:
+    that:
+      - (k8s_node_spec.snapshotter | default('overlayfs')) in ['overlayfs', 'native']
+    fail_msg: >-
+      {{ inventory_hostname }} snapshotter must be `overlayfs` or `native`.
+
 - name: k3s | Establish whether this node founds the cluster
   ansible.builtin.set_fact:
     _k3s_is_founder: "{{ inventory_hostname == k8s_first_node }}"

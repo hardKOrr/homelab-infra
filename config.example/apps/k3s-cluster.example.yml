@@ -65,6 +65,9 @@ cluster:
       memory: 12288
       disk_size: 60
       taints: []
+      # Optional per-node containerd snapshotter. Omit this for K3s's overlayfs default;
+      # native is available when this node needs a non-overlay snapshotter.
+      # snapshotter: native
 
 ingress:
   # The one address your reverse proxy points at, forever. It must sit OUTSIDE any DHCP

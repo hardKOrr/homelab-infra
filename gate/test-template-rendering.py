@@ -1096,6 +1096,54 @@ def k3s_defaults_carry_no_lab_topology():
     assert merged["proxmox"]["storage"] == "lab-pool", merged["proxmox"]
 
 
+def k3s_template_supports_a_per_node_snapshotter():
+    template = read("ansible/roles/k3s_cluster/templates/config.yaml.j2")
+    node_spec = {"ip_address": "192.0.2.23", "taints": []}
+    base = {
+        "_k3s_is_founder": True,
+        "inventory_hostname": "k3s-3",
+        "k8s_cluster_token": "",
+        "k8s_node_spec": node_spec,
+        "k8s_cluster_config": {
+            "cluster": {"nodes": [{"ip_address": "192.0.2.23"}]}
+        },
+    }
+    default_config = yaml.safe_load(render(template, base))
+    overlayfs_config = yaml.safe_load(
+        render(template, {
+            **base,
+            "k8s_node_spec": {**node_spec, "snapshotter": "overlayfs"},
+        })
+    )
+    native_config = yaml.safe_load(
+        render(template, {
+            **base,
+            "k8s_node_spec": {**node_spec, "snapshotter": "native"},
+        })
+    )
+
+    tasks = yaml.safe_load(read("ansible/roles/k3s_cluster/tasks/main.yml"))
+    validation = task_named(tasks, "k3s | Validate the node snapshotter")
+
+    assert "snapshotter" not in default_config, default_config
+    assert overlayfs_config["snapshotter"] == "overlayfs", overlayfs_config
+    assert native_config["snapshotter"] == "native", native_config
+    snapshotter_assertion = validation["ansible.builtin.assert"]["that"][0]
+    assert snapshotter_assertion == (
+        "(k8s_node_spec.snapshotter | default('overlayfs')) in ['overlayfs', 'native']"
+    ), validation
+    cases = ((None, True), ("overlayfs", True), ("native", True), ("zfs", False))
+    for snapshotter, expected in cases:
+        node = dict(node_spec)
+        if snapshotter is not None:
+            node["snapshotter"] = snapshotter
+        result = render(
+            "{{ " + snapshotter_assertion + " }}",
+            {"k8s_node_spec": node},
+        )
+        assert result is expected, (snapshotter, result)
+
+
 def vm_clone_keeps_recorded_app_tags_and_notes():
     # A redeploy must not strip what apps recorded on the guest (record-app-on-guest.yml).
     tasks = yaml.safe_load(read("ansible/tasks/proxmox/vm-clone.yml"))
@@ -1586,6 +1634,7 @@ if __name__ == "__main__":
     print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, qBittorrent startup order, the shared firewall access and mail egress passed")
     
     k3s_defaults_carry_no_lab_topology()
+    k3s_template_supports_a_per_node_snapshotter()
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
     backup_prune_keeps_the_previous_point()

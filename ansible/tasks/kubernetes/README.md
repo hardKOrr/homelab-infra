@@ -23,6 +23,12 @@ sequential cluster-foundation play ensures one node initializes embedded etcd an
 nodes join it. Cluster-scoped storage and ingress configuration runs only after all nodes
 have joined.
 
+Each node may set `snapshotter: native` or `snapshotter: overlayfs` in its
+`cluster.nodes` entry. Omit the field to use K3s's `overlayfs` default. The role writes an
+explicit per-node choice to that node's K3s config and applies it through its serial
+configuration restart. Use `native` when that node's overlayfs mounts do not expose valid
+image files.
+
 The Kubernetes API, node addresses, and ingress virtual IP remain private. The platform
 Caddy is the public TLS edge and proxies a routed application to the stable internal
 MetalLB virtual IP. The cluster does not create a second public edge.
