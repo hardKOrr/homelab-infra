@@ -115,6 +115,12 @@
           - --rm
           - --network
           - host
+          # PBS writes temporary restore files below /tmp and /root/.cache. Keep both
+          # paths off Docker's writable overlay, which can reject unnamed temp files.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _ollama_restore_tmp.path }}:/restore"
           - --env

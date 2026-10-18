@@ -6,8 +6,9 @@ services:
     restart: unless-stopped
     ports:
       - "{{ app_config.app.port }}:11434"
+{% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
     # Compose asks Docker for every GPU visible to this VM. The VM itself receives only
-    # the exact PCI device named in app.pci_device; no second guest can use this card.
+    # the exact PCI device named in app.gpu_device; no second guest can use this card.
     gpus: all
     deploy:
       resources:
@@ -16,6 +17,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+{% endif %}
     environment:
       OLLAMA_HOST: "0.0.0.0:11434"
     volumes:
