@@ -4,6 +4,12 @@
 # explicit recovery units. Version 2 is selected because its stable HTTP API,
 # setup endpoint, and package-managed service are supported by upstream.
 influxdb_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   proxmox:
     type: lxc
     boot_order: 40
@@ -20,6 +26,19 @@ influxdb_defaults:
     admin_user: homelab
     organization: homelab
     bucket: default
+
   routing:
-    proxy: none
+    subdomain: influxdb
+    proxy: internal
+    access: internal
     identity: none
+
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      component: main

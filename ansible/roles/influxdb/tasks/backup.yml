@@ -1,0 +1,311 @@
+---
+# Stop InfluxDB while PBS archives its complete native data directory. The Bolt
+# metadata store, SQLite metadata, TSM files and WAL then belong to one point.
+- name: InfluxDB backup | Resolve paths and recovery identity
+  ansible.builtin.set_fact:
+    _influxdb_backup_data_path: "{{ app_config.app.data_path | default('') }}"
+    _influxdb_backup_service_name: "{{ app_config.app.service_name | default('influxdb') }}"
+    _influxdb_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _application_backup_complete: false
+
+- name: InfluxDB backup | Assert the application recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _influxdb_backup_data_path is match('^/[^/].*')
+      - _influxdb_backup_data_path != '/'
+      - _influxdb_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - app_config.backup.retention_days | default(14) | int > 0
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      InfluxDB backup needs its application-consistent contract, a non-root data path,
+      a safe backup id, and a configured PBS target.
+
+- name: InfluxDB backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: InfluxDB backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for InfluxDB. Deploy PBS and retry; no local archive is
+      treated as a recovery point.
+
+- name: InfluxDB backup | Require the installed PBS client
+  ansible.builtin.stat:
+    path: /usr/bin/proxmox-backup-client
+  register: _influxdb_backup_client
+  changed_when: false
+
+- name: InfluxDB backup | Assert the PBS client is installed
+  ansible.builtin.assert:
+    that: _influxdb_backup_client.stat.exists and _influxdb_backup_client.stat.isreg
+    fail_msg: >-
+      InfluxDB has no installed PBS client. Deploy the instance with the current
+      InfluxDB role before requesting an application backup.
+
+- name: InfluxDB backup | Check the persistent data paths
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop:
+    - {path: "{{ _influxdb_backup_data_path }}", directory: true}
+    - {path: "{{ _influxdb_backup_data_path }}/engine", directory: true}
+    - {path: "{{ _influxdb_backup_data_path }}/influxd.bolt", directory: false}
+  register: _influxdb_backup_paths
+  changed_when: false
+
+- name: InfluxDB backup | Require complete persistent state
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - not item.stat.islnk
+      - >-
+        (item.item.directory | bool and item.stat.isdir)
+        or (not (item.item.directory | bool) and item.stat.isreg)
+    fail_msg: >-
+      InfluxDB recovery path {{ item.item.path }} is missing, linked or has the wrong
+      type; refusing to create an incomplete recovery point.
+  loop: "{{ _influxdb_backup_paths.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: InfluxDB backup | Require the service to be active
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ _influxdb_backup_service_name }}"]
+  register: _influxdb_backup_service_state
+  failed_when: false
+  changed_when: false
+
+- name: InfluxDB backup | Refuse to snapshot an inactive service
+  ansible.builtin.assert:
+    that: _influxdb_backup_service_state.stdout | trim == 'active'
+    fail_msg: >-
+      InfluxDB service {{ _influxdb_backup_service_name }} is not active; start and verify
+      it before creating an application recovery point.
+
+- name: InfluxDB backup | Read the existing recovery points
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - list
+      - "host/{{ _influxdb_backup_id }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _influxdb_backup_snapshots_before
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: InfluxDB backup | Report an unreadable baseline listing
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _influxdb_backup_snapshots_before }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: InfluxDB backup | baseline recovery points could not be verified
+
+- name: InfluxDB backup | Validate the baseline listing
+  ansible.builtin.assert:
+    that: (_influxdb_backup_snapshots_before.stdout | from_json | type_debug) == 'list'
+    fail_msg: InfluxDB backup could not parse the baseline PBS recovery point list.
+  no_log: true
+
+- name: InfluxDB backup | Quiesce and archive the data directory
+  block:
+    - name: InfluxDB backup | Stop only InfluxDB
+      ansible.builtin.systemd_service:
+        name: "{{ _influxdb_backup_service_name }}"
+        state: stopped
+
+    - name: InfluxDB backup | Upload the quiesced data directory
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - backup
+          - "data.pxar:{{ _influxdb_backup_data_path }}"
+          - --backup-id
+          - "{{ _influxdb_backup_id }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _influxdb_backup_upload
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: InfluxDB backup | Report a failed PBS upload
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _influxdb_backup_upload }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: InfluxDB backup | PBS archive upload failed
+
+    - name: InfluxDB backup | Read the recovery points after upload
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - list
+          - "host/{{ _influxdb_backup_id }}"
+          - --output-format
+          - json
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _influxdb_backup_snapshots_after
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: InfluxDB backup | Report an unreadable post-upload listing
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _influxdb_backup_snapshots_after }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: InfluxDB backup | recovery points could not be verified
+
+    - name: InfluxDB backup | Resolve the newly added recovery point
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import datetime, json, os, sys
+
+            before = json.loads(os.environ["SNAPSHOTS_BEFORE"])
+            after = json.loads(os.environ["SNAPSHOTS_AFTER"])
+            backup_id = os.environ["BACKUP_ID"]
+            before_times = {int(row["backup-time"]) for row in before}
+            added = [row for row in after if int(row["backup-time"]) not in before_times]
+            if len(added) != 1:
+                sys.exit("PBS did not add exactly one distinct recovery point")
+            stamp = datetime.datetime.fromtimestamp(
+                int(added[0]["backup-time"]), datetime.timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            print(f"host/{backup_id}/{stamp}")
+      environment:
+        SNAPSHOTS_BEFORE: "{{ _influxdb_backup_snapshots_before.stdout }}"
+        SNAPSHOTS_AFTER: "{{ _influxdb_backup_snapshots_after.stdout }}"
+        BACKUP_ID: "{{ _influxdb_backup_id }}"
+      register: _influxdb_backup_recovery_point
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: InfluxDB backup | Report a missing unique recovery point
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _influxdb_backup_recovery_point }}"
+        scrub_failure_context: InfluxDB backup | new recovery point could not be identified
+
+    - name: InfluxDB backup | Verify the recovery point contains data.pxar
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - files
+          - "{{ _influxdb_backup_recovery_point.stdout | trim }}"
+          - --output-format
+          - json
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _influxdb_backup_files
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: InfluxDB backup | Report an unreadable archive manifest
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _influxdb_backup_files }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: InfluxDB backup | archive manifest could not be verified
+
+    - name: InfluxDB backup | Require the data archive
+      ansible.builtin.assert:
+        that: "'data.pxar' in _influxdb_backup_files.stdout"
+        fail_msg: >-
+          InfluxDB recovery point {{ _influxdb_backup_recovery_point.stdout | trim }}
+          has no data.pxar archive.
+      no_log: true
+
+    - name: InfluxDB backup | Retain recent and daily recovery points
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - prune
+          - "host/{{ _influxdb_backup_id }}"
+          - --keep-last
+          - "2"
+          - --keep-daily
+          - "{{ app_config.backup.retention_days | default(14) | int }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _influxdb_backup_prune
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: InfluxDB backup | Report a failed retention update
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _influxdb_backup_prune }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: InfluxDB backup | PBS retention update failed
+
+    - name: InfluxDB backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+        _influxdb_backup_verified_point: "{{ _influxdb_backup_recovery_point.stdout | trim }}"
+  always:
+    - name: InfluxDB backup | Start only InfluxDB
+      ansible.builtin.systemd_service:
+        name: "{{ _influxdb_backup_service_name }}"
+        state: started
+
+    - name: InfluxDB backup | Wait for the health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_config.app.port }}/health"
+        status_code: 200
+      register: _influxdb_backup_health
+      until: _influxdb_backup_health.status | default(0) == 200
+      retries: 30
+      delay: 2
+      changed_when: false
+
+- name: InfluxDB backup | Show the verified recovery point
+  ansible.builtin.debug:
+    msg: "Verified InfluxDB recovery point {{ _influxdb_backup_verified_point }}."

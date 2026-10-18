@@ -56,6 +56,14 @@
     state: present
     update_cache: true
 
+- name: InfluxDB | Install the PBS client when this lab declares backups
+  ansible.builtin.include_tasks: install-pbs-client.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
 - name: InfluxDB | Enable and start service
   ansible.builtin.systemd:
     name: "{{ app_config.app.service_name }}"

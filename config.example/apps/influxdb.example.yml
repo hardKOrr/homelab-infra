@@ -16,3 +16,18 @@
 #   organization: homelab
 #   bucket: default
 #   admin_user: homelab
+
+# InfluxDB keeps native authentication, so the HTTPS route stays internal and
+# does not use Authentik forward-auth.
+# routing:
+#   proxy: internal
+#   access: internal
+#   identity: none
+
+# The complete InfluxDB data directory is archived application-consistently to
+# PBS while the service is stopped. Deploy includes the PBS client when the lab
+# has a configured backup provider.
+# backup:
+#   enabled: true
+#   application_consistent: true
+#   retention_days: 14
