@@ -1,0 +1,373 @@
+---
+# Restore the complete, stopped Uptime Kuma data directory. Stage the PBS archive
+# beside the live path, validate it before swapping, and put the old directory back
+# if the replacement does not start as the initialized server.
+- name: Uptime Kuma restore | Resolve paths and recovery identities
+  ansible.builtin.set_fact:
+    _kuma_restore_data_path: "{{ app_config.app.data_path | default('') }}"
+    _kuma_restore_source_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _kuma_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _kuma_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _application_restore_complete: false
+    _kuma_restore_previous_moved: false
+    _kuma_restore_new_installed: false
+    _kuma_restore_rollback_complete: false
+
+- name: Uptime Kuma restore | Assert the recovery contract and safe paths
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _kuma_restore_data_path is match('^/[^/].*')
+      - _kuma_restore_data_path != '/'
+      - _kuma_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _kuma_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (_kuma_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Uptime Kuma restore needs its application-consistent contract, safe source and
+      target backup ids, PBS, and a selected recovery point for overwrite=true.
+
+- name: Uptime Kuma restore | Require the selected point to belong to its backup group
+  ansible.builtin.assert:
+    that:
+      - _kuma_restore_snapshot.startswith('host/' ~ _kuma_restore_source_backup_id ~ '/')
+      - _kuma_restore_snapshot | length > ('host/' ~ _kuma_restore_source_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected Uptime Kuma recovery point must belong to
+      host/{{ _kuma_restore_source_backup_id }}/.
+  when: _kuma_restore_snapshot | length > 0
+
+- name: Uptime Kuma restore | Require an independent pre-restore point
+  ansible.builtin.assert:
+    that:
+      - restore_pre_restore_point is defined
+      - restore_pre_restore_point.startswith('host/' ~ _kuma_restore_target_backup_id ~ '/')
+      - restore_pre_restore_point != _kuma_restore_snapshot
+      - restore_pre_restore_point | length > ('host/' ~ _kuma_restore_target_backup_id ~ '/') | length
+    fail_msg: >-
+      Existing-target Uptime Kuma restore needs an independent pre-restore point in
+      host/{{ _kuma_restore_target_backup_id }}/.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: Uptime Kuma restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Uptime Kuma restore | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Uptime Kuma. Deploy PBS before listing or restoring
+      application data.
+
+- name: Uptime Kuma restore | List recovery points or validate a preview
+  block:
+    - name: Uptime Kuma restore | List PBS recovery points
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - SNAPSHOT
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl python3 >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client snapshot list "host/$BACKUP_ID" --output-format json \
+              > /tmp/snapshots.json
+            if [ -n "$SNAPSHOT" ]; then
+              files=$(proxmox-backup-client snapshot files "$SNAPSHOT" --output-format json)
+              printf '%s' "$files" | grep -q 'data.pxar'
+              printf 'SELECTED_POINT=%s\n' "$SNAPSHOT"
+            fi
+            python3 - "$BACKUP_ID" <<'PY'
+            import datetime, json, sys
+
+            backup_id = sys.argv[1]
+            with open('/tmp/snapshots.json') as f:
+                rows = json.load(f)
+            for row in sorted(rows, key=lambda value: int(value['backup-time'])):
+                stamp = datetime.datetime.fromtimestamp(
+                    int(row['backup-time']), datetime.timezone.utc
+                ).strftime('%Y-%m-%dT%H:%M:%SZ')
+                print(f"RECOVERY_POINT=host/{backup_id}/{stamp}")
+            PY
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ _kuma_restore_source_backup_id }}"
+        SNAPSHOT: "{{ _kuma_restore_snapshot }}"
+      register: _kuma_restore_plan
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Uptime Kuma restore | Report a failed preview
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _kuma_restore_plan }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Uptime Kuma restore | PBS recovery point preview failed
+
+    - name: Uptime Kuma restore | Show the read-only plan
+      ansible.builtin.debug:
+        msg:
+          - "No Uptime Kuma data was changed."
+          - >-
+            {{ _kuma_restore_plan.stdout_lines | select('match', '^(SELECTED_POINT|RECOVERY_POINT)=') | list
+               | join('\n') }}
+  when: not (restore_overwrite | bool)
+
+- name: Uptime Kuma restore | Check the existing target data directory
+  ansible.builtin.stat:
+    path: "{{ _kuma_restore_data_path }}"
+  register: _kuma_restore_target_data
+  changed_when: false
+  when: restore_overwrite | bool
+
+- name: Uptime Kuma restore | Refuse an unsafe target directory
+  ansible.builtin.assert:
+    that:
+      - _kuma_restore_target_data.stat.exists
+      - _kuma_restore_target_data.stat.isdir
+      - not (_kuma_restore_target_data.stat.islnk | default(false))
+    fail_msg: >-
+      Uptime Kuma restore target {{ _kuma_restore_data_path }} is missing, not a directory
+      or linked; refusing to replace it.
+  when: restore_overwrite | bool
+
+- name: Uptime Kuma restore | Create same-filesystem staging space
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ _kuma_restore_data_path | dirname }}"
+    prefix: .uptime-kuma-restore-
+  register: _kuma_restore_stage
+  changed_when: true
+  when: restore_overwrite | bool
+
+- name: Uptime Kuma restore | Create the staged data directory
+  ansible.builtin.file:
+    path: "{{ _kuma_restore_stage.path }}/restored"
+    state: directory
+    mode: "0700"
+  when: restore_overwrite | bool
+
+- name: Uptime Kuma restore | Replace and verify the application data
+  when: restore_overwrite | bool
+  block:
+    - name: Uptime Kuma restore | Stop only the Uptime Kuma service
+      community.docker.docker_compose_v2:
+        project_src: "{{ uptime_kuma_project_dir }}"
+        state: stopped
+        services: [uptime-kuma]
+
+    - name: Uptime Kuma restore | Validate both PBS archives and extract the selected point
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --tmpfs
+          - /tmp
+          - --volume
+          - "{{ _kuma_restore_stage.path }}/restored:/restore"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - SNAPSHOT
+          - --env
+          - PRE_RESTORE_POINT
+          - --env
+          - RESTORE_DESTINATION
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            source_files=$(proxmox-backup-client snapshot files "$SNAPSHOT" --output-format json)
+            printf '%s' "$source_files" | grep -q 'data.pxar'
+            if [ "$RESTORE_DESTINATION" = "existing" ]; then
+              pre_restore_files=$(proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" --output-format json)
+              printf '%s' "$pre_restore_files" | grep -q 'data.pxar'
+            fi
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            test -s /restore/kuma.db
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        SNAPSHOT: "{{ _kuma_restore_snapshot }}"
+        PRE_RESTORE_POINT: "{{ restore_pre_restore_point | default('', true) }}"
+        RESTORE_DESTINATION: "{{ restore_destination | default('existing') }}"
+      register: _kuma_restore_extract
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: Uptime Kuma restore | Report an invalid or unavailable PBS archive
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _kuma_restore_extract }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Uptime Kuma restore | PBS archive validation or extraction failed
+
+    - name: Uptime Kuma restore | Move the live data aside for rollback
+      ansible.builtin.command:
+        argv:
+          - mv
+          - --
+          - "{{ _kuma_restore_data_path }}"
+          - "{{ _kuma_restore_stage.path }}/previous"
+      changed_when: true
+
+    - name: Uptime Kuma restore | Record the rollback copy
+      ansible.builtin.set_fact:
+        _kuma_restore_previous_moved: true
+
+    - name: Uptime Kuma restore | Install the validated data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - --
+          - "{{ _kuma_restore_stage.path }}/restored"
+          - "{{ _kuma_restore_data_path }}"
+      changed_when: true
+
+    - name: Uptime Kuma restore | Record the installed replacement
+      ansible.builtin.set_fact:
+        _kuma_restore_new_installed: true
+
+    - name: Uptime Kuma restore | Start only the Uptime Kuma service
+      community.docker.docker_compose_v2:
+        project_src: "{{ uptime_kuma_project_dir }}"
+        state: present
+        services: [uptime-kuma]
+
+    - name: Uptime Kuma restore | Wait for the initialized server
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_config.app.port }}/api/entry-page"
+        return_content: true
+        status_code: 200
+      register: _kuma_restore_health
+      until:
+        - _kuma_restore_health.status | default(0) == 200
+        - (_kuma_restore_health.json | default({})).type | default('') == 'entryPage'
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: Uptime Kuma restore | Mark the application restore complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  rescue:
+    - name: Uptime Kuma restore | Stop the failed replacement
+      community.docker.docker_compose_v2:
+        project_src: "{{ uptime_kuma_project_dir }}"
+        state: stopped
+        services: [uptime-kuma]
+      failed_when: false
+      when: _kuma_restore_new_installed | bool
+
+    - name: Uptime Kuma restore | Remove only the incomplete replacement
+      ansible.builtin.file:
+        path: "{{ _kuma_restore_data_path }}"
+        state: absent
+      failed_when: false
+      when: _kuma_restore_new_installed | bool
+
+    - name: Uptime Kuma restore | Put the original data directory back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - --
+          - "{{ _kuma_restore_stage.path }}/previous"
+          - "{{ _kuma_restore_data_path }}"
+      register: _kuma_restore_rollback_move
+      failed_when: false
+      when: _kuma_restore_previous_moved | bool
+
+    - name: Uptime Kuma restore | Restart the original service after rollback
+      community.docker.docker_compose_v2:
+        project_src: "{{ uptime_kuma_project_dir }}"
+        state: present
+        services: [uptime-kuma]
+      register: _kuma_restore_rollback_start
+      failed_when: false
+
+    - name: Uptime Kuma restore | Record whether rollback completed
+      ansible.builtin.set_fact:
+        _kuma_restore_rollback_complete: >-
+          {{ (_kuma_restore_rollback_move.rc | default(0) == 0)
+             and not (_kuma_restore_rollback_start.failed | default(false) | bool) }}
+
+    - name: Uptime Kuma restore | Fail with the rollback result
+      ansible.builtin.fail:
+        msg: >-
+          Uptime Kuma restore failed. {{ 'The original data was restored and the service restarted.'
+          if _kuma_restore_rollback_complete | bool else
+          'Rollback did not complete; recovery staging was preserved at ' ~ _kuma_restore_stage.path ~ '.' }}
+  always:
+    - name: Uptime Kuma restore | Remove staging after success or completed rollback
+      ansible.builtin.file:
+        path: "{{ _kuma_restore_stage.path }}"
+        state: absent
+      when:
+        - _kuma_restore_stage.path is defined
+        - _application_restore_complete | bool or _kuma_restore_rollback_complete | bool

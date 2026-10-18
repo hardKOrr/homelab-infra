@@ -1,0 +1,172 @@
+---
+# The SQLite database is live state: stop only Uptime Kuma while archiving its
+# complete data directory so monitors, settings and account state share one point.
+- name: Uptime Kuma backup | Resolve the data path and PBS identity
+  ansible.builtin.set_fact:
+    _kuma_backup_data_path: "{{ app_config.app.data_path | default('') }}"
+    _kuma_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _application_backup_complete: false
+
+- name: Uptime Kuma backup | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _kuma_backup_data_path is match('^/[^/].*')
+      - _kuma_backup_data_path != '/'
+      - _kuma_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      Uptime Kuma backup needs its application-consistent contract, a safe data path and
+      backup id, and a configured PBS target.
+
+- name: Uptime Kuma backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: Uptime Kuma backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for Uptime Kuma. Deploy PBS and retry; a local archive is
+      not treated as a recovery point.
+
+- name: Uptime Kuma backup | Check the complete data directory
+  ansible.builtin.stat:
+    path: "{{ _kuma_backup_data_path }}"
+  register: _kuma_backup_data
+  changed_when: false
+
+- name: Uptime Kuma backup | Check the SQLite database
+  ansible.builtin.stat:
+    path: "{{ _kuma_backup_data_path }}/kuma.db"
+  register: _kuma_backup_database
+  changed_when: false
+
+- name: Uptime Kuma backup | Require the live database
+  ansible.builtin.assert:
+    that:
+      - _kuma_backup_data.stat.exists
+      - _kuma_backup_data.stat.isdir
+      - not _kuma_backup_data.stat.islnk
+      - _kuma_backup_database.stat.exists
+      - _kuma_backup_database.stat.isreg
+    fail_msg: >-
+      Uptime Kuma data path {{ _kuma_backup_data_path }} is missing, linked or has no
+      kuma.db; refusing to create an incomplete recovery point.
+
+- name: Uptime Kuma backup | Stop only the Uptime Kuma service
+  community.docker.docker_compose_v2:
+    project_src: "{{ uptime_kuma_project_dir }}"
+    state: stopped
+    services: [uptime-kuma]
+
+- name: Uptime Kuma backup | Archive and verify the quiesced data directory
+  block:
+    - name: Uptime Kuma backup | Push and verify a new PBS point
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - host
+          - --volume
+          - "{{ _kuma_backup_data_path }}:/source:ro"
+          - --env
+          - PBS_REPOSITORY
+          - --env
+          - PBS_FINGERPRINT
+          - --env
+          - PBS_PASSWORD
+          - --env
+          - BACKUP_ID
+          - --env
+          - "RETENTION_DAYS={{ app_config.backup.retention_days | default(14) | int }}"
+          - --env
+          - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
+          - --env
+          - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
+          - "{{ app_config.backup.client.image }}"
+          - /bin/sh
+          - -ceu
+          - |
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl python3 >/dev/null
+            install -d -m 0755 /etc/apt/keyrings
+            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+              > /etc/apt/sources.list.d/pbs-client.list
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+            proxmox-backup-client snapshot list "host/$BACKUP_ID" --output-format json \
+              > /tmp/snapshots-before.json
+            proxmox-backup-client backup data.pxar:/source --backup-id "$BACKUP_ID"
+            proxmox-backup-client snapshot list "host/$BACKUP_ID" --output-format json \
+              > /tmp/snapshots-after.json
+            snapshot=$(python3 - "$BACKUP_ID" <<'PY'
+            import datetime, json, sys
+
+            backup_id = sys.argv[1]
+            with open('/tmp/snapshots-before.json') as f:
+                before = json.load(f)
+            with open('/tmp/snapshots-after.json') as f:
+                after = json.load(f)
+            if not isinstance(before, list) or not isinstance(after, list) or len(after) <= len(before):
+                raise SystemExit('PBS did not add a recovery point')
+            before_times = {int(row['backup-time']) for row in before}
+            added = [row for row in after if int(row['backup-time']) not in before_times]
+            if not added:
+                raise SystemExit('PBS did not add a distinct recovery point')
+            newest = max(added, key=lambda row: int(row['backup-time']))
+            stamp = datetime.datetime.fromtimestamp(
+                int(newest['backup-time']), datetime.timezone.utc
+            ).strftime('%Y-%m-%dT%H:%M:%SZ')
+            print(f"host/{backup_id}/{stamp}")
+            PY
+            )
+            files=$(proxmox-backup-client snapshot files "$snapshot" --output-format json)
+            printf '%s' "$files" | grep -q 'data.pxar'
+            # Keep the new point and the prior point even when both are from today.
+            proxmox-backup-client prune "host/$BACKUP_ID" --keep-last 2 --keep-daily "$RETENTION_DAYS"
+            printf 'RECOVERY_POINT=%s\n' "$snapshot"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+        BACKUP_ID: "{{ _kuma_backup_id }}"
+      register: _kuma_backup_upload
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: Uptime Kuma backup | Report an upload or verification failure
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _kuma_backup_upload }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: Uptime Kuma backup | PBS archive upload or verification failed
+
+    - name: Uptime Kuma backup | Record the verified recovery point
+      ansible.builtin.set_fact:
+        _kuma_backup_recovery_point: >-
+          {{ _kuma_backup_upload.stdout | regex_search('RECOVERY_POINT=(host/[^\s]+)', '\1') | first }}
+
+    - name: Uptime Kuma backup | Report the verified recovery point
+      ansible.builtin.debug:
+        msg: "Verified Uptime Kuma PBS recovery point {{ _kuma_backup_recovery_point }}."
+
+    - name: Uptime Kuma backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: Uptime Kuma backup | Start only the Uptime Kuma service
+      community.docker.docker_compose_v2:
+        project_src: "{{ uptime_kuma_project_dir }}"
+        state: present
+        services: [uptime-kuma]
