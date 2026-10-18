@@ -64,7 +64,9 @@ backup() {
   docker run --rm --network host \
     --volume "$OPEN_WEBUI_DATA_PATH:/source:ro" \
     --env PBS_REPOSITORY --env PBS_FINGERPRINT --env PBS_PASSWORD \
-    --env BACKUP_ID --env PBS_KEY_URL --env PBS_APT_REPO \
+    --env BACKUP_ID \
+    --env "PBS_KEY_URL=$OPEN_WEBUI_PBS_KEY_URL" \
+    --env "PBS_APT_REPO=$OPEN_WEBUI_PBS_APT_REPO" \
     "$OPEN_WEBUI_CLIENT_IMAGE" /bin/sh -ceu '
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -qq

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Open WebUI's release image and Docker bootstrap before deployment."""
+"""Check Open WebUI deployment bootstrap and native recovery wiring."""
 
 from pathlib import Path
 
@@ -36,6 +36,23 @@ def open_webui_release_image_and_docker_bootstrap():
     assert docker["ansible.builtin.include_role"]["name"] == "docker"
 
 
+def open_webui_recovery_maps_root_only_package_settings_into_the_client():
+    script = (ROOT / "ansible/roles/open-webui/files/open-webui-recovery").read_text(
+        encoding="utf-8"
+    )
+    config = (
+        ROOT / "ansible/roles/open-webui/templates/open-webui-recovery.env.j2"
+    ).read_text(encoding="utf-8")
+
+    assert "OPEN_WEBUI_PBS_KEY_URL=" in config
+    assert "OPEN_WEBUI_PBS_APT_REPO=" in config
+    assert '--env "PBS_KEY_URL=$OPEN_WEBUI_PBS_KEY_URL"' in script
+    assert '--env "PBS_APT_REPO=$OPEN_WEBUI_PBS_APT_REPO"' in script
+    assert "--env PBS_KEY_URL " not in script
+    assert "--env PBS_APT_REPO " not in script
+
+
 if __name__ == "__main__":
     open_webui_release_image_and_docker_bootstrap()
-    print("ok Open WebUI release image and stack host Docker bootstrap")
+    open_webui_recovery_maps_root_only_package_settings_into_the_client()
+    print("ok Open WebUI deployment bootstrap and native recovery wiring")
