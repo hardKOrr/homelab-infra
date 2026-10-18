@@ -114,7 +114,6 @@ def check_lab_run(work: Path) -> None:
         " password source")
     assert not any(value in result.stdout + result.stderr for value in LOGIN.values()), \
         "lab-run printed a secret"
-
     password.write_text("wrong\n", encoding="utf-8")
     record.unlink()
     refused = run(["bash", str(repo / "ansible" / "scripts" / "lab-run.sh"),
@@ -123,9 +122,60 @@ def check_lab_run(work: Path) -> None:
     assert not record.exists(), "an undecryptable login file must stop before the preflight"
 
 
+def check_login_rate_limit(work: Path) -> None:
+    """A 429 from overlapping runs is retried and never reported as a bad credential."""
+    lab_repo = work / "lab"
+    (lab_repo / "config").mkdir(parents=True)
+    (lab_repo / "ansible").symlink_to(repo / "ansible")
+    state = work / "state"
+    state.mkdir()
+    (state / "vault-mode").write_text("version=1\n", encoding="utf-8")
+    # The stub rate-limits the first `limited` logins, then accepts; its unlock returns an
+    # empty session, so a run that gets past login stops at the next preflight step.
+    stub = work / "bin"
+    stub.mkdir()
+    calls = work / "logins"
+    limited = work / "limited"
+    (stub / "bw").write_text(
+        "#!/bin/bash\n"
+        '[ "$1" = login ] || exit 0\n'
+        f'echo x >> "{calls}"\n'
+        f'if [ "$(wc -l < "{calls}")" -le "$(cat "{limited}")" ]; then\n'
+        '  echo "Too many login requests"; exit 1\n'
+        "fi\n", encoding="utf-8")
+    (stub / "bw").chmod(0o755)
+    env = {
+        "PATH": f"{stub}:{os.environ['PATH']}",
+        "HOME": str(work),
+        "LAB_ENV_FILE": str(work / "absent.env"),
+        "LAB_REPO": str(lab_repo),
+        "LAB_VENV": str(Path(sys.executable).parent.parent),
+        "LAB_STATE_DIR": str(state),
+        "LAB_REFRESH": "0",
+        "LAB_VAULT_LOGIN_RETRY_DELAY": "0",
+        "BW_SERVER": "https://127.0.0.1:9",
+    } | LOGIN
+    script = ["bash", str(repo / "ansible" / "scripts" / "lab-run.sh"),
+              "playbooks/maintenance/status.yml"]
+
+    limited.write_text("2", encoding="utf-8")
+    recovered = run(script, env)
+    assert calls.read_text().count("x") == 3, "two rate-limited logins must be retried"
+    assert "rate-limited the login (attempt 2 of 5)" in recovered.stderr, recovered.stderr
+    assert "empty vault session" in recovered.stderr, recovered.stderr
+    assert "credential problem" not in recovered.stderr, "a 429 is not a bad credential"
+
+    calls.unlink()
+    limited.write_text("99", encoding="utf-8")
+    exhausted = run(script, env)
+    assert exhausted.returncode != 0 and calls.read_text().count("x") == 5
+    assert "kept rate-limiting" in exhausted.stderr, exhausted.stderr
+    assert "credential problem" not in exhausted.stderr, "a 429 is not a bad credential"
+
+
 def main() -> int:
     failures = 0
-    for check in (check_helper, check_lab_run):
+    for check in (check_helper, check_lab_run, check_login_rate_limit):
         with tempfile.TemporaryDirectory(prefix="homelab-vw-login.") as directory:
             try:
                 check(Path(directory))
