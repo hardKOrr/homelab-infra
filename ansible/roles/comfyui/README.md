@@ -6,8 +6,10 @@ PCI device to be assigned exclusively with `attach-pci-passthrough.yml` and veri
 the guest and Docker expose NVIDIA support. CPU mode uses a CPU image and floating-VM
 placement, skips NVIDIA checks, and omits GPU requests from Compose.
 
-Select the matching AI-Dock image explicitly: `latest-cuda` for CUDA and `latest-cpu` for
-CPU. Leave `app.gpu_device` empty in a CPU-only configuration.
+Select the matching AI-Dock image explicitly. CUDA configurations keep the existing
+`latest-cuda` default. For CPU, use a published CPU version tag such as
+`v2-cpu-22.04-v0.2.7`; the unpinned `latest-cpu` tag is not in AI-Dock's current tag
+scheme. Leave `app.gpu_device` empty in a CPU-only configuration.
 
 `app.models_path` is the large model-storage mount exposed to the container. The role also
 keeps user configuration, custom nodes, inputs, and outputs under `app.storage_path`.

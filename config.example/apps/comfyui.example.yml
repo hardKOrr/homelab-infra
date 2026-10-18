@@ -8,8 +8,8 @@
 # Before live binding, record the instance, Proxmox node, VM/VMID, PCI address, console
 # recovery path, and the model-storage path. The 512 GiB default VM disk is intentionally
 # large for checkpoint and LoRA downloads; override it only with an explicitly sized disk.
-# For CPU-only deployment, set accelerator: cpu, select the latest-cpu image, and leave
-# gpu_device empty.
+# For CPU-only deployment, set accelerator: cpu, select a documented AI-Dock CPU image
+# tag (for example v2-cpu-22.04-v0.2.7), and leave gpu_device empty.
 
 app:
   accelerator: cuda # set to cpu for a CPU-only deployment

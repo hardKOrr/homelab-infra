@@ -1265,7 +1265,7 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
                     "app": {
                         "accelerator": accelerator,
                         "image": (
-                            "ghcr.io/ai-dock/comfyui:latest-cpu"
+                            "ghcr.io/ai-dock/comfyui:v2-cpu-22.04-v0.2.7"
                             if accelerator == "cpu"
                             else "ghcr.io/ai-dock/comfyui:latest-cuda"
                         ),
@@ -1282,7 +1282,7 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
         return yaml.safe_load(rendered)["services"]["comfyui"]
 
     cpu = service("cpu")
-    assert cpu["image"].endswith(":latest-cpu"), cpu
+    assert cpu["image"].endswith(":v2-cpu-22.04-v0.2.7"), cpu
     assert "gpus" not in cpu, cpu
     assert "deploy" not in cpu, cpu
 
