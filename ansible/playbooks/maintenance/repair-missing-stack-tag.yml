@@ -1,0 +1,17 @@
+---
+# Plan or repair an explicitly reviewed missing stack identity tag.
+# Execution requires the exact owned VMIDs and literal derived-tag confirmation.
+- name: "Stack tags | Repair a missing stack identity"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    repair_execute: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Register node delegation
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+  tasks:
+    - name: Repair the reviewed missing stack tag
+      ansible.builtin.import_tasks: ../../tasks/proxmox/repair-missing-stack-tag.yml

@@ -1,0 +1,17 @@
+---
+# Start one exact, owned stack guest through the shared Proxmox readiness task.
+# Planning is the default; execution requires the literal VMID confirmation.
+- name: "Stack hosts | Start one reviewed owned guest"
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    start_guest_execute: false
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+    - name: Register node delegation
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+  tasks:
+    - name: Start the exact owned guest
+      ansible.builtin.import_tasks: ../../tasks/proxmox/start-owned-guest.yml
