@@ -4,6 +4,7 @@
 from pathlib import Path
 import copy
 import http.server
+import json
 import os
 import subprocess
 import tempfile
@@ -66,6 +67,23 @@ def check_contract():
     assert restart["ansible.builtin.systemd_service"]["state"] == "started"
     assert "_ntfy_backup_service_state.rc" in restart["when"]
 
+    baseline = task_named(backup_tasks, "Ntfy backup | Read the existing recovery points")
+    assert baseline["ansible.builtin.command"]["argv"][-2:] == ["--output-format", "json"]
+    baseline_validation = task_named(
+        backup_tasks, "Ntfy backup | Validate the baseline recovery point listing"
+    )
+    verify_new_snapshot = task_named(
+        backup_tasks, "Ntfy backup | Confirm PBS recorded a new recovery point"
+    )
+    assert any("_ntfy_backup_snapshots_before.stdout" in condition
+               and "from_json" in condition
+               for condition in baseline_validation["ansible.builtin.assert"]["that"])
+    assert any("_ntfy_backup_snapshots_before.stdout" in condition
+               and "_ntfy_backup_snapshots.stdout" in condition
+               and "length" in condition
+               for condition in verify_new_snapshot["ansible.builtin.assert"]["that"])
+    assert backup_tasks.index(baseline) < backup_tasks.index(upload) < backup_tasks.index(verify_new_snapshot)
+
     restore_tasks = list(tasks_recursive(RESTORE))
     source_guard = task_named(restore_tasks, "Ntfy restore | Require the source point to belong to its backup group")
     assert "_ntfy_restore_source_backup_id" in str(source_guard["ansible.builtin.assert"]["that"])
@@ -97,6 +115,49 @@ def check_contract():
     assert "Ntfy restore | Put the original auth data back" in rescue_names
     assert "Ntfy restore | Put the original cache back" in rescue_names
     assert rescue_names[-1] == "Ntfy restore | Report the failed restore"
+
+
+def check_backup_snapshot_delta():
+    backup_tasks = list(tasks_recursive(BACKUP))
+    baseline_validation = copy.deepcopy(task_named(
+        backup_tasks, "Ntfy backup | Validate the baseline recovery point listing"
+    ))
+    verify_new_snapshot = copy.deepcopy(task_named(
+        backup_tasks, "Ntfy backup | Confirm PBS recorded a new recovery point"
+    ))
+    cases = [
+        ("existing-snapshot-only", [{"backup-time": 100}], [{"backup-time": 100}], False),
+        ("new-snapshot-added", [{"backup-time": 100}], [{"backup-time": 100}, {"backup-time": 200}], True),
+        ("first-snapshot", [], [{"backup-time": 200}], True),
+    ]
+    for case, before, after, expected_success in cases:
+        with tempfile.TemporaryDirectory(prefix="homelab-ntfy-backup-verify.") as directory:
+            playbook = Path(directory) / "verify.yml"
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {
+                    "_ntfy_backup_id": "ntfy",
+                    "_ntfy_backup_snapshots_before": {"stdout": json.dumps(before)},
+                    "_ntfy_backup_snapshots": {"stdout": json.dumps(after)},
+                },
+                "tasks": [baseline_validation, verify_new_snapshot],
+            }]), encoding="utf-8")
+            env = os.environ | {
+                "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg"),
+                "ANSIBLE_NOCOLOR": "1",
+                "ANSIBLE_STDOUT_CALLBACK": "default",
+            }
+            result = subprocess.run(
+                [str(ANSIBLE), "-i", "localhost,", "-c", "local", str(playbook)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            assert (result.returncode == 0) == expected_success, (
+                f"{case}: expected_success={expected_success}\n{result.stdout}{result.stderr}"
+            )
 
 
 class Health(http.server.BaseHTTPRequestHandler):
@@ -357,6 +418,7 @@ if os.environ['NTFY_TEST_CASE'] == 'rollback-failure':
 
 def main():
     check_contract()
+    check_backup_snapshot_delta()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Health)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
