@@ -563,7 +563,9 @@
         path: "{{ item.path }}"
         state: absent
       loop: "{{ _ntfy_restore_stages.results | default([]) }}"
-      when: >-
-        (_application_restore_complete | bool)
-        or (_ntfy_restore_rollback_complete | bool)
-        or not (_ntfy_restore_data_moved | bool and _ntfy_restore_cache_moved | bool)
+      when:
+        - item.path is defined
+        - >-
+          (_application_restore_complete | bool)
+          or (_ntfy_restore_rollback_complete | bool)
+          or not (_ntfy_restore_data_moved | bool and _ntfy_restore_cache_moved | bool)
