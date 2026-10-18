@@ -219,7 +219,7 @@
           - |
             export DEBIAN_FRONTEND=noninteractive
             if ! apt-get update -qq \
-              || ! apt-get install -y -qq --no-install-recommends ca-certificates curl grep sqlite3 >/dev/null \
+              || ! apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null \
               || ! install -d -m 0755 /etc/apt/keyrings \
               || ! curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg \
               || ! echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
@@ -228,33 +228,7 @@
               || ! apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null; then
               exit 81
             fi
-            umask 077
-            pbs_error_log=/tmp/open-webui-pre-restore-pbs-error.log
-            trap 'rm -f "$pbs_error_log"' EXIT
-            if proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore >"$pbs_error_log" 2>&1; then
-              :
-            elif grep -Eqi 'authentication|permission denied|unauthorized|unauthorised|forbidden|401|403' "$pbs_error_log"; then
-              exit 85
-            elif grep -Eqi 'connection|timed out|timeout|no route|resolve|tls|certificate|ssl' "$pbs_error_log"; then
-              exit 86
-            elif grep -Eqi 'not found|no such file|does not exist|unknown archive|missing archive' "$pbs_error_log"; then
-              exit 87
-            elif grep -Eqi 'decrypt|encryption|wrong key|key.*invalid' "$pbs_error_log"; then
-              exit 88
-            elif grep -Eqi 'checksum|digest|corrupt|chunk' "$pbs_error_log"; then
-              exit 89
-            elif grep -Eqi 'usage:|invalid .*argument|unexpected argument|expects .*argument|unsupported .*feature|unsupported archive|invalid archive|bad archive' "$pbs_error_log"; then
-              exit 90
-            elif grep -Eqi 'no space|read-only|not a directory|file exists|unable to create|cannot create|operation not permitted|filesystem|target directory' "$pbs_error_log"; then
-              exit 91
-            elif grep -Eqi 'http|bad request|internal server error|gateway|api error|unexpected response|status code' "$pbs_error_log"; then
-              exit 92
-            elif [ ! -s "$pbs_error_log" ]; then
-              exit 93
-            else
-              exit 82
-            fi
-            rm -f "$pbs_error_log"
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore --allow-existing-dirs true || exit 82
             test -s /pre-restore/webui.db || exit 83
             test "$(sqlite3 -readonly /pre-restore/webui.db "PRAGMA integrity_check;")" = ok || exit 84
       register: _open_webui_restore_b_validation
@@ -270,32 +244,6 @@
       no_log: true
       when: restore_destination | default('existing') == 'existing'
 
-    - name: Open WebUI restore | Classify the existing-target B archive error
-      ansible.builtin.set_fact:
-        _open_webui_restore_b_failure_class: >-
-          {{ 'PBS authorization or credentials'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 85
-             else 'PBS transport or TLS'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 86
-             else 'snapshot archive is missing'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 87
-             else 'archive encryption key error'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 88
-             else 'archive chunk or integrity error'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 89
-             else 'invalid or unsupported restore request'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 90
-             else 'local extraction path or filesystem error'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 91
-             else 'PBS endpoint or API response error'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 92
-             else 'PBS client returned no diagnostic output'
-             if (_open_webui_restore_b_validation.rc | default(1) | int) == 93
-             else 'unclassified PBS archive extraction error' }}
-      changed_when: false
-      no_log: true
-      when: (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89, 90, 91, 92, 93]
-
     - name: Open WebUI restore | Assert the existing-target B point verified
       ansible.builtin.assert:
         that:
@@ -303,12 +251,10 @@
         fail_msg: >-
           Open WebUI restore could not verify the independent existing-target B point
           (stage={{ 'PBS client setup' if _open_webui_restore_b_validation.rc | default(1) | int == 81
-            else 'PBS archive extraction' if (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89, 90, 91, 92, 93]
+            else 'PBS archive extraction' if _open_webui_restore_b_validation.rc | default(1) | int == 82
             else 'webui.db missing at archive root' if _open_webui_restore_b_validation.rc | default(1) | int == 83
             else 'SQLite integrity check' if _open_webui_restore_b_validation.rc | default(1) | int == 84
-            else 'client execution' }},
-          cause={{ _open_webui_restore_b_failure_class | default('not classified') }},
-          exit={{ _open_webui_restore_b_validation.rc | default(1) }}).
+            else 'client execution' }}, exit={{ _open_webui_restore_b_validation.rc | default(1) }}).
           No target data was replaced.
       when: restore_destination | default('existing') == 'existing'
 
@@ -353,7 +299,7 @@
               > /etc/apt/sources.list.d/proxmox-backup-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore --allow-existing-dirs true
             test -s /restore/webui.db
             test "$(sqlite3 -readonly /restore/webui.db "PRAGMA integrity_check;")" = ok
       environment:
