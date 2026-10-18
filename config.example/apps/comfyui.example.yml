@@ -8,12 +8,13 @@
 # Before live binding, record the instance, Proxmox node, VM/VMID, PCI address, console
 # recovery path, and the model-storage path. The 512 GiB default VM disk is intentionally
 # large for checkpoint and LoRA downloads; override it only with an explicitly sized disk.
-# For CPU-only deployment, set accelerator: cpu, select the tested AI-Dock CPU image
-# tag v2-cpu-22.04-v0.2.2, and leave gpu_device empty.
+# For CPU-only deployment, set accelerator: cpu, select the tested AI-Dock cpu-22.04
+# image pinned by digest, and leave gpu_device empty.
 
 app:
   accelerator: cuda # set to cpu for a CPU-only deployment
   image: ghcr.io/ai-dock/comfyui:latest-cuda
+  # CPU-only image: ghcr.io/ai-dock/comfyui@sha256:5f08ab173b4d78babb6b003a875d495a64378815237e8b80c9248923dcda9a52
   port: 8188
   gpu_device: comfyui-gpu # replace with the key in proxmox.devices
   # Models, custom nodes, inputs, outputs, and user configuration are all retained here.
