@@ -290,12 +290,12 @@ _vault_preflight() {
   fi
 
   # Every run logs in afresh, so overlapping runs can trip Vaultwarden's login rate limit
-  # (HTTP 429, "Too many login requests"). That is transient: wait out the limiter's window
-  # and retry, and never report it as a rejected credential.
+  # (HTTP 429; the Bitwarden CLI prints "Rate limit exceeded"). That is transient: wait out
+  # the limiter's window and retry, and never report it as a rejected credential.
   _vault_login_delay="${LAB_VAULT_LOGIN_RETRY_DELAY:-15}"
   _vault_login_attempt=1
   while ! _vault_login_out="$(bw login --apikey 2>&1 </dev/null)"; do
-    if ! printf '%s' "$_vault_login_out" | grep -qiE 'too many|429'; then
+    if ! printf '%s' "$_vault_login_out" | grep -qiE 'rate limit|too many|429'; then
       [ "$_vault_reachable" -eq 1 ] \
         || die "Vaultwarden at $BW_SERVER did not answer. Vault mode is fail-closed, so this deploy stops here having changed nothing. Start Vaultwarden, or use the explicit recovery workflow."
       die "Vaultwarden preflight failed during API-key authentication — the server answered, so this is a credential problem, not an outage"

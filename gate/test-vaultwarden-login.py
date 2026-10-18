@@ -141,7 +141,7 @@ def check_login_rate_limit(work: Path) -> None:
         '[ "$1" = login ] || exit 0\n'
         f'echo x >> "{calls}"\n'
         f'if [ "$(wc -l < "{calls}")" -le "$(cat "{limited}")" ]; then\n'
-        '  echo "Too many login requests"; exit 1\n'
+        '  echo "Rate limit exceeded. Try again later." >&2; exit 1\n'
         "fi\n", encoding="utf-8")
     (stub / "bw").chmod(0o755)
     env = {
