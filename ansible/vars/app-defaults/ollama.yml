@@ -1,6 +1,7 @@
 ---
-# Ollama is Docker on its own Debian VM. The VM boundary is required by the dedicated
-# PCIe GPU: the guest owns the device exclusively and no shared ai-stack LXC can bind it.
+# Ollama is Docker on its own Debian VM. A dedicated PCIe GPU is optional; when configured,
+# the guest owns that device exclusively. CPU deployments use ordinary floating-VM
+# placement.
 # The VM root disk is intentionally large enough for local model downloads. The role
 # exposes one persistent model-storage mount to Compose so model blobs and Ollama's
 # metadata survive image replacement and are covered by the application archive.
@@ -30,8 +31,8 @@ ollama_defaults:
     image: ollama/ollama:latest
     port: 11434
     service_name: ollama
-    # A blank mapping name is deliberate: the deploy must name the dedicated GPU
-    # declaration in proxmox.devices. No device is selected automatically.
+    # Empty selects CPU mode. GPU mode requires naming a dedicated device declared in
+    # proxmox.devices; no device is selected automatically.
     gpu_device: ""
     storage_path: "/opt/{{ instance }}/models"
     models_path: "/opt/{{ instance }}/models"

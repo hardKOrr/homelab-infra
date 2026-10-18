@@ -1,9 +1,9 @@
 ---
-# Deploy Ollama as Docker on its own VM. The dedicated PCIe GPU is assigned to this VM
-# only; Ollama is not placed on the shared ai-stack LXC and the play never selects a free
-# device automatically.
+# Deploy Ollama as Docker on its own VM. CPU mode uses ordinary floating-VM placement.
+# When a dedicated PCIe GPU is named, it is assigned to this VM only; Ollama is not placed
+# on the shared ai-stack LXC and the play never selects a free device automatically.
 #
-# Before live binding, record the Ollama instance, Proxmox node, VM/VMID, exact PCI
+# Before live binding a GPU, record the Ollama instance, Proxmox node, VM/VMID, exact PCI
 # address, GPU console recovery path, and model-storage path in the acceptance evidence.
 
 - name: "Ollama | Provision"
@@ -44,17 +44,17 @@
              | combine(_instance_config | default({}), recursive=True) }}
       no_log: true
 
-    - name: Assert the explicit VM, PCI, and model-storage contract
+    - name: Assert the VM, optional PCI, and model-storage contract
       ansible.builtin.assert:
         that:
           - app_config.hosting == 'docker'
           - app_config.proxmox.vm is mapping
-          - app_config.app.gpu_device | default('') | length > 0
           - app_config.app.storage_path | default('') | length > 0
           - app_config.app.models_path | default('') | length > 0
         fail_msg: >-
-          Ollama requires its own Docker-capable VM, an exact PCI address declared
-          dedicated in proxmox.devices, and an explicit persistent model-storage path.
+          Ollama requires its own Docker-capable VM and an explicit persistent model-storage
+          path. GPU mode additionally requires an exact PCI device declared dedicated in
+          proxmox.devices.
 
   tasks:
     - name: Refresh inventory to get current Proxmox state
@@ -129,8 +129,10 @@
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml
           vars:
-            proxmox_placement_class: gpu_vm
-            proxmox_placement_device: "{{ app_config.app.gpu_device }}"
+            proxmox_placement_class: >-
+              {{ 'gpu_vm' if app_config.app.gpu_device | default('', true) | trim | length > 0
+                 else 'floating_vm' }}
+            proxmox_placement_device: "{{ app_config.app.gpu_device | default('', true) | trim }}"
             cloud_template_vmid: "{{ app_config.proxmox.cloud_template.vmid | default('', true) }}"
             cloud_template_name: "{{ app_config.proxmox.cloud_template.name }}"
             cloud_template_image_url: "{{ app_config.proxmox.cloud_template.image_url }}"
@@ -170,8 +172,10 @@
         - name: Clone the Ollama VM from the cloud-init template
           ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
           vars:
-            proxmox_placement_class: gpu_vm
-            proxmox_placement_device: "{{ app_config.app.gpu_device }}"
+            proxmox_placement_class: >-
+              {{ 'gpu_vm' if app_config.app.gpu_device | default('', true) | trim | length > 0
+                 else 'floating_vm' }}
+            proxmox_placement_device: "{{ app_config.app.gpu_device | default('', true) | trim }}"
 
         - name: Add the new VM to the deploy group
           ansible.builtin.add_host:
@@ -206,6 +210,7 @@
             {{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pci_mapping
                | default(app_config.app.gpu_device) }}
           pcie: "{{ homelabinfra_config.proxmox.devices[app_config.app.gpu_device].pcie | default(false) | bool }}"
+      when: app_config.app.gpu_device | default('', true) | trim | length > 0
 
 - name: "Ollama | Deploy"
   hosts: "deploy_{{ instance | default('_instance_unset') }}"
@@ -272,7 +277,7 @@
     wiring_access: "{{ _ollama_deploy_host.app_config.routing.access | default('internal') }}"
 
   tasks:
-    # A new restore target is isolated until its model/config archive and GPU health pass.
+    # A new restore target is isolated until its model/config archive and service health pass.
     - name: Skip external wiring while the restore target is isolated
       ansible.builtin.meta: end_play
       when: recovery_isolated | default(false) | bool
