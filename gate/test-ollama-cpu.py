@@ -126,12 +126,26 @@ def test_gpu_health_checks_only_run_for_declared_gpu():
     assert all(render("{{ " + task["when"] + " }}", gpu_context) for task in gpu_tasks)
 
 
+def test_restore_client_uses_tmpfs_for_scratch_paths():
+    tasks = read_yaml("ansible/roles/ollama/tasks/restore.yml")
+    extract = next(
+        task
+        for task in walk_tasks(tasks)
+        if task.get("name") == "Ollama restore | Extract and validate the selected archive"
+    )
+    argv = extract["ansible.builtin.command"]["argv"]
+    options = list(zip(argv, argv[1:]))
+    assert ("--tmpfs", "/tmp") in options
+    assert ("--tmpfs", "/root/.cache") in options
+
+
 def main():
     defaults = read_yaml("ansible/vars/app-defaults/ollama.yml")["ollama_defaults"]
     assert defaults["app"]["gpu_device"] == ""
     test_compose_template_cpu_and_gpu_modes()
     test_playbook_selects_cpu_or_dedicated_gpu_placement()
     test_gpu_health_checks_only_run_for_declared_gpu()
+    test_restore_client_uses_tmpfs_for_scratch_paths()
     print("Ollama CPU and dedicated-GPU deployment modes: OK")
 
 
