@@ -69,6 +69,11 @@
     - name: Bootstrap Docker guest
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
+    - name: Configure OS update notifications
+      ansible.builtin.import_tasks: ../../tasks/bootstrap/configure-unattended-upgrades.yml
+    - name: Ensure Docker is installed on the AI stack host
+      ansible.builtin.include_role:
+        name: docker
     - name: Deploy Open WebUI
       ansible.builtin.include_role:
         name: open-webui
