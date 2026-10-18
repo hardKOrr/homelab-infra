@@ -18,7 +18,7 @@ def open_webui_release_image_and_docker_bootstrap():
     )
     assert (
         defaults["open_webui_defaults"]["app"]["image"]
-        == "ghcr.io/open-webui/open-webui:latest"
+        == "ghcr.io/open-webui/open-webui:v0.11.4"
     )
 
     plays = yaml.safe_load(
