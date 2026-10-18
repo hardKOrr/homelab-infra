@@ -3,5 +3,6 @@
 # vars/app-defaults/ntfy.yml and config/apps/<instance>.yml.
 ntfy_service_name: ntfy
 ntfy_config_file: /etc/ntfy/server.yml
-ntfy_auth_file: /var/lib/ntfy/user.db
+ntfy_auth_file: "{{ app_config.app.data_path }}/user.db"
+ntfy_cache_file: "{{ app_config.app.cache_path }}/cache.db"
 ntfy_token_label: homelab-infra

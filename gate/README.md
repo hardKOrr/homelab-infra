@@ -43,6 +43,7 @@ templates.
 - `test-lab-refresh.py`: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote push; explicit refresh still updates it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
+- `test-ntfy-recovery.py`: native auth/cache archives, read-only planning, group guards and two-directory rollback.
 - `test-servarr-recovery.py`: shared four-app dispatch, restore preview and API key continuity.
 - `test-sabnzbd-clients.py`: authenticated category creation, unique client wiring, convergence and selected-client removal without changing siblings.
 - `test-sabnzbd-restore.py`: authenticated recovery, read-only preview, group guard and rollback after extraction, move, copy, ownership, start, health or credential publication failures.

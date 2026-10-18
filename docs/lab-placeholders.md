@@ -32,6 +32,7 @@ in is a lookup, not a guess.
 | `<GUEST-ip>` | A guest's address, e.g. `<caddy-ip>` | **Lab Status**, or `config/.generated/facts.yml` |
 | `<GUEST-vmid>` | A guest's VMID, e.g. `<k3s-2-vmid>` | **Lab Status** |
 | `<backup-job-id>` | Proxmox backup job ID | `pvesh get /cluster/backup` |
+| `<pbs-snapshot>` | A PBS recovery-point suffix in `host/<GUEST>/<pbs-snapshot>` | Backup App output; keep the exact per-run value in private session scratch |
 | `<operator-home>` | Operator workstation home directory | the workstation |
 
 A VMID derived from an address encodes that address
