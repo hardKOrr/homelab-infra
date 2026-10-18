@@ -220,6 +220,8 @@
           - --env
           - PRE_RESTORE_POINT
           - --env
+          - RESTORE_DESTINATION
+          - --env
           - "PBS_KEY_URL={{ app_config.backup.client.key_url }}"
           - --env
           - "PBS_APT_REPO={{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
@@ -238,8 +240,10 @@
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
             source_files=$(proxmox-backup-client snapshot files "$SNAPSHOT" --output-format json)
             printf '%s' "$source_files" | grep -q 'data.pxar'
-            pre_restore_files=$(proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" --output-format json)
-            printf '%s' "$pre_restore_files" | grep -q 'data.pxar'
+            if [ "$RESTORE_DESTINATION" = "existing" ]; then
+              pre_restore_files=$(proxmox-backup-client snapshot files "$PRE_RESTORE_POINT" --output-format json)
+              printf '%s' "$pre_restore_files" | grep -q 'data.pxar'
+            fi
             proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
             test -s /restore/kuma.db
       environment:
@@ -247,7 +251,8 @@
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
         PBS_PASSWORD: "{{ k8s_pbs_password }}"
         SNAPSHOT: "{{ _kuma_restore_snapshot }}"
-        PRE_RESTORE_POINT: "{{ restore_pre_restore_point }}"
+        PRE_RESTORE_POINT: "{{ restore_pre_restore_point | default('', true) }}"
+        RESTORE_DESTINATION: "{{ restore_destination | default('existing') }}"
       register: _kuma_restore_extract
       failed_when: false
       changed_when: true

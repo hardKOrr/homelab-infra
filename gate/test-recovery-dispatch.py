@@ -183,7 +183,7 @@ def main():
             result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                     env=env, text=True, capture_output=True, check=False)
             assert result.returncode == 0, result.stdout + result.stderr
-    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli", "observability", "frigate"]:
+    for app in ["qbittorrent", "actual-budget", "sabnzbd", "bazarr", "deemix", "tautulli", "observability", "frigate", "uptime-kuma"]:
         for inputs in ({"instance": app}, {"instance": app + "-copy", "app": app}):
             check("backup-app.yml", "Publish the application backup dispatch across plays",
                   inputs, {"_ba_app": app})
@@ -205,8 +205,9 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "pbs-dispatch.yml"
         tasks = []
-        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "karakeep", "frigate"]:
-            defaults = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[f"{app}_defaults"]
+        for app in ["qbittorrent", "bazarr", "sabnzbd", "deemix", "karakeep", "frigate", "uptime-kuma"]:
+            defaults_key = "uptime_kuma_defaults" if app == "uptime-kuma" else f"{app}_defaults"
+            defaults = yaml.safe_load((repo / f"ansible/vars/app-defaults/{app}.yml").read_text())[defaults_key]
             tasks.append({
                 "vars": {"recovery_app_config": defaults, "recovery_app": app,
                          "recovery_instance": app, "recovery_operation": "restore"},
@@ -217,7 +218,7 @@ def main():
             })
         for app in [
             "qbittorrent", "actual-budget", "plex", "sabnzbd", "bazarr",
-            "deemix", "tautulli", "servarr", "karakeep", "observability", "frigate",
+            "deemix", "tautulli", "servarr", "karakeep", "observability", "frigate", "uptime-kuma",
         ]:
             for operation in ["backup", "restore"]:
                 tasks.append({
@@ -228,14 +229,14 @@ def main():
                         "ansible_failed_result.msg is search('No usable PBS')",
                         "not k8s_pbs_available"]}}],
                 })
-        for app in ["tautulli", "deemix", "observability"]:
+        for app in ["tautulli", "deemix", "observability", "uptime-kuma"]:
             tasks.append({
                 "vars": {"restore_overwrite": True, "restore_snapshot": ""},
                 "block": [{"ansible.builtin.include_role": {
                     "name": app, "tasks_from": "restore"}},
                     {"ansible.builtin.fail": {"msg": "Overwrite without a point was accepted"}}],
                 "rescue": [{"ansible.builtin.assert": {"that": [
-                    f"ansible_failed_result.msg is search('{app.capitalize()} restore needs')"]}}],
+                        f"ansible_failed_result.msg is search('{('Uptime Kuma' if app == 'uptime-kuma' else app.capitalize())} restore needs')"]}}],
             })
 
         path.write_text(yaml.safe_dump([{
