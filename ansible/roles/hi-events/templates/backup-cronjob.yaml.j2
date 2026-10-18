@@ -1,16 +1,15 @@
 {#
   The backup for one Hi.Events instance: a CronJob in the instance's own namespace that
-  archives its storage volume (uploaded event/ticket media) and pushes it into the lab's
-  existing PBS datastore with proxmox-backup-client.
+  dumps its named PostgreSQL database, archives its storage volume (uploaded event/ticket
+  media), and pushes both into the lab's existing PBS datastore with proxmox-backup-client.
 
   Rendered by roles/hi_events/tasks/main.yml and applied through
   tasks/kubernetes/apply-manifest.yml. Owned by the namespace like everything else the
   instance owns, so removal deletes it and nothing has to remember it exists.
 
-  SAME SHAPE AS roles/jellyseerr/templates/backup-cronjob.yaml.j2, byte-for-byte in
-  structure: there is no database pod here to quiesce, because Hi.Events' database is the
-  named PostgreSQL backend, backed up as part of that guest's own recovery unit — see the
-  header comment in vars/app-defaults/hi-events.yml.
+  Hi.Events uses a separately managed PostgreSQL backend. This job backs up only the
+  database and role named for this instance; it never captures or changes the backend's
+  other databases.
 #}
 {% set b = app_config.backup %}
 {% set labels %}
@@ -91,10 +90,22 @@ spec:
                   curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
                   echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                     > /etc/apt/sources.list.d/pbs-client.list
+                  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+                    -o /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+                  . /etc/os-release
+                  echo "deb http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+                    > /etc/apt/sources.list.d/postgresql.list
                   apt-get update -qq
-                  apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+                  apt-get install -y -qq --no-install-recommends proxmox-backup-client \
+                    "postgresql-client-${PG_CLIENT_VERSION}" >/dev/null
+
+                  install -d -m 0700 /backup/database
+                  pg_dump --format=custom --no-owner --no-privileges \
+                    --file="/backup/database/${PGDATABASE}.dump"
+                  test -s "/backup/database/${PGDATABASE}.dump"
 
                   proxmox-backup-client backup \
+                    database.pxar:/backup/database \
                     storage.pxar:/app-storage \
                     --backup-id "${BACKUP_ID}"
 
@@ -103,7 +114,7 @@ spec:
                   proxmox-backup-client prune "host/${BACKUP_ID}" \
                     --keep-last 2 --keep-daily "${RETENTION_DAYS}"
 
-                  echo "backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
+                  echo "database and storage backup complete: host/${BACKUP_ID} in ${PBS_REPOSITORY##*:}"
               env:
                 - name: PBS_REPOSITORY
                   value: "{{ _he_backup_repository }}"
@@ -120,6 +131,19 @@ spec:
                   value: "{{ b.client.key_url }}"
                 - name: PBS_APT_REPO
                   value: "{{ b.client.repository }} {{ b.client.suite }} {{ b.client.component }}"
+                - name: PGHOST
+                  value: "{{ app_config.app.database_host }}"
+                - name: PGPORT
+                  value: "{{ app_config.app.database_port | string }}"
+                - name: PGDATABASE
+                  value: "{{ app_config.app.database.name }}"
+                - name: PGUSER
+                  value: "{{ app_config.app.database_user }}"
+                - name: PG_CLIENT_VERSION
+                  value: "{{ _he_pg_client_version }}"
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ instance }}-backup, key: db-password }
 {% if _he_ntfy_url | length > 0 %}
                 - name: NTFY_URL
                   value: "{{ _he_ntfy_url }}"
@@ -130,6 +154,9 @@ spec:
                     secretKeyRef: { name: {{ instance }}-backup, key: ntfy-token }
 {% endif %}
               volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: false
                 - name: app-storage
                   mountPath: /app-storage
                   readOnly: true
@@ -138,6 +165,9 @@ spec:
                   cpu: 100m
                   memory: 128Mi
           volumes:
+            - name: backup
+              emptyDir:
+                sizeLimit: {{ b.scratch_size | int }}Gi
             - name: app-storage
               persistentVolumeClaim:
                 claimName: {{ instance }}-storage

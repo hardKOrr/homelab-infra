@@ -2,13 +2,13 @@
   The restore side of the backup contract, as one Kubernetes Job in the TARGET instance's
   namespace. Rendered by roles/hi_events/tasks/restore.yml and run through
   tasks/kubernetes/run-job.yml. Same shape as
-  roles/jellyseerr/templates/restore-job.yaml.j2, restoring the storage volume rather than
-  the config volume.
+  roles/jellyseerr/templates/restore-job.yaml.j2, restoring both the named database and
+  the storage volume.
 
     plan     — reads only. Lists what PBS holds for this application, proves the named
-               snapshot is readable, and reports what the target currently contains.
+               database and storage snapshot is readable, and reports the current target.
                Writes nothing.
-    restore  — replaces the target's storage volume with the snapshot's.
+    restore  — replaces the target's database and storage volume with the snapshot's.
 #}
 {% set client = app_config.backup.client %}
 ---
@@ -49,8 +49,15 @@ spec:
               curl -fsSL "${PBS_KEY_URL}" -o /etc/apt/keyrings/proxmox-release.gpg
               echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] ${PBS_APT_REPO}" \
                 > /etc/apt/sources.list.d/pbs-client.list
+              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+                -o /etc/apt/trusted.gpg.d/apt.postgresql.org.asc
+              . /etc/os-release
+              echo "deb http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+                > /etc/apt/sources.list.d/postgresql.list
               apt-get update -qq
-              apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
+              apt-get install -y -qq --no-install-recommends proxmox-backup-client \
+                "postgresql-client-${PG_CLIENT_VERSION}" >/dev/null
+              install -d -m 0700 /restore/database /restore/tmp
 {% if _he_r_mode == 'plan' %}
 
               echo "=== snapshots PBS holds for host/${BACKUP_ID} ==="
@@ -61,6 +68,10 @@ spec:
                 echo
                 echo "=== files in ${SNAPSHOT} ==="
                 proxmox-backup-client snapshot files "${SNAPSHOT}"
+                echo
+                echo "=== target database ==="
+                psql --no-psqlrc --tuples-only --no-align \
+                  --command="SELECT current_database(), count(*) FROM pg_tables WHERE schemaname = 'public'"
               else
                 echo
                 echo "No snapshot named. Re-run with one of the identifiers above to check"
@@ -73,9 +84,15 @@ spec:
 {% else %}
 
               echo "=== restoring ${SNAPSHOT} ==="
+              echo "replacing database ${PGDATABASE} and the storage volume"
+              proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database
+              test -s "/restore/database/${PGDATABASE}.dump"
               echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
               find /app-storage -mindepth 1 -delete
               proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
+              pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
+                --dbname="${PGDATABASE}" "/restore/database/${PGDATABASE}.dump"
+              echo "restored database: ${PGDATABASE}"
               echo "restored storage volume: now $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
 {% endif %}
           env:
@@ -94,9 +111,26 @@ spec:
               value: "{{ client.key_url }}"
             - name: PBS_APT_REPO
               value: "{{ client.repository }} {{ client.suite }} {{ client.component }}"
+            - name: PGHOST
+              value: "{{ _he_r_database_host }}"
+            - name: PGPORT
+              value: "{{ _he_r_database_port | string }}"
+            - name: PGDATABASE
+              value: "{{ _he_r_database_name }}"
+            - name: PGUSER
+              value: "{{ _he_r_database_user }}"
+            - name: PG_CLIENT_VERSION
+              value: "{{ _he_r_pg_client_version }}"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ _he_r_secret }}, key: db-password }
+            - name: TMPDIR
+              value: /restore/tmp
           volumeMounts:
             - name: pbs-tmp
               mountPath: /tmp
+            - name: restore
+              mountPath: /restore
             - name: app-storage
               mountPath: /app-storage
 {% if _he_r_mode == 'plan' %}
@@ -111,6 +145,9 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 64Mi
+        - name: restore
+          emptyDir:
+            sizeLimit: {{ app_config.backup.scratch_size | int }}Gi
         - name: app-storage
           persistentVolumeClaim:
             claimName: {{ _he_r_target }}-storage

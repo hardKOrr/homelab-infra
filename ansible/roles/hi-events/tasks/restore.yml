@@ -1,11 +1,11 @@
 ---
-# Restore one Hi.Events instance's storage volume from a PBS snapshot, into the namespace
-# of a Hi.Events instance that is already deployed.
+# Restore one Hi.Events instance's named PostgreSQL database and storage volume from one
+# PBS snapshot, into the namespace of a Hi.Events instance that is already deployed.
 #
 # Called by playbooks/maintenance/restore-app.yml, whose header carries the operator-facing
 # procedure. Same shape as roles/jellyseerr/tasks/restore.yml, restoring the storage
-# volume rather than the config volume: Hi.Events' database is the named PostgreSQL
-# backend, restored through that backend's own procedure, not this one.
+# volume and its application database. The PostgreSQL backend guest remains in place; this
+# role touches only the database and role declared for the target instance.
 #
 # Inputs:
 #   instance               — the instance that OWNS the backup (the PBS backup-id)
@@ -75,6 +75,40 @@
       nothing to restore from. This platform's application backups live in the lab's PBS
       datastore and nowhere else.
 
+- name: Restore | Resolve the target database connection
+  ansible.builtin.set_fact:
+    _he_r_database_config: "{{ restore_target_config.app.database | default({}) }}"
+    _he_r_database_host: "{{ restore_target_config.app.database_host | default('') }}"
+    _he_r_database_port: "{{ restore_target_config.app.database_port | default(0) }}"
+    _he_r_database_name: >-
+      {{ restore_target_config.app.database_name
+         | default(restore_target_config.app.database.name | default(''), true) }}
+    _he_r_database_user: >-
+      {{ restore_target_config.app.database_user
+         | default(restore_target_config.app.database.role | default(''), true) }}
+    _he_r_database_password: "{{ restore_target_config.app.database_password | default('', true) }}"
+    _he_r_pg_client_version: >-
+      {{ restore_target_config.app.database.version
+         | default((homelabinfra_infra.databases | default({})).get(
+             restore_target_config.app.database.instance, {}).version | default(''), true)
+         | string }}
+  no_log: true
+
+- name: Restore | Require the target's named PostgreSQL database
+  ansible.builtin.assert:
+    that:
+      - _he_r_database_config.provider | default('') == 'postgresql'
+      - _he_r_database_host | length > 0
+      - _he_r_database_port | int > 0
+      - _he_r_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - _he_r_database_user is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - _he_r_database_password | length > 0
+      - _he_r_pg_client_version is match('^[0-9]+$')
+    fail_msg: >-
+      Hi.Events restore needs the deployed target's registered PostgreSQL database,
+      credentials and major version.
+  no_log: true
+
 - name: Restore | Resolve the restore's identity
   ansible.builtin.set_fact:
     _he_r_mode: "{{ 'restore' if restore_overwrite | bool else 'plan' }}"
@@ -92,7 +126,8 @@
   vars:
     k8s_secret_name: "{{ _he_r_secret }}"
     k8s_secret_data: >-
-      {{ {'pbs-password': k8s_pbs_password} }}
+      {{ {'pbs-password': k8s_pbs_password,
+          'db-password': _he_r_database_password} }}
 
 - name: Restore | Render the restore job
   ansible.builtin.set_fact:
@@ -116,11 +151,9 @@
           - "Source: PBS group host/{{ _he_r_backup_id }} in datastore
              {{ k8s_pbs_datastore }}{{ ', snapshot ' ~ _he_r_snapshot
                 if _he_r_snapshot | length > 0 else ' (no snapshot named)' }}."
-          - "Target: namespace {{ k8s_namespace }} — the
-             {{ restore_target }}-storage volume. It is listed above as it stands now; a
-             real run empties it before writing the snapshot's contents. The database is
-             NOT touched by this job — restore it through the named PostgreSQL backend's
-             own procedure."
+          - "Target: namespace {{ k8s_namespace }} — the {{ _he_r_database_name }} database
+             and {{ restore_target }}-storage volume. A real run replaces both from the
+             same snapshot."
           - "To do it: re-run this job with the same snapshot and overwrite=true."
 
   always:
@@ -179,6 +212,37 @@
         k8s_job_manifest: "{{ _he_r_manifest }}"
         k8s_job_timeout: "{{ _he_r_timeout }}"
 
+    # Redis is disposable and has no persistent volume. Restart it after replacing the
+    # database so stale cached organizer settings and queued work are not reused.
+    - name: Restore | Restart the disposable Redis cache
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - restart
+          - "deployment/{{ restore_target }}-redis"
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: true
+
+    - name: Restore | Wait for the Redis cache to be ready
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - --namespace
+          - "{{ k8s_namespace }}"
+          - rollout
+          - status
+          - "deployment/{{ restore_target }}-redis"
+          - --timeout=300s
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      changed_when: false
+
     - name: Restore | Start the target application again
       ansible.builtin.command:
         argv:
@@ -212,7 +276,7 @@
       ansible.builtin.debug:
         msg:
           - "Restored {{ _he_r_snapshot }} into namespace {{ k8s_namespace }}."
-          - "The file count above is the storage volume's own account of what arrived."
+          - "The database dump and storage archive came from the same recovery point."
           - "Now verify the application, not the artifact: open
              https://{{ restore_target }}.<estate domain>/, sign in as an organizer, and
              check that event cover images and previously generated tickets are present."

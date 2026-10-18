@@ -161,9 +161,9 @@
 
 # ── Application-consistent backup ──────────────────────────────────────────────
 #
-# Filesystem archive of the storage volume only, on the same contract as
-# roles/jellyseerr — the database is the named PostgreSQL backend's own recovery unit and
-# is backed up with that guest, not duplicated here.
+# One PBS snapshot contains a custom-format dump of this instance's named PostgreSQL
+# database and its uploaded event/ticket media. The backend guest remains independently
+# managed; Hi.Events removes and restores only its own database and storage volume.
 
 - name: Hi.Events | Resolve the lab's PBS target
   ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
@@ -176,8 +176,8 @@
     msg: >-
       {{ instance }} declares backup.enabled, but no Proxmox Backup Server is recorded in
       config/.generated/facts.yml, so no backup was scheduled. Deploy PBS and re-run this
-      job. Until then this instance's uploaded media exists in exactly one place: the
-      volume on the cluster node that holds it.
+      job. Until then this instance's database and uploaded media have no application
+      recovery point.
   when:
     - app_config.backup.enabled | default(false) | bool
     - not (k8s_pbs_available | default(false) | bool)
@@ -187,6 +187,21 @@
     - app_config.backup.enabled | default(false) | bool
     - k8s_pbs_available | default(false) | bool
   block:
+    - name: Hi.Events | Resolve the PostgreSQL client version
+      ansible.builtin.set_fact:
+        _he_pg_client_version: >-
+          {{ app_config.app.database.version
+             | default((homelabinfra_infra.databases | default({})).get(
+                 app_config.app.database.instance, {}).version | default(''), true)
+             | string }}
+
+    - name: Hi.Events | Require a matching PostgreSQL client version
+      ansible.builtin.assert:
+        that: _he_pg_client_version is match('^[0-9]+$')
+        fail_msg: >-
+          Hi.Events needs the registered PostgreSQL backend's major version to make a
+          compatible database recovery point.
+
     - name: Hi.Events | Resolve the backup's identity and destination
       ansible.builtin.set_fact:
         _he_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
@@ -216,7 +231,8 @@
       vars:
         k8s_secret_name: "{{ instance }}-backup"
         k8s_secret_data: >-
-          {{ {'pbs-password': k8s_pbs_password}
+          {{ {'pbs-password': k8s_pbs_password,
+              'db-password': app_config.app.database_password}
              | combine({'ntfy-token': _he_ntfy_token}
                        if _he_ntfy_token | length > 0 else {}) }}
 
@@ -232,11 +248,9 @@
     - name: Hi.Events | State the backup contract
       ansible.builtin.debug:
         msg:
-          - "Backup: a filesystem archive of the storage volume (uploaded event/ticket
-             media), pushed to PBS datastore {{ _he_backup_datastore }} as
-             host/{{ _he_backup_id }}. The named PostgreSQL backend
-             ({{ app_config.app.database.instance }}) is that guest's own recovery unit,
-             not duplicated here."
+          - "Backup: a custom-format dump of {{ app_config.app.database.name }} plus the
+             storage volume (uploaded event/ticket media), pushed together to PBS datastore
+             {{ _he_backup_datastore }} as host/{{ _he_backup_id }}."
           - "Schedule: {{ app_config.backup.schedule }} ({{ _he_backup_timezone }}).
              Retention: {{ app_config.backup.retention_days }} daily snapshots.
              Encryption: {{ app_config.backup.encryption }}."
