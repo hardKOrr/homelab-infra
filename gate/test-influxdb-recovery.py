@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import http.server
+import json
 import os
 from pathlib import Path
 import shutil
@@ -23,6 +25,9 @@ DEPLOY = yaml.safe_load(
 RESTORE = yaml.safe_load(
     (ROOT / "ansible/roles/influxdb/tasks/restore.yml").read_text(encoding="utf-8")
 )
+BACKUP = yaml.safe_load(
+    (ROOT / "ansible/roles/influxdb/tasks/backup.yml").read_text(encoding="utf-8")
+)
 TRANSACTION = next(
     task for task in RESTORE
     if task.get("name") == "InfluxDB restore | Replace and validate the data directory"
@@ -31,6 +36,18 @@ TRANSACTION = next(
 
 def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
+
+
+def find_ansible_playbook():
+    ansible_playbook = (
+        os.environ.get("GATE_ANSIBLE_PLAYBOOK")
+        or shutil.which("ansible-playbook")
+        or str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook")
+    )
+    assert Path(ansible_playbook).is_file(), (
+        "ansible-playbook is required for the InfluxDB recovery gate"
+    )
+    return ansible_playbook
 
 
 def check_contract_and_wiring():
@@ -116,14 +133,7 @@ def write_executable(path: Path, content: str):
 
 
 def run_transaction(case: str, server: InfluxFixture):
-    ansible_playbook = (
-        os.environ.get("GATE_ANSIBLE_PLAYBOOK")
-        or shutil.which("ansible-playbook")
-        or str(Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook")
-    )
-    assert Path(ansible_playbook).is_file(), (
-        "ansible-playbook is required for the InfluxDB recovery gate"
-    )
+    ansible_playbook = find_ansible_playbook()
 
     with tempfile.TemporaryDirectory(prefix="homelab-influxdb-recovery.") as directory:
         root = Path(directory)
@@ -257,9 +267,72 @@ def check_restore_transaction():
     assert "InfluxDB restore | Verify the restored operator token" in block_names
 
 
+def check_backup_snapshot_identity():
+    task_names = (
+        "InfluxDB backup | Validate the recovery points after upload",
+        "InfluxDB backup | Read recovery point timestamps",
+        "InfluxDB backup | Find the newly added recovery point timestamp",
+        "InfluxDB backup | Require one new recovery point",
+        "InfluxDB backup | Format the verified recovery point",
+    )
+    resolution_tasks = copy.deepcopy([
+        task_named(list(all_tasks(BACKUP)), name) for name in task_names
+    ])
+    for task in resolution_tasks:
+        task.pop("no_log", None)
+    assert all("ansible.builtin.command" not in task for task in resolution_tasks)
+    assert "| difference(" in str(resolution_tasks[2])
+    assert "strftime(" in str(resolution_tasks[-1])
+    assert "utc=true" in str(resolution_tasks[-1])
+
+    before = [{"backup-time": 1792371000}, {"backup-time": 1792371500}]
+    added = 1792371600
+    after = before + [{"backup-time": added}]
+    expected = (
+        "host/fixture/"
+        + datetime.datetime.fromtimestamp(added, datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+    )
+    playbook = [{
+        "hosts": "localhost",
+        "connection": "local",
+        "gather_facts": False,
+        "vars": {
+            "_influxdb_backup_snapshots_before": {"stdout": json.dumps(before)},
+            "_influxdb_backup_snapshots_after": {"stdout": json.dumps(after)},
+            "_influxdb_backup_id": "fixture",
+        },
+        "tasks": resolution_tasks + [{
+            "name": "Assert fixture snapshot identity",
+            "ansible.builtin.assert": {
+                "that": "_influxdb_backup_recovery_point == expected_recovery_point"
+            },
+            "vars": {"expected_recovery_point": expected},
+        }],
+    }]
+    with tempfile.TemporaryDirectory(prefix="homelab-influxdb-backup-point.") as directory:
+        fixture = Path(directory) / "backup-point.yml"
+        fixture.write_text(yaml.safe_dump(playbook), encoding="utf-8")
+        result = subprocess.run(
+            [find_ansible_playbook(), "-i", "localhost,", str(fixture)],
+            cwd=ROOT,
+            env=os.environ | {
+                "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg"),
+                "ANSIBLE_NOCOLOR": "1",
+                "ANSIBLE_STDOUT_CALLBACK": "default",
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def main():
     check_contract_and_wiring()
     check_restore_transaction()
+    check_backup_snapshot_identity()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), InfluxFixture)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -271,7 +344,7 @@ def main():
         server.shutdown()
         thread.join(timeout=2)
         server.server_close()
-    print("InfluxDB: recovery declaration, unique wiring, archive restore and post-move rollback passed")
+    print("InfluxDB: recovery declaration, unique wiring, backup identity, archive restore and post-move rollback passed")
 
 
 if __name__ == "__main__":

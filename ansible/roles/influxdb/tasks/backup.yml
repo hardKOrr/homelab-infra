@@ -185,39 +185,42 @@
           - "{{ k8s_pbs_repository }}"
         scrub_failure_context: InfluxDB backup | recovery points could not be verified
 
-    - name: InfluxDB backup | Resolve the newly added recovery point
-      ansible.builtin.command:
-        argv:
-          - python3
-          - -c
-          - |
-            import datetime, json, os, sys
-
-            before = json.loads(os.environ["SNAPSHOTS_BEFORE"])
-            after = json.loads(os.environ["SNAPSHOTS_AFTER"])
-            backup_id = os.environ["BACKUP_ID"]
-            before_times = {int(row["backup-time"]) for row in before}
-            added = [row for row in after if int(row["backup-time"]) not in before_times]
-            if len(added) != 1:
-                sys.exit("PBS did not add exactly one distinct recovery point")
-            stamp = datetime.datetime.fromtimestamp(
-                int(added[0]["backup-time"]), datetime.timezone.utc
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            print(f"host/{backup_id}/{stamp}")
-      environment:
-        SNAPSHOTS_BEFORE: "{{ _influxdb_backup_snapshots_before.stdout }}"
-        SNAPSHOTS_AFTER: "{{ _influxdb_backup_snapshots_after.stdout }}"
-        BACKUP_ID: "{{ _influxdb_backup_id }}"
-      register: _influxdb_backup_recovery_point
-      failed_when: false
-      changed_when: false
+    - name: InfluxDB backup | Validate the recovery points after upload
+      ansible.builtin.assert:
+        that: (_influxdb_backup_snapshots_after.stdout | from_json | type_debug) == 'list'
+        fail_msg: InfluxDB backup could not parse the post-upload PBS recovery point list.
       no_log: true
 
-    - name: InfluxDB backup | Report a missing unique recovery point
-      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
-      vars:
-        scrub_failure_result: "{{ _influxdb_backup_recovery_point }}"
-        scrub_failure_context: InfluxDB backup | new recovery point could not be identified
+    - name: InfluxDB backup | Read recovery point timestamps
+      ansible.builtin.set_fact:
+        _influxdb_backup_snapshot_times_before: >-
+          {{ _influxdb_backup_snapshots_before.stdout | from_json
+             | map(attribute='backup-time') | map('int') | list }}
+        _influxdb_backup_snapshot_times_after: >-
+          {{ _influxdb_backup_snapshots_after.stdout | from_json
+             | map(attribute='backup-time') | map('int') | list }}
+      no_log: true
+
+    - name: InfluxDB backup | Find the newly added recovery point timestamp
+      ansible.builtin.set_fact:
+        _influxdb_backup_added_snapshot_times: >-
+          {{ _influxdb_backup_snapshot_times_after
+             | difference(_influxdb_backup_snapshot_times_before) }}
+      no_log: true
+
+    - name: InfluxDB backup | Require one new recovery point
+      ansible.builtin.assert:
+        that: _influxdb_backup_added_snapshot_times | length == 1
+        fail_msg: PBS did not add exactly one distinct InfluxDB recovery point.
+      no_log: true
+
+    - name: InfluxDB backup | Format the verified recovery point
+      ansible.builtin.set_fact:
+        _influxdb_backup_recovery_point: >-
+          host/{{ _influxdb_backup_id }}/{{
+            '%Y-%m-%dT%H:%M:%SZ'
+            | strftime(_influxdb_backup_added_snapshot_times[0] | int, utc=true) }}
+      no_log: true
 
     - name: InfluxDB backup | Verify the recovery point contains data.pxar
       ansible.builtin.command:
@@ -226,7 +229,7 @@
           - proxmox-backup-client
           - snapshot
           - files
-          - "{{ _influxdb_backup_recovery_point.stdout | trim }}"
+          - "{{ _influxdb_backup_recovery_point }}"
           - --output-format
           - json
       environment:
@@ -252,7 +255,7 @@
       ansible.builtin.assert:
         that: "'data.pxar' in _influxdb_backup_files.stdout"
         fail_msg: >-
-          InfluxDB recovery point {{ _influxdb_backup_recovery_point.stdout | trim }}
+          InfluxDB recovery point {{ _influxdb_backup_recovery_point }}
           has no data.pxar archive.
       no_log: true
 
@@ -289,7 +292,7 @@
     - name: InfluxDB backup | Mark the backup complete
       ansible.builtin.set_fact:
         _application_backup_complete: true
-        _influxdb_backup_verified_point: "{{ _influxdb_backup_recovery_point.stdout | trim }}"
+        _influxdb_backup_verified_point: "{{ _influxdb_backup_recovery_point }}"
   always:
     - name: InfluxDB backup | Start only InfluxDB
       ansible.builtin.systemd_service:
