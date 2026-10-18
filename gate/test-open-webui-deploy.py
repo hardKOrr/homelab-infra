@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Open WebUI bootstraps Docker before deploying its Compose project."""
+"""Check Open WebUI's release image and Docker bootstrap before deployment."""
 
 from pathlib import Path
 
@@ -12,7 +12,15 @@ def task_named(tasks, name):
     return next(task for task in tasks if task.get("name") == name)
 
 
-def docker_is_ready_before_open_webui_deploy():
+def open_webui_release_image_and_docker_bootstrap():
+    defaults = yaml.safe_load(
+        (ROOT / "ansible/vars/app-defaults/open-webui.yml").read_text(encoding="utf-8")
+    )
+    assert (
+        defaults["open_webui_defaults"]["app"]["image"]
+        == "ghcr.io/open-webui/open-webui:latest"
+    )
+
     plays = yaml.safe_load(
         (ROOT / "ansible/playbooks/apps/open-webui.yml").read_text(encoding="utf-8")
     )
@@ -29,5 +37,5 @@ def docker_is_ready_before_open_webui_deploy():
 
 
 if __name__ == "__main__":
-    docker_is_ready_before_open_webui_deploy()
-    print("ok Open WebUI stack host Docker bootstrap")
+    open_webui_release_image_and_docker_bootstrap()
+    print("ok Open WebUI release image and stack host Docker bootstrap")
