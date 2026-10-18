@@ -1109,6 +1109,12 @@ def k3s_template_supports_a_per_node_snapshotter():
         },
     }
     default_config = yaml.safe_load(render(template, base))
+    overlayfs_config = yaml.safe_load(
+        render(template, {
+            **base,
+            "k8s_node_spec": {**node_spec, "snapshotter": "overlayfs"},
+        })
+    )
     native_config = yaml.safe_load(
         render(template, {
             **base,
@@ -1120,10 +1126,22 @@ def k3s_template_supports_a_per_node_snapshotter():
     validation = task_named(tasks, "k3s | Validate the node snapshotter")
 
     assert "snapshotter" not in default_config, default_config
+    assert overlayfs_config["snapshotter"] == "overlayfs", overlayfs_config
     assert native_config["snapshotter"] == "native", native_config
-    assert validation["ansible.builtin.assert"]["that"] == [
+    snapshotter_assertion = validation["ansible.builtin.assert"]["that"][0]
+    assert snapshotter_assertion == (
         "(k8s_node_spec.snapshotter | default('overlayfs')) in ['overlayfs', 'native']"
-    ], validation
+    ), validation
+    cases = ((None, True), ("overlayfs", True), ("native", True), ("zfs", False))
+    for snapshotter, expected in cases:
+        node = dict(node_spec)
+        if snapshotter is not None:
+            node["snapshotter"] = snapshotter
+        result = render(
+            "{{ " + snapshotter_assertion + " }}",
+            {"k8s_node_spec": node},
+        )
+        assert result is expected, (snapshotter, result)
 
 
 def vm_clone_keeps_recorded_app_tags_and_notes():
