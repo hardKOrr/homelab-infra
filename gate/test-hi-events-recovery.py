@@ -24,6 +24,11 @@ def main():
     assert 'restore "${SNAPSHOT}" database.pxar /restore/database' in restore_job
     assert 'restore "${SNAPSHOT}" storage.pxar /app-storage' in restore_job
     assert "pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error" in restore_job
+    assert restore_job.index("pg_restore --clean") < restore_job.index("find /app-storage -mindepth 1 -delete")
+    assert restore_job.index("pg_restore --clean") < restore_job.index(
+        'restore "${SNAPSHOT}" storage.pxar /app-storage'
+    )
+    assert "storage stays untouched if pg_restore fails" in restore_job
     assert "Restart the disposable Redis cache" in restore
     assert "_he_r_database_password" in restore
     assert "_he_r_pg_client_version" in restore

@@ -87,12 +87,13 @@ spec:
               echo "replacing database ${PGDATABASE} and the storage volume"
               proxmox-backup-client restore "${SNAPSHOT}" database.pxar /restore/database
               test -s "/restore/database/${PGDATABASE}.dump"
-              echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
-              find /app-storage -mindepth 1 -delete
-              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
+              echo "restoring database first; storage stays untouched if pg_restore fails"
               pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error \
                 --dbname="${PGDATABASE}" "/restore/database/${PGDATABASE}.dump"
               echo "restored database: ${PGDATABASE}"
+              echo "replacing storage volume: was $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
+              find /app-storage -mindepth 1 -delete
+              proxmox-backup-client restore "${SNAPSHOT}" storage.pxar /app-storage
               echo "restored storage volume: now $(du -sh /app-storage 2>/dev/null | cut -f1) in $(find /app-storage -type f | wc -l) file(s)"
 {% endif %}
           env:
