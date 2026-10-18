@@ -1,0 +1,57 @@
+---
+- name: ComfyUI user data | Inspect the existing container mount
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --format
+      - "{{ '{{range .Mounts}}{{if eq .Destination \"/opt/ComfyUI/user\"}}{{.Source}}{{end}}{{end}}' }}"
+      - "{{ instance }}-comfyui"
+  register: _comfyui_existing_user_mount
+  changed_when: false
+  failed_when: false
+
+- name: ComfyUI user data | Migrate existing container files
+  when:
+    - _comfyui_existing_user_mount.rc == 0
+    - >-
+      (_comfyui_existing_user_mount.stdout | trim | regex_replace('/+$', '')) !=
+      (app_config.app.config_path | regex_replace('/+$', ''))
+  block:
+    - name: ComfyUI user data | Create a private staging directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: comfyui-user-migration-
+      register: _comfyui_user_migration_tmp
+
+    - name: ComfyUI user data | Copy existing files to staging
+      ansible.builtin.command:
+        argv:
+          - docker
+          - cp
+          - "{{ instance }}-comfyui:/opt/ComfyUI/user/."
+          - "{{ _comfyui_user_migration_tmp.path }}/"
+      changed_when: false
+
+    - name: ComfyUI user data | Find staged files
+      ansible.builtin.find:
+        paths: "{{ _comfyui_user_migration_tmp.path }}"
+        recurse: true
+        file_type: file
+      register: _comfyui_staged_user_files
+
+    - name: ComfyUI user data | Merge files without replacing persistent data
+      ansible.builtin.command:
+        argv:
+          - cp
+          - -an
+          - "{{ _comfyui_user_migration_tmp.path }}/."
+          - "{{ app_config.app.config_path }}/"
+      changed_when: true
+      when: _comfyui_staged_user_files.matched | int > 0
+  always:
+    - name: ComfyUI user data | Remove the staging directory
+      ansible.builtin.file:
+        path: "{{ _comfyui_user_migration_tmp.path }}"
+        state: absent
+      when: _comfyui_user_migration_tmp.path is defined

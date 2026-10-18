@@ -1281,12 +1281,36 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
         )
         return yaml.safe_load(rendered)["services"]["comfyui"]
 
+    role_tasks = yaml.safe_load(read("ansible/roles/comfyui/tasks/main.yml"))
     cpu = service("cpu")
     assert cpu["image"] == (
         "ghcr.io/ai-dock/comfyui@sha256:5f08ab173b4d78babb6b003a875d495a64378815237e8b80c9248923dcda9a52"
     ), cpu
     assert "gpus" not in cpu, cpu
     assert "deploy" not in cpu, cpu
+    assert "/opt/comfyui/storage/user:/opt/ComfyUI/user" in cpu["volumes"], cpu
+    healthcheck = cpu["healthcheck"]
+    assert healthcheck["test"][0] == "CMD-SHELL", healthcheck
+    assert "--max-redirect=0" in healthcheck["test"][1], healthcheck
+    assert "HTTP/[^ ]+ (200|302)( |$)" in healthcheck["test"][1], healthcheck
+    migration = yaml.safe_load(read("ansible/roles/comfyui/tasks/migrate-user-data.yml"))
+    migration_block = next(
+        task for task in migration if task.get("name") == "ComfyUI user data | Migrate existing container files"
+    )
+    assert any(
+        task.get("name")
+        == "ComfyUI user data | Merge files without replacing persistent data"
+        for task in migration_block["block"]
+    ), migration
+    migration_index = next(
+        i for i, task in enumerate(role_tasks)
+        if task.get("name") == "ComfyUI | Preserve existing user data before mounting persistent storage"
+    )
+    render_index = next(
+        i for i, task in enumerate(role_tasks)
+        if task.get("name") == "ComfyUI | Render the Compose project"
+    )
+    assert migration_index < render_index, role_tasks
 
     cuda = service("cuda")
     assert cuda["image"].endswith(":latest-cuda"), cuda
@@ -1295,7 +1319,6 @@ def comfyui_accelerator_profile_controls_gpu_runtime():
         {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
     ], cuda
 
-    role_tasks = yaml.safe_load(read("ansible/roles/comfyui/tasks/main.yml"))
     gpu_checks = [task for task in role_tasks if "NVIDIA" in task["name"] or "GPU" in task["name"]]
     assert len(gpu_checks) == 4, gpu_checks
     assert all(

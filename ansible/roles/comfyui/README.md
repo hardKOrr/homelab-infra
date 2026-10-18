@@ -17,11 +17,13 @@ does not follow that login redirect; it accepts the redirect as an available aut
 while the recovery drill verifies the actual login and API. A first CPU start may take
 longer to initialize, so it gets a ten-minute health window.
 
-`app.models_path` is the large model-storage mount exposed to the container. The role also
-keeps user configuration, custom nodes, inputs, and outputs under `app.storage_path`.
-The application-consistent PBS archive covers that whole storage tree, including downloaded
-checkpoints and LoRAs. The GPU is hardware and must be rebound after VM recovery; it is not
-part of the archive.
+`app.models_path` is the large model-storage mount exposed to the container. AI-Dock's
+ComfyUI process stores user settings and workflows under `/opt/ComfyUI/user`; the role
+mounts `app.config_path` there so those files are covered by recovery. On the first deploy
+after this mount change, existing files are copied from the container and merged without
+replacing files already in persistent storage. Custom nodes, inputs, outputs, and models
+also stay under `app.storage_path`, which the application-consistent PBS archive covers.
+The GPU is hardware and must be rebound after VM recovery; it is not part of the archive.
 
 For CUDA, declare the exact PCI device; both modes declare the model-storage path and keep
 node console recovery access. If PCI detach fails, the seam restarts a previously running

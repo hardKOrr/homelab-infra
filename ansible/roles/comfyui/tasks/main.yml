@@ -76,6 +76,9 @@
       ComfyUI storage paths must remain below app.storage_path so model files and
       configuration share one owned recovery unit.
 
+- name: ComfyUI | Preserve existing user data before mounting persistent storage
+  ansible.builtin.include_tasks: migrate-user-data.yml
+
 - name: ComfyUI | Render the Compose project
   ansible.builtin.template:
     src: docker-compose.yml.j2
