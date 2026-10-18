@@ -35,7 +35,11 @@ def open_webui_restore_prepoint_diagnostics():
         block, "Open WebUI restore | Classify the existing-target B archive error"
     )
     assert classify["changed_when"] is False
+    assert classify["no_log"] is True
     assert classify["when"] == "_open_webui_restore_b_validation.rc | default(1) | int == 82"
+    failure_text = classify["vars"]["_open_webui_restore_b_failure_text"]
+    assert "_open_webui_restore_b_validation.stderr" in failure_text
+    assert "_open_webui_restore_b_validation.stdout" in failure_text
     classification = classify["ansible.builtin.set_fact"][
         "_open_webui_restore_b_failure_class"
     ]

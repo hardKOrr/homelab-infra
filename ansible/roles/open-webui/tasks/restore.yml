@@ -245,25 +245,30 @@
       when: restore_destination | default('existing') == 'existing'
 
     - name: Open WebUI restore | Classify the existing-target B archive error
+      vars:
+        _open_webui_restore_b_failure_text: >-
+          {{ ((_open_webui_restore_b_validation.stderr | default('')) ~ ' '
+             ~ (_open_webui_restore_b_validation.stdout | default(''))) | lower }}
       ansible.builtin.set_fact:
         _open_webui_restore_b_failure_class: >-
           {{ 'PBS authorization or credentials'
-             if (_open_webui_restore_b_validation.stderr | default('') | lower)
+             if _open_webui_restore_b_failure_text
                 is search('authentication|permission denied|unauthorized|unauthorised|forbidden|401|403')
              else 'PBS transport or TLS'
-             if (_open_webui_restore_b_validation.stderr | default('') | lower)
+             if _open_webui_restore_b_failure_text
                 is search('connection|timed out|timeout|no route|resolve|tls|certificate|ssl')
              else 'snapshot archive is missing'
-             if (_open_webui_restore_b_validation.stderr | default('') | lower)
+             if _open_webui_restore_b_failure_text
                 is search('not found|no such file|does not exist|unknown archive|missing archive')
              else 'archive encryption key error'
-             if (_open_webui_restore_b_validation.stderr | default('') | lower)
+             if _open_webui_restore_b_failure_text
                 is search('decrypt|encryption|wrong key|key.*invalid')
              else 'archive chunk or integrity error'
-             if (_open_webui_restore_b_validation.stderr | default('') | lower)
+             if _open_webui_restore_b_failure_text
                 is search('checksum|digest|corrupt|chunk')
              else 'unclassified PBS archive extraction error' }}
       changed_when: false
+      no_log: true
       when: _open_webui_restore_b_validation.rc | default(1) | int == 82
 
     - name: Open WebUI restore | Assert the existing-target B point verified
