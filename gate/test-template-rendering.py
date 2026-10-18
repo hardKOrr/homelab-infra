@@ -749,31 +749,54 @@ def navidrome_rendering():
     assert ":rw" not in compose, "':rw' not in compose"
     assert '"14533:4533"' in compose, "'\"14533:4533\"' in compose"
     role_tasks = yaml.safe_load(read("ansible/roles/navidrome/tasks/main.yml"))
-    mount_guard = next(
-        (
-            task["ansible.builtin.assert"]["that"]
-            for task in role_tasks
-            if task.get("name")
-            == "Assert Navidrome music path is inside a declared media mount"
-        )
-    )
-    guard_template = mount_guard
-    mounted = render(
-        guard_template,
-        {
-            "_navidrome_music_path": "/srv/fixtures/media/music",
-            "_navidrome_mounts": [{"path": "/srv/fixtures/media"}],
+    ownership_guard = task_named(
+        role_tasks, "Assert Navidrome storage owner matches its container user"
+    )["ansible.builtin.assert"]["that"]
+    ownership_context = {
+        "app_config": {
+            "media_storage": {"owner": {"uid": 1313, "gid": 1313}},
         },
+        # Ansible's set_fact currently exposes these values as unsafe text even when
+        # the source expression used the int filter.
+        "_navidrome_uid": "1313",
+        "_navidrome_gid": "1313",
+    }
+    for expression in ownership_guard:
+        assert (
+            render("{{ " + expression + " }}", ownership_context) is True
+        ), "matching media ownership survives Ansible's stringified set_fact ids"
+    mount_matcher = task_named(
+        role_tasks, "Match Navidrome music path against declared media mounts"
     )
-    unmounted = render(
-        guard_template,
-        {
-            "_navidrome_music_path": "/srv/fixtures/other/music",
-            "_navidrome_mounts": [{"path": "/srv/fixtures/media"}],
-        },
-    )
-    assert str(mounted).strip().lower() == "true", "mounted is True"
-    assert str(unmounted).strip().lower() == "false", "unmounted is False"
+    mount_match_condition = mount_matcher["when"]
+    assert "{{" not in mount_match_condition and "{%" not in mount_match_condition
+    for music_path, mount_path, expected in (
+        ("/srv/fixtures/media/music", "/srv/fixtures/media", True),
+        ("/srv/fixtures/media", "/srv/fixtures/media", True),
+        ("/srv/fixtures/media-backup/music", "/srv/fixtures/media", False),
+        ("/srv/fixtures/other/music", "/srv/fixtures/media", False),
+    ):
+        assert (
+            render(
+                "{{ " + mount_match_condition + " }}",
+                {
+                    "_navidrome_music_path": music_path,
+                    "item": {"path": mount_path},
+                },
+            )
+            is expected
+        ), f"Navidrome mount match for {music_path} under {mount_path}"
+    mount_guard = task_named(
+        role_tasks, "Assert Navidrome music path is inside a declared media mount"
+    )["ansible.builtin.assert"]["that"]
+    assert (
+        render("{{ " + mount_guard + " }}", {"_navidrome_music_path_mounted": True})
+        is True
+    ), "mounted path is accepted"
+    assert (
+        render("{{ " + mount_guard + " }}", {"_navidrome_music_path_mounted": False})
+        is False
+    ), "unmounted path is rejected"
 
 
 def maintainerr_rendering():

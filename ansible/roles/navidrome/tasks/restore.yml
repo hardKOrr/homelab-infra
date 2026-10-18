@@ -83,16 +83,27 @@
     BACKUP_ID: "{{ _navidrome_restore_backup_id }}"
   no_log: true
 
-- name: Navidrome restore | Report the read-only plan
+- name: Navidrome restore | Report the selected recovery point in plan mode
+  ansible.builtin.debug:
+    msg: "No data was changed. Selected recovery point: {{ restore_snapshot }}"
+  when:
+    - not (restore_overwrite | bool)
+    - restore_snapshot | default('', true) | length > 0
+
+- name: Navidrome restore | Report available recovery points in plan mode
   ansible.builtin.debug:
     msg: >-
       No data was changed. PBS snapshots for host/{{ _navidrome_restore_backup_id }}:
-      {{ _navidrome_restore_snapshots.stdout | default('provide snapshot=<id> to select one') }}
-  when: not (restore_overwrite | bool)
+      {{ _navidrome_restore_snapshots.stdout | default('No snapshots were found.', true) }}
+  when:
+    - not (restore_overwrite | bool)
+    - restore_snapshot | default('', true) | length == 0
 
 - name: Navidrome restore | Create private staging space
   ansible.builtin.tempfile:
     state: directory
+    # Keep the archive outside the directory being replaced and close to its data.
+    path: "{{ app_config.app.data_path | dirname }}"
     prefix: "{{ instance }}-navidrome-restore-"
   register: _navidrome_restore_tmp
   when: restore_overwrite | bool
@@ -114,6 +125,10 @@
           - --rm
           - --network
           - host
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _navidrome_restore_tmp.path }}:/restore"
           - --env
@@ -141,7 +156,15 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            # /restore is the existing tempfile bind mount. PBS's internal temporary
+            # files use /tmp and ~/.cache; tmpfs avoids unsupported anonymous-file
+            # operations on the nested Docker overlay inside this unprivileged LXC.
+            # Ignore metadata that cannot be applied here; the task below assigns
+            # the configured Navidrome owner.
+            proxmox-backup-client restore --allow-existing-dirs true \
+              --ignore-acls true --ignore-ownership true --ignore-permissions true \
+              --ignore-xattrs true \
+              "$SNAPSHOT" data.pxar /restore
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
@@ -149,6 +172,7 @@
         SNAPSHOT: "{{ restore_snapshot }}"
       no_log: true
       changed_when: true
+      register: _navidrome_restore_extract
 
     - name: Navidrome restore | Require a non-empty data archive
       ansible.builtin.command:
@@ -190,6 +214,15 @@
         group: "{{ app_config.app.pgid | default(1313) }}"
         recurse: true
 
+    - name: Navidrome restore | Normalize the data directory mode
+      ansible.builtin.file:
+        path: "{{ app_config.app.data_path }}"
+        state: directory
+        owner: "{{ app_config.app.puid | default(1313) }}"
+        group: "{{ app_config.app.pgid | default(1313) }}"
+        # cp -a applies the archive root's mode to this directory. Keep Deploy a no-op.
+        mode: "0750"
+
     - name: Navidrome restore | Start the named service
       community.docker.docker_compose_v2:
         project_src: "{{ navidrome_project_dir }}"
@@ -215,6 +248,38 @@
       ansible.builtin.set_fact:
         _application_restore_complete: true
   rescue:
+    - name: Navidrome restore | Report safe archive extraction diagnostics
+      ansible.builtin.debug:
+        msg:
+          - "PBS extraction exit code: {{ _navidrome_restore_extract.rc | default('unknown') }}"
+          - "permission_denied={{ 'permission denied' in _navidrome_restore_extract_output_lower }}"
+          - "operation_not_permitted={{ 'operation not permitted' in _navidrome_restore_extract_output_lower }}"
+          - "operation_not_supported={{ 'operation not supported' in _navidrome_restore_extract_output_lower }}"
+          - "no_space_left={{ 'no space left on device' in _navidrome_restore_extract_output_lower }}"
+          - "target_exists={{ 'file exists' in _navidrome_restore_extract_output_lower or 'already exists' in _navidrome_restore_extract_output_lower }}"
+          - "unsupported_option={{ 'unknown option' in _navidrome_restore_extract_output_lower or 'unexpected argument' in _navidrome_restore_extract_output_lower }}"
+          - "authentication_or_acl={{ 'permission check failed' in _navidrome_restore_extract_output_lower or 'authentication failed' in _navidrome_restore_extract_output_lower }}"
+          - >-
+            sanitized_output={{ (_navidrome_restore_extract_output
+            | regex_replace('(?i)pbs_password=[^ ]+', 'PBS_PASSWORD=<redacted>')
+            | regex_replace('(?i)(password|token|secret|key|fingerprint)[=: ]+[^ ]+', '<sensitive-field>=<redacted>')
+            | regex_replace('https?://[^ ]+', '<url>')
+            | regex_replace('host/navidrome/[^ ]+', '<recovery-point>')
+            | regex_replace('[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+(:[0-9]+)?(:[A-Za-z0-9_-]+)?', '<repository>')
+            | regex_replace('([0-9]{1,3}\\.){3}[0-9]{1,3}', '<ip>')
+            | regex_replace('([A-Za-z0-9-]+\\.)+[A-Za-z]{2,}', '<host>')
+            | regex_replace('[A-Za-z0-9_-]{24,}', '<opaque>')
+            | regex_replace('/tmp/[^ ]+', '<staging-path>')
+            | replace('\n', ' '))[:500] }}
+      vars:
+        _navidrome_restore_extract_output: >-
+          {{ (_navidrome_restore_extract.stdout | default('')) ~ ' ' ~
+             (_navidrome_restore_extract.stderr | default('')) }}
+        _navidrome_restore_extract_output_lower: "{{ _navidrome_restore_extract_output | lower }}"
+      when:
+        - _navidrome_restore_extract is defined
+        - (_navidrome_restore_extract.rc | default(0) | int) != 0
+
     - name: Navidrome restore | Stop the named service after a failed restore
       community.docker.docker_compose_v2:
         project_src: "{{ navidrome_project_dir }}"

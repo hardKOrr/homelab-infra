@@ -1,0 +1,93 @@
+# Start exactly one explicitly reviewed, owned stack guest. This does not change its
+# configuration, tags, applications, or data.
+- name: Require an exact guest identity and execution confirmation
+  ansible.builtin.assert:
+    that:
+      - start_guest_vmid | default('') | string is match('^[1-9][0-9]*$')
+      - start_guest_name | default('') is match('^stack-[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - >-
+        not (start_guest_execute | bool)
+        or start_guest_confirmation | default('') == 'START OWNED GUEST ' ~ start_guest_vmid
+
+- name: Read current cluster guest identities
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _start_guest_inventory
+  changed_when: false
+  no_log: true
+
+- name: Select the exact requested guest
+  ansible.builtin.set_fact:
+    _start_guest_matches: "{{ _start_guest_inventory.stdout | from_json | selectattr('vmid', 'equalto', start_guest_vmid | int) | list }}"
+  no_log: true
+
+- name: Require exactly one current guest
+  ansible.builtin.assert:
+    that: _start_guest_matches | length == 1
+
+- name: Require an owned non-template stack guest with the exact name
+  ansible.builtin.assert:
+    that:
+      - _start_guest.type in ['lxc', 'qemu']
+      - not (_start_guest.template | default(false) | bool)
+      - _start_guest.name == start_guest_name
+      - "'_+lab' in (_start_guest.tags | default('', true)).split(';')"
+      - _start_guest.status in ['running', 'stopped']
+  vars:
+    _start_guest: "{{ _start_guest_matches | first }}"
+
+- name: Read the exact guest configuration
+  ansible.builtin.command:
+    argv: [pvesh, get, "/nodes/{{ _start_guest.node }}/{{ _start_guest.type }}/{{ _start_guest.vmid }}/config", --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _start_guest_config
+  changed_when: false
+  no_log: true
+  vars:
+    _start_guest: "{{ _start_guest_matches | first }}"
+
+- name: Refuse an unowned, locked, or differently named guest configuration
+  ansible.builtin.assert:
+    that:
+      - _cfg.digest is defined
+      - _cfg.lock is not defined
+      - "'_+lab' in (_cfg.tags | default('', true)).split(';')"
+      - (_cfg.name if _start_guest.type == 'qemu' else _cfg.hostname) == start_guest_name
+  vars:
+    _cfg: "{{ _start_guest_config.stdout | from_json }}"
+    _start_guest: "{{ _start_guest_matches | first }}"
+  no_log: true
+
+- name: Report the exact planned guest start
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Execute' if start_guest_execute | bool else 'Plan only' }}:
+      start VMID {{ _start_guest.vmid }} ({{ _start_guest.name }}) if stopped;
+      preserve its configuration, tags, applications, and data.
+  vars:
+    _start_guest: "{{ _start_guest_matches | first }}"
+
+- name: Add the reviewed guest to the helper inventory
+  ansible.builtin.add_host:
+    name: "start-owned-guest-{{ _start_guest.vmid }}"
+    groups: start_owned_guests
+    proxmox_vmid: "{{ _start_guest.vmid }}"
+    proxmox_node: "{{ _start_guest.node }}"
+    proxmox_status: "{{ _start_guest.status }}"
+    proxmox_vmtype: "{{ _start_guest.type }}"
+  changed_when: false
+  when:
+    - start_guest_execute | bool
+    - _start_guest.status != 'running'
+  vars:
+    _start_guest: "{{ _start_guest_matches | first }}"
+
+- name: Start the reviewed guest and wait for Proxmox exec readiness
+  ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
+  when:
+    - start_guest_execute | bool
+    - _start_guest.status != 'running'
+  vars:
+    _start_guest: "{{ _start_guest_matches | first }}"
+    ensure_guest_host: "start-owned-guest-{{ _start_guest.vmid }}"
