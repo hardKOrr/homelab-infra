@@ -1,15 +1,13 @@
 ---
 # Remove keeps the empty, _+lab-owned LXC so it can be reused. Its application tag and
-# guest note have been withdrawn, so an ordinary app-tag lookup cannot find it. Adopt it
-# only when the planned VMID, hostname, and address identify one unambiguous LXC with no
-# other app ownership tags. Every other collision remains subject to lxc-create.yml's guard.
+# guest note have been withdrawn, so an ordinary app-tag lookup cannot find it. Reclaim
+# only one exact-name LXC that belongs to this lab, has no other app ownership tags, and
+# sits on the declared network. Explicit address or VMID settings still have to match.
 - name: Require the planned InfluxDB guest to keep its ownership tags
   ansible.builtin.assert:
     that:
-      - homelabinfra_config.proxmox.lxc.vmid | default(0) | int > 0
-      - homelabinfra_config.proxmox.lxc.hostname == instance
-      - "'_+lab' in homelabinfra_config.proxmox.lxc.tags"
-      - "'_' ~ instance in homelabinfra_config.proxmox.lxc.tags"
+      - instance is match('^[A-Za-z0-9_.-]+$')
+      - "'_+lab' in app_config.proxmox.tags"
     fail_msg: Refusing to reuse an InfluxDB LXC without its exact planned identity and ownership tags.
   no_log: true
 
@@ -20,18 +18,26 @@
       {%- for host in groups['lab_managed'] | default([]) -%}
       {%- set guest = hostvars[host] -%}
       {%- set tags = guest.proxmox_tags_parsed | default([]) -%}
-      {%- set app_tags = tags | select('match', '^_[0-9A-Za-z]') | list -%}
+      {%- set app_tags = tags | select('match', '^_[A-Za-z0-9]|^_[.]') | list -%}
+      {%- set guest_ip = guest.proxmox_net0.ip | default(guest.ansible_host | default(''))
+                          | regex_replace('/.*$', '') -%}
+      {%- set configured_ip = app_config.proxmox.ip_address | default('', true)
+                               | regex_replace('/.*$', '') -%}
+      {%- set configured_vmid = app_config.proxmox.vmid | default(0, true) | int -%}
       {%- if guest.proxmox_vmtype | default('') == 'lxc'
-            and guest.proxmox_vmid | default(0) | int == homelabinfra_config.proxmox.lxc.vmid | int
-            and guest.proxmox_name | default(host) == homelabinfra_config.proxmox.lxc.hostname
-            and (homelabinfra_config.proxmox.lxc.ip_address | default('', true) | lower == 'dhcp'
-                 or guest.proxmox_net0.ip | default('') | regex_replace('/.*$', '')
-                    == homelabinfra_config.proxmox.lxc.ip_address)
+            and guest.proxmox_vmid | default(0) | int > 0
+            and guest.proxmox_name | default('') == instance
             and '_+lab' in tags
             and ('_' ~ instance) not in tags
             and app_tags | length == 0
             and guest.proxmox_node | default('') | length > 0
-            and guest.proxmox_status | default('') in ['running', 'stopped'] -%}
+            and guest.proxmox_status | default('') in ['running', 'stopped']
+            and guest_ip | ansible.utils.ipaddr('address')
+            and (network_effective.cidr | lower == 'dhcp'
+                 or guest_ip | ansible.utils.ipaddr(network_effective.cidr))
+            and (configured_ip | length == 0 or configured_ip | lower == 'dhcp'
+                 or guest_ip == configured_ip)
+            and (configured_vmid == 0 or guest.proxmox_vmid | int == configured_vmid) -%}
       {%- set _ = matches.append(host) -%}
       {%- endif -%}
       {%- endfor -%}
@@ -42,6 +48,6 @@
   ansible.builtin.assert:
     that: _influxdb_removed_guest_hosts | length <= 1
     fail_msg: >-
-      Multiple lab-owned LXC guests match the planned InfluxDB VMID and hostname;
+      Multiple lab-owned LXC guests match the removed InfluxDB instance identity;
       refusing to choose one for redeployment.
   no_log: true

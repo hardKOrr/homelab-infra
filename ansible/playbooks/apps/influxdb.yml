@@ -28,9 +28,9 @@
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
     # Remove deliberately leaves the lab-owned LXC in place after deleting the app's
-    # data and withdrawing its instance tag. Resolve the planned address first so a
-    # removed InfluxDB can reclaim only that exact, still-owned guest on redeploy.
-    - name: Prepare the InfluxDB LXC identity when no instance tag exists
+    # data and withdrawing its instance tag. Resolve the declared network before looking
+    # for that guest; only allocate a new address when no exact owned LXC can be reused.
+    - name: Prepare InfluxDB ownership tags and network when no instance tag exists
       when: _existing_hosts | length == 0
       block:
         - ansible.builtin.set_fact:
@@ -44,6 +44,19 @@
           no_log: true
         - ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
           vars: {resolve_network_app: influxdb, resolve_network_estate: ''}
+
+    - name: Find a removed InfluxDB guest that still has exact lab ownership
+      ansible.builtin.include_tasks: ../../roles/influxdb/tasks/reuse-removed-guest.yml
+      when: _existing_hosts | length == 0
+
+    - name: Reuse the exact lab-owned guest left by Remove
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ _influxdb_removed_guest_hosts }}"
+      when: _existing_hosts | length == 0
+
+    - name: Allocate a new InfluxDB LXC address and VMID
+      when: _existing_hosts | length == 0
+      block:
         - ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
           vars:
             network_name: "{{ app_config.proxmox.network | default('', true) }}"
@@ -56,15 +69,6 @@
                  }}}, recursive=True) }}
           no_log: true
         - ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
-
-    - name: Find a removed InfluxDB guest that still has exact lab ownership
-      ansible.builtin.include_tasks: ../../roles/influxdb/tasks/reuse-removed-guest.yml
-      when: _existing_hosts | length == 0
-
-    - name: Reuse the exact lab-owned guest left by Remove
-      ansible.builtin.set_fact:
-        _existing_hosts: "{{ _influxdb_removed_guest_hosts }}"
-      when: _existing_hosts | length == 0
 
     - ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"

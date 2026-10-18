@@ -73,6 +73,18 @@ def check_contract_and_wiring():
     assert "https://{{ wiring_domain }}/health" == wire["vars"]["wiring_monitor_url"]
     assert task_named(wire_tasks, "Skip external wiring for an isolated restore target")
 
+    provision_tasks = DEPLOY[0]["tasks"]
+    reuse_index = next(
+        index for index, task in enumerate(provision_tasks)
+        if task.get("name") == "Find a removed InfluxDB guest that still has exact lab ownership"
+    )
+    allocate_index = next(
+        index for index, task in enumerate(provision_tasks)
+        if task.get("name") == "Allocate a new InfluxDB LXC address and VMID"
+    )
+    assert reuse_index < allocate_index
+    assert provision_tasks[allocate_index]["when"] == "_existing_hosts | length == 0"
+
 
 def all_tasks(tasks):
     for task in tasks:
@@ -334,17 +346,23 @@ def check_backup_snapshot_identity():
 
 def check_removed_guest_reuse():
     assert len(REUSE_GUEST) == 3
-    assert "'_+lab' in homelabinfra_config.proxmox.lxc.tags" in str(REUSE_GUEST[0])
+    assert "'_+lab' in app_config.proxmox.tags" in str(REUSE_GUEST[0])
     assert REUSE_GUEST[1]["ansible.builtin.set_fact"].get("_influxdb_removed_guest_hosts")
     assert "_influxdb_removed_guest_hosts | length <= 1" in str(REUSE_GUEST[2])
 
-    def run_case(ambiguous: bool) -> subprocess.CompletedProcess[str]:
+    def run_case(
+        expected_hosts: list[str] | None,
+        *,
+        ambiguous: bool = False,
+        configured_ip: str = "",
+        configured_vmid: int = 0,
+    ) -> subprocess.CompletedProcess[str]:
         hosts = [
             {
                 "name": "exact-owned-lxc",
                 "groups": ["lab_managed"],
                 "proxmox_vmtype": "lxc",
-                "proxmox_vmid": 123456,
+                "proxmox_vmid": 123999,
                 "proxmox_name": "influxdb",
                 "proxmox_tags_parsed": ["_+lab", "_-debian"],
                 "proxmox_net0": {"ip": "192.0.2.10/24"},
@@ -356,7 +374,7 @@ def check_removed_guest_reuse():
                 "groups": ["lab_managed"],
                 "proxmox_vmtype": "lxc",
                 "proxmox_vmid": 123457,
-                "proxmox_name": "influxdb",
+                "proxmox_name": "other-instance",
                 "proxmox_tags_parsed": ["_+lab", "_-debian"],
                 "proxmox_net0": {"ip": "192.0.2.11/24"},
                 "proxmox_node": "fixture-node",
@@ -374,13 +392,23 @@ def check_removed_guest_reuse():
                 "proxmox_status": "running",
             },
             {
+                "name": "influxdb",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123458,
+                "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.10/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+            {
                 "name": "wrong-ip",
                 "groups": ["lab_managed"],
                 "proxmox_vmtype": "lxc",
                 "proxmox_vmid": 123456,
                 "proxmox_name": "influxdb",
                 "proxmox_tags_parsed": ["_+lab", "_-debian"],
-                "proxmox_net0": {"ip": "192.0.2.13/24"},
+                "proxmox_net0": {"ip": "198.51.100.13/24"},
                 "proxmox_node": "fixture-node",
                 "proxmox_status": "stopped",
             },
@@ -388,9 +416,9 @@ def check_removed_guest_reuse():
                 "name": "other-app-owner",
                 "groups": ["lab_managed"],
                 "proxmox_vmtype": "lxc",
-                "proxmox_vmid": 123459,
+                "proxmox_vmid": 123461,
                 "proxmox_name": "influxdb",
-                "proxmox_tags_parsed": ["_+lab", "_other-app"],
+                "proxmox_tags_parsed": ["_+lab", "_sonarr"],
                 "proxmox_net0": {"ip": "192.0.2.10/24"},
                 "proxmox_node": "fixture-node",
                 "proxmox_status": "stopped",
@@ -399,9 +427,20 @@ def check_removed_guest_reuse():
                 "name": "wrong-guest-type",
                 "groups": ["lab_managed"],
                 "proxmox_vmtype": "qemu",
-                "proxmox_vmid": 123460,
+                "proxmox_vmid": 123462,
                 "proxmox_name": "influxdb",
                 "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.10/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+            {
+                "name": "not-lab-owned",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123463,
+                "proxmox_name": "influxdb",
+                "proxmox_tags_parsed": ["_-debian"],
                 "proxmox_net0": {"ip": "192.0.2.10/24"},
                 "proxmox_node": "fixture-node",
                 "proxmox_status": "stopped",
@@ -419,11 +458,11 @@ def check_removed_guest_reuse():
              "changed_when": False}
             for host in hosts
         ] + reuse_tasks
-        if not ambiguous:
+        if expected_hosts is not None:
             tasks.append({
-                "name": "Assert only the exact owned LXC is selected",
+                "name": "Assert only the expected owned LXC is selected",
                 "ansible.builtin.assert": {
-                    "that": "_influxdb_removed_guest_hosts == ['exact-owned-lxc']"
+                    "that": f"_influxdb_removed_guest_hosts == {expected_hosts!r}"
                 },
             })
         playbook = [{
@@ -432,12 +471,12 @@ def check_removed_guest_reuse():
             "gather_facts": False,
             "vars": {
                 "instance": "influxdb",
-                "homelabinfra_config": {"proxmox": {"lxc": {
-                    "hostname": "influxdb",
-                    "vmid": 123456,
-                    "ip_address": "192.0.2.10",
-                    "tags": ["_+lab", "_-debian", "_influxdb"],
-                }}},
+                "app_config": {"proxmox": {
+                    "ip_address": configured_ip,
+                    "tags": ["_+lab", "_-debian"],
+                    "vmid": configured_vmid,
+                }},
+                "network_effective": {"cidr": "192.0.2.0/24"},
             },
             "tasks": tasks,
         }]
@@ -457,9 +496,21 @@ def check_removed_guest_reuse():
                 check=False,
             )
 
-    exact = run_case(ambiguous=False)
+    exact = run_case(["exact-owned-lxc"])
     assert exact.returncode == 0, exact.stdout + exact.stderr
-    duplicate = run_case(ambiguous=True)
+    configured = run_case(
+        ["exact-owned-lxc"], configured_ip="192.0.2.10", configured_vmid=123999
+    )
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    wrong_configured_ip = run_case([], configured_ip="192.0.2.99")
+    assert wrong_configured_ip.returncode == 0, (
+        wrong_configured_ip.stdout + wrong_configured_ip.stderr
+    )
+    wrong_configured_vmid = run_case([], configured_vmid=123456)
+    assert wrong_configured_vmid.returncode == 0, (
+        wrong_configured_vmid.stdout + wrong_configured_vmid.stderr
+    )
+    duplicate = run_case(None, ambiguous=True)
     assert duplicate.returncode != 0, duplicate.stdout + duplicate.stderr
 
 
