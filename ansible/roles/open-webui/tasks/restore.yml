@@ -199,6 +199,12 @@
           - --rm
           - --network
           - host
+          # PBS uses temporary files and its root cache; keep those writes off the nested
+          # Docker overlay used by this unprivileged LXC.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _open_webui_restore_tmp.path }}/pre-restore:/pre-restore"
           - --env
@@ -218,18 +224,22 @@
           - -ceu
           - |
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null
-            install -d -m 0755 /etc/apt/keyrings
-            curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg
-            echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
-              > /etc/apt/sources.list.d/proxmox-backup-client.list
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore
-            test -s /pre-restore/webui.db
-            test "$(sqlite3 -readonly /pre-restore/webui.db "PRAGMA integrity_check;")" = ok
+            if ! apt-get update -qq \
+              || ! apt-get install -y -qq --no-install-recommends ca-certificates curl sqlite3 >/dev/null \
+              || ! install -d -m 0755 /etc/apt/keyrings \
+              || ! curl -fsSL "$PBS_KEY_URL" -o /etc/apt/keyrings/proxmox-release.gpg \
+              || ! echo "deb [signed-by=/etc/apt/keyrings/proxmox-release.gpg] $PBS_APT_REPO" \
+                > /etc/apt/sources.list.d/proxmox-backup-client.list \
+              || ! apt-get update -qq \
+              || ! apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null; then
+              exit 81
+            fi
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /pre-restore --allow-existing-dirs true || exit 82
+            test -s /pre-restore/webui.db || exit 83
+            test "$(sqlite3 -readonly /pre-restore/webui.db "PRAGMA integrity_check;")" = ok || exit 84
+      register: _open_webui_restore_b_validation
       changed_when: false
+      failed_when: false
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
         PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
@@ -238,6 +248,20 @@
         PBS_KEY_URL: "{{ app_config.backup.client.key_url }}"
         PBS_APT_REPO: "{{ app_config.backup.client.repository }} {{ app_config.backup.client.suite }} {{ app_config.backup.client.component }}"
       no_log: true
+      when: restore_destination | default('existing') == 'existing'
+
+    - name: Open WebUI restore | Assert the existing-target B point verified
+      ansible.builtin.assert:
+        that:
+          - _open_webui_restore_b_validation.rc | default(1) | int == 0
+        fail_msg: >-
+          Open WebUI restore could not verify the independent existing-target B point
+          (stage={{ 'PBS client setup' if _open_webui_restore_b_validation.rc | default(1) | int == 81
+            else 'PBS archive extraction' if _open_webui_restore_b_validation.rc | default(1) | int == 82
+            else 'webui.db missing at archive root' if _open_webui_restore_b_validation.rc | default(1) | int == 83
+            else 'SQLite integrity check' if _open_webui_restore_b_validation.rc | default(1) | int == 84
+            else 'client execution' }}, exit={{ _open_webui_restore_b_validation.rc | default(1) }}).
+          No target data was replaced.
       when: restore_destination | default('existing') == 'existing'
 
     - name: Open WebUI restore | Create selected A extraction directory
@@ -254,6 +278,12 @@
           - --rm
           - --network
           - host
+          # PBS uses temporary files and its root cache; keep those writes off the nested
+          # Docker overlay used by this unprivileged LXC.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _open_webui_restore_tmp.path }}/selected:/restore"
           - --env
@@ -281,7 +311,7 @@
               > /etc/apt/sources.list.d/proxmox-backup-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore
+            proxmox-backup-client restore "$SNAPSHOT" data.pxar /restore --allow-existing-dirs true
             test -s /restore/webui.db
             test "$(sqlite3 -readonly /restore/webui.db "PRAGMA integrity_check;")" = ok
       environment:

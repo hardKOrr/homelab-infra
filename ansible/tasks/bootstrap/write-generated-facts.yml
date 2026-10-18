@@ -55,12 +55,35 @@
   ansible.builtin.set_fact:
     _generated_facts_file: "{{ generated_facts_file }}"
 
+- name: Generated facts | Initialize output data
+  ansible.builtin.set_fact:
+    _generated_facts_data: "{{ generated_facts_data }}"
+  no_log: true
+
+# Ansible templates mapping values but keeps this dynamic mapping key literal. App
+# consumers look up the service by its named instance, so normalize that one key
+# before validating or publishing the registry.
+- name: Generated facts | Resolve dynamic app instance key
+  ansible.builtin.set_fact:
+    _generated_facts_data: >-
+      {{ _generated_facts_data
+         | combine({instance: _generated_facts_data['{' ~ '{ instance }' ~ '}']}, recursive=True)
+         | dict2items
+         | rejectattr('key', 'equalto', '{' ~ '{ instance }' ~ '}')
+         | items2dict }}
+  when:
+    - generated_facts_service == 'apps'
+    - _generated_facts_data is mapping
+    - instance is defined
+    - "('{' ~ '{ instance }' ~ '}') in _generated_facts_data"
+  no_log: true
+
 - name: Generated facts | Reject credential-shaped fields
   ansible.builtin.command:
     argv:
       - "{{ ansible_playbook_python }}"
       - "{{ _generated_facts_file | dirname | dirname | dirname }}/ansible/scripts/secret-shape.py"
-    stdin: "{{ generated_facts_data | to_json }}"
+    stdin: "{{ _generated_facts_data | to_json }}"
   changed_when: false
   delegate_to: localhost
   become: false
@@ -197,9 +220,9 @@
     content: >-
       {{ _gf_existing_facts
          | combine({'estates': {_generated_facts_estate:
-                                {generated_facts_service: generated_facts_data}}}
+                                {generated_facts_service: _generated_facts_data}}}
                    if _generated_facts_estate | length > 0
-                   else {generated_facts_service: generated_facts_data},
+                   else {generated_facts_service: _generated_facts_data},
                    recursive=True)
          | to_nice_yaml(indent=2) }}
   become: false
@@ -229,9 +252,9 @@
     homelabinfra_infra: >-
       {{ _gf_existing_infra
          | combine({'estates': {_generated_facts_estate:
-                                {generated_facts_service: generated_facts_data}}}
+                                {generated_facts_service: _generated_facts_data}}}
                    if _generated_facts_estate | length > 0
-                   else {generated_facts_service: generated_facts_data},
+                   else {generated_facts_service: _generated_facts_data},
                    recursive=True) }}
   no_log: true
 
@@ -243,9 +266,9 @@
     homelabinfra_infra: >-
       {{ _gf_existing_local_infra
          | combine({'estates': {_generated_facts_estate:
-                                {generated_facts_service: generated_facts_data}}}
+                                {generated_facts_service: _generated_facts_data}}}
                    if _generated_facts_estate | length > 0
-                   else {generated_facts_service: generated_facts_data},
+                   else {generated_facts_service: _generated_facts_data},
                    recursive=True) }}
   delegate_to: localhost
   delegate_facts: true

@@ -13,7 +13,8 @@ open_webui_defaults:
       restore_playbook: restore-app.yml
 
   app:
-    image: ghcr.io/open-webui/open-webui:main
+    # Pin a published release instead of a moving upstream branch/tag image.
+    image: ghcr.io/open-webui/open-webui:v0.11.4
     port: 3000
     service_name: open-webui
     # Open WebUI stores users, chats, documents, uploads and its embedded database here.
