@@ -243,6 +243,14 @@
               exit 88
             elif grep -Eqi 'checksum|digest|corrupt|chunk' "$pbs_error_log"; then
               exit 89
+            elif grep -Eqi 'usage:|invalid .*argument|unexpected argument|expects .*argument|unsupported .*feature|unsupported archive|invalid archive|bad archive' "$pbs_error_log"; then
+              exit 90
+            elif grep -Eqi 'no space|read-only|not a directory|file exists|unable to create|cannot create|operation not permitted|filesystem|target directory' "$pbs_error_log"; then
+              exit 91
+            elif grep -Eqi 'http|bad request|internal server error|gateway|api error|unexpected response|status code' "$pbs_error_log"; then
+              exit 92
+            elif [ ! -s "$pbs_error_log" ]; then
+              exit 93
             else
               exit 82
             fi
@@ -275,10 +283,18 @@
              if (_open_webui_restore_b_validation.rc | default(1) | int) == 88
              else 'archive chunk or integrity error'
              if (_open_webui_restore_b_validation.rc | default(1) | int) == 89
+             else 'invalid or unsupported restore request'
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 90
+             else 'local extraction path or filesystem error'
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 91
+             else 'PBS endpoint or API response error'
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 92
+             else 'PBS client returned no diagnostic output'
+             if (_open_webui_restore_b_validation.rc | default(1) | int) == 93
              else 'unclassified PBS archive extraction error' }}
       changed_when: false
       no_log: true
-      when: (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89]
+      when: (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89, 90, 91, 92, 93]
 
     - name: Open WebUI restore | Assert the existing-target B point verified
       ansible.builtin.assert:
@@ -287,7 +303,7 @@
         fail_msg: >-
           Open WebUI restore could not verify the independent existing-target B point
           (stage={{ 'PBS client setup' if _open_webui_restore_b_validation.rc | default(1) | int == 81
-            else 'PBS archive extraction' if (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89]
+            else 'PBS archive extraction' if (_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89, 90, 91, 92, 93]
             else 'webui.db missing at archive root' if _open_webui_restore_b_validation.rc | default(1) | int == 83
             else 'SQLite integrity check' if _open_webui_restore_b_validation.rc | default(1) | int == 84
             else 'client execution' }},

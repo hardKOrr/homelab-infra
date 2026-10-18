@@ -28,7 +28,7 @@ def open_webui_restore_prepoint_diagnostics():
     assert verify["register"] == "_open_webui_restore_b_validation"
     script = verify["ansible.builtin.command"]["argv"][-1]
     assert "proxmox-backup-client restore \"$SNAPSHOT\" data.pxar /pre-restore >\"$pbs_error_log\" 2>&1" in script
-    for exit_code in [82, 85, 86, 87, 88, 89]:
+    for exit_code in [82, 85, 86, 87, 88, 89, 90, 91, 92, 93]:
         assert f"exit {exit_code}" in script
     for pattern in [
         "authentication|permission denied|unauthorized|unauthorised|forbidden|401|403",
@@ -36,6 +36,9 @@ def open_webui_restore_prepoint_diagnostics():
         "not found|no such file|does not exist|unknown archive|missing archive",
         "decrypt|encryption|wrong key|key.*invalid",
         "checksum|digest|corrupt|chunk",
+        "usage:|invalid .*argument|unexpected argument|expects .*argument|unsupported .*feature|unsupported archive|invalid archive|bad archive",
+        "no space|read-only|not a directory|file exists|unable to create|cannot create|operation not permitted|filesystem|target directory",
+        "http|bad request|internal server error|gateway|api error|unexpected response|status code",
     ]:
         assert pattern in script
     assert "test -s /pre-restore/webui.db || exit 83" in script
@@ -46,7 +49,7 @@ def open_webui_restore_prepoint_diagnostics():
     )
     assert classify["changed_when"] is False
     assert classify["no_log"] is True
-    assert classify["when"] == "(_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89]"
+    assert classify["when"] == "(_open_webui_restore_b_validation.rc | default(1) | int) in [82, 85, 86, 87, 88, 89, 90, 91, 92, 93]"
     classification = classify["ansible.builtin.set_fact"][
         "_open_webui_restore_b_failure_class"
     ]
@@ -56,6 +59,10 @@ def open_webui_restore_prepoint_diagnostics():
         "snapshot archive is missing",
         "archive encryption key error",
         "archive chunk or integrity error",
+        "invalid or unsupported restore request",
+        "local extraction path or filesystem error",
+        "PBS endpoint or API response error",
+        "PBS client returned no diagnostic output",
         "unclassified PBS archive extraction error",
     ]:
         assert reason in classification
