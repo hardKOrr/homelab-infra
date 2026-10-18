@@ -289,11 +289,24 @@ _vault_preflight() {
       || _vault_reachable=0
   fi
 
-  if ! bw login --apikey >/dev/null 2>&1; then
-    [ "$_vault_reachable" -eq 1 ] \
-      || die "Vaultwarden at $BW_SERVER did not answer. Vault mode is fail-closed, so this deploy stops here having changed nothing. Start Vaultwarden, or use the explicit recovery workflow."
-    die "Vaultwarden preflight failed during API-key authentication — the server answered, so this is a credential problem, not an outage"
-  fi
+  # Every run logs in afresh, so overlapping runs can trip Vaultwarden's login rate limit
+  # (HTTP 429; the Bitwarden CLI prints "Rate limit exceeded"). That is transient: wait out
+  # the limiter's window and retry, and never report it as a rejected credential.
+  _vault_login_delay="${LAB_VAULT_LOGIN_RETRY_DELAY:-15}"
+  _vault_login_attempt=1
+  while ! _vault_login_out="$(bw login --apikey 2>&1 </dev/null)"; do
+    if ! printf '%s' "$_vault_login_out" | grep -qiE 'rate limit|too many|429'; then
+      [ "$_vault_reachable" -eq 1 ] \
+        || die "Vaultwarden at $BW_SERVER did not answer. Vault mode is fail-closed, so this deploy stops here having changed nothing. Start Vaultwarden, or use the explicit recovery workflow."
+      die "Vaultwarden preflight failed during API-key authentication — the server answered, so this is a credential problem, not an outage"
+    fi
+    [ "$_vault_login_attempt" -lt 5 ] \
+      || die "Vaultwarden kept rate-limiting the automation login (HTTP 429) after $_vault_login_attempt attempts — too many runs are logging in at once. The credential is not the problem; rerun once fewer runs overlap."
+    echo "[lab-run] Vaultwarden rate-limited the login (attempt $_vault_login_attempt of 5); retrying in $((_vault_login_delay * _vault_login_attempt))s" >&2
+    sleep "$((_vault_login_delay * _vault_login_attempt))"
+    _vault_login_attempt=$((_vault_login_attempt + 1))
+  done
+  unset _vault_login_out
   BW_SESSION="$(bw unlock --passwordenv BW_PASSWORD --raw 2>/dev/null)" \
     || die "Vaultwarden preflight failed while unlocking the automation vault"
   [ -n "$BW_SESSION" ] || die "Vaultwarden returned an empty vault session"

@@ -20,9 +20,9 @@
 - name: Homepage | Add platform entries with an approved endpoint
   ansible.builtin.set_fact:
     _homepage_platform_entries: >-
-      {{ _homepage_platform_entries + [{'name': item.value.name,
+      {{ _homepage_platform_entries + [dict([(item.value.name, {
           'href': (homelabinfra_infra | default({})).get(item.key, {}).get('host'),
-          'description': item.value.description}] }}
+          'description': item.value.description})])] }}
   loop: "{{ _homepage_fact_catalog | dict2items }}"
   when: >-
     ((homelabinfra_infra | default({})).get(item.key, {}).get('host', '') | string | length) > 0
@@ -34,8 +34,9 @@
 - name: Homepage | Add deployed media application entries
   ansible.builtin.set_fact:
     _homepage_media_entries: >-
-      {{ _homepage_media_entries + [{'name': item.key, 'href': item.value.host,
-          'description': (item.value.app | default('application')) ~ ' application'}] }}
+      {{ _homepage_media_entries + [dict([(item.key, {
+          'href': item.value.host,
+          'description': (item.value.app | default('application')) ~ ' application'})])] }}
   loop: "{{ ((homelabinfra_infra | default({})).media | default({})) | dict2items }}"
   when: (item.value.host | default('') | string | length) > 0
 
