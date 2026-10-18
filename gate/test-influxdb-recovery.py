@@ -28,6 +28,9 @@ RESTORE = yaml.safe_load(
 BACKUP = yaml.safe_load(
     (ROOT / "ansible/roles/influxdb/tasks/backup.yml").read_text(encoding="utf-8")
 )
+REUSE_GUEST = yaml.safe_load(
+    (ROOT / "ansible/roles/influxdb/tasks/reuse-removed-guest.yml").read_text(encoding="utf-8")
+)
 TRANSACTION = next(
     task for task in RESTORE
     if task.get("name") == "InfluxDB restore | Replace and validate the data directory"
@@ -329,10 +332,142 @@ def check_backup_snapshot_identity():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def check_removed_guest_reuse():
+    assert len(REUSE_GUEST) == 3
+    assert "'_+lab' in homelabinfra_config.proxmox.lxc.tags" in str(REUSE_GUEST[0])
+    assert REUSE_GUEST[1]["ansible.builtin.set_fact"].get("_influxdb_removed_guest_hosts")
+    assert "_influxdb_removed_guest_hosts | length <= 1" in str(REUSE_GUEST[2])
+
+    def run_case(ambiguous: bool) -> subprocess.CompletedProcess[str]:
+        hosts = [
+            {
+                "name": "exact-owned-lxc",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123456,
+                "proxmox_name": "influxdb",
+                "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.10/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+            {
+                "name": "wrong-vmid",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123457,
+                "proxmox_name": "influxdb",
+                "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.11/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+            {
+                "name": "wrong-name",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123458,
+                "proxmox_name": "other-app",
+                "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.12/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "running",
+            },
+            {
+                "name": "wrong-ip",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123456,
+                "proxmox_name": "influxdb",
+                "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.13/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+            {
+                "name": "other-app-owner",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "lxc",
+                "proxmox_vmid": 123459,
+                "proxmox_name": "influxdb",
+                "proxmox_tags_parsed": ["_+lab", "_other-app"],
+                "proxmox_net0": {"ip": "192.0.2.10/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+            {
+                "name": "wrong-guest-type",
+                "groups": ["lab_managed"],
+                "proxmox_vmtype": "qemu",
+                "proxmox_vmid": 123460,
+                "proxmox_name": "influxdb",
+                "proxmox_tags_parsed": ["_+lab", "_-debian"],
+                "proxmox_net0": {"ip": "192.0.2.10/24"},
+                "proxmox_node": "fixture-node",
+                "proxmox_status": "stopped",
+            },
+        ]
+        if ambiguous:
+            duplicate = copy.deepcopy(hosts[0])
+            duplicate["name"] = "duplicate-exact-owned-lxc"
+            hosts.append(duplicate)
+        reuse_tasks = copy.deepcopy(REUSE_GUEST)
+        for task in reuse_tasks:
+            task.pop("no_log", None)
+        tasks = [
+            {"name": "Add owned inventory fixtures", "ansible.builtin.add_host": host,
+             "changed_when": False}
+            for host in hosts
+        ] + reuse_tasks
+        if not ambiguous:
+            tasks.append({
+                "name": "Assert only the exact owned LXC is selected",
+                "ansible.builtin.assert": {
+                    "that": "_influxdb_removed_guest_hosts == ['exact-owned-lxc']"
+                },
+            })
+        playbook = [{
+            "hosts": "localhost",
+            "connection": "local",
+            "gather_facts": False,
+            "vars": {
+                "instance": "influxdb",
+                "homelabinfra_config": {"proxmox": {"lxc": {
+                    "hostname": "influxdb",
+                    "vmid": 123456,
+                    "ip_address": "192.0.2.10",
+                    "tags": ["_+lab", "_-debian", "_influxdb"],
+                }}},
+            },
+            "tasks": tasks,
+        }]
+        with tempfile.TemporaryDirectory(prefix="homelab-influxdb-reuse.") as directory:
+            fixture = Path(directory) / "reuse-guest.yml"
+            fixture.write_text(yaml.safe_dump(playbook), encoding="utf-8")
+            return subprocess.run(
+                [find_ansible_playbook(), "-i", "localhost,", str(fixture)],
+                cwd=ROOT,
+                env=os.environ | {
+                    "ANSIBLE_CONFIG": str(ROOT / "ansible/ansible.cfg"),
+                    "ANSIBLE_NOCOLOR": "1",
+                    "ANSIBLE_STDOUT_CALLBACK": "default",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+    exact = run_case(ambiguous=False)
+    assert exact.returncode == 0, exact.stdout + exact.stderr
+    duplicate = run_case(ambiguous=True)
+    assert duplicate.returncode != 0, duplicate.stdout + duplicate.stderr
+
+
 def main():
     check_contract_and_wiring()
     check_restore_transaction()
     check_backup_snapshot_identity()
+    check_removed_guest_reuse()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), InfluxFixture)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
