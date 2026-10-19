@@ -2,6 +2,11 @@
 # MySQL is an instanced, shared backend. Applications select it through the
 # backend-independent `database` configuration; it is never a Compose sidecar.
 mysql_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
   proxmox:
     type: lxc
     boot_order: 40
@@ -20,3 +25,15 @@ mysql_defaults:
   routing:
     proxy: none
     identity: none
+  # A complete MySQL logical dump includes the mysql grant tables as well as
+  # application databases. mysqldump holds a global read lock for the dump so
+  # engines and user grants share one consistent recovery point.
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: http://download.proxmox.com/debian/pbs-client
+      component: main

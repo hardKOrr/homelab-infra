@@ -7,6 +7,7 @@
 #   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k
 #   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k -e app=radarr
 #   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=radarr-4k -e delete_data=true
+#   ansible-playbook -i inventory/ playbooks/apps/remove.yml -e instance=mysql -e delete_data=true -e destroy_guest=true
 #
 # Rundeck: job parameters
 #   instance     — the app instance name (required)
@@ -16,6 +17,10 @@
 #                  (-e instance=radarr-4k -e app=radarr).
 #   delete_data  — false (default) keeps volumes and data paths, so re-running the
 #                  deploy restores the app with its data. true wipes them.
+#   destroy_guest — false (default) keeps its LXC. true is allowed only with
+#                   delete_data=true and a native LXC carrying both _+lab and
+#                   _<instance>; a live ownership and sharing check runs again
+#                   immediately before Proxmox destroys it.
 #
 # Order of operations — unwire first, then stop:
 #   1. Resolve the instance's config and locate its host
@@ -39,10 +44,10 @@
 # key is a Docker app on a shared stack host; anything else is a native LXC app on
 # its own guest. This is the same key the deploy playbooks branch on.
 #
-# Does NOT:
+# By default, Remove does NOT:
 #   - Delete config/apps/<instance>.yml (restore point — user deletes manually)
 #   - Destroy any Proxmox guest, including a now-empty stack host or a native app's
-#     own LXC (deliberate: re-running the deploy converges the guest back)
+#     own LXC (pass destroy_guest=true with delete_data=true to remove one native LXC)
 #   - Remove data unless -e delete_data=true
 
 # ── Play 1: Resolve the instance, unwire it ────────────────────────────────────
@@ -751,6 +756,71 @@
       vars:
         resolve_estate_name: "{{ app_config.routing.estate | default('') }}"
 
+    - name: Classify app hosting before any guest destruction request
+      ansible.builtin.set_fact:
+        _rm_destroy_guest_host: ""
+        _rm_kind: >-
+          {{ app_config.hosting if (app_config.hosting | default('')) in ['kubernetes', 'appliance', 'docker']
+             else ('docker' if app_config.stack is defined else 'native') }}
+
+    - name: Refresh inventory before validating an explicit guest destruction request
+      ansible.builtin.meta: refresh_inventory
+      when: destroy_guest | default(false) | bool
+
+    - name: Resolve the exact guest selected for explicit destruction
+      ansible.builtin.set_fact:
+        _rm_destroy_guest_host: "{{ instance if instance in (groups['all'] | default([])) else '' }}"
+      when: destroy_guest | default(false) | bool
+
+    - name: Validate the explicit guest destruction request before unwiring
+      ansible.builtin.assert:
+        that:
+          - delete_data | default(false) | bool
+          - _rm_kind == 'native'
+          - _rm_destroy_guest_host | length > 0
+          - _rm_destroy_guest_host == instance
+        fail_msg: >-
+          destroy_guest=true requires delete_data=true and a native app instance that
+          resolves to its matching inventory guest; Docker stack hosts, appliances and
+          Kubernetes nodes cannot be destroyed through Remove App.
+      when: destroy_guest | default(false) | bool
+
+    - name: Verify ownership and non-shared tags before unwiring
+      ansible.builtin.assert:
+        that:
+          - hostvars[_rm_destroy_guest_host].proxmox_vmtype | default('') == 'lxc'
+          - hostvars[_rm_destroy_guest_host].proxmox_vmid | default(0) | int > 0
+          - hostvars[_rm_destroy_guest_host].proxmox_name | default(_rm_destroy_guest_host, true) == instance
+          - "'_+lab' in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
+          - "('_' ~ instance) in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
+          - "'_.shared' not in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
+          - >-
+            (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([])
+             | select('match', '^_[.]stack[+]') | list | length) == 0
+          - >-
+            (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([])
+             | select('match', '^_[.]cluster[+]') | list | length) == 0
+          - >-
+            (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([])
+             | select('match', '^_[A-Za-z0-9]')
+             | reject('equalto', '_' ~ instance) | list | length) == 0
+        fail_msg: >-
+          Refusing destroy_guest=true because the native instance does not resolve to its
+          own LXC with the _+lab ownership tag and exact instance tag.
+      when:
+        - destroy_guest | default(false) | bool
+        - _rm_destroy_guest_host | length > 0
+
+    - name: Record the verified guest identity for the final destroy check
+      ansible.builtin.set_fact:
+        _rm_destroy_guest_name: "{{ hostvars[_rm_destroy_guest_host].proxmox_name | default(_rm_destroy_guest_host, true) }}"
+        _rm_destroy_guest_vmid: "{{ hostvars[_rm_destroy_guest_host].proxmox_vmid }}"
+        _rm_destroy_guest_node: "{{ hostvars[_rm_destroy_guest_host].proxmox_node }}"
+        _rm_destroy_guest_tags: "{{ hostvars[_rm_destroy_guest_host].proxmox_tags_parsed }}"
+      when:
+        - destroy_guest | default(false) | bool
+        - _rm_destroy_guest_host | length > 0
+
   vars:
     # ── WIRING CONTRACT ────────────────────────────────────────────────────────
     # Unwire tasks read the same variable names the wire halves do. They need only
@@ -877,12 +947,6 @@
              | default(_rm_estates | list | first | default(''), true) }}
         _rm_estate: >-
           {{ ((app_config.routing | default({})).estate | default('', true)) or _rm_default_estate }}
-
-    - name: Classify how the app is hosted
-      ansible.builtin.set_fact:
-        _rm_kind: >-
-          {{ app_config.hosting if (app_config.hosting | default('')) in ['kubernetes', 'appliance', 'docker']
-             else ('docker' if app_config.stack is defined else 'native') }}
 
     # Removal resolves a shared Docker stack through the SAME estate-aware identity the
     # deploy used. Docker-on-VM apps have no stack tag; their own VM carries _<instance>,
@@ -1045,6 +1109,17 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         proxmox_vmtype: "{{ hostvars[_rm_hosts[0]].proxmox_vmtype }}"
         proxmox_node: "{{ _rm_guest_node }}"
+        remove_destroy_guest: "{{ destroy_guest | default(false) | bool }}"
+        remove_guest_name: >-
+          {{ _rm_destroy_guest_name | default(
+               hostvars[_rm_hosts[0]].proxmox_name | default(_rm_hosts[0], true), true) }}
+        remove_guest_vmid: >-
+          {{ _rm_destroy_guest_vmid | default(hostvars[_rm_hosts[0]].proxmox_vmid | default(0), true) }}
+        remove_guest_node: >-
+          {{ _rm_destroy_guest_node | default(_rm_guest_node, true) }}
+        remove_guest_original_tags: >-
+          {{ _rm_destroy_guest_tags | default(
+               hostvars[_rm_hosts[0]].proxmox_tags_parsed | default([]), true) }}
         app_config: "{{ app_config }}"
         homelabinfra_config: "{{ homelabinfra_config }}"
         remove_kind: "{{ _rm_kind }}"
@@ -1103,6 +1178,7 @@
 
   vars:
     _rm_delete_data: "{{ delete_data | default(false) | bool }}"
+    _rm_destroy_guest: "{{ remove_destroy_guest | default(false) | bool }}"
     _rm_project_dir: "/opt/{{ instance }}"
     _rm_is_postgresql: "{{ (app | default(instance)) == 'postgresql' }}"
 
@@ -1711,7 +1787,10 @@
           loop: "{{ _rm_service_names | default([]) }}"
           failed_when:
             - _rm_service_stop is failed
-            - "'could not be found' not in (_rm_service_stop.msg | default(''))"
+            - >-
+              'could not be found' not in (_rm_service_stop.msg | default('') | lower)
+              and 'could not find the requested service' not in
+              (_rm_service_stop.msg | default('') | lower)
 
         - name: Report an already-removed service
           ansible.builtin.debug:
@@ -1720,7 +1799,10 @@
               {{ item.item }} on
               {{ inventory_hostname }} — nothing to stop.
           loop: "{{ _rm_service_stop.results | default([]) }}"
-          when: "'could not be found' in (item.msg | default(''))"
+          when: >-
+            'could not be found' in (item.msg | default('') | lower)
+            or 'could not find the requested service' in
+            (item.msg | default('') | lower)
 
         # PostgreSQL's data directory is not the cluster's whole identity: Debian keeps
         # its cluster registration and configuration under /etc/postgresql. Drop each
@@ -1760,6 +1842,19 @@
           when:
             - _rm_delete_data | bool
             - app_config.app.data_path | default('') | length > 0
+
+    - name: Destroy the explicitly selected native LXC
+      ansible.builtin.include_tasks: ../../tasks/proxmox/destroy-owned-lxc.yml
+      vars:
+        destroy_lxc_instance: "{{ instance }}"
+        destroy_lxc_name: "{{ remove_guest_name }}"
+        destroy_lxc_node: "{{ remove_guest_node }}"
+        destroy_lxc_vmid: "{{ remove_guest_vmid }}"
+        destroy_lxc_original_tags: "{{ remove_guest_original_tags }}"
+      when:
+        - _rm_destroy_guest | bool
+        - _rm_delete_data | bool
+        - remove_kind == 'native'
 
 
 # ── Play 3: Remove Hi.Events' named database after its namespace is gone ────────

@@ -105,9 +105,11 @@ to the same inputs.
    interface and read both back. Deploy again; both survive and the wiring stays unique.
 4. Back up through the application's backup playbook. Record the recovery point and
    verify it exists.
-5. Remove with `delete_data=true`. Verify the instance, its data and its wiring are gone,
-   the backup remains, and other applications are unaffected. The stack host stays;
-   Remove never destroys a guest.
+5. Remove with `delete_data=true`. For a drill that requires a fresh native LXC, add
+   `destroy_guest=true`; this is limited to one `_+lab` LXC carrying the exact instance tag
+   and rechecks its live tags before destruction. Verify the instance, its data and wiring
+   are gone, the backup remains, and other applications are unaffected. Without that
+   explicit option, Remove retains the guest for redeployment.
 6. Deploy a fresh instance with the same name. Verify it works and neither canary is
    present. An overwrite Restore of an existing target requires `pre_restore_point`;
    back up the fresh instance with Backup App, verify that point exists, and pass it as
