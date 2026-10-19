@@ -3,6 +3,9 @@
 # withdrawn its instance row/tag. The caller proves the original target identity before
 # unwiring; this task rechecks the live PVE config and refuses to destroy a newly shared
 # guest.
+- name: Register Proxmox nodes before native LXC destruction
+  ansible.builtin.import_tasks: register-nodes.yml
+
 - name: Destroy owned LXC | Validate the original guest identity
   ansible.builtin.assert:
     that:
@@ -17,6 +20,15 @@
     fail_msg: >-
       Refusing to destroy the native guest because its original lab ownership or instance
       identity was not verified.
+
+- name: Destroy owned LXC | Require a registered Proxmox connection
+  ansible.builtin.assert:
+    that:
+      - destroy_lxc_node in (groups['proxmox_delegates'] | default([]))
+      - hostvars[destroy_lxc_node].ansible_host | default('') | length > 0
+    fail_msg: >-
+      Refusing to destroy the native guest because its Proxmox node is not registered
+      with a connection address.
 
 - name: Destroy owned LXC | Read the live Proxmox config
   ansible.builtin.command:
