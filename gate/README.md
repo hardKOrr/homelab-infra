@@ -47,6 +47,7 @@ templates.
 - `test-ntfy-recovery.py`: native auth/cache archives, read-only planning, group guards and two-directory rollback.
 - `test-influxdb-recovery.py`: native data archive, restore credential checks and transactional rollback after replacement failures.
 - `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, restore rollback and scoped guest removal.
+- `test-postgresql-recovery.py`: native LXC capability, consistent physical PBS backup, manifest and version guards, restore health checks and rollback.
 - `test-uptime-kuma-recovery.py`: quiesced PBS snapshots, archive and destination guards, monitor-data restore ordering and rollback.
 - `test-servarr-recovery.py`: shared four-app dispatch, restore preview and API key continuity.
 - `test-sabnzbd-clients.py`: authenticated category creation, unique client wiring, convergence and selected-client removal without changing siblings.

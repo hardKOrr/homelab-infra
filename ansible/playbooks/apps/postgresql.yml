@@ -23,6 +23,10 @@
     - name: Merge app config
       ansible.builtin.set_fact:
         app_config: "{{ _app_defaults.postgresql_defaults | combine(_instance_config | default({}), recursive=True) }}"
+    - name: Require a supported PostgreSQL guest type
+      ansible.builtin.assert:
+        that: app_config.proxmox.type | default('lxc') in ['lxc', 'vm']
+        fail_msg: PostgreSQL supports a native LXC or VM backend.
   tasks:
     - name: Refresh inventory
       ansible.builtin.meta: refresh_inventory
@@ -42,30 +46,37 @@
         app_config: "{{ app_config }}"
       changed_when: false
       when: _existing_hosts | length > 0
+    - name: Require the existing PostgreSQL guest to match its configured type
+      ansible.builtin.assert:
+        that:
+          - >-
+            hostvars[_existing_hosts[0]].proxmox_vmtype | default('') ==
+            ('qemu' if app_config.proxmox.type == 'vm' else 'lxc')
+        fail_msg: >-
+          Existing PostgreSQL instance {{ instance }} is not the configured native
+          {{ app_config.proxmox.type }} guest. Refusing to deploy to a different guest type.
+      when: _existing_hosts | length > 0
     - name: Ensure existing PostgreSQL guest is running
       ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
       vars:
         ensure_guest_host: "{{ _existing_hosts[0] }}"
       when: _existing_hosts | length > 0
-    - name: Provision PostgreSQL VM
-      when: _existing_hosts | length == 0
+    - name: Provision PostgreSQL LXC
+      when:
+        - _existing_hosts | length == 0
+        - app_config.proxmox.type == 'lxc'
       block:
-        - name: Set PostgreSQL VM identity and sizing
+        - name: Set PostgreSQL LXC identity and sizing
           ansible.builtin.set_fact:
             homelabinfra_config: >-
-              {{ homelabinfra_config | combine({'proxmox': {'vm':
-                 (app_config.proxmox.vm | default({})) | combine({
-                   'name': instance,
-                   'cores': app_config.proxmox.cores | default(app_config.proxmox.vm.cores | default(2)) | int,
-                   'memory': app_config.proxmox.memory | default(app_config.proxmox.vm.memory | default(2048)) | int,
-                   'disk_size': app_config.proxmox.disk_size
-                     | default(app_config.proxmox.vm.disk_size
-                     | default((app_config.proxmox.disk_volume | default({})).size | default(32))) | int,
-                   'boot_order': app_config.proxmox.boot_order
-                     | default(app_config.proxmox.vm.boot_order | default(40)) | int,
-                   'tags': ((app_config.proxmox.vm.tags | default(app_config.proxmox.tags
-                     | default(['_+lab', '_-debian']))) + ['_' ~ instance]) | unique
-                 }, recursive=True)}}, recursive=True) }}
+              {{ homelabinfra_config | combine({'proxmox': {'lxc':
+                 (app_config['proxmox'] | combine({
+                   'hostname': instance,
+                   'cores': app_config['proxmox']['cores'] | int,
+                   'memory': app_config['proxmox']['memory'] | int,
+                   'disk_volume': app_config['proxmox']['disk_volume'],
+                   'tags': ((app_config['proxmox']['tags'] | default(['_+lab', '_-debian'])) + ['_' ~ instance]) | unique
+                 }, recursive=True))}}, recursive=True) }}
         - name: Resolve backend network
           ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
           vars:
@@ -77,10 +88,54 @@
             network_name: "{{ app_config.proxmox.network | default('', true) }}"
             pool_name: "{{ app_config.proxmox.pool | default('') }}"
             requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+        - name: Set PostgreSQL LXC IP
+          ansible.builtin.set_fact:
+            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
+        - name: Derive PostgreSQL guest ID
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+        - name: Create PostgreSQL LXC
+          ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
+          vars:
+            proxmox_placement_class: floating_lxc
+        - name: Add PostgreSQL LXC to deploy group
+          ansible.builtin.add_host:
+            name: "{{ homelabinfra_instance.lxc.hostname }}"
+            groups: "deploy_{{ instance }}"
+            ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+            app_config: "{{ app_config }}"
+    - name: Provision PostgreSQL VM
+      when:
+        - _existing_hosts | length == 0
+        - app_config.proxmox.type == 'vm'
+      block:
+        - name: Set PostgreSQL VM identity and sizing
+          ansible.builtin.set_fact:
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({'proxmox': {'vm':
+                 (app_config['proxmox']['vm'] | default({})) | combine({
+                   'name': instance,
+                   'cores': app_config['proxmox']['cores'] | default(app_config['proxmox']['vm']['cores'] | default(2)) | int,
+                   'memory': app_config['proxmox']['memory'] | default(app_config['proxmox']['vm']['memory'] | default(2048)) | int,
+                   'disk_size': app_config['proxmox']['disk_size'] | default(app_config['proxmox']['vm']['disk_size'] | default(app_config['proxmox']['disk_volume']['size'] | default(32))) | int,
+                   'boot_order': app_config['proxmox']['boot_order'] | default(app_config['proxmox']['vm']['boot_order'] | default(40)) | int,
+                   'tags': ((app_config['proxmox']['vm']['tags'] | default(app_config['proxmox']['tags'] | default(['_+lab', '_-debian']))) + ['_' ~ instance]) | unique
+                 }, recursive=True)}}, recursive=True) }}
+        - name: Resolve PostgreSQL VM network
+          ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+          vars:
+            resolve_network_app: postgresql
+            resolve_network_estate: ''
+        - name: Generate PostgreSQL VM IP address
+          ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
+          vars:
+            network_name: "{{ app_config.proxmox.network | default('', true) }}"
+            pool_name: "{{ app_config.proxmox.pool | default('') }}"
+            requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
         - name: Set PostgreSQL VM IP
           ansible.builtin.set_fact:
             homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'vm': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
-        - name: Derive VMID
+        - name: Derive PostgreSQL VMID
           ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
         - name: Ensure the Debian cloud-init template exists
           ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-cloud-template.yml

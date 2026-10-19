@@ -1,0 +1,335 @@
+---
+# pg_basebackup puts the running cluster into backup mode and streams the required WAL,
+# keeping databases, roles and grants in one PostgreSQL-native recovery point.
+- name: PostgreSQL backup | Resolve the backup identity
+  ansible.builtin.set_fact:
+    _postgresql_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _application_backup_complete: false
+
+- name: PostgreSQL backup | Assert the native recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _postgresql_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      PostgreSQL backup needs its application-consistent recovery contract, a safe
+      backup id and a configured PBS target.
+
+- name: PostgreSQL backup | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: PostgreSQL backup | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for PostgreSQL. Deploy PBS and retry; no local archive is
+      treated as a recovery point.
+
+- name: PostgreSQL backup | Require the installed PBS client and recovery helper
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/proxmox-backup-client
+    - /usr/local/sbin/homelab-postgresql-recovery
+  register: _postgresql_backup_tools
+  changed_when: false
+
+- name: PostgreSQL backup | Assert the recovery tools are installed
+  ansible.builtin.assert:
+    that: _postgresql_backup_tools.results | selectattr('stat.exists') | list | length == 2
+    fail_msg: >-
+      PostgreSQL recovery tools are missing. Deploy the instance with the current
+      PostgreSQL role before requesting an application backup.
+
+- name: PostgreSQL backup | Discover the registered cluster
+  ansible.builtin.command:
+    argv: [pg_lsclusters, --no-header]
+  register: _postgresql_backup_clusters
+  changed_when: false
+
+- name: PostgreSQL backup | Resolve the main cluster
+  ansible.builtin.set_fact:
+    _postgresql_backup_cluster_lines: >-
+      {{ _postgresql_backup_clusters.stdout_lines | default([])
+         | select('match', '^[0-9]+[ ]+') | list }}
+    _postgresql_backup_main_lines: >-
+      {{ _postgresql_backup_clusters.stdout_lines | default([])
+         | select('match', '^' ~ (app_config.app.version | string) ~ '[ ]+main[ ]+') | list }}
+
+- name: PostgreSQL backup | Require one main cluster on the configured port
+  ansible.builtin.assert:
+    that:
+      - _postgresql_backup_cluster_lines | length == 1
+      - _postgresql_backup_main_lines | length == 1
+      - (_postgresql_backup_main_lines[0].split()[2] | int) == (app_config.app.port | int)
+    fail_msg: >-
+      PostgreSQL backup requires exactly the configured main cluster and port; no data
+      has been changed.
+
+- name: PostgreSQL backup | Refuse unsupported external tablespaces
+  ansible.builtin.command:
+    argv:
+      - psql
+      - --no-psqlrc
+      - --host=/var/run/postgresql
+      - "--port={{ app_config.app.port }}"
+      - --username=postgres
+      - --dbname=postgres
+      - --tuples-only
+      - --no-align
+      - --command=SELECT spcname FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname
+  become_user: postgres
+  register: _postgresql_backup_tablespaces
+  changed_when: false
+
+- name: PostgreSQL backup | Require the complete cluster to use its standard tablespaces
+  ansible.builtin.assert:
+    that: _postgresql_backup_tablespaces.stdout | trim == ''
+    fail_msg: >-
+      PostgreSQL native recovery currently supports the standard pg_default and pg_global
+      tablespaces only. No recovery point was created.
+
+- name: PostgreSQL backup | Create private staging space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-postgresql-backup-"
+  register: _postgresql_backup_tmp
+
+- name: PostgreSQL backup | Create and verify a native physical backup
+  block:
+    - name: PostgreSQL backup | Set private staging ownership
+      ansible.builtin.file:
+        path: "{{ _postgresql_backup_tmp.path }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0700"
+
+    - name: PostgreSQL backup | Export the full cluster through the local superuser socket
+      ansible.builtin.command:
+        argv:
+          - pg_basebackup
+          - --host=/var/run/postgresql
+          - "--port={{ app_config.app.port }}"
+          - --username=postgres
+          - --no-password
+          - --format=plain
+          - --wal-method=stream
+          - --checkpoint=fast
+          - "--pgdata={{ _postgresql_backup_tmp.path }}/cluster"
+      become_user: postgres
+      changed_when: true
+
+    - name: PostgreSQL backup | Verify the native backup manifest and checksums
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/homelab-postgresql-recovery
+          - verify
+          - "{{ _postgresql_backup_tmp.path }}"
+          - "{{ app_config.app.version }}"
+      changed_when: false
+
+    - name: PostgreSQL backup | Read the existing recovery points
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - list
+          - "host/{{ _postgresql_backup_id }}"
+          - --output-format
+          - json
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _postgresql_backup_snapshots_before
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: PostgreSQL backup | Report an unreadable baseline recovery point listing
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _postgresql_backup_snapshots_before }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: PostgreSQL backup | baseline recovery points could not be verified
+
+    - name: PostgreSQL backup | Validate the baseline recovery point listing
+      ansible.builtin.assert:
+        that: (_postgresql_backup_snapshots_before.stdout | from_json | type_debug) == 'list'
+        fail_msg: PostgreSQL backup could not parse the baseline PBS recovery point list.
+      no_log: true
+
+    - name: PostgreSQL backup | Upload the physical archive to PBS
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - backup
+          - "postgresql.pxar:{{ _postgresql_backup_tmp.path }}"
+          - --backup-id
+          - "{{ _postgresql_backup_id }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _postgresql_backup_upload
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: PostgreSQL backup | Report a failed PBS upload
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _postgresql_backup_upload }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: PostgreSQL backup | PBS archive upload failed
+
+    - name: PostgreSQL backup | Verify and list the recovery points
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - list
+          - "host/{{ _postgresql_backup_id }}"
+          - --output-format
+          - json
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _postgresql_backup_snapshots
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: PostgreSQL backup | Report an unreadable recovery point listing
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _postgresql_backup_snapshots }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: PostgreSQL backup | recovery points could not be verified
+
+    - name: PostgreSQL backup | Resolve the new recovery point
+      ansible.builtin.set_fact:
+        _postgresql_backup_new_points: >-
+          {{ (_postgresql_backup_snapshots.stdout | from_json)
+             | rejectattr('backup-time', 'in',
+                 (_postgresql_backup_snapshots_before.stdout | from_json
+                  | map(attribute='backup-time') | map('int') | list)) | list }}
+      no_log: true
+
+    - name: PostgreSQL backup | Require a new recovery point
+      ansible.builtin.assert:
+        that:
+          - (_postgresql_backup_snapshots.stdout | from_json | type_debug) == 'list'
+          - _postgresql_backup_new_points | length > 0
+        fail_msg: >-
+          PostgreSQL backup completed without adding a recovery point to
+          host/{{ _postgresql_backup_id }}.
+      no_log: true
+
+    - name: PostgreSQL backup | Record the verified recovery point
+      ansible.builtin.set_fact:
+        _postgresql_backup_recovery_point: >-
+          {{ 'host/' ~ _postgresql_backup_id ~ '/' ~
+             ('%Y-%m-%dT%H:%M:%SZ' | strftime(
+               (_postgresql_backup_new_points | sort(attribute='backup-time') | last)['backup-time'] | int,
+               utc=true)) }}
+      no_log: true
+
+    - name: PostgreSQL backup | Verify that PBS stored the native archive
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - snapshot
+          - files
+          - "{{ _postgresql_backup_recovery_point }}"
+          - --output-format
+          - json
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _postgresql_backup_files
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: PostgreSQL backup | Report an unavailable recovery archive
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _postgresql_backup_files }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: PostgreSQL backup | the new PBS recovery point is unavailable
+
+    - name: PostgreSQL backup | Require the native archive in the recovery point
+      ansible.builtin.assert:
+        that: "'postgresql.pxar' in _postgresql_backup_files.stdout"
+        fail_msg: >-
+          Recovery point {{ _postgresql_backup_recovery_point }} does not contain the
+          PostgreSQL native archive.
+      no_log: true
+
+    - name: PostgreSQL backup | Retain the two newest points and daily history
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - prune
+          - "host/{{ _postgresql_backup_id }}"
+          - --keep-last
+          - "2"
+          - --keep-daily
+          - "{{ app_config.backup.retention_days | default(14) | int }}"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _postgresql_backup_prune
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: PostgreSQL backup | Report a failed retention update
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _postgresql_backup_prune }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: PostgreSQL backup | PBS retention update failed
+
+    - name: PostgreSQL backup | Report the verified recovery point
+      ansible.builtin.debug:
+        msg: "PostgreSQL recovery point {{ _postgresql_backup_recovery_point }} is verified."
+
+    - name: PostgreSQL backup | Mark the backup complete
+      ansible.builtin.set_fact:
+        _application_backup_complete: true
+  always:
+    - name: PostgreSQL backup | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _postgresql_backup_tmp.path }}"
+        state: absent
+      when: _postgresql_backup_tmp.path is defined
