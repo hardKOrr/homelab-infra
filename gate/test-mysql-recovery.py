@@ -131,6 +131,15 @@ def check_contract():
     assert "homelab-mysql-recovery" in str(importer["ansible.builtin.command"]["argv"])
     assert task_named(restore, "MySQL restore | Remove private staging data")
 
+    remove = task_tree(ROOT / "ansible/playbooks/apps/remove.yml")
+    assert task_named(remove, "Validate the explicit guest destruction request before unwiring")
+    ownership_guard = task_named(remove, "Verify ownership and non-shared tags before unwiring")
+    assert "_+lab" in str(ownership_guard["ansible.builtin.assert"]["that"])
+    assert task_named(remove, "Destroy the explicitly selected native LXC")
+    destroy = task_tree(ROOT / "ansible/tasks/proxmox/destroy-owned-lxc.yml")
+    assert task_named(destroy, "Destroy owned LXC | Require current lab ownership and an unshared guest")
+    assert task_named(destroy, "Destroy owned LXC | Verify the guest is absent from the cluster")
+
 
 def bundle(path, dump, version="8.4.5"):
     path.mkdir(mode=0o700)

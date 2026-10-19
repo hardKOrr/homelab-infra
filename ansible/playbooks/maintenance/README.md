@@ -109,6 +109,10 @@ The source is [`../../files/recovery/audit.py`](../../files/recovery/audit.py). 
 `pvesh get` requests run; no credentials, full guest configurations or raw command errors
 appear in the report.
 
+Ordinary Remove App retains its guest. The explicit `destroy_guest=true` option requires
+`delete_data=true`, one native LXC with the exact `_+lab` and instance tags, and a live
+pre-destroy check that refuses shared or reassigned guests.
+
 ## Whole-lab decommission
 
 [`decommission.yml`](decommission.yml) is the supported plan/unwire entry point. It is
