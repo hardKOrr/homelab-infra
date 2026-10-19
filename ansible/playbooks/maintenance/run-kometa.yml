@@ -25,6 +25,35 @@
     - name: Verify the Kometa namespace is platform-owned
       ansible.builtin.include_tasks: ../../tasks/kubernetes/ensure-namespace.yml
 
+    - name: Read the operator-owned Kometa configuration
+      ansible.builtin.set_fact:
+        _kometa_config_document: >-
+          {{ homelabinfra_vault.apps[instance].config_yml | from_yaml }}
+      no_log: true
+
+    - name: Check the configured Plex endpoint from the cluster
+      ansible.builtin.uri:
+        url: >-
+          {{ hostvars['localhost']._kometa_config_document.plex.url
+             | regex_replace('/+$', '') }}/identity
+        method: GET
+        headers:
+          X-Plex-Token: "{{ hostvars['localhost'].homelabinfra_vault.media.plex.token }}"
+        status_code: [200]
+        return_content: false
+      delegate_to: "{{ k8s_api_host }}"
+      become: true
+      register: _kometa_plex_endpoint
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Require the configured Plex endpoint to be reachable
+      ansible.builtin.assert:
+        that: (_kometa_plex_endpoint.status | default(0) | int) == 200
+        fail_msg: >-
+          The Plex URL stored in Kometa's config is not reachable from the cluster node.
+
   tasks:
     - name: Run the deployed Kometa CronJob
       ansible.builtin.include_tasks: ../../tasks/kubernetes/run-job.yml
@@ -32,3 +61,15 @@
         k8s_job_name: "{{ instance }}-manual"
         k8s_job_from_cronjob: "{{ instance }}"
         k8s_job_timeout: 7200
+
+    - name: Require a clean Kometa completion log
+      ansible.builtin.assert:
+        that:
+          - k8s_job_log is search('(?im)\\bFinished\\b')
+          - >-
+            k8s_job_log is not search(
+              '(?im)\\b(?:Config Error|Plex Error|TMDb Error|Critical Summary|Traceback|FATAL)\\b'
+            )
+        fail_msg: >-
+          Kometa's Job completed, but its output contains a fatal, configuration or service
+          error. Review the job output printed above.
