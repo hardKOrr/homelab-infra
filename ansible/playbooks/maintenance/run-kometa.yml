@@ -101,7 +101,7 @@
           - k8s_job_log is search('(?m)\\bFinished\\b')
           - >-
             k8s_job_log is not search(
-              '(?m)^.*\\|\\s*(?:ERROR|CRITICAL|FATAL)\\s*\\|'
+              '(?m)^(?:\\[[^]]+\\]\\s*)?(?:\\[\\d{4}-\\d{2}-\\d{2} [0-9:,]+\\]\\s+\\[[^]]+\\]\\s+\\[(?:ERROR|CRITICAL|FATAL)\\]\\s*\\||\\|\\s*\\d{4}-\\d{2}-\\d{2}[^|\\r\\n]*\\|\\s*(?:ERROR|CRITICAL|FATAL)\\s*\\|)'
             )
           - k8s_job_log is not search('(?m)^Traceback \\(most recent call last\\):')
         fail_msg: >-
