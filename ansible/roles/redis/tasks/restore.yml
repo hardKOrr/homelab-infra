@@ -408,6 +408,9 @@
             REDISCLI_AUTH: "{{ _redis_restore_target_password }}"
           register: _redis_restore_target_auth
           failed_when: false
+          until: _redis_restore_target_auth.rc == 0
+          retries: 30
+          delay: 2
           changed_when: false
           no_log: true
 
@@ -425,6 +428,9 @@
             REDISCLI_AUTH: "{{ _redis_restore_source_password }}"
           register: _redis_restore_source_auth
           failed_when: false
+          until: _redis_restore_source_auth.rc == 0
+          retries: 30
+          delay: 2
           changed_when: false
           no_log: true
           when: _redis_restore_target_auth.rc != 0

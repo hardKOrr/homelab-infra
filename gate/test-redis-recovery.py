@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Keep Redis's native PBS recovery and dedicated LXC removal contract in sync."""
 
+import hashlib
+import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -36,7 +41,10 @@ def check_defaults_and_deploy():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert defaults["backup"]["retention_days"] >= 2
-    assert defaults["proxmox"]["type"] == "vm"
+    assert defaults["proxmox"]["type"] == "lxc"
+    assert "Redis defaults to its native LXC" in (
+        ROOT / "ansible/vars/app-defaults/redis.yml"
+    ).read_text()
     assert defaults["routing"] == {"proxy": "none", "identity": "none"}
     assert "remove" not in defaults
 
@@ -50,10 +58,10 @@ def check_defaults_and_deploy():
     provision_tasks = list(tasks_recursive(provision))
     lxc = task_named(provision_tasks, "Provision Redis LXC")
     assert "_existing_hosts | length == 0" in str(lxc["when"])
-    assert "app_config.proxmox.type" in str(lxc["when"])
+    assert "app_config.proxmox.type | default('lxc') == 'lxc'" in str(lxc["when"])
     assert "../../tasks/proxmox/lxc-create.yml" in str(lxc)
     vm = task_named(provision_tasks, "Provision Redis VM")
-    assert "app_config.proxmox.type" in str(vm["when"])
+    assert "app_config.proxmox.type | default('lxc') == 'vm'" in str(vm["when"])
 
     redis_main = read_yaml("ansible/roles/redis/tasks/main.yml")
     install_repo = task_named(redis_main, "Redis | Install the PBS client repository when this lab declares app backups")
@@ -83,14 +91,90 @@ def check_defaults_and_deploy():
     acl_mode = task_named(redis_main, "Redis | Manage the ACL file ownership and mode")
     assert acl_mode["ansible.builtin.file"]["state"] == "file"
     assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
-    seed_acl = task_named(redis_main, "Redis | Seed the default ACL login from Vaultwarden when it is missing")
-    assert "hash('sha256')" in seed_acl["ansible.builtin.lineinfile"]["line"]
-    assert "_redis_acl_has_default_user" in str(seed_acl["when"])
-    assert seed_acl.get("no_log") is True
+    acl_reconcile = task_named(redis_main, "Redis | Reconcile the default ACL login with Vaultwarden")
+    assert acl_reconcile["ansible.builtin.import_tasks"] == "reconcile-default-user.yml"
 
     template = (ROOT / "ansible/roles/redis/templates/redis.conf.j2").read_text()
     assert "aclfile {{ app_config.app.acl_path" in template
     assert "requirepass" not in template
+
+
+def run_default_acl_reconciliation(acl_path, playbook_path, password):
+    task_path = ROOT / "ansible/roles/redis/tasks/reconcile-default-user.yml"
+    playbook = [
+        {
+            "name": "Exercise Redis default ACL reconciliation",
+            "hosts": "localhost",
+            "connection": "local",
+            "gather_facts": False,
+            "vars": {
+                "_redis_acl_path": str(acl_path),
+                "_redis_password": password,
+            },
+            "tasks": [
+                {"name": "Run the role task", "ansible.builtin.import_tasks": str(task_path)}
+            ],
+            "handlers": [
+                {
+                    "name": "Restart Redis",
+                    "ansible.builtin.debug": {"msg": "Redis restart requested"},
+                }
+            ],
+        }
+    ]
+    playbook_path.write_text(yaml.safe_dump(playbook, sort_keys=False))
+    ansible_playbook = Path(sys.executable).with_name("ansible-playbook")
+    assert ansible_playbook.is_file(), "ansible-playbook must be installed beside the gate Python"
+    result = subprocess.run(
+        [ansible_playbook, "-i", "localhost,", "-c", "local", str(playbook_path)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert result.returncode == 0, f"Redis ACL reconciliation failed:\n{result.stdout}\n{result.stderr}"
+    recap = next(line for line in result.stdout.splitlines() if line.startswith("localhost") and "changed=" in line)
+    changed = re.search(r"changed=(\d+)", recap)
+    assert changed, f"Ansible recap did not report changes:\n{recap}"
+    return int(changed.group(1))
+
+
+def check_default_acl_reconciliation():
+    task = read_yaml("ansible/roles/redis/tasks/reconcile-default-user.yml")[0]
+    lineinfile = task["ansible.builtin.lineinfile"]
+    assert lineinfile["regexp"] == r"^user default(?: |$)"
+    assert "hash('sha256')" in lineinfile["line"]
+    assert "nopass" not in lineinfile["line"]
+    assert "when" not in task
+    assert task["notify"] == "Restart Redis"
+    assert task.get("no_log") is True
+
+    with tempfile.TemporaryDirectory(prefix="redis-acl-reconcile-") as directory:
+        acl_path = Path(directory) / "users.acl"
+        playbook_path = Path(directory) / "play.yml"
+        canary_user = "user canary on #" + ("a" * 64) + " ~* &* +@all"
+        acl_path.write_text(f"user default on nopass ~* &* +@all\n{canary_user}\n")
+
+        first_password = "redis-test-password-before-rotation"
+        first_changes = run_default_acl_reconciliation(acl_path, playbook_path, first_password)
+        first_hash = hashlib.sha256(first_password.encode()).hexdigest()
+        acl_lines = acl_path.read_text().splitlines()
+        assert f"user default on #{first_hash} ~* &* +@all" in acl_lines
+        assert canary_user in acl_lines
+        assert "nopass" not in "\n".join(acl_lines)
+        assert first_password not in "\n".join(acl_lines)
+        assert first_changes == 1
+
+        unchanged = run_default_acl_reconciliation(acl_path, playbook_path, first_password)
+        assert unchanged == 0
+
+        rotated_password = "redis-test-password-after-rotation"
+        rotated_changes = run_default_acl_reconciliation(acl_path, playbook_path, rotated_password)
+        rotated_hash = hashlib.sha256(rotated_password.encode()).hexdigest()
+        acl_lines = acl_path.read_text().splitlines()
+        assert f"user default on #{rotated_hash} ~* &* +@all" in acl_lines
+        assert canary_user in acl_lines
+        assert rotated_password not in "\n".join(acl_lines)
+        assert rotated_changes == 1
 
 
 def check_backup():
@@ -199,6 +283,18 @@ def check_restore():
     assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
     assert tasks.index(reconcile) < tasks.index(acl_mode)
 
+    target_auth = task_named(tasks, "Redis restore | Verify the target password after loading the ACL file")
+    source_auth = task_named(tasks, "Redis restore | Verify the source password when the target password differs")
+    for probe, registered in (
+        (target_auth, "_redis_restore_target_auth"),
+        (source_auth, "_redis_restore_source_auth"),
+    ):
+        assert probe["until"] == f"{registered}.rc == 0"
+        assert probe["retries"] == 30
+        assert probe["delay"] == 2
+        assert probe["failed_when"] is False
+        assert probe.get("no_log") is True
+
     plan = task_named(tasks, "Redis restore | Show the read-only recovery point plan")
     assert "not (restore_overwrite | bool)" in plan["when"]
 
@@ -238,6 +334,7 @@ def check_remove_scope():
 
 def main():
     check_defaults_and_deploy()
+    check_default_acl_reconciliation()
     check_backup()
     check_restore()
     check_remove_scope()

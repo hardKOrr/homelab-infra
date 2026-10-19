@@ -103,30 +103,8 @@
     app_config: "{{ app_config | combine({'app': {'password': _redis_password}}, recursive=True) }}"
   no_log: true
 
-- name: Redis | Read the current ACL user definitions
-  ansible.builtin.slurp:
-    src: "{{ _redis_acl_path }}"
-  register: _redis_acl_content
-  changed_when: false
-  no_log: true
-
-- name: Redis | Check whether the external ACL file defines the default user
-  ansible.builtin.set_fact:
-    _redis_acl_has_default_user: >-
-      {{ 'user default ' in (_redis_acl_content.content | b64decode) }}
-  no_log: true
-
-- name: Redis | Seed the default ACL login from Vaultwarden when it is missing
-  ansible.builtin.lineinfile:
-    path: "{{ _redis_acl_path }}"
-    regexp: '^user default '
-    line: "user default on #{{ _redis_password | hash('sha256') }} ~* &* +@all"
-    owner: redis
-    group: redis
-    mode: "0600"
-    create: true
-  when: not (_redis_acl_has_default_user | bool)
-  no_log: true
+- name: Redis | Reconcile the default ACL login with Vaultwarden
+  ansible.builtin.import_tasks: reconcile-default-user.yml
 
 - name: Redis | Configure protected application listener
   ansible.builtin.template: {src: redis.conf.j2, dest: /etc/redis/redis.conf, mode: "0640", owner: redis, group: redis}

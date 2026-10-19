@@ -1,0 +1,11 @@
+---
+# Replace only the managed default user. This applies Vaultwarden password rotations,
+# removes nopass defaults, and leaves other application ACL users intact.
+- name: Redis | Reconcile the default ACL login with Vaultwarden
+  ansible.builtin.lineinfile:
+    path: "{{ _redis_acl_path }}"
+    regexp: '^user default(?: |$)'
+    line: "user default on #{{ _redis_password | hash('sha256') }} ~* &* +@all"
+    mode: "0600"
+  notify: Restart Redis
+  no_log: true
