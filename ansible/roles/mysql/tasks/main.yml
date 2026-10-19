@@ -27,6 +27,33 @@
     state: present
     update_cache: true
 
+- name: MySQL | Install the PBS client repository when this lab declares app backups
+  ansible.builtin.include_tasks: install-pbs-client.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: MySQL | Install the PBS backup client
+  ansible.builtin.apt:
+    name: proxmox-backup-client
+    state: present
+    update_cache: true
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: MySQL | Install the native recovery helper
+  ansible.builtin.copy:
+    src: mysql-recovery.py
+    dest: /usr/local/sbin/homelab-mysql-recovery
+    owner: root
+    group: root
+    mode: "0750"
+
 - name: MySQL | Permit application-network listeners
   ansible.builtin.template:
     src: homelab-infra.cnf.j2
