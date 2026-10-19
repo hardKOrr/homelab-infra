@@ -1,7 +1,28 @@
 ---
 redis_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   proxmox:
     type: vm
-    vm: {boot_order: 40, cores: 2, memory: 1024, disk_size: 16, tags: [_+lab, _-debian]}
-  app: {port: 6379, service_name: redis-server, data_path: /var/lib/redis}
+    boot_order: 40
+    cores: 2
+    memory: 1024
+    disk_volume: {size: 16}
+    tags: [_+lab, _-debian]
+  app: {port: 6379, service_name: redis-server, data_path: /var/lib/redis, acl_path: /var/lib/redis/users.acl}
   routing: {proxy: none, identity: none}
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      component: main
+  remove:
+    destroy_guest_after_data_deletion: false

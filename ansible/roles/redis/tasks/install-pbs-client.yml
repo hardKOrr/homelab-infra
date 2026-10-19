@@ -1,0 +1,49 @@
+---
+# Redis native recovery uses proxmox-backup-client on the application LXC.
+- name: Redis PBS client | Require a supported Debian release
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - ansible_distribution_release in ['bookworm', 'trixie']
+    fail_msg: >-
+      Redis recovery supports Debian Bookworm and Trixie guests; this guest reports
+      {{ ansible_distribution }} {{ ansible_distribution_release }}.
+
+- name: Redis PBS client | Select the Debian Bookworm signing key
+  ansible.builtin.set_fact:
+    _redis_pbs_key_url: "https://enterprise.proxmox.com/debian/proxmox-release-bookworm.gpg"
+    _redis_pbs_keyring: /usr/share/keyrings/proxmox-release-bookworm.gpg
+  when: ansible_distribution_release == 'bookworm'
+
+- name: Redis PBS client | Select the Debian Trixie signing key
+  ansible.builtin.set_fact:
+    _redis_pbs_key_url: "https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg"
+    _redis_pbs_keyring: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  when: ansible_distribution_release == 'trixie'
+
+- name: Redis PBS client | Install the Proxmox repository key
+  ansible.builtin.get_url:
+    url: "{{ _redis_pbs_key_url }}"
+    dest: "{{ _redis_pbs_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Redis PBS client | Configure the signed client repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: >-
+      deb [signed-by={{ _redis_pbs_keyring }}]
+      {{ app_config.backup.client.repository }} {{ ansible_distribution_release }}
+      {{ app_config.backup.client.component }}
+  register: _redis_pbs_repository_source
+
+- name: Redis PBS client | Refresh apt metadata when the repository changes
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 120
+  changed_when: false
+  when: _redis_pbs_repository_source.changed
