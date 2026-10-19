@@ -1,11 +1,84 @@
 ---
+- name: Redis | Install the PBS client repository when this lab declares app backups
+  ansible.builtin.include_tasks: install-pbs-client.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: Redis | Refresh apt metadata when stale
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 120
+  changed_when: false
+
 - name: Redis | Install server
-  ansible.builtin.apt: {name: redis-server, state: present, update_cache: true}
+  ansible.builtin.apt:
+    name: redis-server
+    state: present
+    update_cache: false
+
+- name: Redis | Install the PBS backup client
+  ansible.builtin.apt:
+    name: proxmox-backup-client
+    state: present
+    update_cache: false
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
 - name: Redis | Resolve backend password
   ansible.builtin.set_fact:
     _redis_password: "{{ app_config.app.password | default(lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits'), true) }}"
     _redis_credentials_known: "{{ app_config.app.password | default('') | length > 0 }}"
   no_log: true
+
+- name: Redis | Resolve the ACL file path
+  ansible.builtin.set_fact:
+    _redis_acl_path: "{{ app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}"
+
+- name: Redis | Ensure the data directory exists
+  ansible.builtin.file:
+    path: "{{ app_config.app.data_path }}"
+    state: directory
+    owner: redis
+    group: redis
+    mode: "0750"
+
+- name: Redis | Inspect the ACL file before managing it
+  ansible.builtin.stat:
+    path: "{{ _redis_acl_path }}"
+  register: _redis_acl_file
+  changed_when: false
+
+- name: Redis | Refuse to manage a linked or non-file ACL path
+  ansible.builtin.assert:
+    that:
+      - not _redis_acl_file.stat.exists or (not _redis_acl_file.stat.islnk and _redis_acl_file.stat.isreg)
+    fail_msg: "Redis ACL path {{ _redis_acl_path }} is linked or is not a regular file."
+
+- name: Redis | Create the ACL file without replacing existing users
+  ansible.builtin.copy:
+    dest: "{{ _redis_acl_path }}"
+    content: ""
+    force: false
+    owner: redis
+    group: redis
+    mode: "0600"
+  when: not _redis_acl_file.stat.exists
+
+- name: Redis | Manage the ACL file ownership and mode
+  ansible.builtin.file:
+    path: "{{ _redis_acl_path }}"
+    state: file
+    owner: redis
+    group: redis
+    mode: "0600"
+
 - name: Redis | Read existing managed configuration
   ansible.builtin.slurp: {src: /etc/redis/redis.conf}
   register: _redis_config
@@ -29,6 +102,10 @@
   ansible.builtin.set_fact:
     app_config: "{{ app_config | combine({'app': {'password': _redis_password}}, recursive=True) }}"
   no_log: true
+
+- name: Redis | Reconcile the default ACL login with Vaultwarden
+  ansible.builtin.import_tasks: reconcile-default-user.yml
+
 - name: Redis | Configure protected application listener
   ansible.builtin.template: {src: redis.conf.j2, dest: /etc/redis/redis.conf, mode: "0640", owner: redis, group: redis}
   notify: Restart Redis
@@ -37,7 +114,14 @@
 - ansible.builtin.meta: flush_handlers
 - name: Redis | Verify authenticated local server readiness
   ansible.builtin.command:
-    argv: [redis-cli, --no-auth-warning, ping]
+    argv:
+      - redis-cli
+      - --no-auth-warning
+      - -h
+      - 127.0.0.1
+      - -p
+      - "{{ app_config.app.port | int }}"
+      - ping
   environment:
     REDISCLI_AUTH: "{{ _redis_password }}"
   changed_when: false

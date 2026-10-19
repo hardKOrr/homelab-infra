@@ -1,0 +1,283 @@
+---
+- name: Redis backup | Capture the native RDB and matching ACL file
+  block:
+    - name: Redis backup | Pause write commands while the point is captured
+      ansible.builtin.command:
+        argv:
+          - redis-cli
+          - --no-auth-warning
+          - -h
+          - 127.0.0.1
+          - -p
+          - "{{ app_config.app.port | int }}"
+          - CLIENT
+          - PAUSE
+          - "{{ app_config.backup.pause_timeout_ms | default(600000) | int }}"
+          - WRITE
+      environment:
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
+      register: _redis_backup_pause
+      changed_when: false
+      no_log: true
+
+    - name: Redis backup | Record the paused write state
+      ansible.builtin.set_fact:
+        _redis_backup_writes_paused: true
+
+    - name: Redis backup | Persist the current Redis ACL users
+      ansible.builtin.command:
+        argv:
+          - redis-cli
+          - --no-auth-warning
+          - -h
+          - 127.0.0.1
+          - -p
+          - "{{ app_config.app.port | int }}"
+          - ACL
+          - SAVE
+      environment:
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
+      register: _redis_backup_acl_save
+      changed_when: false
+      no_log: true
+
+    - name: Redis backup | Restore the ACL file ownership and mode
+      ansible.builtin.file:
+        path: "{{ _redis_backup_acl_path }}"
+        state: file
+        owner: redis
+        group: redis
+        mode: "0600"
+
+    - name: Redis backup | Export a consistent RDB through Redis replication
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - redis-cli
+          - --no-auth-warning
+          - -h
+          - 127.0.0.1
+          - -p
+          - "{{ app_config.app.port | int }}"
+          - --rdb
+          - "{{ _redis_backup_stage.path }}/dump.rdb"
+      environment:
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
+      register: _redis_backup_rdb_export
+      changed_when: true
+      no_log: true
+
+    - name: Redis backup | Copy the persisted ACL users into the recovery point
+      ansible.builtin.copy:
+        src: "{{ _redis_backup_acl_path }}"
+        dest: "{{ _redis_backup_stage.path }}/users.acl"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+  always:
+    - name: Redis backup | Resume Redis write commands
+      ansible.builtin.command:
+        argv:
+          - redis-cli
+          - --no-auth-warning
+          - -h
+          - 127.0.0.1
+          - -p
+          - "{{ app_config.app.port | int }}"
+          - CLIENT
+          - UNPAUSE
+      environment:
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
+      changed_when: false
+      no_log: true
+      when: _redis_backup_writes_paused | bool
+
+- name: Redis backup | Validate the exported RDB
+  ansible.builtin.command:
+    argv: [redis-check-rdb, "{{ _redis_backup_stage.path }}/dump.rdb"]
+  register: _redis_backup_rdb_check
+  changed_when: false
+  no_log: true
+
+- name: Redis backup | Verify both staged files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ _redis_backup_stage.path }}/dump.rdb"
+    - "{{ _redis_backup_stage.path }}/users.acl"
+  register: _redis_backup_staged_paths
+  changed_when: false
+  no_log: true
+
+- name: Redis backup | Require a non-empty RDB and ACL file
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - not item.stat.islnk
+      - item.stat.size | int > 0
+    fail_msg: Redis native export did not produce complete RDB and ACL files.
+  loop: "{{ _redis_backup_staged_paths.results }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+  no_log: true
+
+- name: Redis backup | Upload the native export to PBS
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - backup
+      - "data.pxar:{{ _redis_backup_stage.path }}"
+      - --backup-id
+      - "{{ _redis_backup_id }}"
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _redis_backup_upload
+  failed_when: false
+  changed_when: true
+  no_log: true
+
+- name: Redis backup | Report a failed PBS upload
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _redis_backup_upload }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: Redis backup | PBS archive upload failed
+
+- name: Redis backup | Read recovery points after upload
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - list
+      - "host/{{ _redis_backup_id }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _redis_backup_snapshots_after
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Redis backup | Report an unreadable post-upload listing
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _redis_backup_snapshots_after }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: Redis backup | recovery points could not be verified
+
+- name: Redis backup | Validate the post-upload listing
+  ansible.builtin.assert:
+    that: (_redis_backup_snapshots_after.stdout | from_json | type_debug) == 'list'
+    fail_msg: Redis backup could not parse the post-upload PBS recovery point list.
+  no_log: true
+
+- name: Redis backup | Find the new recovery point
+  ansible.builtin.set_fact:
+    _redis_backup_added_snapshot_times: >-
+      {{ (_redis_backup_snapshots_after.stdout | from_json | map(attribute='backup-time') | map('int') | list)
+         | difference(_redis_backup_snapshots_before.stdout | from_json | map(attribute='backup-time') | map('int') | list) }}
+  no_log: true
+
+- name: Redis backup | Require one new recovery point
+  ansible.builtin.assert:
+    that: _redis_backup_added_snapshot_times | length == 1
+    fail_msg: PBS did not add exactly one distinct Redis recovery point.
+  no_log: true
+
+- name: Redis backup | Format the verified recovery point
+  ansible.builtin.set_fact:
+    _redis_backup_recovery_point: >-
+      host/{{ _redis_backup_id }}/{{
+        '%Y-%m-%dT%H:%M:%SZ'
+        | strftime(_redis_backup_added_snapshot_times[0] | int, utc=true) }}
+  no_log: true
+
+- name: Redis backup | Verify the archive is recorded
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - files
+      - "{{ _redis_backup_recovery_point }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _redis_backup_files
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Redis backup | Report an unreadable archive manifest
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _redis_backup_files }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: Redis backup | archive manifest could not be verified
+
+- name: Redis backup | Require the data archive
+  ansible.builtin.assert:
+    that: "'data.pxar' in _redis_backup_files.stdout"
+    fail_msg: The selected Redis recovery point has no data.pxar archive.
+  no_log: true
+
+- name: Redis backup | Retain recent and daily recovery points
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - prune
+      - "host/{{ _redis_backup_id }}"
+      - --keep-last
+      - "2"
+      - --keep-daily
+      - "{{ app_config.backup.retention_days | default(14) | int }}"
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _redis_backup_prune
+  failed_when: false
+  changed_when: true
+  no_log: true
+
+- name: Redis backup | Report a failed retention update
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _redis_backup_prune }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: Redis backup | PBS retention update failed
+
+- name: Redis backup | Mark the backup complete
+  ansible.builtin.set_fact:
+    _application_backup_complete: true
+    _redis_backup_verified_point: "{{ _redis_backup_recovery_point }}"
+
+- name: Redis backup | Show the verified recovery point
+  ansible.builtin.debug:
+    msg: "Verified Redis recovery point {{ _redis_backup_verified_point }}."
+
