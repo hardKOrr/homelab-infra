@@ -24,5 +24,3 @@ redis_defaults:
     client:
       repository: "http://download.proxmox.com/debian/pbs-client"
       component: main
-  remove:
-    destroy_guest_after_data_deletion: false

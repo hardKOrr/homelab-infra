@@ -38,7 +38,7 @@ def check_defaults_and_deploy():
     assert defaults["backup"]["retention_days"] >= 2
     assert defaults["proxmox"]["type"] == "vm"
     assert defaults["routing"] == {"proxy": "none", "identity": "none"}
-    assert defaults["remove"]["destroy_guest_after_data_deletion"] is False
+    assert "remove" not in defaults
 
     redis_play = read_yaml("ansible/playbooks/apps/redis.yml")
     assert not any(
@@ -207,21 +207,33 @@ def check_remove_scope():
     remove = read_yaml("ansible/playbooks/apps/remove.yml")
     unwire_play = remove[0]
     pre_tasks = list(tasks_recursive(unwire_play["pre_tasks"]))
-    ownership = task_named(pre_tasks, "Verify the exact lab-owned LXC before removal")
-    preflight = task_named(pre_tasks, "Find the opted-in native LXC before unwiring")
-    assert "delete_data" in str(preflight["when"])
+    explicit_request = task_named(pre_tasks, "Validate the explicit guest destruction request before unwiring")
+    ownership = task_named(pre_tasks, "Verify ownership and non-shared tags before unwiring")
+    assert "delete_data" in str(explicit_request["ansible.builtin.assert"]["that"])
+    assert "_rm_kind == 'native'" in str(explicit_request["ansible.builtin.assert"]["that"])
+    assert "_rm_destroy_guest_host == instance" in str(explicit_request["ansible.builtin.assert"]["that"])
     assert "_+lab" in str(ownership["ansible.builtin.assert"]["that"])
     assert "proxmox_vmtype" in str(ownership["ansible.builtin.assert"]["that"])
-    assert preflight in unwire_play["pre_tasks"]
+    assert "_.shared" in str(ownership["ansible.builtin.assert"]["that"])
     assert task_named(unwire_play["tasks"], "Unwire reverse proxy") in unwire_play["tasks"]
 
-    destroy_play = next(play for play in remove if play["name"] == "Remove App | Destroy the dedicated native LXC")
-    destroy = task_named(list(tasks_recursive(destroy_play)), "Destroy the exact owned native LXC after deleting its data")
-    module = destroy["community.proxmox.proxmox"]
-    assert module["state"] == "absent"
-    assert module["purge"] is True
-    assert module["destroy_unreferenced_disks"] is True
-    assert "_rm_destroy_guest_after_data_deletion" in str(destroy["when"])
+    destroy = task_named(list(tasks_recursive(remove)), "Destroy the explicitly selected native LXC")
+    assert destroy["ansible.builtin.include_tasks"] == "../../tasks/proxmox/destroy-owned-lxc.yml"
+    assert "_rm_destroy_guest | bool" in str(destroy["when"])
+    assert "_rm_delete_data | bool" in str(destroy["when"])
+    assert "remove_kind == 'native'" in str(destroy["when"])
+
+    destroy_tasks = read_yaml("ansible/tasks/proxmox/destroy-owned-lxc.yml")
+    live_guard = task_named(destroy_tasks, "Destroy owned LXC | Require current lab ownership and an unshared guest")
+    assert "_+lab" in str(live_guard["ansible.builtin.assert"]["that"])
+    assert "_.shared" in str(live_guard["ansible.builtin.assert"]["that"])
+    assert "destroy_lxc_instance" in str(live_guard["ansible.builtin.assert"]["that"])
+    shutdown = task_named(destroy_tasks, "Destroy owned LXC | Shut down the guest cleanly")
+    confirm_stopped = task_named(destroy_tasks, "Destroy owned LXC | Confirm shutdown completed")
+    destroy_guest = task_named(destroy_tasks, "Destroy owned LXC | Destroy the stopped guest")
+    verify_absent = task_named(destroy_tasks, "Destroy owned LXC | Require the VMID to be absent")
+    assert destroy_guest["ansible.builtin.command"]["argv"] == ["pct", "destroy", "{{ destroy_lxc_vmid }}"]
+    assert destroy_tasks.index(shutdown) < destroy_tasks.index(confirm_stopped) < destroy_tasks.index(destroy_guest) < destroy_tasks.index(verify_absent)
 
 
 def main():
