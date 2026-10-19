@@ -147,12 +147,17 @@ def check_contract():
     assert "could not find the requested service" in missing_unit_handling
     already_removed = task_named(remove, "Report an already-removed service")
     assert "could not find the requested service" in str(already_removed["when"])
-    assert task_named(remove, "Validate the explicit guest destruction request before unwiring")
+    destruction_request = task_named(remove, "Validate the explicit guest destruction request before unwiring")
+    destruction_guards = destruction_request["ansible.builtin.assert"]["that"]
+    assert "_rm_destroy_guest_host | length > 0" in destruction_guards
+    assert "_rm_destroy_guest_host == instance" in destruction_guards
     ownership_guard = task_named(remove, "Verify ownership and non-shared tags before unwiring")
     assert "_+lab" in str(ownership_guard["ansible.builtin.assert"]["that"])
     assert task_named(remove, "Destroy the explicitly selected native LXC")
     destroy = task_tree(ROOT / "ansible/tasks/proxmox/destroy-owned-lxc.yml")
-    assert task_named(destroy, "Destroy owned LXC | Require current lab ownership and an unshared guest")
+    live_ownership_guard = task_named(destroy, "Destroy owned LXC | Require current lab ownership and an unshared guest")
+    assert live_ownership_guard.get("no_log") is not True
+    assert "Refusing to destroy the native guest" in live_ownership_guard["ansible.builtin.assert"]["fail_msg"]
     assert task_named(destroy, "Destroy owned LXC | Verify the guest is absent from the cluster")
 
 

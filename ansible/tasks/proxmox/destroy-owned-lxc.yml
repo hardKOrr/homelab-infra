@@ -54,7 +54,6 @@
     fail_msg: >-
       Refusing to destroy the native guest: it changed identity, lost the _+lab ownership
       tag, or now carries another application's managed tag.
-  no_log: true
 
 - name: Destroy owned LXC | Read the guest state
   ansible.builtin.command:

@@ -777,10 +777,12 @@
         that:
           - delete_data | default(false) | bool
           - _rm_kind == 'native'
-          - _rm_destroy_guest_host | length == 0 or _rm_destroy_guest_host == instance
+          - _rm_destroy_guest_host | length > 0
+          - _rm_destroy_guest_host == instance
         fail_msg: >-
-          destroy_guest=true requires delete_data=true and a native app instance; Docker
-          stack hosts, appliances and Kubernetes nodes cannot be destroyed through Remove App.
+          destroy_guest=true requires delete_data=true and a native app instance that
+          resolves to its matching inventory guest; Docker stack hosts, appliances and
+          Kubernetes nodes cannot be destroyed through Remove App.
       when: destroy_guest | default(false) | bool
 
     - name: Verify ownership and non-shared tags before unwiring
