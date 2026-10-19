@@ -75,8 +75,12 @@ def check_defaults_and_deploy():
     assert repo_refresh["changed_when"] is False
 
     acl_file = task_named(redis_main, "Redis | Create the ACL file without replacing existing users")
-    assert acl_file["ansible.builtin.file"]["state"] == "touch"
-    assert acl_file["ansible.builtin.file"]["modification_time"] == "preserve"
+    assert acl_file["ansible.builtin.copy"]["content"] == ""
+    assert acl_file["ansible.builtin.copy"]["force"] is False
+    assert "not _redis_acl_file.stat.exists" in str(acl_file["when"])
+    acl_mode = task_named(redis_main, "Redis | Manage the ACL file ownership and mode")
+    assert acl_mode["ansible.builtin.file"]["state"] == "file"
+    assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
     seed_acl = task_named(redis_main, "Redis | Seed the default ACL login from Vaultwarden when it is missing")
     assert "hash('sha256')" in seed_acl["ansible.builtin.lineinfile"]["line"]
     assert "_redis_acl_has_default_user" in str(seed_acl["when"])

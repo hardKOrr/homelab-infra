@@ -62,14 +62,22 @@
     fail_msg: "Redis ACL path {{ _redis_acl_path }} is linked or is not a regular file."
 
 - name: Redis | Create the ACL file without replacing existing users
-  ansible.builtin.file:
+  ansible.builtin.copy:
     path: "{{ _redis_acl_path }}"
-    state: touch
+    content: ""
+    force: false
     owner: redis
     group: redis
     mode: "0600"
-    modification_time: preserve
-    access_time: preserve
+  when: not _redis_acl_file.stat.exists
+
+- name: Redis | Manage the ACL file ownership and mode
+  ansible.builtin.file:
+    path: "{{ _redis_acl_path }}"
+    state: file
+    owner: redis
+    group: redis
+    mode: "0600"
 
 - name: Redis | Read existing managed configuration
   ansible.builtin.slurp: {src: /etc/redis/redis.conf}
