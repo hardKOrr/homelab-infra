@@ -54,7 +54,7 @@ def find_ansible_playbook():
     return ansible_playbook
 
 
-def check_contract_and_no_external_wiring():
+def check_contract_and_wiring():
     assert DEFAULTS["recovery"]["methods"] == ["native"]
     assert DEFAULTS["recovery"]["native"] == {
         "backup_playbook": "backup-app.yml",
@@ -63,11 +63,33 @@ def check_contract_and_no_external_wiring():
     assert DEFAULTS["backup"]["enabled"] is True
     assert DEFAULTS["backup"]["application_consistent"] is True
     assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb"
-    assert DEFAULTS["routing"] == {"proxy": "none", "identity": "none"}
-    assert "#   proxy: none" in EXAMPLE
-    assert "proxy: internal" not in EXAMPLE
-    assert all(play.get("name") != "InfluxDB | Wire" for play in DEPLOY)
-    assert all("tasks/wiring/" not in str(play) for play in DEPLOY)
+    assert DEFAULTS["routing"] == {
+        "subdomain": "influxdb",
+        "proxy": "internal",
+        "access": "internal",
+        "identity": "catalog",
+    }
+    assert "#   subdomain: influxdb" in EXAMPLE
+    assert "#   proxy: internal" in EXAMPLE
+    assert "#   identity: catalog" in EXAMPLE
+
+    wire_plays = [play for play in DEPLOY if play.get("name") == "InfluxDB | Wire"]
+    assert len(wire_plays) == 1
+    wire_play = wire_plays[0]
+    assert DEPLOY.index(wire_play) > next(
+        index for index, play in enumerate(DEPLOY)
+        if play.get("name") == "InfluxDB | Register backend"
+    )
+    assert wire_play["vars"]["wiring_monitor_url"] == "https://{{ wiring_domain }}/health"
+    assert wire_play["vars"]["wiring_access"] == "{{ _influxdb_host.app_config.routing.access | default('internal') }}"
+    wire_tasks = wire_play["tasks"]
+    assert wire_tasks[0]["name"] == "Skip external wiring while the restore target is isolated"
+    assert wire_tasks[0]["ansible.builtin.meta"] == "end_play"
+    for name in ["Wire reverse proxy", "Wire SSO", "Wire uptime monitoring", "Wire DNS"]:
+        assert sum(task.get("name") == name for task in wire_tasks) == 1
+    assert wire_tasks.index(next(task for task in wire_tasks if task.get("name") == "Wire reverse proxy")) < wire_tasks.index(
+        next(task for task in wire_tasks if task.get("name") == "Wire DNS")
+    )
 
     provision_tasks = DEPLOY[0]["tasks"]
     reuse_index = next(
@@ -511,7 +533,7 @@ def check_removed_guest_reuse():
 
 
 def main():
-    check_contract_and_no_external_wiring()
+    check_contract_and_wiring()
     check_restore_transaction()
     check_backup_snapshot_identity()
     check_removed_guest_reuse()
@@ -526,7 +548,7 @@ def main():
         server.shutdown()
         thread.join(timeout=2)
         server.server_close()
-    print("InfluxDB: native recovery, no external wiring, backup identity, archive restore and post-move rollback passed")
+    print("InfluxDB: native recovery, internal HTTPS wiring, backup identity, archive restore and post-move rollback passed")
 
 
 if __name__ == "__main__":

@@ -30,8 +30,11 @@ influxdb_defaults:
     bucket: default
 
   routing:
-    proxy: none
-    identity: none
+    subdomain: influxdb
+    proxy: internal
+    access: internal
+    # InfluxDB keeps its native login; Authentik adds a catalog tile without gating Caddy.
+    identity: catalog
 
   backup:
     enabled: true

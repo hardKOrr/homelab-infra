@@ -17,11 +17,13 @@
 #   bucket: default
 #   admin_user: homelab
 
-# InfluxDB stays internal to its consumers and has no web route, DNS record,
-# SSO provider, or uptime monitor.
+# The native UI is served at https://influxdb.<lab-domain> through an internal
+# Caddy route. InfluxDB keeps its own login; Authentik provides a catalog tile.
 # routing:
-#   proxy: none
-#   identity: none
+#   subdomain: influxdb
+#   proxy: internal
+#   access: internal
+#   identity: catalog
 
 # The complete InfluxDB data directory is archived application-consistently to
 # PBS while the service is stopped. Deploy includes the PBS client when the lab
