@@ -37,6 +37,7 @@
          | map('replace', '.yml', '')
          | reject('equalto', '_template')
          | list }}
+    _caddy_rebuild_errors: []
     _caddy_rebuild_instances: >-
       {{ groups['lab_managed'] | default([])
          | map('extract', hostvars)
@@ -50,7 +51,7 @@
          | list }}
 
 - name: Rebuild Caddy routes | Replay the route contract for every tagged app
-  ansible.builtin.include_tasks: rebuild-caddy-route.yml
+  ansible.builtin.include_tasks: rebuild-caddy-route-record.yml
   loop: "{{ _caddy_rebuild_instances }}"
   loop_control:
     loop_var: caddy_rebuild_instance
@@ -64,3 +65,11 @@
           | rejectattr('key', 'in', ['domain', 'sso', 'dns', 'mail'])
           | items2dict)
          | combine(_caddy_rebuild_base_infra, recursive=True) }}
+
+- name: Rebuild Caddy routes | Report all failed application records
+  ansible.builtin.assert:
+    that:
+      - _caddy_rebuild_errors | length == 0
+    fail_msg: >-
+      Caddy route rebuild failures ({{ _caddy_rebuild_errors | length }}):
+      {{ _caddy_rebuild_errors | to_nice_json }}

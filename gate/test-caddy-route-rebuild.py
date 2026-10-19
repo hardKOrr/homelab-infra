@@ -68,7 +68,7 @@ class FakeCaddy(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run(playbook, inventory, environment, extra_vars_file=None):
+def run(playbook, inventory, environment, extra_vars_file=None, expect_failure=False):
     command = [str(ANSIBLE_PLAYBOOK), "-i", str(inventory), str(playbook)]
     if extra_vars_file is not None:
         command.extend(["--extra-vars", f"@{extra_vars_file}"])
@@ -81,12 +81,17 @@ def run(playbook, inventory, environment, extra_vars_file=None):
         check=False,
         timeout=90,
     )
-    if result.returncode != 0:
+    if expect_failure and result.returncode == 0:
+        failures.append("route rebuild unexpectedly succeeded with invalid app records")
+    elif not expect_failure and result.returncode != 0:
         failures.append(
             "route rebuild play failed:\n"
             + result.stdout[-2500:]
             + result.stderr[-2500:]
         )
+    return result
+
+
 def route_upstream_dials(value):
     if isinstance(value, dict):
         own = [upstream.get("dial") for upstream in value.get("upstreams", [])]
@@ -250,6 +255,47 @@ def main():
         check("repeat Caddy deploy keeps each route single", len(server.routes), 3)
         check("repeat Caddy deploy posts or patches no routes",
               [call for call in server.calls if call.startswith(("POST ", "PATCH "))], [])
+
+        broken_inventory_data = inventory_fixture()
+        managed_hosts = broken_inventory_data["all"]["children"]["lab_managed"]["hosts"]
+        managed_hosts["stale-tag-host"] = {
+            **managed_hosts["authentik-host"],
+            "proxmox_tags_parsed": ["_+lab", "_no-default-app"],
+        }
+        managed_hosts["orphan-app-host"] = {
+            **managed_hosts["authentik-host"],
+            "ansible_host": "",
+            "proxmox_tags_parsed": ["_+lab", "_radarr-orphan"],
+        }
+        broken_inventory = work / "broken-inventory.yml"
+        broken_inventory.write_text(
+            yaml.safe_dump(broken_inventory_data), encoding="utf-8"
+        )
+        server.routes.clear()
+        server.calls.clear()
+        broken_result = run(
+            playbook,
+            broken_inventory,
+            environment,
+            extra_vars_file,
+            expect_failure=True,
+        )
+        failure_output = broken_result.stdout + broken_result.stderr
+        summary_start = failure_output.rfind(
+            "assertion: _caddy_rebuild_errors | length == 0"
+        )
+        summary_end = failure_output.find("PLAY RECAP", summary_start)
+        summary = failure_output[summary_start:summary_end]
+        check("all invalid app records appear in one final failure",
+              "Caddy route rebuild failures (2):" in summary, True)
+        check("unmatched tag is listed in the final failure", "no-default-app" in summary, True)
+        check("unresolved hosting guest is listed in the final failure",
+              "radarr-orphan" in summary, True)
+        check("valid routes are rebuilt despite invalid app records",
+              sorted(route.get("@id") for route in server.routes),
+              ["route_authentik", "route_homepage", "route_radarr-4k"])
+        check("each valid route remains single after the failed rebuild",
+              len(server.routes), 3)
 
         server.calls.clear()
         app_deploy_wiring = work / "app-deploy-wiring.yml"

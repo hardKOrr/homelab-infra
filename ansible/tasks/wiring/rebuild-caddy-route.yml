@@ -155,12 +155,3 @@
     wiring_identity_mode: "{{ (_caddy_rebuild_app_config.routing | default({})).identity | default('catalog') }}"
     wiring_access: "{{ (_caddy_rebuild_app_config.routing | default({})).access | default('internal') }}"
   when: _caddy_rebuild_route_enabled | bool
-
-- name: Rebuild Caddy route | Restore default estate facts
-  ansible.builtin.set_fact:
-    homelabinfra_infra: >-
-      {{ (homelabinfra_infra
-          | dict2items
-          | rejectattr('key', 'in', ['domain', 'sso', 'dns', 'mail'])
-          | items2dict)
-         | combine(_caddy_rebuild_base_infra, recursive=True) }}
