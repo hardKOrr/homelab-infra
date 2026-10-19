@@ -1,11 +1,51 @@
 ---
-# Replace only the managed default user. This applies Vaultwarden password rotations,
-# removes nopass defaults, and leaves other application ACL users intact.
+# Redis ACL SAVE serializes user flags such as sanitize-payload. Preserve those flags
+# while replacing the managed credential and broad default grants.
+- name: Redis | Read the current default ACL rule
+  ansible.builtin.slurp:
+    src: "{{ _redis_acl_path }}"
+  register: _redis_acl_contents
+  changed_when: false
+  no_log: true
+
+- name: Redis | Collect default ACL rules
+  ansible.builtin.set_fact:
+    _redis_default_acl_rules: >-
+      {{ (_redis_acl_contents.content | b64decode).splitlines()
+         | select('match', '^user default(?: |$)')
+         | list }}
+  no_log: true
+
+- name: Redis | Require at most one default ACL rule
+  ansible.builtin.assert:
+    that:
+      - _redis_default_acl_rules | length <= 1
+    fail_msg: "Redis ACL file contains duplicate default users."
+  no_log: true
+
+- name: Redis | Build the default ACL rule with managed credentials and grants
+  ansible.builtin.set_fact:
+    _redis_default_acl_line: >-
+      {{
+        (
+          ['user', 'default', 'on']
+          + (
+            (
+              (_redis_default_acl_rules | first).split()[2:]
+              | reject('match', '^(on|off|nopass|reset|resetpass|allkeys|allchannels|allcommands|[~&+#>-].*)$')
+              | list
+            ) if _redis_default_acl_rules | length == 1 else []
+          )
+          + ['#' ~ (_redis_password | hash('sha256')), '~*', '&*', '+@all']
+        ) | join(' ')
+      }}
+  no_log: true
+
 - name: Redis | Reconcile the default ACL login with Vaultwarden
   ansible.builtin.lineinfile:
     path: "{{ _redis_acl_path }}"
     regexp: '^user default(?: |$)'
-    line: "user default on #{{ _redis_password | hash('sha256') }} ~* &* +@all"
+    line: "{{ _redis_default_acl_line }}"
     mode: "0600"
   notify: Restart Redis
   no_log: true

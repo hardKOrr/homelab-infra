@@ -139,11 +139,27 @@ def run_default_acl_reconciliation(acl_path, playbook_path, password):
 
 
 def check_default_acl_reconciliation():
-    task = read_yaml("ansible/roles/redis/tasks/reconcile-default-user.yml")[0]
+    tasks = read_yaml("ansible/roles/redis/tasks/reconcile-default-user.yml")
+    read_acl = task_named(tasks, "Redis | Read the current default ACL rule")
+    collect_rules = task_named(tasks, "Redis | Collect default ACL rules")
+    assert read_acl["ansible.builtin.slurp"]["src"] == "{{ _redis_acl_path }}"
+    assert read_acl["no_log"] is True
+    assert collect_rules.get("no_log") is True
+    assert "select('match', '^user default(?: |$)')" in str(collect_rules)
+
+    validate_rules = task_named(tasks, "Redis | Require at most one default ACL rule")
+    assert "_redis_default_acl_rules | length <= 1" in str(validate_rules)
+    assert validate_rules.get("no_log") is True
+
+    build_rule = task_named(tasks, "Redis | Build the default ACL rule with managed credentials and grants")
+    assert "reject('match'" in str(build_rule)
+    assert "hash('sha256')" in str(build_rule)
+    assert build_rule.get("no_log") is True
+
+    task = task_named(tasks, "Redis | Reconcile the default ACL login with Vaultwarden")
     lineinfile = task["ansible.builtin.lineinfile"]
     assert lineinfile["regexp"] == r"^user default(?: |$)"
-    assert "hash('sha256')" in lineinfile["line"]
-    assert "nopass" not in lineinfile["line"]
+    assert lineinfile["line"] == "{{ _redis_default_acl_line }}"
     assert "when" not in task
     assert task["notify"] == "Restart Redis"
     assert task.get("no_log") is True
@@ -167,14 +183,35 @@ def check_default_acl_reconciliation():
         unchanged = run_default_acl_reconciliation(acl_path, playbook_path, first_password)
         assert unchanged == 0
 
+        # Redis ACL SAVE includes user flags in its canonical output. Reconciliation
+        # must leave the serialized rule alone so the next Deploy remains unchanged.
+        saved_rule = f"user default on sanitize-payload #{first_hash} ~* &* +@all"
+        acl_path.write_text(f"{saved_rule}\n{canary_user}\n")
+        after_acl_save = run_default_acl_reconciliation(acl_path, playbook_path, first_password)
+        acl_lines = acl_path.read_text().splitlines()
+        assert after_acl_save == 0
+        assert saved_rule in acl_lines
+        assert canary_user in acl_lines
+
         rotated_password = "redis-test-password-after-rotation"
         rotated_changes = run_default_acl_reconciliation(acl_path, playbook_path, rotated_password)
         rotated_hash = hashlib.sha256(rotated_password.encode()).hexdigest()
         acl_lines = acl_path.read_text().splitlines()
-        assert f"user default on #{rotated_hash} ~* &* +@all" in acl_lines
+        assert f"user default on sanitize-payload #{rotated_hash} ~* &* +@all" in acl_lines
         assert canary_user in acl_lines
         assert rotated_password not in "\n".join(acl_lines)
         assert rotated_changes == 1
+
+        rotation_repeat = run_default_acl_reconciliation(acl_path, playbook_path, rotated_password)
+        assert rotation_repeat == 0
+
+        empty_acl_path = Path(directory) / "empty-users.acl"
+        empty_acl_path.write_text(f"{canary_user}\n")
+        empty_acl_changes = run_default_acl_reconciliation(empty_acl_path, playbook_path, first_password)
+        empty_acl_lines = empty_acl_path.read_text().splitlines()
+        assert f"user default on #{first_hash} ~* &* +@all" in empty_acl_lines
+        assert canary_user in empty_acl_lines
+        assert empty_acl_changes == 1
 
 
 def check_backup():
