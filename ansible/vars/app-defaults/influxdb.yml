@@ -22,15 +22,13 @@ influxdb_defaults:
   app:
     port: 8086
     service_name: influxdb
-    data_path: /var/lib/influxdb
+    data_path: /var/lib/influxdb2
     admin_user: homelab
     organization: homelab
     bucket: default
 
   routing:
-    subdomain: influxdb
-    proxy: internal
-    access: internal
+    proxy: none
     identity: none
 
   backup:

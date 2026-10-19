@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = yaml.safe_load(
     (ROOT / "ansible/vars/app-defaults/influxdb.yml").read_text(encoding="utf-8")
 )["influxdb_defaults"]
+EXAMPLE = (ROOT / "config.example/apps/influxdb.example.yml").read_text(encoding="utf-8")
 DEPLOY = yaml.safe_load(
     (ROOT / "ansible/playbooks/apps/influxdb.yml").read_text(encoding="utf-8")
 )
@@ -53,7 +54,7 @@ def find_ansible_playbook():
     return ansible_playbook
 
 
-def check_contract_and_wiring():
+def check_contract_and_no_external_wiring():
     assert DEFAULTS["recovery"]["methods"] == ["native"]
     assert DEFAULTS["recovery"]["native"] == {
         "backup_playbook": "backup-app.yml",
@@ -61,17 +62,12 @@ def check_contract_and_wiring():
     }
     assert DEFAULTS["backup"]["enabled"] is True
     assert DEFAULTS["backup"]["application_consistent"] is True
-    assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb"
-    assert DEFAULTS["routing"]["proxy"] == "internal"
-    assert DEFAULTS["routing"]["identity"] == "none"
-
-    wire = next(play for play in DEPLOY if play.get("name") == "InfluxDB | Wire")
-    wire_tasks = wire["tasks"]
-    assert task_named(wire_tasks, "Wire reverse proxy")["when"]
-    assert task_named(wire_tasks, "Register uptime monitor")["when"]
-    assert task_named(wire_tasks, "Wire DNS")["when"]
-    assert "https://{{ wiring_domain }}/health" == wire["vars"]["wiring_monitor_url"]
-    assert task_named(wire_tasks, "Skip external wiring for an isolated restore target")
+    assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb2"
+    assert DEFAULTS["routing"] == {"proxy": "none", "identity": "none"}
+    assert "#   proxy: none" in EXAMPLE
+    assert "proxy: internal" not in EXAMPLE
+    assert all(play.get("name") != "InfluxDB | Wire" for play in DEPLOY)
+    assert all("tasks/wiring/" not in str(play) for play in DEPLOY)
 
     provision_tasks = DEPLOY[0]["tasks"]
     reuse_index = next(
@@ -515,7 +511,7 @@ def check_removed_guest_reuse():
 
 
 def main():
-    check_contract_and_wiring()
+    check_contract_and_no_external_wiring()
     check_restore_transaction()
     check_backup_snapshot_identity()
     check_removed_guest_reuse()
@@ -530,7 +526,7 @@ def main():
         server.shutdown()
         thread.join(timeout=2)
         server.server_close()
-    print("InfluxDB: recovery declaration, unique wiring, backup identity, archive restore and post-move rollback passed")
+    print("InfluxDB: native recovery, no external wiring, backup identity, archive restore and post-move rollback passed")
 
 
 if __name__ == "__main__":

@@ -17,11 +17,10 @@
 #   bucket: default
 #   admin_user: homelab
 
-# InfluxDB keeps native authentication, so the HTTPS route stays internal and
-# does not use Authentik forward-auth.
+# InfluxDB stays internal to its consumers and has no web route, DNS record,
+# SSO provider, or uptime monitor.
 # routing:
-#   proxy: internal
-#   access: internal
+#   proxy: none
 #   identity: none
 
 # The complete InfluxDB data directory is archived application-consistently to
