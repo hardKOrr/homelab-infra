@@ -1010,6 +1010,20 @@ def wireguard_opens_its_udp_forward_before_deploy():
     assert ports == {"wireguard": str(defaults["app"]["port"])}, ports
 
 
+def wireguard_remove_preserves_vaultwarden_configuration():
+    remove = yaml.safe_load(read("ansible/playbooks/maintenance/remove-wireguard.yml"))
+    tasks = [task for play in remove for task in play.get("tasks", [])]
+    commands = [task.get("ansible.builtin.command", {}) for task in tasks]
+    assert not any(command.get("argv", [])[:2] == ["bw", "delete"] for command in commands), commands
+    assert any(command.get("argv", [])[:2] == ["pct", "destroy"] for command in commands), commands
+    assert any("tasks/unwiring/firewall-" in task.get("ansible.builtin.include_tasks", "")
+               for task in tasks), tasks
+
+    catalog = yaml.safe_load(read("catalog/applications.yml"))["applications"]["wireguard"]
+    actions = set(catalog.get("actions", []))
+    assert not actions.intersection({"backup", "restore"}), actions
+
+
 def apps_open_access_through_the_shared_task():
     # Apps use one task file for firewall access; it reaches the provider only when one is
     # configured and refuses a forward that misses the app's port. qBittorrent applies its
@@ -1755,6 +1769,7 @@ if __name__ == "__main__":
     immich_task_defaults_missing_gpu_device_to_empty()
     print("Template rendering: Immich and ComfyUI CPU modes omit GPU requests while hardware modes keep their declared devices")
     wireguard_opens_its_udp_forward_before_deploy()
+    wireguard_remove_preserves_vaultwarden_configuration()
     apps_open_access_through_the_shared_task()
     qbittorrent_enforces_peer_ports_before_start()
     print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, qBittorrent startup order, the shared firewall access and mail egress passed")
