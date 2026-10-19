@@ -143,6 +143,13 @@
       vars:
         resolve_estate_name: "{{ _influxdb_host.app_config.routing.estate | default('') }}"
   tasks:
+    # Even an isolated restore target needs its ownership tag so inventory can find it
+    # for the final deploy. Only shared external wiring is skipped during isolation.
+    - name: Record InfluxDB on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_kind: native
+
     - name: Skip external wiring while the restore target is isolated
       ansible.builtin.meta: end_play
       when: recovery_isolated | default(false) | bool
@@ -171,7 +178,8 @@
         - homelabinfra_infra is defined
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
-    - name: Record InfluxDB on its Proxmox guest
-      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
-        record_guest_kind: native
+        degradation_scope: "{{ instance }}"

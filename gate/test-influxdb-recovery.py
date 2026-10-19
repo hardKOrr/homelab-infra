@@ -83,10 +83,34 @@ def check_contract_and_wiring():
     assert wire_play["vars"]["wiring_monitor_url"] == "https://{{ wiring_domain }}/health"
     assert wire_play["vars"]["wiring_access"] == "{{ _influxdb_host.app_config.routing.access | default('internal') }}"
     wire_tasks = wire_play["tasks"]
-    assert wire_tasks[0]["name"] == "Skip external wiring while the restore target is isolated"
-    assert wire_tasks[0]["ansible.builtin.meta"] == "end_play"
+    record_index = next(
+        index for index, task in enumerate(wire_tasks)
+        if task.get("name") == "Record InfluxDB on its Proxmox guest"
+    )
+    isolation_index = next(
+        index for index, task in enumerate(wire_tasks)
+        if task.get("name") == "Skip external wiring while the restore target is isolated"
+    )
+    degradation_index = next(
+        index for index, task in enumerate(wire_tasks)
+        if task.get("name") == "Fail if anything could not be wired"
+    )
+    assert record_index < isolation_index
+    assert wire_tasks[record_index]["ansible.builtin.include_tasks"] == (
+        "../../tasks/proxmox/record-app-on-guest.yml"
+    )
+    assert wire_tasks[record_index]["vars"]["record_guest_kind"] == "native"
+    assert wire_tasks[isolation_index]["ansible.builtin.meta"] == "end_play"
+    assert isolation_index < degradation_index
+    assert degradation_index == len(wire_tasks) - 1
+    assert wire_tasks[degradation_index]["ansible.builtin.include_tasks"] == (
+        "../../tasks/assert-no-degradations.yml"
+    )
     for name in ["Wire reverse proxy", "Wire SSO", "Wire uptime monitoring", "Wire DNS"]:
         assert sum(task.get("name") == name for task in wire_tasks) == 1
+        assert isolation_index < next(
+            index for index, task in enumerate(wire_tasks) if task.get("name") == name
+        ) < degradation_index
     assert wire_tasks.index(next(task for task in wire_tasks if task.get("name") == "Wire reverse proxy")) < wire_tasks.index(
         next(task for task in wire_tasks if task.get("name") == "Wire DNS")
     )
