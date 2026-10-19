@@ -2,6 +2,11 @@
 # MariaDB is an instanced, shared backend. Applications select it through the
 # backend-independent `database` configuration; it is never a Compose sidecar.
 mariadb_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
   proxmox:
     type: lxc
     boot_order: 40
@@ -13,6 +18,7 @@ mariadb_defaults:
     tags: [_+lab, _-debian]
   app:
     port: 3306
+    data_path: /var/lib/mysql
     service_name: mariadb
     # MariaDB account-host patterns allowed to connect to this backend. Keep
     # these within lab networks; `%` would permit any source address.
@@ -20,3 +26,14 @@ mariadb_defaults:
   routing:
     proxy: none
     identity: none
+
+  # A consistent logical export captures all databases, users and grants together.
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: http://download.proxmox.com/debian/pbs-client
+      component: main
