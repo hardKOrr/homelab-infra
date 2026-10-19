@@ -116,13 +116,17 @@ def check_backup():
     assert unpause.get("no_log") is True
 
     acl_save = task_named(backup_tasks, "Redis backup | Persist the current Redis ACL users")
+    acl_mode = task_named(backup_tasks, "Redis backup | Restore the ACL file ownership and mode")
     rdb = task_named(backup_tasks, "Redis backup | Export a consistent RDB through Redis replication")
     acl_copy = task_named(backup_tasks, "Redis backup | Copy the persisted ACL users into the recovery point")
     assert acl_save.get("no_log") is True
+    assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
+    assert acl_mode["ansible.builtin.file"]["group"] == "redis"
+    assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
     assert "--rdb" in rdb["ansible.builtin.command"]["argv"]
     assert rdb.get("no_log") is True
     assert acl_copy["ansible.builtin.copy"]["remote_src"] is True
-    assert backup_tasks.index(pause) < backup_tasks.index(acl_save) < backup_tasks.index(rdb)
+    assert backup_tasks.index(pause) < backup_tasks.index(acl_save) < backup_tasks.index(acl_mode) < backup_tasks.index(rdb)
     assert backup_tasks.index(rdb) < backup_tasks.index(acl_copy)
 
     upload = task_named(backup_tasks, "Redis backup | Upload the native export to PBS")
@@ -170,6 +174,11 @@ def check_restore():
     assert align.get("no_log") is True
     reconcile = task_named(tasks, "Redis restore | Persist the reconciled ACL file")
     assert reconcile.get("no_log") is True
+    acl_mode = task_named(tasks, "Redis restore | Restore the ACL file ownership and mode")
+    assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
+    assert acl_mode["ansible.builtin.file"]["group"] == "redis"
+    assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
+    assert tasks.index(reconcile) < tasks.index(acl_mode)
 
     plan = task_named(tasks, "Redis restore | Show the read-only recovery point plan")
     assert "not (restore_overwrite | bool)" in plan["when"]

@@ -41,6 +41,14 @@
       changed_when: false
       no_log: true
 
+    - name: Redis backup | Restore the ACL file ownership and mode
+      ansible.builtin.file:
+        path: "{{ _redis_backup_acl_path }}"
+        state: file
+        owner: redis
+        group: redis
+        mode: "0600"
+
     - name: Redis backup | Export a consistent RDB through Redis replication
       ansible.builtin.command:
         expand_argument_vars: false
