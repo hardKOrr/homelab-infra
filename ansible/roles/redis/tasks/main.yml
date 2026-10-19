@@ -63,7 +63,7 @@
 
 - name: Redis | Create the ACL file without replacing existing users
   ansible.builtin.copy:
-    path: "{{ _redis_acl_path }}"
+    dest: "{{ _redis_acl_path }}"
     content: ""
     force: false
     owner: redis

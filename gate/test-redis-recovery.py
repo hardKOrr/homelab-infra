@@ -76,6 +76,8 @@ def check_defaults_and_deploy():
 
     acl_file = task_named(redis_main, "Redis | Create the ACL file without replacing existing users")
     assert acl_file["ansible.builtin.copy"]["content"] == ""
+    assert acl_file["ansible.builtin.copy"]["dest"] == "{{ _redis_acl_path }}"
+    assert "path" not in acl_file["ansible.builtin.copy"]
     assert acl_file["ansible.builtin.copy"]["force"] is False
     assert "not _redis_acl_file.stat.exists" in str(acl_file["when"])
     acl_mode = task_named(redis_main, "Redis | Manage the ACL file ownership and mode")
