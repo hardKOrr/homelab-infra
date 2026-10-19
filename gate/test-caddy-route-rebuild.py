@@ -92,7 +92,6 @@ def run(playbook, inventory, environment, extra_vars_file=None, expect_failure=F
     return result
 
 
-
 def route_upstream_dials(value):
     if isinstance(value, dict):
         own = [upstream.get("dial") for upstream in value.get("upstreams", [])]
