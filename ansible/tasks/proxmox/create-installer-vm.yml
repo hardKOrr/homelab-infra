@@ -21,7 +21,9 @@
     vmid: "{{ installer_vm.vmid | int }}"
     name: "{{ installer_vm.name }}"
     state: present
-    update: true
+    # A new VMID must use the module's create endpoint. Existing guests may be updated
+    # only after the ownership guard above proved they are this instance's appliance.
+    update: "{{ _installer_vm_config.rc == 0 }}"
     cores: "{{ installer_vm.cores | int }}"
     memory: "{{ installer_vm.memory | int }}"
     scsi: {scsi0: "{{ installer_vm_storage }}:{{ installer_vm.disk_size }}"}

@@ -64,6 +64,8 @@ def main():
     start = next(item for item in installer_tasks if item.get("name") == "Installer VM | Start installer")
     assert status["ansible.builtin.command"]["argv"][:2] == ["qm", "status"]
     assert "status: running" in start["when"]
+    create = next(item for item in installer_tasks if item.get("name") == "Installer VM | Create project-owned appliance VM")
+    assert create["community.proxmox.proxmox_kvm"]["update"] == "{{ _installer_vm_config.rc == 0 }}"
 
     remove = load("ansible/playbooks/maintenance/remove-pdm.yml")[0]
     remove_tasks = list(tasks(remove["tasks"]))
