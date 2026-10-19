@@ -220,24 +220,28 @@ def test_on_demand_playbook_runs_the_deployed_kometa_cronjob():
     ).group(1).replace("\\\\", "\\")
     assert "(?i" not in error_pattern
 
-    # Stable suffix taken from the successful live Job log. The pod prefix and
-    # run-specific timing are omitted; this is the actual completion line content.
-    live_job_log_line = "|                                            Finished"
+    # Captured from the successful live Job log, with generated pod/container IDs
+    # anonymized. That healthy run had no ERROR-level record to use as a fixture.
+    live_job_log_line = (
+        "[pod/<job-pod>/<container>] |                                            Finished"
+    )
     assert re.search(finished_pattern, live_job_log_line)
     assert not re.search(error_pattern, live_job_log_line)
 
-    # Kometa formats severity as a bracketed column after its timestamp and source.
-    # Keep the older pipe-delimited shape covered for logs from earlier versions.
+    # Exercise Kometa's bracketed severity field after the same kubectl prefix seen
+    # in the live log. Keep the older pipe-delimited format covered as well.
+    pod_log_prefix = "[pod/<job-pod>/<container>] "
     kometa_error_lines = [
-        "[2026-01-01 00:00:00,000] [builder.py:197] [ERROR]     | Plex failed",
-        "[2026-01-01 00:00:00,001] [builder.py:198] [CRITICAL] | Invalid config",
-        "[2026-01-01 00:00:00,002] [kometa.py:299] [FATAL]     | Fatal config error",
-        "| 2026-01-01 00:00:00 | ERROR    | Plex failed |",
+        pod_log_prefix + "[2026-01-01 00:00:00,000] [builder.py:197] [ERROR]     | Plex failed",
+        pod_log_prefix + "[2026-01-01 00:00:00,001] [builder.py:198] [CRITICAL] | Invalid config",
+        pod_log_prefix + "[2026-01-01 00:00:00,002] [kometa.py:299] [FATAL]     | Fatal config error",
+        pod_log_prefix + "| 2026-01-01 00:00:00 | ERROR    | Plex failed |",
     ]
     assert all(re.search(error_pattern, line) for line in kometa_error_lines)
 
     info_log_with_matching_titles = "\n".join(
-        [
+        pod_log_prefix + line
+        for line in [
             "[2026-01-01 00:00:00,000] [builder.py:197] [INFO] | Collection: Critical Summary",
             "[2026-01-01 00:00:00,001] [builder.py:198] [INFO] | Item: Plex Error",
             "[2026-01-01 00:00:00,002] [builder.py:199] [INFO] | Title: FATAL",
