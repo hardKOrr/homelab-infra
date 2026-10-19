@@ -41,9 +41,11 @@
           (_installer_vm_current_config.tags | default('') | replace(',', ';')).split(';')
           | reject('equalto', '') | sort
         ) == (installer_vm.tags | map('string') | list | sort)
-        and (_installer_vm_current_config.scsi0 | default('')).startswith(
-          installer_vm_storage ~ ':vm-' ~ (installer_vm.vmid | string) ~ '-disk-0'
+        and (_installer_vm_current_config.scsi0 | default('')).split(',')[0].startswith(
+          installer_vm_storage ~ ':'
         )
+        and ('vm-' ~ (installer_vm.vmid | string) ~ '-disk-0') in
+          (_installer_vm_current_config.scsi0 | default('')).split(',')[0]
         and (',size=' ~ (installer_vm.disk_size | string) ~ 'G') in
           (',' ~ (_installer_vm_current_config.scsi0 | default('')))
         and (_installer_vm_current_config.ide2 | default('')).split(',')[0]

@@ -26,6 +26,15 @@ def tasks(items):
                 yield from tasks(nested)
 
 
+def managed_disk_matches(value, storage, vmid, size):
+    volume = value.split(",", 1)[0]
+    return (
+        volume.startswith(storage + ":")
+        and f"vm-{vmid}-disk-0" in volume
+        and f",size={size}G" in value
+    )
+
+
 def main():
     restore_text = (ROOT / "ansible/playbooks/maintenance/restore-pdm.yml").read_text()
     assert "proxmox.vm.vmid" not in restore_text
@@ -93,6 +102,11 @@ def main():
     assert "pvesh" in host_firewall_remove_node and "delete" in host_firewall_remove_node
     installer_vm = (ROOT / "ansible/tasks/proxmox/create-installer-vm.yml").read_text()
     assert "installer_vm_boot | default('order=ide2;scsi0')" in installer_vm
+    assert "startswith(\n          installer_vm_storage ~ ':'" in installer_vm
+    assert "('vm-' ~ (installer_vm.vmid | string) ~ '-disk-0') in" in installer_vm
+    assert managed_disk_matches("local:100/vm-100-disk-0.qcow2,size=32G", "local", 100, 32)
+    assert managed_disk_matches("local-lvm:vm-100-disk-0,size=32G", "local-lvm", 100, 32)
+    assert not managed_disk_matches("local:101/vm-101-disk-0.qcow2,size=32G", "local", 100, 32)
     installer_tasks = yaml.safe_load(installer_vm)
     status = next(item for item in installer_tasks if item.get("name") == "Installer VM | Read state before start")
     start = next(item for item in installer_tasks if item.get("name") == "Installer VM | Start installer")
