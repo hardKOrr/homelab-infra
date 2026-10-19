@@ -101,6 +101,12 @@ def check_contract():
     assert defaults["routing"]["identity"] == "none"
 
     main = task_tree(ROLE / "tasks/main.yml")
+    repo_prereqs = task_named(main, "MySQL | Install APT repository prerequisites")
+    assert repo_prereqs["ansible.builtin.apt"]["name"] == ["ca-certificates", "gnupg"]
+    assert repo_prereqs["ansible.builtin.apt"]["update_cache"] is False
+    repo_config = task_named(main, "MySQL | Configure Oracle MySQL 8.4 LTS APT repository")
+    assert main.index(repo_prereqs) < main.index(repo_config)
+
     pbs_install = task_named(main, "MySQL | Install the PBS backup client")
     assert pbs_install["ansible.builtin.apt"]["name"] == "proxmox-backup-client"
     helper_install = task_named(main, "MySQL | Install the native recovery helper")

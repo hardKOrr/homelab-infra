@@ -6,6 +6,12 @@
     state: directory
     mode: "0755"
 
+- name: MySQL | Install APT repository prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, gnupg]
+    state: present
+    update_cache: false
+
 - name: MySQL | Install Oracle repository signing key
   ansible.builtin.get_url:
     url: https://repo.mysql.com/RPM-GPG-KEY-mysql-2025
