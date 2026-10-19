@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import json
+import re
 import subprocess
 
 import yaml
@@ -40,6 +41,15 @@ def main():
     assert "proxmox.vm.vmid" not in restore_text
     assert "proxmox.vmid" in restore_text
     assert "pdm_target_config.proxmox.vmid" in restore_text
+    assert "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" in restore_text
+    backup_pattern = re.compile(
+        r"^backup/vm/100/(?:vzdump-qemu-100-.+|"
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$"
+    )
+    assert backup_pattern.fullmatch("backup/vm/100/vzdump-qemu-100-20261019-120000.vma.zst")
+    assert backup_pattern.fullmatch("backup/vm/100/2026-10-19T12:00:00Z")
+    assert not backup_pattern.fullmatch("backup/vm/101/2026-10-19T12:00:00Z")
+    assert not backup_pattern.fullmatch("backup/vm/100/not-a-backup")
 
     deploy = load("ansible/playbooks/apps/proxmox-datacenter-manager.yml")[0]
     deploy_tasks = list(tasks(deploy["tasks"]))

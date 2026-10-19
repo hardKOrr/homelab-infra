@@ -78,9 +78,11 @@
       ansible.builtin.assert:
         that:
           - pdm_config.backup.storage | default('') | length > 0
+          # Proxmox PBS volume IDs use a timestamp; keep accepting vzdump-style IDs too.
           - _pdm_recovery_point is match(
               '^backup/vm/' ~ (pdm_config.proxmox.vmid | string)
-              ~ '/vzdump-qemu-' ~ (pdm_config.proxmox.vmid | string) ~ '-.+')
+              ~ '/(?:vzdump-qemu-' ~ (pdm_config.proxmox.vmid | string)
+              ~ '-.+|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$')
         fail_msg: >-
           Recovery point must be a PBS backup volume for the declared source PDM VMID
           {{ pdm_config.proxmox.vmid }}.
@@ -171,7 +173,8 @@
           - _pdm_pre_restore_point in _pdm_backup_inventory.stdout
           - _pdm_pre_restore_point is match(
               '^backup/vm/' ~ _pdm_target_vmid
-              ~ '/vzdump-qemu-' ~ _pdm_target_vmid ~ '-.+')
+              ~ '/(?:vzdump-qemu-' ~ _pdm_target_vmid
+              ~ '-.+|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$')
         fail_msg: >-
           Pre-restore PBS volume {{ _pdm_pre_restore_point }} is not a readable backup of
           the exact target VM {{ _pdm_target }}. The target remains untouched; capture or
