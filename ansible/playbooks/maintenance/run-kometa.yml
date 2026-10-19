@@ -31,11 +31,10 @@
           {{ homelabinfra_vault.apps[instance].config_yml | from_yaml }}
       no_log: true
 
-    - name: Check the configured Plex endpoint from the cluster
+    - name: Check Plex endpoint candidates from the cluster
       ansible.builtin.uri:
         url: >-
-          {{ hostvars['localhost']._kometa_config_document.plex.url
-             | regex_replace('/+$', '') }}/identity
+          {{ item.url | regex_replace('/+$', '') }}/identity
         method: GET
         headers:
           X-Plex-Token: "{{ hostvars['localhost'].homelabinfra_vault.media.plex.token }}"
@@ -44,15 +43,40 @@
       delegate_to: "{{ k8s_api_host }}"
       become: true
       register: _kometa_plex_endpoint
+      loop: >-
+        {{ plex_endpoint_candidates | default([
+             {'name': 'configured',
+              'url': hostvars['localhost']._kometa_config_document.plex.url}
+           ]) }}
+      loop_control:
+        label: "{{ item.name }}"
       failed_when: false
       changed_when: false
       no_log: true
 
-    - name: Require the configured Plex endpoint to be reachable
+    - name: Build a safe Plex endpoint status summary
+      ansible.builtin.set_fact:
+        _kometa_plex_endpoint_summary: >-
+          {{ (_kometa_plex_endpoint_summary | default([]))
+             + [item.item.name ~ '=' ~ (item.status | default(0) | string)] }}
+      loop: "{{ _kometa_plex_endpoint.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      no_log: true
+
+    - name: Report endpoint labels and status codes
+      ansible.builtin.debug:
+        msg: "{{ _kometa_plex_endpoint_summary }}"
+
+    - name: Require a Plex endpoint candidate to be reachable
       ansible.builtin.assert:
-        that: (_kometa_plex_endpoint.status | default(0) | int) == 200
+        that: >-
+          _kometa_plex_endpoint.results
+          | selectattr('status', 'defined')
+          | selectattr('status', 'equalto', 200)
+          | list | length > 0
         fail_msg: >-
-          The Plex URL stored in Kometa's config is not reachable from the cluster node.
+          No Plex endpoint candidate was reachable from the cluster node.
 
   tasks:
     - name: Run the deployed Kometa CronJob

@@ -140,13 +140,17 @@ def test_on_demand_playbook_runs_the_deployed_kometa_cronjob():
     assert run["vars"]["k8s_job_from_cronjob"] == "{{ instance }}"
     assert run["vars"]["k8s_job_timeout"] == 7200
 
-    endpoint = task_named(play["pre_tasks"], "Check the configured Plex endpoint from the cluster")
+    endpoint = task_named(play["pre_tasks"], "Check Plex endpoint candidates from the cluster")
     assert endpoint["ansible.builtin.uri"]["method"] == "GET"
     assert endpoint["ansible.builtin.uri"]["status_code"] == [200]
     assert endpoint["delegate_to"] == "{{ k8s_api_host }}"
     assert endpoint["no_log"] is True
     assert endpoint["register"] == "_kometa_plex_endpoint"
     assert endpoint["failed_when"] is False
+    assert "plex_endpoint_candidates | default" in endpoint["loop"]
+
+    endpoint_summary = task_named(play["pre_tasks"], "Report endpoint labels and status codes")
+    assert endpoint_summary["ansible.builtin.debug"]["msg"] == "{{ _kometa_plex_endpoint_summary }}"
 
     clean_log = task_named(play["tasks"], "Require a clean Kometa completion log")
     assert clean_log.get("no_log") is not True
