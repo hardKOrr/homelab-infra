@@ -10,6 +10,53 @@
   ansible.builtin.assert:
     that: ["_installer_vm_config.rc != 0 or (('_+lab' in (_installer_vm_config.stdout | default(''))) and (('_' ~ installer_vm.name) in (_installer_vm_config.stdout | default(''))))"]
     fail_msg: "VMID {{ installer_vm.vmid }} is occupied by an unmanaged VM; refusing adoption."
+- name: Installer VM | Read current managed VM configuration
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ installer_vm_node }}/qemu/{{ installer_vm.vmid }}/config"
+      - --output-format
+      - json
+  delegate_to: "{{ installer_vm_node }}"
+  register: _installer_vm_api_config
+  changed_when: false
+  when: _installer_vm_config.rc == 0
+- name: Installer VM | Decode current VM configuration
+  ansible.builtin.set_fact:
+    _installer_vm_current_config: "{{ _installer_vm_api_config.stdout | default('{}') | from_json }}"
+# The pinned Proxmox module reports every update as changed, so only update on real drift.
+- name: Installer VM | Compare requested VM configuration
+  ansible.builtin.set_fact:
+    _installer_vm_configuration_matches: >-
+      {{
+        _installer_vm_config.rc == 0
+        and (_installer_vm_current_config.name | default('')) == installer_vm.name
+        and (_installer_vm_current_config.cores | default(-1) | int) == (installer_vm.cores | int)
+        and (_installer_vm_current_config.memory | default(-1) | int) == (installer_vm.memory | int)
+        and (_installer_vm_current_config.agent | default(1) | int) == 0
+        and (_installer_vm_current_config.onboot | default(false) | bool)
+        and (_installer_vm_current_config.boot | default('')) == (installer_vm_boot | default('order=ide2;scsi0'))
+        and (
+          (_installer_vm_current_config.tags | default('') | replace(',', ';')).split(';')
+          | reject('equalto', '') | sort
+        ) == (installer_vm.tags | map('string') | list | sort)
+        and (_installer_vm_current_config.scsi0 | default('')).startswith(
+          installer_vm_storage ~ ':vm-' ~ (installer_vm.vmid | string) ~ '-disk-0'
+        )
+        and (',size=' ~ (installer_vm.disk_size | string) ~ 'G') in
+          (',' ~ (_installer_vm_current_config.scsi0 | default('')))
+        and (_installer_vm_current_config.ide2 | default('')).split(',')[0]
+          == (installer_vm.iso | string).split(',')[0]
+        and 'media=cdrom' in (_installer_vm_current_config.ide2 | default(''))
+        and (_installer_vm_current_config.net0 | default('')).split(',')[0].split('=')[0]
+          == (installer_vm.net0 | string).split(',')[0]
+        and (
+          (installer_vm.net0 | string).split(',')[1:]
+          | difference((_installer_vm_current_config.net0 | default('')).split(','))
+          | length
+        ) == 0
+      }}
 - name: Installer VM | Create project-owned appliance VM
   community.proxmox.proxmox_kvm:
     api_host: "{{ installer_vm_api.host }}"
@@ -21,9 +68,7 @@
     vmid: "{{ installer_vm.vmid | int }}"
     name: "{{ installer_vm.name }}"
     state: present
-    # A new VMID must use the module's create endpoint. Existing guests may be updated
-    # only after the ownership guard above proved they are this instance's appliance.
-    update: "{{ _installer_vm_config.rc == 0 }}"
+    update: false
     cores: "{{ installer_vm.cores | int }}"
     memory: "{{ installer_vm.memory | int }}"
     scsi: {scsi0: "{{ installer_vm_storage }}:{{ installer_vm.disk_size }}"}
@@ -33,6 +78,31 @@
     agent: 0
     onboot: true
     tags: "{{ installer_vm.tags }}"
+  when: _installer_vm_config.rc != 0
+- name: Installer VM | Update changed managed appliance configuration
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ installer_vm_api.host }}"
+    api_user: "{{ installer_vm_api.user }}"
+    api_token_id: "{{ installer_vm_api.token_id }}"
+    api_token_secret: "{{ installer_vm_api.token_secret }}"
+    validate_certs: "{{ installer_vm_api.validate_certs | default(false) }}"
+    node: "{{ installer_vm_node }}"
+    vmid: "{{ installer_vm.vmid | int }}"
+    name: "{{ installer_vm.name }}"
+    state: present
+    update: true
+    cores: "{{ installer_vm.cores | int }}"
+    memory: "{{ installer_vm.memory | int }}"
+    scsi: {scsi0: "{{ installer_vm_storage }}:{{ installer_vm.disk_size }}"}
+    ide: {ide2: "{{ installer_vm.iso }},media=cdrom"}
+    boot: "{{ installer_vm_boot | default('order=ide2;scsi0') }}"
+    net: {net0: "{{ installer_vm.net0 }}"}
+    agent: 0
+    onboot: true
+    tags: "{{ installer_vm.tags }}"
+  when:
+    - _installer_vm_config.rc == 0
+    - not (_installer_vm_configuration_matches | bool)
 - name: Installer VM | Read state before start
   ansible.builtin.command: {argv: [qm, status, "{{ installer_vm.vmid | string }}"]}
   delegate_to: "{{ installer_vm_node }}"
