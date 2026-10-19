@@ -1,0 +1,20 @@
+---
+# PVE hosts commonly default to policy_in=DROP. Permit only the PDM guest to
+# reach the API on nodes in its configured, locally managed PVE remotes.
+- name: PDM host firewall | Require an IPv4 source address
+  ansible.builtin.assert:
+    that: pdm_config.proxmox.ip_address is ansible.utils.ipv4_address
+    fail_msg: PDM host firewall wiring requires an IPv4 management address.
+
+- name: PDM host firewall | Build locally managed remote node list
+  ansible.builtin.set_fact:
+    _pdm_host_firewall_nodes: >-
+      {{ _pdm_firewall_targets | map(attribute='pve_node')
+         | reject('equalto', '') | unique | list }}
+
+- name: PDM host firewall | Reconcile node API rules
+  ansible.builtin.include_tasks: pdm-proxmox-host-firewall-node.yml
+  loop: "{{ _pdm_host_firewall_nodes }}"
+  loop_control:
+    loop_var: pdm_firewall_node
+    label: PDM declared PVE remote

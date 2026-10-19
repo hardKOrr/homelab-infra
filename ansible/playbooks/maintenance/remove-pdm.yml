@@ -72,6 +72,8 @@
     - name: Unwire PDM Proxmox API access
       ansible.builtin.include_tasks: ../../tasks/unwiring/firewall-opnsense.yml
       when: (homelabinfra_infra | default({})).get('firewall', {}).get('provider', 'none') == 'opnsense'
+    - name: Unwire PDM Proxmox host API access
+      ansible.builtin.include_tasks: ../../tasks/unwiring/pdm-proxmox-host-firewall.yml
     - name: Unwire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:

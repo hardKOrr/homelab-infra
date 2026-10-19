@@ -59,6 +59,8 @@
           tags: "{{ (pdm_config.proxmox.vm.tags + ['_' ~ instance]) | unique }}"
     - name: Wire PDM Proxmox API access
       ansible.builtin.include_tasks: ../../tasks/wiring/pdm-proxmox-egress.yml
+    - name: Wire PDM Proxmox host API access
+      ansible.builtin.include_tasks: ../../tasks/wiring/pdm-proxmox-host-firewall.yml
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:

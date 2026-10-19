@@ -37,6 +37,7 @@ def main():
     deploy_names = [item.get("name", "") for item in deploy_tasks]
     for name in (
         "Wire PDM Proxmox API access",
+        "Wire PDM Proxmox host API access",
         "Wire reverse proxy",
         "Wire SSO",
         "Register uptime monitor",
@@ -73,6 +74,23 @@ def main():
         check=True,
     )
     assert remote_item.rsplit("/", 1)[-1] in parsed.stdout
+    host_firewall = load("ansible/tasks/wiring/pdm-proxmox-host-firewall.yml")
+    host_firewall_tasks = list(tasks(host_firewall))
+    host_firewall_text = (ROOT / "ansible/tasks/wiring/pdm-proxmox-host-firewall-node.yml").read_text()
+    assert any("map(attribute='pve_node')" in str(item) for item in host_firewall_tasks)
+    assert "pvesh" in host_firewall_text and "create" in host_firewall_text
+    assert "--action" in host_firewall_text and "ACCEPT" in host_firewall_text
+    assert "--type" in host_firewall_text and "in" in host_firewall_text
+    assert "--proto" in host_firewall_text and "tcp" in host_firewall_text
+    assert "--dport" in host_firewall_text and '"8006"' in host_firewall_text
+    assert "--source" in host_firewall_text and "pdm_config.proxmox.ip_address" in host_firewall_text
+    assert "homelab-infra: {{ instance }} pdm-proxmox-api" in host_firewall_text
+    assert "pdm_config.proxmox.node" in host_firewall_text
+    host_firewall_remove = (ROOT / "ansible/tasks/unwiring/pdm-proxmox-host-firewall.yml").read_text()
+    assert "homelabinfra_config.proxmox.nodes" in host_firewall_remove
+    host_firewall_remove_node = (ROOT / "ansible/tasks/unwiring/pdm-proxmox-host-firewall-node-remove.yml").read_text()
+    assert "homelab-infra: {{ instance }} pdm-proxmox-api" in host_firewall_remove_node
+    assert "pvesh" in host_firewall_remove_node and "delete" in host_firewall_remove_node
     installer_vm = (ROOT / "ansible/tasks/proxmox/create-installer-vm.yml").read_text()
     assert "installer_vm_boot | default('order=ide2;scsi0')" in installer_vm
     installer_tasks = yaml.safe_load(installer_vm)
@@ -101,8 +119,10 @@ def main():
     ownership = remove_names.index("PDM | Assert managed VM ownership")
     destroy = remove_names.index("PDM | Destroy managed appliance VM")
     assert inspect < ownership < remove_names.index("Unwire reverse proxy")
+    assert remove_names.index("Unwire PDM Proxmox host API access") < destroy
     for name in (
         "Unwire PDM Proxmox API access",
+        "Unwire PDM Proxmox host API access",
         "Unwire reverse proxy",
         "Unwire SSO",
         "Unregister uptime monitor",
