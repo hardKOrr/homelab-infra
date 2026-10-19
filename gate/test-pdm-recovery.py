@@ -105,11 +105,18 @@ def main():
     assert "--source" in host_firewall_text and "pdm_config.proxmox.ip_address" in host_firewall_text
     assert "homelab-infra: {{ instance }} pdm-proxmox-api" in host_firewall_text
     assert "pdm_config.proxmox.node" in host_firewall_text
+    assert "include_tasks: ../proxmox/pdm-host-firewall-delete-rule.yml" in host_firewall_text
+    assert "--digest" not in host_firewall_text
     host_firewall_remove = (ROOT / "ansible/tasks/unwiring/pdm-proxmox-host-firewall.yml").read_text()
     assert "homelabinfra_config.proxmox.nodes" in host_firewall_remove
     host_firewall_remove_node = (ROOT / "ansible/tasks/unwiring/pdm-proxmox-host-firewall-node-remove.yml").read_text()
     assert "homelab-infra: {{ instance }} pdm-proxmox-api" in host_firewall_remove_node
-    assert "pvesh" in host_firewall_remove_node and "delete" in host_firewall_remove_node
+    assert "include_tasks: ../proxmox/pdm-host-firewall-delete-rule.yml" in host_firewall_remove_node
+    assert "--digest" not in host_firewall_remove_node
+    host_firewall_delete = (ROOT / "ansible/tasks/proxmox/pdm-host-firewall-delete-rule.yml").read_text()
+    assert "Read rules before deleting an owned rule" in host_firewall_delete
+    assert "--digest" in host_firewall_delete and "_pdm_host_firewall_current_rule[0].digest" in host_firewall_delete
+    assert "Verify rule is still owned before deleting" in host_firewall_delete
     installer_vm = (ROOT / "ansible/tasks/proxmox/create-installer-vm.yml").read_text()
     assert "installer_vm_boot | default('order=ide2;scsi0')" in installer_vm
     assert "startswith(\n          installer_vm_storage ~ ':'" in installer_vm

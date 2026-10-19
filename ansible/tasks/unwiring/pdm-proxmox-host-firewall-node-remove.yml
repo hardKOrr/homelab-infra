@@ -24,13 +24,8 @@
   no_log: true
 
 - name: PDM host firewall | Delete only owned API rules
-  ansible.builtin.command:
-    argv: >-
-      {{ ['pvesh', 'delete', '/nodes/' ~ pdm_firewall_node ~ '/firewall/rules/' ~ (item.pos | string)]
-         + (['--digest', item.digest] if item.digest | default('') | length > 0 else []) }}
-  delegate_to: "{{ pdm_config.proxmox.node }}"
+  ansible.builtin.include_tasks: ../proxmox/pdm-host-firewall-delete-rule.yml
   loop: "{{ _pdm_host_firewall_owned | sort(attribute='pos', reverse=true) }}"
   loop_control:
+    loop_var: pdm_firewall_owned_rule
     label: owned PDM API rule
-  changed_when: true
-  no_log: true
