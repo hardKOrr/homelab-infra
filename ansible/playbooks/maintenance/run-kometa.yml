@@ -19,6 +19,25 @@
         that: instance == 'kometa'
         fail_msg: This playbook runs only the Kometa instance.
 
+    - name: Load Kometa defaults
+      ansible.builtin.include_vars:
+        file: ../../vars/app-defaults/kometa.yml
+        name: _app_defaults
+
+    - name: Load Kometa instance configuration
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _instance_config
+      failed_when: false
+
+    - name: Merge Kometa config and Vaultwarden values
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ _app_defaults.kometa_defaults
+             | combine(_instance_config | default({}), recursive=True)
+             | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})},
+                       recursive=True) }}
+
     - name: Resolve the cluster and API host
       ansible.builtin.include_tasks: ../../tasks/kubernetes/resolve-cluster.yml
 
@@ -28,55 +47,45 @@
     - name: Read the operator-owned Kometa configuration
       ansible.builtin.set_fact:
         _kometa_config_document: >-
-          {{ homelabinfra_vault.apps[instance].config_yml | from_yaml }}
+          {{ app_config.app.config_yml | from_yaml }}
       no_log: true
 
-    - name: Check Plex endpoint candidates from the cluster
+    - name: Require a configured Plex endpoint and token
+      ansible.builtin.assert:
+        that:
+          - _kometa_config_document is mapping
+          - _kometa_config_document.plex is mapping
+          - _kometa_config_document.plex.url | default('', true) | length > 0
+          - _kometa_config_document.plex.token | default('', true) | length > 0
+        fail_msg: Kometa config.yml must define plex.url and plex.token.
+      no_log: true
+
+    - name: Check the configured Plex endpoint from the cluster
       ansible.builtin.uri:
         url: >-
-          {{ item.url | regex_replace('/+$', '') }}/identity
+          {{ _kometa_config_document.plex.url | regex_replace('/+$', '') }}/identity
         method: GET
         headers:
-          X-Plex-Token: "{{ hostvars['localhost'].homelabinfra_vault.media.plex.token }}"
+          X-Plex-Token: "{{ _kometa_config_document.plex.token }}"
         status_code: [200]
         return_content: false
       delegate_to: "{{ k8s_api_host }}"
       become: true
       register: _kometa_plex_endpoint
-      loop: >-
-        {{ plex_endpoint_candidates | default([
-             {'name': 'configured',
-              'url': hostvars['localhost']._kometa_config_document.plex.url}
-           ]) }}
-      loop_control:
-        label: "{{ item.name }}"
       failed_when: false
       changed_when: false
       no_log: true
 
-    - name: Build a safe Plex endpoint status summary
-      ansible.builtin.set_fact:
-        _kometa_plex_endpoint_summary: >-
-          {{ (_kometa_plex_endpoint_summary | default([]))
-             + [item.item.name ~ '=' ~ (item.status | default(0) | string)] }}
-      loop: "{{ _kometa_plex_endpoint.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
-      no_log: true
-
-    - name: Report endpoint labels and status codes
+    - name: Report configured Plex endpoint status
       ansible.builtin.debug:
-        msg: "{{ _kometa_plex_endpoint_summary }}"
+        msg: >-
+          Configured Plex endpoint HTTP {{ _kometa_plex_endpoint.status | default(0) }}
 
-    - name: Require a Plex endpoint candidate to be reachable
+    - name: Require the configured Plex endpoint to be reachable
       ansible.builtin.assert:
-        that: >-
-          _kometa_plex_endpoint.results
-          | selectattr('status', 'defined')
-          | selectattr('status', 'equalto', 200)
-          | list | length > 0
+        that: _kometa_plex_endpoint.status | default(0) | int == 200
         fail_msg: >-
-          No Plex endpoint candidate was reachable from the cluster node.
+          The configured Plex endpoint was not reachable from the cluster node.
 
   tasks:
     - name: Run the deployed Kometa CronJob
@@ -89,11 +98,12 @@
     - name: Require a clean Kometa completion log
       ansible.builtin.assert:
         that:
-          - k8s_job_log is search('(?im)\\bFinished\\b')
+          - k8s_job_log is search('(?m)\\bFinished\\b')
           - >-
             k8s_job_log is not search(
-              '(?im)\\b(?:Config Error|Plex Error|TMDb Error|Critical Summary|Traceback|FATAL)\\b'
+              '(?m)^.*\\|\\s*(?:ERROR|CRITICAL|FATAL)\\s*\\|'
             )
+          - k8s_job_log is not search('(?m)^Traceback \\(most recent call last\\):')
         fail_msg: >-
           Kometa's Job completed, but its output contains a fatal, configuration or service
           error. Review the job output printed above.

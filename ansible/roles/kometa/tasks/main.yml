@@ -51,10 +51,13 @@
     that:
       - _kometa_collections_document is mapping
       - (_kometa_collections_document.collections | default({})) is mapping
-      - (_kometa_collections_document.collections | default({}) | length) > 0
+      - (_kometa_collections_document.dynamic_collections | default({})) is mapping
+      - >-
+        (_kometa_collections_document.collections | default({}) | length) > 0
+        or (_kometa_collections_document.dynamic_collections | default({}) | length) > 0
     fail_msg: >-
       homelab-infra/apps/{{ instance }} field collections_yml must contain a non-empty
-      Kometa collections mapping.
+      Kometa collections or dynamic_collections mapping.
   when: _kometa_collections_yml | length > 0
   no_log: true
 
