@@ -50,8 +50,14 @@ def verify_bundle(directory, expected_version):
     if not re.fullmatch(r"[0-9]+", version) or version != str(expected_version):
         raise RecoveryError("recovery point and target PostgreSQL major versions do not match")
 
+    verify_binary = shutil.which("pg_verifybackup")
+    if verify_binary is None:
+        # Debian installs versioned PostgreSQL utilities under /usr/lib rather than
+        # exposing every client tool through pg_wrapper on PATH.
+        verify_binary = f"/usr/lib/postgresql/{expected_version}/bin/pg_verifybackup"
+
     run_checked(
-        ["pg_verifybackup", str(cluster)],
+        [verify_binary, str(cluster)],
         "PostgreSQL recovery point failed native backup verification",
     )
     return cluster

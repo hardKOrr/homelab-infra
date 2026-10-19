@@ -170,6 +170,23 @@ def check_native_verification_and_version_guard():
             else:
                 raise AssertionError("a cross-major recovery point was allowed")
 
+            original_which = POSTGRESQL_RECOVERY.shutil.which
+            original_run_checked = POSTGRESQL_RECOVERY.run_checked
+            verify_commands = []
+
+            def record_versioned_verifier(argv, message):
+                verify_commands.append(argv)
+                return ""
+
+            POSTGRESQL_RECOVERY.shutil.which = lambda _name: None
+            POSTGRESQL_RECOVERY.run_checked = record_versioned_verifier
+            try:
+                POSTGRESQL_RECOVERY.verify_bundle(source, "16")
+            finally:
+                POSTGRESQL_RECOVERY.shutil.which = original_which
+                POSTGRESQL_RECOVERY.run_checked = original_run_checked
+            assert verify_commands[0][0] == "/usr/lib/postgresql/16/bin/pg_verifybackup"
+
             (source / "cluster" / "backup_manifest").unlink()
             try:
                 POSTGRESQL_RECOVERY.verify_bundle(source, "16")
