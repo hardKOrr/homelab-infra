@@ -1029,7 +1029,8 @@ def wireguard_peer_address_uses_the_ipaddr_filter():
     validation = next(task["ansible.builtin.assert"] for task in tasks
                       if task.get("name") == "WireGuard | Validate peer declaration")
     checks = validation["that"]
-    assert any(check == "_wg_peer.vpn_address | ansible.utils.ipaddr" for check in checks), checks
+    assert any(check == "(_wg_peer.vpn_address | ansible.utils.ipaddr) is string"
+               for check in checks), checks
     assert not any("is ansible.utils.ipaddr" in check for check in checks), checks
 
 
