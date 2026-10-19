@@ -11,7 +11,9 @@
 #
 # The default backend is PostgreSQL 16. Keep application/database version pairings
 # explicit when an application requires a particular major version.
-# PostgreSQL defaults to a native LXC; set proxmox.type: vm only for an explicit VM.
+# PostgreSQL defaults to a native LXC. Existing PostgreSQL VMs must set
+# proxmox.type: vm in this file before running Deploy or Restore App; otherwise
+# the configured type will not match the existing guest.
 
 # proxmox:
 #   cores: 4
