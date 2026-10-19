@@ -56,6 +56,10 @@
     state: present
     update_cache: true
 
+- name: PostgreSQL | Configure the PBS client repository when backups are enabled
+  ansible.builtin.include_tasks: install-pbs-client.yml
+  when: app_config.backup.enabled | default(false) | bool
+
 - name: PostgreSQL | Install the PGDG signing key
   ansible.builtin.get_url:
     url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
@@ -77,6 +81,22 @@
       - python3-psycopg2
     state: present
     update_cache: false
+
+- name: PostgreSQL | Install the PBS backup client when backups are enabled
+  ansible.builtin.apt:
+    name: proxmox-backup-client
+    state: present
+    update_cache: false
+  when: app_config.backup.enabled | default(false) | bool
+
+- name: PostgreSQL | Install the native recovery helper when backups are enabled
+  ansible.builtin.copy:
+    src: postgresql-recovery.py
+    dest: /usr/local/sbin/homelab-postgresql-recovery
+    owner: root
+    group: root
+    mode: "0750"
+  when: app_config.backup.enabled | default(false) | bool
 
 # The Debian package creates `main` only when postgresql-NN is first installed.
 # Remove App keeps the packages installed; after a destructive database removal the
@@ -174,6 +194,14 @@
       {% for cidr in app_config.app.client_cidrs %}
       host    all             all             {{ cidr }}               scram-sha-256
       {% endfor %}
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Permit native recovery through the local superuser socket
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_hba }}"
+    regexp: '^local\s+replication\s+postgres\s+peer\s*$'
+    line: "local replication postgres peer"
+    insertbefore: BOF
   notify: Restart PostgreSQL
 
 - name: PostgreSQL | Enable and start service
