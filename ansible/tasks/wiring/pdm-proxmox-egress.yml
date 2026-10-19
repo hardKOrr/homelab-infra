@@ -72,7 +72,8 @@
           {%- for target in _pdm_firewall_targets -%}
           {%-   set _ = rules.append({
                   'name': 'pve-api-' ~ target.remote ~ '-' ~ loop.index,
-                  'protocol': 'TCP', 'port': '8006', 'destination': target.address}) -%}
+                  'protocol': 'TCP', 'port': '8006', 'destination': target.address,
+                  'sequence': pdm_config.firewall.proxmox_api_sequence | default(250)}) -%}
           {%- endfor -%}
           {{ rules | to_json }}
 

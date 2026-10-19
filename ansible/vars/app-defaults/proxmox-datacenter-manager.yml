@@ -13,3 +13,5 @@ proxmox_datacenter_manager_defaults:
   backup: {storage: ''}
   # Complete remote allow-list; authority defaults to read-only when omitted.
   remotes: []
+  # Keep this exact node/port exception ahead of broad private-network deny rules.
+  firewall: {proxmox_api_sequence: 250}

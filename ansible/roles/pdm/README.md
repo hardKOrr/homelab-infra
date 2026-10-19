@@ -24,7 +24,9 @@ not create tokens, update remotes, operate remote VMs, change clusters, or insta
 
 When OPNsense is configured, Deploy opens TCP 8006 from the PDM guest only to the declared
 PVE remote nodes. Node names resolve through `proxmox.nodes`; other hostnames resolve through
-the runner. Remove withdraws only the PDM-owned egress rules.
+the runner. The PDM rules use `firewall.proxmox_api_sequence` (default `250`) so this exact
+exception can precede a broader private-network deny; choose a value below that deny when
+needed. Remove withdraws only the PDM-owned egress rules.
 
 PDM configuration, including `remotes.cfg`, is under `/etc/proxmox-datacenter-manager/`.
 **Backup PDM** creates a PBS-backed VM backup using the configured `backup.storage`; that image

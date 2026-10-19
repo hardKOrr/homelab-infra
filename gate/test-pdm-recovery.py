@@ -54,9 +54,13 @@ def main():
     pdm_firewall_tasks = list(tasks(pdm_firewall))
     assert any("homelabinfra_config.proxmox.nodes" in str(item) for item in pdm_firewall_tasks)
     assert any("getent" in str(item) and "ahostsv4" in str(item) for item in pdm_firewall_tasks)
-    assert any("8006" in str(item) and "destination" in str(item) for item in pdm_firewall_tasks)
+    assert any("8006" in str(item) and "destination" in str(item)
+               and "proxmox_api_sequence" in str(item) for item in pdm_firewall_tasks)
     assert any("../firewall/open-app-access.yml" in str(item) for item in pdm_firewall_tasks)
+    pdm_defaults = load("ansible/vars/app-defaults/proxmox-datacenter-manager.yml")
+    assert pdm_defaults["proxmox_datacenter_manager_defaults"]["firewall"]["proxmox_api_sequence"] == 250
     example = load("config.example/apps/proxmox-datacenter-manager.example.yml")
+    assert example["firewall"]["proxmox_api_sequence"] == 250
     remote_item = example["remotes"][0]["vaultwarden"]["item"]
     assert remote_item.startswith("homelab-infra/")
     assert "/" not in remote_item.removeprefix("homelab-infra/")
