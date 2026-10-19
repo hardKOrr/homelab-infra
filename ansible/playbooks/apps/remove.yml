@@ -1785,7 +1785,10 @@
           loop: "{{ _rm_service_names | default([]) }}"
           failed_when:
             - _rm_service_stop is failed
-            - "'could not be found' not in (_rm_service_stop.msg | default(''))"
+            - >-
+              'could not be found' not in (_rm_service_stop.msg | default('') | lower)
+              and 'could not find the requested service' not in
+              (_rm_service_stop.msg | default('') | lower)
 
         - name: Report an already-removed service
           ansible.builtin.debug:
@@ -1794,7 +1797,10 @@
               {{ item.item }} on
               {{ inventory_hostname }} — nothing to stop.
           loop: "{{ _rm_service_stop.results | default([]) }}"
-          when: "'could not be found' in (item.msg | default(''))"
+          when: >-
+            'could not be found' in (item.msg | default('') | lower)
+            or 'could not find the requested service' in
+            (item.msg | default('') | lower)
 
         # PostgreSQL's data directory is not the cluster's whole identity: Debian keeps
         # its cluster registration and configuration under /etc/postgresql. Drop each

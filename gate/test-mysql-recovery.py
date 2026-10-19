@@ -138,6 +138,11 @@ def check_contract():
     assert task_named(restore, "MySQL restore | Remove private staging data")
 
     remove = task_tree(ROOT / "ansible/playbooks/apps/remove.yml")
+    stop_services = task_named(remove, "Stop and disable every service unit")
+    missing_unit_handling = str(stop_services["failed_when"])
+    assert "could not find the requested service" in missing_unit_handling
+    already_removed = task_named(remove, "Report an already-removed service")
+    assert "could not find the requested service" in str(already_removed["when"])
     assert task_named(remove, "Validate the explicit guest destruction request before unwiring")
     ownership_guard = task_named(remove, "Verify ownership and non-shared tags before unwiring")
     assert "_+lab" in str(ownership_guard["ansible.builtin.assert"]["that"])
