@@ -1,0 +1,291 @@
+---
+- name: MariaDB restore | Resolve recovery identities and selected points
+  ansible.builtin.set_fact:
+    _mariadb_restore_source_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true) or instance, true) }}
+    _mariadb_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _mariadb_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _mariadb_restore_prepoint: "{{ restore_pre_restore_point | default('') }}"
+    _application_restore_complete: false
+
+- name: MariaDB restore | Assert the recovery contract
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _mariadb_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _mariadb_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (_mariadb_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      MariaDB restore needs its application-consistent recovery contract, safe backup ids,
+      PBS, and a selected recovery point for overwrite=true.
+
+- name: MariaDB restore | Require the source point to belong to its backup group
+  ansible.builtin.assert:
+    that:
+      - _mariadb_restore_snapshot.startswith('host/' ~ _mariadb_restore_source_backup_id ~ '/')
+      - _mariadb_restore_snapshot | length > ('host/' ~ _mariadb_restore_source_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected MariaDB recovery point must belong to
+      host/{{ _mariadb_restore_source_backup_id }}/.
+  when: _mariadb_restore_snapshot | length > 0
+
+- name: MariaDB restore | Require the existing-target point to belong to its backup group
+  ansible.builtin.assert:
+    that:
+      - _mariadb_restore_prepoint.startswith('host/' ~ _mariadb_restore_target_backup_id ~ '/')
+      - _mariadb_restore_prepoint | length > ('host/' ~ _mariadb_restore_target_backup_id ~ '/') | length
+    fail_msg: >-
+      The independent MariaDB pre-restore point must belong to
+      host/{{ _mariadb_restore_target_backup_id }}/.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: MariaDB restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: MariaDB restore | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for MariaDB. Deploy PBS before listing or restoring
+      application data.
+
+- name: MariaDB restore | Require the installed PBS client
+  ansible.builtin.stat:
+    path: /usr/bin/proxmox-backup-client
+  register: _mariadb_restore_client
+  changed_when: false
+
+- name: MariaDB restore | Require the PBS client binary
+  ansible.builtin.assert:
+    that: _mariadb_restore_client.stat.exists and _mariadb_restore_client.stat.isreg
+    fail_msg: >-
+      MariaDB has no installed PBS client. Deploy the instance with the current MariaDB role
+      before requesting an application restore.
+
+- name: MariaDB restore | List source recovery points in plan mode
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - list
+      - "host/{{ _mariadb_restore_source_backup_id }}"
+      - --output-format
+      - text
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _mariadb_restore_snapshots
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - not (restore_overwrite | bool)
+    - _mariadb_restore_snapshot | length == 0
+
+- name: MariaDB restore | Report a failed snapshot listing
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _mariadb_restore_snapshots }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: MariaDB restore | PBS snapshot listing failed
+  when:
+    - _mariadb_restore_snapshots is defined
+    - not (_mariadb_restore_snapshots.skipped | default(false) | bool)
+
+- name: MariaDB restore | Show source recovery points in plan mode
+  ansible.builtin.debug:
+    msg: >-
+      PBS recovery points for host/{{ _mariadb_restore_source_backup_id }}:
+      {{ _mariadb_restore_snapshots.stdout }}
+  when:
+    - not (restore_overwrite | bool)
+    - _mariadb_restore_snapshot | length == 0
+
+- name: MariaDB restore | Verify the selected recovery archive
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - files
+      - "{{ _mariadb_restore_snapshot }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _mariadb_restore_source_files
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: _mariadb_restore_snapshot | length > 0
+
+- name: MariaDB restore | Report an unavailable source archive
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _mariadb_restore_source_files }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: MariaDB restore | selected PBS point is unavailable
+  when: _mariadb_restore_source_files is defined
+
+- name: MariaDB restore | Require the selected logical archive
+  ansible.builtin.assert:
+    that: "'mariadb.pxar' in _mariadb_restore_source_files.stdout"
+    fail_msg: >-
+      Recovery point {{ _mariadb_restore_snapshot }} lacks MariaDB's logical archive; the
+      current instance has not been changed.
+  when: _mariadb_restore_snapshot | length > 0
+
+- name: MariaDB restore | Verify the independent pre-restore archive
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - files
+      - "{{ _mariadb_restore_prepoint }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _mariadb_restore_prepoint_files
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: MariaDB restore | Report an unavailable pre-restore archive
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _mariadb_restore_prepoint_files }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: MariaDB restore | independent pre-restore point is unavailable
+  when:
+    - _mariadb_restore_prepoint_files is defined
+    - not (_mariadb_restore_prepoint_files.skipped | default(false) | bool)
+
+- name: MariaDB restore | Require the pre-restore logical archive
+  ansible.builtin.assert:
+    that: "'mariadb.pxar' in _mariadb_restore_prepoint_files.stdout"
+    fail_msg: >-
+      The independent MariaDB pre-restore point lacks its logical archive; the current
+      instance has not been changed.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: MariaDB restore | Explain the selected recovery point in plan mode
+  ansible.builtin.debug:
+    msg: >-
+      No data was changed. Re-run with overwrite=true and
+      pre_restore_point={{ _mariadb_restore_prepoint }} to apply
+      {{ _mariadb_restore_snapshot }} to this MariaDB instance.
+  when:
+    - not (restore_overwrite | bool)
+    - _mariadb_restore_snapshot | length > 0
+
+- name: MariaDB restore | Create private restore staging space
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: "{{ instance }}-mariadb-restore-"
+  register: _mariadb_restore_tmp
+  when: restore_overwrite | bool
+
+- name: MariaDB restore | Apply the selected point with rollback protection
+  when: restore_overwrite | bool
+  block:
+    - name: MariaDB restore | Create private archive directories
+      ansible.builtin.file:
+        path: "{{ _mariadb_restore_tmp.path }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop: [source, safety]
+
+    - name: MariaDB restore | Download the selected recovery archive
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - restore
+          - "{{ _mariadb_restore_snapshot }}"
+          - mariadb.pxar
+          - "{{ _mariadb_restore_tmp.path }}/source"
+          - --allow-existing-dirs
+          - "true"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _mariadb_restore_source_download
+      no_log: true
+      changed_when: true
+
+    - name: MariaDB restore | Download the pre-restore safety archive
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - restore
+          - "{{ _mariadb_restore_prepoint }}"
+          - mariadb.pxar
+          - "{{ _mariadb_restore_tmp.path }}/safety"
+          - --allow-existing-dirs
+          - "true"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _mariadb_restore_safety_download
+      no_log: true
+      changed_when: true
+      when:
+        - restore_destination | default('existing') == 'existing'
+        - _mariadb_restore_prepoint | length > 0
+
+    - name: MariaDB restore | Import the point and retain rollback state until verified
+      ansible.builtin.command:
+        argv: >-
+          {{ ['python3', '/usr/local/sbin/homelab-mariadb-recovery', 'restore',
+              _mariadb_restore_tmp.path ~ '/source',
+              app_config.app.data_path | default('/var/lib/mysql'),
+              app_config.app.service_name | default('mariadb')]
+             + ([_mariadb_restore_tmp.path ~ '/safety']
+                if restore_destination | default('existing') == 'existing'
+                   and _mariadb_restore_prepoint | length > 0 else []) }}
+      register: _mariadb_restore_import
+      changed_when: true
+
+    - name: MariaDB restore | Mark the recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+  always:
+    - name: MariaDB restore | Remove private staging data
+      ansible.builtin.file:
+        path: "{{ _mariadb_restore_tmp.path }}"
+        state: absent
+      when: _mariadb_restore_tmp.path is defined

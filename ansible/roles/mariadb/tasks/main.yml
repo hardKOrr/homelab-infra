@@ -3,9 +3,36 @@
 # Compose files so its data, recovery path, and credentials remain explicit.
 - name: MariaDB | Install server and Python client
   ansible.builtin.apt:
-    name: [mariadb-server, python3-pymysql]
+    name: [mariadb-server, mariadb-client, python3-pymysql]
     state: present
     update_cache: true
+
+- name: MariaDB | Install the PBS client repository when application backups are enabled
+  ansible.builtin.include_tasks: install-pbs-client.yml
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: MariaDB | Install the PBS backup client
+  ansible.builtin.apt:
+    name: proxmox-backup-client
+    state: present
+    update_cache: true
+  when:
+    - app_config.backup.enabled | default(false) | bool
+    - >-
+      ((homelabinfra_infra | default({})).get('backups', {}).get('host', '')
+       | length) > 0
+
+- name: MariaDB | Install the native recovery helper
+  ansible.builtin.copy:
+    src: mariadb-recovery.py
+    dest: /usr/local/sbin/homelab-mariadb-recovery
+    owner: root
+    group: root
+    mode: "0750"
 
 - name: MariaDB | Permit application-network listeners
   ansible.builtin.template:

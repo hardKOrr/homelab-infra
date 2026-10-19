@@ -79,6 +79,7 @@ templates.
   replacement restores the original `wp-content` tree and database. It also checks that
   the bind-mounted data directory is accessible to Apache's `www-data` user.
 - `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
+- `test-mariadb-recovery.py`: native root-socket exports, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem restore rollback.
 
 On a Windows checkout accessed through WSL, wrap each command:
 
@@ -86,5 +87,6 @@ On a Windows checkout accessed through WSL, wrap each command:
 wsl bash -lc 'bash gate/lint.sh'
 wsl bash -lc 'bash gate/test.sh'
 ```
+
 
 The Gate workflow runs lint and test on pull requests targeting master and pushes to master.
