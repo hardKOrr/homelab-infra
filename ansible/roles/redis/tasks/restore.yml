@@ -15,10 +15,13 @@
       {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
          or restore_target | default(instance, true), true) }}
     _redis_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _redis_restore_target_instance: "{{ restore_target | default(instance, true) }}"
     _redis_restore_source_password: >-
       {{ (homelabinfra_vault.apps | default({})).get(
            restore_source_instance | default(instance, true), {}).get('password', '') }}
-    _redis_restore_target_password: "{{ app_config.app.password | default('') }}"
+    _redis_restore_target_password: >-
+      {{ (homelabinfra_vault.apps | default({})).get(
+           restore_target | default(instance, true), {}).get('password', '') }}
     _application_restore_complete: false
     _redis_restore_previous_moved: false
     _redis_restore_new_installed: false

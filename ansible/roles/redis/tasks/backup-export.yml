@@ -15,7 +15,7 @@
           - "{{ app_config.backup.pause_timeout_ms | default(600000) | int }}"
           - WRITE
       environment:
-        REDISCLI_AUTH: "{{ app_config.app.password }}"
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
       register: _redis_backup_pause
       changed_when: false
       no_log: true
@@ -36,7 +36,7 @@
           - ACL
           - SAVE
       environment:
-        REDISCLI_AUTH: "{{ app_config.app.password }}"
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
       register: _redis_backup_acl_save
       changed_when: false
       no_log: true
@@ -62,7 +62,7 @@
           - --rdb
           - "{{ _redis_backup_stage.path }}/dump.rdb"
       environment:
-        REDISCLI_AUTH: "{{ app_config.app.password }}"
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
       register: _redis_backup_rdb_export
       changed_when: true
       no_log: true
@@ -88,7 +88,7 @@
           - CLIENT
           - UNPAUSE
       environment:
-        REDISCLI_AUTH: "{{ app_config.app.password }}"
+        REDISCLI_AUTH: "{{ _redis_backup_password }}"
       changed_when: false
       no_log: true
       when: _redis_backup_writes_paused | bool

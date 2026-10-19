@@ -98,6 +98,18 @@ def check_backup():
     export = read_yaml("ansible/roles/redis/tasks/backup-export.yml")
     backup_tasks = list(tasks_recursive(backup)) + list(tasks_recursive(export))
 
+    credentials = task_named(
+        list(tasks_recursive(backup)), "Redis backup | Resolve paths and the recovery identity"
+    )
+    assert "homelabinfra_vault.apps" in str(
+        credentials["ansible.builtin.set_fact"]["_redis_backup_password"]
+    )
+    require_password = task_named(
+        list(tasks_recursive(backup)), "Redis backup | Require the backend password in Vaultwarden"
+    )
+    assert require_password.get("no_log") is True
+    assert "_redis_backup_password" in str(require_password["ansible.builtin.assert"]["that"])
+
     export_block = task_named(list(tasks_recursive(backup)), "Redis backup | Export and upload the recovery point")
     assert "backup-export.yml" in str(export_block["block"])
     assert "always" in export_block
@@ -119,6 +131,8 @@ def check_backup():
     acl_mode = task_named(backup_tasks, "Redis backup | Restore the ACL file ownership and mode")
     rdb = task_named(backup_tasks, "Redis backup | Export a consistent RDB through Redis replication")
     acl_copy = task_named(backup_tasks, "Redis backup | Copy the persisted ACL users into the recovery point")
+    for task in (pause, acl_save, rdb, unpause):
+        assert task["environment"]["REDISCLI_AUTH"] == "{{ _redis_backup_password }}"
     assert acl_save.get("no_log") is True
     assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
     assert acl_mode["ansible.builtin.file"]["group"] == "redis"
@@ -174,6 +188,11 @@ def check_restore():
     assert align.get("no_log") is True
     reconcile = task_named(tasks, "Redis restore | Persist the reconciled ACL file")
     assert reconcile.get("no_log") is True
+    restore_credentials = task_named(
+        tasks, "Redis restore | Resolve paths, credentials and recovery identities"
+    )["ansible.builtin.set_fact"]["_redis_restore_target_password"]
+    assert "homelabinfra_vault.apps" in str(restore_credentials)
+    assert "restore_target | default(instance, true)" in str(restore_credentials)
     acl_mode = task_named(tasks, "Redis restore | Restore the ACL file ownership and mode")
     assert acl_mode["ansible.builtin.file"]["owner"] == "redis"
     assert acl_mode["ansible.builtin.file"]["group"] == "redis"

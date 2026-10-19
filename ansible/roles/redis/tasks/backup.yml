@@ -7,8 +7,16 @@
     _redis_backup_acl_path: "{{ app_config.app.acl_path | default(app_config.app.data_path ~ '/users.acl') }}"
     _redis_backup_service_name: "{{ app_config.app.service_name | default('redis-server') }}"
     _redis_backup_id: "{{ app_config.backup.backup_id | default('', true) or instance }}"
+    _redis_backup_password: "{{ (homelabinfra_vault.apps | default({})).get(instance, {}).get('password', '') }}"
     _redis_backup_writes_paused: false
     _application_backup_complete: false
+  no_log: true
+
+- name: Redis backup | Require the backend password in Vaultwarden
+  ansible.builtin.assert:
+    that: _redis_backup_password | length > 0
+    fail_msg: Redis native backup needs the backend password stored in Vaultwarden.
+  no_log: true
 
 - name: Redis backup | Assert the application recovery contract
   ansible.builtin.assert:
