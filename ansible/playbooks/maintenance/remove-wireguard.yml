@@ -1,4 +1,7 @@
 ---
+# The canonical Vaultwarden item holds the server and peer keys that define this tunnel.
+# Keep it when removing the runtime guest so a fresh Deploy can recreate the same peer
+# configs. Remove withdraws the guest and its firewall rules, not this configuration.
 - name: WireGuard | Remove managed inbound server
   hosts: localhost
   gather_facts: false
@@ -42,16 +45,6 @@
         argv: [pct, destroy, "{{ hostvars[_wg_hosts[0]].proxmox_vmid | string }}", --purge, '1']
       delegate_to: "{{ homelabinfra_config.proxmox.node }}"
       when: _wg_hosts | length == 1
-    - ansible.builtin.import_tasks: ../../tasks/bitwarden/authenticate.yml
-    - ansible.builtin.command:
-        argv: [bw, list, items, --search, "homelab-infra/apps/{{ instance }}"]
-      register: _wg_items
-      changed_when: false
-      no_log: true
-    - ansible.builtin.command:
-        argv: [bw, delete, item, "{{ (_wg_items.stdout | from_json | selectattr('name', 'equalto', 'homelab-infra/apps/' ~ instance) | map(attribute='id') | list | first) }}"]
-      when: (_wg_items.stdout | from_json | selectattr('name', 'equalto', 'homelab-infra/apps/' ~ instance) | list | length) == 1
-      no_log: true
     - name: Withdraw the instance's firewall forward
       ansible.builtin.include_tasks: "../../tasks/unwiring/firewall-{{ homelabinfra_infra.firewall.provider }}.yml"
       vars:
