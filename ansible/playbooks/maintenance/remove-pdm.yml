@@ -17,27 +17,137 @@
         name: _pdm_instance
     - ansible.builtin.set_fact:
         pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance, recursive=True) }}"
+    - ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ pdm_config.routing.estate | default('') }}"
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ pdm_config.proxmox.ip_address | default('') }}"
+    wiring_upstream_port: "{{ pdm_config.app.port | default(8443) }}"
+    wiring_upstream_scheme: https
+    wiring_upstream_url: "https://{{ wiring_upstream_host }}:{{ wiring_upstream_port }}"
+    wiring_domain: "{{ pdm_config.proxmox.fqdn | default('') }}"
+    wiring_monitor_url: "https://{{ wiring_domain }}/"
+    wiring_app_display: "Proxmox Datacenter Manager ({{ instance }})"
+    wiring_identity_mode: "{{ pdm_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ pdm_config.routing.access | default('internal') }}"
   tasks:
     - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
     - name: PDM | Inspect requested VM
       ansible.builtin.command:
-        argv: [qm, config, "{{ pdm_config.proxmox.vmid | string }}"]
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
       delegate_to: "{{ pdm_config.proxmox.node }}"
       register: _pdm_existing
-      failed_when: false
       changed_when: false
-    - ansible.builtin.assert:
-        that: ["_pdm_existing.rc != 0 or (('_+lab' in _pdm_existing.stdout) and (('_' ~ instance) in _pdm_existing.stdout))"]
+    - name: PDM | Assert Proxmox lookup succeeded
+      ansible.builtin.assert:
+        that:
+          - _pdm_existing.rc == 0
+          - (_pdm_existing.stdout | from_json | type_debug) == 'list'
+        fail_msg: Could not inspect Proxmox guests; no PDM resources were changed.
+    - name: PDM | Select the requested VMID
+      ansible.builtin.set_fact:
+        _pdm_existing_vms: >-
+          {{ _pdm_existing.stdout | from_json
+             | selectattr('vmid', 'equalto', pdm_config.proxmox.vmid | int)
+             | list }}
+    - name: PDM | Assert the VMID is unique
+      ansible.builtin.assert:
+        that: _pdm_existing_vms | length <= 1
+        fail_msg: Proxmox returned multiple guests for the requested PDM VMID.
+    - name: PDM | Inspect managed VM config
+      ansible.builtin.command:
+        argv: [qm, config, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      register: _pdm_vm_config
+      changed_when: false
+      when: _pdm_existing_vms | length == 1
+    - name: PDM | Assert managed VM ownership
+      ansible.builtin.assert:
+        that:
+          - "'_+lab' in _pdm_vm_config.stdout"
+          - "('_' ~ instance) in _pdm_vm_config.stdout"
         fail_msg: Refusing to remove an unmanaged VM.
+      when: _pdm_existing_vms | length == 1
+    - name: Unwire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/unwiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Unwire SSO
+      ansible.builtin.include_tasks: ../../tasks/unwiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - homelabinfra_infra.sso.token | default('') | length > 0
+        - not ((app | default(instance)) is match('^authentik(?:-|$)'))
+    - name: Unregister uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/unwiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring is defined
+    - name: Unwire DNS
+      ansible.builtin.include_tasks: "../../tasks/unwiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+    - name: PDM | Read managed VM state
+      ansible.builtin.command:
+        argv: [qm, status, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      register: _pdm_vm_status
+      changed_when: false
+      when: _pdm_existing_vms | length == 1
+    - name: PDM | Recheck managed VM ownership before destruction
+      ansible.builtin.command:
+        argv: [qm, config, "{{ pdm_config.proxmox.vmid | string }}"]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      register: _pdm_pre_destroy_config
+      changed_when: false
+      when: _pdm_existing_vms | length == 1
+    - name: PDM | Assert VM remains dedicated to this instance
+      ansible.builtin.assert:
+        that:
+          - "'_+lab' in _pdm_pre_destroy_config.stdout"
+          - "('_' ~ instance) in _pdm_pre_destroy_config.stdout"
+          - "'_.shared' not in _pdm_pre_destroy_config.stdout"
+          - >-
+            (_pdm_pre_destroy_config.stdout
+             | regex_findall('(?m)^tags: +(.+)$') | first | default('')
+             | split(';') | select('match', '^_[A-Za-z0-9]')
+             | reject('equalto', '_' ~ instance) | list | length) == 0
+        fail_msg: >-
+          Refusing to destroy the PDM VM because its live ownership or dedicated-instance
+          tags changed while integrations were being withdrawn.
+      when: _pdm_existing_vms | length == 1
     - name: PDM | Stop managed appliance VM
       ansible.builtin.command:
         argv: [qm, stop, "{{ pdm_config.proxmox.vmid | string }}"]
       delegate_to: "{{ pdm_config.proxmox.node }}"
-      when: _pdm_existing.rc == 0
-      failed_when: false
-      changed_when: _pdm_existing.rc == 0
+      when:
+        - _pdm_existing_vms | length == 1
+        - "_pdm_vm_status.stdout is search('status: running')"
     - name: PDM | Destroy managed appliance VM
       ansible.builtin.command:
         argv: [qm, destroy, "{{ pdm_config.proxmox.vmid | string }}"]
       delegate_to: "{{ pdm_config.proxmox.node }}"
-      when: _pdm_existing.rc == 0
+      when: _pdm_existing_vms | length == 1
+    - name: PDM | Verify the VM is absent
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ pdm_config.proxmox.node }}"
+      register: _pdm_after_remove
+      changed_when: false
+    - name: PDM | Assert the VM is absent from the cluster
+      ansible.builtin.assert:
+        that:
+          - _pdm_after_remove.rc == 0
+          - (_pdm_after_remove.stdout | from_json | type_debug) == 'list'
+          - >-
+            (_pdm_after_remove.stdout | from_json
+             | selectattr('vmid', 'equalto', pdm_config.proxmox.vmid | int)
+             | list | length) == 0
+        fail_msg: >-
+          Proxmox still reports VM {{ pdm_config.proxmox.vmid }} after Remove.
+          Inspect its exact project tags and storage before retrying.
