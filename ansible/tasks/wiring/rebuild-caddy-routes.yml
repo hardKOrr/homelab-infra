@@ -1,0 +1,66 @@
+---
+# Restore all current Caddy routes after a fresh Caddy guest has an empty route table.
+# Proxmox's _+lab ownership group and each _<instance> tag are the deployment records;
+# the instance config and app defaults supply the wiring contract. Reusing caddy.yml
+# keeps route creation, drift correction and exactly-one verification identical to an
+# application's normal Deploy.
+
+- name: Rebuild Caddy routes | Resolve repository root
+  ansible.builtin.set_fact:
+    _caddy_rebuild_repo_root: >-
+      {{ caddy_rebuild_repo_root
+         if caddy_rebuild_repo_root is defined
+         else (lookup('ansible.builtin.first_found', {
+           'files': ['ansible/vars/app-defaults/_template.yml'],
+           'paths': [playbook_dir, playbook_dir ~ '/..',
+                     playbook_dir ~ '/../..', playbook_dir ~ '/../../..']
+         }) | dirname | dirname | dirname | dirname) }}
+    _caddy_rebuild_config_root: >-
+      {{ caddy_rebuild_config_root
+         if caddy_rebuild_config_root is defined
+         else _caddy_rebuild_repo_root ~ '/config' }}
+
+- name: Rebuild Caddy routes | Require complete Proxmox inventory
+  ansible.builtin.include_tasks: ../proxmox/assert-inventory.yml
+
+- name: Rebuild Caddy routes | Save default estate facts
+  ansible.builtin.set_fact:
+    _caddy_rebuild_base_infra: "{{ homelabinfra_infra }}"
+
+- name: Rebuild Caddy routes | Collect app defaults and deployed instance tags
+  ansible.builtin.set_fact:
+    _caddy_rebuild_app_slugs: >-
+      {{ lookup('ansible.builtin.fileglob',
+               _caddy_rebuild_repo_root ~ '/ansible/vars/app-defaults/*.yml',
+               wantlist=True)
+         | map('basename')
+         | map('replace', '.yml', '')
+         | reject('equalto', '_template')
+         | list }}
+    _caddy_rebuild_instances: >-
+      {{ groups['lab_managed'] | default([])
+         | map('extract', hostvars)
+         | map(attribute='proxmox_tags_parsed', default=[])
+         | flatten
+         | select('match', '^_[A-Za-z0-9]')
+         | map('regex_replace', '^_', '')
+         | reject('equalto', instance | default(''))
+         | unique
+         | sort
+         | list }}
+
+- name: Rebuild Caddy routes | Replay the route contract for every tagged app
+  ansible.builtin.include_tasks: rebuild-caddy-route.yml
+  loop: "{{ _caddy_rebuild_instances }}"
+  loop_control:
+    loop_var: caddy_rebuild_instance
+    label: "{{ caddy_rebuild_instance }}"
+
+- name: Rebuild Caddy routes | Restore default estate facts
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ (homelabinfra_infra
+          | dict2items
+          | rejectattr('key', 'in', ['domain', 'sso', 'dns', 'mail'])
+          | items2dict)
+         | combine(_caddy_rebuild_base_infra, recursive=True) }}
