@@ -55,6 +55,12 @@ spec:
                   mountPath: /config/config.yml
                   subPath: config.yml
                   readOnly: true
+{% if _kometa_collections_yml | default('', true) | length > 0 %}
+                - name: config
+                  mountPath: /config/collections.yml
+                  subPath: collections.yml
+                  readOnly: true
+{% endif %}
           volumes:
             - name: state
               persistentVolumeClaim:
