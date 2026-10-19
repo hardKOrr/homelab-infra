@@ -1252,6 +1252,131 @@ def immich_machine_learning_uses_only_a_declared_gpu_device():
     assert hardware["devices"] == ["/dev/dri/renderD128:/dev/dri/renderD128"], hardware
 
 
+def comfyui_accelerator_profile_controls_gpu_runtime():
+    template = read("ansible/roles/comfyui/templates/docker-compose.yml.j2")
+
+    def service(accelerator):
+        rendered = render(
+            template,
+            {
+                "ansible_managed": "Managed by gate test",
+                "instance": "comfyui",
+                "app_config": {
+                    "app": {
+                        "accelerator": accelerator,
+                        "image": (
+                            "ghcr.io/ai-dock/comfyui@sha256:5f08ab173b4d78babb6b003a875d495a64378815237e8b80c9248923dcda9a52"
+                            if accelerator == "cpu"
+                            else "ghcr.io/ai-dock/comfyui:latest-cuda"
+                        ),
+                        "port": 8188,
+                        "models_path": "/opt/comfyui/storage/models",
+                        "config_path": "/opt/comfyui/storage/user",
+                        "custom_nodes_path": "/opt/comfyui/storage/custom_nodes",
+                        "input_path": "/opt/comfyui/storage/input",
+                        "output_path": "/opt/comfyui/storage/output",
+                    }
+                },
+            },
+        )
+        return yaml.safe_load(rendered)["services"]["comfyui"]
+
+    role_tasks = yaml.safe_load(read("ansible/roles/comfyui/tasks/main.yml"))
+    cpu = service("cpu")
+    assert cpu["image"] == (
+        "ghcr.io/ai-dock/comfyui@sha256:5f08ab173b4d78babb6b003a875d495a64378815237e8b80c9248923dcda9a52"
+    ), cpu
+    assert "gpus" not in cpu, cpu
+    assert "deploy" not in cpu, cpu
+    assert "/opt/comfyui/storage/user:/opt/ComfyUI/user" in cpu["volumes"], cpu
+    healthcheck = cpu["healthcheck"]
+    assert healthcheck["test"][0] == "CMD-SHELL", healthcheck
+    assert "--max-redirect=0" in healthcheck["test"][1], healthcheck
+    assert "HTTP/[^ ]+ (200|302)( |$)" in healthcheck["test"][1], healthcheck
+    migration = yaml.safe_load(read("ansible/roles/comfyui/tasks/migrate-user-data.yml"))
+    migration_block = next(
+        task for task in migration if task.get("name") == "ComfyUI user data | Migrate existing container files"
+    )
+    assert any(
+        task.get("name")
+        == "ComfyUI user data | Merge files without replacing persistent data"
+        for task in migration_block["block"]
+    ), migration
+    migration_index = next(
+        i for i, task in enumerate(role_tasks)
+        if task.get("name") == "ComfyUI | Preserve existing user data before mounting persistent storage"
+    )
+    render_index = next(
+        i for i, task in enumerate(role_tasks)
+        if task.get("name") == "ComfyUI | Render the Compose project"
+    )
+    assert migration_index < render_index, role_tasks
+
+    cuda = service("cuda")
+    assert cuda["image"].endswith(":latest-cuda"), cuda
+    assert cuda["gpus"] == "all", cuda
+    assert cuda["deploy"]["resources"]["reservations"]["devices"] == [
+        {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
+    ], cuda
+
+    gpu_checks = [task for task in role_tasks if "NVIDIA" in task["name"] or "GPU" in task["name"]]
+    assert len(gpu_checks) == 4, gpu_checks
+    assert all(
+        task["when"] == "app_config.app.accelerator | default('cuda') == 'cuda'"
+        for task in gpu_checks
+    ), gpu_checks
+
+    role_defaults = yaml.safe_load(read("ansible/roles/comfyui/defaults/main.yml"))
+    health = next(
+        task for task in role_tasks if task["name"] == "ComfyUI | Wait for the system stats endpoint"
+    )
+    assert health["ansible.builtin.uri"]["follow_redirects"] == "none"
+    assert health["ansible.builtin.uri"]["status_code"] == [200, 302]
+    assert health["until"] == "_comfyui_health.status | default(0) in [200, 302]"
+    assert role_defaults["comfyui_cpu_http_retries"] == 120
+    assert role_defaults["comfyui_http_retries"] == 60
+    retries = health["retries"]
+    assert render(
+        retries,
+        {
+            "comfyui_cpu_http_retries": 120,
+            "comfyui_http_retries": 60,
+            "app_config": {"app": {"accelerator": "cpu"}},
+        },
+    ) == "120"
+    assert render(
+        retries,
+        {
+            "comfyui_cpu_http_retries": 120,
+            "comfyui_http_retries": 60,
+            "app_config": {"app": {"accelerator": "cuda"}},
+        },
+    ) == "60"
+
+    playbook = yaml.safe_load(read("ansible/playbooks/apps/comfyui.yml"))
+
+    def find_task(tasks, name):
+        for task in tasks:
+            if task.get("name") == name:
+                return task
+            for key in ("block", "rescue", "always"):
+                found = find_task(task.get(key, []), name)
+                if found:
+                    return found
+        return None
+
+    provision = playbook[0]["tasks"]
+    cloud_template = find_task(provision, "Ensure the Debian cloud-init template exists")
+    clone = find_task(provision, "Clone the ComfyUI VM from the cloud-init template")
+    attach = find_task(provision, "Attach the named ComfyUI PCI device")
+    assert cloud_template and clone and attach
+    placement = cloud_template["vars"]["proxmox_placement_class"]
+    assert render(placement, {"app_config": {"app": {"accelerator": "cpu"}}}) == "floating_vm"
+    assert render(placement, {"app_config": {"app": {"accelerator": "cuda"}}}) == "gpu_vm"
+    assert clone["vars"]["proxmox_placement_class"] == placement
+    assert attach["when"] == "app_config.app.accelerator | default('cuda') == 'cuda'"
+
+
 def immich_task_defaults_missing_gpu_device_to_empty():
     tasks = yaml.safe_load(read("ansible/roles/immich/tasks/main.yml"))
     task = task_named(tasks, "Immich | Store the backend and device contract in Vaultwarden")
@@ -1626,8 +1751,9 @@ if __name__ == "__main__":
     mail_consumers_open_smtp_egress()
     flaresolverr_rendering()
     immich_machine_learning_uses_only_a_declared_gpu_device()
+    comfyui_accelerator_profile_controls_gpu_runtime()
     immich_task_defaults_missing_gpu_device_to_empty()
-    print("Template rendering: Immich CPU mode omits device binds and hardware mode retains its declared device")
+    print("Template rendering: Immich and ComfyUI CPU modes omit GPU requests while hardware modes keep their declared devices")
     wireguard_opens_its_udp_forward_before_deploy()
     apps_open_access_through_the_shared_task()
     qbittorrent_enforces_peer_ports_before_start()

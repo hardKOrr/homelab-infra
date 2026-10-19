@@ -1,15 +1,14 @@
 ---
-# The PCI attach seam proves that the exact GPU belongs to this VM. These checks prove the
-# guest can use it before Compose starts: PCI assignment alone is not a CUDA health check.
-# The Debian guest image must have the matching NVIDIA driver and NVIDIA Container Toolkit
-# prepared for the passed-through card; the role refuses to hide a missing runtime behind a
-# CPU-only ComfyUI deployment.
+# The PCI attach seam proves that the exact GPU belongs to this VM. In CUDA mode these
+# checks prove the guest can use it before Compose starts: PCI assignment alone is not a
+# CUDA health check. CPU mode skips the NVIDIA checks and uses no GPU Compose requests.
 - name: ComfyUI | Verify the passed-through NVIDIA GPU is visible
   ansible.builtin.command:
     argv: [nvidia-smi, --query-gpu=name, --format=csv,noheader]
   register: _comfyui_nvidia_smi
   changed_when: false
   failed_when: false
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
 
 - name: ComfyUI | Assert the passed-through GPU is usable in the guest
   ansible.builtin.assert:
@@ -19,6 +18,7 @@
     fail_msg: >-
       The ComfyUI VM does not report an NVIDIA GPU through nvidia-smi. Verify the exact PCI
       device assignment, guest driver, console recovery, and VM reboot before deploying.
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
 
 - name: ComfyUI | Verify Docker exposes the NVIDIA runtime
   ansible.builtin.command:
@@ -26,6 +26,7 @@
   register: _comfyui_docker_info
   changed_when: false
   failed_when: false
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
 
 - name: ComfyUI | Assert Docker has the NVIDIA Container Toolkit runtime
   ansible.builtin.assert:
@@ -35,6 +36,7 @@
     fail_msg: >-
       Docker does not expose the NVIDIA runtime in {{ instance }}. Install/configure the
       NVIDIA Container Toolkit in the GPU guest before deploying ComfyUI.
+  when: app_config.app.accelerator | default('cuda') == 'cuda'
 
 - name: ComfyUI | Create project and persistent storage directories
   ansible.builtin.file:
@@ -74,6 +76,9 @@
       ComfyUI storage paths must remain below app.storage_path so model files and
       configuration share one owned recovery unit.
 
+- name: ComfyUI | Preserve existing user data before mounting persistent storage
+  ansible.builtin.include_tasks: migrate-user-data.yml
+
 - name: ComfyUI | Render the Compose project
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -99,16 +104,22 @@
 - name: ComfyUI | Wait for the system stats endpoint
   ansible.builtin.uri:
     url: "http://localhost:{{ app_config.app.port }}/system_stats"
-    status_code: 200
+    follow_redirects: none
+    status_code: [200, 302]
   register: _comfyui_health
-  until: _comfyui_health.status | default(0) == 200
-  retries: "{{ comfyui_http_retries }}"
+  until: _comfyui_health.status | default(0) in [200, 302]
+  retries: >-
+    {{ comfyui_cpu_http_retries
+       if app_config.app.accelerator | default('cuda') == 'cpu'
+       else comfyui_http_retries }}
   delay: "{{ comfyui_http_delay }}"
   changed_when: false
 
-- name: ComfyUI | Assert the health response identifies the GPU runtime
+- name: ComfyUI | Assert the health response includes system information
   ansible.builtin.assert:
     that:
-      - _comfyui_health.json is defined
-      - _comfyui_health.json.system is defined
-    fail_msg: ComfyUI answered its health endpoint without system information.
+      - >-
+        _comfyui_health.status | int == 302 or
+        (_comfyui_health.json is defined and _comfyui_health.json.system is defined)
+    fail_msg: >-
+      ComfyUI did not return its system information or the expected AI-Dock login redirect.

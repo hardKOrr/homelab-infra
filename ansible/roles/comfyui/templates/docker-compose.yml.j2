@@ -6,8 +6,9 @@ services:
     restart: unless-stopped
     ports:
       - "{{ app_config.app.port }}:8188"
+{% if app_config.app.accelerator | default('cuda') == 'cuda' %}
     # Compose asks Docker for every GPU visible to this VM. The VM itself receives only
-    # the exact PCI device named in app.pci_device; no second guest can use this card.
+    # the exact PCI device named in app.gpu_device; no second guest can use this card.
     gpus: all
     deploy:
       resources:
@@ -16,18 +17,21 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+{% endif %}
     environment:
       COMFYUI_PORT_HOST: "8188"
       AUTO_UPDATE: "false"
     volumes:
       - "{{ app_config.app.models_path }}:/workspace/storage/models"
-      - "{{ app_config.app.config_path }}:/workspace/storage/user"
+      - "{{ app_config.app.config_path }}:/opt/ComfyUI/user"
       - "{{ app_config.app.custom_nodes_path }}:/workspace/storage/custom_nodes"
       - "{{ app_config.app.input_path }}:/workspace/storage/input"
       - "{{ app_config.app.output_path }}:/workspace/storage/output"
       - /etc/localtime:/etc/localtime:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8188/system_stats || exit 1"]
+      # AI-Dock redirects unauthenticated requests to its login page. Inspect that
+      # response without following it, matching the Ansible readiness probe.
+      test: ["CMD-SHELL", "wget --spider --server-response --max-redirect=0 --quiet --timeout=5 --tries=1 http://127.0.0.1:8188/system_stats 2>&1 | grep -Eq 'HTTP/[^ ]+ (200|302)( |$)'"]
       interval: 30s
       timeout: 10s
       retries: 10
