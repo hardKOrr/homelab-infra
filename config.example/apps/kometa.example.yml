@@ -1,7 +1,15 @@
 ---
-# Kometa's complete secret-bearing config.yml belongs in Vaultwarden field config_yml of
-# homelab-infra/apps/kometa. Store it before deployment; it is mounted as a Kubernetes
-# Secret, never written to config/ or job output. This file controls the scheduled runtime.
+# Kometa's secret-bearing config.yml belongs in Vaultwarden field config_yml of
+# homelab-infra/apps/kometa. Optional custom collection definitions belong in the same
+# item's collections_yml field. Reference that file from config_yml with:
+#
+#   libraries:
+#     P2 Canary:
+#       collection_files:
+#         - file: config/collections.yml
+#
+# Both values are mounted from a Kubernetes Secret, never written to config/ or job output.
+# This file controls the scheduled runtime.
 # app:
 #   image: "kometateam/kometa:latest"
 #   storage: 1

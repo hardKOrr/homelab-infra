@@ -3,7 +3,7 @@
   uuid: 0cbefb9c-0632-4d22-8af8-79ee34b3d9d5
   name: Deploy Kometa
   group: Applications/Media & Entertainment/Library Management/Kometa
-  description: "Deploy Kometa as a Kubernetes CronJob. Store config.yml as Vaultwarden field homelab-infra/apps/<instance>.config_yml before deployment. It has no UI or public route."
+  description: "Deploy Kometa as a Kubernetes CronJob. Store config.yml as Vaultwarden field homelab-infra/apps/<instance>.config_yml before deployment. Optional custom collection definitions can be stored as collections_yml and referenced in config.yml. It has no UI or public route."
   loglevel: INFO
   executionEnabled: true
   scheduleEnabled: false

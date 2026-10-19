@@ -66,6 +66,9 @@ still supplies the venv, `BW_SERVER` and CA settings, and `LAB_STATE_DIR` defaul
 `/etc/homelab-infra/state`, so the run sees the same lab mode as every job. The runner
 checkout stays on `LAB_BRANCH` for Rundeck.
 
+To run Kometa's deployed CronJob once and read the complete output, use
+`lab-run playbooks/maintenance/run-kometa.yml`.
+
 ## Live operations
 
 Live runs may overlap; there is no lab lock. Ordinary runs use the on-disk checkout, so a

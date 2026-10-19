@@ -35,12 +35,42 @@
       homelab-infra/apps/{{ instance }} field config_yml must contain a YAML mapping.
   no_log: true
 
+- name: Kometa | Read the optional operator-owned collection file
+  ansible.builtin.set_fact:
+    _kometa_collections_yml: "{{ app_config.app.collections_yml | default('', true) }}"
+  no_log: true
+
+- name: Kometa | Validate the optional collection file as YAML
+  ansible.builtin.set_fact:
+    _kometa_collections_document: "{{ _kometa_collections_yml | from_yaml }}"
+  when: _kometa_collections_yml | length > 0
+  no_log: true
+
+- name: Kometa | Require a collection mapping when a collection file is stored
+  ansible.builtin.assert:
+    that:
+      - _kometa_collections_document is mapping
+      - (_kometa_collections_document.collections | default({})) is mapping
+      - (_kometa_collections_document.collections | default({}) | length) > 0
+    fail_msg: >-
+      homelab-infra/apps/{{ instance }} field collections_yml must contain a non-empty
+      Kometa collections mapping.
+  when: _kometa_collections_yml | length > 0
+  no_log: true
+
+- name: Kometa | Assemble the operator-owned configuration files
+  ansible.builtin.set_fact:
+    _kometa_secret_data: >-
+      {{ {'config.yml': _kometa_config_yml}
+         | combine({'collections.yml': _kometa_collections_yml}
+                   if _kometa_collections_yml | length > 0 else {}) }}
+  no_log: true
+
 - name: Kometa | Sync the configuration into the namespace
   ansible.builtin.include_tasks: ../../../tasks/kubernetes/sync-secret.yml
   vars:
     k8s_secret_name: "{{ instance }}-config"
-    k8s_secret_data:
-      config.yml: "{{ _kometa_config_yml }}"
+    k8s_secret_data: "{{ _kometa_secret_data }}"
   no_log: true
 
 - name: Kometa | Render the scheduled workload manifest

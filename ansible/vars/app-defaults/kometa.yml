@@ -4,10 +4,11 @@
 # config/apps/kometa.yml; the operator-owned Kometa config.yml itself belongs in the
 # canonical Vaultwarden item, not in a tracked or runner-local config file.
 #
-# Kometa's config normally contains Plex, TMDb, Trakt, and often *arr credentials. It is
-# therefore one opaque, secret-bearing document instead of a set of partial platform
-# guesses. Store it as `config_yml` in `homelab-infra/apps/<instance>` with Store Secret;
-# the role mounts that field at /config/config.yml for each CronJob run.
+# Kometa's config normally contains Plex, TMDb, Trakt, and often *arr credentials. Store
+# the main document as `config_yml` in `homelab-infra/apps/<instance>` with Store Secret.
+# Optional custom collection definitions go in `collections_yml`; the main config must
+# reference `config/collections.yml` under a library's `collection_files`. Both fields are
+# mounted from one Kubernetes Secret for each CronJob run.
 
 kometa_defaults:
   hosting: kubernetes
