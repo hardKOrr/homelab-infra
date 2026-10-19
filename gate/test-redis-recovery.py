@@ -320,17 +320,28 @@ def check_restore():
     assert acl_mode["ansible.builtin.file"]["mode"] == "0600"
     assert tasks.index(reconcile) < tasks.index(acl_mode)
 
+    start_redis = task_named(tasks, "Redis restore | Start Redis with the recovered state")
+    wait_for_port = task_named(tasks, "Redis restore | Wait for the restored service port")
+    assert wait_for_port["ansible.builtin.wait_for"] == {
+        "host": "127.0.0.1",
+        "port": "{{ app_config.app.port | int }}",
+        "state": "started",
+        "timeout": 60,
+    }
+
     target_auth = task_named(tasks, "Redis restore | Verify the target password after loading the ACL file")
     source_auth = task_named(tasks, "Redis restore | Verify the source password when the target password differs")
     for probe, registered in (
         (target_auth, "_redis_restore_target_auth"),
         (source_auth, "_redis_restore_source_auth"),
     ):
-        assert probe["until"] == f"{registered}.rc == 0"
-        assert probe["retries"] == 30
-        assert probe["delay"] == 2
+        assert "until" not in probe
+        assert "retries" not in probe
+        assert "delay" not in probe
         assert probe["failed_when"] is False
         assert probe.get("no_log") is True
+    assert tasks.index(start_redis) < tasks.index(wait_for_port) < tasks.index(target_auth)
+    assert tasks.index(target_auth) < tasks.index(source_auth)
 
     plan = task_named(tasks, "Redis restore | Show the read-only recovery point plan")
     assert "not (restore_overwrite | bool)" in plan["when"]
