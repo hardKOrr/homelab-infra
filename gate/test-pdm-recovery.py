@@ -35,7 +35,13 @@ def main():
     deploy = load("ansible/playbooks/apps/proxmox-datacenter-manager.yml")[0]
     deploy_tasks = list(tasks(deploy["tasks"]))
     deploy_names = [item.get("name", "") for item in deploy_tasks]
-    for name in ("Wire reverse proxy", "Wire SSO", "Register uptime monitor", "Wire DNS"):
+    for name in (
+        "Wire PDM Proxmox API access",
+        "Wire reverse proxy",
+        "Wire SSO",
+        "Register uptime monitor",
+        "Wire DNS",
+    ):
         assert name in deploy_names, f"PDM deploy must include {name}"
     deploy_vars = deploy["vars"]
     assert deploy_vars["wiring_upstream_scheme"] == "https"
@@ -44,6 +50,12 @@ def main():
     assert "pdm_config.proxmox.vlan" in deploy_text
     assert ",tag=" in deploy_text
     assert 'installer_vm_boot: "order=scsi0;ide2"' in deploy_text
+    pdm_firewall = load("ansible/tasks/wiring/pdm-proxmox-egress.yml")
+    pdm_firewall_tasks = list(tasks(pdm_firewall))
+    assert any("homelabinfra_config.proxmox.nodes" in str(item) for item in pdm_firewall_tasks)
+    assert any("getent" in str(item) and "ahostsv4" in str(item) for item in pdm_firewall_tasks)
+    assert any("8006" in str(item) and "destination" in str(item) for item in pdm_firewall_tasks)
+    assert any("../firewall/open-app-access.yml" in str(item) for item in pdm_firewall_tasks)
     example = load("config.example/apps/proxmox-datacenter-manager.example.yml")
     remote_item = example["remotes"][0]["vaultwarden"]["item"]
     assert remote_item.startswith("homelab-infra/")
@@ -85,7 +97,13 @@ def main():
     ownership = remove_names.index("PDM | Assert managed VM ownership")
     destroy = remove_names.index("PDM | Destroy managed appliance VM")
     assert inspect < ownership < remove_names.index("Unwire reverse proxy")
-    for name in ("Unwire reverse proxy", "Unwire SSO", "Unregister uptime monitor", "Unwire DNS"):
+    for name in (
+        "Unwire PDM Proxmox API access",
+        "Unwire reverse proxy",
+        "Unwire SSO",
+        "Unregister uptime monitor",
+        "Unwire DNS",
+    ):
         assert name in remove_names, f"PDM remove must include {name}"
         assert remove_names.index(name) < destroy, f"{name} must run before VM destruction"
     assert remove_names.index("PDM | Recheck managed VM ownership before destruction") < destroy

@@ -22,6 +22,10 @@ credential. `mutating` is an explicit per-remote exception. Retrieve credentials
 Vaultwarden after installation and add only declared remotes through PDM. This repository does
 not create tokens, update remotes, operate remote VMs, change clusters, or install remotes.
 
+When OPNsense is configured, Deploy opens TCP 8006 from the PDM guest only to the declared
+PVE remote nodes. Node names resolve through `proxmox.nodes`; other hostnames resolve through
+the runner. Remove withdraws only the PDM-owned egress rules.
+
 PDM configuration, including `remotes.cfg`, is under `/etc/proxmox-datacenter-manager/`.
 **Backup PDM** creates a PBS-backed VM backup using the configured `backup.storage`; that image
 contains the complete PDM configuration and remote definitions. **Restore PDM** requires the

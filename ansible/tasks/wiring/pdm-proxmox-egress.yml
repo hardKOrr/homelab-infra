@@ -1,0 +1,84 @@
+---
+# PDM needs the Proxmox API to read its configured PVE remotes. Give the appliance
+# only HTTPS access to those nodes; the remote token remains separately scoped by PVE.
+- name: PDM firewall | Allow configured PVE API access
+  when: (homelabinfra_infra | default({})).get('firewall', {}).get('provider', 'none') == 'opnsense'
+  block:
+    - name: PDM firewall | Build declared PVE remote node list
+      ansible.builtin.set_fact:
+        _pdm_pve_nodes: "{{ _pdm_pve_nodes_json | from_json }}"
+      vars:
+        _pdm_pve_nodes_json: >-
+          {%- set nodes = [] -%}
+          {%- for remote in pdm_config.remotes | default([]) if remote.type == 'pve' -%}
+          {%-   for node in remote.nodes -%}
+          {%-     set _ = nodes.append({'remote': remote.id, 'node': node}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ nodes | to_json }}
+
+    - name: PDM firewall | Resolve PVE hostnames not in the node map
+      ansible.builtin.command:
+        argv: [getent, ahostsv4, "{{ item.node }}"]
+      register: _pdm_pve_hostname_results
+      changed_when: false
+      failed_when: false
+      loop: "{{ _pdm_pve_nodes }}"
+      loop_control:
+        label: PDM remote node
+      when:
+        - item.node not in (homelabinfra_config.proxmox.nodes | default({}))
+        - item.node is not ansible.utils.ipv4_address
+
+    - name: PDM firewall | Resolve node addresses
+      ansible.builtin.set_fact:
+        _pdm_firewall_targets: "{{ _pdm_firewall_targets_json | from_json }}"
+      vars:
+        _pdm_firewall_targets_json: >-
+          {%- set targets = [] -%}
+          {%- set node_map = homelabinfra_config.proxmox.nodes | default({}) -%}
+          {%- set resolutions = _pdm_pve_hostname_results.results | default([]) -%}
+          {%- for entry in _pdm_pve_nodes -%}
+          {%-   set address = node_map.get(entry.node, '') -%}
+          {%-   if not address and entry.node is ansible.utils.ipv4_address -%}
+          {%-     set address = entry.node -%}
+          {%-   endif -%}
+          {%-   if not address -%}
+          {%-     set result = (resolutions | selectattr('item.node', 'equalto', entry.node) | list | first | default({})) -%}
+          {%-     if result.rc | default(1) | int == 0 and result.stdout_lines | default([]) | length > 0 -%}
+          {%-       set address = result.stdout_lines[0].split() | first -%}
+          {%-     endif -%}
+          {%-   endif -%}
+          {%-   set _ = targets.append(entry | combine({'address': address})) -%}
+          {%- endfor -%}
+          {{ targets | to_json }}
+
+    - name: PDM firewall | Require every declared PVE node to resolve to IPv4
+      ansible.builtin.assert:
+        that: item.address is ansible.utils.ipv4_address
+        fail_msg: >-
+          Each PDM PVE remote node must be an IPv4 address, a key in
+          homelabinfra_config.proxmox.nodes, or a hostname resolvable by the runner.
+      loop: "{{ _pdm_firewall_targets }}"
+      loop_control:
+        label: PDM remote node
+
+    - name: PDM firewall | Build node-scoped HTTPS egress rules
+      ansible.builtin.set_fact:
+        _pdm_firewall_egress: "{{ _pdm_firewall_egress_json | from_json }}"
+      vars:
+        _pdm_firewall_egress_json: >-
+          {%- set rules = [] -%}
+          {%- for target in _pdm_firewall_targets -%}
+          {%-   set _ = rules.append({
+                  'name': 'pve-api-' ~ target.remote ~ '-' ~ loop.index,
+                  'protocol': 'TCP', 'port': '8006', 'destination': target.address}) -%}
+          {%- endfor -%}
+          {{ rules | to_json }}
+
+    - name: PDM firewall | Open declared remote API access
+      ansible.builtin.include_tasks: ../firewall/open-app-access.yml
+      vars:
+        wiring_firewall:
+          egress: "{{ _pdm_firewall_egress }}"
+          inbound: []
