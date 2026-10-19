@@ -1,0 +1,531 @@
+---
+# Restore one complete InfluxDB data directory. PBS extraction is staged beside the
+# live path; the previous directory remains available until health and token checks pass.
+- name: InfluxDB restore | Resolve paths and recovery identities
+  ansible.builtin.set_fact:
+    _influxdb_restore_data_path: "{{ app_config.app.data_path | default('') }}"
+    _influxdb_restore_service_name: "{{ app_config.app.service_name | default('influxdb') }}"
+    _influxdb_restore_source_instance: "{{ restore_source_instance | default(instance, true) }}"
+    _influxdb_restore_source_backup_id: >-
+      {{ restore_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_source_instance | default(instance, true), true) }}
+    _influxdb_restore_target_backup_id: >-
+      {{ restore_target_backup_id | default(app_config.backup.backup_id | default('', true)
+         or restore_target | default(instance, true), true) }}
+    _influxdb_restore_snapshot: "{{ restore_snapshot | default('') }}"
+    _influxdb_restore_source_credentials: >-
+      {{ (homelabinfra_vault.apps | default({})).get(
+           restore_source_instance | default(instance, true), {}) }}
+    _influxdb_restore_target_credentials: >-
+      {{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}
+    _application_restore_complete: false
+    _influxdb_restore_previous_moved: false
+    _influxdb_restore_new_installed: false
+    _influxdb_restore_rollback_complete: false
+  no_log: true
+
+- name: InfluxDB restore | Assert the recovery contract and safe paths
+  ansible.builtin.assert:
+    that:
+      - app_config.backup.enabled | default(false) | bool
+      - app_config.backup.application_consistent | default(false) | bool
+      - _influxdb_restore_data_path is match('^/[^/].*')
+      - _influxdb_restore_data_path != '/'
+      - _influxdb_restore_source_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _influxdb_restore_target_backup_id is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - _influxdb_restore_source_instance is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - restore_overwrite is defined
+      - (_influxdb_restore_snapshot | length > 0) or not (restore_overwrite | bool)
+      - homelabinfra_infra.backups is defined
+    fail_msg: >-
+      InfluxDB restore needs its application-consistent contract, safe source and target
+      identities, PBS, and a selected recovery point for overwrite=true.
+
+- name: InfluxDB restore | Require a source credential set
+  ansible.builtin.assert:
+    that:
+      - _influxdb_restore_source_credentials.admin_user | default('') | length > 0
+      - _influxdb_restore_source_credentials.admin_password | default('') | length > 0
+      - _influxdb_restore_source_credentials.operator_token | default('') | length > 0
+      - _influxdb_restore_source_credentials.organization | default('') | length > 0
+      - _influxdb_restore_source_credentials.bucket | default('') | length > 0
+    fail_msg: >-
+      InfluxDB restore cannot authenticate the restored state because the source
+      credentials are missing from homelab-infra/apps/{{ _influxdb_restore_source_instance }}.
+  no_log: true
+
+- name: InfluxDB restore | Require target credentials for rollback
+  ansible.builtin.assert:
+    that:
+      - _influxdb_restore_target_credentials.admin_user | default('') | length > 0
+      - _influxdb_restore_target_credentials.admin_password | default('') | length > 0
+      - _influxdb_restore_target_credentials.operator_token | default('') | length > 0
+      - _influxdb_restore_target_credentials.organization | default('') | length > 0
+      - _influxdb_restore_target_credentials.bucket | default('') | length > 0
+    fail_msg: >-
+      InfluxDB restore cannot protect the target because its current credentials are
+      missing from homelab-infra/apps/{{ instance }}.
+  when: restore_overwrite | bool
+  no_log: true
+
+- name: InfluxDB restore | Require the selected recovery point to belong to its source group
+  ansible.builtin.assert:
+    that:
+      - _influxdb_restore_snapshot.startswith('host/' ~ _influxdb_restore_source_backup_id ~ '/')
+      - _influxdb_restore_snapshot | length > ('host/' ~ _influxdb_restore_source_backup_id ~ '/') | length
+    fail_msg: >-
+      The selected InfluxDB recovery point must belong to
+      host/{{ _influxdb_restore_source_backup_id }}/.
+  when: _influxdb_restore_snapshot | length > 0
+
+- name: InfluxDB restore | Require an independent existing-target point
+  ansible.builtin.assert:
+    that:
+      - restore_pre_restore_point is defined
+      - restore_pre_restore_point.startswith('host/' ~ _influxdb_restore_target_backup_id ~ '/')
+      - restore_pre_restore_point | length > ('host/' ~ _influxdb_restore_target_backup_id ~ '/') | length
+      - restore_pre_restore_point != _influxdb_restore_snapshot
+    fail_msg: >-
+      Existing-target InfluxDB restore needs a distinct pre_restore_point from
+      host/{{ _influxdb_restore_target_backup_id }}/.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: InfluxDB restore | Resolve the PBS client target
+  ansible.builtin.include_tasks: ../../../tasks/backup/resolve-pbs-target.yml
+  vars:
+    k8s_pbs_datastore_override: "{{ app_config.backup.datastore | default('') }}"
+
+- name: InfluxDB restore | Require PBS
+  ansible.builtin.assert:
+    that: k8s_pbs_available | bool
+    fail_msg: >-
+      No usable PBS is recorded for InfluxDB. Deploy PBS before listing or restoring
+      application data.
+
+- name: InfluxDB restore | Require the installed PBS client
+  ansible.builtin.stat:
+    path: /usr/bin/proxmox-backup-client
+  register: _influxdb_restore_client
+  changed_when: false
+
+- name: InfluxDB restore | Assert the PBS client is installed
+  ansible.builtin.assert:
+    that: _influxdb_restore_client.stat.exists and _influxdb_restore_client.stat.isreg
+    fail_msg: >-
+      InfluxDB has no installed PBS client. Deploy the instance with the current
+      InfluxDB role before requesting an application restore.
+
+- name: InfluxDB restore | List recovery points in plan mode
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - list
+      - "host/{{ _influxdb_restore_source_backup_id }}"
+      - --output-format
+      - text
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _influxdb_restore_snapshots
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - not (restore_overwrite | bool)
+    - _influxdb_restore_snapshot | length == 0
+
+- name: InfluxDB restore | Report a failed snapshot listing
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _influxdb_restore_snapshots }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: InfluxDB restore | PBS snapshot listing failed
+  when:
+    - _influxdb_restore_snapshots is defined
+    - not (_influxdb_restore_snapshots.skipped | default(false) | bool)
+
+- name: InfluxDB restore | Show the read-only recovery point plan
+  ansible.builtin.debug:
+    msg: >-
+      No InfluxDB data was changed. Recovery points for
+      host/{{ _influxdb_restore_source_backup_id }}:
+      {{ _influxdb_restore_snapshots.stdout | default(_influxdb_restore_snapshot) }}
+  when: not (restore_overwrite | bool)
+
+- name: InfluxDB restore | Verify the selected recovery point archive
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - files
+      - "{{ _influxdb_restore_snapshot }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _influxdb_restore_source_files
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when: _influxdb_restore_snapshot | length > 0
+
+- name: InfluxDB restore | Report an unavailable source archive
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _influxdb_restore_source_files }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: InfluxDB restore | selected PBS point is unavailable
+  when: _influxdb_restore_source_files is defined
+
+- name: InfluxDB restore | Require the selected data archive
+  ansible.builtin.assert:
+    that: "'data.pxar' in _influxdb_restore_source_files.stdout"
+    fail_msg: >-
+      InfluxDB recovery point {{ _influxdb_restore_snapshot }} has no data.pxar archive;
+      the target has not been changed.
+  when: _influxdb_restore_snapshot | length > 0
+  no_log: true
+
+- name: InfluxDB restore | Verify the independent target recovery point
+  ansible.builtin.command:
+    expand_argument_vars: false
+    argv:
+      - proxmox-backup-client
+      - snapshot
+      - files
+      - "{{ restore_pre_restore_point }}"
+      - --output-format
+      - json
+  environment:
+    PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+    PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+    PBS_PASSWORD: "{{ k8s_pbs_password }}"
+  register: _influxdb_restore_prepoint_files
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+
+- name: InfluxDB restore | Report an unavailable target recovery point
+  ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+  vars:
+    scrub_failure_result: "{{ _influxdb_restore_prepoint_files }}"
+    scrub_failure_secrets:
+      - "{{ k8s_pbs_password }}"
+      - "{{ k8s_pbs_fingerprint }}"
+      - "{{ k8s_pbs_repository }}"
+    scrub_failure_context: InfluxDB restore | pre-restore point is unavailable
+  when: _influxdb_restore_prepoint_files is defined
+
+- name: InfluxDB restore | Require the independent target data archive
+  ansible.builtin.assert:
+    that: "'data.pxar' in _influxdb_restore_prepoint_files.stdout"
+    fail_msg: >-
+      Pre-restore point {{ restore_pre_restore_point }} has no InfluxDB data.pxar archive.
+  when:
+    - restore_destination | default('existing') == 'existing'
+    - restore_overwrite | bool
+  no_log: true
+
+- name: InfluxDB restore | Replace and validate the data directory
+  when: restore_overwrite | bool
+  block:
+    - name: InfluxDB restore | Check the live data directory
+      ansible.builtin.stat:
+        path: "{{ _influxdb_restore_data_path }}"
+      register: _influxdb_restore_live_data
+      changed_when: false
+
+    - name: InfluxDB restore | Require a real live data directory
+      ansible.builtin.assert:
+        that:
+          - _influxdb_restore_live_data.stat.exists
+          - _influxdb_restore_live_data.stat.isdir
+          - not _influxdb_restore_live_data.stat.islnk
+        fail_msg: >-
+          InfluxDB restore target {{ _influxdb_restore_data_path }} is missing, linked or
+          not a directory; refusing to replace it.
+
+    - name: InfluxDB restore | Require the service to be active
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ _influxdb_restore_service_name }}"]
+      register: _influxdb_restore_service_state
+      failed_when: false
+      changed_when: false
+
+    - name: InfluxDB restore | Refuse an inactive target
+      ansible.builtin.assert:
+        that: _influxdb_restore_service_state.stdout | trim == 'active'
+        fail_msg: >-
+          InfluxDB service {{ _influxdb_restore_service_name }} is not active; restore the
+          service before replacing its data.
+
+    - name: InfluxDB restore | Create private staging and rollback directories
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ _influxdb_restore_data_path | dirname }}"
+        prefix: "{{ item }}"
+      loop:
+        - .influxdb-restore-stage-
+        - .influxdb-pre-restore-
+      register: _influxdb_restore_dirs
+
+    - name: InfluxDB restore | Create the extracted data target
+      ansible.builtin.file:
+        path: "{{ _influxdb_restore_dirs.results[0].path }}/restored"
+        state: directory
+        mode: "0700"
+
+    - name: InfluxDB restore | Extract the selected archive to staging
+      ansible.builtin.command:
+        expand_argument_vars: false
+        argv:
+          - proxmox-backup-client
+          - restore
+          - "{{ _influxdb_restore_snapshot }}"
+          - data.pxar
+          - "{{ _influxdb_restore_dirs.results[0].path }}/restored"
+      environment:
+        PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
+        PBS_FINGERPRINT: "{{ k8s_pbs_fingerprint }}"
+        PBS_PASSWORD: "{{ k8s_pbs_password }}"
+      register: _influxdb_restore_extract
+      failed_when: false
+      changed_when: true
+      no_log: true
+
+    - name: InfluxDB restore | Report a failed data extraction
+      ansible.builtin.include_tasks: ../../../tasks/fail-with-scrubbed-output.yml
+      vars:
+        scrub_failure_result: "{{ _influxdb_restore_extract }}"
+        scrub_failure_secrets:
+          - "{{ k8s_pbs_password }}"
+          - "{{ k8s_pbs_fingerprint }}"
+          - "{{ k8s_pbs_repository }}"
+        scrub_failure_context: InfluxDB restore | data extraction failed
+
+    - name: InfluxDB restore | Check the staged Bolt metadata and engine
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ _influxdb_restore_dirs.results[0].path }}/restored/influxd.bolt"
+        - "{{ _influxdb_restore_dirs.results[0].path }}/restored/engine"
+      register: _influxdb_restore_staged_paths
+      changed_when: false
+      no_log: true
+
+    - name: InfluxDB restore | Require complete staged state
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - not item.stat.islnk
+          - >-
+            (item.item.endswith('/engine') and item.stat.isdir)
+            or (item.item.endswith('/influxd.bolt') and item.stat.isreg)
+        fail_msg: >-
+          The selected InfluxDB recovery point is missing a required metadata or engine
+          path; the live instance has not been replaced.
+      loop: "{{ _influxdb_restore_staged_paths.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    - name: InfluxDB restore | Stop only InfluxDB
+      ansible.builtin.systemd_service:
+        name: "{{ _influxdb_restore_service_name }}"
+        state: stopped
+
+    - name: InfluxDB restore | Move the original data aside on the same filesystem
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _influxdb_restore_data_path }}"
+          - "{{ _influxdb_restore_dirs.results[1].path }}/state"
+      register: _influxdb_restore_move_original
+      changed_when: _influxdb_restore_move_original.rc == 0
+
+    - name: InfluxDB restore | Record the original data move
+      ansible.builtin.set_fact:
+        _influxdb_restore_previous_moved: true
+
+    - name: InfluxDB restore | Move the staged data into place
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _influxdb_restore_dirs.results[0].path }}/restored"
+          - "{{ _influxdb_restore_data_path }}"
+      register: _influxdb_restore_install
+      changed_when: _influxdb_restore_install.rc == 0
+
+    - name: InfluxDB restore | Record the new data installation
+      ansible.builtin.set_fact:
+        _influxdb_restore_new_installed: true
+
+    - name: InfluxDB restore | Set the data ownership
+      ansible.builtin.file:
+        path: "{{ _influxdb_restore_data_path }}"
+        owner: influxdb
+        group: influxdb
+        recurse: true
+
+    - name: InfluxDB restore | Start InfluxDB
+      ansible.builtin.systemd_service:
+        name: "{{ _influxdb_restore_service_name }}"
+        state: started
+
+    - name: InfluxDB restore | Wait for the restored service
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_config.app.port }}/health"
+        status_code: 200
+      register: _influxdb_restore_health
+      until: _influxdb_restore_health.status | default(0) == 200
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: InfluxDB restore | Verify the restored operator token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_config.app.port }}/api/v2/authorizations"
+        headers:
+          Authorization: "Token {{ _influxdb_restore_source_credentials.operator_token }}"
+        status_code: 200
+      register: _influxdb_restore_auth
+      changed_when: false
+      no_log: true
+
+    - name: InfluxDB restore | Align a new target's Vaultwarden credentials with the restored state
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ instance }}"
+        vault_item_merge: true
+        vault_item_fields:
+          admin_user: "{{ _influxdb_restore_source_credentials.admin_user }}"
+          admin_password: "{{ _influxdb_restore_source_credentials.admin_password }}"
+          operator_token: "{{ _influxdb_restore_source_credentials.operator_token }}"
+          organization: "{{ _influxdb_restore_source_credentials.organization }}"
+          bucket: "{{ _influxdb_restore_source_credentials.bucket }}"
+        vault_item_secret_fields: [admin_password, operator_token]
+      when: restore_destination | default('existing') == 'new'
+      no_log: true
+
+    - name: InfluxDB restore | Mark recovery complete
+      ansible.builtin.set_fact:
+        _application_restore_complete: true
+
+    - name: InfluxDB restore | Remove the previous target data after verification
+      ansible.builtin.file:
+        path: "{{ _influxdb_restore_dirs.results[1].path }}/state"
+        state: absent
+
+  rescue:
+    - name: InfluxDB restore | Stop InfluxDB before rolling back
+      ansible.builtin.systemd_service:
+        name: "{{ _influxdb_restore_service_name }}"
+        state: stopped
+
+    - name: InfluxDB restore | Remove the failed replacement
+      ansible.builtin.file:
+        path: "{{ _influxdb_restore_data_path }}"
+        state: absent
+      when: _influxdb_restore_new_installed | bool
+
+    - name: InfluxDB restore | Put the original data back
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ _influxdb_restore_dirs.results[1].path }}/state"
+          - "{{ _influxdb_restore_data_path }}"
+      register: _influxdb_restore_rollback_move
+      changed_when: _influxdb_restore_rollback_move.rc == 0
+      when: _influxdb_restore_previous_moved | bool
+
+    - name: InfluxDB restore | Start the original instance
+      ansible.builtin.systemd_service:
+        name: "{{ _influxdb_restore_service_name }}"
+        state: started
+
+    - name: InfluxDB restore | Verify the rolled-back service
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_config.app.port }}/health"
+        status_code: 200
+      register: _influxdb_restore_rollback_health
+      until: _influxdb_restore_rollback_health.status | default(0) == 200
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: InfluxDB restore | Verify the original operator token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_config.app.port }}/api/v2/authorizations"
+        headers:
+          Authorization: "Token {{ _influxdb_restore_target_credentials.operator_token }}"
+        status_code: 200
+      register: _influxdb_restore_rollback_auth
+      changed_when: false
+      no_log: true
+
+    - name: InfluxDB restore | Revert new-target credentials after a failed restore
+      ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
+      vars:
+        vault_item_name: "homelab-infra/apps/{{ instance }}"
+        vault_item_merge: true
+        vault_item_fields:
+          admin_user: "{{ _influxdb_restore_target_credentials.admin_user }}"
+          admin_password: "{{ _influxdb_restore_target_credentials.admin_password }}"
+          operator_token: "{{ _influxdb_restore_target_credentials.operator_token }}"
+          organization: "{{ _influxdb_restore_target_credentials.organization }}"
+          bucket: "{{ _influxdb_restore_target_credentials.bucket }}"
+        vault_item_secret_fields: [admin_password, operator_token]
+      when:
+        - restore_destination | default('existing') == 'new'
+        - not (_application_restore_complete | bool)
+      no_log: true
+
+    - name: InfluxDB restore | Mark rollback complete
+      ansible.builtin.set_fact:
+        _influxdb_restore_rollback_complete: true
+
+    - name: InfluxDB restore | Report failure after restoring the original data
+      ansible.builtin.fail:
+        msg: >-
+          InfluxDB restore failed at {{ ansible_failed_task.name | default('an unknown task') }}.
+          The original data directory was restored and the service passed health and
+          operator-token checks.
+
+  always:
+    - name: InfluxDB restore | Remove temporary staging data
+      ansible.builtin.file:
+        path: "{{ _influxdb_restore_dirs.results[0].path }}"
+        state: absent
+      when: _influxdb_restore_dirs is defined
+
+    - name: InfluxDB restore | Remove an empty rollback parent
+      ansible.builtin.file:
+        path: "{{ _influxdb_restore_dirs.results[1].path }}"
+        state: absent
+      when:
+        - _influxdb_restore_dirs is defined
+        - _application_restore_complete | bool or _influxdb_restore_rollback_complete | bool
+
+- name: InfluxDB restore | Confirm recovery
+  ansible.builtin.debug:
+    msg: >-
+      InfluxDB data from {{ _influxdb_restore_snapshot }} was restored and the service
+      passed health and operator-token checks.
+  when: _application_restore_complete | bool

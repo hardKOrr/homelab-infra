@@ -768,6 +768,7 @@
         restore_destination: "{{ hostvars['localhost'].recovery_destination_resolved }}"
         restore_method: "{{ hostvars['localhost'].recovery_method_resolved }}"
         restore_snapshot: "{{ hostvars['localhost']._ra_recovery_point }}"
+        restore_source_instance: "{{ hostvars['localhost']._ra_source_instance }}"
         restore_source_database: "{{ hostvars['localhost'].restore_source_database | default({}) }}"
         restore_source_encryption_key: "{{ hostvars['localhost'].restore_source_encryption_key | default('') }}"
         restore_source_open_webui_secret_key: "{{ hostvars['localhost'].restore_source_open_webui_secret_key | default('') }}"

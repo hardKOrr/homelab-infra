@@ -26,33 +26,68 @@
       vars: {tag_group_tag: "_{{ instance }}"}
     - ansible.builtin.set_fact:
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
-    - ansible.builtin.add_host:
-        name: "{{ _existing_hosts[0] }}"
-        groups: "deploy_{{ instance }}"
-        ansible_host: "{{ hostvars[_existing_hosts[0]].ansible_host }}"
-        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
-        app_config: "{{ app_config }}"
-      changed_when: false
-      when: _existing_hosts | length > 0
-    - ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
-      vars: {ensure_guest_host: "{{ _existing_hosts[0] }}"}
-      when: _existing_hosts | length > 0
-    - name: Provision InfluxDB LXC
+
+    # Remove deliberately leaves the lab-owned LXC in place after deleting the app's
+    # data and withdrawing its instance tag. Resolve the declared network before looking
+    # for that guest; only allocate a new address when no exact owned LXC can be reused.
+    - name: Prepare InfluxDB ownership tags and network when no instance tag exists
       when: _existing_hosts | length == 0
       block:
         - ansible.builtin.set_fact:
             homelabinfra_config: >-
-              {{ homelabinfra_config | combine({'proxmox': {'lxc': app_config.proxmox | combine({'hostname': instance, 'tags': (app_config.proxmox.tags + ['_' ~ instance]) | unique}, recursive=True)}}, recursive=True) }}
+              {{ homelabinfra_config | combine({'proxmox': {'lxc':
+                   app_config.proxmox | combine({
+                     'hostname': instance,
+                     'tags': (app_config.proxmox.tags + ['_' ~ instance]) | unique
+                   }, recursive=True)
+                 }}, recursive=True) }}
+          no_log: true
         - ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
           vars: {resolve_network_app: influxdb, resolve_network_estate: ''}
+
+    - name: Find a removed InfluxDB guest that still has exact lab ownership
+      ansible.builtin.include_tasks: ../../roles/influxdb/tasks/reuse-removed-guest.yml
+      when: _existing_hosts | length == 0
+
+    - name: Reuse the exact lab-owned guest left by Remove
+      ansible.builtin.set_fact:
+        _existing_hosts: "{{ _influxdb_removed_guest_hosts }}"
+      when: _existing_hosts | length == 0
+
+    - name: Allocate a new InfluxDB LXC address and VMID
+      when: _existing_hosts | length == 0
+      block:
         - ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
           vars:
             network_name: "{{ app_config.proxmox.network | default('', true) }}"
             pool_name: "{{ app_config.proxmox.pool | default('') }}"
             requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
         - ansible.builtin.set_fact:
-            homelabinfra_config: "{{ homelabinfra_config | combine({'proxmox': {'lxc': {'ip_address': homelabinfra_instance.network.ip_address}}}, recursive=True) }}"
+            homelabinfra_config: >-
+              {{ homelabinfra_config | combine({'proxmox': {'lxc': {
+                   'ip_address': homelabinfra_instance.network.ip_address
+                 }}}, recursive=True) }}
+          no_log: true
         - ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+
+    - ansible.builtin.add_host:
+        name: "{{ _existing_hosts[0] }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: >-
+          {{ hostvars[_existing_hosts[0]].ansible_host
+             | default(hostvars[_existing_hosts[0]].proxmox_net0.ip | default('') | regex_replace('/.*$', '')) }}
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+      changed_when: false
+      when: _existing_hosts | length > 0
+
+    - ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-guest-running.yml
+      vars: {ensure_guest_host: "{{ _existing_hosts[0] }}"}
+      when: _existing_hosts | length > 0
+
+    - name: Provision InfluxDB LXC
+      when: _existing_hosts | length == 0
+      block:
         - ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
         - ansible.builtin.add_host:
             name: "{{ homelabinfra_instance.lxc.hostname }}"
@@ -86,4 +121,65 @@
           {{ {instance: {'provider': 'influxdb',
              'host': _influxdb_host.ansible_host,
              'port': _influxdb_host.app_config.app.port}} }}
-    - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+- name: InfluxDB | Wire
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _influxdb_host: "{{ hostvars[groups['deploy_' ~ instance][0]] }}"
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ _influxdb_host.ansible_host }}"
+    wiring_upstream_port: "{{ _influxdb_host.app_config.app.port }}"
+    wiring_subdomain: "{{ _influxdb_host.app_config.routing.subdomain | default(instance, true) }}"
+    wiring_domain: "{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}"
+    wiring_app_display: "InfluxDB ({{ instance }})"
+    wiring_monitor_url: "https://{{ wiring_domain }}/health"
+    wiring_auth_group: homelab-users
+    wiring_identity_mode: "{{ _influxdb_host.app_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ _influxdb_host.app_config.routing.access | default('internal') }}"
+  pre_tasks:
+    - name: Resolve the InfluxDB routing estate
+      ansible.builtin.include_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ _influxdb_host.app_config.routing.estate | default('') }}"
+  tasks:
+    # Even an isolated restore target needs its ownership tag so inventory can find it
+    # for the final deploy. Only shared external wiring is skipped during isolation.
+    - name: Record InfluxDB on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_kind: native
+
+    - name: Skip external wiring while the restore target is isolated
+      ansible.builtin.meta: end_play
+      when: recovery_isolated | default(false) | bool
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Wire uptime monitoring
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.monitoring is defined
+        - homelabinfra_infra.monitoring.provider | default('none') != 'none'
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
+
+    - name: Fail if anything could not be wired
+      ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"

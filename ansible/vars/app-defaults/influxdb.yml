@@ -4,6 +4,12 @@
 # explicit recovery units. Version 2 is selected because its stable HTTP API,
 # setup endpoint, and package-managed service are supported by upstream.
 influxdb_defaults:
+  recovery:
+    methods: [native]
+    native:
+      backup_playbook: backup-app.yml
+      restore_playbook: restore-app.yml
+
   proxmox:
     type: lxc
     boot_order: 40
@@ -16,10 +22,26 @@ influxdb_defaults:
   app:
     port: 8086
     service_name: influxdb
-    data_path: /var/lib/influxdb2
+    # The Debian package stores its Bolt database and engine beneath this path. Keep
+    # native backup, restore and Remove aligned with the existing package data.
+    data_path: /var/lib/influxdb
     admin_user: homelab
     organization: homelab
     bucket: default
+
   routing:
-    proxy: none
-    identity: none
+    subdomain: influxdb
+    proxy: internal
+    access: internal
+    # InfluxDB keeps its native login; Authentik adds a catalog tile without gating Caddy.
+    identity: catalog
+
+  backup:
+    enabled: true
+    application_consistent: true
+    retention_days: 14
+    datastore: ""
+    backup_id: ""
+    client:
+      repository: "http://download.proxmox.com/debian/pbs-client"
+      component: main
