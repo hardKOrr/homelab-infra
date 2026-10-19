@@ -62,7 +62,7 @@ def check_contract_and_no_external_wiring():
     }
     assert DEFAULTS["backup"]["enabled"] is True
     assert DEFAULTS["backup"]["application_consistent"] is True
-    assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb2"
+    assert DEFAULTS["app"]["data_path"] == "/var/lib/influxdb"
     assert DEFAULTS["routing"] == {"proxy": "none", "identity": "none"}
     assert "#   proxy: none" in EXAMPLE
     assert "proxy: internal" not in EXAMPLE
