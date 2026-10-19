@@ -5,7 +5,7 @@
       - _wg_peer.name is defined
       - _wg_peer.name is match('^[a-z0-9][a-z0-9-]*$')
       - _wg_peer.vpn_address is defined
-      - _wg_peer.vpn_address is ansible.utils.ipaddr
+      - _wg_peer.vpn_address | ansible.utils.ipaddr
     fail_msg: Each WireGuard peer needs a lowercase name and a valid vpn_address.
   no_log: true
 

@@ -1024,6 +1024,15 @@ def wireguard_remove_preserves_vaultwarden_configuration():
     assert not actions.intersection({"backup", "restore"}), actions
 
 
+def wireguard_peer_address_uses_the_ipaddr_filter():
+    tasks = yaml.safe_load(read("ansible/roles/wireguard/tasks/peer.yml"))
+    validation = next(task["ansible.builtin.assert"] for task in tasks
+                      if task.get("name") == "WireGuard | Validate peer declaration")
+    checks = validation["that"]
+    assert any(check == "_wg_peer.vpn_address | ansible.utils.ipaddr" for check in checks), checks
+    assert not any("is ansible.utils.ipaddr" in check for check in checks), checks
+
+
 def apps_open_access_through_the_shared_task():
     # Apps use one task file for firewall access; it reaches the provider only when one is
     # configured and refuses a forward that misses the app's port. qBittorrent applies its
@@ -1770,6 +1779,7 @@ if __name__ == "__main__":
     print("Template rendering: Immich and ComfyUI CPU modes omit GPU requests while hardware modes keep their declared devices")
     wireguard_opens_its_udp_forward_before_deploy()
     wireguard_remove_preserves_vaultwarden_configuration()
+    wireguard_peer_address_uses_the_ipaddr_filter()
     apps_open_access_through_the_shared_task()
     qbittorrent_enforces_peer_ports_before_start()
     print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, FlareSolverr, qBittorrent startup order, the shared firewall access and mail egress passed")
