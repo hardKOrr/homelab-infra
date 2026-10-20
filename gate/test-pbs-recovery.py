@@ -176,11 +176,32 @@ assert task(configure, "PBS | Require the PVE storage backend to be active")["an
 backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")
 backup_tasks = backup_guest[0]["tasks"]
 backup_response = task(backup_tasks, "Normalize the PBS backup task response")
-assert "regex_search('UPID:" in backup_response["ansible.builtin.set_fact"]["_bg_task_upid"]
+assert "regex_findall('(?m)" in backup_response["ansible.builtin.set_fact"]["_bg_task_upids"]
+assert task(backup_tasks, "Require at most one PBS backup task identity")["ansible.builtin.assert"]["that"] == "_bg_task_upids | length <= 1"
+assert "_bg_task_upids | first" in task(backup_tasks, "Select the PBS backup task identity")["ansible.builtin.set_fact"]["_bg_task_upid"]
 async_wait = task(backup_tasks, "Wait for the asynchronous PBS backup task")
 assert async_wait["when"] == "_bg_task_upid | length > 0"
 sync_assert = task(backup_tasks, "Require a successful synchronous PBS backup result")
 assert "INFO: Backup job finished successfully" in str(sync_assert["ansible.builtin.assert"])
+
+restore_guest = load_yaml("ansible/playbooks/maintenance/restore-guest.yml")
+restore_tasks = restore_guest[0]["tasks"]
+pre_restore_tasks = task(
+    restore_guest[0]["pre_tasks"], "Capture and verify an independent pre-restore recovery point"
+)["block"]
+pre_restore_response = task(pre_restore_tasks, "Normalize the independent target recovery task response")
+assert "regex_findall('(?m)" in pre_restore_response["ansible.builtin.set_fact"]["_rg_pre_task_upids"]
+assert task(pre_restore_tasks, "Require at most one independent recovery task identity")["ansible.builtin.assert"]["that"] == "_rg_pre_task_upids | length <= 1"
+pre_restore_wait = task(pre_restore_tasks, "Wait for the independent target recovery point")
+assert "_rg_pre_task_upid" in pre_restore_wait["vars"]["proxmox_task_upid"]
+assert "_rg_pre_task_upid | length > 0" in str(pre_restore_wait["when"])
+assert task(pre_restore_tasks, "Require a successful synchronous target recovery point")["ansible.builtin.assert"]["that"]
+restore_tasks = task(restore_tasks, "Restore the guest without activating the target")["block"]
+restore_response = task(restore_tasks, "Normalize the guest restore task response")
+assert "regex_findall('(?m)" in restore_response["ansible.builtin.set_fact"]["_rg_restore_task_upids"]
+assert task(restore_tasks, "Require exactly one guest restore task identity")["ansible.builtin.assert"]["that"] == "_rg_restore_task_upids | length == 1"
+restore_wait = task(restore_tasks, "Wait for the guest restore task")
+assert "_rg_restore_task_upid" in restore_wait["vars"]["proxmox_task_upid"]
 
 helper = ROOT / "ansible/files/proxmox/pbs-datastore-volume-references.py"
 with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:

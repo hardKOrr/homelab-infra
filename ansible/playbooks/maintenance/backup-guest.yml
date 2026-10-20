@@ -146,10 +146,20 @@
 
     - name: Normalize the PBS backup task response
       ansible.builtin.set_fact:
-        _bg_task_upid: >-
+        _bg_task_upids: >-
           {{ _bg_task.stdout | default('')
-             | regex_search('UPID:[^\s"\\]+')
-             | default('', true) }}
+             | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+
+    - name: Require at most one PBS backup task identity
+      ansible.builtin.assert:
+        that: _bg_task_upids | length <= 1
+        fail_msg: >-
+          Proxmox returned multiple task identities for one guest backup. Inspect the
+          backup result before retrying.
+
+    - name: Select the PBS backup task identity
+      ansible.builtin.set_fact:
+        _bg_task_upid: "{{ (_bg_task_upids | first | default('', true)) | trim }}"
 
     - name: Wait for the asynchronous PBS backup task
       ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
