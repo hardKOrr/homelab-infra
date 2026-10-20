@@ -126,11 +126,12 @@
 - name: PBS disk | Allocate the first datastore volume
   ansible.builtin.command:
     argv:
-      - qm
-      - set
-      - "{{ pbs_disk_vmid }}"
-      - --scsi1
-      - "{{ pbs_disk_config.storage }}:{{ pbs_disk_config.size_gib | int }}G,backup=0,serial=homelab-pbs-store"
+      - pvesm
+      - alloc
+      - "{{ pbs_disk_config.storage }}"
+      - "{{ _pbs_disk_source_vmid }}"
+      - "vm-{{ _pbs_disk_source_vmid }}-disk-1"
+      - "{{ pbs_disk_config.size_gib | int }}G"
   delegate_to: "{{ pbs_disk_node }}"
   register: _pbs_disk_allocate
   changed_when: _pbs_disk_allocate.rc == 0
@@ -178,7 +179,6 @@
   changed_when: _pbs_disk_attach.rc == 0
   when:
     - _pbs_disk_current | length == 0
-    - not (_pbs_disk_allocate.changed | default(false) | bool)
 
 - name: PBS disk | Read back the attached disk configuration
   ansible.builtin.command:

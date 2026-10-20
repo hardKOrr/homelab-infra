@@ -34,8 +34,14 @@ assert provision_tasks.index(reuse_preflight) < clone_index
 assert "source_vmid" in task(provision_tasks, "Require a stable retained volume identity for datastore reuse")["ansible.builtin.assert"]["that"][1]
 
 ensure_disk = load_yaml("ansible/tasks/proxmox/ensure-pbs-datastore-disk.yml")
+allocate_disk = task(ensure_disk, "PBS disk | Allocate the first datastore volume")
+allocate_argv = allocate_disk["ansible.builtin.command"]["argv"]
+assert allocate_argv[:2] == ["pvesm", "alloc"]
+assert any("_pbs_disk_source_vmid" in arg for arg in allocate_argv)
+assert "vm-{{ _pbs_disk_source_vmid }}-disk-1" in allocate_argv
 attach = task(ensure_disk, "PBS disk | Attach the retained volume")
 assert "_pbs_disk_expected_volid" in attach["ansible.builtin.command"]["argv"][-1]
+assert "_pbs_disk_current | length == 0" in str(attach["when"])
 assert "_+lab" in str(task(ensure_disk, "PBS disk | Confirm live ownership and reject a different scsi1 disk"))
 assert "backup=0" in str(task(ensure_disk, "PBS disk | Confirm volume, backup exclusion and stable guest serial"))
 
