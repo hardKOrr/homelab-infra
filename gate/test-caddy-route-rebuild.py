@@ -151,6 +151,7 @@ def main():
 
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
+        (work / "ansible").symlink_to(ROOT / "ansible", target_is_directory=True)
         config_apps = work / "config/apps"
         config_apps.mkdir(parents=True)
 
@@ -195,7 +196,7 @@ def main():
                 {
                     "instance": "edge-router",
                     "caddy_test_admin_port": server.server_port,
-                    "caddy_rebuild_config_root": str(work / "config"),
+                    "caddy_rebuild_repo_root": str(work),
                 },
                 sort_keys=False,
             ),

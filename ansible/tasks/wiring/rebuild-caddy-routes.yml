@@ -15,6 +15,9 @@
            'paths': [playbook_dir, playbook_dir ~ '/..',
                      playbook_dir ~ '/../..', playbook_dir ~ '/../../..']
          }) | dirname | dirname | dirname | dirname) }}
+
+- name: Rebuild Caddy routes | Resolve config root
+  ansible.builtin.set_fact:
     _caddy_rebuild_config_root: >-
       {{ caddy_rebuild_config_root
          if caddy_rebuild_config_root is defined
