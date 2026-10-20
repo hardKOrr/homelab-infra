@@ -189,9 +189,35 @@
       - startup
       - timeout
 
+- name: Read the target VM status before creation
+  ansible.builtin.command:
+    cmd: "qm status {{ homelabinfra_instance.vm.vmid }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vm_create_status
+  failed_when: false
+  changed_when: false
+
+- name: Check node memory before creating the VM
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_memory_guest: "{{ homelabinfra_instance.vm.name }}"
+    proxmox_guest_memory_mib: "{{ vm_module_args.memory | default(512) | int }}"
+  when: >-
+    _vm_create_status.stdout | default('') | trim != 'status: running'
+
 - name: Create VM
   community.proxmox.proxmox_kvm: "{{ vm_module_args }}"
   register: create_vm_result
+
+- name: Check node memory before starting the VM
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_memory_guest: "{{ homelabinfra_instance.vm.name }}"
+    proxmox_guest_memory_mib: "{{ vm_module_args.memory | default(512) | int }}"
+  when: >-
+    _vm_create_status.stdout | default('') | trim != 'status: running'
 
 # `present` above created the VM stopped, exactly as it does for LXC in lxc-create.yml, and
 # nothing else here starts it — without this the wait below spins its full 30 retries and

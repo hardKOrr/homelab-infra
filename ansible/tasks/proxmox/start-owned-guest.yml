@@ -74,6 +74,7 @@
     groups: start_owned_guests
     proxmox_vmid: "{{ _start_guest.vmid }}"
     proxmox_node: "{{ _start_guest.node }}"
+    proxmox_name: "{{ _start_guest.name }}"
     proxmox_status: "{{ _start_guest.status }}"
     proxmox_vmtype: "{{ _start_guest.type }}"
   changed_when: false

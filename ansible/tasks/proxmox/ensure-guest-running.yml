@@ -34,6 +34,7 @@
     _egr_vmid: "{{ hostvars[ensure_guest_host].proxmox_vmid | default('') }}"
     _egr_node: "{{ hostvars[ensure_guest_host].proxmox_node | default('') }}"
     _egr_status: "{{ hostvars[ensure_guest_host].proxmox_status | default('') }}"
+    _egr_vmtype: "{{ hostvars[ensure_guest_host].proxmox_vmtype | default('lxc') }}"
     # The comparison needs its own parentheses: Jinja binds `|` tighter than `==`, so
     # `x == 'qemu' | ternary('qm', 'pct')` groups as `x == ('qemu' | ternary(...))`, which
     # compares the vmtype against the string 'qm' and yields the BOOLEAN False — producing
@@ -51,6 +52,29 @@
     fail_msg: >-
       Cannot determine the Proxmox vmid/node for '{{ ensure_guest_host }}'. Expected
       proxmox_vmid and proxmox_node hostvars from the dynamic inventory.
+
+- name: Ensure running | Read the stopped guest's configured memory
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ _egr_node }}/{{ _egr_vmtype }}/{{ _egr_vmid }}/config"
+      - --output-format
+      - json
+  delegate_to: "{{ _egr_node }}"
+  register: _egr_guest_config
+  changed_when: false
+  when: _egr_status != 'running'
+
+- name: Ensure running | Check node memory before starting the guest
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ _egr_node }}"
+    proxmox_memory_guest: >-
+      {{ hostvars[ensure_guest_host].proxmox_name
+         | default(hostvars[ensure_guest_host].proxmox_hostname | default(ensure_guest_host)) }}
+    proxmox_guest_memory_mib: "{{ (_egr_guest_config.stdout | from_json).memory | default(512) | int }}"
+  when: _egr_status != 'running'
 
 - name: Ensure running | Start the guest if it is not running
   ansible.builtin.command:
