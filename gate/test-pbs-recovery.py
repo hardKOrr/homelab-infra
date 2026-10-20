@@ -136,7 +136,7 @@ assert "_pbs_existing_storage | length == 1" in str(endpoint_changed["ansible.bu
 assert "_pbs_pve_server" in str(endpoint_changed["ansible.builtin.set_fact"])
 running_backups = task(configure, "PBS | Read running PVE backup tasks before replacing the storage entry")
 assert running_backups["ansible.builtin.command"]["argv"] == [
-    "pvesh", "get", "/cluster/tasks", "--typefilter", "vzdump", "--output-format", "json"
+    "pvesh", "get", "/cluster/tasks", "--output-format", "json"
 ]
 assert running_backups["delegate_to"] == "{{ homelabinfra_config.proxmox.node }}"
 assert running_backups["no_log"] is True
@@ -147,6 +147,9 @@ assert "_pbs_storage_endpoint_changed | bool" in str(running_backups["when"])
 query_guard = task(configure, "PBS | Require the PVE backup task query to succeed")
 assert "_pbs_backup_tasks_before_storage_replacement.rc" in str(query_guard["ansible.builtin.assert"]["that"])
 assert "error_class" in query_guard["ansible.builtin.assert"]["fail_msg"]
+running_tasks = task(configure, "PBS | Resolve running PVE backup tasks before replacing the storage entry")
+assert "selectattr('type', 'equalto', 'vzdump')" in str(running_tasks["ansible.builtin.set_fact"])
+assert running_tasks["no_log"] is True
 active_backup_guard = task(configure, "PBS | Refuse to replace the storage entry during a backup")
 assert "_pbs_running_backup_tasks | length == 0" in str(active_backup_guard["ansible.builtin.assert"]["that"])
 remove_old_storage = task(configure, "PBS | Remove the old PVE storage endpoint")

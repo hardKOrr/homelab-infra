@@ -305,8 +305,6 @@
       - pvesh
       - get
       - /cluster/tasks
-      - --typefilter
-      - vzdump
       - --output-format
       - json
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
@@ -341,6 +339,7 @@
   ansible.builtin.set_fact:
     _pbs_running_backup_tasks: >-
       {{ _pbs_backup_tasks_before_storage_replacement.stdout | from_json
+         | selectattr('type', 'equalto', 'vzdump')
          | selectattr('endtime', 'undefined') | list }}
   no_log: true
   when: _pbs_storage_endpoint_changed | bool
