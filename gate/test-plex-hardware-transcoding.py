@@ -89,12 +89,21 @@ def main():
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             preferences = root / "Preferences.xml"
-            preferences.write_text(
-                '<Preferences PlexOnlineToken="fixture-token" '
-                'HardwareAcceleratedCodecs="0" HardwareAcceleratedEncoders="0"/>'
-            )
+            preferences.write_text('<Preferences PlexOnlineToken="fixture-token"/>')
             server.preferences_path = preferences
             playbook = root / "plan.yml"
+
+            changed, _ = run_playbook(server, preferences, playbook, [])
+            assert changed == 1
+            assert server.requests[-1] == {
+                "HardwareAcceleratedCodecs": ["0"],
+                "HardwareAcceleratedEncoders": ["0"],
+            }
+            assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedCodecs"] == "0"
+
+            changed, _ = run_playbook(server, preferences, playbook, [])
+            assert changed == 0
+            assert len(server.requests) == 1
 
             changed, _ = run_playbook(server, preferences, playbook, ["/dev/dri"])
             assert changed == 1
@@ -102,11 +111,11 @@ def main():
                 "HardwareAcceleratedCodecs": ["1"],
                 "HardwareAcceleratedEncoders": ["1"],
             }
-            assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedCodecs"] == "1"
+            assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedEncoders"] == "1"
 
             changed, _ = run_playbook(server, preferences, playbook, ["/dev/dri"])
             assert changed == 0
-            assert len(server.requests) == 1
+            assert len(server.requests) == 2
 
             changed, _ = run_playbook(server, preferences, playbook, [])
             assert changed == 1
@@ -118,11 +127,11 @@ def main():
 
             changed, _ = run_playbook(server, preferences, playbook, [])
             assert changed == 0
-            assert len(server.requests) == 2
+            assert len(server.requests) == 3
     finally:
         server.shutdown()
         server.server_close()
-    print("Plex transcoding: declared /dev/dri enables hardware settings; empty devices disable them and repeat unchanged")
+    print("Plex transcoding: missing settings converge to explicit off; declared /dev/dri enables hardware settings; repeats are unchanged")
 
 
 if __name__ == "__main__":

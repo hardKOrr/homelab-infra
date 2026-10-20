@@ -13,11 +13,11 @@
     _plex_hardware_codecs_current: >-
       {{ (_plex_preferences_after.content | b64decode
           | regex_findall('HardwareAcceleratedCodecs="([^"]*)"')
-          | first | default('0', true)) }}
+          | first | default('', true)) }}
     _plex_hardware_encoders_current: >-
       {{ (_plex_preferences_after.content | b64decode
           | regex_findall('HardwareAcceleratedEncoders="([^"]*)"')
-          | first | default('0', true)) }}
+          | first | default('', true)) }}
   no_log: true
 
 - name: Apply the requested Plex hardware transcoding preferences
@@ -48,11 +48,11 @@
     _plex_hardware_codecs_after: >-
       {{ (_plex_preferences_hardware_after.content | b64decode
           | regex_findall('HardwareAcceleratedCodecs="([^"]*)"')
-          | first | default('0', true)) }}
+          | first | default('', true)) }}
     _plex_hardware_encoders_after: >-
       {{ (_plex_preferences_hardware_after.content | b64decode
           | regex_findall('HardwareAcceleratedEncoders="([^"]*)"')
-          | first | default('0', true)) }}
+          | first | default('', true)) }}
   no_log: true
 
 - name: Assert Plex applied the requested hardware transcoding preferences
