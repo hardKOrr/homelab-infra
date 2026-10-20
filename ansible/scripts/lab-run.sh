@@ -407,7 +407,8 @@ sys.stdout.write(value.rstrip("\n") + "\n")
 # A file that cannot be decrypted stops the run here: it is never a reason to skip the
 # preflight. The password source is consumed once and then unset, because a prompt or
 # stdin cannot be read a second time. An edge run keeps a LAB_VAULT_PASSWORD value, which
-# can be reused, to refresh the edge copy after the preflight.
+# can be reused, to refresh the edge copy after the preflight. The Vaultwarden Login File
+# playbook rewrites that file, so it gets the LAB_VAULT_PASSWORD value back after loading.
 _lab_login_file="$LAB_REPO/config/vaultwarden.yml"
 _lab_edge_json=""
 _lab_edge_password=""
@@ -432,6 +433,10 @@ if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
   if [ "$_lab_edge_run" = "1" ]; then
     _lab_edge_password="${LAB_VAULT_PASSWORD:-}"
   fi
+  _lab_login_file_password=""
+  if [ "$playbook" = "playbooks/maintenance/vaultwarden-login-file.yml" ]; then
+    _lab_login_file_password="${LAB_VAULT_PASSWORD:-}"
+  fi
   if { [ -z "${BW_CLIENTID:-}" ] || [ -z "${BW_CLIENTSECRET:-}" ] || [ -z "${BW_PASSWORD:-}" ] \
        || { [ "$_lab_edge_run" = "1" ] && [ -n "$_lab_edge_password" ]; }; } \
      && [ -f "$_lab_login_file" ]; then
@@ -450,6 +455,10 @@ if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
     fi
   fi
   _lab_edge_password=""
+  if [ -n "$_lab_login_file_password" ]; then
+    export LAB_VAULT_PASSWORD="$_lab_login_file_password"
+  fi
+  _lab_login_file_password=""
 fi
 
 # ── Validate config before anything mutates ───────────────────────────────────
