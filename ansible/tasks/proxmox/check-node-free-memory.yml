@@ -29,7 +29,7 @@
   ansible.builtin.assert:
     quiet: true
     that:
-      - _proxmox_memory_available_bytes >= _proxmox_memory_needed_mib * 1024 * 1024
+      - (_proxmox_memory_available_bytes | int) >= (_proxmox_memory_needed_mib | int) * 1024 * 1024
     fail_msg: >-
       Not enough available memory for guest '{{ proxmox_memory_guest }}' on Proxmox node
       '{{ proxmox_memory_node }}': needs {{ _proxmox_memory_needed_mib }} MiB, only

@@ -42,9 +42,9 @@ with tempfile.TemporaryDirectory() as t:
   if case=='template':inventory[0]['template']=1
   if case=='locked':config['lock']='backup'
   (d/'123.json').write_text(json.dumps(config));(d/'inventory.json').write_text(json.dumps(inventory))
-  memory={'total':8*1024**3,'used':4*1024**3,'free':1024**3,'available':4*1024**3}
+  memory={'total':32*1024**3,'used':16*1024**3,'free':1024**3,'available':16*1024**3}
   if case in ['low-memory','low-memory-fallback']:
-   memory.update({'used':7*1024**3,'free':4*1024**3})
+   memory.update({'used':31*1024**3,'free':4*1024**3})
   if case=='low-memory-fallback':memory.pop('available')
   elif case=='low-memory':memory['available']=1024**3
   (d/'memory.json').write_text(json.dumps(memory))

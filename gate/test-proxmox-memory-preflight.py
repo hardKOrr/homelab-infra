@@ -27,6 +27,8 @@ status_read = preflight[1]["ansible.builtin.command"]["argv"]
 assert status_read == ["pvesh", "get", "/nodes/{{ proxmox_memory_node }}/status", "--output-format", "json"]
 capacity_assert = preflight[2]["ansible.builtin.assert"]
 memory_vars = str(preflight[2]["vars"])
+assert "_proxmox_memory_available_bytes | int" in str(capacity_assert["that"])
+assert "_proxmox_memory_needed_mib | int" in str(capacity_assert["that"])
 assert "memory.available" in memory_vars
 assert "memory.total" in memory_vars and "memory.used" in memory_vars
 assert "memory.free" not in memory_vars
