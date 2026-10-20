@@ -300,18 +300,26 @@
          and (_pbs_existing_storage | first).server | default('') != _pbs_pve_server }}
 
 - name: PBS | Read running PVE backup tasks before replacing the storage entry
-  ansible.builtin.uri:
-    url: "{{ _pve_url }}/cluster/tasks?typefilter=vzdump"
-    headers: "{{ _pve_headers }}"
-    validate_certs: false
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/tasks
+      - --typefilter
+      - vzdump
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _pbs_backup_tasks_before_storage_replacement
+  changed_when: false
+  become: true
   no_log: true
   when: _pbs_storage_endpoint_changed | bool
 
 - name: PBS | Resolve running PVE backup tasks before replacing the storage entry
   ansible.builtin.set_fact:
     _pbs_running_backup_tasks: >-
-      {{ _pbs_backup_tasks_before_storage_replacement.json.data
+      {{ _pbs_backup_tasks_before_storage_replacement.stdout | from_json
          | selectattr('endtime', 'undefined') | list }}
   when: _pbs_storage_endpoint_changed | bool
 
