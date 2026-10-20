@@ -37,7 +37,9 @@ A direct run then supplies only the Ansible Vault password, through `LAB_VAULT_P
 `lab-run` reads it once, unsets those variables, fills the missing `BW_CLIENTID`,
 `BW_CLIENTSECRET` and `BW_PASSWORD` from the file, and continues through the same
 Vault-mode guard and Vaultwarden preflight as a job. A file it cannot decrypt stops the
-run.
+run. The Vaultwarden Login File playbook (`playbooks/maintenance/vaultwarden-login-file.yml`)
+rewrites that file, so a direct run of it gets the `LAB_VAULT_PASSWORD` value back after
+the preflight.
 
 The file also holds an edge copy: the platform items of the Vaultwarden contract, without
 any application's credentials. Caddy serves `BW_SERVER`, so deploying Caddy

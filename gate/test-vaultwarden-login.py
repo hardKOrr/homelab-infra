@@ -285,6 +285,22 @@ def check_edge_copy(work: Path) -> None:
     assert "Vaultwarden edge copy refreshed" in refreshed.stdout, refreshed.stdout + refreshed.stderr
     exported = run(read, vault)
     assert "pve-rotated-6f" in exported.stdout, "the refresh must store the rotated token"
+
+    # A direct Login File run loads the login from the file and still hands the playbook
+    # the LAB_VAULT_PASSWORD value it needs to rewrite that file.
+    (venv / "bin" / "ansible-playbook").write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "${{LAB_VAULT_PASSWORD:-unset}}" > "{record}"\n', encoding="utf-8")
+    record.unlink()
+    direct = run(lab_run + ["playbooks/maintenance/vaultwarden-login-file.yml"], env)
+    assert "Vaultwarden login loaded" in direct.stdout, direct.stdout + direct.stderr
+    assert record.read_text(encoding="utf-8").strip() == "correct horse", \
+        "the Login File playbook must receive LAB_VAULT_PASSWORD"
+    record.unlink()
+    other = run(lab_run + ["playbooks/maintenance/status.yml"], env)
+    assert other.returncode == 0, other.stdout + other.stderr
+    assert record.read_text(encoding="utf-8").strip() == "unset", \
+        "other playbooks must not receive LAB_VAULT_PASSWORD"
     (stub / "bw").write_text("#!/bin/bash\n[ \"$1\" = login ] || exit 0\nexit 1\n", encoding="utf-8")
 
     # Vaultwarden answers but refuses the login: a credential problem, even for Caddy.
