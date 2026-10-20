@@ -57,6 +57,7 @@ disk_tasks = load_yaml("ansible/roles/pbs/tasks/datastore-disk.yml")
 lsblk_read = task(disk_tasks, "PBS datastore disk | Read block devices and serials")
 lsblk_check = task(disk_tasks, "PBS datastore disk | Require block-device inspection to succeed")
 lsblk_resolve = task(disk_tasks, "PBS datastore disk | Resolve the unique data device")
+assert lsblk_read["ansible.builtin.command"]["argv"][-1] == "NAME,SERIAL,TYPE,FSTYPE,UUID,MOUNTPOINTS"
 assert lsblk_read["failed_when"] is False
 assert "_pbs_lsblk.rc == 0" in str(lsblk_check["ansible.builtin.assert"]["that"])
 assert "_pbs_lsblk.stderr" in lsblk_check["ansible.builtin.assert"]["fail_msg"]

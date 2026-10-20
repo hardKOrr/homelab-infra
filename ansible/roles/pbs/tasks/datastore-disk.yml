@@ -17,7 +17,12 @@
 
 - name: PBS datastore disk | Read block devices and serials
   ansible.builtin.command:
-    argv: [lsblk, --json, --paths, --output, NAME,SERIAL,TYPE,FSTYPE,UUID,MOUNTPOINTS]
+    argv:
+      - lsblk
+      - --json
+      - --paths
+      - --output
+      - "NAME,SERIAL,TYPE,FSTYPE,UUID,MOUNTPOINTS"
   register: _pbs_lsblk
   changed_when: false
   failed_when: false
