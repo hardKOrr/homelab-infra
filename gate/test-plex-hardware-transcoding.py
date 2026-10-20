@@ -28,11 +28,17 @@ class PlexPreferences(BaseHTTPRequestHandler):
             return
 
         self.server.requests.append(values)
-        tree = ET.parse(self.server.preferences_path)
-        root = tree.getroot()
-        for key in ["HardwareAcceleratedCodecs", "HardwareAcceleratedEncoders"]:
-            root.set(key, values[key][0])
-        tree.write(self.server.preferences_path, encoding="utf-8")
+
+        def flush_preferences():
+            tree = ET.parse(self.server.preferences_path)
+            root = tree.getroot()
+            for key in ["HardwareAcceleratedCodecs", "HardwareAcceleratedEncoders"]:
+                root.set(key, values[key][0])
+            tree.write(self.server.preferences_path, encoding="utf-8")
+
+        pending = threading.Timer(self.server.flush_delay, flush_preferences)
+        self.server.pending_writes.append(pending)
+        pending.start()
         self.send_response(200)
         self.end_headers()
 
@@ -40,23 +46,31 @@ class PlexPreferences(BaseHTTPRequestHandler):
         pass
 
 
-def run_playbook(server, preferences_path, playbook_path, devices):
+def run_playbook(server, preferences_path, playbook_path, devices, gpu_device="", expect_retry=False):
     content = base64.b64encode(preferences_path.read_bytes()).decode()
     play = [{
         "hosts": "localhost",
         "connection": "local",
         "gather_facts": False,
         "vars": {
-            "app_config": {"app": {"devices": devices, "gpu_device": ""}},
+            "app_config": {"app": {"devices": devices, "gpu_device": gpu_device}},
             "_plex_base": f"http://127.0.0.1:{server.server_port}",
             "_plex_preferences": str(preferences_path),
             "_plex_preferences_after": {"content": content},
             "_plex_server_token": "fixture-token",
-            "plex_http_retries": 5,
-            "plex_http_delay": 0,
+            "plex_http_retries": 40,
+            "plex_http_delay": 0.1,
         },
         "tasks": [{"ansible.builtin.include_tasks": str(task_file)}],
     }]
+    if expect_retry:
+        play[0]["tasks"].append({
+            "name": "Confirm Plex preferences were reread after the delayed flush",
+            "ansible.builtin.assert": {
+                "that": "_plex_preferences_hardware_after.attempts | default(1) | int > 1",
+                "fail_msg": "Plex readback did not retry while its preferences were stale.",
+            },
+        })
     playbook_path.write_text(yaml.safe_dump(play, sort_keys=False))
     env = os.environ | {
         "ANSIBLE_CONFIG": str(repo / "ansible/ansible.cfg"),
@@ -83,55 +97,75 @@ def run_playbook(server, preferences_path, playbook_path, devices):
 def main():
     server = HTTPServer(("127.0.0.1", 0), PlexPreferences)
     server.requests = []
+    server.pending_writes = []
+    server.flush_delay = 3
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    directory = tempfile.TemporaryDirectory()
     try:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            preferences = root / "Preferences.xml"
-            preferences.write_text('<Preferences PlexOnlineToken="fixture-token"/>')
-            server.preferences_path = preferences
-            playbook = root / "plan.yml"
+        root = Path(directory.name)
+        preferences = root / "Preferences.xml"
+        preferences.write_text('<Preferences PlexOnlineToken="fixture-token"/>')
+        server.preferences_path = preferences
+        playbook = root / "plan.yml"
 
-            changed, _ = run_playbook(server, preferences, playbook, [])
-            assert changed == 1
-            assert server.requests[-1] == {
-                "HardwareAcceleratedCodecs": ["0"],
-                "HardwareAcceleratedEncoders": ["0"],
-            }
-            assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedCodecs"] == "0"
+        changed, _ = run_playbook(server, preferences, playbook, [], expect_retry=True)
+        assert changed == 1
+        assert server.requests[-1] == {
+            "HardwareAcceleratedCodecs": ["0"],
+            "HardwareAcceleratedEncoders": ["0"],
+        }
+        assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedCodecs"] == "0"
 
-            changed, _ = run_playbook(server, preferences, playbook, [])
-            assert changed == 0
-            assert len(server.requests) == 1
+        changed, _ = run_playbook(server, preferences, playbook, [])
+        assert changed == 0
+        assert len(server.requests) == 1
 
-            changed, _ = run_playbook(server, preferences, playbook, ["/dev/dri"])
-            assert changed == 1
-            assert server.requests[-1] == {
-                "HardwareAcceleratedCodecs": ["1"],
-                "HardwareAcceleratedEncoders": ["1"],
-            }
-            assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedEncoders"] == "1"
+        changed, _ = run_playbook(server, preferences, playbook, ["/dev/dri"], expect_retry=True)
+        assert changed == 1
+        assert server.requests[-1] == {
+            "HardwareAcceleratedCodecs": ["1"],
+            "HardwareAcceleratedEncoders": ["1"],
+        }
+        assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedEncoders"] == "1"
 
-            changed, _ = run_playbook(server, preferences, playbook, ["/dev/dri"])
-            assert changed == 0
-            assert len(server.requests) == 2
+        changed, _ = run_playbook(server, preferences, playbook, ["/dev/dri"])
+        assert changed == 0
+        assert len(server.requests) == 2
 
-            changed, _ = run_playbook(server, preferences, playbook, [])
-            assert changed == 1
-            assert server.requests[-1] == {
-                "HardwareAcceleratedCodecs": ["0"],
-                "HardwareAcceleratedEncoders": ["0"],
-            }
-            assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedEncoders"] == "0"
+        changed, _ = run_playbook(server, preferences, playbook, [])
+        assert changed == 1
+        assert server.requests[-1] == {
+            "HardwareAcceleratedCodecs": ["0"],
+            "HardwareAcceleratedEncoders": ["0"],
+        }
+        assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedEncoders"] == "0"
 
-            changed, _ = run_playbook(server, preferences, playbook, [])
-            assert changed == 0
-            assert len(server.requests) == 3
+        changed, _ = run_playbook(
+            server,
+            preferences,
+            playbook,
+            [],
+            gpu_device="fixture-igpu",
+            expect_retry=True,
+        )
+        assert changed == 1
+        assert server.requests[-1] == {
+            "HardwareAcceleratedCodecs": ["1"],
+            "HardwareAcceleratedEncoders": ["1"],
+        }
+        assert ET.parse(preferences).getroot().attrib["HardwareAcceleratedEncoders"] == "1"
+
+        changed, _ = run_playbook(server, preferences, playbook, [], gpu_device="fixture-igpu")
+        assert changed == 0
+        assert len(server.requests) == 4
     finally:
+        for pending in server.pending_writes:
+            pending.join()
+        directory.cleanup()
         server.shutdown()
         server.server_close()
-    print("Plex transcoding: missing settings converge to explicit off; declared /dev/dri enables hardware settings; repeats are unchanged")
+    print("Plex transcoding: delayed preferences retry to off/on; /dev/dri and gpu_device enable hardware settings; repeats are unchanged")
 
 
 if __name__ == "__main__":

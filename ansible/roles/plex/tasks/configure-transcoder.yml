@@ -37,7 +37,14 @@
   ansible.builtin.slurp:
     src: "{{ _plex_preferences }}"
   register: _plex_preferences_hardware_after
-  until: _plex_preferences_hardware_after.content is defined
+  until: >-
+    ((_plex_preferences_hardware_after.content | b64decode
+      | regex_findall('HardwareAcceleratedCodecs="([^"]*)"')
+      | first | default('', true)) == _plex_hardware_transcoding_value)
+    and
+    ((_plex_preferences_hardware_after.content | b64decode
+      | regex_findall('HardwareAcceleratedEncoders="([^"]*)"')
+      | first | default('', true)) == _plex_hardware_transcoding_value)
   retries: "{{ plex_http_retries }}"
   delay: "{{ plex_http_delay }}"
   changed_when: false
@@ -60,5 +67,8 @@
     that:
       - _plex_hardware_codecs_after == _plex_hardware_transcoding_value
       - _plex_hardware_encoders_after == _plex_hardware_transcoding_value
-    fail_msg: Plex did not save the requested hardware transcoding preferences.
-  no_log: true
+    fail_msg: >-
+      Plex hardware preferences did not converge:
+      HardwareAcceleratedCodecs={{ _plex_hardware_codecs_after }};
+      HardwareAcceleratedEncoders={{ _plex_hardware_encoders_after }};
+      expected {{ _plex_hardware_transcoding_value }}.
