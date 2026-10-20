@@ -1,0 +1,48 @@
+---
+# Inputs:
+#   avoid_vmid_requested    — the guest VMID selected by config or IP derivation
+#   avoid_vmid_reserved     — stable VMID reserved by the PBS datastore volume
+#   avoid_vmid_source_ip    — IP marker set only when the requested VMID was derived
+#   avoid_vmid_current_ip   — current guest IP
+#   avoid_vmid_node         — Proxmox node for the cluster-wide resource query
+
+- name: PBS VMID | Detect a datastore owner collision
+  ansible.builtin.set_fact:
+    _pbs_vmid_collision: "{{ avoid_vmid_requested | int == avoid_vmid_reserved | int }}"
+
+- name: PBS VMID | Reject an explicit VMID colliding with the datastore owner
+  ansible.builtin.assert:
+    that:
+      - avoid_vmid_source_ip == avoid_vmid_current_ip
+    fail_msg: >-
+      The configured PBS VMID collides with the reserved datastore owner VMID.
+      Choose a different explicit VMID before provisioning.
+  when: _pbs_vmid_collision | bool
+
+- name: PBS VMID | Find a free ID for an IP-derived collision
+  ansible.builtin.script:
+    cmd: >-
+      {{ playbook_dir }}/../../files/proxmox/find-free-vmid.py
+      {{ (avoid_vmid_requested | int + 1) | int }} {{ avoid_vmid_reserved | int }}
+    executable: python3
+  delegate_to: "{{ avoid_vmid_node }}"
+  register: _pbs_vmid_free
+  changed_when: false
+  no_log: true
+  when: _pbs_vmid_collision | bool
+
+- name: PBS VMID | Require a safe free ID
+  ansible.builtin.assert:
+    that:
+      - _pbs_vmid_free.stdout | trim is match('^[0-9]+$')
+      - _pbs_vmid_free.stdout | trim | int != avoid_vmid_reserved | int
+    fail_msg: The Proxmox cluster did not return a valid free PBS VMID.
+  when: _pbs_vmid_collision | bool
+
+- name: PBS VMID | Set the free ID in config
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox': {'vm': {
+           'vmid': _pbs_vmid_free.stdout | trim | int
+         }}}, recursive=True) }}
+  when: _pbs_vmid_collision | bool

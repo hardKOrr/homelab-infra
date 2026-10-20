@@ -42,6 +42,28 @@ assert owner_query["ansible.builtin.command"]["argv"][:3] == ["pvesh", "get", "/
 owner_guard = task(provision_tasks, "Refuse a PBS datastore owner VMID assigned to a guest")
 assert "_pbs_datastore_source_vmid | int not in" in str(owner_guard["ansible.builtin.assert"]["that"])
 assert provision_tasks.index(owner_guard) < clone_index
+provision_block = task(provision_tasks, "Provision new VM")["block"]
+derive_index = next(i for i, item in enumerate(provision_block) if item.get("name") == "Derive VMID from IP")
+avoid_vmid = task(provision_block, "Avoid colliding with the retained PBS datastore VMID")
+assert provision_block.index(avoid_vmid) == derive_index + 1
+assert provision_block.index(
+    task(provision_block, "Clone the VM from the cloud-init template")
+) > provision_block.index(avoid_vmid)
+avoid_vmid_tasks = load_yaml("ansible/tasks/proxmox/avoid-vmid-collision.yml")
+assert "avoid_vmid_source_ip == avoid_vmid_current_ip" in str(
+    task(avoid_vmid_tasks, "PBS VMID | Reject an explicit VMID colliding with the datastore owner")["ansible.builtin.assert"]["that"]
+)
+assert "recursive=True" in str(
+    task(avoid_vmid_tasks, "PBS VMID | Set the free ID in config")["ansible.builtin.set_fact"]
+)
+assert task(avoid_vmid_tasks, "PBS VMID | Find a free ID for an IP-derived collision")["no_log"] is True
+vmid_helper = ROOT / "ansible/files/proxmox/find-free-vmid.py"
+vmid_spec = importlib.util.spec_from_file_location("find_free_vmid", vmid_helper)
+find_free_vmid = importlib.util.module_from_spec(vmid_spec)
+vmid_spec.loader.exec_module(find_free_vmid)
+assert find_free_vmid.first_free_vmid([{"vmid": 100}, {"vmid": "102"}], 100, 101) == 103
+assert find_free_vmid.first_free_vmid([], 200, 201) == 200
+assert find_free_vmid.first_free_vmid([{"vmid": 999_999_999}], 1_000_000_000, 100) == 101
 
 ensure_disk = load_yaml("ansible/tasks/proxmox/ensure-pbs-datastore-disk.yml")
 allocate_disk = task(ensure_disk, "PBS disk | Allocate the first datastore volume")

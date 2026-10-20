@@ -287,6 +287,19 @@
         - name: Derive VMID from IP
           ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
 
+        # A retained disk reserves its source VMID even while the PBS guest is absent.
+        # Resolve an IP-derived collision before cloning so Proxmox cannot create the
+        # replacement at the disk owner's ID.
+        - name: Avoid colliding with the retained PBS datastore VMID
+          ansible.builtin.include_tasks: ../../tasks/proxmox/avoid-vmid-collision.yml
+          vars:
+            avoid_vmid_requested: "{{ homelabinfra_config.proxmox.vm.vmid }}"
+            avoid_vmid_reserved: "{{ app_config.proxmox.vm.datastore_disk.source_vmid }}"
+            avoid_vmid_source_ip: "{{ homelabinfra_config.proxmox.vm.vmid_source_ip | default('') }}"
+            avoid_vmid_current_ip: "{{ homelabinfra_instance.network.ip_address }}"
+            avoid_vmid_node: "{{ homelabinfra_config.proxmox.node }}"
+          when: app_config.proxmox.vm.datastore_disk is defined
+
         - name: Clone the VM from the cloud-init template
           ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
           vars:
