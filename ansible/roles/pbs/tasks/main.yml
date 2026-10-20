@@ -58,6 +58,16 @@
     state: present
     update_cache: true
 
+- name: Install rsync for PBS datastore migration
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+  when: app_config.proxmox.vm.datastore_disk is defined
+
+- name: Configure the persistent PBS datastore disk
+  ansible.builtin.include_tasks: datastore-disk.yml
+  when: app_config.proxmox.vm.datastore_disk is defined
+
 - name: Create apt keyrings directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
@@ -91,6 +101,26 @@
   ansible.builtin.file:
     path: /etc/apt/sources.list.d/pbs-enterprise.list
     state: absent
+
+- name: Read the new PBS datastore directory marker
+  ansible.builtin.stat:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+    follow: false
+  register: _pbs_new_datastore_chunks
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - app_config.app.datastore_mode | default('create') == 'create'
+
+- name: Give PBS ownership of an empty datastore directory
+  ansible.builtin.file:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    owner: backup
+    group: backup
+    mode: "0750"
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - app_config.app.datastore_mode | default('create') == 'create'
+    - not (_pbs_new_datastore_chunks.stat.isdir | default(false))
 
 - name: Enable and start the PBS services
   ansible.builtin.systemd:
@@ -298,6 +328,12 @@
       creation, the backup job and notification routing all use this token. Check
       `proxmox-backup-manager user list-tokens {{ pbs_auth_id }}` and
       `proxmox-backup-manager acl list` on the PBS VM.
+
+- name: Register the retained datastore without initialising it
+  ansible.builtin.include_tasks: register-reused-datastore.yml
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - app_config.app.datastore_mode | default('create') == 'reuse'
 
 # ── Hand the endpoint and token back to the playbook ──────────────────────────
 - name: Export the PBS endpoint to the playbook

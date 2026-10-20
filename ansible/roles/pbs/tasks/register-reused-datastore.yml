@@ -1,0 +1,44 @@
+---
+# A new PBS guest has no datastore.cfg even when its retained ext4 volume contains
+# chunks and snapshots. `--reuse-datastore` registers that existing directory without
+# creating or initialising its contents.
+
+- name: PBS datastore reuse | List local registrations
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, datastore, list, --output-format, json]
+  register: _pbs_reuse_datastores
+  changed_when: false
+
+- name: PBS datastore reuse | Find the declared registration
+  ansible.builtin.set_fact:
+    _pbs_reuse_registered: >-
+      {{ (_pbs_reuse_datastores.stdout | from_json)
+         | selectattr('name', 'equalto', app_config.app.datastore_name) | list }}
+
+- name: PBS datastore reuse | Require a unique registration at the mounted path
+  ansible.builtin.assert:
+    that:
+      - _pbs_reuse_registered | length <= 1
+      - >-
+        _pbs_reuse_registered | length == 0
+        or (((_pbs_reuse_registered | first).path | default(''))
+            | regex_replace('(?<=.)/+$', ''))
+           == (homelabinfra_config.infrastructure.backups.datastore_path
+               | regex_replace('(?<=.)/+$', ''))
+    fail_msg: >-
+      PBS datastore {{ app_config.app.datastore_name }} is already registered at a
+      different path or appears more than once. Refusing to change the retained store.
+
+- name: PBS datastore reuse | Register the retained directory without initialising it
+  ansible.builtin.command:
+    argv:
+      - proxmox-backup-manager
+      - datastore
+      - create
+      - "{{ app_config.app.datastore_name }}"
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+      - --reuse-datastore
+      - 'true'
+  register: _pbs_reuse_create
+  changed_when: _pbs_reuse_create.rc == 0
+  when: _pbs_reuse_registered | length == 0

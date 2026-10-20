@@ -147,13 +147,20 @@
   delay: 5
   changed_when: false
 
-- name: PBS | Apply retention settings on datastore
+- name: PBS | Read current datastore retention settings
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_datastore_config
+
+- name: PBS | Apply only drifted retention settings
   ansible.builtin.uri:
     url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
     method: PUT
     headers: "{{ _pbs_headers }}"
     body_format: form-urlencoded
-    body: "{{ _pbs_keep }}"
+    body: "{{ {item.key: item.value} }}"
     validate_certs: false
   vars:
     _retention: "{{ homelabinfra_config.infrastructure.backups.retention | default({}) }}"
@@ -163,7 +170,12 @@
               | map(attribute='key') | map('replace', '_', '-')
               | zip(_retention | dict2items | selectattr('key', 'match', '^keep_')
                     | map(attribute='value'))) }}
-  when: _pbs_keep | length > 0
+  loop: "{{ _pbs_keep | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: >-
+    (_pbs_datastore_config.json.data[item.key] | default(none) | string)
+    != (item.value | string)
 
 - name: PBS | Configure Ntfy notifications
   when:
@@ -257,6 +269,61 @@
     validate_certs: false
   register: _pve_storages
 
+- name: PBS | Resolve the existing PVE storage entry
+  ansible.builtin.set_fact:
+    _pbs_pve_server: "{{ pbs_api_host | regex_replace('^https?://', '') | regex_replace(':\\d+$', '') }}"
+    _pbs_pve_fingerprint: >-
+      {{ _pbs_certs.json.data | selectattr('fingerprint', 'defined')
+         | map(attribute='fingerprint') | first }}
+    _pbs_existing_storage: >-
+      {{ _pve_storages.json.data
+         | selectattr('storage', 'equalto', 'pbs-homelab') | list }}
+
+- name: PBS | Validate the existing PVE storage identity
+  ansible.builtin.assert:
+    that:
+      - _pbs_existing_storage | length <= 1
+      - >-
+        _pbs_existing_storage | length == 0
+        or (_pbs_existing_storage | first).type == 'pbs'
+      - >-
+        _pbs_existing_storage | length == 0
+        or (_pbs_existing_storage | first).datastore | default('') == _pbs_datastore
+    fail_msg: >-
+      PVE storage pbs-homelab is ambiguous or owned by a different storage type.
+      Refusing to replace its configuration.
+
+- name: PBS | Check existing PVE storage health
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/nodes/{{ homelabinfra_config.proxmox.node }}/storage/pbs-homelab/status"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+    status_code: [200, 400, 500]
+  register: _pbs_pve_status_before
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _pbs_existing_storage | length == 1
+
+- name: PBS | Read the existing PVE storage health result
+  ansible.builtin.set_fact:
+    _pbs_existing_storage_active: >-
+      {{ _pbs_pve_status_before.status | default(0) == 200
+         and (_pbs_pve_status_before.json.data.active | default(0) | int == 1) }}
+
+- name: PBS | Decide whether the PVE storage entry needs repair
+  ansible.builtin.set_fact:
+    _pbs_storage_needs_update: >-
+      {{ _pbs_existing_storage | length == 1
+         and (
+           (pbs_token_rotated | default(false) | bool)
+           or ((_pbs_existing_storage | first).server | default('') != _pbs_pve_server)
+           or ((_pbs_existing_storage | first).username | default('') != pbs_api_token_id)
+           or ((_pbs_existing_storage | first).fingerprint | default('') != _pbs_pve_fingerprint)
+           or ('backup' not in ((_pbs_existing_storage | first).content | default('')).split(','))
+           or not (_pbs_existing_storage_active | default(false) | bool)
+         ) }}
+
 - name: PBS | Register PBS as a PVE storage backend
   ansible.builtin.uri:
     url: "{{ _pve_url }}/storage"
@@ -266,22 +333,34 @@
     body:
       storage: pbs-homelab
       type: pbs
-      server: "{{ pbs_api_host | regex_replace('^https?://', '') | regex_replace(':\\d+$', '') }}"
+      server: "{{ _pbs_pve_server }}"
       datastore: "{{ _pbs_datastore }}"
       username: "{{ pbs_api_token_id }}"
       password: "{{ pbs_api_token_secret }}"
-      fingerprint: >-
-        {{ _pbs_certs.json.data | selectattr('fingerprint', 'defined')
-           | map(attribute='fingerprint') | first }}
+      fingerprint: "{{ _pbs_pve_fingerprint }}"
       content: backup
     validate_certs: false
-  when: >-
-    _pve_storages.json.data
-    | map(attribute='storage') | list
-    is not contains('pbs-homelab')
+  no_log: true
+  when: _pbs_existing_storage | length == 0
 
-# Existing named registrations are not adopted. The owning POST condition above
-# also gates the node-root-private creation record (no password crosses this path).
+- name: PBS | Repair PVE storage endpoint and rotated API credentials
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage/pbs-homelab"
+    method: PUT
+    headers: "{{ _pve_headers }}"
+    body_format: form-urlencoded
+    body:
+      server: "{{ _pbs_pve_server }}"
+      username: "{{ pbs_api_token_id }}"
+      password: "{{ pbs_api_token_secret }}"
+      fingerprint: "{{ _pbs_pve_fingerprint }}"
+      content: backup
+      disable: 0
+    validate_certs: false
+  no_log: true
+  when: _pbs_storage_needs_update | bool
+
+# Only a registration created by this task is recorded in the node-root-private journal.
 - name: PBS | Register provenance delegation
   ansible.builtin.include_tasks: ../proxmox/register-nodes.yml
   when: >-
@@ -297,9 +376,33 @@
     executable: python3
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   become: true
-  when: >-
-    _pve_storages.json.data | map(attribute='storage') | list
-    is not contains('pbs-homelab')
+  when: _pbs_existing_storage | length == 0
+
+- name: PBS | Wait for the PVE storage backend to be active
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/nodes/{{ homelabinfra_config.proxmox.node }}/storage/pbs-homelab/status"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+    status_code: [200, 400, 500]
+  register: _pbs_pve_status_after
+  changed_when: false
+  failed_when: false
+  until: >-
+    _pbs_pve_status_after.status | default(0) == 200
+    and (_pbs_pve_status_after.json.data.active | default(0) | int == 1)
+  retries: 12
+  delay: 5
+  no_log: true
+
+- name: PBS | Require the PVE storage backend to be active
+  ansible.builtin.assert:
+    that: >-
+      _pbs_pve_status_after.status | default(0) == 200
+      and (_pbs_pve_status_after.json.data.active | default(0) | int == 1)
+    fail_msg: >-
+      PVE storage pbs-homelab is not active with the current PBS address, fingerprint and
+      API token. PBS deployment cannot report success while scheduled backups are unable
+      to reach the datastore.
 
 - name: PBS | Collect vmids of guests tagged _+lab
   ansible.builtin.uri:
@@ -346,11 +449,34 @@
 
 - name: PBS | Find our backup job (by comment marker)
   ansible.builtin.set_fact:
-    _backup_job_id: >-
+    _backup_job_matches: >-
       {{ _pve_backup_jobs.json.data
          | selectattr('comment', 'defined')
          | selectattr('comment', 'search', 'managed by homelab-infra')
-         | map(attribute='id') | first | default('') }}
+         | list }}
+
+- name: PBS | Reject duplicate managed backup jobs
+  ansible.builtin.assert:
+    that: _backup_job_matches | length <= 1
+    fail_msg: >-
+      PVE has multiple managed PBS backup jobs. Refusing to update an arbitrary job.
+
+- name: PBS | Resolve managed backup job state
+  ansible.builtin.set_fact:
+    _backup_job: "{{ _backup_job_matches | first | default({}) }}"
+    _backup_job_id: "{{ (_backup_job_matches | first | default({})).id | default('') }}"
+
+- name: PBS | Detect backup job drift
+  ansible.builtin.set_fact:
+    _backup_job_needs_update: >-
+      {{ _backup_job_id | length > 0
+         and (
+           (_backup_job.schedule | default('') != _backup_schedule)
+           or ((_backup_job.vmid | default('') | string) != (_backup_vmids | string))
+           or (_backup_job.storage | default('') != 'pbs-homelab')
+           or (_backup_job.mode | default('') != 'snapshot')
+           or (_backup_job.enabled | default(0) | int != 1)
+         ) }}
 
 - name: PBS | Create backup job for tagged guests
   ansible.builtin.uri:
@@ -377,11 +503,14 @@
     headers: "{{ _pve_headers }}"
     body_format: form-urlencoded
     body:
+      storage: pbs-homelab
       schedule: "{{ _backup_schedule }}"
       vmid: "{{ _backup_vmids }}"
+      mode: snapshot
+      enabled: 1
     validate_certs: false
   when:
-    - _backup_job_id | length > 0
+    - _backup_job_needs_update | bool
     - _backup_vmids | length > 0
 
 # ── Confirm + record ──────────────────────────────────────────────────────────
@@ -403,6 +532,7 @@
       guest(s) on schedule '{{ _backup_schedule }}'. PBS notifications route to
       this topic.
     body_format: raw
+  changed_when: false
   when:
     - homelabinfra_infra is defined
     - homelabinfra_infra.notifications is defined

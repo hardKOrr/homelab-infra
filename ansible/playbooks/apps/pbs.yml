@@ -59,6 +59,22 @@
              | combine(_instance_config | default({}), recursive=True)
              | combine({'app': (homelabinfra_vault.apps | default({}))[instance] | default({})}, recursive=True) }}
 
+    - name: Validate the optional PBS datastore disk declaration
+      ansible.builtin.assert:
+        that:
+          - app_config.proxmox.vm.datastore_disk.storage | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - app_config.proxmox.vm.datastore_disk.size_gib | default(0) | string is match('^[1-9][0-9]*$')
+          - >-
+            app_config.proxmox.vm.datastore_disk.source_vmid is not defined
+            or app_config.proxmox.vm.datastore_disk.source_vmid | string is match('^[1-9][0-9]*$')
+          - >-
+            app_config.app.datastore_mode | default('create') != 'reuse'
+            or app_config.proxmox.vm.datastore_disk.source_vmid is defined
+        fail_msg: >-
+          PBS datastore_disk requires a valid image storage and positive size_gib; reuse
+          also requires the original source_vmid. Refusing an unsafe volume path.
+      when: app_config.proxmox.vm.datastore_disk is defined
+
   tasks:
     # VM PATH — dedicated VM per instance. Mirrors the native LXC playbooks: an
     # existing `_<instance>` host is reused so re-runs are idempotent (a fresh
@@ -77,6 +93,58 @@
     - name: Check for existing instance host
       ansible.builtin.set_fact:
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+
+    - name: Require a stable retained volume identity for datastore reuse
+      ansible.builtin.assert:
+        that:
+          - app_config.proxmox.vm.datastore_disk is defined
+          - app_config.proxmox.vm.datastore_disk.source_vmid is defined
+          - app_config.proxmox.vm.datastore_disk.source_vmid | string is match('^[1-9][0-9]*$')
+        fail_msg: >-
+          PBS datastore_mode: reuse requires proxmox.vm.datastore_disk with the original
+          source_vmid. Refusing to create a guest before its retained volume is identified.
+      when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+    - name: Resolve the retained PBS volume identity before provisioning
+      ansible.builtin.set_fact:
+        _pbs_datastore_source_vmid: "{{ app_config.proxmox.vm.datastore_disk.source_vmid }}"
+        _pbs_datastore_volume_id: >-
+          {{ app_config.proxmox.vm.datastore_disk.storage }}:vm-{{ app_config.proxmox.vm.datastore_disk.source_vmid }}-disk-1
+        _pbs_disk_preflight_node: >-
+          {{ hostvars[_existing_hosts[0]].proxmox_node
+             if _existing_hosts | length > 0 else homelabinfra_config.proxmox.node }}
+      when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+    - name: Register the retained PBS volume preflight node
+      ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
+      when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+    - name: Check the retained PBS volume before creating a replacement guest
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/nodes/{{ _pbs_disk_preflight_node }}/storage/{{ app_config.proxmox.vm.datastore_disk.storage }}/content"
+          - --content
+          - images
+          - --output-format
+          - json
+      delegate_to: "{{ _pbs_disk_preflight_node }}"
+      register: _pbs_datastore_preflight_content
+      changed_when: false
+      no_log: true
+      when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+    - name: Refuse provisioning without the exact retained PBS volume
+      ansible.builtin.assert:
+        that:
+          - >-
+            (_pbs_datastore_preflight_content.stdout | from_json)
+            | selectattr('volid', 'equalto', _pbs_datastore_volume_id) | list | length == 1
+        fail_msg: >-
+          PBS reuse volume is absent or ambiguous. The existing guest remains untouched;
+          restore the exact retained volume before retrying Deploy PBS.
+      when: app_config.app.datastore_mode | default('create') == 'reuse'
 
     # Resolve without allocating, for both reuse and creation. The same effective
     # network (including default inheritance) must guard a reused running VM too.
@@ -135,6 +203,15 @@
       vars:
         ensure_guest_host: "{{ _existing_hosts[0] }}"
       when: _existing_hosts | length > 0
+
+    - name: Attach the retained PBS datastore disk to the existing guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
+      vars:
+        pbs_disk_vmid: "{{ hostvars[_existing_hosts[0]].proxmox_vmid }}"
+        pbs_disk_node: "{{ hostvars[_existing_hosts[0]].proxmox_node }}"
+        pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
+        pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+      when: app_config.proxmox.vm.datastore_disk is defined and _existing_hosts | length > 0
 
     - name: Provision new VM
       when: _existing_hosts | length == 0
@@ -199,6 +276,15 @@
             ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
             app_config: "{{ app_config }}"
             homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+
+        - name: Attach the retained PBS datastore disk to the new guest
+          ansible.builtin.include_tasks: ../../tasks/proxmox/ensure-pbs-datastore-disk.yml
+          vars:
+            pbs_disk_vmid: "{{ homelabinfra_instance.vm.vmid }}"
+            pbs_disk_node: "{{ homelabinfra_config.proxmox.node }}"
+            pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
+            pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
+          when: app_config.proxmox.vm.datastore_disk is defined
 
 
 # ── Play 2: Deploy ─────────────────────────────────────────────────────────────
@@ -302,6 +388,7 @@
         pbs_instance: "{{ instance }}"
         pbs_datastore_name: "{{ _pbs_deploy_host.app_config.app.datastore_name }}"
         pbs_datastore_mode: "{{ _pbs_deploy_host.app_config.app.datastore_mode | default('create') }}"
+        pbs_token_rotated: "{{ _pbs_deploy_host.pbs_token_rotated | default(false) }}"
 
     - name: Reload infrastructure facts
       ansible.builtin.include_vars:

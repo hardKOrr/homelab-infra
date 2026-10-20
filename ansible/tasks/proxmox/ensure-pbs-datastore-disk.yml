@@ -1,0 +1,203 @@
+---
+# Attach the one declared, retained PBS data volume to an owned PBS VM.
+#
+# Inputs: pbs_disk_vmid, pbs_disk_node, pbs_disk_tags, pbs_disk_config, pbs_disk_mode.
+# The PVE volume is stable across guest replacement: storage:vm-<source_vmid>-disk-1.
+# A missing volume is created only in create mode on its original VMID. Reuse never
+# allocates storage, and an attached volume is never detached or overwritten here.
+
+- name: PBS disk | Validate the retained volume declaration
+  ansible.builtin.assert:
+    that:
+      - pbs_disk_mode in ['create', 'reuse']
+      - pbs_disk_config.storage | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+      - pbs_disk_config.size_gib | default(0) | string is match('^[1-9][0-9]*$')
+      - pbs_disk_vmid | string is match('^[1-9][0-9]*$')
+      - pbs_disk_node | string | length > 0
+      - pbs_disk_mode != 'reuse' or pbs_disk_config.source_vmid is defined
+      - >-
+        pbs_disk_config.source_vmid is not defined
+        or pbs_disk_config.source_vmid | string is match('^[1-9][0-9]*$')
+      - >-
+        pbs_disk_mode != 'create'
+        or pbs_disk_config.source_vmid | default(pbs_disk_vmid) | int == pbs_disk_vmid | int
+    fail_msg: >-
+      PBS datastore_disk needs an image storage, positive size_gib and an owned PBS VM.
+      Reuse also requires the original source_vmid; create may allocate only on the
+      current VMID. Refusing to guess or allocate a recovery volume.
+
+- name: PBS disk | Resolve the stable storage identity
+  ansible.builtin.set_fact:
+    _pbs_disk_source_vmid: "{{ pbs_disk_config.source_vmid | default(pbs_disk_vmid) | int }}"
+    _pbs_disk_expected_volid: >-
+      {{ pbs_disk_config.storage }}:vm-{{ pbs_disk_config.source_vmid | default(pbs_disk_vmid) }}-disk-1
+
+- name: PBS disk | Read target VM configuration from PVE
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ pbs_disk_node }}/qemu/{{ pbs_disk_vmid }}/config"
+      - --output-format
+      - json
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_vm_config
+  changed_when: false
+  no_log: true
+
+- name: PBS disk | Confirm live ownership and reject a different scsi1 disk
+  ansible.builtin.assert:
+    that:
+      - "'_+lab' in (_pbs_disk_config_parsed.tags | default('')).split(';')"
+      - "('_' ~ instance) in (_pbs_disk_config_parsed.tags | default('')).split(';')"
+      - >-
+        _pbs_disk_config_parsed.scsi1 is not defined
+        or (_pbs_disk_config_parsed.scsi1.split(',') | first) == _pbs_disk_expected_volid
+    fail_msg: >-
+      PBS datastore disk attach requires the live VM to retain _+lab and _{{ instance }}
+      and scsi1 to be empty or already reference the declared retained volume. No disk
+      was attached or replaced.
+  vars:
+    _pbs_disk_config_parsed: "{{ _pbs_disk_vm_config.stdout | from_json }}"
+
+- name: PBS disk | List images on the declared storage
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ pbs_disk_node }}/storage/{{ pbs_disk_config.storage }}/content"
+      - --content
+      - images
+      - --output-format
+      - json
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_storage_content
+  changed_when: false
+  no_log: true
+
+- name: PBS disk | Find the exact retained volume
+  ansible.builtin.set_fact:
+    _pbs_disk_volumes: >-
+      {{ (_pbs_disk_storage_content.stdout | from_json)
+         | selectattr('volid', 'equalto', _pbs_disk_expected_volid) | list }}
+    _pbs_disk_current: >-
+      {{ (_pbs_disk_config_parsed.scsi1 | default('')).split(',') | first }}
+  vars:
+    _pbs_disk_config_parsed: "{{ _pbs_disk_vm_config.stdout | from_json }}"
+
+- name: PBS disk | Require a retained volume before reuse
+  ansible.builtin.assert:
+    that:
+      - _pbs_disk_volumes | length <= 1
+      - pbs_disk_mode != 'reuse' or _pbs_disk_volumes | length == 1
+    fail_msg: >-
+      The declared PBS datastore volume {{ _pbs_disk_expected_volid }} is missing or
+      ambiguous. Reuse never creates a replacement disk. Keep the guest and storage
+      unchanged while the volume owner is repaired.
+
+- name: PBS disk | Read every VM reference to the retained volume
+  ansible.builtin.script:
+    cmd: >-
+      {{ playbook_dir }}/../../files/proxmox/pbs-datastore-volume-references.py
+      {{ _pbs_disk_expected_volid | quote }}
+    executable: python3
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_references
+  changed_when: false
+  no_log: true
+  when: _pbs_disk_volumes | length == 1
+
+- name: PBS disk | Require one exclusive writer
+  ansible.builtin.assert:
+    that:
+      - _pbs_disk_reference_list | length <= 1
+      - >-
+        _pbs_disk_reference_list | length == 0
+        or ((_pbs_disk_reference_list | first).vmid | int == pbs_disk_vmid | int
+            and (_pbs_disk_reference_list | first).guest_type == 'qemu-server'
+            and (_pbs_disk_reference_list | first).device == 'scsi1')
+    fail_msg: >-
+      The retained PBS datastore volume is referenced by another VM or device. Refusing
+      a second writer; inspect the volume owner before deploying PBS.
+  vars:
+    _pbs_disk_reference_list: "{{ _pbs_disk_references.stdout | default('[]') | from_json }}"
+  when: _pbs_disk_volumes | length == 1
+
+- name: PBS disk | Allocate the first datastore volume
+  ansible.builtin.command:
+    argv:
+      - qm
+      - set
+      - "{{ pbs_disk_vmid }}"
+      - --scsi1
+      - "{{ pbs_disk_config.storage }}:{{ pbs_disk_config.size_gib | int }}G,backup=0,serial=homelab-pbs-store"
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_allocate
+  changed_when: _pbs_disk_allocate.rc == 0
+  when:
+    - pbs_disk_mode == 'create'
+    - _pbs_disk_source_vmid | int == pbs_disk_vmid | int
+    - _pbs_disk_volumes | length == 0
+    - _pbs_disk_current | length == 0
+
+- name: PBS disk | Read the new or retained volume after allocation
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ pbs_disk_node }}/storage/{{ pbs_disk_config.storage }}/content"
+      - --content
+      - images
+      - --output-format
+      - json
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_storage_after
+  changed_when: false
+  no_log: true
+
+- name: PBS disk | Verify the volume exists after allocation
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_pbs_disk_storage_after.stdout | from_json)
+        | selectattr('volid', 'equalto', _pbs_disk_expected_volid) | list | length == 1
+    fail_msg: >-
+      PVE did not expose the exact declared PBS datastore volume after attach/allocation.
+      The guest was not configured to initialise another volume.
+
+- name: PBS disk | Attach the retained volume
+  ansible.builtin.command:
+    argv:
+      - qm
+      - set
+      - "{{ pbs_disk_vmid }}"
+      - --scsi1
+      - "{{ _pbs_disk_expected_volid }},backup=0,serial=homelab-pbs-store"
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_attach
+  changed_when: _pbs_disk_attach.rc == 0
+  when:
+    - _pbs_disk_current | length == 0
+    - not (_pbs_disk_allocate.changed | default(false) | bool)
+
+- name: PBS disk | Read back the attached disk configuration
+  ansible.builtin.command:
+    argv: [qm, config, "{{ pbs_disk_vmid }}", --current]
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_config_after
+  changed_when: false
+  no_log: true
+
+- name: PBS disk | Confirm volume, backup exclusion and stable guest serial
+  ansible.builtin.assert:
+    that:
+      - _pbs_disk_final | regex_search('(^|,)' ~ (_pbs_disk_expected_volid | regex_escape) ~ '(,|$)')
+      - _pbs_disk_final is search('(^|,)backup=0(,|$)')
+      - _pbs_disk_final is search('(^|,)serial=homelab-pbs-store(,|$)')
+    fail_msg: >-
+      The PBS data disk did not read back with its exact retained volume identity,
+      backup=0 and the stable guest serial. Refusing guest deployment.
+  vars:
+    _pbs_disk_final: >-
+      {{ _pbs_disk_config_after.stdout
+         | regex_findall('(?m)^scsi1:\s*(.+)$') | first | default('') | trim }}

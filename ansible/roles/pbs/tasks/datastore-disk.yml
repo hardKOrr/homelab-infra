@@ -1,0 +1,398 @@
+---
+# Mount PBS's explicitly declared external datastore volume. Only create mode may
+# initialise a blank managed disk. Reuse mode requires the filesystem and snapshot
+# metadata to already exist on the retained volume.
+
+- name: PBS datastore disk | Validate the path and mode
+  ansible.builtin.assert:
+    that:
+      - app_config.app.datastore_mode | default('create') in ['create', 'reuse']
+      - homelabinfra_config.infrastructure.backups.datastore_path is defined
+      - homelabinfra_config.infrastructure.backups.datastore_path is match('^/')
+      - homelabinfra_config.infrastructure.backups.datastore_path != '/'
+      - "'..' not in homelabinfra_config.infrastructure.backups.datastore_path.split('/')"
+    fail_msg: >-
+      PBS datastore_disk requires an absolute, non-root datastore path and a create or
+      reuse mode. Refusing to mount or initialise an ambiguous location.
+
+- name: PBS datastore disk | Read block devices and serials
+  ansible.builtin.command:
+    argv: [lsblk, --json, --paths, --output, NAME,SERIAL,TYPE,FSTYPE,UUID,MOUNTPOINTS]
+  register: _pbs_lsblk
+  changed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Resolve the unique data device
+  ansible.builtin.set_fact:
+    _pbs_data_devices: >-
+      {{ (_pbs_lsblk.stdout | from_json).blockdevices
+         | selectattr('serial', 'equalto', 'homelab-pbs-store') | list }}
+
+- name: PBS datastore disk | Require one whole disk with the expected serial
+  ansible.builtin.assert:
+    that:
+      - _pbs_data_devices | length == 1
+      - (_pbs_data_devices | first).type == 'disk'
+      - (_pbs_data_devices | first).children | default([]) | length == 0
+    fail_msg: >-
+      Expected exactly one whole PBS datastore disk with serial homelab-pbs-store and no
+      partitions. Refusing to format or mount an ambiguous device.
+
+- name: PBS datastore disk | Resolve the target device
+  ansible.builtin.set_fact:
+    _pbs_data_device: "{{ (_pbs_data_devices | first).name }}"
+
+- name: PBS datastore disk | Read existing disk signatures
+  ansible.builtin.command:
+    argv: [wipefs, --no-act, --noheadings, --output, TYPE, "{{ _pbs_data_device }}"]
+  register: _pbs_data_signatures
+  changed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Refuse unsupported or uninitialised reuse media
+  ansible.builtin.assert:
+    that:
+      - _pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list in [[], ['ext4']]
+      - >-
+        app_config.app.datastore_mode | default('create') != 'reuse'
+        or (_pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list) == ['ext4']
+    fail_msg: >-
+      Reuse requires an existing ext4 filesystem. Create mode can format only the exact
+      declared PBS datastore disk when it has no filesystem signature.
+
+- name: PBS datastore disk | Initialise a blank declared disk
+  ansible.builtin.command:
+    argv: [mkfs.ext4, -F, -m, '0', -L, pbs-datastore, "{{ _pbs_data_device }}"]
+  register: _pbs_data_format
+  changed_when: _pbs_data_format.rc == 0
+  when:
+    - app_config.app.datastore_mode | default('create') == 'create'
+    - (_pbs_data_signatures.stdout_lines | map('trim') | reject('equalto', '') | list) == []
+  no_log: true
+
+- name: PBS datastore disk | Read the filesystem UUID
+  ansible.builtin.command:
+    argv: [blkid, --output, value, --match-tag, UUID, "{{ _pbs_data_device }}"]
+  register: _pbs_data_uuid
+  changed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Read the current datastore mount
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - UUID
+      - --mountpoint
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+  register: _pbs_final_mount
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Confirm the final path is unmounted or uses this disk
+  ansible.builtin.assert:
+    that:
+      - _pbs_data_uuid.stdout | trim | length > 0
+      - >-
+        _pbs_final_mount.rc != 0
+        or _pbs_final_mount.stdout | trim == _pbs_data_uuid.stdout | trim
+    fail_msg: >-
+      The configured datastore path is mounted from a different filesystem. Refusing to
+      replace that mount or hide its data.
+
+- name: PBS datastore disk | Inspect the current path before creating mount directories
+  ansible.builtin.stat:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    follow: false
+  register: _pbs_datastore_path_before
+
+- name: PBS datastore disk | Refuse a symlink or non-directory source path
+  ansible.builtin.assert:
+    that:
+      - not (_pbs_datastore_path_before.stat.islnk | default(false))
+      - >-
+        not (_pbs_datastore_path_before.stat.exists | default(false))
+        or (_pbs_datastore_path_before.stat.isdir | default(false))
+    fail_msg: >-
+      The declared PBS datastore path is a symlink or non-directory. Refusing to mount over
+      or copy from an ambiguous path.
+
+- name: PBS datastore disk | Create target and staging directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    - /var/lib/homelab-infra/pbs-datastore-stage
+
+- name: PBS datastore disk | Read the staging mount
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - UUID
+      - --mountpoint
+      - /var/lib/homelab-infra/pbs-datastore-stage
+  register: _pbs_stage_mount
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Refuse a staging path owned by another filesystem
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_stage_mount.rc != 0
+        or _pbs_stage_mount.stdout | trim == _pbs_data_uuid.stdout | trim
+    fail_msg: >-
+      The PBS datastore migration staging path is mounted from another filesystem.
+      Refusing to write through it.
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Mount the disk temporarily for verification
+  ansible.builtin.command:
+    argv:
+      - mount
+      - --source
+      - "UUID={{ _pbs_data_uuid.stdout | trim }}"
+      - --target
+      - /var/lib/homelab-infra/pbs-datastore-stage
+  register: _pbs_stage_mount_command
+  changed_when: _pbs_stage_mount_command.rc == 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_stage_mount.rc != 0
+  no_log: true
+
+- name: PBS datastore disk | Inspect old and staged datastore contents
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+    - /var/lib/homelab-infra/pbs-datastore-stage/.chunks
+    - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+  register: _pbs_datastore_markers
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Record old and staged datastore state
+  ansible.builtin.set_fact:
+    _pbs_source_has_chunks: "{{ _pbs_datastore_markers.results[0].stat.isdir | default(false) }}"
+    _pbs_stage_has_chunks: "{{ _pbs_datastore_markers.results[1].stat.isdir | default(false) }}"
+    _pbs_source_path_is_symlink: "{{ _pbs_datastore_markers.results[2].stat.islnk | default(false) }}"
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Refuse unsafe source or create-mode adoption
+  ansible.builtin.assert:
+    that:
+      - not (_pbs_source_path_is_symlink | bool)
+      - >-
+        app_config.app.datastore_mode | default('create') != 'create'
+        or not (_pbs_stage_has_chunks | bool)
+        or (_pbs_source_has_chunks | bool)
+    fail_msg: >-
+      The PBS datastore source is a symlink or create mode found a populated retained disk
+      without the old datastore to migrate. No source files were removed.
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Read PBS service state before copying data
+  ansible.builtin.service_facts:
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+
+- name: PBS datastore disk | Stop proxy before copying the old datastore
+  ansible.builtin.systemd:
+    name: proxmox-backup-proxy
+    state: stopped
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - "'proxmox-backup-proxy.service' in ansible_facts.services | default({})"
+    - ansible_facts.services['proxmox-backup-proxy.service'].state == 'running'
+
+- name: PBS datastore disk | Stop datastore service before copying the old datastore
+  ansible.builtin.systemd:
+    name: proxmox-backup
+    state: stopped
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - "'proxmox-backup.service' in ansible_facts.services | default({})"
+    - ansible_facts.services['proxmox-backup.service'].state == 'running'
+
+- name: PBS datastore disk | Copy existing data to retained storage
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - --exclude=lost+found
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/"
+      - /var/lib/homelab-infra/pbs-datastore-stage/
+  register: _pbs_datastore_copy
+  changed_when: _pbs_datastore_copy.rc == 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - app_config.app.datastore_mode | default('create') == 'create'
+  no_log: true
+
+- name: PBS datastore disk | Preserve datastore root ownership and mode
+  ansible.builtin.file:
+    path: /var/lib/homelab-infra/pbs-datastore-stage
+    owner: "{{ _pbs_datastore_path_before.stat.uid }}"
+    group: "{{ _pbs_datastore_path_before.stat.gid }}"
+    mode: "{{ _pbs_datastore_path_before.stat.mode }}"
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - app_config.app.datastore_mode | default('create') == 'create'
+
+- name: PBS datastore disk | Verify the copied data byte-for-byte
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - --exclude=lost+found
+      - --checksum
+      - --delete
+      - --dry-run
+      - --itemize-changes
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/"
+      - /var/lib/homelab-infra/pbs-datastore-stage/
+  register: _pbs_datastore_verify_copy
+  changed_when: false
+  failed_when: >-
+    _pbs_datastore_verify_copy.rc != 0
+    or _pbs_datastore_verify_copy.stdout | trim | length > 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_source_has_chunks | default(false) | bool
+    - app_config.app.datastore_mode | default('create') == 'create'
+  no_log: true
+
+- name: PBS datastore disk | Unmount the staging path after verification
+  ansible.builtin.command:
+    argv: [umount, /var/lib/homelab-infra/pbs-datastore-stage]
+  register: _pbs_stage_unmount
+  changed_when: _pbs_stage_unmount.rc == 0
+  when:
+    - _pbs_final_mount.rc != 0
+    - _pbs_stage_mount.rc == 0 or _pbs_stage_mount_command.changed | default(false)
+  no_log: true
+
+- name: PBS datastore disk | Mount the retained datastore at its declared path
+  ansible.posix.mount:
+    src: "UUID={{ _pbs_data_uuid.stdout | trim }}"
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+    fstype: ext4
+    opts: defaults
+    dump: '0'
+    passno: '2'
+    state: mounted
+  when: _pbs_final_mount.rc != 0
+
+- name: PBS datastore disk | Verify the mounted filesystem identity
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - UUID
+      - --mountpoint
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+  register: _pbs_final_mount_after
+  changed_when: false
+  no_log: true
+
+- name: PBS datastore disk | Require the expected disk at the datastore path
+  ansible.builtin.assert:
+    that:
+      - _pbs_final_mount_after.rc == 0
+      - _pbs_final_mount_after.stdout | trim == _pbs_data_uuid.stdout | trim
+    fail_msg: >-
+      The declared PBS datastore path is not backed by the retained disk UUID. PBS services
+      will not be started against a directory on the OS disk.
+
+- name: PBS datastore disk | Check the mounted retained chunk directory
+  ansible.builtin.stat:
+    path: "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+    follow: false
+  register: _pbs_final_chunks
+  when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+- name: PBS datastore disk | Check the mounted retained snapshot metadata
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}"
+      - -path
+      - "{{ homelabinfra_config.infrastructure.backups.datastore_path }}/.chunks"
+      - -prune
+      - -o
+      - -type
+      - f
+      - '('
+      - -name
+      - index.json.blob
+      - -o
+      - -name
+      - manifest.blob
+      - ')'
+      - -print
+      - -quit
+  register: _pbs_final_snapshot_marker
+  changed_when: false
+  when: app_config.app.datastore_mode | default('create') == 'reuse'
+  no_log: true
+
+- name: PBS datastore disk | Require existing artifacts in reuse mode
+  ansible.builtin.assert:
+    that:
+      - _pbs_final_chunks.stat.isdir | default(false)
+      - _pbs_final_snapshot_marker.stdout | default('') | trim | length > 0
+    fail_msg: >-
+      Reuse requires an existing PBS chunk store and at least one snapshot manifest/index
+      on the retained disk. Refusing to register a blank or incomplete directory.
+  when: app_config.app.datastore_mode | default('create') == 'reuse'
+
+- name: PBS datastore disk | Create service drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+
+- name: PBS datastore disk | Make both PBS services require the datastore mount
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.service.d/homelabinfra-datastore.conf"
+    content: |
+      [Unit]
+      RequiresMountsFor={{ homelabinfra_config.infrastructure.backups.datastore_path }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - proxmox-backup
+    - proxmox-backup-proxy
+  notify: Reload systemd
+
+- name: PBS datastore disk | Apply mount dependency changes
+  ansible.builtin.meta: flush_handlers

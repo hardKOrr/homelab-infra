@@ -27,6 +27,10 @@
 #                         # datastore itself if you want backups on separate storage,
 #                         # then point infrastructure.yml backups.datastore_path at it.
 #     storage: local-lvm  # storage the cloned disk lands on
+#     datastore_disk:    # optional persistent disk for the PBS datastore
+#       storage: <shared-image-storage>
+#       size_gib: 160
+#       source_vmid: <original-pbs-vmid>  # keep this value for app.datastore_mode: reuse
 #   network: default    # OVERRIDE ONLY. PBS is `scope: lab`, so it resolves to the
 #                       # network named `shared` when your lab declares one.
 
@@ -63,7 +67,8 @@
 #   datastore_name: homelab # datastore created at infrastructure.yml backups.datastore_path
 #   datastore_mode: reuse  # recovery: require an existing registration at that path;
 #                          # never create/initialise a missing datastore (default: create).
-#                          # Read ansible/roles/pbs/README.md before guest recovery.
+#                          # With datastore_disk configured, attach and mount its retained
+#                          # volume, then register its existing directory without formatting.
 #   api_token_name: ansible # token id becomes root@pam!ansible
 #
 #   # Use pbs-enterprise instead if this lab has a Proxmox subscription.
