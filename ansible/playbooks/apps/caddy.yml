@@ -325,6 +325,11 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
+    # This bookkeeping is independent of route replay. Record the fresh guest first so an
+    # aggregated per-app route failure cannot leave Caddy itself unrecorded.
+    - name: Record the app on its Proxmox guest
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
     # A fresh Caddy has an empty admin route table. Rebuild each deployed application's
     # route from its Proxmox instance tag and the same defaults/config used by Deploy.
     - name: Rebuild routes for deployed applications
@@ -332,11 +337,6 @@
       when:
         - homelabinfra_infra is defined
         - homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
-
-    # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the UI
-    # shows what each host actually runs. Defaults cover every input - see the task file.
-    - name: Record the app on its Proxmox guest
-      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
 
     - name: Notify deployment complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml

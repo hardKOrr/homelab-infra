@@ -143,6 +143,15 @@ def main():
         print(f"ansible-playbook is required at {ANSIBLE_PLAYBOOK}", file=sys.stderr)
         return 2
 
+    caddy_playbook = (ROOT / "ansible/playbooks/apps/caddy.yml").read_text(encoding="utf-8")
+    record_task = caddy_playbook.find("- name: Record the app on its Proxmox guest")
+    rebuild_task = caddy_playbook.find("- name: Rebuild routes for deployed applications")
+    check(
+        "Caddy guest record runs before route replay can report aggregate failures",
+        record_task >= 0 and rebuild_task >= 0 and record_task < rebuild_task,
+        True,
+    )
+
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeCaddy)
     server.routes = []
     server.calls = []
