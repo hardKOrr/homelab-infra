@@ -26,11 +26,14 @@ def task_index(tasks, *, name=None, include=None):
 status_read = preflight[1]["ansible.builtin.command"]["argv"]
 assert status_read == ["pvesh", "get", "/nodes/{{ proxmox_memory_node }}/status", "--output-format", "json"]
 capacity_assert = preflight[2]["ansible.builtin.assert"]
-assert "memory.free" in str(preflight[2]["vars"])
+memory_vars = str(preflight[2]["vars"])
+assert "memory.available" in memory_vars
+assert "memory.total" in memory_vars and "memory.used" in memory_vars
+assert "memory.free" not in memory_vars
 assert "proxmox_memory_guest" in capacity_assert["fail_msg"]
 assert "proxmox_memory_node" in capacity_assert["fail_msg"]
 assert "_proxmox_memory_needed_mib" in capacity_assert["fail_msg"]
-assert "_proxmox_memory_free_mib" in capacity_assert["fail_msg"]
+assert "_proxmox_memory_available_mib" in capacity_assert["fail_msg"]
 
 expected = {
     "vm-create.yml": ("Create VM", "Start the VM"),

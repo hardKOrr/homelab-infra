@@ -14,7 +14,7 @@ with (root/'pvesh-calls').open('a') as f:f.write(' '.join(args)+'\n')
 if args[:2]==['get','/cluster/resources']:
  print(json.dumps(json.loads((root/'inventory.json').read_text())));sys.exit(0)
 if args[:2]==['get','/nodes/localhost/status']:
- print(json.dumps({'memory':{'free':int((root/'free-memory').read_text())}}));sys.exit(0)
+ print(json.dumps({'memory':json.loads((root/'memory.json').read_text())}));sys.exit(0)
 vmid=args[1].split('/')[-2];print(json.dumps(json.loads((root/(vmid+'.json')).read_text())))
 '''
 qm=r'''#!/usr/bin/env python3
@@ -25,7 +25,7 @@ with (root/'commands').open('a') as f:f.write(' '.join(args)+'\n')
 if args[0]=='start':(root/'started').write_text('yes')
 sys.exit(0)
 '''
-cases=['plan','execute-lxc','execute-qemu','repeat-running','low-memory','wrong-name','unowned','template','duplicate','missing','locked','wrong-confirmation']
+cases=['plan','execute-lxc','execute-qemu','repeat-running','low-memory','low-memory-fallback','wrong-name','unowned','template','duplicate','missing','locked','wrong-confirmation']
 with tempfile.TemporaryDirectory() as t:
  root=Path(t);pvesh_bin=root/'pvesh';pvesh_bin.write_text(pvesh);pvesh_bin.chmod(0o700)
  qm_bin=root/'qm';qm_bin.write_text(qm);qm_bin.chmod(0o700)
@@ -42,7 +42,12 @@ with tempfile.TemporaryDirectory() as t:
   if case=='template':inventory[0]['template']=1
   if case=='locked':config['lock']='backup'
   (d/'123.json').write_text(json.dumps(config));(d/'inventory.json').write_text(json.dumps(inventory))
-  (d/'free-memory').write_text(str(1024**3 if case=='low-memory' else 4*1024**3))
+  memory={'total':8*1024**3,'used':4*1024**3,'free':1024**3,'available':4*1024**3}
+  if case in ['low-memory','low-memory-fallback']:
+   memory.update({'used':7*1024**3,'free':4*1024**3})
+  if case=='low-memory-fallback':memory.pop('available')
+  elif case=='low-memory':memory['available']=1024**3
+  (d/'memory.json').write_text(json.dumps(memory))
   tasks=[]
   for task in source:
    task=dict(task)
@@ -65,10 +70,10 @@ with tempfile.TemporaryDirectory() as t:
   if case=='execute-lxc':assert calls==['start 123','exec 123 -- /bin/true'] and (d/'started').exists(),calls
   elif case=='execute-qemu':assert calls==['start 123','guest exec 123 -- /bin/true'] and (d/'started').exists(),calls
   else:assert not calls,(case,calls)
-  if case=='low-memory':
-   assert 'Not enough free memory for guest' in p.stdout,p.stdout
+  if case in ['low-memory','low-memory-fallback']:
+   assert 'Not enough available memory for guest' in p.stdout,p.stdout
    assert 'stack-services' in p.stdout and "node 'localhost'" in p.stdout,p.stdout
-   assert 'needs 2048 MiB' in p.stdout and 'only 1024 MiB free' in p.stdout,p.stdout
+   assert 'needs 2048 MiB' in p.stdout and 'only 1024 MiB available' in p.stdout,p.stdout
    assert any('/nodes/localhost/status' in call for call in api_calls),api_calls
   if case=='repeat-running':
    assert not any('/nodes/localhost/status' in call for call in api_calls),api_calls
