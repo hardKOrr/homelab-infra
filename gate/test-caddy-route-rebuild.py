@@ -122,6 +122,7 @@ def inventory_fixture():
                         "radarr-host": guest(["_radarr-4k"], "192.0.2.25", 101),
                         "authentik-host": guest(["_authentik"], "192.0.2.26", 102),
                         "caddy-host": guest(["_edge-router"], "192.0.2.27", 103),
+                        "rundeck-host": guest(["_rundeck"], "192.0.2.28", 104),
                         "k8s-one": guest(["_homepage"], "192.0.2.31", 201),
                         "k8s-two": guest(["_homepage"], "192.0.2.32", 202),
                         "wireguard-host": guest(["_wireguard"], "192.0.2.41", 301),

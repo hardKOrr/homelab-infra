@@ -4,6 +4,8 @@
 # the instance config and app defaults supply the wiring contract. Reusing caddy.yml
 # keeps route creation, drift correction and exactly-one verification identical to an
 # application's normal Deploy.
+# `rundeck` is the control-plane guest described by app-instances.py, not a deployable
+# application. Mirror its reserved identity here; all other unmatched instance tags fail.
 
 - name: Rebuild Caddy routes | Resolve repository root
   ansible.builtin.set_fact:
@@ -49,6 +51,7 @@
          | select('match', '^_[A-Za-z0-9]')
          | map('regex_replace', '^_', '')
          | reject('equalto', instance | default(''))
+         | reject('equalto', 'rundeck')
          | unique
          | sort
          | list }}
