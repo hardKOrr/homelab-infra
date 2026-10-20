@@ -105,7 +105,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     declared = {"egress": [{"name": "soulseek", "protocol": "TCP", "port": ""},
                            {"name": "peer-range", "protocol": "TCP", "port": "",
-                            "source_port": "61000-65535"}],
+                            "source_port": "61000-65535", "sequence": 750}],
                 "inbound": [{"name": "peers", "protocol": "TCP", "port": 50300,
                              "enabled": False}]}
     with tempfile.TemporaryDirectory() as directory:
@@ -128,6 +128,8 @@ def main():
         peer = next(r for r in owned if r["description"].endswith("peer-range"))
         check("optional egress source port reaches the filter rule",
               peer.get("source_port"), "61000-65535")
+        check("per-rule sequence overrides the global default",
+              peer.get("sequence"), "750")
         check("disabled forward publishes nothing", server.rules["d_nat"], {})
 
         check("second deploy changes nothing",
@@ -139,6 +141,11 @@ def main():
 
         peer["source_port"] = "61001-65535"
         check("source-port drift is corrected in place",
+              run(server, root, wire, "slskd", declared), ["filter/setRule", "filter/apply"])
+
+        next(r for r in server.rules["filter"].values()
+             if r["description"].endswith("peer-range"))["sequence"] = "751"
+        check("per-rule sequence drift is corrected in place",
               run(server, root, wire, "slskd", declared), ["filter/setRule", "filter/apply"])
 
         declared["inbound"][0]["enabled"] = True

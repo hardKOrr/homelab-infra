@@ -1,0 +1,43 @@
+---
+- name: PDM host firewall | Read rules before deleting an owned rule
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ pdm_firewall_node }}/firewall/rules"
+      - --output-format
+      - json
+  delegate_to: "{{ pdm_config.proxmox.node }}"
+  register: _pdm_host_firewall_current_read
+  changed_when: false
+  no_log: true
+
+- name: PDM host firewall | Select current rule at the saved position
+  ansible.builtin.set_fact:
+    _pdm_host_firewall_current_rule: >-
+      {{ (_pdm_host_firewall_current_read.stdout | from_json)
+         | selectattr('pos', 'defined')
+         | selectattr('pos', 'equalto', pdm_firewall_owned_rule.pos | int)
+         | list }}
+  no_log: true
+
+- name: PDM host firewall | Verify rule is still owned before deleting
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_pdm_host_firewall_current_rule
+         | selectattr('comment', 'defined')
+         | selectattr('comment', 'equalto', 'homelab-infra: ' ~ instance ~ ' pdm-proxmox-api')
+         | list | length) == 1
+    fail_msg: Refusing to delete a Proxmox firewall rule that is no longer PDM-owned.
+  no_log: true
+
+- name: PDM host firewall | Delete owned API rule with current digest
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'delete', '/nodes/' ~ pdm_firewall_node ~ '/firewall/rules/' ~ (_pdm_host_firewall_current_rule[0].pos | string)]
+         + (['--digest', _pdm_host_firewall_current_rule[0].digest]
+            if _pdm_host_firewall_current_rule[0].digest | default('') | length > 0 else []) }}
+  delegate_to: "{{ pdm_config.proxmox.node }}"
+  changed_when: true
+  no_log: true

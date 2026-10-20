@@ -6,6 +6,9 @@
 #   wiring_app_name:       app instance name (e.g. radarr-4k) — route @id is route_<name>
 #   wiring_upstream_host:  IP or hostname of the app container
 #   wiring_upstream_port:  port the app listens on
+#   wiring_upstream_scheme: http | https (default: http)
+#   wiring_upstream_tls_insecure_skip_verify: skip an HTTPS upstream's certificate
+#                          verification (default: false)
 #   wiring_domain:         full domain (e.g. radarr-4k.homelab.example.com)
 #   wiring_access:         internal | public | authenticated (default: internal). This is
 #                          the app's EXPOSURE, from routing.access — not which proxy serves
@@ -72,10 +75,15 @@
       {{ (wiring_identity_mode | default('catalog')) == 'forward_auth'
          and (homelabinfra_infra.sso.provider | default('none')) == 'authentik' }}
 
-    _caddy_app_handler:
-      handler: reverse_proxy
-      upstreams:
-        - dial: "{{ wiring_upstream_host }}:{{ wiring_upstream_port }}"
+    _caddy_app_transport: >-
+      {{ {'transport': {'protocol': 'http',
+                        'tls': {'insecure_skip_verify':
+                          wiring_upstream_tls_insecure_skip_verify | default(false) | bool}}}
+         if wiring_upstream_scheme | default('http') == 'https' else {} }}
+    _caddy_app_handler: >-
+      {{ {'handler': 'reverse_proxy',
+          'upstreams': [{'dial': wiring_upstream_host ~ ':' ~ wiring_upstream_port}]}
+         | combine(_caddy_app_transport, recursive=True) }}
 
     # sso.host is a full base URL; Caddy dials host:port, and needs an explicit TLS
     # transport when that URL is https (lab Authentiks serve their own certificate,
@@ -157,6 +165,7 @@
           - wiring_upstream_host is defined and wiring_upstream_host | length > 0
           - wiring_upstream_port is defined and wiring_upstream_port | string | length > 0
           - wiring_domain is defined and wiring_domain | length > 0
+          - wiring_upstream_scheme | default('http') in ['http', 'https']
           - _caddy_access in ['internal', 'public', 'authenticated']
         fail_msg: >-
           wiring/caddy.yml needs the wiring contract vars: wiring_app_name,

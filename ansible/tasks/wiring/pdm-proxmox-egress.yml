@@ -1,0 +1,91 @@
+---
+# Resolve PDM's declared PVE remotes for optional OPNsense egress rules and
+# narrower node-local Proxmox firewall rules. External remotes have no locally
+# managed node firewall target.
+- name: PDM firewall | Build declared PVE remote node list
+  ansible.builtin.set_fact:
+    _pdm_pve_nodes: "{{ _pdm_pve_nodes_json | from_json }}"
+  vars:
+    _pdm_pve_nodes_json: >-
+      {%- set nodes = [] -%}
+      {%- for remote in pdm_config.remotes | default([]) if remote.type == 'pve' -%}
+      {%-   for node in remote.nodes | default([]) -%}
+      {%-     set _ = nodes.append({'remote': remote.id, 'node': node}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ nodes | to_json }}
+
+- name: PDM firewall | Resolve PVE hostnames not in the node map
+  ansible.builtin.command:
+    argv: [getent, ahostsv4, "{{ item.node }}"]
+  register: _pdm_pve_hostname_results
+  changed_when: false
+  failed_when: false
+  loop: "{{ _pdm_pve_nodes }}"
+  loop_control:
+    label: PDM remote node
+  when:
+    - (homelabinfra_infra | default({})).get('firewall', {}).get('provider', 'none') == 'opnsense'
+    - item.node not in (homelabinfra_config.proxmox.nodes | default({}))
+    - item.node is not ansible.utils.ipv4_address
+
+- name: PDM firewall | Resolve node addresses and managed node names
+  ansible.builtin.set_fact:
+    _pdm_firewall_targets: "{{ _pdm_firewall_targets_json | from_json }}"
+  vars:
+    _pdm_firewall_targets_json: >-
+      {%- set targets = [] -%}
+      {%- set node_map = homelabinfra_config.proxmox.nodes | default({}) -%}
+      {%- set resolutions = _pdm_pve_hostname_results.results | default([]) -%}
+      {%- for entry in _pdm_pve_nodes -%}
+      {%-   set address = node_map.get(entry.node, '') -%}
+      {%-   if not address and entry.node is ansible.utils.ipv4_address -%}
+      {%-     set address = entry.node -%}
+      {%-   endif -%}
+      {%-   if not address -%}
+      {%-     set result = (resolutions | selectattr('item.node', 'equalto', entry.node) | list | first | default({})) -%}
+      {%-     if result.rc | default(1) | int == 0 and result.stdout_lines | default([]) | length > 0 -%}
+      {%-       set address = result.stdout_lines[0].split() | first -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%-   set pve_node = entry.node if entry.node in node_map else '' -%}
+      {%-   if not pve_node and address -%}
+      {%-     set pve_node = node_map | dict2items | selectattr('value', 'equalto', address) | map(attribute='key') | first | default('') -%}
+      {%-   endif -%}
+      {%-   set _ = targets.append(entry | combine({'address': address, 'pve_node': pve_node})) -%}
+      {%- endfor -%}
+      {{ targets | to_json }}
+
+- name: PDM firewall | Require IPv4 targets for OPNsense
+  ansible.builtin.assert:
+    that: item.address is ansible.utils.ipv4_address
+    fail_msg: >-
+      Each PDM PVE remote node must be an IPv4 address, a key in
+      homelabinfra_config.proxmox.nodes, or a hostname resolvable by the runner.
+  loop: "{{ _pdm_firewall_targets }}"
+  loop_control:
+    label: PDM remote node
+  when: (homelabinfra_infra | default({})).get('firewall', {}).get('provider', 'none') == 'opnsense'
+
+- name: PDM firewall | Build node-scoped HTTPS egress rules
+  ansible.builtin.set_fact:
+    _pdm_firewall_egress: "{{ _pdm_firewall_egress_json | from_json }}"
+  vars:
+    _pdm_firewall_egress_json: >-
+      {%- set rules = [] -%}
+      {%- for target in _pdm_firewall_targets -%}
+      {%-   set _ = rules.append({
+              'name': 'pve-api-' ~ target.remote ~ '-' ~ loop.index,
+              'protocol': 'TCP', 'port': '8006', 'destination': target.address,
+              'sequence': pdm_config.firewall.proxmox_api_sequence | default(250)}) -%}
+      {%- endfor -%}
+      {{ rules | to_json }}
+  when: (homelabinfra_infra | default({})).get('firewall', {}).get('provider', 'none') == 'opnsense'
+
+- name: PDM firewall | Open declared remote API access
+  ansible.builtin.include_tasks: ../firewall/open-app-access.yml
+  vars:
+    wiring_firewall:
+      egress: "{{ _pdm_firewall_egress }}"
+      inbound: []
+  when: (homelabinfra_infra | default({})).get('firewall', {}).get('provider', 'none') == 'opnsense'

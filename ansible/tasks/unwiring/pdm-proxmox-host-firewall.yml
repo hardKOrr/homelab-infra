@@ -1,0 +1,15 @@
+---
+# Remove only explicitly marked rules from local nodes; unrelated host firewall
+# policy and rules are left untouched.
+- name: PDM host firewall | Find all local Proxmox nodes
+  ansible.builtin.set_fact:
+    _pdm_host_firewall_nodes: >-
+      {{ ((homelabinfra_config.proxmox.nodes | default({}) | dict2items | map(attribute='key') | list)
+          + [pdm_config.proxmox.node]) | unique | list }}
+
+- name: PDM host firewall | Remove owned API rules from local nodes
+  ansible.builtin.include_tasks: pdm-proxmox-host-firewall-node-remove.yml
+  loop: "{{ _pdm_host_firewall_nodes }}"
+  loop_control:
+    loop_var: pdm_firewall_node
+    label: local PVE node

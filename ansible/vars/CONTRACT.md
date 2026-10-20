@@ -353,7 +353,8 @@ exists on the wire.
 | `firewall.host` | required unless provider `none` | OPNsense API address |
 | `firewall.interfaces` | required unless provider `none` | list of `{cidr, interface}`: the OPNsense interface (e.g. `opt4`) a guest's traffic enters on, matched by the guest's address |
 | `firewall.wan_interface` | optional | default `wan`; where inbound port forwards are published |
-| `firewall.sequence` | optional | default `1000`; egress rules sit after the operator's lower-numbered rules, so an earlier private-range block still applies |
+| `firewall.sequence` | optional | default `1000`; baseline priority for app egress rules |
+| `firewall.egress[].sequence` | optional | overrides the baseline for one narrowly scoped exception that must precede a policy rule |
 | `firewall.validate_certs` | optional | default `false` |
 | `mail.provider` | optional, default `none` | `smtp \| none` — absent means disabled, exactly like an explicit `none`, so an existing checkout with no `mail:` block keeps passing `config-doctor.sh` unchanged |
 | `mail.host` | required unless provider `none` | SMTP relay hostname; never in Proxmox inventory |

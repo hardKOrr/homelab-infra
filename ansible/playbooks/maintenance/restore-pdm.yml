@@ -71,25 +71,27 @@
 
     - name: Resolve the exact PDM target VM and node
       ansible.builtin.set_fact:
-        _pdm_target_vmid: "{{ (pdm_target_config.proxmox.vm.vmid | default('')) | string }}"
+        _pdm_target_vmid: "{{ (pdm_target_config.proxmox.vmid | default('')) | string }}"
         _pdm_target_node: "{{ pdm_target_config.proxmox.node | default(pdm_config.proxmox.node, true) }}"
 
     - name: Validate the source PBS volume identity
       ansible.builtin.assert:
         that:
           - pdm_config.backup.storage | default('') | length > 0
+          # Proxmox PBS volume IDs use a timestamp; keep accepting vzdump-style IDs too.
           - _pdm_recovery_point is match(
-              '^backup/vm/' ~ (pdm_config.proxmox.vm.vmid | string)
-              ~ '/vzdump-qemu-' ~ (pdm_config.proxmox.vm.vmid | string) ~ '-.+')
+              '^backup/vm/' ~ (pdm_config.proxmox.vmid | string)
+              ~ '/(?:vzdump-qemu-' ~ (pdm_config.proxmox.vmid | string)
+              ~ '-.+|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$')
         fail_msg: >-
           Recovery point must be a PBS backup volume for the declared source PDM VMID
-          {{ pdm_config.proxmox.vm.vmid }}.
+          {{ pdm_config.proxmox.vmid }}.
 
     - name: Validate the exact PDM destination identity
       ansible.builtin.assert:
         that:
           - _pdm_target_config_file.stat.exists | default(false) | bool
-          - pdm_target_config.proxmox.vm.vmid is defined
+          - pdm_target_config.proxmox.vmid is defined
         fail_msg: >-
           PDM restore needs an authored config for the exact destination {{ _pdm_target }}
           with an explicit VMID; it never guesses or aliases a guest.
@@ -98,7 +100,7 @@
       ansible.builtin.assert:
         that:
           - _pdm_target != instance
-          - pdm_target_config.proxmox.vm.vmid | int != pdm_config.proxmox.vm.vmid | int
+          - pdm_target_config.proxmox.vmid | int != pdm_config.proxmox.vmid | int
         fail_msg: >-
           A new PDM restore needs a distinct VMID and exact destination identity. It never
           aliases or takes over the source VM.
@@ -127,7 +129,7 @@
         recovery_target_config_present: "{{ _pdm_target_config_file.stat.exists | default(false) }}"
         recovery_source_route_key: "{{ _pdm_source_route }}"
         recovery_target_route_key: "{{ _pdm_target_route }}"
-        recovery_source_storage_key: "pdm-vmid:{{ pdm_config.proxmox.vm.vmid }}"
+        recovery_source_storage_key: "pdm-vmid:{{ pdm_config.proxmox.vmid }}"
         recovery_target_storage_key: "pdm-vmid:{{ _pdm_target_vmid }}"
         recovery_target_storage_collision: false
         recovery_target_vmid_collision: false
@@ -171,7 +173,8 @@
           - _pdm_pre_restore_point in _pdm_backup_inventory.stdout
           - _pdm_pre_restore_point is match(
               '^backup/vm/' ~ _pdm_target_vmid
-              ~ '/vzdump-qemu-' ~ _pdm_target_vmid ~ '-.+')
+              ~ '/(?:vzdump-qemu-' ~ _pdm_target_vmid
+              ~ '-.+|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$')
         fail_msg: >-
           Pre-restore PBS volume {{ _pdm_pre_restore_point }} is not a readable backup of
           the exact target VM {{ _pdm_target }}. The target remains untouched; capture or
@@ -213,7 +216,7 @@
       ansible.builtin.assert:
         that: _pdm_existing.rc != 0
         fail_msg: >-
-          New PDM target VMID {{ pdm_target_config.proxmox.vm.vmid }} already exists.
+          New PDM target VMID {{ pdm_target_config.proxmox.vmid }} already exists.
           No restore was attempted; choose an unused VMID.
       when:
         - _pdm_destination == 'new'
@@ -342,7 +345,7 @@
     - name: PDM | State the new target remains isolated
       ansible.builtin.debug:
         msg: >-
-          PDM {{ _pdm_target }} was restored to VMID {{ pdm_target_config.proxmox.vm.vmid }}
+          PDM {{ _pdm_target }} was restored to VMID {{ pdm_target_config.proxmox.vmid }}
           and verified stopped. Production cutover is separate and was not performed.
       when:
         - _pdm_destination == 'new'

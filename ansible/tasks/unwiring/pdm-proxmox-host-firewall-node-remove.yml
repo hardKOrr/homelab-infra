@@ -1,0 +1,31 @@
+---
+- name: PDM host firewall | Read rules before removing owned API access
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ pdm_firewall_node }}/firewall/rules"
+      - --output-format
+      - json
+  delegate_to: "{{ pdm_config.proxmox.node }}"
+  register: _pdm_host_firewall_read
+  changed_when: false
+  no_log: true
+
+- name: PDM host firewall | Select owned rules for removal
+  ansible.builtin.set_fact:
+    _pdm_host_firewall_owned: >-
+      {{ (_pdm_host_firewall_read.stdout | from_json)
+         | selectattr('comment', 'defined')
+         | selectattr('comment', 'equalto', _pdm_host_firewall_comment)
+         | list }}
+  vars:
+    _pdm_host_firewall_comment: "homelab-infra: {{ instance }} pdm-proxmox-api"
+  no_log: true
+
+- name: PDM host firewall | Delete only owned API rules
+  ansible.builtin.include_tasks: ../proxmox/pdm-host-firewall-delete-rule.yml
+  loop: "{{ _pdm_host_firewall_owned | sort(attribute='pos', reverse=true) }}"
+  loop_control:
+    loop_var: pdm_firewall_owned_rule
+    label: owned PDM API rule

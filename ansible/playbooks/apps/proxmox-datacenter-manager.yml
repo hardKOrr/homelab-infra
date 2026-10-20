@@ -12,6 +12,9 @@
     - ansible.builtin.include_vars: {file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml", name: _pdm_instance}
     - ansible.builtin.set_fact:
         pdm_config: "{{ _pdm_defaults.proxmox_datacenter_manager_defaults | combine(_pdm_instance | default({}), recursive=True) }}"
+    - ansible.builtin.import_tasks: ../../tasks/resolve-estate.yml
+      vars:
+        resolve_estate_name: "{{ pdm_config.routing.estate | default('') }}"
     - ansible.builtin.include_role: {name: pdm}
     - ansible.builtin.assert:
         that:
@@ -21,12 +24,26 @@
           - pdm_config.proxmox.ip_address | default('') | length > 0
           - pdm_config.proxmox.fqdn | default('') | length > 0
         fail_msg: "PDM requires explicit node, storage, VMID, management IP, and FQDN before touching Proxmox."
+  vars:
+    wiring_app_name: "{{ instance }}"
+    wiring_upstream_host: "{{ pdm_config.proxmox.ip_address }}"
+    wiring_upstream_port: "{{ pdm_config.app.port | default(8443) }}"
+    wiring_upstream_scheme: https
+    wiring_upstream_tls_insecure_skip_verify: true
+    wiring_upstream_url: "https://{{ wiring_upstream_host }}:{{ wiring_upstream_port }}"
+    wiring_domain: "{{ pdm_config.proxmox.fqdn }}"
+    wiring_monitor_url: "https://{{ wiring_domain }}/"
+    wiring_app_display: "Proxmox Datacenter Manager ({{ instance }})"
+    wiring_identity_mode: "{{ pdm_config.routing.identity | default('catalog') }}"
+    wiring_access: "{{ pdm_config.routing.access | default('internal') }}"
+    wiring_auth_group: "homelab-users"
   tasks:
     - ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
     - ansible.builtin.include_tasks: ../../tasks/proxmox/create-installer-vm.yml
       vars:
         installer_vm_node: "{{ pdm_config.proxmox.node }}"
         installer_vm_storage: "{{ pdm_config.proxmox.storage }}"
+        installer_vm_boot: "order=scsi0;ide2"
         installer_vm_api: {host: "{{ homelabinfra_config.proxmox.api_host }}", user: "{{ homelabinfra_config.proxmox.api_user }}", token_id: "{{ homelabinfra_config.proxmox.api_token_id }}", token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}", validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"}
         installer_vm:
           name: "{{ instance }}"
@@ -35,10 +52,43 @@
           cores: "{{ pdm_config.proxmox.vm.cores }}"
           memory: "{{ pdm_config.proxmox.vm.memory }}"
           disk_size: "{{ pdm_config.proxmox.vm.disk_size }}"
-          net0: "virtio,bridge={{ pdm_config.proxmox.bridge | default('vmbr0') }}"
+          net0: >-
+            {{ 'virtio,bridge=' ~ (pdm_config.proxmox.bridge | default('vmbr0'))
+               ~ (',tag=' ~ (pdm_config.proxmox.vlan | string)
+                  if pdm_config.proxmox.vlan | default(0) | int > 0 else '') }}
           tags: "{{ (pdm_config.proxmox.vm.tags + ['_' ~ instance]) | unique }}"
+    - name: Wire PDM Proxmox API access
+      ansible.builtin.include_tasks: ../../tasks/wiring/pdm-proxmox-egress.yml
+    - name: Wire PDM Proxmox host API access
+      ansible.builtin.include_tasks: ../../tasks/wiring/pdm-proxmox-host-firewall.yml
+    - name: Wire reverse proxy
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
+        - pdm_config.routing.proxy | default('none') != 'none'
+    - name: Wire SSO
+      ansible.builtin.include_tasks: ../../tasks/wiring/authentik.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.sso is defined
+        - homelabinfra_infra.sso.provider | default('none') == 'authentik'
+        - wiring_identity_mode != 'none'
+    - name: Register uptime monitor
+      ansible.builtin.include_tasks: ../../tasks/wiring/uptime-kuma.yml
+      when: homelabinfra_infra.monitoring is defined
+    - name: Wire DNS
+      ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.dns.provider }}.yml"
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.dns is defined
+        - homelabinfra_infra.dns.provider | default('none') != 'none'
     - ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_name: "{{ instance }}"
         record_guest_kind: appliance
         record_guest_url: "https://{{ pdm_config.proxmox.fqdn }}:8443"
+    - ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
+      vars:
+        degradation_scope: "{{ instance }}"
