@@ -3,8 +3,8 @@
 #
 # Inputs: pbs_disk_vmid, pbs_disk_node, pbs_disk_tags, pbs_disk_config, pbs_disk_mode.
 # The PVE volume is stable across guest replacement: storage:vm-<source_vmid>-disk-1.
-# A missing volume is created only in create mode on its original VMID. Reuse never
-# allocates storage, and an attached volume is never detached or overwritten here.
+# source_vmid is reserved for the datastore volume, not a PBS guest, so PVE guest destroy
+# cannot free the retained disk. Reuse never allocates storage or overwrites a volume.
 
 - name: PBS disk | Validate the retained volume declaration
   ansible.builtin.assert:
@@ -14,23 +14,19 @@
       - pbs_disk_config.size_gib | default(0) | string is match('^[1-9][0-9]*$')
       - pbs_disk_vmid | string is match('^[1-9][0-9]*$')
       - pbs_disk_node | string | length > 0
-      - pbs_disk_mode != 'reuse' or pbs_disk_config.source_vmid is defined
-      - >-
-        pbs_disk_config.source_vmid is not defined
-        or pbs_disk_config.source_vmid | string is match('^[1-9][0-9]*$')
-      - >-
-        pbs_disk_mode != 'create'
-        or pbs_disk_config.source_vmid | default(pbs_disk_vmid) | int == pbs_disk_vmid | int
+      - pbs_disk_config.source_vmid is defined
+      - pbs_disk_config.source_vmid | string is match('^[1-9][0-9]*$')
+      - pbs_disk_config.source_vmid | int != pbs_disk_vmid | int
     fail_msg: >-
-      PBS datastore_disk needs an image storage, positive size_gib and an owned PBS VM.
-      Reuse also requires the original source_vmid; create may allocate only on the
-      current VMID. Refusing to guess or allocate a recovery volume.
+      PBS datastore_disk needs an image storage, positive size_gib, a stable source_vmid
+      reserved for the volume, and an owned PBS VM with a different VMID. Refusing to
+      allocate or attach a guest-owned recovery volume.
 
 - name: PBS disk | Resolve the stable storage identity
   ansible.builtin.set_fact:
-    _pbs_disk_source_vmid: "{{ pbs_disk_config.source_vmid | default(pbs_disk_vmid) | int }}"
+    _pbs_disk_source_vmid: "{{ pbs_disk_config.source_vmid | int }}"
     _pbs_disk_expected_volid: >-
-      {{ pbs_disk_config.storage }}:vm-{{ pbs_disk_config.source_vmid | default(pbs_disk_vmid) }}-disk-1
+      {{ pbs_disk_config.storage }}:vm-{{ pbs_disk_config.source_vmid }}-disk-1
 
 - name: PBS disk | Read target VM configuration from PVE
   ansible.builtin.command:
@@ -137,7 +133,6 @@
   changed_when: _pbs_disk_allocate.rc == 0
   when:
     - pbs_disk_mode == 'create'
-    - _pbs_disk_source_vmid | int == pbs_disk_vmid | int
     - _pbs_disk_volumes | length == 0
     - _pbs_disk_current | length == 0
 

@@ -64,15 +64,12 @@
         that:
           - app_config.proxmox.vm.datastore_disk.storage | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
           - app_config.proxmox.vm.datastore_disk.size_gib | default(0) | string is match('^[1-9][0-9]*$')
-          - >-
-            app_config.proxmox.vm.datastore_disk.source_vmid is not defined
-            or app_config.proxmox.vm.datastore_disk.source_vmid | string is match('^[1-9][0-9]*$')
-          - >-
-            app_config.app.datastore_mode | default('create') != 'reuse'
-            or app_config.proxmox.vm.datastore_disk.source_vmid is defined
+          - app_config.proxmox.vm.datastore_disk.source_vmid is defined
+          - app_config.proxmox.vm.datastore_disk.source_vmid | string is match('^[1-9][0-9]*$')
         fail_msg: >-
-          PBS datastore_disk requires a valid image storage and positive size_gib; reuse
-          also requires the original source_vmid. Refusing an unsafe volume path.
+          PBS datastore_disk requires an image storage, positive size_gib and a stable
+          source_vmid reserved for the volume, distinct from every PBS guest VMID.
+          Refusing an unsafe volume identity.
       when: app_config.proxmox.vm.datastore_disk is defined
 
   tasks:
@@ -101,11 +98,11 @@
           - app_config.proxmox.vm.datastore_disk.source_vmid is defined
           - app_config.proxmox.vm.datastore_disk.source_vmid | string is match('^[1-9][0-9]*$')
         fail_msg: >-
-          PBS datastore_mode: reuse requires proxmox.vm.datastore_disk with the original
-          source_vmid. Refusing to create a guest before its retained volume is identified.
+          PBS datastore_mode: reuse requires proxmox.vm.datastore_disk with its reserved
+          source_vmid. Refusing to create a guest before the retained volume is identified.
       when: app_config.app.datastore_mode | default('create') == 'reuse'
 
-    - name: Resolve the retained PBS volume identity before provisioning
+    - name: Resolve the stable PBS volume identity before provisioning
       ansible.builtin.set_fact:
         _pbs_datastore_source_vmid: "{{ app_config.proxmox.vm.datastore_disk.source_vmid }}"
         _pbs_datastore_volume_id: >-
@@ -113,11 +110,40 @@
         _pbs_disk_preflight_node: >-
           {{ hostvars[_existing_hosts[0]].proxmox_node
              if _existing_hosts | length > 0 else homelabinfra_config.proxmox.node }}
-      when: app_config.app.datastore_mode | default('create') == 'reuse'
+      when: app_config.proxmox.vm.datastore_disk is defined
 
-    - name: Register the retained PBS volume preflight node
+    - name: Register the PBS volume preflight node
       ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
-      when: app_config.app.datastore_mode | default('create') == 'reuse'
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+    - name: Check PBS datastore owner identity against current guests
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - /cluster/resources
+          - --type
+          - vm
+          - --output-format
+          - json
+      delegate_to: "{{ _pbs_disk_preflight_node }}"
+      register: _pbs_datastore_owner_guests
+      changed_when: false
+      no_log: true
+      when: app_config.proxmox.vm.datastore_disk is defined
+
+    - name: Refuse a PBS datastore owner VMID assigned to a guest
+      ansible.builtin.assert:
+        that:
+          - >-
+            _pbs_datastore_source_vmid | int not in
+            (_pbs_datastore_owner_guests.stdout | from_json
+             | map(attribute='vmid') | map('int') | list)
+        fail_msg: >-
+          PBS datastore source_vmid must remain reserved for the volume and must not be
+          assigned to a guest. Proxmox may free disks owned by a guest when it is destroyed.
+          No PBS guest was created or modified.
+      when: app_config.proxmox.vm.datastore_disk is defined
 
     - name: Check the retained PBS volume before creating a replacement guest
       ansible.builtin.command:

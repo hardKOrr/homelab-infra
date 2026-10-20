@@ -81,10 +81,14 @@ datastore while PBS is stopped, verifies the copy with checksums, and mounts it 
 mount as a fallback until the guest is replaced. Both PBS services require that mount at
 boot. Default `create` remains unchanged when no datastore disk is declared.
 
-Keep the original PVE VMID as `proxmox.vm.datastore_disk.source_vmid`; it identifies the
-volume `storage:vm-<source_vmid>-disk-1` after the guest has been removed. Before guest
-replacement, verify the disk is separate from the OS disk, the expected volume exists and
-is not attached to another guest, and the snapshots are readable. Then set
+Reserve a PVE VMID exclusively for the datastore volume in
+`proxmox.vm.datastore_disk.source_vmid`. It identifies
+`storage:vm-<source_vmid>-disk-1` and must differ from every PBS guest VMID. Proxmox removes
+owned disks when it destroys a guest; a separate reserved owner ID keeps this volume
+independent through repeated replacements. Keep this ID unchanged. Before guest replacement,
+verify the disk is separate from the OS disk, the expected volume exists and is not attached
+to another guest, and the snapshots are readable. A disk still owned by a PBS guest VMID
+must be migrated to a reserved owner identity before that guest is destroyed. Then set
 `app.datastore_mode: reuse`. Deploy checks the exact volume before creating a replacement
 VM, attaches it without allocating a replacement, requires its existing ext4 filesystem,
 `.chunks` directory and snapshot metadata, and mounts it by UUID. It never formats in reuse

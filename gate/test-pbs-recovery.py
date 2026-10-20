@@ -28,10 +28,18 @@ assert "datastore_disk" not in defaults["proxmox"]["vm"]
 
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
 provision_tasks = playbook[0]["tasks"]
+provision_pre_tasks = playbook[0]["pre_tasks"]
 reuse_preflight = task(provision_tasks, "Refuse provisioning without the exact retained PBS volume")
 clone_index = next(i for i, item in enumerate(provision_tasks) if item.get("name") == "Provision new VM")
 assert provision_tasks.index(reuse_preflight) < clone_index
-assert "source_vmid" in task(provision_tasks, "Require a stable retained volume identity for datastore reuse")["ansible.builtin.assert"]["that"][1]
+disk_declaration = task(provision_pre_tasks, "Validate the optional PBS datastore disk declaration")
+assert "source_vmid is defined" in str(disk_declaration["ansible.builtin.assert"]["that"])
+assert "stable source_vmid reserved for the volume" in disk_declaration["ansible.builtin.assert"]["fail_msg"]
+owner_query = task(provision_tasks, "Check PBS datastore owner identity against current guests")
+assert owner_query["ansible.builtin.command"]["argv"][:3] == ["pvesh", "get", "/cluster/resources"]
+owner_guard = task(provision_tasks, "Refuse a PBS datastore owner VMID assigned to a guest")
+assert "_pbs_datastore_source_vmid | int not in" in str(owner_guard["ansible.builtin.assert"]["that"])
+assert provision_tasks.index(owner_guard) < clone_index
 
 ensure_disk = load_yaml("ansible/tasks/proxmox/ensure-pbs-datastore-disk.yml")
 allocate_disk = task(ensure_disk, "PBS disk | Allocate the first datastore volume")
@@ -39,6 +47,9 @@ allocate_argv = allocate_disk["ansible.builtin.command"]["argv"]
 assert allocate_argv[:2] == ["pvesm", "alloc"]
 assert any("_pbs_disk_source_vmid" in arg for arg in allocate_argv)
 assert "vm-{{ _pbs_disk_source_vmid }}-disk-1" in allocate_argv
+disk_identity_guard = task(ensure_disk, "PBS disk | Validate the retained volume declaration")
+assert "pbs_disk_config.source_vmid is defined" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
+assert "pbs_disk_config.source_vmid | int != pbs_disk_vmid | int" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
 attach = task(ensure_disk, "PBS disk | Attach the retained volume")
 assert "_pbs_disk_expected_volid" in attach["ansible.builtin.command"]["argv"][-1]
 assert "_pbs_disk_current | length == 0" in str(attach["when"])
