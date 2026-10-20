@@ -135,6 +135,9 @@
       Plex started but Preferences.xml lacks PlexOnlineToken. Obtain a fresh claim
       token, update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
 
+- name: Configure Plex hardware transcoding from its declared device
+  ansible.builtin.include_tasks: configure-transcoder.yml
+
 - name: Store and verify the Plex server token
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:
