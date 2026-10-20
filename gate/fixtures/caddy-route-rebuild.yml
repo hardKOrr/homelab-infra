@@ -1,0 +1,27 @@
+---
+- name: Exercise Caddy route rebuild from a Bootstrap-depth playbook directory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Prepare fixture infrastructure facts
+      ansible.builtin.set_fact:
+        homelabinfra_infra:
+          domain: example.test
+          reverse_proxy:
+            provider: caddy
+            host: http://127.0.0.1
+            port: "{{ caddy_test_admin_port }}"
+            internal_cidrs:
+              - 192.0.2.0/24
+          kubernetes:
+            ingress_vip: 192.0.2.80
+          sso:
+            provider: authentik
+            host: https://auth.example.test
+          estates:
+            alpha:
+              sso:
+                provider: none
+
+    - name: Rebuild tagged application routes
+      ansible.builtin.include_tasks: ../../ansible/tasks/wiring/rebuild-caddy-routes.yml

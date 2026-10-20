@@ -13,6 +13,9 @@
 # Play 3 records the `reverse_proxy` registry key (CONTRACT.md §3) BEFORE wiring, so
 # a standalone deploy registers Caddy exactly as a bootstrap run does. Every later
 # app deploy reads host + port from there to POST its route.
+# After Caddy records its new admin endpoint, it also discovers every deployed app tag
+# and replays the shared Caddy route task. Bootstrap imports this playbook, so both
+# entry points restore routes after a fresh Caddy guest.
 #
 # Caddy does not route itself: app-defaults set routing.proxy: none, and the reverse
 # proxy wiring step below is gated on that.
@@ -322,10 +325,18 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    # Bookkeeping, not wiring: stamps this instance onto the Proxmox guest so the UI
-    # shows what each host actually runs. Defaults cover every input - see the task file.
+    # This bookkeeping is independent of route replay. Record the fresh guest first so an
+    # aggregated per-app route failure cannot leave Caddy itself unrecorded.
     - name: Record the app on its Proxmox guest
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+
+    # A fresh Caddy has an empty admin route table. Rebuild each deployed application's
+    # route from its Proxmox instance tag and the same defaults/config used by Deploy.
+    - name: Rebuild routes for deployed applications
+      ansible.builtin.include_tasks: ../../tasks/wiring/rebuild-caddy-routes.yml
+      when:
+        - homelabinfra_infra is defined
+        - homelabinfra_infra.reverse_proxy.provider | default('none') == 'caddy'
 
     - name: Notify deployment complete
       ansible.builtin.include_tasks: ../../tasks/notify.yml
@@ -335,7 +346,7 @@
           Reverse proxy {{ instance }} is running at
           {{ _caddy_deploy_host.caddy_admin_host }} with TLS mode
           '{{ _caddy_deploy_host.app_config.app.tls_mode | default('acme') }}'.
-          App routes are added automatically as each app deploys.
+          Routes for deployed applications were reconciled from their instance records.
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops

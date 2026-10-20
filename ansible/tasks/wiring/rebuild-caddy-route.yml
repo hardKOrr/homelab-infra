@@ -1,0 +1,157 @@
+---
+# One deployed application instance. The longest app-default prefix resolves names
+# such as radarr-4k to radarr while preserving the exact instance tag for the route ID
+# and its config/apps/<instance>.yml overrides.
+
+- name: Rebuild Caddy route | Reset to the default estate
+  ansible.builtin.set_fact:
+    homelabinfra_infra: >-
+      {{ (homelabinfra_infra
+          | dict2items
+          | rejectattr('key', 'in', ['domain', 'sso', 'dns', 'mail'])
+          | items2dict)
+         | combine(_caddy_rebuild_base_infra, recursive=True) }}
+
+- name: Rebuild Caddy route | Match the instance tag to app defaults
+  ansible.builtin.set_fact:
+    _caddy_rebuild_app_candidates: >-
+      {%- set candidates = [] -%}
+      {%- for slug in _caddy_rebuild_app_slugs -%}
+      {%- if caddy_rebuild_instance == slug or caddy_rebuild_instance.startswith(slug ~ '-') -%}
+      {%- set _ = candidates.append({'slug': slug, 'length': slug | length}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ candidates | sort(attribute='length', reverse=true) }}
+
+- name: Rebuild Caddy route | Require matching app defaults
+  ansible.builtin.assert:
+    that:
+      - _caddy_rebuild_app_candidates | length > 0
+    fail_msg: >-
+      The deployed Proxmox instance tag '{{ caddy_rebuild_instance }}' does not match an
+      app default in ansible/vars/app-defaults. Add or repair its platform record before
+      rebuilding Caddy routes.
+
+- name: Rebuild Caddy route | Select the most specific app default
+  ansible.builtin.set_fact:
+    _caddy_rebuild_app_slug: "{{ (_caddy_rebuild_app_candidates | first).slug }}"
+
+- name: Rebuild Caddy route | Load app defaults
+  ansible.builtin.include_vars:
+    file: "{{ _caddy_rebuild_repo_root }}/ansible/vars/app-defaults/{{ _caddy_rebuild_app_slug }}.yml"
+    name: _caddy_rebuild_defaults
+
+- name: Rebuild Caddy route | Read this instance config or use an empty mapping
+  ansible.builtin.set_fact:
+    _caddy_rebuild_instance_config: >-
+      {{ lookup('ansible.builtin.file',
+               _caddy_rebuild_config_root ~ '/apps/' ~ caddy_rebuild_instance ~ '.yml',
+               errors='ignore')
+         | from_yaml
+         | default({}, true) }}
+
+- name: Rebuild Caddy route | Resolve route settings from app records
+  ansible.builtin.set_fact:
+    _caddy_rebuild_app_config:
+      hosting: >-
+        {{ _caddy_rebuild_instance_config.hosting
+           | default(_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults'].hosting
+                     | default('')) }}
+      routing: >-
+        {{ _caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults'].routing
+           | default({})
+           | combine(_caddy_rebuild_instance_config.routing | default({}), recursive=True) }}
+    _caddy_rebuild_app_port: >-
+      {{ (((homelabinfra_vault | default({})).apps | default({}))[caddy_rebuild_instance]
+          | default({})).port
+         | default((_caddy_rebuild_instance_config.app | default({})).port
+                  | default((_caddy_rebuild_defaults[(_caddy_rebuild_app_slug | replace('-', '_')) ~ '_defaults'].app
+                            | default({})).port | default('', true), true), true) }}
+
+- name: Rebuild Caddy route | Select apps using the HTTP wiring contract
+  ansible.builtin.set_fact:
+    _caddy_rebuild_route_enabled: >-
+      {{ ((_caddy_rebuild_app_config.routing | default({})).proxy | default('internal')) != 'none'
+         and (_caddy_rebuild_app_port | string | length > 0)
+         and (_caddy_rebuild_app_config.hosting | default('')) != 'appliance' }}
+
+- name: Rebuild Caddy route | Resolve estate facts
+  ansible.builtin.include_tasks: ../resolve-estate.yml
+  vars:
+    resolve_estate_name: "{{ (_caddy_rebuild_app_config.routing | default({})).estate | default('') }}"
+    resolve_estate_config_file: "{{ _caddy_rebuild_config_root }}/infrastructure.yml"
+  when: _caddy_rebuild_route_enabled | bool
+
+- name: Rebuild Caddy route | Require the application domain
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_infra.domain | default('') | length > 0
+    fail_msg: >-
+      Cannot rebuild the route for '{{ caddy_rebuild_instance }}': its resolved estate
+      has no domain.
+  when: _caddy_rebuild_route_enabled | bool
+
+- name: Rebuild Caddy route | Resolve its tagged hosting group
+  ansible.builtin.include_tasks: ../proxmox/tag-group.yml
+  vars:
+    tag_group_tag: "_{{ caddy_rebuild_instance }}"
+  when:
+    - _caddy_rebuild_route_enabled | bool
+    - (_caddy_rebuild_app_config.hosting | default('')) != 'kubernetes'
+
+- name: Rebuild Caddy route | Collect hosting group members
+  ansible.builtin.set_fact:
+    _caddy_rebuild_app_hosts: "{{ groups[tag_group_name] | default([]) }}"
+  when:
+    - _caddy_rebuild_route_enabled | bool
+    - (_caddy_rebuild_app_config.hosting | default('')) != 'kubernetes'
+
+- name: Rebuild Caddy route | Require one reachable host for HTTP applications
+  ansible.builtin.assert:
+    that:
+      - _caddy_rebuild_app_hosts | length == 1
+      - hostvars[_caddy_rebuild_app_hosts[0]].ansible_host | default('') | length > 0
+    fail_msg: >-
+      Cannot resolve the tagged hosting guest for '{{ caddy_rebuild_instance }}'. Its
+      route needs exactly one owned non-Kubernetes host with an address.
+  when:
+    - _caddy_rebuild_route_enabled | bool
+    - (_caddy_rebuild_app_config.hosting | default('')) != 'kubernetes'
+
+- name: Rebuild Caddy route | Require the Kubernetes ingress address
+  ansible.builtin.assert:
+    that:
+      - (homelabinfra_infra.kubernetes | default({})).ingress_vip | default('') | length > 0
+    fail_msg: >-
+      Cannot rebuild the route for '{{ caddy_rebuild_instance }}': the platform has no
+      Kubernetes ingress VIP.
+  when:
+    - _caddy_rebuild_route_enabled | bool
+    - (_caddy_rebuild_app_config.hosting | default('')) == 'kubernetes'
+
+- name: Rebuild Caddy route | Build the route upstream
+  ansible.builtin.set_fact:
+    _caddy_rebuild_upstream_host: >-
+      {{ homelabinfra_infra.kubernetes.ingress_vip
+         if (_caddy_rebuild_app_config.hosting | default('')) == 'kubernetes'
+         else hostvars[_caddy_rebuild_app_hosts[0]].ansible_host }}
+    _caddy_rebuild_upstream_port: >-
+      {{ 80 if (_caddy_rebuild_app_config.hosting | default('')) == 'kubernetes'
+         else _caddy_rebuild_app_port }}
+  when: _caddy_rebuild_route_enabled | bool
+
+- name: Rebuild Caddy route | Reuse the app Deploy wiring task
+  ansible.builtin.include_tasks: "{{ _caddy_rebuild_repo_root }}/ansible/tasks/wiring/caddy.yml"
+  vars:
+    wiring_app_name: "{{ caddy_rebuild_instance }}"
+    wiring_upstream_host: "{{ _caddy_rebuild_upstream_host }}"
+    wiring_upstream_port: "{{ _caddy_rebuild_upstream_port }}"
+    wiring_subdomain: >-
+      {{ (_caddy_rebuild_app_config.routing | default({})).subdomain
+         | default(caddy_rebuild_instance, true) }}
+    wiring_domain: >-
+      {{ (_caddy_rebuild_app_config.routing | default({})).subdomain
+         | default(caddy_rebuild_instance, true) }}.{{ homelabinfra_infra.domain }}
+    wiring_identity_mode: "{{ (_caddy_rebuild_app_config.routing | default({})).identity | default('catalog') }}"
+    wiring_access: "{{ (_caddy_rebuild_app_config.routing | default({})).access | default('internal') }}"
+  when: _caddy_rebuild_route_enabled | bool

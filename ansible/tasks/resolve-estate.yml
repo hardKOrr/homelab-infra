@@ -11,6 +11,7 @@
 #
 # Inputs:
 #   resolve_estate_name — the app's routing.estate ('' or undefined = default estate)
+#   resolve_estate_config_file — optional path override; defaults to config/infrastructure.yml
 #   homelabinfra_infra  — loaded facts (may be undefined pre-bootstrap)
 #
 # Effect (set_fact wins over the include_vars-loaded copy for the rest of the play):
@@ -35,7 +36,7 @@
 
 - name: Resolve estate | Load domain declarations
   ansible.builtin.include_vars:
-    file: "{{ playbook_dir }}/../../../config/infrastructure.yml"
+    file: "{{ resolve_estate_config_file | default(playbook_dir ~ '/../../../config/infrastructure.yml', true) }}"
     name: _estate_infra_cfg
   failed_when: false   # absent on a clean checkout — falls through to single-estate
 

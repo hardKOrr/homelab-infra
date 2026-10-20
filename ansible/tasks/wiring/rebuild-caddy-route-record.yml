@@ -1,0 +1,28 @@
+# Isolate one deployed app record so a stale tag or unresolved route cannot prevent the
+# remaining applications from being restored. The caller reports the collected failures
+# after every record has been attempted.
+
+- name: Rebuild Caddy route record | Process one deployed application
+  block:
+    - name: Rebuild Caddy route record | Resolve and wire its route
+      ansible.builtin.include_tasks: rebuild-caddy-route.yml
+
+  rescue:
+    - name: Rebuild Caddy route record | Collect this application's failure
+      ansible.builtin.set_fact:
+        _caddy_rebuild_errors: >-
+          {{ _caddy_rebuild_errors | default([])
+             + [{'instance': caddy_rebuild_instance,
+                 'task': ansible_failed_task.name | default('unknown task'),
+                 'message': ansible_failed_result.msg
+                            | default(ansible_failed_result | string)}] }}
+
+  always:
+    - name: Rebuild Caddy route record | Restore default estate facts
+      ansible.builtin.set_fact:
+        homelabinfra_infra: >-
+          {{ (homelabinfra_infra
+              | dict2items
+              | rejectattr('key', 'in', ['domain', 'sso', 'dns', 'mail'])
+              | items2dict)
+             | combine(_caddy_rebuild_base_infra, recursive=True) }}
