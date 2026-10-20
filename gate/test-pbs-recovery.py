@@ -2,6 +2,8 @@
 """Guard PBS datastore volume reuse, registration and repeat-deploy behavior."""
 
 import json
+import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -87,7 +89,46 @@ assert task(pbs_role, "Give PBS ownership of an empty datastore directory")["ans
 register_tasks = load_yaml("ansible/roles/pbs/tasks/register-reused-datastore.yml")
 register_existing = task(register_tasks, "PBS datastore reuse | Register the retained directory without initialising it")
 assert register_existing["ansible.builtin.command"]["argv"][-2:] == ["--reuse-datastore", "true"]
-assert "_pbs_reuse_registered | length == 0" in str(register_existing["when"])
+assert "_pbs_reuse_native_supported | bool" in str(register_existing["when"])
+legacy_guard = task(register_tasks, "PBS datastore reuse | Require an empty legacy config before registration")
+assert "stat.size" in str(legacy_guard["ansible.builtin.assert"]["that"])
+legacy_verify = task(register_tasks, "PBS datastore reuse | Verify the retained chunk store for legacy registration")
+assert "verify-reused-datastore.py" in str(legacy_verify["ansible.builtin.script"])
+assert legacy_verify["no_log"] is True
+legacy_register = task(register_tasks, "PBS datastore reuse | Write the legacy registration without touching backup data")
+assert legacy_register["ansible.builtin.copy"]["dest"] == "/etc/proxmox-backup/datastore.cfg"
+assert legacy_register["ansible.builtin.copy"]["owner"] == "root"
+assert legacy_register["ansible.builtin.copy"]["group"] == "backup"
+assert legacy_register["ansible.builtin.copy"]["mode"] == "0640"
+assert "datastore:" in legacy_register["ansible.builtin.copy"]["content"]
+assert "--reuse-datastore" not in legacy_register["ansible.builtin.copy"]["content"]
+post_registration = task(register_tasks, "PBS datastore reuse | Require the retained registration to be unique and mounted")
+assert "_pbs_reuse_registered_after | length == 1" in str(post_registration["ansible.builtin.assert"]["that"])
+
+helper_path = ROOT / "ansible/files/pbs/verify-reused-datastore.py"
+spec = importlib.util.spec_from_file_location("verify_reused_datastore", helper_path)
+verify_reused_datastore = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(verify_reused_datastore)
+with tempfile.TemporaryDirectory(prefix="pbs-reuse-layout-") as tmp:
+    datastore = Path(tmp) / "store"
+    chunks = datastore / ".chunks"
+    chunks.mkdir(parents=True)
+    (datastore / ".lock").touch()
+    os.chmod(datastore / ".lock", 0o600)
+    for index in range(4):
+        (chunks / f"{index:04x}").mkdir()
+    verify_reused_datastore.verify_datastore(
+        str(datastore), chunk_count=4, owner=(os.getuid(), os.getgid())
+    )
+    (chunks / "0003").rmdir()
+    try:
+        verify_reused_datastore.verify_datastore(
+            str(datastore), chunk_count=4, owner=(os.getuid(), os.getgid())
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("legacy registration accepted an incomplete chunk directory")
 
 configure = load_yaml("ansible/tasks/bootstrap/configure-pbs.yml")
 storage_repair = task(configure, "PBS | Repair PVE storage endpoint and rotated API credentials")

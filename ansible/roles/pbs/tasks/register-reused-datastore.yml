@@ -1,7 +1,8 @@
 ---
 # A new PBS guest has no datastore.cfg even when its retained ext4 volume contains
-# chunks and snapshots. `--reuse-datastore` registers that existing directory without
-# creating or initialising its contents.
+# chunks and snapshots. Use PBS's native reuse option when it exists. PBS 3.4 does not
+# expose that option, so its compatibility path validates the chunk store and writes only
+# the datastore.cfg registration; it never runs datastore create without reuse.
 
 - name: PBS datastore reuse | List local registrations
   ansible.builtin.command:
@@ -29,6 +30,20 @@
       PBS datastore {{ app_config.app.datastore_name }} is already registered at a
       different path or appears more than once. Refusing to change the retained store.
 
+- name: PBS datastore reuse | Read datastore create options
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, datastore, create, --help]
+  register: _pbs_reuse_create_help
+  changed_when: false
+  failed_when: false
+
+- name: PBS datastore reuse | Detect native reuse support
+  ansible.builtin.set_fact:
+    _pbs_reuse_native_supported: >-
+      {{ '--reuse-datastore' in
+         ((_pbs_reuse_create_help.stdout | default('')) ~
+          (_pbs_reuse_create_help.stderr | default(''))) }}
+
 - name: PBS datastore reuse | Register the retained directory without initialising it
   ansible.builtin.command:
     argv:
@@ -41,4 +56,80 @@
       - 'true'
   register: _pbs_reuse_create
   changed_when: _pbs_reuse_create.rc == 0
-  when: _pbs_reuse_registered | length == 0
+  when:
+    - _pbs_reuse_registered | length == 0
+    - _pbs_reuse_native_supported | bool
+
+- name: PBS datastore reuse | Read the legacy datastore config state
+  ansible.builtin.stat:
+    path: /etc/proxmox-backup/datastore.cfg
+    follow: false
+  register: _pbs_reuse_legacy_config
+  when:
+    - _pbs_reuse_registered | length == 0
+    - not (_pbs_reuse_native_supported | bool)
+
+- name: PBS datastore reuse | Require an empty legacy config before registration
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (_pbs_reuse_legacy_config.stat.exists | default(false))
+        or ((_pbs_reuse_legacy_config.stat.isreg | default(false))
+            and (_pbs_reuse_legacy_config.stat.size | default(0) | int == 0))
+    fail_msg: >-
+      This PBS version lacks the native reuse option and already has an unrecognised
+      datastore configuration. Refusing to replace or merge that configuration.
+  when:
+    - _pbs_reuse_registered | length == 0
+    - not (_pbs_reuse_native_supported | bool)
+
+- name: PBS datastore reuse | Verify the retained chunk store for legacy registration
+  ansible.builtin.script:
+    cmd: >-
+      {{ playbook_dir }}/../../files/pbs/verify-reused-datastore.py
+      {{ homelabinfra_config.infrastructure.backups.datastore_path | quote }}
+    executable: python3
+  register: _pbs_reuse_legacy_store
+  changed_when: false
+  no_log: true
+  when:
+    - _pbs_reuse_registered | length == 0
+    - not (_pbs_reuse_native_supported | bool)
+
+- name: PBS datastore reuse | Write the legacy registration without touching backup data
+  ansible.builtin.copy:
+    dest: /etc/proxmox-backup/datastore.cfg
+    content: |
+      datastore: {{ app_config.app.datastore_name }}
+          path {{ homelabinfra_config.infrastructure.backups.datastore_path }}
+    owner: root
+    group: backup
+    mode: "0640"
+  when:
+    - _pbs_reuse_registered | length == 0
+    - not (_pbs_reuse_native_supported | bool)
+
+- name: PBS datastore reuse | Read registrations after reuse
+  ansible.builtin.command:
+    argv: [proxmox-backup-manager, datastore, list, --output-format, json]
+  register: _pbs_reuse_datastores_after
+  changed_when: false
+
+- name: PBS datastore reuse | Find the registration after reuse
+  ansible.builtin.set_fact:
+    _pbs_reuse_registered_after: >-
+      {{ (_pbs_reuse_datastores_after.stdout | from_json)
+         | selectattr('name', 'equalto', app_config.app.datastore_name) | list }}
+
+- name: PBS datastore reuse | Require the retained registration to be unique and mounted
+  ansible.builtin.assert:
+    that:
+      - _pbs_reuse_registered_after | length == 1
+      - >-
+        (((_pbs_reuse_registered_after | first).path | default(''))
+         | regex_replace('(?<=.)/+$', ''))
+        == (homelabinfra_config.infrastructure.backups.datastore_path
+            | regex_replace('(?<=.)/+$', ''))
+    fail_msg: >-
+      PBS did not expose exactly one retained datastore registration at the mounted path.
+      The existing store was not initialised or replaced.

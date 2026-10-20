@@ -97,6 +97,11 @@ mode. If the new PBS guest has no datastore registration, it uses
 directory; the normal API create/initialise path is not used. A registration at a different
 path still fails closed.
 
+PBS 3.4 does not expose the native reuse option. On that version, Deploy verifies the
+existing chunk directory, lock file, ownership and permissions, then writes only the
+`datastore.cfg` registration when that file is missing or empty. It refuses to overwrite
+an unrecognised datastore config and never calls the initialising create path.
+
 When a fresh PBS creates a new API token, Deploy updates the existing PVE PBS storage
 entry with the new endpoint, fingerprint and token, then waits for the storage to become
 active. Subsequent Deploy runs update PVE storage, datastore retention and the scheduled
