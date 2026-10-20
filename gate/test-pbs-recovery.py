@@ -141,6 +141,7 @@ assert running_backups["ansible.builtin.command"]["argv"] == [
 assert running_backups["delegate_to"] == "{{ homelabinfra_config.proxmox.node }}"
 assert running_backups["no_log"] is True
 assert running_backups["changed_when"] is False
+assert running_backups["become"] is False
 assert "_pbs_storage_endpoint_changed | bool" in str(running_backups["when"])
 active_backup_guard = task(configure, "PBS | Refuse to replace the storage entry during a backup")
 assert "_pbs_running_backup_tasks | length == 0" in str(active_backup_guard["ansible.builtin.assert"]["that"])

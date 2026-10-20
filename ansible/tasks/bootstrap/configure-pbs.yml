@@ -312,6 +312,7 @@
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _pbs_backup_tasks_before_storage_replacement
   changed_when: false
+  become: false
   no_log: true
   when: _pbs_storage_endpoint_changed | bool
 
