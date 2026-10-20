@@ -21,7 +21,10 @@ def find_callers(value):
             yield from find_callers(item)
     elif isinstance(value, dict):
         if str(value.get("ansible.builtin.include_tasks", "")).endswith("/wait-for-task.yml"):
-            yield value["vars"]["proxmox_task_upid"]
+            yield {
+                "upid": value["vars"]["proxmox_task_upid"],
+                "when": value.get("when"),
+            }
         for item in value.values():
             yield from find_callers(item)
 
@@ -33,7 +36,7 @@ def main():
         callers.extend(find_callers(yaml.safe_load(source.read_text())))
     registers = ("_bg_task", "_rg_pre_task", "_rg_stop_task", "_rg_restore_task", "_rg_start_task")
     assert len(callers) == 5, callers
-    assert all(any(register in expression for expression in callers) for register in registers)
+    assert all(any(register in caller["upid"] for caller in callers) for register in registers)
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -50,21 +53,27 @@ def main():
         tasks = []
         expected = []
 
-        def include(expression, output):
-            return {
-                "ansible.builtin.include_tasks": str(waiter),
-                "vars": {"proxmox_task_upid": expression,
-                         **{register: {"stdout": output} for register in registers}},
+        def include(caller, output, normalized_upid=None):
+            variables = {
+                "proxmox_task_upid": caller["upid"],
+                **{register: {"stdout": output} for register in registers},
             }
+            if "_bg_task_upid" in caller["upid"]:
+                variables["_bg_task_upid"] = normalized_upid or output
+            task = {
+                "ansible.builtin.include_tasks": str(waiter),
+                "vars": variables,
+            }
+            return task
 
         # Each of the five production callers must poll exactly the same identity
         # for bare and JSON-quoted stdout, including pvesh's trailing newline.
-        for index, expression in enumerate(callers):
+        for index, caller in enumerate(callers):
             for operation in ("vzdump", "qmstop", "qmstart", "vzrestore", "vzstop", "vzstart"):
                 upid = (f"UPID:<pve-node>:00000001:00000002:00000003:{operation}:"
                         f"<GUEST-vmid>:fixture{index}:")
                 for output in (upid + "\n", json.dumps(upid) + "\n"):
-                    tasks.append(include(expression, output))
+                    tasks.append(include(caller, output, normalized_upid=upid))
                     expected.append(["get", f"/nodes/localhost/tasks/{upid}/status", "--output-format", "json"])
 
         # Run failures after successful calls to also detect stale normalized facts.

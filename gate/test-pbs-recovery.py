@@ -74,6 +74,15 @@ assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing
 assert "_pbs_datastore_config.json.data[item.key]" in str(task(configure, "PBS | Apply only drifted retention settings")["when"])
 assert task(configure, "PBS | Require the PVE storage backend to be active")["ansible.builtin.assert"]
 
+backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")
+backup_tasks = backup_guest[0]["tasks"]
+backup_response = task(backup_tasks, "Normalize the PBS backup task response")
+assert "regex_search('UPID:" in backup_response["ansible.builtin.set_fact"]["_bg_task_upid"]
+async_wait = task(backup_tasks, "Wait for the asynchronous PBS backup task")
+assert async_wait["when"] == "_bg_task_upid | length > 0"
+sync_assert = task(backup_tasks, "Require a successful synchronous PBS backup result")
+assert "INFO: Backup job finished successfully" in str(sync_assert["ansible.builtin.assert"])
+
 helper = ROOT / "ansible/files/proxmox/pbs-datastore-volume-references.py"
 with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     config_dir = Path(tmp)
