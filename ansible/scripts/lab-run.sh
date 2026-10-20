@@ -236,6 +236,23 @@ case "$playbook" in
 esac
 [ "$playbook" = "playbooks/maintenance/vaultwarden-recovery.yml" ] && _lab_recovery=1
 
+# Edge runs deploy or remove Caddy. Caddy serves BW_SERVER, so in Vault mode these are the
+# runs that may fall back to the edge copy in config/vaultwarden.yml when Vaultwarden does
+# not answer. Removal is matched the way remove.yml resolves its app: `app`, else `instance`.
+_lab_edge_run=0
+case "$playbook" in
+  playbooks/apps/caddy.yml) _lab_edge_run=1 ;;
+  playbooks/apps/remove.yml)
+    _lab_arg_app=""; _lab_arg_instance=""
+    for _arg in "${@:2}"; do
+      case "$_arg" in
+        app=*) _lab_arg_app="${_arg#app=}" ;;
+        instance=*) _lab_arg_instance="${_arg#instance=}" ;;
+      esac
+    done
+    if [ "${_lab_arg_app:-$_lab_arg_instance}" = caddy ]; then _lab_edge_run=1; fi ;;
+esac
+
 if [ ! -f "$LAB_VAULT_MARKER" ]; then
   if [ "${LAB_SEED_MODE:-0}" != "1" ] || [ "$_lab_seed_allowed" != "1" ]; then
     die "runner is in Seed mode; ordinary jobs are disabled. Complete Vaultwarden enrollment and run Vaultwarden Cutover."
@@ -282,7 +299,8 @@ _vault_preflight() {
   # one, and it would stop a lab whose vault serves the API but not /alive, or that reaches
   # it by a path curl does not share. `bw login` stays the sole arbiter; the probe only
   # chooses which explanation is printed when login fails. It is skipped when curl is
-  # absent, so the preflight gains no new runtime dependency.
+  # absent, so the preflight gains no new runtime dependency. The single exception is an
+  # edge run, below: deploying or removing Caddy, which serves BW_SERVER.
   _vault_reachable=1
   if command -v curl >/dev/null 2>&1; then
     curl -fsS --max-time 10 -o /dev/null "${BW_SERVER%/}/alive" >/dev/null 2>&1 \
@@ -296,6 +314,14 @@ _vault_preflight() {
   _vault_login_attempt=1
   while ! _vault_login_out="$(bw login --apikey 2>&1 </dev/null)"; do
     if ! printf '%s' "$_vault_login_out" | grep -qiE 'rate limit|too many|429'; then
+      # The one place the probe decides: an edge run whose login failed because
+      # Vaultwarden did not answer. Every other run, and an edge run against a vault that
+      # answers, keeps bw login as the sole arbiter.
+      if [ "$_vault_reachable" -eq 0 ] && [ "$_lab_edge_run" = "1" ] && [ -n "$_lab_edge_json" ]; then
+        unset _vault_login_out
+        _vault_edge_fallback
+        return
+      fi
       [ "$_vault_reachable" -eq 1 ] \
         || die "Vaultwarden at $BW_SERVER did not answer. Vault mode is fail-closed, so this deploy stops here having changed nothing. Start Vaultwarden, or use the explicit recovery workflow."
       die "Vaultwarden preflight failed during API-key authentication — the server answered, so this is a credential problem, not an outage"
@@ -332,7 +358,23 @@ _vault_preflight() {
     || die "Vaultwarden preflight failed (item set rejected, or vault-runtime.py could not run) — see the error above"
   unset _vault_items
   export HOMELABINFRA_VAULT_JSON
+  _vault_export_runtime
+  log "Vaultwarden preflight complete"
+}
 
+# Caddy is down or being replaced, so Vaultwarden is out of reach behind it. Use the edge
+# copy written from the last verified Vaultwarden session. It carries no application
+# credentials, and the run cannot write Vaultwarden items, which Caddy does not need.
+_vault_edge_fallback() {
+  log "Vaultwarden at $BW_SERVER did not answer; this run deploys or removes Caddy, which serves it — using the edge copy in $_lab_login_file"
+  HOMELABINFRA_VAULT_JSON="$_lab_edge_json"
+  export HOMELABINFRA_VAULT_JSON
+  _vault_export_runtime
+  log "Vaultwarden edge copy loaded"
+}
+
+# Export what with-proxmox-env.sh and Ansible read from the contract.
+_vault_export_runtime() {
   eval "$(printf '%s' "$HOMELABINFRA_VAULT_JSON" | python3 -c '
 import json, shlex, sys
 d=json.load(sys.stdin)
@@ -357,7 +399,6 @@ sys.stdout.write(value.rstrip("\n") + "\n")
   elif [ -f "$LAB_VAULT_MARKER" ]; then
     die "homelab-infra/runner has no ssh_private_key field"
   fi
-  log "Vaultwarden preflight complete"
 }
 
 # Rundeck supplies the automation login from Key Storage. Any other caller — an operator
@@ -365,8 +406,11 @@ sys.stdout.write(value.rstrip("\n") + "\n")
 # the login comes from config/vaultwarden.yml (written by the Vaultwarden Login File job).
 # A file that cannot be decrypted stops the run here: it is never a reason to skip the
 # preflight. The password source is consumed once and then unset, because a prompt or
-# stdin cannot be read a second time and nothing after this point reads Ansible Vault data.
+# stdin cannot be read a second time. An edge run keeps a LAB_VAULT_PASSWORD value, which
+# can be reused, to refresh the edge copy after the preflight.
 _lab_login_file="$LAB_REPO/config/vaultwarden.yml"
+_lab_edge_json=""
+_lab_edge_password=""
 _lab_load_login() {
   local _py _exports _id="${BW_CLIENTID:-}" _secret="${BW_CLIENTSECRET:-}" _password="${BW_PASSWORD:-}"
   _py="$(bash scripts/resolve-python.sh "$ANSIBLE_PLAYBOOK")" || die "no python3 with PyYAML for $_lab_login_file"
@@ -377,17 +421,35 @@ _lab_load_login() {
   [ -z "$_id" ] || BW_CLIENTID="$_id"
   [ -z "$_secret" ] || BW_CLIENTSECRET="$_secret"
   [ -z "$_password" ] || BW_PASSWORD="$_password"
+  _lab_edge_json="${HOMELABINFRA_EDGE_VAULT_JSON:-}"
+  unset HOMELABINFRA_EDGE_VAULT_JSON
   unset ANSIBLE_VAULT_PASSWORD_FILE ANSIBLE_VAULT_IDENTITY_LIST LAB_VAULT_PASSWORD
   log "Vaultwarden login loaded from $_lab_login_file"
 }
 
 if { [ -f "$LAB_VAULT_MARKER" ] || [ "${LAB_VAULT_PREFLIGHT:-0}" = "1" ]; } \
    && [ "$_lab_recovery" != "1" ]; then
-  if { [ -z "${BW_CLIENTID:-}" ] || [ -z "${BW_CLIENTSECRET:-}" ] || [ -z "${BW_PASSWORD:-}" ]; } \
+  if [ "$_lab_edge_run" = "1" ]; then
+    _lab_edge_password="${LAB_VAULT_PASSWORD:-}"
+  fi
+  if { [ -z "${BW_CLIENTID:-}" ] || [ -z "${BW_CLIENTSECRET:-}" ] || [ -z "${BW_PASSWORD:-}" ] \
+       || { [ "$_lab_edge_run" = "1" ] && [ -n "$_lab_edge_password" ]; }; } \
      && [ -f "$_lab_login_file" ]; then
     _lab_load_login
   fi
   _vault_preflight
+  # A verified session refreshes the edge copy, so the next edge run that finds
+  # Vaultwarden down uses current values. Best-effort: the copy is a fallback only.
+  if [ -n "$_lab_edge_password" ] && [ -n "${BW_SESSION:-}" ]; then
+    if LAB_VAULT_PASSWORD="$_lab_edge_password" \
+       "$(bash scripts/resolve-python.sh "$ANSIBLE_PLAYBOOK")" scripts/vaultwarden-login.py \
+       write "$_lab_login_file" >/dev/null; then
+      log "Vaultwarden edge copy refreshed in $_lab_login_file"
+    else
+      log "Vaultwarden edge copy not refreshed — run Vaultwarden Login File"
+    fi
+  fi
+  _lab_edge_password=""
 fi
 
 # ── Validate config before anything mutates ───────────────────────────────────

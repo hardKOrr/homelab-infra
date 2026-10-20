@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""The vaulted Vaultwarden login: helper round trip and lab-run.sh loading it."""
+"""The vaulted Vaultwarden login: helper round trip, lab-run.sh loading it, edge copy."""
 
+import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -173,9 +175,127 @@ def check_login_rate_limit(work: Path) -> None:
     assert "credential problem" not in exhausted.stderr, "a 429 is not a bad credential"
 
 
+CONTRACT = {
+    "proxmox": {"api_token_secret": "pve-token-5e"},
+    "runner": {"ssh_private_key": "-----BEGIN KEY-----\nk3y\n-----END KEY-----"},
+    "reverse_proxy": {"dns_api_token": "dns-7a"},
+    "apps": {"forgejo": {"admin_password": "app-secret-1"}},
+    "media": {"plex": {"token": "app-secret-2"}},
+}
+
+
+def check_edge_copy(work: Path) -> None:
+    """The login file keeps an edge copy, and only a Caddy run whose vault is down uses it."""
+    lab_repo = work / "lab"
+    (lab_repo / "config").mkdir(parents=True)
+    # A copy, not a symlink: the Proxmox wrapper reads ../config/proxmox.yml from ansible/,
+    # and the kernel resolves that `..` through a symlink to this repository instead.
+    shutil.copytree(repo / "ansible", lab_repo / "ansible", symlinks=True)
+    login = lab_repo / "config" / "vaultwarden.yml"
+    (lab_repo / "config" / "proxmox.yml").write_text(
+        "proxmox:\n  api_host: 127.0.0.1\n  api_token_id: lab\n", encoding="utf-8")
+    state = work / "state"
+    state.mkdir()
+    (state / "vault-mode").write_text("version=1\n", encoding="utf-8")
+    vault = {"LAB_VAULT_PASSWORD": "correct horse"}
+    write = [sys.executable, str(helper), "write", str(login)]
+    read = [sys.executable, str(helper), "read", str(login)]
+
+    first = run(write, LOGIN | vault | {"HOMELABINFRA_VAULT_JSON": json.dumps(CONTRACT)})
+    assert first.returncode == 0 and first.stdout.strip() == "written", first.stderr
+    text = login.read_text(encoding="utf-8")
+    assert text.count("!vault |") == 4, "the edge copy must be a fourth inline !vault value"
+    assert "pve-token" not in text, "plaintext edge copy in the login file"
+    exported = run(read, vault)
+    echoed = run(["bash", "-c", exported.stdout + 'printf "%s" "$HOMELABINFRA_EDGE_VAULT_JSON"'], {})
+    edge = json.loads(echoed.stdout)
+    assert set(edge) == {"proxmox", "runner", "reverse_proxy"}, "edge copy must drop app items"
+
+    kept = run(write, LOGIN | vault)
+    assert kept.stdout.strip() == "unchanged", "a write without a contract must keep the copy"
+    no_runner = run(write, LOGIN | vault | {"HOMELABINFRA_VAULT_JSON": json.dumps({"proxmox": {"a": "b"}})})
+    assert no_runner.returncode == 1 and "no runner item" in no_runner.stderr
+
+    # bw refuses every login and curl cannot reach /alive: Caddy, and Vaultwarden behind
+    # it, are down. A stub ansible-playbook records what the run would have received.
+    stub = work / "bin"
+    stub.mkdir()
+    (stub / "bw").write_text("#!/bin/bash\n[ \"$1\" = login ] || exit 0\nexit 1\n", encoding="utf-8")
+    (stub / "curl").write_text("#!/bin/bash\nexit 7\n", encoding="utf-8")
+    venv = work / "venv"
+    (venv / "bin").mkdir(parents=True)
+    # A wrapper, not a symlink: a symlinked venv interpreter loses its venv.
+    (venv / "bin" / "python3").write_text(f'#!/bin/bash\nexec "{sys.executable}" "$@"\n',
+                                          encoding="utf-8")
+    record = work / "playbook-env"
+    (venv / "bin" / "ansible-playbook").write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "$PROXMOX_API_TOKEN_SECRET" "$HOMELABINFRA_VAULT_JSON" > "{record}"\n',
+        encoding="utf-8")
+    for tool in (stub / "bw", stub / "curl", venv / "bin" / "ansible-playbook",
+                 venv / "bin" / "python3"):
+        tool.chmod(0o755)
+    env = vault | {
+        "PATH": f"{stub}:{os.environ['PATH']}",
+        "HOME": str(work),
+        "LAB_ENV_FILE": str(work / "absent.env"),
+        "LAB_REPO": str(lab_repo),
+        "LAB_VENV": str(venv),
+        "LAB_STATE_DIR": str(state),
+        "LAB_REFRESH": "0",
+        "LAB_DOCTOR": "0",
+        "BW_SERVER": "https://127.0.0.1:9",
+    }
+    lab_run = ["bash", str(repo / "ansible" / "scripts" / "lab-run.sh")]
+
+    for args in (["playbooks/apps/caddy.yml", "-e", "instance=caddy"],
+                 ["playbooks/apps/remove.yml", "-e", "instance=edge", "-e", "app=caddy"]):
+        if record.exists():
+            record.unlink()
+        result = run(lab_run + args, env)
+        output = result.stdout + result.stderr
+        assert "Vaultwarden edge copy loaded" in result.stdout, output
+        assert "did not answer. Vault mode is fail-closed" not in output, output
+        assert not any(v in output for v in ("pve-token-5e", "dns-7a")), "lab-run printed a secret"
+        assert record.exists(), "an edge run must reach ansible-playbook: " + output
+        seen = record.read_text(encoding="utf-8").split("\n")
+        assert seen[0] == "pve-token-5e", "the edge copy must supply the Proxmox token"
+        assert "app-secret" not in seen[1], "an edge run must not see app credentials"
+
+    for args in (["playbooks/maintenance/status.yml"],
+                 ["playbooks/apps/remove.yml", "-e", "instance=radarr"]):
+        refused = run(lab_run + args, env)
+        assert refused.returncode != 0, args
+        assert "did not answer. Vault mode is fail-closed" in refused.stderr, refused.stderr
+        assert "edge copy" not in refused.stdout, "only a Caddy run may use the edge copy"
+
+    # Vaultwarden answers and serves a rotated Proxmox token: the Caddy run refreshes the copy.
+    items = [{"name": f"homelab-infra/{name}",
+              "fields": [{"name": key, "value": value} for key, value in fields.items()]}
+             for name, fields in (("proxmox", {"api_token_secret": "pve-rotated-6f"}),
+                                  ("runner", CONTRACT["runner"]),
+                                  ("vaultwarden", {"admin_token": "vw-admin"}))]
+    (work / "items.json").write_text(json.dumps(items), encoding="utf-8")
+    (stub / "bw").write_text(
+        "#!/bin/bash\n"
+        'case "$1" in unlock) echo session ;; list) cat "' + str(work / "items.json") + '" ;; esac\n',
+        encoding="utf-8")
+    (stub / "curl").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    refreshed = run(lab_run + ["playbooks/apps/caddy.yml", "-e", "instance=caddy"], env)
+    assert "Vaultwarden edge copy refreshed" in refreshed.stdout, refreshed.stdout + refreshed.stderr
+    exported = run(read, vault)
+    assert "pve-rotated-6f" in exported.stdout, "the refresh must store the rotated token"
+    (stub / "bw").write_text("#!/bin/bash\n[ \"$1\" = login ] || exit 0\nexit 1\n", encoding="utf-8")
+
+    # Vaultwarden answers but refuses the login: a credential problem, even for Caddy.
+    (stub / "curl").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    answered = run(lab_run + ["playbooks/apps/caddy.yml", "-e", "instance=caddy"], env)
+    assert answered.returncode != 0 and "credential problem" in answered.stderr, answered.stderr
+
+
 def main() -> int:
     failures = 0
-    for check in (check_helper, check_lab_run, check_login_rate_limit):
+    for check in (check_helper, check_lab_run, check_login_rate_limit, check_edge_copy):
         with tempfile.TemporaryDirectory(prefix="homelab-vw-login.") as directory:
             try:
                 check(Path(directory))
