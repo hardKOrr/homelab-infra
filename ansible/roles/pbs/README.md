@@ -103,10 +103,13 @@ existing chunk directory, lock file, ownership and permissions, then writes only
 an unrecognised datastore config and never calls the initialising create path.
 
 When a fresh PBS creates a new API token, Deploy updates the existing PVE PBS storage
-entry with the new endpoint, fingerprint and token, then waits for the storage to become
-active. Subsequent Deploy runs update PVE storage, datastore retention and the scheduled
-backup job only when their current values differ. An active PVE storage status is required
-before Deploy reports success.
+entry with the fingerprint and token, then waits for the storage to become active. The PVE
+PBS storage plugin fixes the server and datastore fields after creation. If a rebuilt PBS
+guest has a new server address, Deploy checks that no `vzdump` task is running, then
+recreates the storage entry under the same ID and reuses the existing datastore name. The
+scheduled backup job keeps its storage ID. Subsequent Deploy runs update PVE storage,
+datastore retention and the scheduled backup job only when their current values differ.
+An active PVE storage status is required before Deploy reports success.
 
 Datastore reuse is not proof that the backing files are complete. Verify the volume identity
 through PVE, then list the pre-existing artifacts and restore a canary before removing any

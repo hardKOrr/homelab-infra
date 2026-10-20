@@ -131,9 +131,29 @@ with tempfile.TemporaryDirectory(prefix="pbs-reuse-layout-") as tmp:
         raise AssertionError("legacy registration accepted an incomplete chunk directory")
 
 configure = load_yaml("ansible/tasks/bootstrap/configure-pbs.yml")
+endpoint_changed = task(configure, "PBS | Detect a changed PVE storage endpoint")
+assert "_pbs_existing_storage | length == 1" in str(endpoint_changed["ansible.builtin.set_fact"])
+assert "_pbs_pve_server" in str(endpoint_changed["ansible.builtin.set_fact"])
+running_backups = task(configure, "PBS | Read running PVE backup tasks before replacing the storage entry")
+assert "cluster/tasks?typefilter=vzdump" in running_backups["ansible.builtin.uri"]["url"]
+assert running_backups["no_log"] is True
+assert "_pbs_storage_endpoint_changed | bool" in str(running_backups["when"])
+active_backup_guard = task(configure, "PBS | Refuse to replace the storage entry during a backup")
+assert "_pbs_running_backup_tasks | length == 0" in str(active_backup_guard["ansible.builtin.assert"]["that"])
+remove_old_storage = task(configure, "PBS | Remove the old PVE storage endpoint")
+assert remove_old_storage["ansible.builtin.uri"]["method"] == "DELETE"
+assert "_pbs_storage_endpoint_changed | bool" in str(remove_old_storage["when"])
 storage_repair = task(configure, "PBS | Repair PVE storage endpoint and rotated API credentials")
 assert storage_repair["ansible.builtin.uri"]["method"] == "PUT"
+assert "server" not in storage_repair["ansible.builtin.uri"]["body"]
 assert "datastore" not in storage_repair["ansible.builtin.uri"]["body"]
+register_storage = task(configure, "PBS | Register PBS as a PVE storage backend")
+assert "_pbs_storage_endpoint_changed | bool" in str(register_storage["when"])
+assert "_pbs_storage_endpoint_changed | bool" in str(task(configure, "PBS | Decide whether the PVE storage entry needs repair")["ansible.builtin.set_fact"])
+storage_check = task(configure, "PBS | Require one storage entry at the expected endpoint and datastore")
+assert "| list | length == 1" in str(storage_check["ansible.builtin.assert"]["that"])
+assert ".server == _pbs_pve_server" in str(storage_check["ansible.builtin.assert"]["that"])
+assert ".datastore == _pbs_datastore" in str(storage_check["ansible.builtin.assert"]["that"])
 assert "datastore" in str(task(configure, "PBS | Validate the existing PVE storage identity"))
 assert "pbs_token_rotated" in str(task(configure, "PBS | Decide whether the PVE storage entry needs repair"))
 assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing backup job (vmid list + schedule)")["when"])

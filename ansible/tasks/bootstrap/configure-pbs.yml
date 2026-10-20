@@ -293,6 +293,37 @@
       PVE storage pbs-homelab is ambiguous or owned by a different storage type.
       Refusing to replace its configuration.
 
+- name: PBS | Detect a changed PVE storage endpoint
+  ansible.builtin.set_fact:
+    _pbs_storage_endpoint_changed: >-
+      {{ _pbs_existing_storage | length == 1
+         and (_pbs_existing_storage | first).server | default('') != _pbs_pve_server }}
+
+- name: PBS | Read running PVE backup tasks before replacing the storage entry
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/cluster/tasks?typefilter=vzdump"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pbs_backup_tasks_before_storage_replacement
+  no_log: true
+  when: _pbs_storage_endpoint_changed | bool
+
+- name: PBS | Resolve running PVE backup tasks before replacing the storage entry
+  ansible.builtin.set_fact:
+    _pbs_running_backup_tasks: >-
+      {{ _pbs_backup_tasks_before_storage_replacement.json.data
+         | selectattr('endtime', 'undefined') | list }}
+  when: _pbs_storage_endpoint_changed | bool
+
+- name: PBS | Refuse to replace the storage entry during a backup
+  ansible.builtin.assert:
+    that:
+      - _pbs_running_backup_tasks | length == 0
+    fail_msg: >-
+      A PVE vzdump task is still running. Wait for it to finish before replacing
+      the PBS storage endpoint.
+  when: _pbs_storage_endpoint_changed | bool
+
 - name: PBS | Check existing PVE storage health
   ansible.builtin.uri:
     url: "{{ _pve_url }}/nodes/{{ homelabinfra_config.proxmox.node }}/storage/pbs-homelab/status"
@@ -303,7 +334,9 @@
   changed_when: false
   failed_when: false
   no_log: true
-  when: _pbs_existing_storage | length == 1
+  when:
+    - _pbs_existing_storage | length == 1
+    - not (_pbs_storage_endpoint_changed | bool)
 
 - name: PBS | Read the existing PVE storage health result
   ansible.builtin.set_fact:
@@ -315,14 +348,23 @@
   ansible.builtin.set_fact:
     _pbs_storage_needs_update: >-
       {{ _pbs_existing_storage | length == 1
+         and not (_pbs_storage_endpoint_changed | bool)
          and (
            (pbs_token_rotated | default(false) | bool)
-           or ((_pbs_existing_storage | first).server | default('') != _pbs_pve_server)
            or ((_pbs_existing_storage | first).username | default('') != pbs_api_token_id)
            or ((_pbs_existing_storage | first).fingerprint | default('') != _pbs_pve_fingerprint)
            or ('backup' not in ((_pbs_existing_storage | first).content | default('')).split(','))
            or not (_pbs_existing_storage_active | default(false) | bool)
          ) }}
+
+- name: PBS | Remove the old PVE storage endpoint
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage/pbs-homelab"
+    method: DELETE
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  no_log: true
+  when: _pbs_storage_endpoint_changed | bool
 
 - name: PBS | Register PBS as a PVE storage backend
   ansible.builtin.uri:
@@ -341,7 +383,9 @@
       content: backup
     validate_certs: false
   no_log: true
-  when: _pbs_existing_storage | length == 0
+  when: >-
+    _pbs_existing_storage | length == 0
+    or (_pbs_storage_endpoint_changed | bool)
 
 - name: PBS | Repair PVE storage endpoint and rotated API credentials
   ansible.builtin.uri:
@@ -350,7 +394,6 @@
     headers: "{{ _pve_headers }}"
     body_format: form-urlencoded
     body:
-      server: "{{ _pbs_pve_server }}"
       username: "{{ pbs_api_token_id }}"
       password: "{{ pbs_api_token_secret }}"
       fingerprint: "{{ _pbs_pve_fingerprint }}"
@@ -359,6 +402,33 @@
     validate_certs: false
   no_log: true
   when: _pbs_storage_needs_update | bool
+
+- name: PBS | List PVE storage backends after repair
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pbs_storages_after_repair
+  no_log: true
+
+- name: PBS | Require one storage entry at the expected endpoint and datastore
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_storages_after_repair.json.data
+        | selectattr('storage', 'equalto', 'pbs-homelab') | list | length == 1
+      - >-
+        (_pbs_storages_after_repair.json.data
+         | selectattr('storage', 'equalto', 'pbs-homelab') | first).type == 'pbs'
+      - >-
+        (_pbs_storages_after_repair.json.data
+         | selectattr('storage', 'equalto', 'pbs-homelab') | first).server == _pbs_pve_server
+      - >-
+        (_pbs_storages_after_repair.json.data
+         | selectattr('storage', 'equalto', 'pbs-homelab') | first).datastore == _pbs_datastore
+    fail_msg: >-
+      PVE storage pbs-homelab is not unique or does not point to the configured PBS
+      server and datastore.
 
 # Only a registration created by this task is recorded in the node-root-private journal.
 - name: PBS | Register provenance delegation
