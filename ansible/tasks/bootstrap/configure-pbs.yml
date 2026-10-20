@@ -312,8 +312,29 @@
   delegate_to: "{{ homelabinfra_config.proxmox.node }}"
   register: _pbs_backup_tasks_before_storage_replacement
   changed_when: false
+  failed_when: false
   become: false
   no_log: true
+  when: _pbs_storage_endpoint_changed | bool
+
+- name: PBS | Require the PVE backup task query to succeed
+  ansible.builtin.assert:
+    that:
+      - _pbs_backup_tasks_before_storage_replacement.rc | default(1) | int == 0
+    fail_msg: >-
+      PVE backup task query failed before storage replacement
+      (rc={{ _pbs_backup_tasks_before_storage_replacement.rc | default('unavailable') }};
+      error_class={{
+        'command_not_found'
+          if 'not found' in (_pbs_backup_tasks_before_storage_replacement.stderr | default('') | lower)
+          else 'permission_denied'
+          if 'permission' in (_pbs_backup_tasks_before_storage_replacement.stderr | default('') | lower)
+             or 'denied' in (_pbs_backup_tasks_before_storage_replacement.stderr | default('') | lower)
+          else 'unsupported_option'
+          if 'unknown option' in (_pbs_backup_tasks_before_storage_replacement.stderr | default('') | lower)
+             or 'unknown parameter' in (_pbs_backup_tasks_before_storage_replacement.stderr | default('') | lower)
+          else 'other'
+      }}).
   when: _pbs_storage_endpoint_changed | bool
 
 - name: PBS | Resolve running PVE backup tasks before replacing the storage entry
@@ -321,6 +342,7 @@
     _pbs_running_backup_tasks: >-
       {{ _pbs_backup_tasks_before_storage_replacement.stdout | from_json
          | selectattr('endtime', 'undefined') | list }}
+  no_log: true
   when: _pbs_storage_endpoint_changed | bool
 
 - name: PBS | Refuse to replace the storage entry during a backup
