@@ -20,7 +20,16 @@
     argv: [lsblk, --json, --paths, --output, NAME,SERIAL,TYPE,FSTYPE,UUID,MOUNTPOINTS]
   register: _pbs_lsblk
   changed_when: false
+  failed_when: false
   no_log: true
+
+- name: PBS datastore disk | Require block-device inspection to succeed
+  ansible.builtin.assert:
+    that:
+      - _pbs_lsblk.rc == 0
+    fail_msg: >-
+      lsblk could not inspect PBS block devices (exit {{ _pbs_lsblk.rc }}):
+      {{ _pbs_lsblk.stderr | default('') }}
 
 - name: PBS datastore disk | Resolve the unique data device
   ansible.builtin.set_fact:
