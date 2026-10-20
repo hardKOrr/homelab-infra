@@ -39,6 +39,14 @@ A direct run then supplies only the Ansible Vault password, through `LAB_VAULT_P
 Vault-mode guard and Vaultwarden preflight as a job. A file it cannot decrypt stops the
 run.
 
+The file also holds an edge copy: the platform items of the Vaultwarden contract, without
+any application's credentials. Caddy serves `BW_SERVER`, so deploying Caddy
+(`playbooks/apps/caddy.yml`) or removing it (`playbooks/apps/remove.yml` with app
+`caddy`) cannot depend on reaching Vaultwarden. For those runs only, when the login fails
+and Vaultwarden does not answer, `lab-run` takes the contract from the edge copy instead
+and the run continues. Each such run given `LAB_VAULT_PASSWORD`, and each Vaultwarden Login
+File run, rewrites the copy from a verified Vaultwarden session, so it follows rotations.
+
 Run a candidate revision from its own checkout beside the runner checkout, with refresh off
 and `config/` linked to the runner's. On the runner (`pct exec <runner-vmid>` from its
 node), as root:

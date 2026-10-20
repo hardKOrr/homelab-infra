@@ -2,13 +2,21 @@
 """Read or write config/vaultwarden.yml, the vaulted automation login for direct runs.
 
     vaultwarden-login.py read  <file>   print shell exports for BW_CLIENTID, BW_CLIENTSECRET
-                                        and BW_PASSWORD, for lab-run.sh to eval
+                                        and BW_PASSWORD (and HOMELABINFRA_EDGE_VAULT_JSON
+                                        when stored), for lab-run.sh to eval
     vaultwarden-login.py write <file>   store those three variables from the environment,
-                                        each as an inline Ansible Vault value
+                                        each as an inline Ansible Vault value, plus the edge
+                                        copy taken from HOMELABINFRA_VAULT_JSON when set
 
 The file is what lets lab-run.sh unlock Vaultwarden without Rundeck: an operator or agent
 supplies only the Ansible Vault password, and the existing Vaultwarden preflight does the
 rest. Vaultwarden stays the canonical store for every other secret.
+
+The file also keeps an edge copy: the platform items of the Vaultwarden contract (Proxmox,
+runner, reverse proxy, DNS, ...), without any application's credentials. Caddy serves
+BW_SERVER, so Caddy's own deploy and removal cannot depend on reaching it; lab-run.sh uses
+this copy for those runs only, and only when Vaultwarden does not answer. Every write takes
+it fresh from a verified Vaultwarden session, so Vaultwarden stays the source of truth.
 
 The Ansible Vault password comes from, in order:
 
@@ -22,6 +30,7 @@ the export lines; `write` prints `unchanged` or `written`. A rotation keeps the 
 file under config/.backups/, like every other config write.
 """
 
+import json
 import os
 import shlex
 import sys
@@ -33,6 +42,9 @@ import yaml
 FIELDS = (("bw_clientid", "BW_CLIENTID"),
           ("bw_clientsecret", "BW_CLIENTSECRET"),
           ("bw_password", "BW_PASSWORD"))
+EDGE_FIELD = ("edge_vault", "HOMELABINFRA_EDGE_VAULT_JSON")
+# Contract groups holding per-application credentials; the edge copy leaves them out.
+APP_GROUPS = ("apps", "media")
 BACKUPS_KEPT = 20
 HEADER = """\
 # Vaultwarden automation login for direct lab-run.sh operation. Written by the
@@ -117,13 +129,38 @@ def load(path: str, secrets: list) -> dict:
                              "Ansible Vault password") from None
         if not values[key]:
             raise LoginError(f"{path}: {key} is empty")
+    key = EDGE_FIELD[0]
+    value = document.get(key)
+    if value is not None:
+        if not (isinstance(value, tuple) and value[0] == "vault"):
+            raise LoginError(f"{path}: {key} must be an inline !vault value")
+        try:
+            values[key] = vault.decrypt(value[1].encode()).decode()
+        except Exception:  # noqa: BLE001
+            raise LoginError(f"{path}: {key} could not be decrypted with the supplied "
+                             "Ansible Vault password") from None
     return values
+
+
+def edge_copy(contract_json: str) -> str:
+    try:
+        contract = json.loads(contract_json)
+    except json.JSONDecodeError:
+        raise LoginError("HOMELABINFRA_VAULT_JSON is not JSON") from None
+    if not isinstance(contract, dict):
+        raise LoginError("HOMELABINFRA_VAULT_JSON must be a mapping")
+    edge = {key: value for key, value in contract.items() if key not in APP_GROUPS}
+    for required in ("proxmox", "runner"):
+        if not edge.get(required):
+            raise LoginError(f"the Vaultwarden contract has no {required} item")
+    return json.dumps(edge, sort_keys=True, separators=(",", ":"))
 
 
 def read(path: str) -> None:
     values = load(path, vault_secrets())
-    for key, env in FIELDS:
-        print(f"export {env}={shlex.quote(values[key])}")
+    for key, env in FIELDS + (EDGE_FIELD,):
+        if key in values:
+            print(f"export {env}={shlex.quote(values[key])}")
 
 
 def backup(path: str) -> None:
@@ -149,12 +186,19 @@ def write(path: str) -> None:
     if missing:
         raise LoginError("missing from the environment: " + ", ".join(missing))
     secrets = vault_secrets()
+    contract = os.environ.get("HOMELABINFRA_VAULT_JSON", "")
+    if contract:
+        wanted[EDGE_FIELD[0]] = edge_copy(contract)
 
     # Reruns keep the existing file. One the current password cannot read is replaced:
     # the caller has just proved these inputs unlock Vaultwarden.
+    # A write without a contract keeps the edge copy already stored.
     if os.path.exists(path):
         try:
-            if load(path, secrets) == wanted:
+            existing = load(path, secrets)
+            if not contract and EDGE_FIELD[0] in existing:
+                wanted[EDGE_FIELD[0]] = existing[EDGE_FIELD[0]]
+            if existing == wanted:
                 print("unchanged")
                 return
         except LoginError:
@@ -164,7 +208,7 @@ def write(path: str) -> None:
     vault = VaultLib(secrets)
     secret = secrets[0][1]
     lines = [HEADER]
-    for key, _ in FIELDS:
+    for key in [key for key, _ in FIELDS + (EDGE_FIELD,) if key in wanted]:
         ciphertext = vault.encrypt(wanted[key], secret).decode()
         lines.append(f"{key}: !vault |\n")
         lines.extend(f"  {line}\n" for line in ciphertext.splitlines())

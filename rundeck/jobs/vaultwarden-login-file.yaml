@@ -14,7 +14,9 @@
     encrypted with your Ansible Vault password.
 
     With that file in place, `lab-run` runs directly from a shell or another operator
-    interface with only the Ansible Vault password. Rerun after rotating the automation
+    interface with only the Ansible Vault password. The file also keeps an edge copy of the
+    platform credentials, so Caddy can be deployed or removed while Vaultwarden is
+    unreachable behind it. Rerun after rotating the automation
     login or changing the Ansible Vault password; an unchanged rerun changes nothing.
 
     > Run after Vaultwarden Cutover.

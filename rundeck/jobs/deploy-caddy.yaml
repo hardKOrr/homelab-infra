@@ -17,6 +17,8 @@
     - Configures Cloudflare DNS-01 certificate issuance
     - Uses the temporary encrypted Cloudflare input before Vaultwarden Cutover
     - Reads the canonical reverse-proxy credential from Vaultwarden after cutover
+    - With the Ansible Vault password, deploys from the edge copy in
+      `config/vaultwarden.yml` when Caddy is down and Vaultwarden is unreachable behind it
 
     **Recovery:** Caddy is the lab-wide shared TLS edge. Use **Backup Guest** and
     **Restore Guest** with the exact Caddy LXC VMID; these are whole-guest PBS operations,
@@ -35,6 +37,13 @@
       an additional Caddy instance. The value identifies its config file, guest, and route.'
     required: true
     value: caddy
+  - name: ansible_vault_password
+    description: '**Optional.** The operator''s Ansible Vault password. Given, a run that
+      reaches Vaultwarden refreshes the edge copy in `config/vaultwarden.yml`, and a run
+      that cannot reach it (Caddy is down) deploys from that copy. Masked; never stored.'
+    required: false
+    secure: true
+    valueExposed: true
   sequence:
     keepgoing: false
     strategy: node-first
@@ -48,6 +57,9 @@
           # ${option.x} tokens would collide with shell expansion in a script step.
           : "${RD_OPTION_INSTANCE:?instance is required}"
           ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          if [ -n "${RD_OPTION_ANSIBLE_VAULT_PASSWORD:-}" ]; then
+            export LAB_VAULT_PASSWORD="$RD_OPTION_ANSIBLE_VAULT_PASSWORD"
+          fi
 
           # Caddy is deliberately one of the few playbooks allowed before the
           # Vaultwarden marker exists: it must provide HTTPS for enrollment.
