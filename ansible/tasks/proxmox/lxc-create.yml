@@ -258,6 +258,13 @@
       and hostname {{ lxc_module_args.hostname }}.
   loop: "{{ groups['all'] | default([]) }}"
 
+- name: Check node memory before creating the LXC container
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_memory_guest: "{{ lxc_module_args.hostname }}"
+    proxmox_guest_memory_mib: "{{ lxc_module_args.memory | default(512) | int }}"
+
 - name: Create LXC container
   community.proxmox.proxmox: "{{ lxc_module_args }}"
   register: create_lxc_result
@@ -297,6 +304,13 @@
     _lxc_features_current: >-
       {{ (_lxc_config_now.stdout_lines | select('match', '^features:') | list | first | default('features:'))
          | regex_replace('^features:\s*', '') | trim | split(',') | select() | sort }}
+
+- name: Check node memory before starting the LXC container
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_memory_guest: "{{ homelabinfra_instance.lxc.hostname }}"
+    proxmox_guest_memory_mib: "{{ lxc_module_args.memory | default(512) | int }}"
 
 # `present` above created the container STOPPED and no other task here starts it — without
 # this, "Wait for LXC to be running" spins its full 30 retries and fails on every first

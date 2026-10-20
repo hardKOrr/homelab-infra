@@ -1,0 +1,50 @@
+---
+# Inputs:
+#   proxmox_memory_node       — node that will own the guest
+#   proxmox_memory_guest      — guest name shown in the failure message
+#   proxmox_guest_memory_mib  — configured guest memory in MiB
+
+- name: Proxmox memory | Require the guest size and target node
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - proxmox_memory_node | default('', true) | length > 0
+      - proxmox_memory_guest | default('', true) | length > 0
+      - proxmox_guest_memory_mib | int > 0
+    fail_msg: "Cannot check Proxmox node memory without a node, guest name and positive guest memory size."
+
+- name: Proxmox memory | Read available memory from the target node
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ proxmox_memory_node }}/status"
+      - --output-format
+      - json
+  delegate_to: "{{ proxmox_memory_node }}"
+  register: _proxmox_memory_node_status
+  changed_when: false
+
+- name: Proxmox memory | Require enough available memory for the guest
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - (_proxmox_memory_available_bytes | int) >= (_proxmox_memory_needed_mib | int) * 1024 * 1024
+    fail_msg: >-
+      Not enough available memory for guest '{{ proxmox_memory_guest }}' on Proxmox node
+      '{{ proxmox_memory_node }}': needs {{ _proxmox_memory_needed_mib }} MiB, only
+      {{ _proxmox_memory_available_mib }} MiB available.
+  vars:
+    _proxmox_memory_status: "{{ _proxmox_memory_node_status.stdout | from_json }}"
+    _proxmox_memory_available_bytes: >-
+      {{
+        (
+          _proxmox_memory_status.memory.available
+          | default(
+              (_proxmox_memory_status.memory.total | int)
+              - (_proxmox_memory_status.memory.used | int)
+            )
+        ) | int
+      }}
+    _proxmox_memory_available_mib: "{{ _proxmox_memory_available_bytes | int // (1024 * 1024) }}"
+    _proxmox_memory_needed_mib: "{{ proxmox_guest_memory_mib | int }}"

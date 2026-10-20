@@ -111,6 +111,14 @@
   failed_when: false
   changed_when: false
 
+- name: VM clone | Check node memory before cloning the VM
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ _vmc_api.node }}"
+    proxmox_memory_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
+    proxmox_guest_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
+  when: _vmc_existing.rc != 0
+
 - name: VM clone | Clone the template
   community.proxmox.proxmox_kvm:
     api_host: "{{ _vmc_api.api_host }}"
@@ -318,6 +326,16 @@
   when:
     - homelabinfra_config.proxmox.vm.disk_size is defined
     - (_vmc_disk_bytes | int) < (homelabinfra_config.proxmox.vm.disk_size | int) * 1024 ** 3
+
+- name: VM clone | Check node memory before starting the VM
+  ansible.builtin.include_tasks: check-node-free-memory.yml
+  vars:
+    proxmox_memory_node: "{{ _vmc_api.node }}"
+    proxmox_memory_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
+    proxmox_guest_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
+  when: >-
+    (_vmc_clone.changed | default(false))
+    or (_vmc_reused_status.stdout | default('') | trim != 'status: running')
 
 # Node-local `qm start` rather than the module's `state: started`: the module resolves the
 # guest through the eventually-consistent /cluster/resources cache and reads its name
