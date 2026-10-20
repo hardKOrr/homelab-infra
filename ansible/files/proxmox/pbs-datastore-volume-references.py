@@ -15,7 +15,7 @@ def main():
     references = []
     root = Path(args.config_dir)
     for guest_type in ("qemu-server", "lxc"):
-        for config in sorted((root / guest_type).glob("*.conf")):
+        for config in sorted((root / "nodes").glob(f"*/{guest_type}/*.conf")):
             vmid = config.stem
             for line in config.read_text(encoding="utf-8").splitlines():
                 match = re.match(

@@ -228,15 +228,22 @@ assert "_rg_restore_task_upid" in restore_wait["vars"]["proxmox_task_upid"]
 helper = ROOT / "ansible/files/proxmox/pbs-datastore-volume-references.py"
 with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     config_dir = Path(tmp)
-    (config_dir / "qemu-server").mkdir()
-    (config_dir / "lxc").mkdir()
-    (config_dir / "qemu-server/100.conf").write_text(
+    local_qemu = config_dir / "nodes/local/qemu-server"
+    remote_qemu = config_dir / "nodes/remote/qemu-server"
+    remote_lxc = config_dir / "nodes/remote/lxc"
+    local_qemu.mkdir(parents=True)
+    remote_qemu.mkdir(parents=True)
+    remote_lxc.mkdir(parents=True)
+    (local_qemu / "100.conf").write_text(
         "scsi1: store:vm-100-disk-1,backup=0\n", encoding="utf-8"
     )
-    (config_dir / "lxc/101.conf").write_text(
+    (remote_lxc / "101.conf").write_text(
         "mp0: store:vm-100-disk-1,mp=/data\n", encoding="utf-8"
     )
-    (config_dir / "qemu-server/102.conf").write_text(
+    (remote_qemu / "103.conf").write_text(
+        "scsi1: store:vm-100-disk-1,backup=0\n", encoding="utf-8"
+    )
+    (remote_qemu / "102.conf").write_text(
         "scsi1: store:vm-100-disk-10,backup=0\n", encoding="utf-8"
     )
     result = subprocess.run(
@@ -253,6 +260,7 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     )
     assert json.loads(result.stdout) == [
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "100"},
+        {"device": "scsi1", "guest_type": "qemu-server", "vmid": "103"},
         {"device": "mp0", "guest_type": "lxc", "vmid": "101"},
     ]
 
