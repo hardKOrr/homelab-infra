@@ -5,7 +5,7 @@
 # same-name owned guests are ambiguous and must be repaired before Deploy continues.
 #
 # Input:  resolve_app_vm_instance
-# Output: resolve_app_vm_hosts
+# Output: resolve_app_vm_hosts, resolve_app_vm_needs_tag
 
 - name: Resolve application VM | Require an instance name
   ansible.builtin.assert:
@@ -45,3 +45,6 @@
       {{ _resolve_app_vm_tagged_hosts
          if _resolve_app_vm_tagged_hosts | length > 0
          else _resolve_app_vm_named_owned_hosts }}
+    resolve_app_vm_needs_tag: >-
+      {{ _resolve_app_vm_tagged_hosts | length == 0
+         and _resolve_app_vm_named_owned_hosts | length == 1 }}

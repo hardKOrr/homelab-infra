@@ -68,6 +68,7 @@
     - name: Record the resolved Ollama VM candidates
       ansible.builtin.set_fact:
         _ollama_existing_hosts: "{{ resolve_app_vm_hosts }}"
+        _ollama_needs_identity_record: "{{ resolve_app_vm_needs_tag | bool }}"
 
     - name: Resolve the existing Ollama VM node
       ansible.builtin.set_fact:
@@ -201,6 +202,7 @@
       vars:
         record_guest_kind: docker
         record_guest_require_success: true
+      when: _ollama_needs_identity_record
 
     # PCIe passthrough is not hotplugged. The shared task preflights the exact declaration,
     # ownership tag, node presence, and exclusive conflict before qm set, and restores a

@@ -119,6 +119,12 @@ def main():
         )
         assert predeploy_record["vars"]["record_guest_kind"] == "docker"
         assert predeploy_record["vars"]["record_guest_require_success"] is True
+        assert predeploy_record["when"] == f"_{app}_needs_identity_record"
+
+        create_identity = task_named(
+            provision["tasks"], f"Set the {display} VM identity and ownership tags"
+        )["ansible.builtin.set_fact"]["homelabinfra_config"]
+        assert "['_' ~ instance]" in create_identity
 
         wire = next(play for play in plays if play["name"] == f"{display} | Wire")
         wire_record = task_named(wire["tasks"], f"Record {display} on its dedicated Docker VM")
