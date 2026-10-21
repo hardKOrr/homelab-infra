@@ -138,16 +138,46 @@
           - "{{ _bg_storage }}"
           - --mode
           - snapshot
+          - --output-format
+          - json
       delegate_to: "{{ _bg_guest.node }}"
       register: _bg_task
       changed_when: true
 
-    - name: Wait for the PBS backup task
+    - name: Normalize the PBS backup task response
+      ansible.builtin.set_fact:
+        _bg_task_upids: >-
+          {{ _bg_task.stdout | default('')
+             | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+
+    - name: Require at most one PBS backup task identity
+      ansible.builtin.assert:
+        that: _bg_task_upids | length <= 1
+        fail_msg: >-
+          Proxmox returned multiple task identities for one guest backup. Inspect the
+          backup result before retrying.
+
+    - name: Select the PBS backup task identity
+      ansible.builtin.set_fact:
+        _bg_task_upid: "{{ (_bg_task_upids | first | default('', true)) | trim }}"
+
+    - name: Wait for the asynchronous PBS backup task
       ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
       vars:
         proxmox_task_node: "{{ _bg_guest.node }}"
-        proxmox_task_upid: "{{ _bg_task.stdout | trim }}"
+        proxmox_task_upid: "{{ _bg_task_upid }}"
         proxmox_task_timeout: "{{ backup_timeout | default(7200) }}"
+      when: _bg_task_upid | length > 0
+
+    - name: Require a successful synchronous PBS backup result
+      ansible.builtin.assert:
+        that:
+          - _bg_task.rc == 0
+          - "'INFO: Backup job finished successfully' in (_bg_task.stdout | default(''))"
+        fail_msg: >-
+          Proxmox returned neither a task UPID nor a successful completed backup log.
+          Inspect the vzdump result before retrying.
+      when: _bg_task_upid | length == 0
 
     - name: Read the completed guest artifacts
       ansible.builtin.command:
