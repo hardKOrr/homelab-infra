@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -97,6 +98,20 @@ def main():
     assert ambiguous["ansible.builtin.assert"]["that"] == [
         "_resolve_app_vm_named_owned_hosts | length <= 1"
     ]
+    unclaimed = task_named(
+        resolver, "Resolve application VM | Require an unclaimed exact-name fallback guest"
+    )
+    assert unclaimed["when"] == [
+        "_resolve_app_vm_tagged_hosts | length == 0",
+        "_resolve_app_vm_named_owned_hosts | length == 1",
+    ]
+    unclaimed_check = unclaimed["ansible.builtin.assert"]["that"][0]
+    assert "proxmox_tags_parsed" in unclaimed_check
+    claim_pattern_match = re.search(r"select\('match', '([^']+)'\)", unclaimed_check)
+    assert claim_pattern_match is not None
+    claim_pattern = re.compile(claim_pattern_match.group(1))
+    assert not any(claim_pattern.match(tag) for tag in ("_+lab", "_-gpu", "operator-note"))
+    assert any(claim_pattern.match(tag) for tag in ("_ollama", "_.gpu"))
     select_guest = task_named(
         resolver, "Resolve application VM | Select the tagged or uniquely named owned guest"
     )["ansible.builtin.set_fact"]

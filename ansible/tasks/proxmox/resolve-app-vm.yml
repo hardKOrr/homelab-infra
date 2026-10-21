@@ -39,6 +39,20 @@
       distinguish them, so refusing to select one or create another VM. Repair the exact
       guest identity before retrying Deploy.
 
+- name: Resolve application VM | Require an unclaimed exact-name fallback guest
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - >-
+        (hostvars[_resolve_app_vm_named_owned_hosts[0]].proxmox_tags_parsed | default([])
+         | select('match', '^_[A-Za-z0-9]|^_[.]') | list | length) == 0
+    fail_msg: >-
+      The exact-name guest {{ resolve_app_vm_instance }} already has an instance or
+      topology tag. Refusing to adopt a guest claimed by another resource.
+  when:
+    - _resolve_app_vm_tagged_hosts | length == 0
+    - _resolve_app_vm_named_owned_hosts | length == 1
+
 - name: Resolve application VM | Select the tagged or uniquely named owned guest
   ansible.builtin.set_fact:
     resolve_app_vm_hosts: >-
