@@ -123,13 +123,17 @@
       - "{{ hostvars['localhost'].app_config.media_storage.owner.gid | int }}"
       - --clear-groups
       - find
-      - "{{ hostvars['localhost']._rm_immich_media_path }}"
+      - .
       - -mindepth
       - "1"
       - -maxdepth
       - "1"
       - -print
       - -quit
+  # Ansible enters the verified mount as root before setpriv changes identity. The owner
+  # then scans from that directory without needing search permission on its ancestors.
+  args:
+    chdir: "{{ hostvars['localhost']._rm_immich_media_path }}"
   register: _rm_immich_media_contents
   changed_when: false
   no_log: true
@@ -144,7 +148,7 @@
       - "{{ hostvars['localhost'].app_config.media_storage.owner.gid | int }}"
       - --clear-groups
       - find
-      - "{{ hostvars['localhost']._rm_immich_media_path }}"
+      - .
       - -mindepth
       - "1"
       - -maxdepth
@@ -155,6 +159,8 @@
       - --
       - "{}"
       - +
+  args:
+    chdir: "{{ hostvars['localhost']._rm_immich_media_path }}"
   changed_when: true
   no_log: true
   when: _rm_immich_media_contents.stdout | length > 0
