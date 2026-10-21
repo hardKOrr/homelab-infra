@@ -72,6 +72,9 @@
     fail_msg: "{{ item.item.path }} is not present on the media stack host."
   loop: "{{ _plex_mount_checks.results }}"
 
+- name: Configure Plex access to declared DRI devices
+  ansible.builtin.include_tasks: configure-devices.yml
+
 - name: Write the Plex Compose project
   ansible.builtin.template:
     src: docker-compose.yml.j2

@@ -38,6 +38,12 @@ services:
       - "{{ device }}:{{ device }}"
 {% endfor %}
 {% endif %}
+{% if _plex_dri_group_ids | default([], true) | length > 0 %}
+    group_add:
+{% for group_id in _plex_dri_group_ids | unique %}
+      - "{{ group_id }}"
+{% endfor %}
+{% endif %}
 networks:
   media:
     external: true

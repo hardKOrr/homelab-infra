@@ -19,7 +19,7 @@ plex_defaults:
     puid: 1313
     pgid: 1313
     # Optional dedicated GPU declaration from proxmox.devices. A configured GPU pins
-    # the shared media stack VM to that device's node and exposes /dev/dri to Plex.
+    # the shared media stack VM to that device's node and grants Plex the DRI device groups.
     # The role enables Plex hardware decoding and encoding when /dev/dri is declared,
     # and disables both settings when no /dev/dri device is configured.
     gpu_device: ""
