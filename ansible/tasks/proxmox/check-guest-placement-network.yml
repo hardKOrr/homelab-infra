@@ -16,7 +16,7 @@
   ansible.builtin.set_fact:
     _guest_placement_current_vlan_allowed: true
   loop: >-
-    {{ _guest_placement_current_bridge.bridge_vids | default('') | string
+    {{ _guest_placement_current_bridge.bridge_vids | default('2-4094') | string
        | replace(',', ' ') | split }}
   when:
     - _guest_placement_current_bridge | length > 0
@@ -31,7 +31,7 @@
   ansible.builtin.set_fact:
     _guest_placement_current_vlan_allowed: true
   loop: >-
-    {{ _guest_placement_current_bridge.bridge_vids | default('') | string
+    {{ _guest_placement_current_bridge.bridge_vids | default('2-4094') | string
        | replace(',', ' ') | split }}
   vars:
     _guest_placement_vlan_range: "{{ item | split('-') }}"

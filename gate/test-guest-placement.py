@@ -462,7 +462,7 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
              pci_mapping=None, device=None, storage=None, storage_resources=None,
              memory=None, networks=None, explicit_node=None, placement_devices=None,
              usb_mapping=None, bridge="vmbr0", compute=None, additional_storage=None,
-             stale_vm_storage=None, app_config=None):
+             stale_vm_storage=None, app_config=None, repeat_placement=None):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         stub = root / "pvesh"
@@ -548,6 +548,30 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
                     ]
                 }
             })
+            if repeat_placement is not None:
+                repeat_vars = resolver_vars | {
+                    "guest_placement_node": repeat_placement["node"],
+                    "guest_placement_storage": repeat_placement["storage"],
+                    "guest_placement_use_app_config": False,
+                }
+                tasks.extend([
+                    {
+                        "ansible.builtin.include_tasks": str(RESOLVER),
+                        "vars": repeat_vars,
+                    },
+                    {
+                        "ansible.builtin.assert": {
+                            "that": [
+                                f"_guest_placement.node == {json.dumps(repeat_placement['node'])}",
+                                "_guest_placement_memory_candidates | length == 1",
+                                "_guest_placement_memory_candidates[0].node == "
+                                f"{json.dumps(repeat_placement['node'])}",
+                                "_guest_placement_app_storage == ''",
+                                "_guest_placement_app_node == ''",
+                            ]
+                        }
+                    },
+                ])
         if expected_error:
             tasks = [{
                 "block": tasks,
@@ -609,7 +633,13 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
             "tasks": tasks,
         }]))
         inventory = root / "inventory.ini"
-        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        inventory.write_text(
+            "[local]\n"
+            "localhost ansible_connection=local\n"
+            "compute-3 ansible_connection=local\n"
+            "compute-2 ansible_connection=local\n"
+            "storage-1 ansible_connection=local\n"
+        )
         env = os.environ | {
             "ANSIBLE_STDOUT_CALLBACK": "default",
             "ANSIBLE_NOCOLOR": "1",
@@ -793,6 +823,27 @@ def main():
         app_config={"proxmox": {"node": "compute-3"}},
     )
     run_case(
+        "repeated placement resets candidate and optional app inputs",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "local-zfs", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        app_config={"proxmox": {"vm": {"node": "compute-3", "storage": "local-zfs"}}},
+        storage_resources=[
+            {"type": "storage", "storage": "local-zfs", "node": "compute-3",
+             "status": "available", "shared": 0, "content": "images"},
+            *[
+                {"type": "storage", "storage": "iscsi-shared", "node": name,
+                 "status": "available", "shared": 1, "content": "images"}
+                for name in ("compute-3", "compute-2")
+            ],
+        ],
+        memory={
+            "compute-3": {"memory": {"available": 12 * 1024**3, "total": 16 * 1024**3, "used": 4 * 1024**3}},
+            "compute-2": {"memory": {"available": 8 * 1024**3, "total": 16 * 1024**3, "used": 8 * 1024**3}},
+        },
+        repeat_placement={"node": "compute-2", "storage": "iscsi-shared"},
+    )
+    run_case(
         "flat LXC app storage selects and pins its local node",
         "floating_lxc",
         [node("compute-3"), node("compute-2")],
@@ -878,6 +929,18 @@ def main():
                             "bridge_vlan_aware": 1, "bridge_vids": "10 30"}],
             "compute-3": [{"type": "bridge", "iface": "vmbr0", "active": 1,
                             "bridge_vlan_aware": 1, "bridge_vids": "10-25"}],
+        },
+    )
+    run_case(
+        "VLAN-aware bridge without bridge_vids allows the default VLAN range",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        networks={
+            "compute-3": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1}],
+            "compute-2": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1}],
         },
     )
     run_case(

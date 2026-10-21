@@ -39,6 +39,12 @@
       config/proxmox.yml must declare node_roles.storage and an ordered, unique
       node_roles.compute list, and the pinned storage node must not be a compute node.
 
+- name: Guest placement | Reset optional app placement inputs
+  ansible.builtin.set_fact:
+    _guest_placement_app_proxmox: {}
+    _guest_placement_app_storage: ''
+    _guest_placement_app_node: ''
+
 - name: Guest placement | Load the current app's Proxmox settings
   ansible.builtin.set_fact:
     _guest_placement_app_proxmox: "{{ (app_config | default({})).get('proxmox', {}) }}"
@@ -481,10 +487,14 @@
   register: _guest_placement_memory_results
   changed_when: false
 
+- name: Guest placement | Initialize available-memory candidates
+  ansible.builtin.set_fact:
+    _guest_placement_memory_candidates: []
+
 - name: Guest placement | Build available-memory ranking
   ansible.builtin.set_fact:
     _guest_placement_memory_candidates: >-
-      {{ _guest_placement_memory_candidates | default([])
+      {{ _guest_placement_memory_candidates
          + [{'node': item.item,
              'available_bytes': ((item.stdout | from_json).memory.available
                | default((item.stdout | from_json).memory.total
