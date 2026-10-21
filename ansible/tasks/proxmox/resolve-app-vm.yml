@@ -1,0 +1,47 @@
+---
+# Resolve a dedicated application VM without creating another same-name guest when its
+# application tag is missing. The app tag remains the preferred identity. A single
+# `_+lab` guest with the exact application name can be adopted and tagged; multiple
+# same-name owned guests are ambiguous and must be repaired before Deploy continues.
+#
+# Input:  resolve_app_vm_instance
+# Output: resolve_app_vm_hosts
+
+- name: Resolve application VM | Require an instance name
+  ansible.builtin.assert:
+    that:
+      - resolve_app_vm_instance is defined
+      - resolve_app_vm_instance is match('^[A-Za-z0-9_.-]+$')
+    fail_msg: "Provide a safe application instance name before resolving its VM."
+
+- name: Resolve application VM | Find hosts with the application tag
+  ansible.builtin.include_tasks: tag-group.yml
+  vars:
+    tag_group_tag: "_{{ resolve_app_vm_instance }}"
+
+- name: Resolve application VM | Start the exact-name owned guest list
+  ansible.builtin.set_fact:
+    _resolve_app_vm_tagged_hosts: "{{ groups[tag_group_name] | default([]) }}"
+    _resolve_app_vm_named_owned_hosts: []
+
+- name: Resolve application VM | Find owned guests with the exact application name
+  ansible.builtin.set_fact:
+    _resolve_app_vm_named_owned_hosts: "{{ _resolve_app_vm_named_owned_hosts + [item] }}"
+  loop: "{{ groups['lab_managed'] | default([]) }}"
+  when: hostvars[item].proxmox_name | default(item, true) == resolve_app_vm_instance
+
+- name: Resolve application VM | Refuse ambiguous exact-name owned guests
+  ansible.builtin.assert:
+    that:
+      - _resolve_app_vm_named_owned_hosts | length <= 1
+    fail_msg: >-
+      Multiple _+lab guests are named {{ resolve_app_vm_instance }}. The app tag cannot
+      distinguish them, so refusing to select one or create another VM. Repair the exact
+      guest identity before retrying Deploy.
+
+- name: Resolve application VM | Select the tagged or uniquely named owned guest
+  ansible.builtin.set_fact:
+    resolve_app_vm_hosts: >-
+      {{ _resolve_app_vm_tagged_hosts
+         if _resolve_app_vm_tagged_hosts | length > 0
+         else _resolve_app_vm_named_owned_hosts }}
