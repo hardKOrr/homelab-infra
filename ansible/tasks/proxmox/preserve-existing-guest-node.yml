@@ -1,0 +1,48 @@
+---
+# Creation seams call this before placement so a rerun keeps the VMID's current node.
+# Existing guests are never moved just because another node now has more free memory.
+
+- name: Existing guest | Read cluster resources for the requested VMID
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/resources
+      - --type
+      - vm
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _existing_guest_cluster_resources
+  changed_when: false
+  when: guest_existing_id | default('') | string | trim | length > 0
+
+- name: Existing guest | Find the requested guest resource
+  ansible.builtin.set_fact:
+    _existing_guest_resources: >-
+      {{ (_existing_guest_cluster_resources.stdout | default('[]') | from_json)
+         | selectattr('vmid', 'defined')
+         | selectattr('vmid', 'equalto', guest_existing_id | int)
+         | list }}
+
+- name: Existing guest | Require an unambiguous resource of the expected type
+  ansible.builtin.assert:
+    that:
+      - _existing_guest_resources | length <= 1
+      - _existing_guest_resources | length == 0 or _existing_guest_resources[0].type == guest_existing_type
+    fail_msg: >-
+      VMID {{ guest_existing_id }} already belongs to another Proxmox guest type or has
+      ambiguous cluster state. Refusing to create or update it.
+
+- name: Existing guest | Record its current node
+  ansible.builtin.set_fact:
+    _existing_guest_current_node: "{{ (_existing_guest_resources | first | default({})).node | default('') }}"
+
+- name: Existing guest | Preserve its current node in the guest config
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config | combine({'proxmox':
+           ({'node': _existing_guest_current_node}
+            | combine({guest_existing_config_key: {'node': _existing_guest_current_node}}))
+         }, recursive=True) }}
+  when: _existing_guest_current_node | length > 0

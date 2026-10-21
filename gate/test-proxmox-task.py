@@ -21,19 +21,66 @@ def find_callers(value):
             yield from find_callers(item)
     elif isinstance(value, dict):
         if str(value.get("ansible.builtin.include_tasks", "")).endswith("/wait-for-task.yml"):
-            yield value["vars"]["proxmox_task_upid"]
+            yield {
+                "upid": value["vars"]["proxmox_task_upid"],
+                "when": value.get("when"),
+            }
         for item in value.values():
             yield from find_callers(item)
 
 
+def find_named_tasks(value, name):
+    if isinstance(value, list):
+        for item in value:
+            yield from find_named_tasks(item, name)
+    elif isinstance(value, dict):
+        if value.get("name") == name:
+            yield value
+        for item in value.values():
+            yield from find_named_tasks(item, name)
+
+
+def named_task(value, name):
+    matches = list(find_named_tasks(value, name))
+    assert len(matches) == 1, (name, matches)
+    return matches[0]
+
+
 def main():
-    callers = []
-    for name in ("backup-guest.yml", "restore-guest.yml"):
-        source = repo / "ansible/playbooks/maintenance" / name
-        callers.extend(find_callers(yaml.safe_load(source.read_text())))
+    playbooks = {
+        name: yaml.safe_load(
+            (repo / "ansible/playbooks/maintenance" / name).read_text()
+        )
+        for name in ("backup-guest.yml", "restore-guest.yml")
+    }
+    callers = [
+        caller
+        for playbook in playbooks.values()
+        for caller in find_callers(playbook)
+    ]
     registers = ("_bg_task", "_rg_pre_task", "_rg_stop_task", "_rg_restore_task", "_rg_start_task")
     assert len(callers) == 5, callers
-    assert all(any(register in expression for expression in callers) for register in registers)
+    assert all(any(register in caller["upid"] for caller in callers) for register in registers)
+    normalizers = {
+        "_bg_task_upid": (
+            "_bg_task_upids",
+            named_task(playbooks["backup-guest.yml"], "Normalize the PBS backup task response"),
+            named_task(playbooks["backup-guest.yml"], "Require at most one PBS backup task identity"),
+            named_task(playbooks["backup-guest.yml"], "Select the PBS backup task identity"),
+        ),
+        "_rg_pre_task_upid": (
+            "_rg_pre_task_upids",
+            named_task(playbooks["restore-guest.yml"], "Normalize the independent target recovery task response"),
+            named_task(playbooks["restore-guest.yml"], "Require at most one independent recovery task identity"),
+            named_task(playbooks["restore-guest.yml"], "Select the independent target recovery task identity"),
+        ),
+        "_rg_restore_task_upid": (
+            "_rg_restore_task_upids",
+            named_task(playbooks["restore-guest.yml"], "Normalize the guest restore task response"),
+            named_task(playbooks["restore-guest.yml"], "Require exactly one guest restore task identity"),
+            named_task(playbooks["restore-guest.yml"], "Select the guest restore task identity"),
+        ),
+    }
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -50,21 +97,42 @@ def main():
         tasks = []
         expected = []
 
-        def include(expression, output):
-            return {
-                "ansible.builtin.include_tasks": str(waiter),
-                "vars": {"proxmox_task_upid": expression,
-                         **{register: {"stdout": output} for register in registers}},
+        def include(caller, output, normalized_upid=None):
+            variables = {
+                "proxmox_task_upid": caller["upid"],
+                **{register: {"stdout": output} for register in registers},
             }
+            fact = next((name for name in normalizers if name in caller["upid"]), None)
+            if fact:
+                variables[fact] = normalized_upid or output
+            return [{
+                "ansible.builtin.include_tasks": str(waiter),
+                "vars": variables,
+            }]
+
+        # Exercise the production parser against a real multiline command response: the
+        # UPID is one whole line between informational output, not the entire stdout.
+        normalization_cases = []
+        for fact, (list_fact, normalize_task, cardinality_task, select_task) in normalizers.items():
+            register = {"_bg_task_upid": "_bg_task", "_rg_pre_task_upid": "_rg_pre_task",
+                        "_rg_restore_task_upid": "_rg_restore_task"}[fact]
+            upid = f"UPID:<pve-node>:00000001:00000002:00000003:vzrestore:<GUEST-vmid>:fixture:"
+            output = "PVE operation accepted\n" + upid + "\nworker request complete\n"
+            normalization_cases.append((register, output, [
+                {"ansible.builtin.set_fact": normalize_task["ansible.builtin.set_fact"]},
+                {"ansible.builtin.assert": cardinality_task["ansible.builtin.assert"]},
+                {"ansible.builtin.set_fact": select_task["ansible.builtin.set_fact"]},
+                {"ansible.builtin.assert": {"that": [f"{fact} == {json.dumps(upid)}"]}},
+            ]))
 
         # Each of the five production callers must poll exactly the same identity
         # for bare and JSON-quoted stdout, including pvesh's trailing newline.
-        for index, expression in enumerate(callers):
+        for index, caller in enumerate(callers):
             for operation in ("vzdump", "qmstop", "qmstart", "vzrestore", "vzstop", "vzstart"):
                 upid = (f"UPID:<pve-node>:00000001:00000002:00000003:{operation}:"
                         f"<GUEST-vmid>:fixture{index}:")
                 for output in (upid + "\n", json.dumps(upid) + "\n"):
-                    tasks.append(include(expression, output))
+                    tasks.extend(include(caller, output, normalized_upid=upid))
                     expected.append(["get", f"/nodes/localhost/tasks/{upid}/status", "--output-format", "json"])
 
         # Run failures after successful calls to also detect stale normalized facts.
@@ -75,7 +143,7 @@ def main():
                    "UPID:with space", "UPID:with\ttab", "UPID:with\rcarriage", '"UPID:with\nnewline"')
         for index, output in enumerate(invalid):
             tasks.append({
-                "block": [include(callers[index % len(callers)], output),
+                "block": [*include(callers[index % len(callers)], output),
                           {"ansible.builtin.fail": {"msg": "Invalid task output was accepted"}}],
                 "rescue": [{"ansible.builtin.assert": {"that": [
                     f"ansible_failed_result.msg == {json.dumps(failure)}",
@@ -104,9 +172,22 @@ def main():
         result = subprocess.run([str(ansible), "-i", str(inventory), str(playbook)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
+
+        normalize_playbook = root / "normalize.yml"
+        for register, output, normalization_tasks in normalization_cases:
+            normalize_playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost", "gather_facts": False,
+                "vars": {register: {"stdout": output}},
+                "tasks": normalization_tasks,
+            }]))
+            normalized = subprocess.run(
+                [str(ansible), "-i", str(inventory), str(normalize_playbook)],
+                env=env, text=True, capture_output=True, check=False,
+            )
+            assert normalized.returncode == 0, normalized.stdout + normalized.stderr
         requests = [json.loads(line) for line in log.read_text().splitlines()]
         assert requests == expected, requests
-    print("Proxmox: all five callers accept bare/quoted UPIDs; invalid output fails before polling")
+    print("Proxmox: callers extract one wrapped UPID; invalid output fails before polling")
 
 
 if __name__ == "__main__":

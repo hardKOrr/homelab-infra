@@ -1,0 +1,28 @@
+---
+# Resolve a Docker app's effective stack. A declared GPU's stack owns its PCI device,
+# so every stack-hosted app naming that GPU joins the same VM. Apps without a GPU keep
+# the stack from their defaults or instance config. GPU-backed single-app VMs have no
+# `stack` key and continue through their existing placement path.
+#
+# Inputs: stack_resolution_config, optional stack_resolution_default_name.
+# Outputs: _stack_resolution_device, _stack_resolution_name.
+
+- name: Resolve app stack | Read the app's GPU and default stack
+  ansible.builtin.set_fact:
+    _stack_resolution_device: >-
+      {{ (stack_resolution_config | default({})).get('app', {}).get('gpu_device', '')
+         | default('', true) | string | trim }}
+    _stack_resolution_base_name: >-
+      {{ (stack_resolution_config | default({})).get(
+           'stack', stack_resolution_default_name | default('', true))
+         | default('', true) | string | trim }}
+
+- name: Resolve app stack | Select the GPU owner's stack or the existing default
+  ansible.builtin.set_fact:
+    _stack_resolution_name: >-
+      {{ ((((homelabinfra_config | default({})).get('proxmox', {})
+             .get('devices', {})).get(_stack_resolution_device, {}))
+             .get('stack', _stack_resolution_device)
+          | default(_stack_resolution_device, true) | string | trim)
+         if _stack_resolution_device | length > 0 and _stack_resolution_base_name | length > 0
+         else _stack_resolution_base_name }}

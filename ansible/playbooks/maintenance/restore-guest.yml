@@ -291,13 +291,47 @@
           changed_when: true
           when: _rg_pre_restore_point | length == 0
 
+        - name: Normalize the independent target recovery task response
+          ansible.builtin.set_fact:
+            _rg_pre_task_upids: >-
+              {{ _rg_pre_task.stdout | default('')
+                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+          when: _rg_pre_restore_point | length == 0
+
+        - name: Require at most one independent recovery task identity
+          ansible.builtin.assert:
+            that: _rg_pre_task_upids | length <= 1
+            fail_msg: >-
+              Proxmox returned multiple task identities for one target recovery point.
+              Inspect the backup result before retrying.
+          when: _rg_pre_restore_point | length == 0
+
+        - name: Select the independent target recovery task identity
+          ansible.builtin.set_fact:
+            _rg_pre_task_upid: "{{ (_rg_pre_task_upids | first | default('', true)) | trim }}"
+          when: _rg_pre_restore_point | length == 0
+
         - name: Wait for the independent target recovery point
           ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
           vars:
             proxmox_task_node: "{{ _rg_target_node }}"
-            proxmox_task_upid: "{{ _rg_pre_task.stdout | trim }}"
+            proxmox_task_upid: "{{ _rg_pre_task_upid }}"
             proxmox_task_timeout: "{{ restore_timeout | default(7200) }}"
-          when: _rg_pre_restore_point | length == 0
+          when:
+            - _rg_pre_restore_point | length == 0
+            - _rg_pre_task_upid | length > 0
+
+        - name: Require a successful synchronous target recovery point
+          ansible.builtin.assert:
+            that:
+              - _rg_pre_task.rc == 0
+              - "'INFO: Backup job finished successfully' in (_rg_pre_task.stdout | default(''))"
+            fail_msg: >-
+              Proxmox returned neither one task identity nor a successful completed backup
+              result. Inspect the target before retrying.
+          when:
+            - _rg_pre_restore_point | length == 0
+            - _rg_pre_task_upid | length == 0
 
         - name: List target recovery points after the pre-restore backup
           ansible.builtin.command:
@@ -505,11 +539,31 @@
             - _rg_execute | bool
             - _rg_target_type == 'lxc'
 
+        - name: Normalize the guest restore task response
+          ansible.builtin.set_fact:
+            _rg_restore_task_upids: >-
+              {{ _rg_restore_task.stdout | default('')
+                 | regex_findall('(?m)^[ \t]*(?:UPID:[^\s"\\]+:|"UPID:[^\s"\\]+:")[ \t]*$') }}
+          when: _rg_execute | bool
+
+        - name: Require exactly one guest restore task identity
+          ansible.builtin.assert:
+            that: _rg_restore_task_upids | length == 1
+            fail_msg: >-
+              Proxmox did not return exactly one guest restore task identity. The target
+              remains stopped for inspection.
+          when: _rg_execute | bool
+
+        - name: Select the guest restore task identity
+          ansible.builtin.set_fact:
+            _rg_restore_task_upid: "{{ (_rg_restore_task_upids | first | default('', true)) | trim }}"
+          when: _rg_execute | bool
+
         - name: Wait for the guest restore task
           ansible.builtin.include_tasks: ../../tasks/proxmox/wait-for-task.yml
           vars:
             proxmox_task_node: "{{ _rg_target_node }}"
-            proxmox_task_upid: "{{ _rg_restore_task.stdout | trim }}"
+            proxmox_task_upid: "{{ _rg_restore_task_upid }}"
             proxmox_task_timeout: "{{ restore_timeout | default(7200) }}"
           when: _rg_execute | bool
 

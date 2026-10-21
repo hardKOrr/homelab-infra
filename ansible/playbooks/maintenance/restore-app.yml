@@ -194,6 +194,19 @@
         # carries a hyphen declares its defaults under an underscored name.
         _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
 
+    - name: Resolve the restore target's GPU stack
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
+      vars:
+        stack_resolution_config: "{{ restore_target_config }}"
+        stack_resolution_default_name: "{{ restore_target_config.stack | default('', true) }}"
+
+    - name: Apply the effective stack to the restore target config
+      ansible.builtin.set_fact:
+        restore_target_config: >-
+          {{ restore_target_config
+             | combine({'stack': _stack_resolution_name}, recursive=True)
+             if restore_target_config.stack is defined else restore_target_config }}
+
     - name: Resolve the hosting kind
       ansible.builtin.set_fact:
         _ra_kind: >-
@@ -606,6 +619,25 @@
                        recursive=True) }}
       vars:
         _ra_defaults_key: "{{ _ra_app | replace('-', '_') }}_defaults"
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Re-resolve the provisioned restore target's GPU stack
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
+      vars:
+        stack_resolution_config: "{{ restore_target_config }}"
+        stack_resolution_default_name: "{{ restore_target_config.stack | default('', true) }}"
+      when:
+        - recovery_destination_resolved == 'new'
+        - _ra_overwrite | bool
+
+    - name: Reapply the effective stack to the provisioned restore target
+      ansible.builtin.set_fact:
+        restore_target_config: >-
+          {{ restore_target_config
+             | combine({'stack': _stack_resolution_name}, recursive=True)
+             if restore_target_config.stack is defined else restore_target_config }}
       when:
         - recovery_destination_resolved == 'new'
         - _ra_overwrite | bool

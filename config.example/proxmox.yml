@@ -29,7 +29,9 @@ proxmox:
   # node_roles and proxmox.devices must also be present in `nodes` below.
   node_roles:
     storage: ""          # pinned database node (PostgreSQL and Redis)
-    compute: []           # ordered preference for floating guests; node 1 must not appear
+    compute: []           # eligible floating-guest nodes; list order breaks memory ties
+  # An effective guest config may set proxmox.vm.node or proxmox.lxc.node to pin a new
+  # guest explicitly. Otherwise placement resolves node-local storage and devices first.
   storage_ids:
     database_vm: ""       # local mirrored ZFS storage with 16K zvol blocksize; VM images
     floating_vm: ""       # shared ZFS over iSCSI storage; VM images
@@ -42,9 +44,10 @@ proxmox:
   # Declare each physical device once. GPU guests require kind: igpu|gpu, mode: dedicated,
   # an exact PCI identifier and an existing Proxmox PCI resource mapping. `pci_mapping`
   # optionally names that resource mapping; if omitted, the proxmox.devices key is used.
-  # GPU/igpu devices used by the GPU VM class must declare `node` explicitly; it must be in
-  # node_roles.compute and name the node holding the PCI resource mapping. Other device kinds
-  # may omit it and fall back to proxmox.node. `kind` defaults to igpu for mode: shared and
+  # GPU/igpu devices used by the GPU VM class must declare `node` explicitly and name the
+  # node holding the PCI resource mapping. Other device kinds may omit it: placement checks
+  # the Proxmox resource mapping or shared host path, and `node` restricts the result. `kind`
+  # defaults to igpu for mode: shared and
   # gpu for a bare mode: dedicated. A dedicated iGPU must say kind: igpu; mark USB devices
   # kind: usb. Shared /dev/dri binds are LXC-only and are not used by the GPU-capable app paths.
   # The attachment tasks refuse a request whose mode or node disagrees with this declaration
@@ -54,6 +57,7 @@ proxmox:
   #     kind: igpu        # igpu | gpu | usb | other
   #     node: <pve-node-3>
   #     mode: dedicated
+  #     stack: media      # optional owner stack; defaults to the proxmox.devices key
   #     pci_mapping: intel-igpu # existing /cluster/mapping/pci ID; defaults to this key
   #     identifiers:
   #       - "0000:00:02.0" # exact PCI identifier used by the resource mapping

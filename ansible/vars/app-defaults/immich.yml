@@ -1,7 +1,8 @@
 ---
-# Immich on the dedicated photos Docker stack. PostgreSQL and Redis are platform
-# backends, not Compose sidecars. The media mount is deliberately empty here: an
-# instance must name the exact existing host directory it owns in config/apps/<instance>.yml.
+# Immich defaults to the photos Docker stack. A declared GPU selects the stack that owns
+# that device instead. PostgreSQL and Redis are platform backends, not Compose sidecars.
+# The media mount is deliberately empty here: an instance must name the exact existing host
+# directory it owns in config/apps/<instance>.yml.
 immich_defaults:
   stack: photos
 
@@ -26,11 +27,11 @@ immich_defaults:
     redis:
       provider: redis
       instance: redis-immich
-    # The operator declares one dedicated GPU mapping in proxmox.devices. The VM
-    # receives the PCI device; the ML container uses its /dev/dri render node.
+    # The operator declares one dedicated GPU mapping in proxmox.devices. Its stack owns
+    # the PCI device; the ML container uses its /dev/dri render node.
     gpu_device: ""
     gpu_render_node: /dev/dri/renderD128
-    # The ML model cache is disposable and stays on the photos stack rootfs.
+    # The ML model cache is disposable and stays on the selected stack host rootfs.
     model_cache_path: "/opt/{{ instance }}/model-cache"
 
   # No global media_storage is inherited. Immich must not adopt an existing photo

@@ -29,7 +29,8 @@ stack: media     # which Docker stack host this app runs on
 #       subpath: tv
 #
 #   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.
-#   # It pins the media stack VM to that node and adds /dev/dri to Jellyfin's container.
+#   # It selects the device's stack VM and adds /dev/dri to Jellyfin's container. An
+#   # explicit top-level stack must match the device's effective stack.
 #   # Enable codecs in Jellyfin's playback settings after deployment.
 #   gpu_device: intel-igpu
 #

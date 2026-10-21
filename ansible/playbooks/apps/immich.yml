@@ -1,5 +1,5 @@
 ---
-# Deploy Immich on the dedicated photos Docker stack.
+# Deploy Immich on its effective Docker stack (the GPU owner's stack when app.gpu_device is set).
 #
 # The hosting unit is an LXC stack host, not a VM. The exact shared render node is
 # declared in config/proxmox.yml under proxmox.devices with mode: shared. The durable
@@ -102,7 +102,7 @@
           }}, recursive=True) }}
       no_log: true
 
-    - name: Find or create the photos stack host
+    - name: Find or create the effective stack host
       ansible.builtin.import_tasks: ../../tasks/stack/find-or-create-host.yml
       vars:
         stack_name: "{{ app_config.stack }}"
@@ -149,7 +149,7 @@
         _immich_media_path: "{{ hostvars['localhost']._immich_media_path }}"
 
   tasks:
-    - name: Bootstrap the photos stack host
+    - name: Bootstrap the effective stack host
       ansible.builtin.import_tasks: ../../tasks/guest-bootstrap.yml
       when: not (ansible_local.homelab_bootstrapped.bootstrapped | default(false) | bool)
 
@@ -228,7 +228,7 @@
         - homelabinfra_infra.dns is defined
         - homelabinfra_infra.dns.provider | default('none') != 'none'
 
-    - name: Record Immich on its photos stack host
+    - name: Record Immich on its effective stack host
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
       vars:
         record_guest_names: ["{{ _immich_deploy_host.inventory_hostname }}"]

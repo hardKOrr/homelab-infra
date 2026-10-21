@@ -19,10 +19,19 @@
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
+- name: Preserve an existing LXC's current node
+  ansible.builtin.include_tasks: preserve-existing-guest-node.yml
+  vars:
+    guest_existing_id: "{{ homelabinfra_config.proxmox.lxc.vmid | default('') }}"
+    guest_existing_type: lxc
+    guest_existing_config_key: lxc
+
 - name: Resolve the declared placement for this LXC
   ansible.builtin.include_tasks: resolve-guest-placement.yml
   vars:
     guest_placement_class: "{{ proxmox_placement_class | default('floating_lxc') }}"
+    guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
+    guest_placement_node: "{{ _existing_guest_current_node | default('') }}"
 
 - name: Assert homelabinfra instance data is provided
   ansible.builtin.assert:
@@ -64,19 +73,14 @@
           validate_certs = (homelabinfra_config.proxmox.validate_certs | default(false))
         ) | combine(homelabinfra_config.proxmox.lxc, recursive=True)}, recursive=True) }}
 
-# Storage is a property of the LAB, not of the app: which pool holds container rootfs is
-# the same answer for every guest on a node, and it cannot be guessed in a git-managed
-# default — a stock Proxmox `local` carries vztmpl/iso/backup and rejects a rootfs with
-# "storage 'local' does not support container directories". So app-defaults pin nothing and
-# the lab-wide value, discovered and written by bootstrap-rundeck.sh, fills in here. An app
-# that genuinely needs its own pool still sets proxmox.disk_volume.storage and wins.
-- name: Default the rootfs storage to the lab-wide storage
+# Apply placement's resolved rootfs pool to this guest instance. The resolver does not
+# write storage into shared config facts, which may be reused by the next guest in a play.
+- name: Apply the selected LXC rootfs storage
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | combine({'lxc': {'disk_volume': {
-           'storage': (homelabinfra_config.proxmox.storage | default('local'))
+           'storage': _guest_placement.storage
          }}}, recursive=True) }}
-  when: (homelabinfra_instance.lxc.disk_volume | default({})).storage is not defined
 
 # Deliberately its own task: keys set by one set_fact are templated against the variable
 # context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
@@ -185,7 +189,12 @@
          | selectattr('key', 'in', lxc_module_keys)
          | list
          | items2dict
-         | combine({'api_user': homelabinfra_config.proxmox.api_user, 'state': 'present', 'update': false}) }}
+         | combine({
+             'api_user': homelabinfra_config.proxmox.api_user,
+             'state': 'present',
+             'update': false,
+             'node': _guest_placement.node
+           }) }}
   vars:
     # community.proxmox.proxmox parameters only. User/bookkeeping keys (network, ip_address)
     # are absent by design so they can never reach the module. Every key here is verified

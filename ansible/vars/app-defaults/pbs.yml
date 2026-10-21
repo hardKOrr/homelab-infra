@@ -31,6 +31,14 @@ pbs_defaults:
       tags:
         - _+lab
         - _-debian
+      # Optional independently retained datastore disk. Set this per instance when
+      # the datastore must survive replacement of the PBS guest. `source_vmid` is a
+      # reserved PVE volume-owner ID, distinct from every guest VMID; PVE may delete a
+      # disk when destroying the guest that owns it. Reuse requires the same reserved ID.
+      # datastore_disk:
+      #   storage: <shared image storage>
+      #   size_gib: 160
+      #   source_vmid: <unused VMID reserved for the datastore volume>
     # No `network:` here on purpose. Which network a guest is addressed on follows from
     # its SCOPE — tasks/network/resolve-network.yml puts a `scope: lab` application on the
     # shared network and an estate-scoped one on its estate's — and a name pinned in

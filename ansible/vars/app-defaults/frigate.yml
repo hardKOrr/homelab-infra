@@ -1,6 +1,6 @@
 ---
-# Frigate is deliberately a one-tenant Docker-on-VM stack. Its GPU is dedicated to this
-# VM, and its recordings stay on the existing external storage mount.
+# Frigate defaults to a one-tenant Docker-on-VM stack. A declared GPU can route it to the
+# stack that owns that device; its recordings stay on the existing external storage mount.
 frigate_defaults:
   stack: frigate
 

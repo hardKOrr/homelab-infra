@@ -100,6 +100,184 @@
           config/apps/{{ instance }}.yml exists. If the instance was deployed under
           a different app name, pass it: -e app=<app>.
 
+    - name: Resolve the app's GPU stack before locating its host
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
+      vars:
+        stack_resolution_config: "{{ app_config }}"
+        stack_resolution_default_name: "{{ app_config.stack | default('', true) }}"
+
+    - name: Apply the effective stack for removal
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'stack': _stack_resolution_name}, recursive=True)
+             if app_config.stack is defined else app_config }}
+
+    # Immich keeps originals and thumbnails on one separately mounted durable path and
+    # its PostgreSQL database on a separately managed guest. Validate both exact targets
+    # before unwiring; delete_data must never turn into removing an unregistered backend,
+    # another app's database, or a path outside the declared Immich mount.
+    - name: Resolve Immich's named database and media removal inputs
+      ansible.builtin.set_fact:
+        _rm_immich_database_config: "{{ app_config.app.database | default({}) }}"
+        _rm_immich_database_backend: >-
+          {{ (homelabinfra_infra.databases | default({})).get(
+               app_config.app.database.instance | default(''), {}) }}
+        _rm_immich_database_credentials: >-
+          {{ (homelabinfra_vault.apps | default({})).get(instance, {}) }}
+        _rm_immich_media_mounts: "{{ app_config.media_storage.mounts | default([]) }}"
+        _rm_immich_media_path: >-
+          {{ ((app_config.media_storage.mounts | default([]) | first | default({})).path
+               | default('') | regex_replace('/+$', '')) }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Validate Immich's named database and dedicated media mount
+      ansible.builtin.assert:
+        that:
+          - _rm_immich_database_config.provider | default('') == 'postgresql'
+          - _rm_immich_database_config.instance | default('') is match('^[A-Za-z0-9_.-]+$')
+          - _rm_immich_database_config.name | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_immich_database_config.role | default('') is match('^[A-Za-z_][A-Za-z0-9_]*$')
+          - _rm_immich_database_backend.provider | default('') == 'postgresql'
+          - _rm_immich_database_backend.host | default('') | length > 0
+          - _rm_immich_database_backend.port | default(0) | int > 0
+          - _rm_immich_database_credentials.database_provider | default('') == 'postgresql'
+          - _rm_immich_database_credentials.database_host | default('') == _rm_immich_database_backend.host
+          - _rm_immich_database_credentials.database_name | default('') == _rm_immich_database_config.name
+          - _rm_immich_database_credentials.database_user | default('') == _rm_immich_database_config.role
+          - _rm_immich_media_mounts | length == 1
+          - _rm_immich_media_path is match('^/')
+          - _rm_immich_media_path | length > 1
+          - _rm_immich_media_path.split('/') | select('equalto', '..') | list | length == 0
+          - app_config.media_storage.owner.uid | default(0) | int > 0
+          - app_config.media_storage.owner.gid | default(0) | int > 0
+        fail_msg: >-
+          Refusing to remove Immich data without its registered PostgreSQL connection and
+          exactly one safe, owned durable media mount.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Check Immich's database and role are not shared by another app
+      ansible.builtin.set_fact:
+        _rm_immich_shared_database_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_immich_database_backend.host)
+             | selectattr('value.database_name', 'defined')
+             | selectattr('value.database_name', 'equalto', _rm_immich_database_config.name)
+             | list }}
+        _rm_immich_shared_role_consumers: >-
+          {{ (homelabinfra_vault.apps | default({}) | dict2items)
+             | rejectattr('key', 'equalto', instance)
+             | selectattr('value.database_host', 'defined')
+             | selectattr('value.database_host', 'equalto', _rm_immich_database_backend.host)
+             | selectattr('value.database_user', 'defined')
+             | selectattr('value.database_user', 'equalto', _rm_immich_database_config.role)
+             | list }}
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove a shared Immich database or role
+      ansible.builtin.assert:
+        that:
+          - _rm_immich_shared_database_consumers | length == 0
+          - _rm_immich_shared_role_consumers | length == 0
+        fail_msg: >-
+          Refusing to remove Immich's named database or role because another canonical
+          app item references it.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Refresh inventory before checking Immich's database guest ownership
+      ansible.builtin.meta: refresh_inventory
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Resolve Immich's PostgreSQL guest ownership group
+      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+      vars:
+        tag_group_tag: "_{{ _rm_immich_database_config.instance }}"
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Record Immich's PostgreSQL guest ownership group
+      ansible.builtin.set_fact:
+        _rm_immich_database_guest_group: "{{ tag_group_name }}"
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Require Immich's PostgreSQL backend to be one owned guest
+      ansible.builtin.assert:
+        that:
+          - _rm_immich_database_guest_group is match('^lab_app_')
+          - groups[_rm_immich_database_guest_group] | default([]) | length == 1
+          - hostvars[groups[_rm_immich_database_guest_group][0]].ansible_host | default('') == _rm_immich_database_backend.host
+        fail_msg: >-
+          Refusing to remove Immich data because its registered PostgreSQL backend does
+          not resolve to one tagged, homelab-infra-owned guest at the registered address.
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Add Immich's named database backend to the removal inventory
+      ansible.builtin.add_host:
+        name: immich_database_removal_target
+        ansible_host: "{{ _rm_immich_database_backend.host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user | default('root') }}"
+        groups: immich_database_removal_targets
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Read the owner of Immich's named PostgreSQL database
+      ansible.builtin.command:
+        argv:
+          - psql
+          - --tuples-only
+          - --no-align
+          - --username=postgres
+          - --dbname=postgres
+          - "--port={{ _rm_immich_database_backend.port }}"
+          - >-
+            --command=SELECT COALESCE((SELECT pg_get_userbyid(datdba)
+            FROM pg_database WHERE datname = '{{ _rm_immich_database_config.name }}'), 'missing')
+      delegate_to: immich_database_removal_target
+      become: true
+      become_user: postgres
+      register: _rm_immich_database_owner
+      changed_when: false
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
+    - name: Refuse to remove Immich's database with an unexpected owner
+      ansible.builtin.assert:
+        that:
+          - _rm_immich_database_owner.stdout | trim in ['missing', _rm_immich_database_config.role]
+        fail_msg: "Refusing to delete Immich's named PostgreSQL database because its owner is unexpected."
+      no_log: true
+      when:
+        - (app | default(instance)) == 'immich'
+        - delete_data | default(false) | bool
+
     # Hi.Events owns one named database and role on a separately managed PostgreSQL
     # guest. Resolve that exact pair before unwiring; deleting the app must never touch
     # another registered consumer or the shared backend guest.
@@ -976,6 +1154,20 @@
                    if _rm_kind == 'docker'
                    else ([instance] if instance in (groups['all'] | default([])) else [])) }}
 
+    # A GPU assignment belongs to the stack host. Removing one GPU-backed app may detach
+    # it only when no sibling app remains on that host; shared media stacks keep the device
+    # for their other applications.
+    - name: Resolve whether this stack host still has sibling applications
+      ansible.builtin.set_fact:
+        _rm_stack_has_other_apps: >-
+          {{ (hostvars[_rm_hosts[0]].proxmox_tags_parsed | default([])
+              | select('match', '^_[A-Za-z0-9]')
+              | reject('equalto', '_' ~ instance) | list | length) > 0 }}
+      when:
+        - _rm_kind == 'docker'
+        - app_config.stack | default('', true) | length > 0
+        - _rm_hosts | length > 0
+
     - name: Resolve the Proxmox node for the app guest
       ansible.builtin.set_fact:
         _rm_guest_node: "{{ hostvars[_rm_hosts[0]].proxmox_node | default('') }}"
@@ -1250,6 +1442,14 @@
             remove_volumes: "{{ _rm_delete_data | bool }}"
             remove_orphans: true
           when: _rm_compose_stat.stat.exists
+
+        # Immich's library and named PostgreSQL database live outside Compose. Its
+        # dedicated removal tasks run only after the app containers have stopped.
+        - name: Remove Immich's named database and durable media
+          ansible.builtin.include_tasks: ../../roles/immich/tasks/remove.yml
+          when:
+            - hostvars['localhost']._rm_app_name == 'immich'
+            - _rm_delete_data | bool
 
         # A stopped runner must not leave a registration token or the local registration
         # marker behind. Removing these files even when delete_data is false makes a later
@@ -1730,6 +1930,7 @@
         - remove_kind == 'docker'
         - (remove_app | default(instance)) == 'frigate'
         - app_config.app.gpu_device | default('') | length > 0
+        - not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
 
     - name: Detach Frigate's project-owned Coral USB mapping
       ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough.yml
@@ -1758,6 +1959,7 @@
         - remove_kind == 'docker'
         - (remove_app | default(instance)) == 'immich'
         - app_config.app.gpu_device | default('') | length > 0
+        - not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
 
     # Legacy shared device declarations remain accepted for non-GPU users. GPU-capable
     # apps no longer call this LXC bind seam.

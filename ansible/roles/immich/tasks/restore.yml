@@ -34,6 +34,8 @@
       - app_config.backup.application_consistent | default(false) | bool
       - app_config.media_storage.owner.uid | default(0) | int > 0
       - app_config.media_storage.owner.gid | default(0) | int > 0
+      - _immich_restore_media_path | length > 1
+      - _immich_restore_media_path.split('/') | select('equalto', '..') | list | length == 0
       - restore_target is defined and restore_target | length > 0
       - (restore_snapshot | default('') | length > 0) or not (restore_overwrite | bool)
       - _immich_restore_database_backend.provider | default('') == 'postgresql'
@@ -108,6 +110,29 @@
       - "Re-run with snapshot=<snapshot-id> and overwrite=true only after verifying the target."
   when: not (restore_overwrite | bool)
 
+- name: Immich restore | Check the declared media path is an exact mount point
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - TARGET
+      - --mountpoint
+      - "{{ _immich_restore_media_path }}"
+  register: _immich_restore_media_mountpoint
+  changed_when: false
+  no_log: true
+  when: restore_overwrite | bool
+
+- name: Immich restore | Refuse to replace an unmounted media path
+  ansible.builtin.assert:
+    that:
+      - _immich_restore_media_mountpoint.rc == 0
+      - _immich_restore_media_mountpoint.stdout | trim == _immich_restore_media_path
+    fail_msg: "Refusing to restore Immich media because its declared path is not mounted here."
+  no_log: true
+  when: restore_overwrite | bool
+
 - name: Immich restore | Allocate private scratch space
   ansible.builtin.tempfile:
     state: directory
@@ -135,6 +160,11 @@
           - --rm
           - --network
           - host
+          # Keep PBS temporary and cache paths off Docker's overlay in this unprivileged LXC.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _immich_restore_scratch.path }}:/restore"
           - --env
@@ -162,8 +192,10 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$PBS_SNAPSHOT" database.pxar /restore/database
-            proxmox-backup-client restore "$PBS_SNAPSHOT" media.pxar /restore/media
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$PBS_SNAPSHOT" database.pxar /restore/database
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$PBS_SNAPSHOT" media.pxar /restore/media
             test -s /restore/database/immich.dump
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
@@ -211,7 +243,7 @@
           - "{{ app_config.media_storage.owner.gid | int }}"
           - --clear-groups
           - find
-          - "{{ _immich_restore_media_path }}"
+          - .
           - -mindepth
           - "1"
           - -maxdepth
@@ -222,7 +254,9 @@
           - --
           - "{}"
           - +
-        chdir: /
+        # Enter the verified mount as root, then scan from its cwd as the media owner.
+        # This does not require the owner to traverse restricted ancestor directories.
+        chdir: "{{ _immich_restore_media_path }}"
       changed_when: true
       no_log: true
 
@@ -239,8 +273,8 @@
           - -a
           - --no-preserve=ownership
           - "{{ _immich_restore_scratch.path }}/media/."
-          - "{{ _immich_restore_media_path }}/"
-        chdir: /
+          - .
+        chdir: "{{ _immich_restore_media_path }}"
       changed_when: true
       no_log: true
 

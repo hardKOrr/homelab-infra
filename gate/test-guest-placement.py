@@ -16,6 +16,7 @@ RESOLVER = REPO / "ansible/tasks/proxmox/resolve-guest-placement.yml"
 PCI_MAPPING_PARSER = REPO / "ansible/tasks/proxmox/parse-pci-mapping-entries.yml"
 PCI_ATTACH = REPO / "ansible/tasks/proxmox/attach-pci-passthrough.yml"
 VM_HOST_MOUNTS = REPO / "ansible/tasks/proxmox/attach-host-mounts-vm.yml"
+VM_CLONE = REPO / "ansible/tasks/proxmox/vm-clone.yml"
 BOOTSTRAP = REPO / "rundeck/bootstrap-rundeck.sh"
 
 
@@ -259,11 +260,155 @@ def verify_virtiofs_mount_contract():
         assert result.returncode == 0, f"existing virtiofs device was not recognized\n{output}"
 
 
+def verify_vm_clone_existing_node_contract():
+    tasks = yaml.safe_load(VM_CLONE.read_text())
+    task_names = [task.get("name") for task in tasks]
+    resource_lookup = "VM clone | Read cluster resources to preserve an existing guest's node"
+    existing_node = "VM clone | Keep an existing guest on its current node"
+    resolver = "Resolve the declared placement for this cloned VM"
+    assert task_names.index(resource_lookup) < task_names.index(resolver)
+    assert task_names.index(existing_node) < task_names.index(resolver)
+    resolver_task = next(task for task in tasks if task.get("name") == resolver)
+    assert resolver_task["when"] == "_vmc_existing_guest | length == 0"
+    assert resolver_task["vars"]["guest_placement_node"] == "{{ proxmox_placement_node | default('') }}"
+    node_task = next(task for task in tasks if task.get("name") == existing_node)
+    assert "_vmc_existing_guest.node" in node_task["ansible.builtin.set_fact"][
+        "homelabinfra_config"
+    ]
+
+    def flatten(tasks):
+        for task in tasks:
+            yield task
+            for key in ("block", "rescue", "always"):
+                yield from flatten(task.get(key, []))
+
+    stack_tasks = yaml.safe_load(
+        (REPO / "ansible/tasks/stack/find-or-create-host.yml").read_text()
+    )
+    clone_task = next(
+        task for task in flatten(stack_tasks)
+        if task.get("name") == "Clone the stack host VM"
+    )
+    assert clone_task["vars"]["proxmox_placement_node"] == "{{ _guest_placement.node }}"
+
+    clone_tasks = yaml.safe_load(VM_CLONE.read_text())
+    clone_call = next(
+        task for task in clone_tasks
+        if task.get("name") == "VM clone | Clone the template"
+    )
+    assert "_guest_placement.storage" in clone_call["community.proxmox.proxmox_kvm"]["storage"]
+
+    existing_node_helper = yaml.safe_load(
+        (REPO / "ansible/tasks/proxmox/preserve-existing-guest-node.yml").read_text()
+    )
+    assert any(task.get("name") == "Existing guest | Preserve its current node in the guest config"
+               for task in existing_node_helper)
+    for path, preserve_task_name, resolver_name in (
+        (REPO / "ansible/tasks/proxmox/vm-create.yml", "Preserve an existing VM's current node",
+         "Resolve the declared placement for this VM"),
+        (REPO / "ansible/tasks/proxmox/lxc-create.yml", "Preserve an existing LXC's current node",
+         "Resolve the declared placement for this LXC"),
+    ):
+        tasks = yaml.safe_load(path.read_text())
+        names = [task.get("name") for task in tasks]
+        assert names.index(preserve_task_name) < names.index(resolver_name)
+
+    for path, storage_task_name in (
+        (REPO / "ansible/tasks/proxmox/vm-create.yml", "Apply the selected VM disk storage"),
+        (REPO / "ansible/tasks/proxmox/lxc-create.yml", "Apply the selected LXC rootfs storage"),
+    ):
+        tasks = yaml.safe_load(path.read_text())
+        storage_task = next(task for task in tasks if task.get("name") == storage_task_name)
+        assert "_guest_placement.storage" in storage_task["ansible.builtin.set_fact"][
+            "homelabinfra_instance"
+        ]
+        module_args_task = next(
+            task for task in tasks
+            if task.get("name") in (
+                "Build VM module arguments from the community.proxmox.proxmox_kvm allowlist",
+                "Build LXC module arguments from the community.proxmox.proxmox allowlist",
+            )
+        )
+        module_args_key = "vm_module_args" if "vm_module_args" in module_args_task[
+            "ansible.builtin.set_fact"
+        ] else "lxc_module_args"
+        assert "_guest_placement.node" in module_args_task["ansible.builtin.set_fact"][
+            module_args_key
+        ]
+
+    resolver_tasks = yaml.safe_load(RESOLVER.read_text())
+    for task_name in ("Guest placement | Apply VM target settings",
+                      "Guest placement | Apply LXC target settings"):
+        task = next(task for task in resolver_tasks if task.get("name") == task_name)
+        assert "storage" not in task["ansible.builtin.set_fact"]["homelabinfra_config"]
+
+    template_tasks = yaml.safe_load(
+        (REPO / "ansible/tasks/proxmox/ensure-cloud-template.yml").read_text()
+    )
+    template_placement = next(
+        task for task in template_tasks
+        if task.get("name") == "Resolve the declared placement before ensuring the VM template"
+    )
+    assert "guest_placement_additional_storage" in template_placement["vars"]
+    assert template_placement["vars"]["guest_placement_node"] == "{{ proxmox_placement_node | default('') }}"
+    stack_ensure = next(
+        task for task in flatten(stack_tasks)
+        if task.get("name") == "Ensure the Debian cloud-init template exists for the stack VM"
+    )
+    assert stack_ensure["vars"]["proxmox_placement_node"] == "{{ _stack_sizing.node | default('') }}"
+
+
+def verify_existing_guest_node_helper():
+    helper = REPO / "ansible/tasks/proxmox/preserve-existing-guest-node.yml"
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        stub = root / "pvesh"
+        stub.write_text(
+            f"#!{ANSIBLE.parent / 'python'}\n"
+            "import json\n"
+            "print(json.dumps([{'vmid': 204, 'type': 'qemu', 'node': 'compute-3'}]))\n"
+        )
+        stub.chmod(0o755)
+        playbook = root / "existing-node.yml"
+        playbook.write_text(yaml.safe_dump([{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "vars": {
+                "homelabinfra_config": {"proxmox": {
+                    "node": "localhost",
+                    "vm": {"node": "old-pin"},
+                }},
+                "guest_existing_id": 204,
+                "guest_existing_type": "qemu",
+                "guest_existing_config_key": "vm",
+            },
+            "environment": {"PATH": str(root) + os.pathsep + os.environ["PATH"]},
+            "tasks": [
+                {"ansible.builtin.include_tasks": str(helper)},
+                {"ansible.builtin.assert": {"that": [
+                    "homelabinfra_config.proxmox.node == 'compute-3'",
+                    "homelabinfra_config.proxmox.vm.node == 'compute-3'",
+                ]}},
+            ],
+        }]))
+        inventory = root / "inventory.ini"
+        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        result = subprocess.run(
+            [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+            env=os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"existing guest node was not preserved\n{output}"
+
+
 def node(name, status="online"):
     return {"type": "node", "node": name, "status": status}
 
 
-def config(compute=None, cpu="x86-64-v2-AES", devices=None):
+def config(compute=None, cpu="x86-64-v2-AES", devices=None, explicit_node=None):
     compute = compute or ["compute-3", "compute-2"]
     proxmox = {
         "node": "localhost",
@@ -274,25 +419,75 @@ def config(compute=None, cpu="x86-64-v2-AES", devices=None):
             "floating_lxc": "nfs-shared",
         },
         "floating_vm_cpu_model": cpu,
+        "vm": {},
+        "lxc": {},
     }
+    if explicit_node:
+        proxmox["vm"]["node"] = explicit_node
+        proxmox["lxc"]["node"] = explicit_node
     if devices is not None:
         proxmox["devices"] = devices
-    return {"proxmox": proxmox}
+    return {"proxmox": proxmox, "networks": {"default": {"bridge": "vmbr0", "vlan": 20}}}
+
+
+def default_storage_rows(placement_class, storage, compute_nodes):
+    if storage is None:
+        storage = {
+            "database_vm": "local-mirror",
+            "floating_vm": "iscsi-shared",
+            "floating_lxc": "nfs-shared",
+            "gpu_vm": "iscsi-shared",
+        }[placement_class]
+    if placement_class == "database_vm":
+        storage_nodes = ["storage-1"]
+        shared = 0
+    else:
+        storage_nodes = compute_nodes
+        shared = 1
+    return [
+        {
+            "type": "storage",
+            "storage": storage,
+            "node": name,
+            "status": "available",
+            "shared": shared,
+            "content": "images,rootdir",
+        }
+        for name in storage_nodes
+    ]
 
 
 def run_case(name, placement_class, resources, expected=None, preferred=None,
              cpu="x86-64-v2-AES", expected_error=None, devices=None,
-             pci_mapping=None, device=None):
+             pci_mapping=None, device=None, storage=None, storage_resources=None,
+             memory=None, networks=None, explicit_node=None, placement_devices=None,
+             usb_mapping=None, bridge="vmbr0", compute=None, additional_storage=None,
+             stale_vm_storage=None, app_config=None, repeat_placement=None):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         stub = root / "pvesh"
         stub.write_text(
             f"#!{ANSIBLE.parent / 'python'}\n"
-            "import os, sys\n"
-            "if any(arg.startswith('/cluster/mapping/pci/') for arg in sys.argv):\n"
+            "import json, os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if any(arg.startswith('/cluster/mapping/pci/') for arg in args):\n"
             "    print(os.environ['GUEST_PLACEMENT_PCI_MAPPING'])\n"
+            "elif any(arg.startswith('/cluster/mapping/usb/') for arg in args):\n"
+            "    print(os.environ['GUEST_PLACEMENT_USB_MAPPING'])\n"
+            "elif '/cluster/resources' in args:\n"
+            "    kind = args[args.index('--type') + 1]\n"
+            "    key = 'GUEST_PLACEMENT_NODES' if kind == 'node' else 'GUEST_PLACEMENT_STORAGES'\n"
+            "    print(os.environ[key])\n"
+            "elif any(arg.endswith('/status') for arg in args):\n"
+            "    path = next(arg for arg in args if arg.startswith('/nodes/'))\n"
+            "    node = path.split('/')[2]\n"
+            "    print(json.dumps(json.loads(os.environ['GUEST_PLACEMENT_MEMORY'])[node]))\n"
+            "elif any(arg.endswith('/network') for arg in args):\n"
+            "    path = next(arg for arg in args if arg.startswith('/nodes/'))\n"
+            "    node = path.split('/')[2]\n"
+            "    print(json.dumps(json.loads(os.environ['GUEST_PLACEMENT_NETWORKS'])[node]))\n"
             "else:\n"
-            "    print(os.environ['GUEST_PLACEMENT_RESOURCES'])\n"
+            "    raise SystemExit('unexpected pvesh request')\n"
         )
         stub.chmod(0o755)
 
@@ -301,6 +496,14 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
             resolver_vars["guest_placement_preferred_node"] = preferred
         if device is not None:
             resolver_vars["guest_placement_device"] = device
+        if storage is not None:
+            resolver_vars["guest_placement_storage"] = storage
+        if additional_storage is not None:
+            resolver_vars["guest_placement_additional_storage"] = additional_storage
+        if placement_devices is not None:
+            resolver_vars["guest_placement_devices"] = placement_devices
+        if bridge is not None:
+            resolver_vars["guest_placement_bridge"] = bridge
         tasks = [
             {"ansible.builtin.include_tasks": str(RESOLVER), "vars": resolver_vars}
         ]
@@ -323,18 +526,21 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
                     )
             if placement["guest_type"] == "qemu":
                 assertions.append(
-                    f"homelabinfra_config.proxmox.vm.storage == {json.dumps(placement['storage'])}"
+                    f"homelabinfra_config.proxmox.vm.storage == {json.dumps(stale_vm_storage)}"
+                    if stale_vm_storage is not None else
+                    "homelabinfra_config.proxmox.vm.storage is not defined"
                 )
+                if explicit_node is None:
+                    assertions.append("homelabinfra_config.proxmox.vm.node is not defined")
                 if placement["cpu_model"]:
                     assertions.append(
                         "homelabinfra_config.proxmox.vm.cpu == "
                         f"{json.dumps(placement['cpu_model'])}"
                     )
             else:
-                assertions.append(
-                    "homelabinfra_config.proxmox.lxc.disk_volume.storage == "
-                    f"{json.dumps(placement['storage'])}"
-                )
+                assertions.append("homelabinfra_config.proxmox.lxc.disk_volume.storage is not defined")
+                if explicit_node is None:
+                    assertions.append("homelabinfra_config.proxmox.lxc.node is not defined")
             tasks.append({
                 "ansible.builtin.assert": {
                     "that": assertions + [
@@ -342,33 +548,107 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
                     ]
                 }
             })
+            if repeat_placement is not None:
+                repeat_vars = resolver_vars | {
+                    "guest_placement_node": repeat_placement["node"],
+                    "guest_placement_storage": repeat_placement["storage"],
+                    "guest_placement_use_app_config": False,
+                }
+                tasks.extend([
+                    {
+                        "ansible.builtin.include_tasks": str(RESOLVER),
+                        "vars": repeat_vars,
+                    },
+                    {
+                        "ansible.builtin.assert": {
+                            "that": [
+                                f"_guest_placement.node == {json.dumps(repeat_placement['node'])}",
+                                "_guest_placement_memory_candidates | length == 1",
+                                "_guest_placement_memory_candidates[0].node == "
+                                f"{json.dumps(repeat_placement['node'])}",
+                                "_guest_placement_app_storage == ''",
+                                "_guest_placement_app_node == ''",
+                            ]
+                        }
+                    },
+                ])
         if expected_error:
             tasks = [{
                 "block": tasks,
                 "rescue": [{
                     "ansible.builtin.assert": {
                         "that": [
-                            f"ansible_failed_result.msg is search({json.dumps(expected_error)})"
+                            f"ansible_failed_result | to_json is search({json.dumps(expected_error)})"
                         ]
                     }
                 }],
             }]
 
         playbook = root / "placement.yml"
+        compute_nodes = config(
+            compute=compute, cpu=cpu, devices=devices, explicit_node=explicit_node
+        )["proxmox"]["node_roles"]["compute"]
+        node_memory = {
+            "compute-3": {"memory": {"available": 4 * 1024**3, "total": 16 * 1024**3, "used": 12 * 1024**3}},
+            "compute-2": {"memory": {"available": 8 * 1024**3, "total": 16 * 1024**3, "used": 8 * 1024**3}},
+            "storage-1": {"memory": {"available": 12 * 1024**3, "total": 16 * 1024**3, "used": 4 * 1024**3}},
+        }
+        if memory:
+            node_memory.update(memory)
+        network_rows = {
+            item["node"]: [{
+                "type": "bridge", "iface": "vmbr0", "active": 1,
+                "bridge_vlan_aware": 1, "bridge_vids": "10 20 30",
+            }]
+            for item in resources
+        }
+        if networks:
+            network_rows.update(networks)
+        test_config = config(
+            compute=compute, cpu=cpu, devices=devices, explicit_node=explicit_node
+        )
+        if stale_vm_storage is not None:
+            test_config["proxmox"]["vm"]["storage"] = stale_vm_storage
+        authored_proxmox = dict(test_config["proxmox"])
+        authored_proxmox["vm"] = dict(test_config["proxmox"]["vm"])
+        authored_proxmox["vm"].pop("storage", None)
+        selected_storage = storage or {
+            "database_vm": "local-mirror",
+            "floating_vm": "iscsi-shared",
+            "floating_lxc": "nfs-shared",
+            "gpu_vm": "iscsi-shared",
+        }[placement_class]
+        storage_rows = storage_resources or default_storage_rows(
+            placement_class, selected_storage, compute_nodes
+        )
         playbook.write_text(yaml.safe_dump([{
             "hosts": "localhost",
             "gather_facts": False,
-            "vars": {"homelabinfra_config": config(cpu=cpu, devices=devices)},
+            "vars": {
+                "homelabinfra_config": test_config,
+                "_config_proxmox": {"proxmox": authored_proxmox},
+                **({"app_config": app_config} if app_config is not None else {}),
+            },
             "environment": {"PATH": str(root) + os.pathsep + os.environ["PATH"]},
             "tasks": tasks,
         }]))
         inventory = root / "inventory.ini"
-        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        inventory.write_text(
+            "[local]\n"
+            "localhost ansible_connection=local\n"
+            "compute-3 ansible_connection=local\n"
+            "compute-2 ansible_connection=local\n"
+            "storage-1 ansible_connection=local\n"
+        )
         env = os.environ | {
             "ANSIBLE_STDOUT_CALLBACK": "default",
             "ANSIBLE_NOCOLOR": "1",
-            "GUEST_PLACEMENT_RESOURCES": json.dumps(resources),
+            "GUEST_PLACEMENT_NODES": json.dumps(resources),
+            "GUEST_PLACEMENT_STORAGES": json.dumps(storage_rows),
             "GUEST_PLACEMENT_PCI_MAPPING": json.dumps(pci_mapping or {"map": []}),
+            "GUEST_PLACEMENT_USB_MAPPING": json.dumps(usb_mapping or {"map": []}),
+            "GUEST_PLACEMENT_MEMORY": json.dumps(node_memory),
+            "GUEST_PLACEMENT_NETWORKS": json.dumps(network_rows),
         }
         result = subprocess.run(
             [str(ANSIBLE), "-i", str(inventory), str(playbook)],
@@ -388,6 +668,8 @@ def run_case(name, placement_class, resources, expected=None, preferred=None,
 def main():
     verify_pci_mapping_contract()
     verify_virtiofs_mount_contract()
+    verify_vm_clone_existing_node_contract()
+    verify_existing_guest_node_helper()
     run_case(
         "database pinned to storage role",
         "database_vm",
@@ -395,16 +677,33 @@ def main():
         {"node": "storage-1", "storage": "local-mirror", "guest_type": "qemu", "cpu_model": ""},
     )
     run_case(
-        "floating VM follows online compute preference",
+        "floating VM selects an online compute node",
         "floating_vm",
         [node("storage-1"), node("compute-3", "offline"), node("compute-2")],
         {"node": "compute-2", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
     )
     run_case(
-        "floating LXC follows online compute preference",
+        "available-memory tie keeps configured compute order",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        memory={
+            name: {"memory": {"available": 4 * 1024**3, "total": 16 * 1024**3, "used": 12 * 1024**3}}
+            for name in ("compute-3", "compute-2")
+        },
+    )
+    run_case(
+        "stale runtime VM storage does not override the guest class",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        stale_vm_storage="local-zfs",
+    )
+    run_case(
+        "floating LXC selects the compute node with most available memory",
         "floating_lxc",
         [node("compute-3"), node("compute-2")],
-        {"node": "compute-3", "storage": "nfs-shared", "guest_type": "lxc", "cpu_model": ""},
+        {"node": "compute-2", "storage": "nfs-shared", "guest_type": "lxc", "cpu_model": ""},
     )
     run_case(
         "cluster member may request an eligible compute node",
@@ -424,13 +723,13 @@ def main():
         "floating guests refuse an offline compute pool",
         "floating_lxc",
         [node("storage-1"), node("compute-3", "offline"), node("compute-2", "offline")],
-        expected_error="None of the ordered nodes in proxmox.node_roles.compute is online",
+        expected_error="not available for LXC root filesystems",
     )
     run_case(
         "database placement refuses an offline pinned node",
         "database_vm",
         [node("storage-1", "offline"), node("compute-3"), node("compute-2")],
-        expected_error="configured storage node is offline",
+        expected_error="not available for VM images",
     )
     gpu_device = {
         "mode": "dedicated",
@@ -460,13 +759,25 @@ def main():
         device="intel-igpu",
     )
     run_case(
-        "GPU VM refuses a node outside the compute role",
+        "GPU VM's device pin may target a node outside the unpinned compute pool",
         "gpu_vm",
         [node("storage-1"), node("compute-3"), node("compute-2")],
-        expected_error="not in proxmox.node_roles.compute",
+        {
+            "node": "storage-1",
+            "storage": "iscsi-shared",
+            "guest_type": "qemu",
+            "cpu_model": "x86-64-v2-AES",
+            "device": "intel-igpu",
+            "pci_mapping": "compute-3-igpu",
+            "pci_id": "0000:00:02.0",
+        },
         devices={"intel-igpu": {**gpu_device, "node": "storage-1"}},
         pci_mapping={"map": ["node=storage-1,path=0000:00:02.0,id=8086:1234"]},
         device="intel-igpu",
+        storage_resources=[{
+            "type": "storage", "storage": "iscsi-shared", "node": "storage-1",
+            "status": "available", "shared": 1, "content": "images",
+        }],
     )
     run_case(
         "GPU VM refuses a mismatched PCI resource mapping",
@@ -487,13 +798,180 @@ def main():
         device="intel-igpu",
     )
     run_case(
+        "free-memory ranking overrides compute-list order",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        compute=["compute-2", "compute-3"],
+        memory={
+            "compute-2": {"memory": {"available": 3 * 1024**3, "total": 16 * 1024**3, "used": 13 * 1024**3}},
+            "compute-3": {"memory": {"available": 9 * 1024**3, "total": 16 * 1024**3, "used": 7 * 1024**3}},
+        },
+    )
+    run_case(
+        "explicit per-guest node wins over memory ranking",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        explicit_node="compute-3",
+    )
+    run_case(
+        "app-level VM node pins a new guest",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        app_config={"proxmox": {"node": "compute-3"}},
+    )
+    run_case(
+        "repeated placement resets candidate and optional app inputs",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "local-zfs", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        app_config={"proxmox": {"vm": {"node": "compute-3", "storage": "local-zfs"}}},
+        storage_resources=[
+            {"type": "storage", "storage": "local-zfs", "node": "compute-3",
+             "status": "available", "shared": 0, "content": "images"},
+            *[
+                {"type": "storage", "storage": "iscsi-shared", "node": name,
+                 "status": "available", "shared": 1, "content": "images"}
+                for name in ("compute-3", "compute-2")
+            ],
+        ],
+        memory={
+            "compute-3": {"memory": {"available": 12 * 1024**3, "total": 16 * 1024**3, "used": 4 * 1024**3}},
+            "compute-2": {"memory": {"available": 8 * 1024**3, "total": 16 * 1024**3, "used": 8 * 1024**3}},
+        },
+        repeat_placement={"node": "compute-2", "storage": "iscsi-shared"},
+    )
+    run_case(
+        "flat LXC app storage selects and pins its local node",
+        "floating_lxc",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "local-zfs", "guest_type": "lxc", "cpu_model": ""},
+        app_config={"proxmox": {"disk_volume": {"storage": "local-zfs"}}},
+        storage_resources=[{
+            "type": "storage", "storage": "local-zfs", "node": "compute-2",
+            "status": "available", "shared": 0, "content": "rootdir",
+        }],
+    )
+    run_case(
+        "single-node local storage pins outside the compute pool",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "storage-1", "storage": "local-zfs", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        storage="local-zfs",
+        storage_resources=[{
+            "type": "storage", "storage": "local-zfs", "node": "storage-1",
+            "status": "available", "shared": 0, "content": "images,rootdir",
+        }],
+    )
+    run_case(
+        "template placement intersects its storage with the target guest storage",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "template-store", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        storage="template-store",
+        additional_storage="local-zfs",
+        storage_resources=[
+            {"type": "storage", "storage": "template-store", "node": name,
+             "status": "available", "shared": 1, "content": "images"}
+            for name in ("compute-3", "compute-2")
+        ] + [
+            {"type": "storage", "storage": "local-zfs", "node": "compute-2",
+             "status": "available", "shared": 0, "content": "images"}
+        ],
+    )
+    run_case(
+        "conflicting local template and guest stores refuse placement",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        expected_error="point to different",
+        storage="template-store",
+        additional_storage="local-zfs",
+        storage_resources=[
+            {"type": "storage", "storage": "template-store", "node": "compute-3",
+             "status": "available", "shared": 0, "content": "images"},
+            {"type": "storage", "storage": "local-zfs", "node": "compute-2",
+             "status": "available", "shared": 0, "content": "images"},
+        ],
+    )
+    run_case(
+        "multi-node local storage is restricted to nodes exposing that pool",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "local-zfs", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        storage="local-zfs",
+        storage_resources=[
+            {"type": "storage", "storage": "local-zfs", "node": name,
+             "status": "available", "shared": 0, "content": "images,rootdir"}
+            for name in ("compute-2", "compute-3")
+        ],
+    )
+    run_case(
+        "inactive bridge excludes a higher-memory candidate",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        networks={
+            "compute-2": [{"type": "bridge", "iface": "vmbr0", "active": 0,
+                            "bridge_vlan_aware": 1, "bridge_vids": "20"}],
+            "compute-3": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1, "bridge_vids": "20"}],
+        },
+    )
+    run_case(
+        "bridge VLAN membership excludes an unreachable network",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        networks={
+            "compute-2": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1, "bridge_vids": "10 30"}],
+            "compute-3": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1, "bridge_vids": "10-25"}],
+        },
+    )
+    run_case(
+        "VLAN-aware bridge without bridge_vids allows the default VLAN range",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-2", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        networks={
+            "compute-3": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1}],
+            "compute-2": [{"type": "bridge", "iface": "vmbr0", "active": 1,
+                            "bridge_vlan_aware": 1}],
+        },
+    )
+    run_case(
+        "USB mapping on one node pins the guest there",
+        "floating_vm",
+        [node("compute-3"), node("compute-2")],
+        {"node": "compute-3", "storage": "iscsi-shared", "guest_type": "qemu", "cpu_model": "x86-64-v2-AES"},
+        devices={"zigbee": {"mode": "dedicated", "kind": "usb", "identifiers": ["zigbee"]}},
+        placement_devices=["zigbee"],
+        usb_mapping={"map": [{"node": "compute-3", "path": "1-2"}]},
+    )
+    run_case(
+        "conflicting explicit and local-storage pins refuse creation",
+        "floating_vm",
+        [node("storage-1"), node("compute-3"), node("compute-2")],
+        expected_error="point to different",
+        explicit_node="compute-3",
+        storage="local-zfs",
+        storage_resources=[{
+            "type": "storage", "storage": "local-zfs", "node": "storage-1",
+            "status": "available", "shared": 0, "content": "images,rootdir",
+        }],
+    )
+    run_case(
         "floating VM refuses host CPU model",
         "floating_vm",
         [node("compute-3"), node("compute-2")],
         cpu="host",
         expected_error="floating_vm_cpu_model | lower != 'host'",
     )
-    print("Guest placement: class storage, pinned node, ordered floating selection, GPU mapping, virtiofs dependency and safety refusals")
+    print("Guest placement: storage/network filtering, available-memory ranking, explicit/storage/device pins, GPU mapping, virtiofs dependency and safety refusals")
 
 
 if __name__ == "__main__":

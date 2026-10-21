@@ -151,6 +151,7 @@
           ansible.builtin.include_tasks: ../../tasks/proxmox/vm-clone.yml
           vars:
             proxmox_placement_class: database_vm
+            proxmox_placement_node: "{{ _guest_placement.node }}"
         - name: Add PostgreSQL VM to deploy group
           ansible.builtin.add_host:
             name: "{{ homelabinfra_instance.vm.name }}"

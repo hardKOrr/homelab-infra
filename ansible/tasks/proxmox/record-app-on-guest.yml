@@ -39,9 +39,11 @@
 #   record_guest_kind      — docker | native | kubernetes | appliance (default: derived from
 #                            app_config.stack)
 #   record_guest_url       — public URL (default: the wired domain, or empty when unrouted)
+#   record_guest_require_success — when true, fail if the selected guest cannot be recorded
 #
-# Best-effort and never fatal: a guest that has vanished, or a Proxmox that refuses the
-# update, must not fail an otherwise successful deploy. This is bookkeeping, not the deploy.
+# Best-effort by default: a guest that has vanished, or a Proxmox that refuses the update,
+# is reported without failing the deploy. A caller that relies on the tag to find and reuse
+# its guest can set `record_guest_require_success: true` before deploying the application.
 
 - name: Resolve the guest to record on
   ansible.builtin.set_fact:
@@ -88,6 +90,12 @@
     - homelabinfra_infra.reverse_proxy is defined
     - homelabinfra_infra.reverse_proxy.provider | default('none') != 'none'
 
+- name: Require an application guest before recording when success is required
+  ansible.builtin.assert:
+    that: _rg_names | length > 0
+    fail_msg: "No deploy guest was selected for {{ _rg_instance }}; its Proxmox identity was not recorded."
+  when: record_guest_require_success | default(false) | bool
+
 - name: Record the app on its Proxmox guest
   when: _rg_names | length > 0
   block:
@@ -114,15 +122,14 @@
       loop: "{{ _rg_names }}"
       register: _rg_result
       changed_when: _rg_result.stdout is defined and _rg_result.stdout.startswith('CHANGED')
-      failed_when: false
-      ignore_unreachable: true
+      failed_when: >-
+        (record_guest_require_success | default(false) | bool)
+        and not (_rg_result.stdout is defined and _rg_result.stdout is search('^(CHANGED|OK)'))
+      ignore_unreachable: "{{ not (record_guest_require_success | default(false) | bool) }}"
 
-    # DEGRADATION BY DESIGN — reports instead of failing, and that is correct here. What
-    # this writes is a cosmetic Proxmox label: the app is deployed, wired and serving
-    # whether or not the guest's notes say so, and nothing downstream reads the record.
-    # Surfaced rather than swallowed so an operator who wonders why the Proxmox UI
-    # disagrees with reality gets told. Do not convert this to
-    # tasks/report-degradation.yml.
+    # The normal end-of-Wire call remains best-effort and reports a failed metadata write.
+    # Provisioning paths that need the instance tag for guest reuse set
+    # `record_guest_require_success: true` before the application role runs.
     - name: Report a guest record that could not be written
       ansible.builtin.debug:
         msg: "Guest record not updated — {{ item.stdout | default('the node was unreachable') | trim }}"
