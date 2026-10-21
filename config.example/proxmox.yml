@@ -54,6 +54,7 @@ proxmox:
   #     kind: igpu        # igpu | gpu | usb | other
   #     node: <pve-node-3>
   #     mode: dedicated
+  #     stack: media      # optional owner stack; defaults to the proxmox.devices key
   #     pci_mapping: intel-igpu # existing /cluster/mapping/pci ID; defaults to this key
   #     identifiers:
   #       - "0000:00:02.0" # exact PCI identifier used by the resource mapping

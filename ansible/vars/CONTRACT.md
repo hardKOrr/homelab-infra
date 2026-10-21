@@ -266,7 +266,7 @@ All merges use `combine(recursive=True)`; later layers win per key.
 | `proxmox.node_roles` | required | `{storage: <node>, compute: [<node>, ...]}`. Databases pin to storage; floating VMs/LXCs use the ordered online compute nodes, which exclude the storage node |
 | `proxmox.storage_ids` | required | `{database_vm, floating_vm, floating_lxc}` storage IDs; databases use local mirror, floating VMs use ZFS over iSCSI and floating LXCs use NFS |
 | `proxmox.floating_vm_cpu_model` | required | common migratable CPU model for floating and GPU VMs; `host` is rejected |
-| `proxmox.devices` | optional by default; required by an attachment request | map of `<physical-device-name>: {mode: shared\|dedicated, identifiers: [...]}`. GPU VMs require `kind: igpu|gpu`, `mode: dedicated`, exactly one PCI identifier and an existing PCI resource mapping (`pci_mapping`, defaulting to the declaration key). `node` optionally names its target in `proxmox.nodes`, otherwise it falls back to `proxmox.node`. `kind` defaults to `igpu` for shared and `gpu` for bare dedicated declarations; a dedicated iGPU must say `kind: igpu`. |
+| `proxmox.devices` | optional by default; required by an attachment request | map of `<physical-device-name>: {mode: shared\|dedicated, identifiers: [...]}`. GPU VMs require `kind: igpu|gpu`, `mode: dedicated`, exactly one PCI identifier and an existing PCI resource mapping (`pci_mapping`, defaulting to the declaration key). `node` optionally names its target in `proxmox.nodes`, otherwise it falls back to `proxmox.node`. `kind` defaults to `igpu` for shared and `gpu` for bare dedicated declarations; a dedicated iGPU must say `kind: igpu`. Optional `stack` names the logical Docker stack whose VM owns the dedicated device; it defaults to the device key. |
 | `networks.<name>.cidr` | required | per named subnet, **after inheritance** — see below |
 | `networks.<name>.gateway` | required | per named subnet, after inheritance |
 | `networks.<name>.dns_servers` | required | per named subnet, after inheritance |
@@ -818,6 +818,14 @@ URL following it around. `routing.estate` names a `domains:` estate (§5) and is
 `app-defaults/` must not declare one and `rundeck/render-job.py` rejects it: that file is
 git-managed and ships to every lab, so an estate named there is one the next clone has
 never declared, and its config-doctor refuses the instance that inherits it.
+For a Docker app whose defaults declare a `stack:`, a non-empty `app.gpu_device` selects
+the stack that owns that device: `proxmox.devices.<device>.stack`, or the device key when
+`stack` is omitted. This applies during Deploy and application recovery/removal. The app's
+default stack is retained when no GPU is declared. An instance file may omit its top-level
+`stack` to inherit the app default and let the GPU select another stack; if it explicitly
+sets `stack`, config-doctor requires that value to match the device's effective stack.
+Apps deployed as dedicated GPU VMs without a `stack:` use their existing VM placement path.
+
 Media-stack instances may add three optional `app:` keys read only by
 `wire-media-stack.yml`: `media_kind` (the app kind — its presence is what enrols
 the instance in media wiring), `host` (an explicit base URL, for an app this lab

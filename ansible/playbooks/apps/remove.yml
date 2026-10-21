@@ -100,6 +100,18 @@
           config/apps/{{ instance }}.yml exists. If the instance was deployed under
           a different app name, pass it: -e app=<app>.
 
+    - name: Resolve the app's GPU stack before locating its host
+      ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
+      vars:
+        stack_resolution_config: "{{ app_config }}"
+        stack_resolution_default_name: "{{ app_config.stack | default('', true) }}"
+
+    - name: Apply the effective stack for removal
+      ansible.builtin.set_fact:
+        app_config: >-
+          {{ app_config | combine({'stack': _stack_resolution_name}, recursive=True)
+             if app_config.stack is defined else app_config }}
+
     # Hi.Events owns one named database and role on a separately managed PostgreSQL
     # guest. Resolve that exact pair before unwiring; deleting the app must never touch
     # another registered consumer or the shared backend guest.
@@ -976,6 +988,20 @@
                    if _rm_kind == 'docker'
                    else ([instance] if instance in (groups['all'] | default([])) else [])) }}
 
+    # A GPU assignment belongs to the stack host. Removing one GPU-backed app may detach
+    # it only when no sibling app remains on that host; shared media stacks keep the device
+    # for their other applications.
+    - name: Resolve whether this stack host still has sibling applications
+      ansible.builtin.set_fact:
+        _rm_stack_has_other_apps: >-
+          {{ (hostvars[_rm_hosts[0]].proxmox_tags_parsed | default([])
+              | select('match', '^_[A-Za-z0-9]')
+              | reject('equalto', '_' ~ instance) | list | length) > 0 }}
+      when:
+        - _rm_kind == 'docker'
+        - app_config.stack | default('', true) | length > 0
+        - _rm_hosts | length > 0
+
     - name: Resolve the Proxmox node for the app guest
       ansible.builtin.set_fact:
         _rm_guest_node: "{{ hostvars[_rm_hosts[0]].proxmox_node | default('') }}"
@@ -1730,6 +1756,7 @@
         - remove_kind == 'docker'
         - (remove_app | default(instance)) == 'frigate'
         - app_config.app.gpu_device | default('') | length > 0
+        - not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
 
     - name: Detach Frigate's project-owned Coral USB mapping
       ansible.builtin.include_tasks: ../../tasks/proxmox/detach-usb-passthrough.yml
@@ -1758,6 +1785,7 @@
         - remove_kind == 'docker'
         - (remove_app | default(instance)) == 'immich'
         - app_config.app.gpu_device | default('') | length > 0
+        - not (hostvars['localhost']._rm_stack_has_other_apps | default(false) | bool)
 
     # Legacy shared device declarations remain accepted for non-GPU users. GPU-capable
     # apps no longer call this LXC bind seam.

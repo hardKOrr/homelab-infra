@@ -6,7 +6,9 @@
 
 # app:
 #   # Optional: key of a proxmox.devices declaration with kind: igpu and mode: dedicated.
-#   # It pins the media stack VM to that node and adds /dev/dri to Plex's container.
+#   # It selects the device's stack VM and adds /dev/dri to Plex's container. The device
+#   # declaration's optional `stack` defaults to its key; an explicit top-level stack here
+#   # must match that effective stack.
 #   gpu_device: intel-igpu
 #   # Plex tells clients this route in bridge-network mode. Keep the explicit
 #   # port: Plex rejects an incomplete custom access URL.

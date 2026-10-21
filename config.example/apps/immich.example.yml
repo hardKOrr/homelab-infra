@@ -1,10 +1,10 @@
-# Immich is a Docker application on the dedicated photos GPU VM.
+# Immich defaults to the photos Docker stack. When app.gpu_device is set, its device's
+# declared stack selects the VM instead, allowing Immich to share one dedicated GPU VM.
 #
-# Before a live deployment, name and verify all three authority points in the change
-# record: the Immich instance (for example, immich), the Proxmox photos-stack target
-# (for example, stack-photos), its dedicated GPU mapping and the exact host directory. This
-# example deliberately does not inherit infrastructure.media_storage: doing so could
-# adopt an existing photo library that this deployment does not own.
+# Before a live deployment, name and verify the Immich instance, its dedicated GPU mapping
+# and the exact host directory. This example deliberately does not inherit
+# infrastructure.media_storage: doing so could adopt an existing photo library that this
+# deployment does not own.
 #
 # Dependencies to deploy first:
 #   - PostgreSQL instance `postgresql-immich` (with pgvector)
@@ -14,7 +14,9 @@
 # The mount host directory must already exist and be authorized for this new Immich
 # instance. The playbook attaches it with media_storage.owner and refuses an empty or
 # ambiguous declaration.
-stack: photos
+# Leave `stack` absent when app.gpu_device should choose a stack other than the default
+# `photos`. An explicit stack must equal the GPU device's effective stack.
+# stack: photos
 
 app:
   database:
