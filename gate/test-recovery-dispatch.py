@@ -107,6 +107,13 @@ def main():
                          if task.get("name") == "Immich restore | Replace the application-consistent artifact")
     fetch_index = next(i for i, task in enumerate(restore_block)
                        if task.get("name") == "Immich restore | Fetch the database and durable media archives")
+    fetch_argv = restore_block[fetch_index]["ansible.builtin.command"]["argv"]
+    assert ("--tmpfs", "/tmp") in list(zip(fetch_argv, fetch_argv[1:]))
+    assert ("--tmpfs", "/root/.cache") in list(zip(fetch_argv, fetch_argv[1:]))
+    fetch_script = fetch_argv[-1]
+    assert fetch_script.count("proxmox-backup-client restore --allow-existing-dirs true") == 2
+    assert '"$PBS_SNAPSHOT" database.pxar /restore/database' in fetch_script
+    assert '"$PBS_SNAPSHOT" media.pxar /restore/media' in fetch_script
     database_private_index = next(i for i, task in enumerate(restore_block)
                                   if task.get("name") == "Immich restore | Keep the database dump private from the media owner")
     scratch_traverse_index = next(i for i, task in enumerate(restore_block)

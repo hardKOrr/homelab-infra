@@ -160,6 +160,11 @@
           - --rm
           - --network
           - host
+          # Keep PBS temporary and cache paths off Docker's overlay in this unprivileged LXC.
+          - --tmpfs
+          - /tmp
+          - --tmpfs
+          - /root/.cache
           - --volume
           - "{{ _immich_restore_scratch.path }}:/restore"
           - --env
@@ -187,8 +192,10 @@
               > /etc/apt/sources.list.d/pbs-client.list
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends proxmox-backup-client >/dev/null
-            proxmox-backup-client restore "$PBS_SNAPSHOT" database.pxar /restore/database
-            proxmox-backup-client restore "$PBS_SNAPSHOT" media.pxar /restore/media
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$PBS_SNAPSHOT" database.pxar /restore/database
+            proxmox-backup-client restore --allow-existing-dirs true \
+              "$PBS_SNAPSHOT" media.pxar /restore/media
             test -s /restore/database/immich.dump
       environment:
         PBS_REPOSITORY: "{{ k8s_pbs_repository }}"
