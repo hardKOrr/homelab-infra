@@ -1,5 +1,5 @@
 ---
-# InfluxDB OSS v2 is deliberately a standalone LXC backend. Its initial setup
+# InfluxDB OSS v2 is deliberately a standalone LXC or VM backend. Its initial setup
 # creates an operator token, so the token and password are recorded in
 # Vaultwarden before the API call that puts them into service.
 - name: InfluxDB | Install repository prerequisites

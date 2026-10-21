@@ -9,7 +9,7 @@ postgresql_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
   proxmox:
-    type: lxc
+    guest_type: lxc
     boot_order: 40
     cores: 2
     memory: 2048

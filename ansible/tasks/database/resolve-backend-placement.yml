@@ -1,0 +1,86 @@
+---
+# Normalize the instance's placement inputs once for every database engine. Keep
+# the legacy `proxmox.type` value readable so existing PostgreSQL and Redis VM
+# instances continue to resolve to their current guest type.
+- name: Database backend | Resolve the configured guest type
+  ansible.builtin.set_fact:
+    _database_backend_guest_type: >-
+      {{ (_database_backend_instance_proxmox.get(
+           'guest_type',
+           _database_backend_instance_proxmox.get(
+             'type', app_config.proxmox.guest_type | default('lxc'))))
+         | string | trim }}
+  vars:
+    _database_backend_instance_proxmox: "{{ (_instance_config | default({})).get('proxmox', {}) }}"
+
+- name: Database backend | Validate the configured guest type
+  ansible.builtin.assert:
+    that: _database_backend_guest_type in ['lxc', 'vm']
+    fail_msg: >-
+      Database backend instance {{ instance }} has an unsupported proxmox.guest_type
+      '{{ _database_backend_guest_type }}'; choose lxc or vm.
+
+- name: Database backend | Resolve the node and storage
+  ansible.builtin.set_fact:
+    _database_backend_node: >-
+      {{ ((app_config.proxmox.get('lxc', {}).get('node', '')
+           if _database_backend_guest_type == 'lxc'
+           else app_config.proxmox.get('vm', {}).get('node', ''))
+          or app_config.proxmox.get('node', '')
+          or homelabinfra_config.proxmox.get('node', '')) | string | trim }}
+    _database_backend_storage: >-
+      {{ (((app_config.proxmox.get('disk_volume', {}).get('storage', '')
+            or app_config.proxmox.get('lxc', {}).get('disk_volume', {}).get('storage', ''))
+           if _database_backend_guest_type == 'lxc'
+           else app_config.proxmox.get('vm', {}).get('storage', ''))
+          or app_config.proxmox.get('storage', '')
+          or homelabinfra_config.proxmox.get('storage', '')) | string | trim }}
+
+- name: Database backend | Require a node and storage
+  ansible.builtin.assert:
+    that:
+      - _database_backend_node | length > 0
+      - _database_backend_storage | length > 0
+    fail_msg: >-
+      Database backend instance {{ instance }} needs a Proxmox node and storage. Set
+      proxmox.node and proxmox.storage in config/apps/{{ instance }}.yml, or configure
+      the lab-wide proxmox.node and proxmox.storage.
+
+- name: Database backend | Validate the selected node address map
+  ansible.builtin.assert:
+    that: homelabinfra_config.proxmox.get('nodes', {}) is mapping
+    fail_msg: >-
+      Database backend instance {{ instance }} requires proxmox.nodes to be a mapping
+      from Proxmox node names to addresses.
+
+- name: Database backend | Require an address for a per-instance node
+  ansible.builtin.assert:
+    that: >-
+      _database_backend_node == homelabinfra_config.proxmox.get('node', '')
+      or homelabinfra_config.proxmox.get('nodes', {}).get(_database_backend_node, '')
+         | string | trim | length > 0
+    fail_msg: >-
+      Database backend instance {{ instance }} targets a node that has no address in
+      proxmox.nodes. Add proxmox.nodes.{{ _database_backend_node }} to config/proxmox.yml.
+
+- name: Database backend | Publish normalized placement to the guest resolver
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'proxmox': {
+           'guest_type': _database_backend_guest_type,
+           'node': _database_backend_node,
+           'storage': _database_backend_storage
+         }}, recursive=True) }}
+  no_log: true
+
+- name: Database backend | Refuse a guest type change for an existing instance
+  ansible.builtin.assert:
+    that: >-
+      hostvars[_existing_hosts[0]].proxmox_vmtype | default('') ==
+      ('qemu' if _database_backend_guest_type == 'vm' else 'lxc')
+    fail_msg: >-
+      Existing database backend instance {{ instance }} is a
+      {{ hostvars[_existing_hosts[0]].proxmox_vmtype | default('unknown') }} guest, but
+      config selects proxmox.guest_type={{ _database_backend_guest_type }}. Deploy will
+      not convert or modify a guest whose type differs from the instance config.
+  when: _existing_hosts | length > 0

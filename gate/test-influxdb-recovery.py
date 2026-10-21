@@ -120,12 +120,18 @@ def check_contract_and_wiring():
         index for index, task in enumerate(provision_tasks)
         if task.get("name") == "Find a removed InfluxDB guest that still has exact lab ownership"
     )
-    allocate_index = next(
+    placement_index = next(
         index for index, task in enumerate(provision_tasks)
-        if task.get("name") == "Allocate a new InfluxDB LXC address and VMID"
+        if task.get("name") == "Resolve InfluxDB guest placement and check existing type"
     )
-    assert reuse_index < allocate_index
-    assert provision_tasks[allocate_index]["when"] == "_existing_hosts | length == 0"
+    provision_index = next(
+        index for index, task in enumerate(provision_tasks)
+        if task.get("name") == "Provision a new InfluxDB backend guest"
+    )
+    assert reuse_index < placement_index < provision_index
+    assert provision_tasks[provision_index]["ansible.builtin.include_tasks"] == (
+        "../../tasks/database/provision-backend-guest.yml"
+    )
 
 
 def all_tasks(tasks):

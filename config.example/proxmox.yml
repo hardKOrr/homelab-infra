@@ -23,20 +23,23 @@ proxmox:
   api_user: homelab-infra@pve   # bootstrap-rundeck.sh creates this user with a scoped role
   api_token_id: automation      # the token bootstrap-rundeck.sh mints for that user
 
-  # Guest placement classes. `storage` below remains the local storage used for cloud-init
-  # templates; these IDs select storage for guests. GPU VMs use the floating VM iSCSI store
-  # but are pinned to the compute node declared with their dedicated PCI device. Names in
-  # node_roles and proxmox.devices must also be present in `nodes` below.
-  node_roles:
-    storage: ""          # pinned database node (PostgreSQL and Redis)
-    compute: []           # eligible floating-guest nodes; list order breaks memory ties
-  # An effective guest config may set proxmox.vm.node or proxmox.lxc.node to pin a new
-  # guest explicitly. Otherwise placement resolves node-local storage and devices first.
-  storage_ids:
-    database_vm: ""       # local mirrored ZFS storage with 16K zvol blocksize; VM images
-    floating_vm: ""       # shared ZFS over iSCSI storage; VM images
-    floating_lxc: ""      # shared NFS storage; container root directories
-  floating_vm_cpu_model: "" # common migratable model for floating/GPU VMs; never host
+  # Database backends can override guest type, node and storage per instance in
+  # config/apps/<instance>.yml. Without those keys they use an LXC on this file's
+  # proxmox.node and proxmox.storage. Existing guests are never converted when the
+  # configured guest_type changes.
+  #
+  # Optional class-based placement for multi-node labs. Basic installs need only node
+  # and storage above; database instances default to LXC on those values. To enable the
+  # advanced placement classes, populate all of these maps and add every named node to
+  # `nodes` below. GPU VMs use the floating VM store but are pinned to their device node.
+  # node_roles:
+  #   storage: <pve-node-1>       # pinned node for other classed database VMs
+  #   compute: [<pve-node-2>]     # eligible floating-guest nodes; order breaks memory ties
+  # storage_ids:
+  #   database_vm: <pve-storage>  # local storage with 16K zvol blocksize; VM images
+  #   floating_vm: <pve-storage>  # shared VM image storage
+  #   floating_lxc: <pve-storage> # shared LXC root filesystem storage
+  # floating_vm_cpu_model: x86-64-v2-AES # migratable model; never host
 
   # A VM with a virtiofs device cannot live-migrate. Moving it requires an offline
   # migration or an HA restart; this is an accepted directory-mapping limitation.
@@ -83,8 +86,8 @@ proxmox:
   #     identifiers:
   #       - "0000:02:00.0"  # a separate exact GPU; never reuse comfyui-gpu
 
-  # Default storage for cloud-init templates and explicit, non-classed guest paths.
-  # Classed guests use the storage_ids declared above instead.
+  # Default storage for cloud-init templates, database backends and explicit,
+  # non-classed guest paths. Other classed guests use storage_ids declared above.
   storage: ""           # e.g. local-zfs, local-lvm (required — bootstrap fills this in)
 
   # Node name -> address, for every node in the cluster. bootstrap-rundeck.sh discovers this
@@ -96,7 +99,7 @@ proxmox:
   # resolver has no reason to know them. tasks/proxmox/register-nodes.yml turns this map
   # into addressable hosts. Omit it on a single-node lab and api_host is used instead.
   # nodes:
-  #   pve: 192.168.1.10
+  #   <pve-node>: <pve-node-ip>
 
   # Verify the Proxmox API's TLS certificate. Defaults to false, because a stock Proxmox
   # node serves a self-signed certificate and every guest-creating task would otherwise

@@ -7,8 +7,7 @@ redis_defaults:
       restore_playbook: restore-app.yml
 
   proxmox:
-    # Redis defaults to its native LXC; set type: vm in one instance to opt into a VM.
-    type: lxc
+    guest_type: lxc
     boot_order: 40
     cores: 2
     memory: 1024

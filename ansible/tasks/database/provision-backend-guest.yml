@@ -1,0 +1,145 @@
+---
+# Shared guest provisioning for PostgreSQL, Redis, MariaDB, MySQL and InfluxDB.
+# Engine roles remain responsible for installing and configuring the database itself.
+- name: Database backend | Provision an LXC
+  when:
+    - _existing_hosts | length == 0
+    - _database_backend_guest_type == 'lxc'
+  block:
+    - name: Database backend | Set LXC identity and sizing
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'lxc':
+             (app_config.proxmox | combine({
+               'hostname': instance,
+               'cores': app_config.proxmox.cores
+                 | default(app_config.proxmox.lxc.cores | default(2)) | int,
+               'memory': app_config.proxmox.memory
+                 | default(app_config.proxmox.lxc.memory | default(2048)) | int,
+               'disk_volume': app_config.proxmox.disk_volume
+                 | default(app_config.proxmox.lxc.disk_volume | default({'size': 32})),
+               'tags': ((app_config.proxmox.tags | default(['_+lab', '_-debian']))
+                 + ['_' ~ instance]) | unique
+             }, recursive=True))}}, recursive=True) }}
+
+    - name: Database backend | Resolve the guest network
+      ansible.builtin.include_tasks: ../network/resolve-network.yml
+      vars:
+        resolve_network_app: "{{ database_backend_network_app }}"
+        resolve_network_estate: ''
+
+    - name: Database backend | Allocate an LXC address
+      ansible.builtin.import_tasks: ../network/generate-ip.yml
+      vars:
+        network_name: "{{ app_config.proxmox.network | default('', true) }}"
+        pool_name: "{{ app_config.proxmox.pool | default('') }}"
+        requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+
+    - name: Database backend | Set the LXC address
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'lxc': {
+               'ip_address': homelabinfra_instance.network.ip_address
+             }}}, recursive=True) }}
+
+    - name: Database backend | Derive the LXC VMID
+      ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
+
+    - name: Database backend | Create the LXC
+      ansible.builtin.include_tasks: ../proxmox/lxc-create.yml
+      vars:
+        proxmox_placement_class: floating_lxc
+        proxmox_placement_database_backend: true
+
+    - name: Database backend | Add the LXC to its deploy group
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.lxc.hostname }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
+- name: Database backend | Provision a VM
+  when:
+    - _existing_hosts | length == 0
+    - _database_backend_guest_type == 'vm'
+  block:
+    - name: Database backend | Set VM identity and sizing
+      ansible.builtin.set_fact:
+        _database_backend_vm_config: >-
+          {{ (app_config.proxmox.vm | default({})) | combine({
+               'name': instance,
+               'cores': app_config.proxmox.cores
+                 | default(app_config.proxmox.vm.cores | default(2)) | int,
+               'memory': app_config.proxmox.memory
+                 | default(app_config.proxmox.vm.memory | default(2048)) | int,
+               'disk_size': app_config.proxmox.disk_size
+                 | default(app_config.proxmox.vm.disk_size
+                   | default(app_config.proxmox.disk_volume.size
+                     | default(app_config.proxmox.vm.disk_volume.size | default(32)))) | int,
+               'boot_order': app_config.proxmox.boot_order
+                 | default(app_config.proxmox.vm.boot_order | default(40)) | int,
+               'tags': ((app_config.proxmox.vm.tags
+                 | default(app_config.proxmox.tags | default(['_+lab', '_-debian'])))
+                 + ['_' ~ instance]) | unique
+             }, recursive=True) }}
+    - name: Database backend | Apply VM identity and sizing
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'vm': _database_backend_vm_config}}, recursive=True) }}
+
+    - name: Database backend | Resolve the guest network
+      ansible.builtin.include_tasks: ../network/resolve-network.yml
+      vars:
+        resolve_network_app: "{{ database_backend_network_app }}"
+        resolve_network_estate: ''
+
+    - name: Database backend | Allocate a VM address
+      ansible.builtin.import_tasks: ../network/generate-ip.yml
+      vars:
+        network_name: "{{ app_config.proxmox.network | default('', true) }}"
+        pool_name: "{{ app_config.proxmox.pool | default('') }}"
+        requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
+
+    - name: Database backend | Set the VM address
+      ansible.builtin.set_fact:
+        homelabinfra_config: >-
+          {{ homelabinfra_config | combine({'proxmox': {'vm': {
+               'ip_address': homelabinfra_instance.network.ip_address
+             }}}, recursive=True) }}
+
+    - name: Database backend | Derive the VMID
+      ansible.builtin.include_tasks: ../proxmox/ip-to-vmid.yml
+
+    - name: Database backend | Ensure the Debian cloud-init template exists
+      ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
+      vars:
+        proxmox_placement_class: database_vm
+        proxmox_placement_database_backend: true
+        proxmox_placement_node: "{{ _database_backend_node }}"
+        proxmox_placement_storage: "{{ _database_backend_storage }}"
+        cloud_template_name: "{{ app_config.proxmox.cloud_template.name | default('debian-12-cloud') }}"
+        cloud_template_image_url: >-
+          {{ app_config.proxmox.cloud_template.image_url
+             | default('https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2') }}
+        cloud_template_storage: >-
+          {{ app_config.proxmox.cloud_template.storage
+             | default(_database_backend_storage, true) }}
+        cloud_template_bridge: "{{ network_effective.bridge }}"
+
+    - name: Database backend | Clone the VM
+      ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
+      vars:
+        proxmox_placement_class: database_vm
+        proxmox_placement_database_backend: true
+        proxmox_placement_node: "{{ _database_backend_node }}"
+        proxmox_placement_storage: "{{ _database_backend_storage }}"
+
+    - name: Database backend | Add the VM to its deploy group
+      ansible.builtin.add_host:
+        name: "{{ homelabinfra_instance.vm.name }}"
+        groups: "deploy_{{ instance }}"
+        ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
+        ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+        app_config: "{{ app_config }}"
+        homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"

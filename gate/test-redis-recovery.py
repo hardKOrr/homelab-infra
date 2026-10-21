@@ -41,10 +41,7 @@ def check_defaults_and_deploy():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert defaults["backup"]["retention_days"] >= 2
-    assert defaults["proxmox"]["type"] == "lxc"
-    assert "Redis defaults to its native LXC" in (
-        ROOT / "ansible/vars/app-defaults/redis.yml"
-    ).read_text()
+    assert defaults["proxmox"]["guest_type"] == "lxc"
     assert defaults["routing"] == {"proxy": "none", "identity": "none"}
     assert "remove" not in defaults
 
@@ -56,12 +53,10 @@ def check_defaults_and_deploy():
     )
     provision = next(play for play in redis_play if play["name"] == "Redis | Provision")
     provision_tasks = list(tasks_recursive(provision))
-    lxc = task_named(provision_tasks, "Provision Redis LXC")
-    assert "_existing_hosts | length == 0" in str(lxc["when"])
-    assert "app_config.proxmox.type | default('lxc') == 'lxc'" in str(lxc["when"])
-    assert "../../tasks/proxmox/lxc-create.yml" in str(lxc)
-    vm = task_named(provision_tasks, "Provision Redis VM")
-    assert "app_config.proxmox.type | default('lxc') == 'vm'" in str(vm["when"])
+    placement = task_named(provision_tasks, "Resolve Redis guest placement and check existing type")
+    assert placement["ansible.builtin.include_tasks"] == "../../tasks/database/resolve-backend-placement.yml"
+    provision_guest = task_named(provision_tasks, "Provision a new Redis backend guest")
+    assert provision_guest["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
 
     redis_main = read_yaml("ansible/roles/redis/tasks/main.yml")
     install_repo = task_named(redis_main, "Redis | Install the PBS client repository when this lab declares app backups")

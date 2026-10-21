@@ -256,16 +256,16 @@ All merges use `combine(recursive=True)`; later layers win per key.
 |---|---|---|
 | `proxmox.api_host` | required | canonical name |
 | `proxmox.api_port` | optional | default `8006` (canonical name) |
-| `proxmox.node` | required | |
+| `proxmox.node` | required | default node for database backend instances; an instance may override it in `config/apps/<instance>.yml` |
 | `proxmox.api_user` | required | |
 | `proxmox.api_token_id` | required | |
 | `proxmox.api_token_secret` | required *in file or runtime environment* | secret — omit it from the file after Vaultwarden cutover |
 | `proxmox.validate_certs` | optional | default `false` — a stock Proxmox node is self-signed, so guest creation fails with `CERTIFICATE_VERIFY_FAILED` when this verifies. `inventory/proxmox.yml` assumes the same. Set `true` once the node serves a trusted certificate |
-| `proxmox.nodes` | optional | `{node_name: address}` for every cluster node, written by `bootstrap-rundeck.sh` from `pvesh get /cluster/status`. Consumed by `tasks/proxmox/register-nodes.yml`, which makes `delegate_to: <node name>` resolvable — node names have no `ansible_host` from the dynamic inventory. Falls back to `proxmox.api_host` for the targeted node when absent |
-| `proxmox.storage` | required *in practice* | local storage for cloud-init templates and explicit non-classed paths; classed guests use `storage_ids` |
-| `proxmox.node_roles` | required | `{storage: <node>, compute: [<node>, ...]}`. Database guests pin to storage; unpinned floating VMs/LXCs choose the online compute node with the most available memory after storage and active-bridge checks. List order breaks ties; compute nodes exclude the storage node |
-| `proxmox.storage_ids` | required | `{database_vm, floating_vm, floating_lxc}` storage IDs; databases use local mirror, floating VMs use ZFS over iSCSI and floating LXCs use NFS |
-| `proxmox.floating_vm_cpu_model` | required | common migratable CPU model for floating and GPU VMs; `host` is rejected |
+| `proxmox.nodes` | optional on one node | `{node_name: address}` for every cluster node used as a guest target, written by `bootstrap-rundeck.sh` from `pvesh get /cluster/status`. Consumed by `tasks/proxmox/register-nodes.yml`, which makes `delegate_to: <node name>` resolvable — node names have no `ansible_host` from the dynamic inventory. `proxmox.api_host` is the fallback for `proxmox.node`; a per-instance node override must have its own entry |
+| `proxmox.storage` | required *in practice* | default storage for cloud-init templates, database backend instances and explicit non-classed paths; other classed guests use `storage_ids` |
+| `proxmox.node_roles` | required for classed multi-node placement | `{storage: <node>, compute: [<node>, ...]}`. Other classed database VMs pin to storage; unpinned floating VMs/LXCs choose the online compute node with the most available memory after storage and active-bridge checks. List order breaks ties; compute nodes exclude the storage node. The five database engine playbooks use their configured node instead |
+| `proxmox.storage_ids` | required for other classed guests | `{database_vm, floating_vm, floating_lxc}` storage IDs. Database engine instances use `proxmox.storage`; other classed VMs/LXCs use the IDs declared here |
+| `proxmox.floating_vm_cpu_model` | required for floating/GPU VMs | common migratable CPU model; `host` is rejected |
 | `proxmox.devices` | optional by default; required by an attachment request | map of `<physical-device-name>: {mode: shared\|dedicated, identifiers: [...]}`. GPU VMs require `kind: igpu|gpu`, `mode: dedicated`, exactly one PCI identifier, an explicit `node`, and an existing PCI resource mapping (`pci_mapping`, defaulting to the declaration key). For other PCI/USB mappings and shared host paths, placement resolves the eligible node set from the resource mapping or path presence; an optional `node` restricts that set. `kind` defaults to `igpu` for shared and `gpu` for bare dedicated declarations; a dedicated iGPU must say `kind: igpu`. Optional `stack` names the logical Docker stack whose VM owns the dedicated device; it defaults to the device key. |
 | `networks.<name>.cidr` | required | per named subnet, **after inheritance** — see below |
 | `networks.<name>.gateway` | required | per named subnet, after inheritance |
@@ -325,6 +325,23 @@ and Deploy opens them through `infrastructure.firewall`. Declare here only what 
 exists on the wire.
 | `ansible.ssh_user` | required | |
 | `ansible.ssh_public_key` | required | |
+
+### Database backend instance placement
+
+PostgreSQL, Redis, MariaDB, MySQL and InfluxDB instances may set these keys in
+`config/apps/<instance>.yml`:
+
+| Key | Required? | Default / notes |
+|---|---|---|
+| `proxmox.guest_type` | optional | `lxc` by default; choose `vm` or `lxc` per instance. Existing PostgreSQL and Redis configs may keep using `proxmox.type` when `guest_type` is absent. |
+| `proxmox.node` | optional | node for this instance; defaults to `config/proxmox.yml` `proxmox.node` |
+| `proxmox.storage` | optional | guest storage for this instance; defaults to `config/proxmox.yml` `proxmox.storage`. A VM's cloud template uses this storage too unless `proxmox.cloud_template.storage` is set. |
+
+Existing type-specific placement keys remain valid and take precedence: LXC
+`proxmox.lxc.node` and `proxmox.disk_volume.storage` (or
+`proxmox.lxc.disk_volume.storage`), and VM `proxmox.vm.node` and
+`proxmox.vm.storage`. Deploy fails before starting or changing a tagged existing guest
+when its Proxmox type differs from `guest_type`; guests are never converted.
 
 ### `config/infrastructure.yml`
 
