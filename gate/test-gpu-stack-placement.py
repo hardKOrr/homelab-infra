@@ -76,7 +76,11 @@ def test_effective_stack_resolution():
 def test_deploy_and_recovery_paths_share_the_resolver():
     deploy = read_yaml("ansible/tasks/stack/find-or-create-host.yml")
     resolver = named(deploy, "Resolve app stack for the declared GPU")
-    assert resolver["ansible.builtin.include_tasks"] == "resolve-app-stack.yml"
+    resolver_path = resolver["ansible.builtin.include_tasks"]
+    assert resolver_path == "../../tasks/stack/resolve-app-stack.yml"
+    assert (
+        ROOT / "ansible/playbooks/apps" / resolver_path
+    ).resolve() == (ROOT / "ansible/tasks/stack/resolve-app-stack.yml").resolve()
     sizing = named(deploy, "Resolve this stack's host sizing")
     assert "_defaults[_stack_resolution_name]" in sizing["ansible.builtin.set_fact"][
         "_stack_sizing"

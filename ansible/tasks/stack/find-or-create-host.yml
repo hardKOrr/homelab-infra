@@ -73,7 +73,7 @@
 # useful for CPU deployments, but a stack-hosted app that names a GPU follows that device's
 # stack regardless of its default. The helper leaves apps without a GPU unchanged.
 - name: Resolve app stack for the declared GPU
-  ansible.builtin.include_tasks: resolve-app-stack.yml
+  ansible.builtin.include_tasks: ../../tasks/stack/resolve-app-stack.yml
   vars:
     stack_resolution_config: "{{ app_config }}"
     stack_resolution_default_name: "{{ stack_name }}"
