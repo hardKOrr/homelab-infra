@@ -60,14 +60,15 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
-    - name: Resolve the inventory group for this Ollama instance
-      ansible.builtin.include_tasks: ../../tasks/proxmox/tag-group.yml
+    - name: Resolve the tagged or uniquely named owned Ollama VM
+      ansible.builtin.include_tasks: ../../tasks/proxmox/resolve-app-vm.yml
       vars:
-        tag_group_tag: "_{{ instance }}"
+        resolve_app_vm_instance: "{{ instance }}"
 
-    - name: Check for an existing Ollama VM
+    - name: Record the resolved Ollama VM candidates
       ansible.builtin.set_fact:
-        _ollama_existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
+        _ollama_existing_hosts: "{{ resolve_app_vm_hosts }}"
+        _ollama_needs_identity_record: "{{ resolve_app_vm_needs_tag | bool }}"
 
     - name: Resolve the existing Ollama VM node
       ansible.builtin.set_fact:
@@ -100,6 +101,8 @@
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         proxmox_vmtype: qemu
         proxmox_node: "{{ _ollama_existing_node }}"
+        proxmox_name: "{{ hostvars[_ollama_existing_hosts[0]].proxmox_name | default(instance, true) }}"
+        proxmox_vmid: "{{ hostvars[_ollama_existing_hosts[0]].proxmox_vmid }}"
         app_config: "{{ app_config }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       when: _ollama_existing_hosts | length > 0
@@ -193,6 +196,13 @@
         - name: Set the new VM guest name
           ansible.builtin.set_fact:
             _ollama_guest: "{{ instance }}"
+
+    - name: Record Ollama VM identity before application deployment
+      ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_kind: docker
+        record_guest_require_success: true
+      when: _ollama_needs_identity_record
 
     # PCIe passthrough is not hotplugged. The shared task preflights the exact declaration,
     # ownership tag, node presence, and exclusive conflict before qm set, and restores a
@@ -325,6 +335,8 @@
 
     - name: Record Ollama on its dedicated Docker VM
       ansible.builtin.include_tasks: ../../tasks/proxmox/record-app-on-guest.yml
+      vars:
+        record_guest_kind: docker
 
     - name: Fail if anything could not be wired
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml

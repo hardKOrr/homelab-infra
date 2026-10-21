@@ -1,5 +1,10 @@
 # ComfyUI role
 
+Deploy selects the VM carrying the instance tag. If that tag is missing, it can adopt one
+`_+lab` VM whose Proxmox name exactly matches the instance, then records the instance tag
+before running the application role. Multiple same-name owned VMs stop Deploy before it can
+create another guest.
+
 ComfyUI runs as one Docker service on its own Debian VM. `app.accelerator` selects `cuda`
 or `cpu` and defaults to `cuda` for existing configurations. CUDA mode requires the named
 PCI device to be assigned exclusively with `attach-pci-passthrough.yml` and verifies that
