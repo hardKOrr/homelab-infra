@@ -17,7 +17,7 @@
       - -type
       - c
       - -printf
-      - "%g\\n"
+      - "%G\\n"
   register: _plex_dri_group_ids_found
   changed_when: false
   when: _plex_dri_device_declared | bool
