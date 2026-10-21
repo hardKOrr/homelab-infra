@@ -10,7 +10,8 @@
       ansible.builtin.set_fact:
         homelabinfra_config: >-
           {{ homelabinfra_config | combine({'proxmox': {'lxc':
-             (app_config.proxmox | combine({
+               (app_config.proxmox | dict2items
+                | rejectattr('key', 'equalto', 'storage') | items2dict | combine({
                'hostname': instance,
                'cores': app_config.proxmox.cores
                  | default(app_config.proxmox.lxc.cores | default(2)) | int,

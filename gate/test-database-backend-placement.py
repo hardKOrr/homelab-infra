@@ -315,9 +315,67 @@ def check_all_engines_share_placement():
     assert "_database_backend_guest_type == 'vm'" in provision_text
     assert "proxmox_placement_database_backend: true" in provision_text
 
+    provision_tasks = list(iter_tasks(yaml.safe_load(provision_text)))
+    lxc_identity = next(
+        task for task in provision_tasks
+        if task.get("name") == "Database backend | Set LXC identity and sizing"
+    )
     lxc_create = yaml.safe_load(
         (ROOT / "ansible/tasks/proxmox/lxc-create.yml").read_text(encoding="utf-8")
     )
+    lxc_build_facts = next(
+        task for task in lxc_create
+        if task.get("name") == "Build facts for usage in proxmox lxc creation"
+    )
+    lxc_storage = next(
+        task for task in lxc_create
+        if task.get("name") == "Apply the selected LXC rootfs storage"
+    )
+    lxc_module_args = next(
+        task for task in lxc_create
+        if task.get("name") == "Build LXC module arguments from the community.proxmox.proxmox allowlist"
+    )
+    storage_result = run_playbook(
+        [{
+            "name": "database LXC storage maps to disk_volume",
+            "hosts": "localhost",
+            "connection": "local",
+            "gather_facts": False,
+            "vars": {
+                "instance": "database-test",
+                "_database_backend_storage": "instance-store",
+                "app_config": {"proxmox": {
+                    "guest_type": "lxc",
+                    "node": "node-2",
+                    "storage": "instance-store",
+                }},
+                "homelabinfra_config": {
+                    "ansible": {"ssh_public_key": "fixture-key"},
+                    "proxmox": {
+                        "node": "control-node",
+                        "storage": "global-store",
+                        "api_host": "pve.example.invalid",
+                        "api_port": 8006,
+                        "api_user": "fixture@pve",
+                        "api_token_id": "fixture-token",
+                        "api_token_secret": "fixture-secret",
+                    },
+                },
+                "homelabinfra_instance": {},
+                "_guest_placement": {"node": "node-2", "storage": "instance-store"},
+            },
+            "tasks": [lxc_identity, lxc_build_facts, lxc_storage, lxc_module_args, {
+                "ansible.builtin.assert": {"that": [
+                    "'storage' not in lxc_module_args",
+                    "lxc_module_args.disk_volume.storage == 'instance-store'",
+                ]},
+            }],
+        }],
+        "[local]\nlocalhost ansible_connection=local\n",
+    )
+    output = storage_result.stdout + storage_result.stderr
+    assert storage_result.returncode == 0, f"database LXC storage mapping failed\n{output}"
+
     lxc_start = next(
         task for task in lxc_create if task.get("name") == "Start the LXC container"
     )
