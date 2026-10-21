@@ -628,6 +628,91 @@ def main():
         "ansible.builtin.command"]["argv"][-1]
     assert litellm_drop_role["delegate_to"] == "litellm_database_removal_target"
     assert litellm_drop_role["no_log"] is True
+
+    immich_remove_inputs = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Resolve Immich's named database and media removal inputs"
+    )
+    immich_validate = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Validate Immich's named database and dedicated media mount"
+    )
+    immich_shared_guard = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Refuse to remove a shared Immich database or role"
+    )
+    immich_guest_guard = next(
+        task for task in unwire_play["pre_tasks"]
+        if task.get("name") == "Require Immich's PostgreSQL backend to be one owned guest"
+    )
+    assert "_rm_immich_media_mounts | length == 1" in immich_validate[
+        "ansible.builtin.assert"]["that"]
+    assert "_rm_immich_media_path | length > 1" in immich_validate[
+        "ansible.builtin.assert"]["that"]
+    assert any("_rm_immich_media_path.split('/')" in condition
+               for condition in immich_validate["ansible.builtin.assert"]["that"])
+    assert "_rm_immich_database_credentials.database_host" in " ".join(
+        immich_validate["ansible.builtin.assert"]["that"])
+    assert "_rm_immich_shared_database_consumers | length == 0" in immich_shared_guard[
+        "ansible.builtin.assert"]["that"]
+    assert "_rm_immich_shared_role_consumers | length == 0" in immich_shared_guard[
+        "ansible.builtin.assert"]["that"]
+    assert "^lab_app_" in immich_guest_guard["ansible.builtin.assert"]["that"][0]
+    assert immich_remove_inputs["no_log"] is True
+
+    compose_block = next(
+        task["block"] for task in remove_playbook[1]["tasks"]
+        if task.get("name") == "Remove the Compose project"
+    )
+    immich_include = next(
+        (index, task) for index, task in enumerate(compose_block)
+        if task.get("name") == "Remove Immich's named database and durable media"
+    )
+    stop_compose = next(
+        index for index, task in enumerate(compose_block)
+        if task.get("name") == "Stop and remove the containers"
+    )
+    assert immich_include[0] > stop_compose
+    assert immich_include[1]["ansible.builtin.include_tasks"] == "../../roles/immich/tasks/remove.yml"
+    assert "_rm_delete_data | bool" in immich_include[1]["when"]
+
+    immich_remove_tasks = yaml.safe_load(
+        (repo / "ansible/roles/immich/tasks/remove.yml").read_text()
+    )
+    exact_mount = next(
+        task for task in immich_remove_tasks
+        if task.get("name") == "Immich remove | Require the declared media path to be an exact mount point"
+    )
+    assert exact_mount["ansible.builtin.command"]["argv"] == [
+        "findmnt", "--noheadings", "--output", "TARGET", "--mountpoint",
+        "{{ hostvars['localhost']._rm_immich_media_path }}",
+    ]
+    drop_database = next(
+        task for task in immich_remove_tasks
+        if task.get("name") == "Immich remove | Drop the named PostgreSQL database"
+    )
+    assert "DROP DATABASE {{ hostvars['localhost']._rm_immich_database_config.name }}" in (
+        drop_database["ansible.builtin.command"]["argv"][-1])
+    assert drop_database["delegate_to"] == "immich_database_removal_target"
+    assert drop_database["no_log"] is True
+    drop_role = next(
+        task for task in immich_remove_tasks
+        if task.get("name") == "Immich remove | Drop its PostgreSQL role"
+    )
+    assert "DROP ROLE {{ hostvars['localhost']._rm_immich_database_config.role }}" in (
+        drop_role["ansible.builtin.command"]["argv"][-1])
+    clear_media = next(
+        task for task in immich_remove_tasks
+        if task.get("name") == "Immich remove | Empty its durable media mount as the declared owner"
+    )
+    assert clear_media["ansible.builtin.command"]["argv"][:7] == [
+        "setpriv", "--reuid", "{{ hostvars['localhost'].app_config.media_storage.owner.uid | int }}",
+        "--regid", "{{ hostvars['localhost'].app_config.media_storage.owner.gid | int }}",
+        "--clear-groups", "find",
+    ]
+    assert "-mindepth" in clear_media["ansible.builtin.command"]["argv"]
+    assert "-maxdepth" in clear_media["ansible.builtin.command"]["argv"]
+    assert clear_media["no_log"] is True
     print("Recovery: backup/restore dispatch and named database removal safety passed")
 
 
