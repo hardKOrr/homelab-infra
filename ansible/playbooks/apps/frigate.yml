@@ -86,6 +86,12 @@
         stack_name: "{{ app_config.stack }}"
         stack_estate: "{{ app_config.routing.estate | default('', true) }}"
         deploy_group: "deploy_{{ instance }}"
+        stack_placement_devices: >-
+          {{ (homelabinfra_config.proxmox.devices | default({}) | dict2items
+              | selectattr('value.identifiers', 'defined')
+              | selectattr('value.identifiers', 'contains', app_config.app.coral_usb_mapping | default(''))
+              | map(attribute='key') | list)
+             if app_config.app.detector == 'coral' else [] }}
 
     - name: Resolve the declared Frigate recording mount
       ansible.builtin.set_fact:

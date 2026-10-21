@@ -1,0 +1,20 @@
+---
+- name: Guest placement device | Check each declared host path
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: "{{ guest_placement_probe_node }}"
+  loop: "{{ _guest_placement_current_device_paths }}"
+  loop_control:
+    label: device path
+  register: _guest_placement_device_path_checks
+
+- name: Guest placement device | Keep nodes with every declared host path
+  ansible.builtin.set_fact:
+    _guest_placement_current_device_nodes: >-
+      {{ _guest_placement_current_device_nodes
+         + ([guest_placement_probe_node]
+            if _guest_placement_device_path_checks.results | length == _guest_placement_current_device_paths | length
+               and (_guest_placement_device_path_checks.results
+                    | selectattr('stat.exists') | list | length)
+                   == (_guest_placement_current_device_paths | length)
+            else []) }}

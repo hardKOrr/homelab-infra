@@ -17,6 +17,7 @@
 #
 # Inputs:
 #   homelabinfra_cloud_template.{vmid,name}  — from ensure-cloud-template.yml
+#   proxmox_placement_node                  — optional node selected for the local template
 #   homelabinfra_config.proxmox.*            — API connection, node, vm.* settings
 #   homelabinfra_config.ansible.*            — ssh_user, ssh_public_key
 #   homelabinfra_instance.network.*          — from generate-ip.yml
@@ -31,13 +32,7 @@
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
-- name: Resolve the declared placement for this cloned VM
-  ansible.builtin.include_tasks: resolve-guest-placement.yml
-  vars:
-    guest_placement_class: "{{ proxmox_placement_class | default('floating_vm') }}"
-    guest_placement_device: "{{ proxmox_placement_device | default('') }}"
-
-- name: VM clone | Assert required inputs
+- name: VM clone | Assert required inputs before placement lookup
   ansible.builtin.assert:
     that:
       - homelabinfra_cloud_template.vmid is defined
@@ -51,6 +46,68 @@
     fail_msg: >-
       Required inputs: homelabinfra_cloud_template.vmid, ansible[ssh_public_key],
       proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name]].
+
+- name: VM clone | Read cluster resources to preserve an existing guest's node
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/resources
+      - --type
+      - vm
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _vmc_cluster_resources
+  changed_when: false
+
+- name: VM clone | Find the requested VMID in cluster resources
+  ansible.builtin.set_fact:
+    _vmc_existing_resources: >-
+      {{ _vmc_cluster_resources.stdout | from_json
+         | selectattr('vmid', 'defined')
+         | selectattr('vmid', 'equalto', homelabinfra_config.proxmox.vm.vmid | int)
+         | list }}
+
+- name: VM clone | Refuse a VMID already owned by another guest type
+  ansible.builtin.assert:
+    that:
+      - _vmc_existing_resources | length <= 1
+      - _vmc_existing_resources | length == 0 or _vmc_existing_resources[0].type == 'qemu'
+    fail_msg: >-
+      VMID {{ homelabinfra_config.proxmox.vm.vmid }} already belongs to a different
+      Proxmox guest or has ambiguous cluster state. Refusing to create or update it.
+
+- name: VM clone | Set the existing guest resource
+  ansible.builtin.set_fact:
+    _vmc_existing_guest: "{{ _vmc_existing_resources | first | default({}) }}"
+
+- name: VM clone | Require the existing guest's Proxmox node
+  ansible.builtin.assert:
+    that:
+      - _vmc_existing_guest.node | default('') | string | trim | length > 0
+    fail_msg: >-
+      Existing VM {{ homelabinfra_config.proxmox.vm.vmid }} has no node in Proxmox
+      cluster resources. Refusing to resolve a new placement for it.
+  when: _vmc_existing_guest | length > 0
+
+- name: VM clone | Keep an existing guest on its current node
+  ansible.builtin.set_fact:
+    homelabinfra_config: >-
+      {{ homelabinfra_config
+         | combine({'proxmox': {'node': _vmc_existing_guest.node}}, recursive=True) }}
+  when: _vmc_existing_guest | length > 0
+
+- name: Resolve the declared placement for this cloned VM
+  ansible.builtin.include_tasks: resolve-guest-placement.yml
+  vars:
+    guest_placement_class: "{{ proxmox_placement_class | default('floating_vm') }}"
+    guest_placement_device: "{{ proxmox_placement_device | default('') }}"
+    guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
+    guest_placement_node: "{{ proxmox_placement_node | default('') }}"
+    guest_placement_storage: "{{ proxmox_placement_storage | default('') }}"
+    guest_placement_use_app_config: "{{ proxmox_placement_use_app_config | default(true) | bool }}"
+  when: _vmc_existing_guest | length == 0
 
 # validate_certs is part of the connection, not an afterthought: Proxmox serves a
 # self-signed certificate out of the box, so the module's default of verifying it fails
@@ -134,7 +191,7 @@
     newid: "{{ _vmc_vmid | int }}"
     name: "{{ homelabinfra_config.proxmox.vm.name }}"
     full: true
-    storage: "{{ homelabinfra_config.proxmox.vm.storage | default(omit) }}"
+    storage: "{{ _guest_placement.storage | default(homelabinfra_config.proxmox.vm.storage | default(omit)) }}"
     timeout: "{{ homelabinfra_config.proxmox.vm.timeout | default(300) | int }}"
   register: _vmc_clone
   when: _vmc_existing.rc != 0

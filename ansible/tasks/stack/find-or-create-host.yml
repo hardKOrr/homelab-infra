@@ -30,20 +30,21 @@
 #                                         would run its role on every earlier app's guest and
 #                                         its Play 3 would read [0], the FIRST app's host.
 #   app_config                          — merged app config (handed to Play 2 via add_host)
+#   stack_placement_devices             — optional proxmox.devices keys for non-GPU passthrough
 #   homelabinfra_config.ansible.ssh_user
 #   homelabinfra_config.proxmox.*       — API connection + floating VM placement
 #   homelabinfra_config.networks.*      — for generate-ip.yml (create path)
 #   homelabinfra_config.infrastructure.stacks.<resolved_stack_name>
-#                                       — optional; sizing, `shared: true`, plus `network`,
-#                                         `pool` and `ip_address` for this stack host's
-#                                         address (create path)
+#                                       — optional; sizing, `shared: true`, `node` and
+#                                         `storage`, plus `network`, `pool` and `ip_address`
+#                                         for this stack host (create path)
 #   homelabinfra_config.infrastructure.domains
 #                                       — optional; the estates this lab declares
 #   homelabinfra_infra                  — optional; forwarded to the host if defined
 #
 # Mutates (create path only, except .stack):
 #   homelabinfra_config.proxmox.vm.{name,tags,stack_tag,stack_id,ip_address,vmid,
-#                                  vmid_source_ip}
+#                                  vmid_source_ip,node,storage}
 #   homelabinfra_instance.{network,vm}                  — via generate-ip / vm-clone
 #   homelabinfra_instance.stack.{hostname,ip_address}  — both paths
 #
@@ -155,6 +156,9 @@
 - name: Resolve the stack host's placement class
   ansible.builtin.set_fact:
     _stack_placement_class: "{{ 'gpu_vm' if _stack_gpu_device | length > 0 else 'floating_vm' }}"
+    _stack_placement_devices: >-
+      {{ ((stack_placement_devices | default([]) | list)
+          + ([_stack_gpu_device] if _stack_gpu_device | length > 0 else [])) | unique }}
 
 - name: Validate the stack's GPU device declaration
   ansible.builtin.assert:
@@ -326,6 +330,13 @@
       vars:
         proxmox_placement_class: "{{ _stack_placement_class }}"
         proxmox_placement_device: "{{ _stack_gpu_device }}"
+        proxmox_placement_devices: "{{ _stack_placement_devices }}"
+        proxmox_placement_node: "{{ _stack_sizing.node | default('') }}"
+        proxmox_placement_storage: >-
+          {{ _stack_sizing.storage
+             | default((_config_proxmox | default({})).get('proxmox', {}).get('vm', {}).get('storage', '')
+                       | default(homelabinfra_config.proxmox.storage_ids.floating_vm, true), true) }}
+        proxmox_placement_use_app_config: false
         cloud_template_name: "{{ homelabinfra_config.proxmox.cloud_template.name | default('debian-12-cloud') }}"
         cloud_template_image_url: >-
           {{ homelabinfra_config.proxmox.cloud_template.image_url
@@ -338,6 +349,13 @@
       vars:
         proxmox_placement_class: "{{ _stack_placement_class }}"
         proxmox_placement_device: "{{ _stack_gpu_device }}"
+        proxmox_placement_devices: "{{ _stack_placement_devices }}"
+        proxmox_placement_node: "{{ _guest_placement.node }}"
+        proxmox_placement_storage: >-
+          {{ _stack_sizing.storage
+             | default((_config_proxmox | default({})).get('proxmox', {}).get('vm', {}).get('storage', '')
+                       | default(homelabinfra_config.proxmox.storage_ids.floating_vm, true), true) }}
+        proxmox_placement_use_app_config: false
 
     - name: Set facts from new stack host
       ansible.builtin.set_fact:
