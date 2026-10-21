@@ -1,0 +1,135 @@
+---
+# Resolve one passthrough declaration to the nodes on which the named resource exists.
+# The caller initializes _guest_placement_device_node_sets and the online-node list.
+
+- name: Guest placement device | Load the named declaration
+  ansible.builtin.set_fact:
+    _guest_placement_current_device: "{{ homelabinfra_config.proxmox.devices[guest_placement_device_key] }}"
+    _guest_placement_current_device_paths: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device_key].identifiers
+         | default([]) | select('match', '^/') | list }}
+    _guest_placement_current_device_pci_ids: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device_key].identifiers
+         | default([])
+         | select('match', '^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}[.][0-7]$') | list }}
+    _guest_placement_current_usb_mapping_id: >-
+      {{ homelabinfra_config.proxmox.devices[guest_placement_device_key].usb_mapping
+         | default(homelabinfra_config.proxmox.devices[guest_placement_device_key].identifiers
+                   | default([]) | first | default(guest_placement_device_key), true) }}
+    _guest_placement_current_device_nodes: []
+
+- name: Guest placement device | Require a valid declared physical device
+  ansible.builtin.assert:
+    that:
+      - _guest_placement_current_device is mapping
+      - _guest_placement_current_device.mode in ['shared', 'dedicated']
+      - _guest_placement_current_device.identifiers is sequence
+      - _guest_placement_current_device.identifiers is not string
+      - _guest_placement_current_device.identifiers | length > 0
+    fail_msg: >-
+      Guest placement device {{ guest_placement_device_key }} must have an explicit
+      shared or dedicated mode and at least one identifier.
+
+- name: Guest placement device | Read a named USB resource mapping
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/usb/{{ _guest_placement_current_usb_mapping_id }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _guest_placement_usb_mapping
+  changed_when: false
+  failed_when: false
+  when: _guest_placement_current_device.kind | default('') == 'usb'
+
+- name: Guest placement device | Resolve the nodes in the USB mapping
+  ansible.builtin.set_fact:
+    _guest_placement_current_device_nodes: >-
+      {{ ((_guest_placement_usb_mapping.stdout | default('{}') | from_json).map | default([]))
+         | selectattr('node', 'defined') | map(attribute='node') | unique | list }}
+  when: _guest_placement_current_device.kind | default('') == 'usb'
+
+- name: Guest placement device | Read a named PCI resource mapping
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/cluster/mapping/pci/{{ _guest_placement_current_pci_mapping }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _guest_placement_pci_mapping
+  changed_when: false
+  failed_when: false
+  vars:
+    _guest_placement_current_pci_mapping: >-
+      {{ _guest_placement_current_device.pci_mapping | default(guest_placement_device_key) }}
+  when:
+    - _guest_placement_current_device.kind | default('') in ['gpu', 'igpu']
+      or _guest_placement_current_device_pci_ids | length > 0
+    - _guest_placement_current_device.kind | default('') != 'usb'
+
+- name: Guest placement device | Parse the PCI resource mapping
+  ansible.builtin.include_tasks: parse-pci-mapping-entries.yml
+  vars:
+    proxmox_pci_mapping_result: "{{ _guest_placement_pci_mapping }}"
+  when:
+    - _guest_placement_current_device.kind | default('') in ['gpu', 'igpu']
+      or _guest_placement_current_device_pci_ids | length > 0
+    - _guest_placement_current_device.kind | default('') != 'usb'
+
+- name: Guest placement device | Resolve the PCI mapping node candidates
+  ansible.builtin.set_fact:
+    _guest_placement_current_device_nodes: >-
+      {{ _proxmox_pci_mapping_entries
+         | selectattr('path', 'defined')
+         | selectattr('path', 'in', _guest_placement_current_device_pci_ids)
+         | map(attribute='node') | unique | list }}
+  when:
+    - _guest_placement_current_device.kind | default('') in ['gpu', 'igpu']
+      or _guest_placement_current_device_pci_ids | length > 0
+    - _guest_placement_current_device.kind | default('') != 'usb'
+
+- name: Guest placement device | Check shared device paths on online nodes
+  ansible.builtin.include_tasks: probe-guest-placement-device-node.yml
+  loop: "{{ _guest_placement_online_nodes }}"
+  loop_control:
+    loop_var: guest_placement_probe_node
+    label: "{{ guest_placement_probe_node }} device paths"
+  when:
+    - _guest_placement_current_device_paths | length > 0
+    - _guest_placement_current_device.kind | default('') != 'usb'
+    - _guest_placement_current_device_pci_ids | length == 0
+
+- name: Guest placement device | Use a declared node for a non-mapped device
+  ansible.builtin.set_fact:
+    _guest_placement_current_device_nodes: >-
+      {{ [_guest_placement_current_device.node] }}
+  when:
+    - _guest_placement_current_device_nodes | length == 0
+    - _guest_placement_current_device.node is defined
+    - _guest_placement_current_device_paths | length == 0
+    - _guest_placement_current_device_pci_ids | length == 0
+    - _guest_placement_current_device.kind | default('') != 'usb'
+
+- name: Guest placement device | Apply the declared node restriction
+  ansible.builtin.set_fact:
+    _guest_placement_current_device_nodes: >-
+      {{ _guest_placement_current_device_nodes
+         | select('equalto', _guest_placement_current_device.node) | list }}
+  when: _guest_placement_current_device.node is defined
+
+- name: Guest placement device | Require an online mapped or present device
+  ansible.builtin.assert:
+    that:
+      - _guest_placement_current_device_nodes | length > 0
+    fail_msg: >-
+      Passthrough device {{ guest_placement_device_key }} has no matching USB/PCI mapping
+      or shared device path on an online node. Refusing to create the guest on another node.
+
+- name: Guest placement device | Add the device's eligible node set
+  ansible.builtin.set_fact:
+    _guest_placement_device_node_sets: >-
+      {{ _guest_placement_device_node_sets + [_guest_placement_current_device_nodes] }}

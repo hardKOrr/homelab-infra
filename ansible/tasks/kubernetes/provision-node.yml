@@ -125,6 +125,8 @@
     cloud_template_name: "{{ k8s_cluster_config.proxmox.cloud_template.name }}"
     cloud_template_image_url: "{{ k8s_cluster_config.proxmox.cloud_template.image_url }}"
     cloud_template_storage: "{{ k8s_cluster_config.proxmox.storage }}"
+    proxmox_placement_storage: "{{ k8s_cluster_config.proxmox.storage }}"
+    proxmox_placement_use_app_config: false
     cloud_template_bridge: >-
       {{ network_effective.bridge | default('vmbr0') }}
 
@@ -143,6 +145,9 @@
   vars:
     proxmox_placement_class: floating_vm
     guest_placement_preferred_node: "{{ k8s_node.proxmox_node }}"
+    proxmox_placement_node: "{{ _guest_placement.node }}"
+    proxmox_placement_storage: "{{ k8s_cluster_config.proxmox.storage }}"
+    proxmox_placement_use_app_config: false
 
 # A CPU model is not hot-pluggable. `qm set --cpu` on a running guest writes the config and
 # changes nothing about the process already running, so a node provisioned before this

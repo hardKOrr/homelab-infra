@@ -5,11 +5,20 @@
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
+- name: Preserve an existing VM's current node
+  ansible.builtin.include_tasks: preserve-existing-guest-node.yml
+  vars:
+    guest_existing_id: "{{ homelabinfra_config.proxmox.vm.vmid | default('') }}"
+    guest_existing_type: qemu
+    guest_existing_config_key: vm
+
 - name: Resolve the declared placement for this VM
   ansible.builtin.include_tasks: resolve-guest-placement.yml
   vars:
     guest_placement_class: "{{ proxmox_placement_class | default('floating_vm') }}"
     guest_placement_device: "{{ proxmox_placement_device | default('') }}"
+    guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
+    guest_placement_node: "{{ _existing_guest_current_node | default('') }}"
 
 - name: Assert homelabinfra instance data is provided
   ansible.builtin.assert:
@@ -46,16 +55,14 @@
           )
         }, recursive=True) }}
 
-# See the note in lxc-create.yml: storage is a lab property, not an app property, so
-# app-defaults pin nothing and the lab-wide value fills in here. An app that needs its own
-# pool sets proxmox.vm.storage and wins.
-- name: Default the VM disk storage to the lab-wide storage
+# Placement resolves the effective storage (an explicit VM pool or the class default).
+# Keep it on this guest instance instead of writing it back into shared config facts.
+- name: Apply the selected VM disk storage
   ansible.builtin.set_fact:
     homelabinfra_instance: >-
       {{ homelabinfra_instance | combine({'vm': {
-           'storage': (homelabinfra_config.proxmox.storage | default('local'))
+           'storage': _guest_placement.storage
          }}, recursive=True) }}
-  when: homelabinfra_instance.vm.storage is not defined
 
 # Deliberately its own task: keys set by one set_fact are templated against the variable
 # context as it stood BEFORE the task, so a sibling key cannot reference this one. Folding
@@ -129,7 +136,10 @@
          | selectattr('key', 'in', vm_module_keys)
          | list
          | items2dict
-         | combine({'api_user': homelabinfra_config.proxmox.api_user}) }}
+         | combine({
+             'api_user': homelabinfra_config.proxmox.api_user,
+             'node': _guest_placement.node
+           }) }}
   vars:
     # community.proxmox.proxmox_kvm parameters only. User/bookkeeping keys (network, ip_address,
     # ansible_host) are absent by design. vm_ansible_host is a sibling of .vm (not inside it), so

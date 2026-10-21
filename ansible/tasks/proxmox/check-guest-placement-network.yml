@@ -1,0 +1,54 @@
+---
+- name: Guest placement network | Find the declared bridge
+  ansible.builtin.set_fact:
+    _guest_placement_current_bridge: >-
+      {{ guest_placement_network_result.stdout | from_json
+         | selectattr('type', 'defined')
+         | selectattr('type', 'equalto', 'bridge')
+         | selectattr('iface', 'defined')
+         | selectattr('iface', 'equalto', _guest_placement_bridge)
+         | selectattr('active', 'defined')
+         | selectattr('active', 'truthy') | list | first | default({}) }}
+    _guest_placement_current_network_node: "{{ guest_placement_network_result.item }}"
+    _guest_placement_current_vlan_allowed: "{{ _guest_placement_vlan | int <= 0 }}"
+
+- name: Guest placement network | Allow an exact VLAN from the bridge list
+  ansible.builtin.set_fact:
+    _guest_placement_current_vlan_allowed: true
+  loop: >-
+    {{ _guest_placement_current_bridge.bridge_vids | default('') | string
+       | replace(',', ' ') | split }}
+  when:
+    - _guest_placement_current_bridge | length > 0
+    - _guest_placement_current_bridge.bridge_vlan_aware | default(false) | bool
+    - _guest_placement_vlan | int > 0
+    - item is match('^[0-9]+$')
+    - item | int == _guest_placement_vlan | int
+  loop_control:
+    label: VLAN entry
+
+- name: Guest placement network | Allow a VLAN inside a configured range
+  ansible.builtin.set_fact:
+    _guest_placement_current_vlan_allowed: true
+  loop: >-
+    {{ _guest_placement_current_bridge.bridge_vids | default('') | string
+       | replace(',', ' ') | split }}
+  vars:
+    _guest_placement_vlan_range: "{{ item | split('-') }}"
+  when:
+    - _guest_placement_current_bridge | length > 0
+    - _guest_placement_current_bridge.bridge_vlan_aware | default(false) | bool
+    - _guest_placement_vlan | int > 0
+    - item is match('^[0-9]+-[0-9]+$')
+    - _guest_placement_vlan | int >= _guest_placement_vlan_range[0] | int
+    - _guest_placement_vlan | int <= _guest_placement_vlan_range[1] | int
+  loop_control:
+    label: VLAN range
+
+- name: Guest placement network | Keep nodes that can serve the guest network
+  ansible.builtin.set_fact:
+    _guest_placement_network_nodes: >-
+      {{ _guest_placement_network_nodes
+         + ([_guest_placement_current_network_node]
+            if _guest_placement_current_bridge | length > 0
+               and _guest_placement_current_vlan_allowed | bool else []) }}

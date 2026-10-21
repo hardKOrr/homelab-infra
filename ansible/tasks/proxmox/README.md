@@ -13,16 +13,25 @@ The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.y
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path.
 
-`resolve-guest-placement.yml` is the placement source for those creation seams. The
-`database_vm` class pins PostgreSQL/Redis to `node_roles.storage` and
-`storage_ids.database_vm`; `floating_vm` uses the first online node from the ordered
-`node_roles.compute` list and `storage_ids.floating_vm`; `floating_lxc` uses that same
-compute order and `storage_ids.floating_lxc`. `gpu_vm` uses the iSCSI VM store and the
-common migratable CPU model, but pins the guest to its dedicated device's declared compute
-node. Its `proxmox.devices` declaration must name that node and an existing PCI resource
-mapping. The database template is built on the pinned storage node and storage so its full
-clones inherit the declared local zvol block size. The global
-`proxmox.node` remains the control node for cluster-wide queries and non-classed paths.
+`resolve-guest-placement.yml` is the placement source for those creation seams. It honors
+an explicit `proxmox.vm.node`, `proxmox.lxc.node`, or `stacks.<name>.node`, then
+node-local storage or a single-node passthrough device.
+Otherwise it considers online nodes in `node_roles.compute` that expose the requested
+storage and active guest bridge/VLAN, and selects the one with the most available memory.
+Per-guest node and storage overrides are read from that guest's app configuration and the
+authored Proxmox config; placement does not reuse a prior guest's runtime facts. The list
+order breaks a memory tie. The `database_vm` class keeps its `node_roles.storage` pin
+and `storage_ids.database_vm`; floating VMs use `storage_ids.floating_vm`, and floating
+LXCs use `storage_ids.floating_lxc`. `gpu_vm` uses the iSCSI VM store and the common
+migratable CPU model, and stays on its dedicated device's declared node and PCI mapping.
+The memory preflight runs on the selected node and never retries creation elsewhere.
+VM and LXC create paths check cluster resources first and keep an existing guest on its
+current node. A new clone stays on a node that can reach both its local template and the
+target VM storage because Proxmox cannot clone a local template across nodes. Placement
+facts carry the selected storage to the one guest being created, so another guest in the
+same play keeps its own storage configuration.
+The configured `proxmox.node` is used for cluster reads before selection; node-local
+operations then use the selected guest node.
 
 `attach-host-mounts.yml` routes stack directories by Proxmox guest type. LXC guests keep
 their existing mountpoint/idmap path. Stack VMs use one cluster directory mapping per
@@ -140,9 +149,9 @@ seams assert `_+lab` ownership before writing, and platform-created assignments 
 
 Before inspecting the node or a guest, an attachment request must match exactly one named
 entry in `homelabinfra_config.proxmox.devices`, whose explicit `mode` must agree with the
-seam. A declaration's optional `node` scopes it to one `proxmox.nodes` entry and otherwise
-falls back to `proxmox.node`; it never selects a node automatically. GPU VM declarations
-use kind `igpu` or `gpu`, mode `dedicated`, one exact PCI identifier, and an existing
+seam. A declaration's optional `node` scopes it to one `proxmox.nodes` entry. Without it,
+placement resolves PCI/USB mapping nodes or checks shared host paths on online nodes. GPU VM
+declarations use kind `igpu` or `gpu`, mode `dedicated`, one exact PCI identifier, and an existing
 `pci_mapping` (defaulting to the declaration key). `kind` defaults to `igpu` for shared
 declarations and `gpu` for a bare dedicated declaration; a dedicated iGPU must say
 `kind: igpu`, while USB or other entries use `kind: usb` or `kind: other`.

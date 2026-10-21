@@ -10,6 +10,8 @@
 #
 # Everything here runs on the Proxmox node itself (delegate_to), because the image
 # import is a local disk operation the API does not expose.
+# Placement checks both the template store and target VM store before choosing a node:
+# Proxmox cannot clone a template from node-local storage across nodes.
 #
 # Idempotent: a template named cloud_template_name and tagged `_+lab` on the
 # target node is adopted wherever it sits, so this is a no-op on every run after the
@@ -82,6 +84,28 @@
   vars:
     guest_placement_class: "{{ proxmox_placement_class | default('floating_vm') }}"
     guest_placement_device: "{{ proxmox_placement_device | default('') }}"
+    guest_placement_node: "{{ proxmox_placement_node | default('') }}"
+    guest_placement_storage: >-
+      {{ cloud_template_storage
+         | default(homelabinfra_config.proxmox.storage | default('local-lvm'), true) }}
+    guest_placement_additional_storage: >-
+      {{ proxmox_placement_storage
+         | default(
+             ((app_config | default({})).get('proxmox', {}).get('vm', {}).get('storage', '')
+              if proxmox_placement_use_app_config | default(true) | bool else ''), true)
+         | default((_config_proxmox | default({})).get('proxmox', {}).get('vm', {}).get('storage', ''), true)
+         | default(homelabinfra_config.proxmox.storage_ids[
+             {'database_vm': 'database_vm', 'floating_vm': 'floating_vm',
+              'floating_lxc': 'floating_lxc', 'gpu_vm': 'floating_vm'}[
+                proxmox_placement_class | default('floating_vm')]
+           ], true) }}
+    guest_placement_guest_type: qemu
+    guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
+    guest_placement_use_app_config: "{{ proxmox_placement_use_app_config | default(true) | bool }}"
+    guest_placement_bridge: >-
+      {{ cloud_template_bridge
+         | default(network_effective.bridge
+                   | default(homelabinfra_config.networks.default.bridge, true), true) }}
 
 - name: Cloud template | Set build facts
   ansible.builtin.set_fact:
