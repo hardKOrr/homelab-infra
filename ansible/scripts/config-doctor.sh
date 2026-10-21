@@ -169,6 +169,13 @@ def validate_mail_block(block, where, path_prefix, inherited=None, require_ident
 # ── config/proxmox.yml ────────────────────────────────────────────────────────
 PROXMOX_FILE = os.path.join(CONFIG_DIR, "proxmox.yml")
 proxmox, found = load(PROXMOX_FILE)
+proxmox_found = found
+proxmox_body = proxmox.get("proxmox") if isinstance(proxmox, dict) else {}
+proxmox_devices = (
+    proxmox_body.get("devices", {}) if isinstance(proxmox_body, dict) else {}
+)
+if not isinstance(proxmox_devices, dict):
+    proxmox_devices = {}
 # Declared network names, read below and used again by the estate checks. Empty means
 # "nothing to check against", never "check against nothing" -- a missing proxmox.yml is
 # already its own error and must not produce a second, misleading one per estate.
@@ -185,6 +192,15 @@ else:
         proxmox.get("proxmox"),
         lambda key, message: report("ERROR", "proxmox.yml", key, message),
     )
+    if isinstance(proxmox_devices, dict):
+        for name, declaration in proxmox_devices.items():
+            if not isinstance(declaration, dict) or "stack" not in declaration:
+                continue
+            stack_name = declaration.get("stack")
+            if not isinstance(stack_name, str) or not re.fullmatch(
+                    r"[a-z0-9][a-z0-9-]*", stack_name):
+                report("ERROR", "proxmox.yml", "proxmox.devices.%s.stack" % name,
+                       "must be a lowercase logical stack name such as media")
 
     # Placement is lab topology. Require it at the config boundary so each guest
     # creation path cannot silently fall back to the former lab-wide node or storage.
@@ -495,6 +511,27 @@ for path in app_files:
 
     if "stack" in data and isinstance(data["stack"], dict):
         report("ERROR", where, "stack", "must be a scalar stack name, e.g. media")
+
+    app_config = data.get("app")
+    if isinstance(app_config, dict):
+        gpu_device = app_config.get("gpu_device")
+        if gpu_device not in (None, ""):
+            if not isinstance(gpu_device, str) or not gpu_device.strip():
+                report("ERROR", where, "app.gpu_device",
+                       "must name a proxmox.devices declaration")
+            elif proxmox_found and gpu_device not in proxmox_devices:
+                report("ERROR", where, "app.gpu_device",
+                       "%r is not declared under proxmox.devices" % gpu_device)
+            elif proxmox_found:
+                device = proxmox_devices[gpu_device]
+                device_stack = (
+                    device.get("stack", gpu_device)
+                    if isinstance(device, dict) else gpu_device
+                )
+                if "stack" in data and data.get("stack") != device_stack:
+                    report("ERROR", where, "stack",
+                           "must match proxmox.devices.%s.stack (%s) when app.gpu_device is set"
+                           % (gpu_device, device_stack))
 
     # The platform reserves the leading-underscore tag grammar: `_+` ownership, `_-` machine
     # facts, `_.` topology, and `_<instance>` for applications. An instance whose name began

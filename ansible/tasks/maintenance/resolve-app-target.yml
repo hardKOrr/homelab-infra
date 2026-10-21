@@ -61,13 +61,29 @@
 # ansible/vars/CONTRACT.md §2. Hyphenated slugs use underscores in that key.
 - name: Resolve app target | Read the declared hosting shape
   ansible.builtin.set_fact:
-    _rat_stack: >-
-      {{ _rat_instance_config.stack
-         | default((_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
-                    | default({})).stack | default(''), true) }}
+    app_config: >-
+      {{ (_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
+          | default({}))
+         | combine(_rat_instance_config | default({}), recursive=True) }}
     _rat_declared_hosting: >-
       {{ (_rat_defaults_file[(_rat_app | replace('-', '_')) ~ '_defaults']
           | default({})).hosting | default('') }}
+
+- name: Resolve app target | Resolve the GPU stack
+  ansible.builtin.include_tasks: ../stack/resolve-app-stack.yml
+  vars:
+    stack_resolution_config: "{{ app_config }}"
+    stack_resolution_default_name: "{{ app_config.stack | default('', true) }}"
+
+- name: Resolve app target | Apply the effective stack
+  ansible.builtin.set_fact:
+    app_config: >-
+      {{ app_config | combine({'stack': _stack_resolution_name}, recursive=True)
+         if app_config.stack is defined else app_config }}
+
+- name: Resolve app target | Read the effective stack
+  ansible.builtin.set_fact:
+    _rat_stack: "{{ app_config.stack | default('', true) }}"
 
 # The platform's one rule, not a second one: an explicit `hosting:` wins, otherwise the
 # presence of `stack:` is what tells a Docker app from a native LXC app.

@@ -1,4 +1,7 @@
-# Frigate is a dedicated Docker-on-VM stack, not a tenant of media/services.
+# Frigate defaults to its own Docker-on-VM stack.
+# When app.gpu_device is set, its device's stack takes precedence over the default `frigate`
+# stack. Omit an explicit top-level stack to allow that placement; an explicit mismatch is
+# rejected by config-doctor.
 # Copy this to config/apps/<instance>.yml after declaring its recording-storage mount.
 # For a camera-less CPU-only instance, select detector: cpu and leave device paths,
 # hwaccel_args and recordings_path blank.
