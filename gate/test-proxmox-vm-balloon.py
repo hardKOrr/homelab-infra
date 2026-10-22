@@ -32,26 +32,44 @@ assert "proxmox_vm_balloon_mib | string is match('^[1-9][0-9]*$')" in validator[
 assert "proxmox_vm_memory_mib | string is match('^[1-9][0-9]*$')" in validator["that"]
 assert "(proxmox_vm_balloon_mib | int) <= (proxmox_vm_memory_mib | int)" in validator["that"]
 
+resolver = load_tasks(task_dir / "resolve-vm-balloon.yml")[0]["ansible.builtin.set_fact"]
+assert "app_config" in resolver["_proxmox_vm_balloon_requested"]
+assert "homelabinfra_config" in resolver["_proxmox_vm_balloon_requested"]
+assert "app_config" in resolver["_proxmox_vm_memory_max_mib"]
+assert "proxmox_vm_balloon_memory_fallback" in resolver["_proxmox_vm_memory_max_mib"]
+
 create = load_tasks(task_dir / "vm-create.yml")
+create_resolver = include_index(create, "resolve-vm-balloon.yml")
 create_validation = include_index(create, "validate-vm-balloon.yml")
-assert create_validation < task_index(create, "Create VM"), "validate before VM create"
+assert create_resolver < create_validation < task_index(create, "Create VM"), "resolve and validate before VM create"
 create_args = load_tasks(task_dir / "vm-create.yml")[task_index(
     create, "Build VM module arguments from the community.proxmox.proxmox_kvm allowlist"
 )]["vars"]["vm_module_keys"]
 assert "balloon" in create_args, create_args
+create_module_args = str(create[task_index(
+    create, "Build VM module arguments from the community.proxmox.proxmox_kvm allowlist"
+)]["ansible.builtin.set_fact"]["vm_module_args"])
+assert "rejectattr('key', 'equalto', 'balloon')" in create_module_args
+assert "_proxmox_vm_memory_max_mib | int" in create_module_args
+assert "_proxmox_vm_balloon_configured | bool" in create_module_args
 
 clone = load_tasks(task_dir / "vm-clone.yml")
+clone_resolver = include_index(clone, "resolve-vm-balloon.yml")
 clone_validation = include_index(clone, "validate-vm-balloon.yml")
-assert clone_validation < task_index(clone, "VM clone | Clone the template")
+assert clone_resolver < clone_validation < task_index(clone, "VM clone | Clone the template")
 update = clone[task_index(clone, "VM clone | Apply per-VM configuration")][
     "community.proxmox.proxmox_kvm"
 ]
-assert update["balloon"] == "{{ homelabinfra_config.proxmox.vm.balloon | default(omit) }}"
-assert update["memory"] == "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
+assert "_proxmox_vm_balloon_requested | int" in update["balloon"]
+assert "_proxmox_vm_balloon_configured | bool" in update["balloon"]
+assert "_proxmox_vm_memory_max_mib | int" in update["memory"]
+assert "_proxmox_vm_balloon_configured | bool" in update["memory"]
 assert update["update_unsafe"] == "{{ _vmc_clone.changed | default(false) }}"
 
 template = load_tasks(task_dir / "ensure-cloud-template.yml")
-assert include_index(template, "validate-vm-balloon.yml") < task_index(
+template_resolver = include_index(template, "resolve-vm-balloon.yml")
+template_validation = include_index(template, "validate-vm-balloon.yml")
+assert template_resolver < template_validation < task_index(
     template, "Make Proxmox nodes addressable for delegation"
 ), "validate before any template operation"
 

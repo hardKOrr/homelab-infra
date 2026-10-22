@@ -33,13 +33,18 @@
       - homelabinfra_config.proxmox.vm.ansible_host is defined or homelabinfra_config.proxmox.vm.ip_address is defined
     fail_msg: "Required homelabinfra_config inputs: proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name,ansible_host|ip_address]]"
 
+- name: Resolve the optional VM balloon configuration
+  ansible.builtin.include_tasks: resolve-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_memory_fallback: 512
+
 - name: Validate the configured VM balloon minimum
   ansible.builtin.include_tasks: validate-vm-balloon.yml
   vars:
-    proxmox_vm_balloon_mib: "{{ homelabinfra_config.proxmox.vm.balloon }}"
-    proxmox_vm_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(512) }}"
-    proxmox_vm_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
-  when: homelabinfra_config.proxmox.vm.balloon is defined
+    proxmox_vm_balloon_mib: "{{ _proxmox_vm_balloon_requested }}"
+    proxmox_vm_memory_mib: "{{ _proxmox_vm_memory_max_mib }}"
+    proxmox_vm_guest: "{{ _proxmox_vm_balloon_guest }}"
+  when: _proxmox_vm_balloon_configured | bool
 
 - name: Build facts for usage in proxmox vm creation
   ansible.builtin.set_fact:
@@ -141,13 +146,19 @@
   ansible.builtin.set_fact:
     vm_module_args: >-
       {{ homelabinfra_instance.vm | dict2items
+         | rejectattr('key', 'equalto', 'balloon')
          | selectattr('key', 'in', vm_module_keys)
          | list
          | items2dict
          | combine({
              'api_user': homelabinfra_config.proxmox.api_user,
              'node': _guest_placement.node
-           }) }}
+           })
+         | combine(
+             {'memory': _proxmox_vm_memory_max_mib | int,
+              'balloon': _proxmox_vm_balloon_requested | int}
+             if _proxmox_vm_balloon_configured | bool else {}
+           ) }}
   vars:
     # community.proxmox.proxmox_kvm parameters only. User/bookkeeping keys (network, ip_address,
     # ansible_host) are absent by design. vm_ansible_host is a sibling of .vm (not inside it), so

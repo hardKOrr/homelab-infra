@@ -29,6 +29,11 @@
 
 # Node names are not resolvable on their own — see the file's header. Every delegate_to
 # below depends on this having run.
+- name: VM clone | Resolve the optional balloon configuration
+  ansible.builtin.include_tasks: resolve-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_memory_fallback: 2048
+
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 
@@ -50,10 +55,10 @@
 - name: VM clone | Validate the configured balloon minimum
   ansible.builtin.include_tasks: validate-vm-balloon.yml
   vars:
-    proxmox_vm_balloon_mib: "{{ homelabinfra_config.proxmox.vm.balloon }}"
-    proxmox_vm_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) }}"
-    proxmox_vm_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
-  when: homelabinfra_config.proxmox.vm.balloon is defined
+    proxmox_vm_balloon_mib: "{{ _proxmox_vm_balloon_requested }}"
+    proxmox_vm_memory_mib: "{{ _proxmox_vm_memory_max_mib }}"
+    proxmox_vm_guest: "{{ _proxmox_vm_balloon_guest }}"
+  when: _proxmox_vm_balloon_configured | bool
 
 - name: VM clone | Read cluster resources to preserve an existing guest's node
   ansible.builtin.command:
@@ -332,8 +337,13 @@
     # whose cause was invisible from Kubernetes. Omitted by default so existing guests are
     # untouched; a caller that needs a modern baseline sets proxmox.vm.cpu.
     cpu: "{{ homelabinfra_config.proxmox.vm.cpu | default(omit) }}"
-    memory: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
-    balloon: "{{ homelabinfra_config.proxmox.vm.balloon | default(omit) }}"
+    memory: >-
+      {{ _proxmox_vm_memory_max_mib | int
+         if _proxmox_vm_balloon_configured | bool
+         else (homelabinfra_config.proxmox.vm.memory | default(2048) | int) }}
+    balloon: >-
+      {{ _proxmox_vm_balloon_requested | int
+         if _proxmox_vm_balloon_configured | bool else omit }}
     agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
     onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"
     startup: "{{ _proxmox_startup if (_proxmox_startup | length > 0) else omit }}"
