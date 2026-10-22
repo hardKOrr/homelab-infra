@@ -1,6 +1,9 @@
 ---
 # Shared guest provisioning for PostgreSQL, Redis, MariaDB, MySQL and InfluxDB.
 # Engine roles remain responsible for installing and configuring the database itself.
+- name: Database backend | Resolve selected guest memory
+  ansible.builtin.import_tasks: resolve-guest-memory.yml
+
 - name: Database backend | Provision an LXC
   when:
     - _existing_hosts | length == 0
@@ -15,8 +18,7 @@
                'hostname': instance,
                'cores': app_config.proxmox.cores
                  | default(app_config.proxmox.lxc.cores | default(2)) | int,
-               'memory': app_config.proxmox.memory
-                 | default(app_config.proxmox.lxc.memory | default(2048)) | int,
+               'memory': _database_backend_memory_mib | int,
                'disk_volume': app_config.proxmox.disk_volume
                  | default(app_config.proxmox.lxc.disk_volume | default({'size': 32})),
                'tags': ((app_config.proxmox.tags | default(['_+lab', '_-debian']))
@@ -59,6 +61,7 @@
         ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
+        _database_backend_guest_type: "{{ _database_backend_guest_type }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
 - name: Database backend | Provision a VM
   when:
@@ -72,8 +75,7 @@
                'name': instance,
                'cores': app_config.proxmox.cores
                  | default(app_config.proxmox.vm.cores | default(2)) | int,
-               'memory': app_config.proxmox.memory
-                 | default(app_config.proxmox.vm.memory | default(2048)) | int,
+               'memory': _database_backend_memory_mib | int,
                'disk_size': app_config.proxmox.disk_size
                  | default(app_config.proxmox.vm.disk_size
                    | default(app_config.proxmox.disk_volume.size
@@ -143,4 +145,5 @@
         ansible_host: "{{ homelabinfra_instance.vm_ansible_host }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
+        _database_backend_guest_type: "{{ _database_backend_guest_type }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"

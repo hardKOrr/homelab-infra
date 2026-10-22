@@ -83,7 +83,15 @@ def assert_expressions(values):
     ]
 
 
-def play(name, engine, guest_type, memory_config, app_memory, expected):
+def play(
+    name,
+    engine,
+    guest_type,
+    memory_config,
+    app_memory,
+    expected_guest_memory,
+    expected,
+):
     proxmox = {"guest_type": guest_type}
     proxmox.update(memory_config)
     assertions = ["_database_backend_memory_mib | int == _expected_guest_memory | int"]
@@ -95,7 +103,8 @@ def play(name, engine, guest_type, memory_config, app_memory, expected):
         "gather_facts": False,
         "vars": {
             "instance": f"memory-{engine}",
-            "_expected_guest_memory": 1024 if name.endswith("LXC defaults") else 4096,
+            "_database_backend_guest_type": guest_type,
+            "_expected_guest_memory": expected_guest_memory,
             "app_config": {
                 "proxmox": proxmox,
                 "app": {"memory": app_memory},
@@ -119,6 +128,7 @@ def check_engine_memory():
                 "lxc",
                 {"memory": 1024},
                 {},
+                1024,
                 spec["low"],
             )
         )
@@ -129,6 +139,7 @@ def check_engine_memory():
                 "vm",
                 {"vm": {"memory": 4096}},
                 {},
+                4096,
                 spec["high"],
             )
         )
@@ -139,9 +150,31 @@ def check_engine_memory():
                 "vm",
                 {"memory": 4096},
                 spec["override"],
+                4096,
                 spec["overridden"],
             )
         )
+
+        for guest_type, selected_memory, expected in (
+            ("lxc", 1024, spec["low"]),
+            ("vm", 4096, spec["high"]),
+        ):
+            plays.append(
+                play(
+                    f"{engine} {guest_type.upper()} selection with both blocks",
+                    engine,
+                    guest_type,
+                    {
+                        "memory": 8192,
+                        "lxc": {"memory": 1024},
+                        "vm": {"memory": 4096},
+                    },
+                    # A conflicting shared value must not hide the selected guest block.
+                    {},
+                    selected_memory,
+                    expected,
+                )
+            )
 
     with tempfile.TemporaryDirectory() as directory:
         playbook = Path(directory) / "database-memory.yml"
@@ -163,6 +196,21 @@ def check_engine_memory():
 
 
 def check_config_wiring():
+    provision_path = ROOT / "ansible/tasks/database/provision-backend-guest.yml"
+    provision_text = provision_path.read_text(encoding="utf-8")
+    assert "ansible.builtin.import_tasks: resolve-guest-memory.yml" in provision_text
+    assert provision_text.count("'memory': _database_backend_memory_mib | int") == 2
+    assert provision_text.count(
+        '_database_backend_guest_type: "{{ _database_backend_guest_type }}"'
+    ) == 2
+
+    for engine in ("postgresql", "redis", "mariadb", "mysql", "influxdb"):
+        app_playbook = ROOT / f"ansible/playbooks/apps/{engine}.yml"
+        assert (
+            '_database_backend_guest_type: "{{ _database_backend_guest_type }}"'
+            in app_playbook.read_text(encoding="utf-8")
+        )
+
     postgresql_tasks = yaml.safe_load(
         (ROOT / "ansible/roles/postgresql/tasks/main.yml").read_text(encoding="utf-8")
     )

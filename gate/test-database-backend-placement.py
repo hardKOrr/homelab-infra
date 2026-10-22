@@ -412,6 +412,7 @@ def check_all_engines_share_placement():
             "gather_facts": False,
             "vars": {
                 "instance": "database-test",
+                "_database_backend_memory_mib": 2048,
                 "_database_backend_storage": "instance-store",
                 "app_config": {"proxmox": {
                     "guest_type": "lxc",

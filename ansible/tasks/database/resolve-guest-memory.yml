@@ -1,11 +1,11 @@
 ---
+# Match provisioning: the selected guest block wins, then shared memory, then 2048 MiB.
 - name: Database backend | Resolve the guest memory from instance config
   ansible.builtin.set_fact:
     _database_backend_memory_mib: >-
       {{ app_config.proxmox.get(
-           'memory',
-           app_config.proxmox.get('lxc', {}).get(
-             'memory', app_config.proxmox.get('vm', {}).get('memory', 2048)))
+           _database_backend_guest_type, {}).get(
+             'memory', app_config.proxmox.get('memory', 2048))
          | int }}
 
 - name: Database backend | Validate the configured guest and engine memory maps
