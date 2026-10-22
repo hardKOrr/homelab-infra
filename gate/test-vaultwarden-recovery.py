@@ -121,6 +121,28 @@ def check_contract_and_dispatch():
     }
 
     remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove_pre_tasks = list(tasks_recursive(remove[0]))
+    missing_backend = task_named(
+        remove_pre_tasks,
+        "Recognize an absent registered database backend for cleanup",
+    )
+    missing_backend_expr = str(
+        missing_backend["ansible.builtin.set_fact"]["_rm_database_backend_missing_guest"]
+    )
+    assert "homelabinfra_infra" in missing_backend_expr
+    assert "databases" in missing_backend_expr
+    assert "_rm_destroy_guest_host | length == 0" in missing_backend_expr
+    assert "proxmox_name" in missing_backend_expr and "equalto" in missing_backend_expr
+    validate_destroy = task_named(
+        remove_pre_tasks,
+        "Validate the explicit guest destruction request before unwiring",
+    )
+    validate_checks = str(validate_destroy["ansible.builtin.assert"]["that"])
+    assert "_rm_database_backend_missing_guest" in validate_checks
+    assert "delete_data" in validate_checks and "_rm_kind == 'native'" in validate_checks
+    ownership = task_named(remove_pre_tasks, "Verify ownership and non-shared tags before unwiring")
+    assert "_rm_destroy_guest_host | length > 0" in str(ownership["when"])
+
     play_names = [play.get("name", "") for play in remove]
     destroy_index = next(
         i for i, name in enumerate(play_names) if name.startswith("Remove App | Stop")
@@ -157,6 +179,97 @@ def check_contract_and_dispatch():
     repository = task_named(pbs_tasks, "Vaultwarden PBS client | Configure the signed client repository")
     assert "{{ ansible_distribution_release }}" in repository["ansible.builtin.copy"]["content"]
     assert "{{ _vaultwarden_pbs_keyring }}" in repository["ansible.builtin.copy"]["content"]
+
+
+def check_remove_absent_database_backend_cleanup():
+    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove_pre_tasks = list(tasks_recursive(remove[0]))
+    resolve = task_named(remove_pre_tasks, "Resolve the exact guest selected for explicit destruction")
+    missing_backend = task_named(
+        remove_pre_tasks,
+        "Recognize an absent registered database backend for cleanup",
+    )
+    validate = task_named(
+        remove_pre_tasks,
+        "Validate the explicit guest destruction request before unwiring",
+    )
+    ownership = task_named(remove_pre_tasks, "Verify ownership and non-shared tags before unwiring")
+
+    def run_case(instance, app, database_instances, guest=None, expected_missing=True, failure=None):
+        with tempfile.TemporaryDirectory(prefix="homelab-remove-database.") as directory:
+            root = Path(directory)
+            hosts = {"localhost": {"ansible_connection": "local"}}
+            if guest is not None:
+                hosts[instance] = guest
+            inventory = {"all": {"hosts": hosts}}
+            inventory_path = root / "inventory.yml"
+            inventory_path.write_text(yaml.safe_dump(inventory), encoding="utf-8")
+            playbook = root / "remove-guard.yml"
+            databases = {name: {"provider": app} for name in database_instances}
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {
+                    "instance": instance,
+                    "app": app,
+                    "delete_data": True,
+                    "destroy_guest": True,
+                    "_rm_kind": "native",
+                    "_rm_destroy_guest_host": "",
+                    "homelabinfra_infra": {"databases": databases},
+                    "expected_missing_backend": expected_missing,
+                },
+                "tasks": [
+                    copy.deepcopy(resolve),
+                    copy.deepcopy(missing_backend),
+                    copy.deepcopy(validate),
+                    copy.deepcopy(ownership),
+                    {"name": "Check absent-backend classification", "ansible.builtin.assert": {
+                        "that": [
+                            "(_rm_database_backend_missing_guest | default(false) | bool) == expected_missing_backend",
+                        ],
+                    }},
+                ],
+            }]), encoding="utf-8")
+            result = subprocess.run(
+                [str(ANSIBLE_PLAYBOOK), "-i", str(inventory_path), str(playbook)],
+                env=os.environ | {
+                    "ANSIBLE_STDOUT_CALLBACK": "default",
+                    "ANSIBLE_NOCOLOR": "1",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            output = result.stdout + result.stderr
+            if failure is not None:
+                assert result.returncode != 0 and failure in output, output
+            else:
+                assert result.returncode == 0, output
+
+    owned_guest = {
+        "proxmox_name": "postgresql",
+        "proxmox_vmtype": "lxc",
+        "proxmox_vmid": 402,
+        "proxmox_node": "pve-a",
+        "proxmox_tags_parsed": ["_+lab", "_postgresql"],
+    }
+    unowned_guest = {
+        **owned_guest,
+        "proxmox_tags_parsed": ["_+lab", "_other-app"],
+    }
+    run_case("postgresql", "postgresql", ["postgresql"])
+    run_case("mariadb-mautic-stage", "mariadb", ["mariadb-mautic-stage"])
+    run_case("missing-app", "immich", [], failure="destroy_guest=true requires delete_data=true")
+    run_case("postgresql", "postgresql", ["postgresql"], guest=owned_guest, expected_missing=False)
+    run_case(
+        "postgresql",
+        "postgresql",
+        ["postgresql"],
+        guest=unowned_guest,
+        expected_missing=False,
+        failure="Refusing destroy_guest=true",
+    )
 
 
 def check_retained_lxc_resolution():
@@ -466,6 +579,7 @@ raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
 
 def main():
     check_contract_and_dispatch()
+    check_remove_absent_database_backend_cleanup()
     check_retained_lxc_resolution()
     check_backup_role()
     check_restore_transaction()
@@ -480,7 +594,7 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
-    print("Vaultwarden: native recovery contract, plan, selected group, success and post-move rollback passed")
+    print("Vaultwarden recovery and Remove: contract, isolation, absent-backend cleanup, and rollback passed")
 
 
 if __name__ == "__main__":

@@ -952,16 +952,32 @@
         _rm_destroy_guest_host: "{{ instance if instance in (groups['all'] | default([])) else '' }}"
       when: destroy_guest | default(false) | bool
 
+    - name: Recognize an absent registered database backend for cleanup
+      ansible.builtin.set_fact:
+        _rm_database_backend_missing_guest: >-
+          {{ (app | default(instance)) in ['influxdb', 'mariadb', 'mysql', 'postgresql', 'redis']
+             and instance in ((homelabinfra_infra | default({})).get('databases', {}))
+             and _rm_destroy_guest_host | length == 0
+             and (groups['all'] | default([])
+                  | map('extract', hostvars)
+                  | selectattr('proxmox_name', 'defined')
+                  | selectattr('proxmox_name', 'equalto', instance)
+                  | list | length == 0) }}
+      when: destroy_guest | default(false) | bool
+
     - name: Validate the explicit guest destruction request before unwiring
       ansible.builtin.assert:
         that:
           - delete_data | default(false) | bool
           - _rm_kind == 'native'
-          - _rm_destroy_guest_host | length > 0
-          - _rm_destroy_guest_host == instance
+          - >-
+            (_rm_destroy_guest_host | length > 0)
+            or (_rm_database_backend_missing_guest | default(false) | bool)
+          - _rm_destroy_guest_host | length == 0 or _rm_destroy_guest_host == instance
         fail_msg: >-
           destroy_guest=true requires delete_data=true and a native app instance that
-          resolves to its matching inventory guest; Docker stack hosts, appliances and
+          resolves to its matching inventory guest, or an already absent registered
+          database backend for registry cleanup; Docker stack hosts, appliances and
           Kubernetes nodes cannot be destroyed through Remove App.
       when: destroy_guest | default(false) | bool
 
