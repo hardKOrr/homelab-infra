@@ -21,8 +21,14 @@
 #
 # Idempotent: the record is one "<ip> <fqdn>" element of the dns.hosts config array.
 # Any stale element for this FQDN is removed first, then the wanted element is added
-# only when absent. The session is always closed in the always: block — Pi-hole allows
-# a small fixed number of concurrent sessions and leaking them locks out the UI.
+# only when absent. Since Pi-hole has no per-record description, a changed route host
+# captured by Caddy's stable instance id identifies the previous name to remove.
+# Failure window: Caddy is updated before this task. If Pi-hole fails here and Deploy is
+# retried, Caddy no longer has the old host. Pi-hole's host strings have no owner, so
+# sweeping records by proxy IP could delete a sibling or operator entry; verify and
+# remove any orphaned previous entry after restoring Pi-hole API availability.
+# The session is always closed in the always: block — Pi-hole allows a small fixed
+# number of concurrent sessions and leaking them locks out the UI.
 #
 # Requests carry no_log (password and session SID).
 
@@ -81,6 +87,11 @@
           X-FTL-SID: "{{ _ph_auth.json.session.sid }}"
           Accept: "application/json"
         _ph_entry: "{{ _ph_ip }} {{ wiring_domain }}"
+        _ph_previous_domains: >-
+          {{ (wiring_previous_domains_by_app | default({}))
+             .get(wiring_app_name | default(''), [])
+             if homelabinfra_infra.get('reverse_proxy', {}).get('provider', 'none') == 'caddy'
+             else [] }}
       block:
         - name: Wire Pihole | Read current custom DNS records
           ansible.builtin.uri:
@@ -102,8 +113,38 @@
             _ph_present: >-
               {{ _ph_entry in (_ph_hosts.json.config.dns.hosts | default([])) }}
 
-        # A changed upstream IP would otherwise leave two records for the same FQDN and
-        # Pi-hole would answer with both.
+        # A Pi-hole host entry has no owner field. Delete the previous route hostname
+        # only when it points to this same DNS target; other custom records are opaque
+        # operator data and remain untouched.
+        - name: Wire Pihole | Select prior route hostnames
+          ansible.builtin.set_fact:
+            _ph_prior_domains: >-
+              {{ _ph_previous_domains | reject('equalto', wiring_domain) | list }}
+            _ph_prior_entries: >-
+              {{ (_ph_previous_domains | reject('equalto', wiring_domain) | list)
+                 | map('regex_replace', '^', _ph_ip ~ ' ') | list }}
+          no_log: true
+
+        - name: Wire Pihole | Select the prior route record
+          ansible.builtin.set_fact:
+            _ph_prior_records: >-
+              {{ (_ph_hosts.json.config.dns.hosts | default([]))
+                 | select('in', _ph_prior_entries) | list }}
+          no_log: true
+
+        - name: Wire Pihole | Add DNS record
+          ansible.builtin.uri:
+            url: "{{ _ph_base }}/api/config/dns/hosts/{{ _ph_entry | urlencode }}"
+            method: PUT
+            headers: "{{ _ph_headers }}"
+            validate_certs: "{{ _ph_validate | bool }}"
+            status_code: [200, 201]
+          when: not (_ph_present | bool)
+          changed_when: true
+          no_log: true
+
+        # Publish the wanted entry before removing stale same-name entries or the
+        # previous route hostname, so a failed add never removes the last working name.
         - name: Wire Pihole | Delete stale records for this FQDN
           ansible.builtin.uri:
             url: "{{ _ph_base }}/api/config/dns/hosts/{{ item | urlencode }}"
@@ -115,14 +156,14 @@
           changed_when: true
           no_log: true
 
-        - name: Wire Pihole | Add DNS record
+        - name: Wire Pihole | Delete the prior route record
           ansible.builtin.uri:
-            url: "{{ _ph_base }}/api/config/dns/hosts/{{ _ph_entry | urlencode }}"
-            method: PUT
+            url: "{{ _ph_base }}/api/config/dns/hosts/{{ item | urlencode }}"
+            method: DELETE
             headers: "{{ _ph_headers }}"
             validate_certs: "{{ _ph_validate | bool }}"
-            status_code: [200, 201]
-          when: not (_ph_present | bool)
+            status_code: [200, 204, 404]
+          loop: "{{ _ph_prior_records }}"
           changed_when: true
           no_log: true
 
@@ -141,7 +182,24 @@
           ansible.builtin.assert:
             that:
               - _ph_entry in (_ph_verify.json.config.dns.hosts | default([]))
+              - >-
+                (_ph_verify.json.config.dns.hosts | default([])
+                 | select('search', '\\s' ~ (wiring_domain | regex_escape) ~ '$')
+                 | list | length) == 1
             fail_msg: "Pi-hole has no custom DNS record '{{ _ph_entry }}' after wiring."
+
+        - name: Wire Pihole | Assert previous route records are gone
+          ansible.builtin.assert:
+            that:
+              - >-
+                (_ph_verify.json.config.dns.hosts | default([])
+                 | select('search', '\\s' ~ (item | regex_escape) ~ '$')
+                 | list | length) == 0
+            fail_msg: >-
+              Pi-hole still has a custom DNS entry for this application's previous Caddy
+              hostname. An entry with a different target was left untouched.
+          loop: "{{ _ph_prior_domains }}"
+          no_log: true
       always:
         - name: Wire Pihole | Close API session
           ansible.builtin.uri:

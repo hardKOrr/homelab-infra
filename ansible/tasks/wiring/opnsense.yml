@@ -28,10 +28,12 @@
 # paths this slice's README sketched were retired upstream.
 # Docs: https://docs.opnsense.org/development/api/core/unbound.html
 #
-# Idempotent: the override is located by hostname + domain; absent → addHostOverride,
-# drifted → setHostOverride, identical → no change. Unbound is reconfigured only when
-# something actually changed. Silent no-op when the configured DNS provider is not
-# opnsense.
+# Idempotent: the current override is located by hostname + domain and the exact
+# homelab-infra description. Old overrides with that same description are removed after
+# the current one is present; operator records with another description are never changed.
+# Absent → addHostOverride, drifted → setHostOverride, identical → no change. Unbound is
+# reconfigured only when something actually changed. Silent no-op when the configured
+# DNS provider is not opnsense.
 
 - name: Wire OPNsense | Create Unbound host override
   when: homelabinfra_infra.dns.provider | default('none') == 'opnsense'
@@ -42,6 +44,7 @@
          else 'https://' ~ homelabinfra_infra.dns.host }}
     _opn_hostname: "{{ wiring_hostname | default(wiring_domain.split('.')[0]) }}"
     _opn_zone: "{{ wiring_dns_domain | default(wiring_domain.split('.')[1:] | join('.')) }}"
+    _opn_owner_description: "homelab-infra: {{ wiring_app_name | default(_opn_hostname) }}"
     _opn_proxy_ip: >-
       {{ homelabinfra_infra.reverse_proxy.host | default('', true)
          | regex_replace('^https?://', '') | regex_replace(':.*$', '') }}
@@ -64,9 +67,26 @@
           (wiring_ip, a configured reverse proxy, or wiring_upstream_host), and
           dns.api_key + dns.api_secret in config/.generated/facts.yml.
 
-    - name: Wire OPNsense | Read and validate host override search
+    - name: Wire OPNsense | Read and validate host override searches
       block:
-        - name: Wire OPNsense | Search existing host overrides
+        - name: Wire OPNsense | Search overrides by instance description
+          ansible.builtin.uri:
+            url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
+            method: POST
+            url_username: "{{ homelabinfra_infra.dns.api_key }}"
+            url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+            force_basic_auth: true
+            validate_certs: "{{ _opn_validate | bool }}"
+            body_format: json
+            body: >-
+              {{ {'current': 1, 'rowCount': 1000,
+                  'searchPhrase': wiring_app_name | default(_opn_hostname)} }}
+            status_code: 200
+          register: _opn_owner_search
+          changed_when: false
+          no_log: true
+
+        - name: Wire OPNsense | Search overrides by current hostname
           ansible.builtin.uri:
             url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
             method: POST
@@ -78,7 +98,7 @@
             body: >-
               {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_hostname} }}
             status_code: 200
-          register: _opn_search
+          register: _opn_hostname_search
           changed_when: false
           no_log: true
 
@@ -87,11 +107,16 @@
         - name: Wire OPNsense | Validate host override search response
           ansible.builtin.assert:
             that:
-              - _opn_search.json is defined
-              - _opn_search.json is mapping
-              - _opn_search.json.rows is defined
-              - _opn_search.json.rows | type_debug == 'list'
-              - _opn_search.json.rows | select('mapping') | list | length == _opn_search.json.rows | length
+              - _opn_owner_search.json is defined
+              - _opn_owner_search.json is mapping
+              - _opn_owner_search.json.rows is defined
+              - _opn_owner_search.json.rows | type_debug == 'list'
+              - _opn_owner_search.json.rows | select('mapping') | list | length == _opn_owner_search.json.rows | length
+              - _opn_hostname_search.json is defined
+              - _opn_hostname_search.json is mapping
+              - _opn_hostname_search.json.rows is defined
+              - _opn_hostname_search.json.rows | type_debug == 'list'
+              - _opn_hostname_search.json.rows | select('mapping') | list | length == _opn_hostname_search.json.rows | length
           no_log: true
       rescue:
         # Never interpolate msg, exception, URL, headers, body or invocation from
@@ -115,9 +140,7 @@
               for response-shape failures check the settings/searchHostOverride JSON contract.
           vars:
             _opn_failure_status: >-
-              {{ (_opn_search.status | default(0) if ansible_failed_task.name ==
-                  'Wire OPNsense | Validate host override search response'
-                  else ansible_failed_result.status | default(0)) | int }}
+              {{ ansible_failed_result.status | default(0) | int }}
             # fetch_url collapses several exception classes to status=-1. Match
             # only known Ansible/Python prefixes, never echo arbitrary error text.
             # A signature is evidence about the failure text, not a root cause.
@@ -144,15 +167,32 @@
                    search('^Connection failure: (Remote end closed connection without response|connection was closed before a valid response was received:)')
                  else 'unclassified' }}
 
-    - name: Wire OPNsense | Select existing override and build payload
+    - name: Wire OPNsense | Select owned and current-host overrides
       ansible.builtin.set_fact:
+        _opn_owned_matches: >-
+          {{ (_opn_owner_search.json.rows | default([]))
+             | selectattr('description', 'equalto', _opn_owner_description)
+             | list }}
+        _opn_current_hostname_matches: >-
+          {{ (_opn_hostname_search.json.rows | default([]))
+             | selectattr('hostname', 'equalto', _opn_hostname)
+             | selectattr('domain', 'equalto', _opn_zone)
+             | list }}
+      no_log: true
+
+    - name: Wire OPNsense | Select current override and build payload
+      ansible.builtin.set_fact:
+        _opn_foreign_matches: >-
+          {{ _opn_current_hostname_matches
+             | rejectattr('description', 'equalto', _opn_owner_description)
+             | list }}
         _opn_existing_matches: >-
-          {{ (_opn_search.json.rows | default([]))
+          {{ _opn_owned_matches
              | selectattr('hostname', 'equalto', _opn_hostname)
              | selectattr('domain', 'equalto', _opn_zone)
              | list }}
         _opn_existing: >-
-          {{ (_opn_search.json.rows | default([]))
+          {{ _opn_owned_matches
              | selectattr('hostname', 'equalto', _opn_hostname)
              | selectattr('domain', 'equalto', _opn_zone)
              | list | first | default({}) }}
@@ -165,9 +205,34 @@
                'domain': _opn_zone,
                'rr': 'A',
                'server': _opn_ip,
-               'description': 'homelab-infra: ' ~ (wiring_app_name | default(_opn_hostname)),
+               'description': _opn_owner_description,
              }} }}
       no_log: true
+
+    - name: Wire OPNsense | Select previous owned overrides
+      ansible.builtin.set_fact:
+        _opn_stale_owned: >-
+          {{ _opn_owned_matches
+             | rejectattr('uuid', 'equalto', _opn_existing.uuid | default(''))
+             | list }}
+      no_log: true
+
+    - name: Wire OPNsense | Require UUIDs for owned overrides
+      ansible.builtin.assert:
+        that:
+          - _opn_owned_matches | selectattr('uuid', 'defined') | list | length == _opn_owned_matches | length
+        fail_msg: >-
+          OPNsense returned an owned Unbound host override without its UUID. No DNS
+          records were changed; inspect Services > Unbound DNS > Overrides before rerunning.
+      no_log: true
+
+    - name: Wire OPNsense | Reject a foreign override at the current hostname
+      ansible.builtin.assert:
+        that: _opn_foreign_matches | length == 0
+        fail_msg: >-
+          OPNsense already has an Unbound host override for {{ _opn_hostname }}.{{ _opn_zone }}
+          without description '{{ _opn_owner_description }}'. It was left untouched;
+          resolve the hostname conflict before rerunning this application's Deploy.
 
     - name: Wire OPNsense | Reject duplicate exact host overrides
       ansible.builtin.assert:
@@ -223,6 +288,22 @@
           (add: {{ _opn_add.json.result | default('skipped') }},
           set: {{ _opn_set.json.result | default('skipped') }}).
 
+    - name: Wire OPNsense | Delete previous overrides owned by this instance
+      ansible.builtin.uri:
+        url: "{{ _opn_base }}/api/unbound/settings/delHostOverride/{{ item.uuid }}"
+        method: POST
+        url_username: "{{ homelabinfra_infra.dns.api_key }}"
+        url_password: "{{ homelabinfra_infra.dns.api_secret }}"
+        force_basic_auth: true
+        validate_certs: "{{ _opn_validate | bool }}"
+        body_format: json
+        body: {}
+        status_code: 200
+      loop: "{{ _opn_stale_owned }}"
+      register: _opn_delete
+      changed_when: true
+      no_log: true
+
     - name: Wire OPNsense | Read the host override after reconciliation
       ansible.builtin.uri:
         url: "{{ _opn_base }}/api/unbound/settings/searchHostOverride"
@@ -233,7 +314,8 @@
         validate_certs: "{{ _opn_validate | bool }}"
         body_format: json
         body: >-
-          {{ {'current': 1, 'rowCount': 1000, 'searchPhrase': _opn_hostname} }}
+          {{ {'current': 1, 'rowCount': 1000,
+              'searchPhrase': wiring_app_name | default(_opn_hostname)} }}
         status_code: 200
       register: _opn_verify_search
       changed_when: false
@@ -243,8 +325,7 @@
       ansible.builtin.set_fact:
         _opn_verified_matches: >-
           {{ (_opn_verify_search.json.rows | default([]))
-             | selectattr('hostname', 'equalto', _opn_hostname)
-             | selectattr('domain', 'equalto', _opn_zone)
+             | selectattr('description', 'equalto', _opn_owner_description)
              | list }}
       no_log: true
 
@@ -252,6 +333,8 @@
       ansible.builtin.assert:
         that:
           - _opn_verified_matches | length == 1
+          - _opn_verified_matches[0].hostname | default('') == _opn_hostname
+          - _opn_verified_matches[0].domain | default('') == _opn_zone
           - _opn_verified_matches[0].server | default('') == _opn_ip
           - _opn_verified_matches[0].enabled | default('0') | string == '1'
         fail_msg: >-
@@ -273,6 +356,7 @@
         body_format: json
         body: {}
         status_code: 200
-      when: (_opn_add is not skipped) or (_opn_set is not skipped)
+      when:
+        - (_opn_add is not skipped) or (_opn_set is not skipped) or (_opn_delete is not skipped)
       changed_when: true
       no_log: true
