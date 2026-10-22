@@ -27,6 +27,9 @@
     _jf_base: "http://localhost:{{ app_config.app.port }}"
     _jf_subdomain: "{{ app_config.routing.subdomain | default(instance, true) }}"
 
+- name: Resolve Jellyfin's DRI device and host groups
+  ansible.builtin.include_tasks: configure-devices.yml
+
 # What Jellyfin tells its clients its own address is. Empty unless the lab has a
 # domain, and the compose template omits the variable entirely in that case —
 # Jellyfin then falls back to advertising the address it sees, which is the right
@@ -288,6 +291,12 @@
       {{ instance }} served /Users to a caller with no token. Anything on the LAN
       can enumerate this server's accounts and stream from it. Check whether the
       running container is reading a configuration this role did not write.
+
+# A declared Intel iGPU is the configuration source of truth for Jellyfin's
+# acceleration settings too. Saving through Jellyfin's API keeps the server's
+# own encoding configuration converged alongside the device passed by Compose.
+- name: Configure Jellyfin hardware transcoding from its declared device
+  ansible.builtin.include_tasks: configure-transcoding.yml
 
 # ── Libraries ─────────────────────────────────────────────────────────────────
 # A media server with no library is a deploy that exited 0 and left the operator
