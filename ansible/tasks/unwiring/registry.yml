@@ -20,6 +20,7 @@
 # Inputs:
 #   instance                    the app being removed
 #   unwire_registry_file        absolute path to config/.generated/facts.yml
+#   unwire_registry_database_backend  true only after destroying this backend's owned guest
 #
 # NOT a degradation site. A registry the platform failed to prune is a landmine for the
 # next run, and unlike the provider unwiring above it cannot be "stale route on a proxy
@@ -36,7 +37,11 @@
     argv:
       - "{{ ansible_playbook_python }}"
       - "{{ unwire_registry_file | dirname | dirname | dirname }}/ansible/scripts/registry-forget.py"
-    stdin: "{{ {'registry': _unwire_registry, 'instance': instance} | to_json }}"
+    stdin: >-
+      {{ {'registry': _unwire_registry,
+          'instance': instance,
+          'database_backend': unwire_registry_database_backend | default(false) | bool}
+         | to_json }}
   register: _unwire_registry_pruned
   changed_when: false
   delegate_to: localhost

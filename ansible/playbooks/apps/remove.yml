@@ -17,10 +17,12 @@
 #                  (-e instance=radarr-4k -e app=radarr).
 #   delete_data  — false (default) keeps volumes and data paths, so re-running the
 #                  deploy restores the app with its data. true wipes them.
-#   destroy_guest — false (default) keeps its LXC. true is allowed only with
-#                   delete_data=true and a native LXC carrying both _+lab and
+#   destroy_guest — false (default) keeps its native guest. true is allowed only with
+#                   delete_data=true and a native LXC or VM carrying both _+lab and
 #                   _<instance>; a live ownership and sharing check runs again
 #                   immediately before Proxmox destroys it.
+#                   Destroying a database backend also removes its exact generated database
+#                   registry entry after the guest is gone.
 #
 # Order of operations — unwire first, then stop:
 #   1. Resolve the instance's config and locate its host
@@ -47,7 +49,7 @@
 # By default, Remove does NOT:
 #   - Delete config/apps/<instance>.yml (restore point — user deletes manually)
 #   - Destroy any Proxmox guest, including a now-empty stack host or a native app's
-#     own LXC (pass destroy_guest=true with delete_data=true to remove one native LXC)
+#     own guest (pass destroy_guest=true with delete_data=true for one native guest)
 #   - Remove data unless -e delete_data=true
 
 # ── Play 1: Resolve the instance, unwire it ────────────────────────────────────
@@ -2074,7 +2076,22 @@
         - proxmox_vmtype == 'qemu'
 
 
-# ── Play 3: Remove Hi.Events' named database after its namespace is gone ────────
+# ── Play 3: Forget a destroyed database backend after its guest is gone ────────
+- name: "Remove Database Backend | Unregister destroyed backend"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Forget the destroyed database backend's generated registry entry
+      ansible.builtin.include_tasks: ../../tasks/unwiring/registry.yml
+      vars:
+        unwire_registry_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        unwire_registry_database_backend: true
+      when:
+        - delete_data | default(false) | bool
+        - destroy_guest | default(false) | bool
+        - (app | default(instance)) in ['influxdb', 'mariadb', 'mysql', 'postgresql', 'redis']
+
+# ── Play 4: Remove Hi.Events' named database after its namespace is gone ────────
 - name: "Remove Hi.Events | Delete its named database"
   hosts: localhost
   gather_facts: false
@@ -2174,7 +2191,7 @@
           no_log: true
           when: _rm_hi_events_database_role.stdout | trim == 'present'
 
-# ── Play 4: Notify ─────────────────────────────────────────────────────────────
+# ── Play 5: Notify ─────────────────────────────────────────────────────────────
 - name: "Remove App | Notify"
   hosts: localhost
   gather_facts: false

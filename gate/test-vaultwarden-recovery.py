@@ -94,9 +94,52 @@ def check_contract_and_dispatch():
     registry = {
         "vaultwarden": {"host": "http://root-vault.invalid", "port": 80},
         "apps": {"vaultwarden-family": {"host": "http://family.invalid", "port": 80}},
+        "databases": {
+            "mariadb-bookstack": {"provider": "mariadb", "host": "db.invalid", "port": 3306},
+            "mariadb-stage": {"provider": "mariadb", "host": "stage.invalid", "port": 3306},
+        },
     }
     assert registry_module.prune(registry, "vaultwarden-family") == {
-        "vaultwarden": {"host": "http://root-vault.invalid", "port": 80}}
+        "vaultwarden": {"host": "http://root-vault.invalid", "port": 80},
+        "databases": registry["databases"],
+    }
+    consumer_registry = {
+        "apps": {"bookstack": {"host": "http://bookstack.invalid", "port": 80}},
+        "databases": {
+            "mariadb-bookstack": {"provider": "mariadb", "host": "db.invalid", "port": 3306},
+        },
+    }
+    assert registry_module.prune(consumer_registry, "bookstack") == {
+        "databases": consumer_registry["databases"],
+    }
+    assert registry_module.prune(registry, "mariadb-stage", database_backend=True) == {
+        "vaultwarden": {"host": "http://root-vault.invalid", "port": 80},
+        "apps": {"vaultwarden-family": {"host": "http://family.invalid", "port": 80}},
+        "databases": {
+            "mariadb-bookstack": {"provider": "mariadb", "host": "db.invalid", "port": 3306},
+        },
+    }
+
+    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    play_names = [play.get("name", "") for play in remove]
+    destroy_index = next(
+        i for i, name in enumerate(play_names) if name.startswith("Remove App | Stop")
+    )
+    registry_index = play_names.index(
+        "Remove Database Backend | Unregister destroyed backend"
+    )
+    notify_index = play_names.index("Remove App | Notify")
+    assert destroy_index < registry_index < notify_index
+    unregister = next(
+        task for task in tasks_recursive(remove[registry_index])
+        if task.get("name") == "Forget the destroyed database backend's generated registry entry"
+    )
+    assert unregister["ansible.builtin.include_tasks"] == (
+        "../../tasks/unwiring/registry.yml"
+    )
+    assert unregister["vars"]["unwire_registry_database_backend"] is True
+    assert "destroy_guest" in str(unregister["when"])
+    assert "delete_data" in str(unregister["when"])
 
     pbs_client = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/install-pbs-client.yml")
     pbs_tasks = list(tasks_recursive(pbs_client))
