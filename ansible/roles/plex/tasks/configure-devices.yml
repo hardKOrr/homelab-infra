@@ -1,0 +1,35 @@
+---
+- name: Resolve whether Plex declares DRI hardware
+  ansible.builtin.set_fact:
+    _plex_dri_device_declared: >-
+      {{ (app_config.app.devices | default([], true)
+          | select('match', '^/dev/dri(?:/|$)') | list | length > 0)
+         or (app_config.app.gpu_device | default('', true) | trim | length > 0) }}
+    _plex_dri_group_ids: []
+
+- name: Read the stack host's DRI device group IDs
+  ansible.builtin.command:
+    argv:
+      - find
+      - /dev/dri
+      - -maxdepth
+      - "1"
+      - -type
+      - c
+      - -printf
+      - "%G\\n"
+  register: _plex_dri_group_ids_found
+  changed_when: false
+  when: _plex_dri_device_declared | bool
+
+- name: Assert the stack host exposes DRI device nodes
+  ansible.builtin.assert:
+    that: _plex_dri_group_ids_found.stdout_lines | default([]) | length > 0
+    fail_msg: >-
+      Plex declares DRI hardware, but the stack host exposes no character devices under /dev/dri.
+  when: _plex_dri_device_declared | bool
+
+- name: Resolve the unique DRI supplemental group IDs
+  ansible.builtin.set_fact:
+    _plex_dri_group_ids: "{{ _plex_dri_group_ids_found.stdout_lines | map('trim') | unique | list }}"
+  when: _plex_dri_device_declared | bool

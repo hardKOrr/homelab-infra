@@ -44,6 +44,7 @@ templates.
 - `test-lab-refresh.py`: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote push; explicit refresh still updates it.
 - `test-actual-budget-password.py`: Actual Budget's native terminal password exchange and failure handling.
 - `test-plex-recovery.py`: Plex native capability/dispatch and non-mutating restore preview.
+- `test-plex-hardware-transcoding.py`: Plex hardware decoding/encoding preferences follow the declared `/dev/dri` device and converge on repeat runs.
 - `test-ntfy-recovery.py`: native auth/cache archives, read-only planning, group guards and two-directory rollback.
 - `test-influxdb-recovery.py`: native data archive, restore credential checks and transactional rollback after replacement failures.
 - `test-redis-recovery.py`: default native LXC deploy, ACL password rotation, `nopass` convergence and `ACL SAVE` flag preservation, Redis readiness retries, native RDB PBS recovery, restore rollback and scoped guest removal.

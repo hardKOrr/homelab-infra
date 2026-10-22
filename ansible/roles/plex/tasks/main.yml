@@ -72,6 +72,9 @@
     fail_msg: "{{ item.item.path }} is not present on the media stack host."
   loop: "{{ _plex_mount_checks.results }}"
 
+- name: Configure Plex access to declared DRI devices
+  ansible.builtin.include_tasks: configure-devices.yml
+
 - name: Write the Plex Compose project
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -134,6 +137,9 @@
     fail_msg: >-
       Plex started but Preferences.xml lacks PlexOnlineToken. Obtain a fresh claim
       token, update homelab-infra/apps/{{ instance }} in Vaultwarden, and rerun.
+
+- name: Configure Plex hardware transcoding from its declared device
+  ansible.builtin.include_tasks: configure-transcoder.yml
 
 - name: Store and verify the Plex server token
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
