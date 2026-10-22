@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Check shared memory preflight coverage and placement before Proxmox mutations."""
 
+import json
 from pathlib import Path
 
+from jinja2 import Environment, StrictUndefined
 import yaml
 
 repo = Path(__file__).resolve().parents[1]
@@ -59,11 +61,33 @@ config = task_index(
     ensure,
     name="Ensure running | Read the guest config needed for memory checks or balloon convergence",
 )
-assert config < memory_check < start
+decode = task_index(ensure, name="Ensure running | Decode current guest config for balloon convergence")
+balloon_memory = task_index(ensure, name="Ensure running | Resolve the configured VM memory maximum")
+balloon_validation = task_index(ensure, name="Ensure running | Validate the configured balloon minimum")
+balloon_converge = task_index(ensure, name="Ensure running | Converge the configured VM balloon minimum")
+assert config < decode < balloon_memory < balloon_validation < balloon_converge < memory_check < start
 assert ensure[config]["when"] == [
     "_egr_status != 'running' or (_egr_vmtype == 'qemu' and (_egr_balloon_requested | string | length > 0))"
 ]
 assert ensure[memory_check]["when"] == "_egr_status != 'running'"
-assert "_egr_guest_config.stdout | from_json" in str(ensure[memory_check]["vars"])
+memory_expression = ensure[memory_check]["vars"]["proxmox_guest_memory_mib"]
+assert "_egr_balloon_memory_mib" in memory_expression
+assert "_egr_balloon_requested" in memory_expression
+assert "_egr_guest_config.stdout | from_json" in memory_expression
+
+jinja = Environment(undefined=StrictUndefined)
+jinja.filters["from_json"] = json.loads
+memory_template = jinja.from_string(memory_expression)
+configured_memory = memory_template.render(
+    _egr_balloon_requested="512",
+    _egr_balloon_memory_mib="4096",
+    _egr_guest_config={"stdout": json.dumps({"memory": 2048})},
+)
+assert configured_memory == "4096", configured_memory
+current_memory = memory_template.render(
+    _egr_balloon_requested="",
+    _egr_guest_config={"stdout": json.dumps({"memory": 2048})},
+)
+assert current_memory == "2048", current_memory
 
 print("Proxmox memory preflight covers create/start paths and skips running guests")

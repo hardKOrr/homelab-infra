@@ -138,7 +138,10 @@
     proxmox_memory_guest: >-
       {{ hostvars[ensure_guest_host].proxmox_name
          | default(hostvars[ensure_guest_host].proxmox_hostname | default(ensure_guest_host)) }}
-    proxmox_guest_memory_mib: "{{ (_egr_guest_config.stdout | from_json).memory | default(512) | int }}"
+    proxmox_guest_memory_mib: >-
+      {{ (_egr_balloon_memory_mib
+          if (_egr_balloon_requested | string | length > 0)
+          else ((_egr_guest_config.stdout | from_json).memory | default(512))) | int }}
   when: _egr_status != 'running'
 
 - name: Ensure running | Start the guest if it is not running
