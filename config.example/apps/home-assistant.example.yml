@@ -19,6 +19,7 @@ app:
 #   vm:
 #     cores: 4
 #     memory: 8192
+#     balloon: 2048 # optional minimum in MiB; memory remains the maximum
 #     disk_size: 64
 
 # Optional routing overrides; uncomment the top-level key to set any of these.

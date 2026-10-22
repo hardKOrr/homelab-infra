@@ -9,6 +9,8 @@ proxmox:
   fqdn: pdm.example.internal
   bridge: vmbr0
   vlan: 0 # set the guest VLAN tag when the selected bridge is a trunk
+  # Optional VM resource overrides. `memory` is the maximum; `balloon` is the minimum.
+  # vm: {memory: 4096, balloon: 1024}
 remotes:
   - id: lab-pve
     type: pve

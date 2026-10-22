@@ -22,9 +22,12 @@
 #   ensure_guest_host — inventory hostname of the existing guest. Its proxmox_*
 #                       hostvars (vmid, node, status, vmtype) come from the dynamic
 #                       inventory with want_facts: true.
+#   app_config         — optional merged app config; a configured VM balloon minimum
+#                       converges its memory maximum and balloon value on deploy.
 #
-# Idempotent: a running guest is a no-op, and the "already running" race between the
-# status fact and the start is tolerated rather than treated as a failure.
+# Idempotent: a running guest without VM config drift is a no-op, and the "already
+# running" race between the status fact and the start is tolerated rather than treated
+# as a failure.
 
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
@@ -40,6 +43,10 @@
     # compares the vmtype against the string 'qm' and yields the BOOLEAN False — producing
     # the command `False start <vmid>`.
     _egr_command: "{{ ((hostvars[ensure_guest_host].proxmox_vmtype | default('lxc')) == 'qemu') | ternary('qm', 'pct') }}"
+    # App deploys carry their effective per-instance config on localhost. Other callers
+    # (for example the reviewed start-only helper) may not, so absence stays a no-op.
+    _egr_balloon_requested: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get('balloon') or '' }}
 
 # A guest in the inventory always carries these. Missing them means the caller passed
 # a host the Proxmox inventory did not produce, which is worth failing on rather than
@@ -53,7 +60,7 @@
       Cannot determine the Proxmox vmid/node for '{{ ensure_guest_host }}'. Expected
       proxmox_vmid and proxmox_node hostvars from the dynamic inventory.
 
-- name: Ensure running | Read the stopped guest's configured memory
+- name: Ensure running | Read the guest config needed for memory checks or balloon convergence
   ansible.builtin.command:
     argv:
       - pvesh
@@ -64,7 +71,65 @@
   delegate_to: "{{ _egr_node }}"
   register: _egr_guest_config
   changed_when: false
-  when: _egr_status != 'running'
+  when:
+    - _egr_status != 'running'
+      or (_egr_vmtype == 'qemu' and (_egr_balloon_requested | string | length > 0))
+
+- name: Ensure running | Decode current guest config for balloon convergence
+  ansible.builtin.set_fact:
+    _egr_guest_config_data: "{{ _egr_guest_config.stdout | default('{}') | from_json }}"
+  when:
+    - _egr_vmtype == 'qemu'
+    - _egr_balloon_requested is not none
+    - _egr_balloon_requested | string | length > 0
+
+- name: Ensure running | Resolve the configured VM memory maximum
+  ansible.builtin.set_fact:
+    _egr_balloon_memory_mib: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get('memory')
+         | default(
+             (app_config | default({})).get('proxmox', {}).get('memory')
+             | default(_egr_guest_config_data.memory | default(512), true),
+             true
+           ) }}
+  when:
+    - _egr_vmtype == 'qemu'
+    - _egr_balloon_requested is not none
+    - _egr_balloon_requested | string | length > 0
+
+- name: Ensure running | Validate the configured balloon minimum
+  ansible.builtin.include_tasks: validate-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_mib: "{{ _egr_balloon_requested }}"
+    proxmox_vm_memory_mib: "{{ _egr_balloon_memory_mib }}"
+    proxmox_vm_guest: "{{ hostvars[ensure_guest_host].proxmox_name | default(ensure_guest_host) }}"
+  when:
+    - _egr_vmtype == 'qemu'
+    - _egr_balloon_requested is not none
+    - _egr_balloon_requested | string | length > 0
+
+- name: Ensure running | Converge the configured VM balloon minimum
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ homelabinfra_config.proxmox.api_host }}"
+    api_port: "{{ homelabinfra_config.proxmox.api_port | default(8006) }}"
+    api_user: "{{ homelabinfra_config.proxmox.api_user }}"
+    api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
+    api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
+    validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
+    node: "{{ _egr_node }}"
+    vmid: "{{ _egr_vmid | int }}"
+    state: present
+    update: true
+    memory: "{{ _egr_balloon_memory_mib | int }}"
+    balloon: "{{ _egr_balloon_requested | int }}"
+  no_log: true
+  when:
+    - _egr_vmtype == 'qemu'
+    - _egr_balloon_requested is not none
+    - _egr_balloon_requested | string | length > 0
+    - >-
+      (_egr_guest_config_data.memory | default(512) | int) != (_egr_balloon_memory_mib | int)
+      or (_egr_guest_config_data.balloon | default(0) | int) != (_egr_balloon_requested | int)
 
 - name: Ensure running | Check node memory before starting the guest
   ansible.builtin.include_tasks: check-node-free-memory.yml
@@ -73,7 +138,10 @@
     proxmox_memory_guest: >-
       {{ hostvars[ensure_guest_host].proxmox_name
          | default(hostvars[ensure_guest_host].proxmox_hostname | default(ensure_guest_host)) }}
-    proxmox_guest_memory_mib: "{{ (_egr_guest_config.stdout | from_json).memory | default(512) | int }}"
+    proxmox_guest_memory_mib: >-
+      {{ (_egr_balloon_memory_mib
+          if (_egr_balloon_requested | string | length > 0)
+          else ((_egr_guest_config.stdout | from_json).memory | default(512))) | int }}
   when: _egr_status != 'running'
 
 - name: Ensure running | Start the guest if it is not running

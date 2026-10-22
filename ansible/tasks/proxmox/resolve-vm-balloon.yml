@@ -1,0 +1,37 @@
+---
+# Resolve the per-instance setting before a template or guest mutation. App deploys
+# use app_config as their source of truth; direct VM tasks may only have the platform
+# config available.
+#
+# Inputs:
+#   proxmox_vm_balloon_memory_fallback — path-specific default maximum in MiB.
+#
+# Outputs:
+#   _proxmox_vm_balloon_configured — true when a non-null value was supplied.
+#   _proxmox_vm_balloon_requested  — requested minimum, if configured.
+#   _proxmox_vm_memory_max_mib     — effective maximum for validation and updates.
+#   _proxmox_vm_balloon_guest      — guest label for validation errors.
+- name: Resolve the requested VM balloon minimum and memory maximum
+  ansible.builtin.set_fact:
+    _proxmox_vm_balloon_configured: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get(
+           'balloon',
+           (homelabinfra_config | default({})).get('proxmox', {}).get('vm', {}).get('balloon')
+         ) is not none }}
+    _proxmox_vm_balloon_requested: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get(
+           'balloon',
+           (homelabinfra_config | default({})).get('proxmox', {}).get('vm', {}).get('balloon')
+         ) }}
+    _proxmox_vm_memory_max_mib: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get(
+           'memory',
+           (homelabinfra_config | default({})).get('proxmox', {}).get('vm', {}).get(
+             'memory', proxmox_vm_balloon_memory_fallback | default(2048)
+           )
+         ) }}
+    _proxmox_vm_balloon_guest: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get(
+           'name',
+           (homelabinfra_config | default({})).get('proxmox', {}).get('vm', {}).get('name', 'VM')
+         ) }}

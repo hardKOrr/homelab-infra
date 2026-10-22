@@ -1,5 +1,15 @@
 ---
 # Vendor-appliance VM seam: no cloud-init, SSH, or QEMU guest agent.
+- name: Installer VM | Validate the configured balloon minimum
+  ansible.builtin.include_tasks: validate-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_mib: "{{ installer_vm.balloon }}"
+    proxmox_vm_memory_mib: "{{ installer_vm.memory }}"
+    proxmox_vm_guest: "{{ installer_vm.name }}"
+  when:
+    - installer_vm.balloon is defined
+    - installer_vm.balloon is not none
+
 - name: Installer VM | Check requested VMID
   ansible.builtin.command: {argv: [qm, config, "{{ installer_vm.vmid | string }}"]}
   delegate_to: "{{ installer_vm_node }}"
@@ -34,6 +44,11 @@
         and (_installer_vm_current_config.name | default('')) == installer_vm.name
         and (_installer_vm_current_config.cores | default(-1) | int) == (installer_vm.cores | int)
         and (_installer_vm_current_config.memory | default(-1) | int) == (installer_vm.memory | int)
+        and (
+          installer_vm.balloon is not defined
+          or installer_vm.balloon is none
+          or (_installer_vm_current_config.balloon | default(-1) | int) == (installer_vm.balloon | int)
+        )
         and (_installer_vm_current_config.agent | default(1) | int) == 0
         and (_installer_vm_current_config.onboot | default(false) | bool)
         and (_installer_vm_current_config.boot | default('')) == (installer_vm_boot | default('order=ide2;scsi0'))
@@ -73,6 +88,7 @@
     update: false
     cores: "{{ installer_vm.cores | int }}"
     memory: "{{ installer_vm.memory | int }}"
+    balloon: "{{ installer_vm.balloon | default(omit, true) }}"
     scsi: {scsi0: "{{ installer_vm_storage }}:{{ installer_vm.disk_size }}"}
     ide: {ide2: "{{ installer_vm.iso }},media=cdrom"}
     boot: "{{ installer_vm_boot | default('order=ide2;scsi0') }}"
@@ -95,6 +111,7 @@
     update: true
     cores: "{{ installer_vm.cores | int }}"
     memory: "{{ installer_vm.memory | int }}"
+    balloon: "{{ installer_vm.balloon | default(omit, true) }}"
     scsi: {scsi0: "{{ installer_vm_storage }}:{{ installer_vm.disk_size }}"}
     ide: {ide2: "{{ installer_vm.iso }},media=cdrom"}
     boot: "{{ installer_vm_boot | default('order=ide2;scsi0') }}"
