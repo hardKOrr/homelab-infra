@@ -952,9 +952,9 @@
         _rm_destroy_guest_host: "{{ instance if instance in (groups['all'] | default([])) else '' }}"
       when: destroy_guest | default(false) | bool
 
-    - name: Recognize an absent registered database backend for cleanup
+    - name: Identify a registered database backend missing from the inventory
       ansible.builtin.set_fact:
-        _rm_database_backend_missing_guest: >-
+        _rm_database_backend_inventory_absence_candidate: >-
           {{ (app | default(instance)) in ['influxdb', 'mariadb', 'mysql', 'postgresql', 'redis']
              and instance in ((homelabinfra_infra | default({})).get('databases', {}))
              and _rm_destroy_guest_host | length == 0
@@ -963,6 +963,57 @@
                   | selectattr('proxmox_name', 'defined')
                   | selectattr('proxmox_name', 'equalto', instance)
                   | list | length == 0) }}
+      when: destroy_guest | default(false) | bool
+
+    - name: Register Proxmox nodes before checking an absent database backend
+      ansible.builtin.include_tasks: ../../tasks/proxmox/register-nodes.yml
+      when: _rm_database_backend_inventory_absence_candidate | default(false) | bool
+
+    - name: Read Proxmox cluster guests before pruning an absent database backend
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+      register: _rm_database_backend_cluster_resources
+      changed_when: false
+      no_log: true
+      when: _rm_database_backend_inventory_absence_candidate | default(false) | bool
+
+    - name: Require Proxmox to return its current cluster guests
+      ansible.builtin.assert:
+        that:
+          - (_rm_database_backend_cluster_resources.stdout | from_json | type_debug) == 'list'
+          - _rm_database_backend_cluster_resources.stdout | from_json | length > 0
+        fail_msg: >-
+          Refusing to unregister the database backend because Proxmox did not return a
+          nonempty cluster guest list.
+      when: _rm_database_backend_inventory_absence_candidate | default(false) | bool
+
+    - name: Check Proxmox resources for the registered backend name or tag
+      ansible.builtin.set_fact:
+        _rm_database_backend_live_guest_matches: >-
+          {{ (_rm_database_backend_live_guest_matches | default([]))
+             + ([item] if item.name | default('') == instance
+                or ('_' ~ instance) in ((item.tags | default('', true)).split(';'))
+                else []) }}
+      loop: "{{ _rm_database_backend_cluster_resources.stdout | from_json }}"
+      loop_control:
+        label: "database backend identity check"
+      no_log: true
+      when: _rm_database_backend_inventory_absence_candidate | default(false) | bool
+
+    - name: Refuse absent-backend cleanup while Proxmox reports the guest
+      ansible.builtin.assert:
+        that: _rm_database_backend_live_guest_matches | default([]) | length == 0
+        fail_msg: >-
+          Refusing to unregister the database backend because Proxmox still reports a
+          guest with its instance name or tag; repair inventory before retrying Remove.
+      when: _rm_database_backend_inventory_absence_candidate | default(false) | bool
+
+    - name: Confirm the registered database backend is absent from Proxmox
+      ansible.builtin.set_fact:
+        _rm_database_backend_missing_guest: >-
+          {{ _rm_database_backend_inventory_absence_candidate | default(false) | bool
+             and _rm_database_backend_live_guest_matches | default([]) | length == 0 }}
       when: destroy_guest | default(false) | bool
 
     - name: Validate the explicit guest destruction request before unwiring
