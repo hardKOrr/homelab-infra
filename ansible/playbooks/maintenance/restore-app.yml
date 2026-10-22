@@ -343,6 +343,25 @@
           object_storage: "{{ plane_restore_target_config.app.object_storage_path }}"
       when: _ra_app == 'plane'
 
+    - name: Resolve native guest storage identity scopes
+      ansible.builtin.set_fact:
+        # Paths inside a Proxmox guest root filesystem are private to that guest. Keep
+        # explicit host-mounted paths shared so the collision guard still protects them.
+        _ra_source_storage_scope: >-
+          {{ _ra_source_instance
+             if _ra_kind == 'native'
+                and app_config.get('proxmox', {}).get(
+                  'guest_type', app_config.get('proxmox', {}).get('type', '')) in ['lxc', 'vm']
+                and app_config.get('media_storage', {}).get('mounts', []) | length == 0
+             else '' }}
+        _ra_target_storage_scope: >-
+          {{ _ra_target
+             if _ra_kind == 'native'
+                and restore_target_config.get('proxmox', {}).get(
+                  'guest_type', restore_target_config.get('proxmox', {}).get('type', '')) in ['lxc', 'vm']
+                and restore_target_config.get('media_storage', {}).get('mounts', []) | length == 0
+             else '' }}
+
     - name: Resolve target identities before mutation
       ansible.builtin.set_fact:
         _ra_source_route_key: >-
@@ -360,7 +379,7 @@
           {{ (restore_target_config.get('proxmox', {}).get('vm', {}).get('ip_address',
              restore_target_config.get('proxmox', {}).get('lxc', {}).get('ip_address', '')) | string)
              | regex_replace('/.*$', '') }}
-        _ra_source_storage_key: >-
+        _ra_source_storage_path: >-
           {{ (_ra_kind ~ ':' ~ _ra_source_instance)
              if _ra_kind == 'kubernetes'
              else (
@@ -374,7 +393,7 @@
                      or (app_config.get('app', {}).get('filestore_path', '')
                          | replace('{{ instance }}', _ra_source_instance))
                      or (_ra_kind ~ ':' ~ _ra_source_instance))) | string }}
-        _ra_target_storage_key: >-
+        _ra_target_storage_path: >-
           {{ (_ra_kind ~ ':' ~ _ra_target)
              if _ra_kind == 'kubernetes'
              else (
@@ -397,6 +416,15 @@
                      or (restore_target_config.get('app', {}).get('filestore_path', '')
                          | replace('{{ instance }}', _ra_target))
                      or (_ra_kind ~ ':' ~ _ra_target))) | string }}
+
+    - name: Scope native guest paths to their owning guest
+      ansible.builtin.set_fact:
+        _ra_source_storage_key: >-
+          {{ (_ra_source_storage_scope ~ ':' ~ _ra_source_storage_path)
+             if _ra_source_storage_scope | length > 0 else _ra_source_storage_path }}
+        _ra_target_storage_key: >-
+          {{ (_ra_target_storage_scope ~ ':' ~ _ra_target_storage_path)
+             if _ra_target_storage_scope | length > 0 else _ra_target_storage_path }}
 
     - name: Refresh inventory before checking a new target's ownership
       ansible.builtin.meta: refresh_inventory

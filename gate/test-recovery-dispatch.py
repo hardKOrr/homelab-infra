@@ -13,6 +13,57 @@ repo = Path(__file__).resolve().parents[1]
 ansible = Path.home() / ".venvs/homelab-ansible/bin/ansible-playbook"
 
 
+def check_native_restore_storage_scopes():
+    source = yaml.safe_load((repo / "ansible/playbooks/maintenance/restore-app.yml").read_text())[0]
+    scope_task = next(task for task in source["pre_tasks"]
+                      if task.get("name") == "Resolve native guest storage identity scopes")
+    identity_task = next(task for task in source["pre_tasks"]
+                         if task.get("name") == "Resolve target identities before mutation")
+    storage_key_task = next(task for task in source["pre_tasks"]
+                            if task.get("name") == "Scope native guest paths to their owning guest")
+    cases = [
+        # The same guest-local path belongs to separate root filesystems when a native
+        # database is staged as another Proxmox guest.
+        ({"_ra_kind": "native", "_ra_app": "mariadb", "_ra_source_instance": "db-source",
+          "_ra_target": "db-stage",
+          "app_config": {"proxmox": {"guest_type": "lxc"},
+                         "app": {"data_path": "/var/lib/mysql"}},
+          "restore_target_config": {"proxmox": {"guest_type": "vm"},
+                                    "app": {"data_path": "/var/lib/mysql"}}},
+         "_ra_source_storage_key != _ra_target_storage_key"),
+        # Host-mounted paths remain shared and must still trip the collision guard.
+        ({"_ra_kind": "native", "_ra_app": "mariadb", "_ra_source_instance": "db-source",
+          "_ra_target": "db-stage",
+          "app_config": {"proxmox": {"guest_type": "lxc"},
+                         "media_storage": {"mounts": [{"host": "/srv/db", "path": "/var/lib/mysql"}]},
+                         "app": {"data_path": "/var/lib/mysql"}},
+          "restore_target_config": {"proxmox": {"guest_type": "vm"},
+                                    "media_storage": {"mounts": [{"host": "/srv/db", "path": "/var/lib/mysql"}]},
+                                    "app": {"data_path": "/var/lib/mysql"}}},
+         "_ra_source_storage_key == _ra_target_storage_key"),
+        # Replacing a native guest in place continues to be treated as a collision.
+        ({"_ra_kind": "native", "_ra_app": "mariadb", "_ra_source_instance": "db-source",
+          "_ra_target": "db-source",
+          "app_config": {"proxmox": {"guest_type": "lxc"},
+                         "app": {"data_path": "/var/lib/mysql"}},
+          "restore_target_config": {"proxmox": {"guest_type": "lxc"},
+                                    "app": {"data_path": "/var/lib/mysql"}}},
+         "_ra_source_storage_key == _ra_target_storage_key"),
+    ]
+    plays = [{"name": f"Check native restore storage scope {index}", "hosts": "localhost",
+              "gather_facts": False, "vars": inputs,
+              "tasks": [scope_task, identity_task, storage_key_task,
+                        {"ansible.builtin.assert": {"that": [assertion]}}]}
+             for index, (inputs, assertion) in enumerate(cases)]
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "native-restore-storage-scope.yml"
+        path.write_text(yaml.safe_dump(plays))
+        env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
+        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                env=env, text=True, capture_output=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
 def check(playbook, task_name, inputs, expected):
     source = yaml.safe_load((repo / "ansible/playbooks/maintenance" / playbook).read_text())[0]
     publish = next(task for task in source["pre_tasks"] if task["name"] == task_name)
@@ -36,6 +87,8 @@ def check(playbook, task_name, inputs, expected):
 
 
 def main():
+    check_native_restore_storage_scopes()
+
     # Role metadata dependencies run before the selected backup/restore task file.
     # The Docker dependency consumes host architecture facts, so both app target plays
     # must gather facts before Ansible dispatches into an application role.
