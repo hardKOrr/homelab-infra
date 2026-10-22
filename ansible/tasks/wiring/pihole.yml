@@ -23,6 +23,10 @@
 # Any stale element for this FQDN is removed first, then the wanted element is added
 # only when absent. Since Pi-hole has no per-record description, a changed route host
 # captured by Caddy's stable instance id identifies the previous name to remove.
+# Failure window: Caddy is updated before this task. If Pi-hole fails here and Deploy is
+# retried, Caddy no longer has the old host. Pi-hole's host strings have no owner, so
+# sweeping records by proxy IP could delete a sibling or operator entry; verify and
+# remove any orphaned previous entry after restoring Pi-hole API availability.
 # The session is always closed in the always: block — Pi-hole allows a small fixed
 # number of concurrent sessions and leaking them locks out the UI.
 #
