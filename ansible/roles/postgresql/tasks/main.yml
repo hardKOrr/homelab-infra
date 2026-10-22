@@ -89,6 +89,20 @@
     update_cache: false
   when: app_config.backup.enabled | default(false) | bool
 
+# The first package install can rewrite this source file. Leave it in its declared
+# form at the end of Deploy so the immediate repeat is unchanged.
+- name: PostgreSQL | Reassert the signed PBS client repository after package installation
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/proxmox-backup-client.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: >-
+      deb [signed-by={{ _postgresql_pbs_keyring }}]
+      {{ app_config.backup.client.repository }} {{ ansible_distribution_release }}
+      {{ app_config.backup.client.component }}
+  when: app_config.backup.enabled | default(false) | bool
+
 - name: PostgreSQL | Install the native recovery helper when backups are enabled
   ansible.builtin.copy:
     src: postgresql-recovery.py

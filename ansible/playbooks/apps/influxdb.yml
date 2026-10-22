@@ -27,23 +27,13 @@
     - ansible.builtin.set_fact:
         _existing_hosts: "{{ groups[tag_group_name] | default([]) }}"
 
-    # Remove deliberately leaves the lab-owned LXC in place after deleting the app's
+    # Remove deliberately leaves the lab-owned guest in place after deleting the app's
     # data and withdrawing its instance tag. Resolve the declared network before looking
-    # for that guest; only allocate a new address when no exact owned LXC can be reused.
-    - name: Prepare InfluxDB ownership tags and network when no instance tag exists
+    # for that guest; the shared provisioner allocates an address only for a new guest.
+    - name: Resolve InfluxDB network before checking for a removed guest
+      ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
+      vars: {resolve_network_app: influxdb, resolve_network_estate: ''}
       when: _existing_hosts | length == 0
-      block:
-        - ansible.builtin.set_fact:
-            homelabinfra_config: >-
-              {{ homelabinfra_config | combine({'proxmox': {'lxc':
-                   app_config.proxmox | combine({
-                     'hostname': instance,
-                     'tags': (app_config.proxmox.tags + ['_' ~ instance]) | unique
-                   }, recursive=True)
-                 }}, recursive=True) }}
-          no_log: true
-        - ansible.builtin.include_tasks: ../../tasks/network/resolve-network.yml
-          vars: {resolve_network_app: influxdb, resolve_network_estate: ''}
 
     - name: Find a removed InfluxDB guest that still has exact lab ownership
       ansible.builtin.include_tasks: ../../roles/influxdb/tasks/reuse-removed-guest.yml
@@ -54,21 +44,8 @@
         _existing_hosts: "{{ _influxdb_removed_guest_hosts }}"
       when: _existing_hosts | length == 0
 
-    - name: Allocate a new InfluxDB LXC address and VMID
-      when: _existing_hosts | length == 0
-      block:
-        - ansible.builtin.import_tasks: ../../tasks/network/generate-ip.yml
-          vars:
-            network_name: "{{ app_config.proxmox.network | default('', true) }}"
-            pool_name: "{{ app_config.proxmox.pool | default('') }}"
-            requested_ip_address: "{{ app_config.proxmox.ip_address | default('') }}"
-        - ansible.builtin.set_fact:
-            homelabinfra_config: >-
-              {{ homelabinfra_config | combine({'proxmox': {'lxc': {
-                   'ip_address': homelabinfra_instance.network.ip_address
-                 }}}, recursive=True) }}
-          no_log: true
-        - ansible.builtin.include_tasks: ../../tasks/proxmox/ip-to-vmid.yml
+    - name: Resolve InfluxDB guest placement and check existing type
+      ansible.builtin.include_tasks: ../../tasks/database/resolve-backend-placement.yml
 
     - ansible.builtin.add_host:
         name: "{{ _existing_hosts[0] }}"
@@ -85,16 +62,10 @@
       vars: {ensure_guest_host: "{{ _existing_hosts[0] }}"}
       when: _existing_hosts | length > 0
 
-    - name: Provision InfluxDB LXC
-      when: _existing_hosts | length == 0
-      block:
-        - ansible.builtin.include_tasks: ../../tasks/proxmox/lxc-create.yml
-        - ansible.builtin.add_host:
-            name: "{{ homelabinfra_instance.lxc.hostname }}"
-            groups: "deploy_{{ instance }}"
-            ansible_host: "{{ homelabinfra_instance.network.ip_address }}"
-            ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
-            app_config: "{{ app_config }}"
+    - name: Provision a new InfluxDB backend guest
+      ansible.builtin.include_tasks: ../../tasks/database/provision-backend-guest.yml
+      vars:
+        database_backend_network_app: influxdb
 
 - name: InfluxDB | Deploy
   hosts: "deploy_{{ instance | default('_instance_unset') }}"

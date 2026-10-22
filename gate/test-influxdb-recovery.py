@@ -120,12 +120,18 @@ def check_contract_and_wiring():
         index for index, task in enumerate(provision_tasks)
         if task.get("name") == "Find a removed InfluxDB guest that still has exact lab ownership"
     )
-    allocate_index = next(
+    placement_index = next(
         index for index, task in enumerate(provision_tasks)
-        if task.get("name") == "Allocate a new InfluxDB LXC address and VMID"
+        if task.get("name") == "Resolve InfluxDB guest placement and check existing type"
     )
-    assert reuse_index < allocate_index
-    assert provision_tasks[allocate_index]["when"] == "_existing_hosts | length == 0"
+    provision_index = next(
+        index for index, task in enumerate(provision_tasks)
+        if task.get("name") == "Provision a new InfluxDB backend guest"
+    )
+    assert reuse_index < placement_index < provision_index
+    assert provision_tasks[provision_index]["ansible.builtin.include_tasks"] == (
+        "../../tasks/database/provision-backend-guest.yml"
+    )
 
 
 def all_tasks(tasks):
@@ -389,6 +395,7 @@ def check_backup_snapshot_identity():
 def check_removed_guest_reuse():
     assert len(REUSE_GUEST) == 3
     assert "'_+lab' in app_config.proxmox.tags" in str(REUSE_GUEST[0])
+    assert "['lxc', 'qemu']" in str(REUSE_GUEST[1])
     assert REUSE_GUEST[1]["ansible.builtin.set_fact"].get("_influxdb_removed_guest_hosts")
     assert "_influxdb_removed_guest_hosts | length <= 1" in str(REUSE_GUEST[2])
 
@@ -398,6 +405,7 @@ def check_removed_guest_reuse():
         ambiguous: bool = False,
         configured_ip: str = "",
         configured_vmid: int = 0,
+        vm_reuse: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         hosts = [
             {
@@ -466,11 +474,11 @@ def check_removed_guest_reuse():
                 "proxmox_status": "stopped",
             },
             {
-                "name": "wrong-guest-type",
+                "name": "wrong-name-vm",
                 "groups": ["lab_managed"],
                 "proxmox_vmtype": "qemu",
                 "proxmox_vmid": 123462,
-                "proxmox_name": "influxdb",
+                "proxmox_name": "other-instance",
                 "proxmox_tags_parsed": ["_+lab", "_-debian"],
                 "proxmox_net0": {"ip": "192.0.2.10/24"},
                 "proxmox_node": "fixture-node",
@@ -488,6 +496,10 @@ def check_removed_guest_reuse():
                 "proxmox_status": "stopped",
             },
         ]
+        if vm_reuse:
+            hosts[0]["proxmox_name"] = "other-instance"
+            hosts[6]["name"] = "exact-owned-vm"
+            hosts[6]["proxmox_name"] = "influxdb"
         if ambiguous:
             duplicate = copy.deepcopy(hosts[0])
             duplicate["name"] = "duplicate-exact-owned-lxc"
@@ -502,7 +514,7 @@ def check_removed_guest_reuse():
         ] + reuse_tasks
         if expected_hosts is not None:
             tasks.append({
-                "name": "Assert only the expected owned LXC is selected",
+                "name": "Assert only the expected removed InfluxDB guest is selected",
                 "ansible.builtin.assert": {
                     "that": f"_influxdb_removed_guest_hosts == {expected_hosts!r}"
                 },
@@ -540,6 +552,8 @@ def check_removed_guest_reuse():
 
     exact = run_case(["exact-owned-lxc"])
     assert exact.returncode == 0, exact.stdout + exact.stderr
+    exact_vm = run_case(["exact-owned-vm"], vm_reuse=True)
+    assert exact_vm.returncode == 0, exact_vm.stdout + exact_vm.stderr
     configured = run_case(
         ["exact-owned-lxc"], configured_ip="192.0.2.10", configured_vmid=123999
     )

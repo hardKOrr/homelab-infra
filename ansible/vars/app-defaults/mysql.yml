@@ -8,7 +8,7 @@ mysql_defaults:
       backup_playbook: backup-app.yml
       restore_playbook: restore-app.yml
   proxmox:
-    type: lxc
+    guest_type: lxc
     boot_order: 40
     # Inherit the lab's proxmox.lxc.ostemplate; only instance config may override it.
     cores: 2

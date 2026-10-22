@@ -7,6 +7,9 @@
 # secret in this file.
 
 # proxmox:
+#   guest_type: lxc        # lxc (default) or vm
+#   node: <pve-node-2>     # optional; defaults to config/proxmox.yml proxmox.node
+#   storage: <pve-storage> # optional; defaults to config/proxmox.yml proxmox.storage
 #   cores: 4
 #   memory: 4096
 #

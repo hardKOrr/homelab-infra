@@ -17,8 +17,9 @@
 #
 # Inputs:
 #   homelabinfra_config.proxmox.nodes    — {node_name: address}, written by
-#                                          bootstrap-rundeck.sh from `pvesh get /cluster/status`
-#   homelabinfra_config.proxmox.node     — the node this deploy targets
+#                                          bootstrap-rundeck.sh from `pvesh get /cluster/status`;
+#                                          per-instance targets need an entry here
+#   homelabinfra_config.proxmox.node     — cluster control node and single-node fallback
 #   homelabinfra_config.proxmox.api_host — fallback address, used when the target node has
 #                                          no entry in the map
 #   homelabinfra_config.ansible.ssh_user — connection user (default root)

@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1047,6 +1048,26 @@ def doctor_and_secret_shape():
     for name in ("valid", "multi-estate"):
         result = doctor(fixtures / name)
         assert result.returncode == 0, result.stdout + result.stderr
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory)
+        source = fixtures / "valid"
+        for source_path in source.rglob("*"):
+            if source_path.is_file():
+                relative = source_path.relative_to(source)
+                destination = target / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, destination)
+        proxmox = yaml.safe_load((target / "proxmox.yml").read_text(encoding="utf-8"))
+        for key in ("node_roles", "storage_ids", "floating_vm_cpu_model", "nodes"):
+            proxmox["proxmox"].pop(key, None)
+        (target / "proxmox.yml").write_text(
+            yaml.safe_dump(proxmox, sort_keys=False), encoding="utf-8"
+        )
+        result = doctor(target)
+        assert result.returncode == 0, (
+            "single-node Proxmox config should need only proxmox.node and "
+            "proxmox.storage\n" + result.stdout + result.stderr
+        )
     invalid = doctor(fixtures / "invalid")
     assert invalid.returncode != 0, "invalid configuration accepted"
     output = invalid.stdout + invalid.stderr

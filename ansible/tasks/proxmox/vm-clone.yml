@@ -106,6 +106,7 @@
     guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
     guest_placement_node: "{{ proxmox_placement_node | default('') }}"
     guest_placement_storage: "{{ proxmox_placement_storage | default('') }}"
+    guest_placement_database_backend: "{{ proxmox_placement_database_backend | default(false) | bool }}"
     guest_placement_use_app_config: "{{ proxmox_placement_use_app_config | default(true) | bool }}"
   when: _vmc_existing_guest | length == 0
 
@@ -129,7 +130,7 @@
       api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
       api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
       validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
-      node: "{{ homelabinfra_config.proxmox.node }}"
+      node: "{{ _guest_placement.node | default(homelabinfra_config.proxmox.node) }}"
     _vmc_vmid: "{{ homelabinfra_config.proxmox.vm.vmid | int }}"
 
 - name: VM clone | Build network settings
@@ -163,7 +164,7 @@
 - name: VM clone | Check whether the target VM already exists
   ansible.builtin.command:
     cmd: "qm config {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_existing
   failed_when: false
   changed_when: false
@@ -202,7 +203,7 @@
 - name: VM clone | Read the reused VM configuration
   ansible.builtin.command:
     cmd: "qm config {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_reused_config
   changed_when: false
   when: not (_vmc_clone.changed | default(false))
@@ -210,7 +211,7 @@
 - name: VM clone | Read the reused VM status
   ansible.builtin.command:
     cmd: "qm status {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_reused_status
   changed_when: false
   when: not (_vmc_clone.changed | default(false))
@@ -252,7 +253,7 @@
 - name: VM clone | Read the configuration before the update
   ansible.builtin.command:
     cmd: "qm config {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_config_before
   changed_when: false
 
@@ -264,9 +265,9 @@
 - name: VM clone | Read the tags and notes an existing guest carries
   ansible.builtin.command:
     cmd: >-
-      pvesh get /nodes/{{ homelabinfra_config.proxmox.node }}/qemu/{{ _vmc_vmid }}/config
+      pvesh get /nodes/{{ _vmc_api.node }}/qemu/{{ _vmc_vmid }}/config
       --output-format json
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_existing_config
   changed_when: false
   when: _vmc_existing.rc == 0
@@ -344,7 +345,7 @@
 - name: VM clone | Read the configuration after the update
   ansible.builtin.command:
     cmd: "qm config {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_config_after
   changed_when: >-
     (_vmc_config_before.stdout_lines | reject('match', '^digest:') | list)
@@ -372,7 +373,7 @@
     cmd: >-
       qm resize {{ _vmc_vmid }} scsi0
       {{ homelabinfra_config.proxmox.vm.disk_size }}G
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_resize
   # Shrinking is refused by Proxmox; kept for a size the parse above misread.
   failed_when:
@@ -401,7 +402,7 @@
 - name: VM clone | Start the VM
   ansible.builtin.command:
     cmd: "qm start {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_start
   changed_when: _vmc_start.rc == 0
   failed_when:
@@ -411,7 +412,7 @@
 - name: VM clone | Wait for the VM to be running
   ansible.builtin.command:
     cmd: "qm status {{ _vmc_vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_status
   retries: 30
   delay: 2
@@ -429,7 +430,7 @@
 - name: VM clone | Wait for the guest agent to accept exec
   ansible.builtin.command:
     cmd: "qm guest exec {{ _vmc_vmid }} -- /bin/true"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_agent
   retries: 60
   delay: 5
@@ -484,7 +485,7 @@
           sleep 2
         done
         exit 1
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _vmc_api.node }}"
   register: _vmc_lease
   changed_when: false
   when: (homelabinfra_instance.network.ip_address | lower) == 'dhcp'

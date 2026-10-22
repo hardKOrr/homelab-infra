@@ -32,6 +32,7 @@
     guest_placement_class: "{{ proxmox_placement_class | default('floating_lxc') }}"
     guest_placement_devices: "{{ proxmox_placement_devices | default([]) }}"
     guest_placement_node: "{{ _existing_guest_current_node | default('') }}"
+    guest_placement_database_backend: "{{ proxmox_placement_database_backend | default(false) | bool }}"
 
 - name: Assert homelabinfra instance data is provided
   ansible.builtin.assert:
@@ -270,7 +271,7 @@
 - name: Check node memory before creating the LXC container
   ansible.builtin.include_tasks: check-node-free-memory.yml
   vars:
-    proxmox_memory_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_memory_node: "{{ _guest_placement.node }}"
     proxmox_memory_guest: "{{ lxc_module_args.hostname }}"
     proxmox_guest_memory_mib: "{{ lxc_module_args.memory | default(512) | int }}"
 
@@ -292,7 +293,7 @@
 - name: Read the container's current feature flags
   ansible.builtin.command:
     cmd: "pct config {{ homelabinfra_instance.lxc.vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   register: _lxc_config_now
   changed_when: false
 
@@ -304,7 +305,7 @@
     cmd: >-
       pct set {{ homelabinfra_instance.lxc.vmid }}
       --features {{ _lxc_features_desired | sort | join(',') }}
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   changed_when: true
   when:
     - _lxc_features_desired | length > 0
@@ -317,7 +318,7 @@
 - name: Check node memory before starting the LXC container
   ansible.builtin.include_tasks: check-node-free-memory.yml
   vars:
-    proxmox_memory_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_memory_node: "{{ _guest_placement.node }}"
     proxmox_memory_guest: "{{ homelabinfra_instance.lxc.hostname }}"
     proxmox_guest_memory_mib: "{{ lxc_module_args.memory | default(512) | int }}"
 
@@ -337,7 +338,7 @@
 - name: Start the LXC container
   ansible.builtin.command:
     cmd: "pct start {{ homelabinfra_instance.lxc.vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   register: lxc_start
   changed_when: lxc_start.rc == 0
   failed_when:
@@ -347,7 +348,7 @@
 - name: Wait for LXC to be running
   ansible.builtin.command:
     cmd: "pct status {{ homelabinfra_instance.lxc.vmid }}"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   register: lxc_status
   retries: 30
   delay: 2
@@ -357,7 +358,7 @@
 - name: Wait for LXC to accept exec
   ansible.builtin.command:
     cmd: "pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/true"
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   register: lxc_exec_ready
   retries: 30
   delay: 2
@@ -385,7 +386,7 @@
           sleep 2
         done
         exit 1
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   register: lxc_dhcp_lease
   changed_when: false
   when: homelabinfra_instance.network.ip_address | lower == 'dhcp'
@@ -439,6 +440,6 @@
     cat <<'EOF' | pct exec {{ homelabinfra_instance.lxc.vmid }} -- /bin/sh -c 'set -e; umask 077; cat > /root/homelabinfra_instance.lxc.json; chmod 0600 /root/homelabinfra_instance.lxc.json; rm -f /root/home/homelabinfra_instance.lxc.json'
     {{ homelabinfra_instance.lxc | dict2items | rejectattr('key', 'in', ['api_token_secret', 'api_token_id', 'password', 'cipassword', 'pubkey', 'sshkeys']) | list | items2dict | to_nice_json }}
     EOF
-  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  delegate_to: "{{ _guest_placement.node }}"
   args:
     executable: /bin/bash

@@ -106,15 +106,15 @@ def check_contract():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert defaults["backup"]["retention_days"] >= 2
-    assert defaults["proxmox"]["type"] == "lxc"
+    assert defaults["proxmox"]["guest_type"] == "lxc"
     assert defaults["routing"]["proxy"] == "none"
     assert defaults["routing"]["identity"] == "none"
 
     deploy = task_tree(ROOT / "ansible/playbooks/apps/postgresql.yml")
-    assert task_named(deploy, "Provision PostgreSQL LXC")
-    assert task_named(deploy, "Provision PostgreSQL VM")
-    type_guard = task_named(deploy, "Require the existing PostgreSQL guest to match its configured type")
-    assert "proxmox_vmtype" in str(type_guard["ansible.builtin.assert"]["that"])
+    placement = task_named(deploy, "Resolve PostgreSQL guest placement and check existing type")
+    assert placement["ansible.builtin.include_tasks"] == "../../tasks/database/resolve-backend-placement.yml"
+    provision = task_named(deploy, "Provision a new PostgreSQL backend guest")
+    assert provision["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
 
     main = task_tree(ROLE / "tasks/main.yml")
     pbs_client = task_named(main, "PostgreSQL | Install the PBS backup client when backups are enabled")

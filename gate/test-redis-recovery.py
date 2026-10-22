@@ -41,10 +41,7 @@ def check_defaults_and_deploy():
     assert defaults["backup"]["enabled"] is True
     assert defaults["backup"]["application_consistent"] is True
     assert defaults["backup"]["retention_days"] >= 2
-    assert defaults["proxmox"]["type"] == "lxc"
-    assert "Redis defaults to its native LXC" in (
-        ROOT / "ansible/vars/app-defaults/redis.yml"
-    ).read_text()
+    assert defaults["proxmox"]["guest_type"] == "lxc"
     assert defaults["routing"] == {"proxy": "none", "identity": "none"}
     assert "remove" not in defaults
 
@@ -56,12 +53,10 @@ def check_defaults_and_deploy():
     )
     provision = next(play for play in redis_play if play["name"] == "Redis | Provision")
     provision_tasks = list(tasks_recursive(provision))
-    lxc = task_named(provision_tasks, "Provision Redis LXC")
-    assert "_existing_hosts | length == 0" in str(lxc["when"])
-    assert "app_config.proxmox.type | default('lxc') == 'lxc'" in str(lxc["when"])
-    assert "../../tasks/proxmox/lxc-create.yml" in str(lxc)
-    vm = task_named(provision_tasks, "Provision Redis VM")
-    assert "app_config.proxmox.type | default('lxc') == 'vm'" in str(vm["when"])
+    placement = task_named(provision_tasks, "Resolve Redis guest placement and check existing type")
+    assert placement["ansible.builtin.include_tasks"] == "../../tasks/database/resolve-backend-placement.yml"
+    provision_guest = task_named(provision_tasks, "Provision a new Redis backend guest")
+    assert provision_guest["ansible.builtin.include_tasks"] == "../../tasks/database/provision-backend-guest.yml"
 
     redis_main = read_yaml("ansible/roles/redis/tasks/main.yml")
     install_repo = task_named(redis_main, "Redis | Install the PBS client repository when this lab declares app backups")
@@ -346,6 +341,7 @@ def check_remove_scope():
     assert "_rm_kind == 'native'" in str(explicit_request["ansible.builtin.assert"]["that"])
     assert "_rm_destroy_guest_host == instance" in str(explicit_request["ansible.builtin.assert"]["that"])
     assert "_+lab" in str(ownership["ansible.builtin.assert"]["that"])
+    assert "in ['lxc', 'qemu']" in str(ownership["ansible.builtin.assert"]["that"])
     assert "proxmox_vmtype" in str(ownership["ansible.builtin.assert"]["that"])
     assert "_.shared" in str(ownership["ansible.builtin.assert"]["that"])
     assert task_named(unwire_play["tasks"], "Unwire reverse proxy") in unwire_play["tasks"]
@@ -355,6 +351,21 @@ def check_remove_scope():
     assert "_rm_destroy_guest | bool" in str(destroy["when"])
     assert "_rm_delete_data | bool" in str(destroy["when"])
     assert "remove_kind == 'native'" in str(destroy["when"])
+
+    destroy_vm = task_named(list(tasks_recursive(remove)), "Destroy the explicitly selected native VM")
+    assert destroy_vm["ansible.builtin.include_tasks"] == "../../tasks/proxmox/destroy-owned-vm.yml"
+    assert "proxmox_vmtype == 'qemu'" in str(destroy_vm["when"])
+    vm_destroy_tasks = read_yaml("ansible/tasks/proxmox/destroy-owned-vm.yml")
+    vm_live_guard = task_named(vm_destroy_tasks, "Destroy owned VM | Require current lab ownership and an unshared guest")
+    assert "_+lab" in str(vm_live_guard["ansible.builtin.assert"]["that"])
+    assert "_.shared" in str(vm_live_guard["ansible.builtin.assert"]["that"])
+    assert "destroy_vm_instance" in str(vm_live_guard["ansible.builtin.assert"]["that"])
+    vm_destroy = task_named(vm_destroy_tasks, "Destroy owned VM | Destroy the stopped guest")
+    vm_absent = task_named(vm_destroy_tasks, "Destroy owned VM | Require the VMID to be absent")
+    assert vm_destroy["ansible.builtin.command"]["argv"] == [
+        "qm", "destroy", "{{ destroy_vm_vmid }}", "--purge", "1"
+    ]
+    assert vm_destroy_tasks.index(vm_destroy) < vm_destroy_tasks.index(vm_absent)
 
     destroy_tasks = read_yaml("ansible/tasks/proxmox/destroy-owned-lxc.yml")
     live_guard = task_named(destroy_tasks, "Destroy owned LXC | Require current lab ownership and an unshared guest")

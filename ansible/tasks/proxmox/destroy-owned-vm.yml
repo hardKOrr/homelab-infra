@@ -1,0 +1,129 @@
+---
+# Destroy one dedicated native VM after Remove App has stopped its service and
+# withdrawn its instance row/tag. The caller verifies the original target identity;
+# this task rechecks the live PVE config and refuses to destroy a newly shared guest.
+- name: Register Proxmox nodes before native VM destruction
+  ansible.builtin.import_tasks: register-nodes.yml
+
+- name: Destroy owned VM | Validate the original guest identity
+  ansible.builtin.assert:
+    that:
+      - destroy_vm_vmid | int > 0
+      - destroy_vm_name | length > 0
+      - destroy_vm_node | length > 0
+      - destroy_vm_instance | length > 0
+      - destroy_vm_original_tags is sequence
+      - destroy_vm_original_tags is not string
+      - "'_+lab' in destroy_vm_original_tags"
+      - "('_' ~ destroy_vm_instance) in destroy_vm_original_tags"
+    fail_msg: >-
+      Refusing to destroy the native VM because its original lab ownership or instance
+      identity was not verified.
+
+- name: Destroy owned VM | Require a registered Proxmox connection
+  ansible.builtin.assert:
+    that:
+      - destroy_vm_node in (groups['proxmox_delegates'] | default([]))
+      - hostvars[destroy_vm_node].ansible_host | default('') | length > 0
+    fail_msg: >-
+      Refusing to destroy the native VM because its Proxmox node is not registered
+      with a connection address.
+
+- name: Destroy owned VM | Read the live Proxmox config
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ destroy_vm_node }}/qemu/{{ destroy_vm_vmid }}/config"
+      - --output-format
+      - json
+  delegate_to: "{{ destroy_vm_node }}"
+  register: _destroy_vm_config
+  changed_when: false
+
+- name: Destroy owned VM | Resolve the live tag set
+  ansible.builtin.set_fact:
+    _destroy_vm_live_config: "{{ _destroy_vm_config.stdout | from_json }}"
+    _destroy_vm_live_tags: >-
+      {{ (_destroy_vm_config.stdout | from_json).tags | default('', true)
+         | split(';') | reject('equalto', '') | list }}
+  no_log: true
+
+- name: Destroy owned VM | Require current lab ownership and an unshared guest
+  ansible.builtin.assert:
+    that:
+      - _destroy_vm_live_config.name | default('') == destroy_vm_name
+      - "'_+lab' in _destroy_vm_live_tags"
+      - "'_.shared' not in _destroy_vm_live_tags"
+      - >-
+        (_destroy_vm_live_tags | select('match', '^_[.]stack[+]') | list | length) == 0
+      - >-
+        (_destroy_vm_live_tags | select('match', '^_[.]cluster[+]') | list | length) == 0
+      - >-
+        (_destroy_vm_live_tags | select('match', '^_[A-Za-z0-9]')
+         | reject('equalto', '_' ~ destroy_vm_instance) | list | length) == 0
+    fail_msg: >-
+      Refusing to destroy the native VM: it changed identity, lost the _+lab ownership
+      tag, or now carries another application's managed tag.
+
+- name: Destroy owned VM | Read the guest state
+  ansible.builtin.command:
+    argv: [qm, status, "{{ destroy_vm_vmid }}"]
+  delegate_to: "{{ destroy_vm_node }}"
+  register: _destroy_vm_status_before
+  changed_when: false
+
+- name: Destroy owned VM | Shut down the guest cleanly
+  ansible.builtin.command:
+    argv: [qm, shutdown, "{{ destroy_vm_vmid }}", --timeout, "60"]
+  delegate_to: "{{ destroy_vm_node }}"
+  register: _destroy_vm_shutdown
+  changed_when: true
+  when: "_destroy_vm_status_before.stdout is search('status: running')"
+
+- name: Destroy owned VM | Require the guest to be stopped
+  ansible.builtin.command:
+    argv: [qm, status, "{{ destroy_vm_vmid }}"]
+  delegate_to: "{{ destroy_vm_node }}"
+  register: _destroy_vm_status_after
+  changed_when: false
+
+- name: Destroy owned VM | Confirm shutdown completed
+  ansible.builtin.assert:
+    that:
+      - _destroy_vm_status_after.rc == 0
+      - _destroy_vm_status_after.stdout is search('status: stopped')
+    fail_msg: >-
+      Refusing to destroy the native VM because Proxmox did not confirm it is stopped.
+
+- name: Destroy owned VM | Destroy the stopped guest
+  ansible.builtin.command:
+    argv: [qm, destroy, "{{ destroy_vm_vmid }}", --purge, '1']
+  delegate_to: "{{ destroy_vm_node }}"
+  register: _destroy_vm_result
+  changed_when: true
+
+- name: Destroy owned VM | Verify the guest is absent from the cluster
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/resources
+      - --type
+      - vm
+      - --output-format
+      - json
+  delegate_to: "{{ destroy_vm_node }}"
+  register: _destroy_vm_resources
+  changed_when: false
+
+- name: Destroy owned VM | Require the VMID to be absent
+  ansible.builtin.assert:
+    that:
+      - (_destroy_vm_resources.stdout | from_json | type_debug) == 'list'
+      - >-
+        (_destroy_vm_resources.stdout | from_json
+         | selectattr('vmid', 'equalto', destroy_vm_vmid | int) | list | length) == 0
+    fail_msg: >-
+      Proxmox still reports the destroyed native VM; inspect its configuration before
+      deploying a replacement.

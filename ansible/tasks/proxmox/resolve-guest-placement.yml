@@ -9,14 +9,23 @@
 #   guest_placement_storage            — explicit storage override
 #   guest_placement_additional_storage — another store the selected node must reach
 #   guest_placement_use_app_config     — false for shared hosts whose owner is not the app
+#   guest_placement_database_backend   — use an explicit node/storage pin without class role maps
 #
 # Per-guest overrides come from the current app config or authored Proxmox config. The
 # global proxmox.node remains the control node used for cluster-wide queries.
 
-- name: Guest placement | Validate the declared class and role shape
+- name: Guest placement | Validate the declared class
   ansible.builtin.assert:
     that:
       - guest_placement_class in ['database_vm', 'floating_vm', 'floating_lxc', 'gpu_vm']
+      - >-
+        guest_placement_preferred_node is not defined
+        or guest_placement_class in ['floating_vm', 'floating_lxc']
+    fail_msg: Unsupported guest placement class or preferred-node request.
+
+- name: Guest placement | Validate the declared placement role shape
+  ansible.builtin.assert:
+    that:
       - homelabinfra_config.proxmox.node_roles is mapping
       - homelabinfra_config.proxmox.storage_ids is mapping
       - homelabinfra_config.proxmox.node_roles.storage | default('') | string | trim | length > 0
@@ -32,12 +41,20 @@
       - >-
         homelabinfra_config.proxmox.node_roles.storage
         not in homelabinfra_config.proxmox.node_roles.compute
-      - >-
-        guest_placement_preferred_node is not defined
-        or guest_placement_class in ['floating_vm', 'floating_lxc']
     fail_msg: >-
       config/proxmox.yml must declare node_roles.storage and an ordered, unique
       node_roles.compute list, and the pinned storage node must not be a compute node.
+  when: not (guest_placement_database_backend | default(false) | bool)
+
+- name: Guest placement | Require the database backend's pinned node and storage
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.node | default('') | string | trim | length > 0
+      - homelabinfra_config.proxmox.storage | default('') | string | trim | length > 0
+    fail_msg: >-
+      Database backend placement requires proxmox.node and proxmox.storage from the
+      instance configuration or the lab-wide Proxmox configuration.
+  when: guest_placement_database_backend | default(false) | bool
 
 - name: Guest placement | Reset optional app placement inputs
   ansible.builtin.set_fact:
@@ -53,10 +70,11 @@
 - name: Guest placement | Resolve per-guest Proxmox overrides
   ansible.builtin.set_fact:
     _guest_placement_app_storage: >-
-      {{ (_guest_placement_app_proxmox.get('disk_volume', {}).get('storage', '')
-          or _guest_placement_app_proxmox.get('lxc', {}).get('disk_volume', {}).get('storage', ''))
-         if guest_placement_class == 'floating_lxc'
-         else _guest_placement_app_proxmox.get('vm', {}).get('storage', '') }}
+      {{ _guest_placement_app_proxmox.get('storage', '')
+         or (((_guest_placement_app_proxmox.get('disk_volume', {}).get('storage', '')
+               or _guest_placement_app_proxmox.get('lxc', {}).get('disk_volume', {}).get('storage', ''))
+              if guest_placement_class == 'floating_lxc'
+              else _guest_placement_app_proxmox.get('vm', {}).get('storage', ''))) }}
     _guest_placement_app_node: >-
       {{ (_guest_placement_app_proxmox.get('lxc', {}).get('node', '')
           or _guest_placement_app_proxmox.get('node', ''))
@@ -68,7 +86,8 @@
 - name: Guest placement | Resolve guest type, storage and configured inputs
   ansible.builtin.set_fact:
     _guest_placement_compute_nodes: >-
-      {{ homelabinfra_config.proxmox.node_roles.compute | list }}
+      {{ homelabinfra_config.proxmox.get('node_roles', {}).get(
+           'compute', [homelabinfra_config.proxmox.node]) | list }}
     _guest_placement_guest_type: >-
       {{ guest_placement_guest_type
          | default('lxc' if guest_placement_class == 'floating_lxc' else 'qemu', true) }}
@@ -84,10 +103,10 @@
                else (_config_proxmox | default({})).get('proxmox', {}).get('vm', {}).get('storage', '')),
              true)
          | default(
-             homelabinfra_config.proxmox.storage_ids[
+             homelabinfra_config.proxmox.get('storage_ids', {}).get(
                {'database_vm': 'database_vm', 'floating_vm': 'floating_vm',
-                'floating_lxc': 'floating_lxc', 'gpu_vm': 'floating_vm'}[guest_placement_class]
-             ], true) }}
+                'floating_lxc': 'floating_lxc', 'gpu_vm': 'floating_vm'}.get(
+                 guest_placement_class, ''), ''), true) }}
     _guest_placement_configured_node: >-
       {{ guest_placement_node
          | default(
@@ -373,6 +392,7 @@
             if guest_placement_preferred_node is defined else [])
          + ([{'source': 'database node role', 'node': homelabinfra_config.proxmox.node_roles.storage}]
             if guest_placement_class == 'database_vm'
+               and not (guest_placement_database_backend | default(false) | bool)
                and _guest_placement_configured_node | length == 0
                and _guest_placement_storage_pin_nodes | length == 0 else []) }}
 
