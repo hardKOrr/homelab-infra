@@ -177,7 +177,7 @@ def main():
         ], vm_requests
         assert vm_requests[0][2] == "/nodes/test-node/qemu/456/config", vm_requests
         assert vm_requests[2][1:] == ["shutdown", "456", "--timeout", "60"], vm_requests
-        assert vm_requests[4][1:] == ["destroy", "456"], vm_requests
+        assert vm_requests[4][1:] == ["destroy", "456", "--purge", "1"], vm_requests
         assert vm_requests[5][2:4] == ["/cluster/resources", "--type"], vm_requests
     print("Owned LXC and VM destruction: registered-node delegation and ownership checks passed")
 

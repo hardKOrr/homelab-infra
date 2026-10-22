@@ -98,7 +98,7 @@
 
 - name: Destroy owned VM | Destroy the stopped guest
   ansible.builtin.command:
-    argv: [qm, destroy, "{{ destroy_vm_vmid }}"]
+    argv: [qm, destroy, "{{ destroy_vm_vmid }}", --purge, '1']
   delegate_to: "{{ destroy_vm_node }}"
   register: _destroy_vm_result
   changed_when: true

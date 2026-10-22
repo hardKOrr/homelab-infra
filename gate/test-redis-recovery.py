@@ -362,7 +362,9 @@ def check_remove_scope():
     assert "destroy_vm_instance" in str(vm_live_guard["ansible.builtin.assert"]["that"])
     vm_destroy = task_named(vm_destroy_tasks, "Destroy owned VM | Destroy the stopped guest")
     vm_absent = task_named(vm_destroy_tasks, "Destroy owned VM | Require the VMID to be absent")
-    assert vm_destroy["ansible.builtin.command"]["argv"] == ["qm", "destroy", "{{ destroy_vm_vmid }}"]
+    assert vm_destroy["ansible.builtin.command"]["argv"] == [
+        "qm", "destroy", "{{ destroy_vm_vmid }}", "--purge", "1"
+    ]
     assert vm_destroy_tasks.index(vm_destroy) < vm_destroy_tasks.index(vm_absent)
 
     destroy_tasks = read_yaml("ansible/tasks/proxmox/destroy-owned-lxc.yml")
