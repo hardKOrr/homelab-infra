@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Remove every trace of one instance from the service registry.
+"""Remove registry entries for an app, or an explicitly destroyed database backend.
 
-Reads `{"registry": {...}, "instance": "<name>"}` on stdin and writes the pruned
-registry as JSON on stdout, so the caller can compare it with what it had and write
-the file only when something actually changed.
+Reads `{"registry": {...}, "instance": "<name>", "database_backend": false}` on
+stdin and writes the pruned registry as JSON on stdout, so the caller can compare it
+with what it had and write the file only when something actually changed.
 
 WHY. `config/.generated/facts.yml` is how each service finds the ones before it, and
 until 2026-08-15 nothing ever removed from it. `Remove App` unwires the reverse proxy,
@@ -24,6 +24,11 @@ Three shapes are pruned, at the top level and inside every `estates.<name>` scop
      names this instance — the removed app WAS that service, so the registry must stop
      claiming the lab has one.
 
+The top-level `databases.<instance>` entry is preserved for ordinary app removal because
+consumers own that backend independently. A database backend removal may pass
+`database_backend: true` after its exact tagged guest has been destroyed to forget only
+that backend's topology entry.
+
 Nothing else is touched: `domain`, unrelated roles, other estates and other instances
 come back byte-identical. Empty containers left behind by a prune are dropped too — an
 `estates.foxglove` holding an empty `media` map is a claim about the estate that is no
@@ -36,7 +41,7 @@ import json
 import sys
 
 
-def prune_scope(scope: dict, instance: str) -> dict:
+def prune_scope(scope: dict, instance: str, database_backend: bool = False) -> dict:
     """Prune one registry scope — the top level, or one estates.<name> block."""
     result: dict[str, object] = {}
     for key, value in scope.items():
@@ -55,6 +60,11 @@ def prune_scope(scope: dict, instance: str) -> dict:
             if remaining:
                 result[key] = remaining
             continue
+        if key == "databases" and database_backend:
+            remaining = {k: v for k, v in value.items() if k != instance}
+            if remaining:
+                result[key] = remaining
+            continue
         # A role entry naming this instance describes a service that no longer exists.
         if value.get("instance") == instance:
             continue
@@ -62,8 +72,8 @@ def prune_scope(scope: dict, instance: str) -> dict:
     return result
 
 
-def prune(registry: dict, instance: str) -> dict:
-    result = prune_scope(registry, instance)
+def prune(registry: dict, instance: str, database_backend: bool = False) -> dict:
+    result = prune_scope(registry, instance, database_backend)
     estates = registry.get("estates")
     if isinstance(estates, dict):
         pruned_estates = {}
@@ -71,7 +81,7 @@ def prune(registry: dict, instance: str) -> dict:
             if not isinstance(scope, dict):
                 pruned_estates[name] = scope
                 continue
-            pruned = prune_scope(scope, instance)
+            pruned = prune_scope(scope, instance, database_backend)
             if pruned:
                 pruned_estates[name] = pruned
         if pruned_estates:
@@ -92,7 +102,14 @@ def main() -> int:
             raise ValueError("registry must be a mapping")
         if not isinstance(instance, str) or not instance:
             raise ValueError("instance must be a non-empty string")
-        json.dump(prune(registry, instance), sys.stdout, separators=(",", ":"))
+        database_backend = source.get("database_backend", False)
+        if not isinstance(database_backend, bool):
+            raise ValueError("database_backend must be a boolean")
+        json.dump(
+            prune(registry, instance, database_backend),
+            sys.stdout,
+            separators=(",", ":"),
+        )
         return 0
     except (ValueError, json.JSONDecodeError) as exc:
         print(f"invalid registry input: {exc}", file=sys.stderr)

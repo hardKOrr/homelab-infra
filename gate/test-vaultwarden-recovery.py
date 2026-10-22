@@ -5,6 +5,7 @@ from pathlib import Path
 import copy
 import http.server
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -94,9 +95,89 @@ def check_contract_and_dispatch():
     registry = {
         "vaultwarden": {"host": "http://root-vault.invalid", "port": 80},
         "apps": {"vaultwarden-family": {"host": "http://family.invalid", "port": 80}},
+        "databases": {
+            "mariadb-bookstack": {"provider": "mariadb", "host": "db.invalid", "port": 3306},
+            "mariadb-stage": {"provider": "mariadb", "host": "stage.invalid", "port": 3306},
+        },
     }
     assert registry_module.prune(registry, "vaultwarden-family") == {
-        "vaultwarden": {"host": "http://root-vault.invalid", "port": 80}}
+        "vaultwarden": {"host": "http://root-vault.invalid", "port": 80},
+        "databases": registry["databases"],
+    }
+    consumer_registry = {
+        "apps": {"bookstack": {"host": "http://bookstack.invalid", "port": 80}},
+        "databases": {
+            "mariadb-bookstack": {"provider": "mariadb", "host": "db.invalid", "port": 3306},
+        },
+    }
+    assert registry_module.prune(consumer_registry, "bookstack") == {
+        "databases": consumer_registry["databases"],
+    }
+    assert registry_module.prune(registry, "mariadb-stage", database_backend=True) == {
+        "vaultwarden": {"host": "http://root-vault.invalid", "port": 80},
+        "apps": {"vaultwarden-family": {"host": "http://family.invalid", "port": 80}},
+        "databases": {
+            "mariadb-bookstack": {"provider": "mariadb", "host": "db.invalid", "port": 3306},
+        },
+    }
+
+    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove_pre_tasks = list(tasks_recursive(remove[0]))
+    absence_candidate = task_named(
+        remove_pre_tasks,
+        "Identify a registered database backend missing from the inventory",
+    )
+    missing_backend_expr = str(
+        absence_candidate["ansible.builtin.set_fact"]["_rm_database_backend_inventory_absence_candidate"]
+    )
+    assert "homelabinfra_infra" in missing_backend_expr
+    assert "databases" in missing_backend_expr
+    assert "_rm_destroy_guest_host | length == 0" in missing_backend_expr
+    assert "proxmox_name" in missing_backend_expr and "equalto" in missing_backend_expr
+    resources = task_named(
+        remove_pre_tasks,
+        "Read Proxmox cluster guests before pruning an absent database backend",
+    )
+    assert resources["ansible.builtin.command"]["argv"] == [
+        "pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json",
+    ]
+    assert resources["delegate_to"] == "{{ homelabinfra_config.proxmox.node }}"
+    require_resources = task_named(remove_pre_tasks, "Require Proxmox to return its current cluster guests")
+    assert "| length > 0" in str(require_resources["ansible.builtin.assert"]["that"])
+    live_match = task_named(remove_pre_tasks, "Check Proxmox resources for the registered backend name or tag")
+    assert "item.name" in str(live_match["ansible.builtin.set_fact"])
+    assert "item.tags" in str(live_match["ansible.builtin.set_fact"])
+    live_absence = task_named(remove_pre_tasks, "Refuse absent-backend cleanup while Proxmox reports the guest")
+    assert "_rm_database_backend_live_guest_matches" in str(live_absence["ansible.builtin.assert"])
+    validate_destroy = task_named(
+        remove_pre_tasks,
+        "Validate the explicit guest destruction request before unwiring",
+    )
+    validate_checks = str(validate_destroy["ansible.builtin.assert"]["that"])
+    assert "_rm_database_backend_missing_guest" in validate_checks
+    assert "delete_data" in validate_checks and "_rm_kind == 'native'" in validate_checks
+    ownership = task_named(remove_pre_tasks, "Verify ownership and non-shared tags before unwiring")
+    assert "_rm_destroy_guest_host | length > 0" in str(ownership["when"])
+
+    play_names = [play.get("name", "") for play in remove]
+    destroy_index = next(
+        i for i, name in enumerate(play_names) if name.startswith("Remove App | Stop")
+    )
+    registry_index = play_names.index(
+        "Remove Database Backend | Unregister destroyed backend"
+    )
+    notify_index = play_names.index("Remove App | Notify")
+    assert destroy_index < registry_index < notify_index
+    unregister = next(
+        task for task in tasks_recursive(remove[registry_index])
+        if task.get("name") == "Forget the destroyed database backend's generated registry entry"
+    )
+    assert unregister["ansible.builtin.include_tasks"] == (
+        "../../tasks/unwiring/registry.yml"
+    )
+    assert unregister["vars"]["unwire_registry_database_backend"] is True
+    assert "destroy_guest" in str(unregister["when"])
+    assert "delete_data" in str(unregister["when"])
 
     pbs_client = read_yaml(ROOT / "ansible/roles/vaultwarden/tasks/install-pbs-client.yml")
     pbs_tasks = list(tasks_recursive(pbs_client))
@@ -114,6 +195,176 @@ def check_contract_and_dispatch():
     repository = task_named(pbs_tasks, "Vaultwarden PBS client | Configure the signed client repository")
     assert "{{ ansible_distribution_release }}" in repository["ansible.builtin.copy"]["content"]
     assert "{{ _vaultwarden_pbs_keyring }}" in repository["ansible.builtin.copy"]["content"]
+
+
+def check_remove_absent_database_backend_cleanup():
+    remove = read_yaml(ROOT / "ansible/playbooks/apps/remove.yml")
+    remove_pre_tasks = list(tasks_recursive(remove[0]))
+    resolve = task_named(remove_pre_tasks, "Resolve the exact guest selected for explicit destruction")
+    absence_candidate = task_named(
+        remove_pre_tasks,
+        "Identify a registered database backend missing from the inventory",
+    )
+    register_nodes = task_named(remove_pre_tasks, "Register Proxmox nodes before checking an absent database backend")
+    read_resources = task_named(
+        remove_pre_tasks,
+        "Read Proxmox cluster guests before pruning an absent database backend",
+    )
+    require_resources = task_named(remove_pre_tasks, "Require Proxmox to return its current cluster guests")
+    live_match = task_named(remove_pre_tasks, "Check Proxmox resources for the registered backend name or tag")
+    live_absence = task_named(remove_pre_tasks, "Refuse absent-backend cleanup while Proxmox reports the guest")
+    confirm_absent = task_named(remove_pre_tasks, "Confirm the registered database backend is absent from Proxmox")
+    validate = task_named(
+        remove_pre_tasks,
+        "Validate the explicit guest destruction request before unwiring",
+    )
+    ownership = task_named(remove_pre_tasks, "Verify ownership and non-shared tags before unwiring")
+
+    def run_case(
+        instance,
+        app,
+        database_instances,
+        guest=None,
+        expected_missing=True,
+        failure=None,
+        cluster_guests=None,
+    ):
+        with tempfile.TemporaryDirectory(prefix="homelab-remove-database.") as directory:
+            root = Path(directory)
+            hosts = {
+                "localhost": {"ansible_connection": "local"},
+                "pve-control": {"ansible_connection": "local"},
+            }
+            if guest is not None:
+                hosts[instance] = guest
+            inventory = {"all": {"hosts": hosts}}
+            inventory_path = root / "inventory.yml"
+            inventory_path.write_text(yaml.safe_dump(inventory), encoding="utf-8")
+
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            pvesh_stub = bin_dir / "pvesh"
+            pvesh_stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, sys\n"
+                "if os.environ.get('PVE_RESOURCES_FAIL') == '1':\n"
+                "    sys.exit(1)\n"
+                "sys.stdout.write(pathlib.Path(os.environ['PVE_RESOURCES_FIXTURE']).read_text())\n",
+                encoding="utf-8",
+            )
+            pvesh_stub.chmod(0o755)
+            resources_path = root / "cluster-resources.json"
+            if cluster_guests is None:
+                cluster_guests = [{"name": "other-guest", "tags": "_+lab;_other-guest"}]
+            resources_path.write_text(json.dumps(cluster_guests), encoding="utf-8")
+
+            playbook = root / "remove-guard.yml"
+            databases = {name: {"provider": app} for name in database_instances}
+            playbook.write_text(yaml.safe_dump([{
+                "hosts": "localhost",
+                "gather_facts": False,
+                "vars": {
+                    "instance": instance,
+                    "app": app,
+                    "delete_data": True,
+                    "destroy_guest": True,
+                    "_rm_kind": "native",
+                    "_rm_destroy_guest_host": "",
+                    "homelabinfra_infra": {"databases": databases},
+                    "homelabinfra_config": {
+                        "ansible": {"ssh_user": "root"},
+                        "proxmox": {
+                            "node": "pve-control",
+                            "nodes": {"pve-control": "127.0.0.1"},
+                        },
+                    },
+                    "expected_missing_backend": expected_missing,
+                },
+                "tasks": [
+                    copy.deepcopy(resolve),
+                    copy.deepcopy(absence_candidate),
+                    {
+                        **copy.deepcopy(register_nodes),
+                        "ansible.builtin.include_tasks": str(
+                            ROOT / "ansible/tasks/proxmox/register-nodes.yml"
+                        ),
+                    },
+                    copy.deepcopy(read_resources),
+                    copy.deepcopy(require_resources),
+                    copy.deepcopy(live_match),
+                    copy.deepcopy(live_absence),
+                    copy.deepcopy(confirm_absent),
+                    copy.deepcopy(validate),
+                    copy.deepcopy(ownership),
+                    {"name": "Check absent-backend classification", "ansible.builtin.assert": {
+                        "that": [
+                            "(_rm_database_backend_missing_guest | default(false) | bool) == expected_missing_backend",
+                        ],
+                    }},
+                ],
+            }]), encoding="utf-8")
+            result = subprocess.run(
+                [str(ANSIBLE_PLAYBOOK), "-i", str(inventory_path), str(playbook)],
+                env=os.environ | {
+                    "ANSIBLE_STDOUT_CALLBACK": "default",
+                    "ANSIBLE_NOCOLOR": "1",
+                    "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+                    "PVE_RESOURCES_FIXTURE": str(resources_path),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            output = result.stdout + result.stderr
+            if failure is not None:
+                assert result.returncode != 0 and failure in output, output
+            else:
+                assert result.returncode == 0, output
+
+    owned_guest = {
+        "proxmox_name": "postgresql",
+        "proxmox_vmtype": "lxc",
+        "proxmox_vmid": 402,
+        "proxmox_node": "pve-a",
+        "proxmox_tags_parsed": ["_+lab", "_postgresql"],
+    }
+    unowned_guest = {
+        **owned_guest,
+        "proxmox_tags_parsed": ["_+lab", "_other-app"],
+    }
+    run_case("postgresql", "postgresql", ["postgresql"])
+    run_case("mariadb-mautic-stage", "mariadb", ["mariadb-mautic-stage"])
+    run_case("missing-app", "immich", [], failure="destroy_guest=true requires delete_data=true")
+    run_case(
+        "postgresql",
+        "postgresql",
+        ["postgresql"],
+        failure="Refusing to unregister the database backend",
+        cluster_guests=[{"name": "postgresql", "tags": "_+lab;_postgresql"}],
+    )
+    run_case(
+        "postgresql",
+        "postgresql",
+        ["postgresql"],
+        failure="Refusing to unregister the database backend",
+        cluster_guests=[],
+    )
+    run_case(
+        "postgresql",
+        "postgresql",
+        ["postgresql"],
+        failure="Refusing to unregister the database backend",
+        cluster_guests=[{"name": "renamed-guest", "tags": "_+lab;_postgresql"}],
+    )
+    run_case("postgresql", "postgresql", ["postgresql"], guest=owned_guest, expected_missing=False)
+    run_case(
+        "postgresql",
+        "postgresql",
+        ["postgresql"],
+        guest=unowned_guest,
+        expected_missing=False,
+        failure="Refusing destroy_guest=true",
+    )
 
 
 def check_retained_lxc_resolution():
@@ -423,6 +674,7 @@ raise SystemExit(subprocess.run(['/bin/chown', *sys.argv[1:]]).returncode)
 
 def main():
     check_contract_and_dispatch()
+    check_remove_absent_database_backend_cleanup()
     check_retained_lxc_resolution()
     check_backup_role()
     check_restore_transaction()
@@ -437,7 +689,7 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
-    print("Vaultwarden: native recovery contract, plan, selected group, success and post-move rollback passed")
+    print("Vaultwarden recovery and Remove: contract, isolation, absent-backend cleanup, and rollback passed")
 
 
 if __name__ == "__main__":
