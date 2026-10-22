@@ -21,6 +21,10 @@ def check_native_restore_storage_scopes():
                          if task.get("name") == "Resolve target identities before mutation")
     storage_key_task = next(task for task in source["pre_tasks"]
                             if task.get("name") == "Scope native guest paths to their owning guest")
+    provision_task = next(task for task in source["pre_tasks"]
+                          if task.get("name") == "Provision the isolated new restore target")
+    nested_ansible = provision_task["ansible.builtin.command"]["argv"][0]
+    assert nested_ansible == "{{ ansible_playbook_python | dirname }}/ansible-playbook"
     cases = [
         # The same guest-local path belongs to separate root filesystems when a native
         # database is staged as another Proxmox guest.
@@ -59,6 +63,27 @@ def check_native_restore_storage_scopes():
         path = Path(directory) / "native-restore-storage-scope.yml"
         path.write_text(yaml.safe_dump(plays))
         env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1"}
+        result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
+                                env=env, text=True, capture_output=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    # The runner invokes its primary playbook through an absolute venv path. Keep the
+    # nested provisioning process runnable even when Ansible's command PATH omits venv.
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "nested-ansible-path.yml"
+        path.write_text(yaml.safe_dump([{
+            "hosts": "localhost", "gather_facts": False, "connection": "local",
+            "tasks": [
+                {"ansible.builtin.command": {"argv": [nested_ansible, "--version"]},
+                 "register": "nested_ansible_result", "changed_when": False},
+                {"ansible.builtin.assert": {"that": [
+                    "nested_ansible_result.rc == 0",
+                    "nested_ansible_result.stdout is search('ansible-playbook')",
+                ]}},
+            ],
+        }]))
+        env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
+                            "PATH": "/usr/bin:/bin"}
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr

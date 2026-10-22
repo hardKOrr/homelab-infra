@@ -563,7 +563,7 @@
         - _ra_overwrite | bool
       ansible.builtin.command:
         argv:
-          - ansible-playbook
+          - "{{ ansible_playbook_python | dirname }}/ansible-playbook"
           - -i
           - inventory/
           - "playbooks/apps/{{ _ra_app }}.yml"
