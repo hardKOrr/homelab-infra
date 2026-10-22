@@ -1,0 +1,23 @@
+---
+# Redis maxmemory excludes allocator and persistence overhead; reserve half the guest.
+- name: Redis | Derive memory settings from the configured guest size
+  ansible.builtin.set_fact:
+    _redis_maxmemory_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'maxmemory', [1, (_database_backend_memory_mib | int) // 2] | max)
+         | int }}
+    _redis_maxmemory_policy: >-
+      {{ app_config.app.get('memory', {}).get('maxmemory_policy', 'noeviction')
+         | string | trim }}
+
+- name: Redis | Validate memory limit and preserve consumer key semantics
+  ansible.builtin.assert:
+    that:
+      - _redis_maxmemory_mib | int > 0
+      - _redis_maxmemory_policy in [
+          'noeviction', 'allkeys-lru', 'volatile-lru', 'allkeys-lfu',
+          'volatile-lfu', 'allkeys-random', 'volatile-random', 'volatile-ttl'
+        ]
+    fail_msg: >-
+      Redis memory.maxmemory must be positive MiB and memory.maxmemory_policy must be
+      a policy supported by the installed Redis server.

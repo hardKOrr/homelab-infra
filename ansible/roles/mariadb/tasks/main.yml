@@ -1,6 +1,12 @@
 ---
 # MariaDB is a standalone backend, deliberately independent of application
 # Compose files so its data, recovery path, and credentials remain explicit.
+- name: MariaDB | Resolve configured guest memory
+  ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+
+- name: MariaDB | Resolve database memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
 - name: MariaDB | Install server and Python client
   ansible.builtin.apt:
     name: [mariadb-server, mariadb-client, python3-pymysql]

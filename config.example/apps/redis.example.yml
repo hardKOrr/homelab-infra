@@ -9,3 +9,8 @@
 #   storage: <pve-storage> # optional; defaults to config/proxmox.yml proxmox.storage
 # app:
 #   port: 6379
+#   # Optional per-instance overrides, in MiB. The default maxmemory is 50% of
+#   # proxmox.memory. noeviction preserves existing keys and rejects writes at the limit.
+#   memory:
+#     maxmemory: 512
+#     maxmemory_policy: noeviction

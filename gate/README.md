@@ -60,6 +60,7 @@ templates.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
 - `test-guest-placement.py`: database pinning, ordered floating node selection, class storage and placement refusal paths.
 - `test-database-backend-placement.py`: shared backend placement for all five engines, per-instance node/storage defaults, legacy type compatibility, mismatch refusal and single-node LXC/VM placement.
+- `test-database-memory.py`: database memory ratios, LXC/VM guest inputs, per-instance overrides and rendered or managed engine settings.
 - `test-decommission-retire.py`: PBS stamp retirement, credential provenance checks and repeat execution.
 - `test-orphan-stack-tag.py`: the orphan stack tag repair's plan, execute, repeat and refusal cases.
 - `test-repair-missing-stack-tag.py`: the missing stack identity repair's plan, execute, repeat and refusal cases.

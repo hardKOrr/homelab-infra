@@ -1,0 +1,26 @@
+---
+# PostgreSQL docs suggest 25% for shared_buffers; 75% is a common effective-cache estimate.
+# work_mem is per operation and multiplies across sessions, so budget 1/800 of guest MiB.
+- name: PostgreSQL | Derive memory settings from the configured guest size
+  ansible.builtin.set_fact:
+    _postgresql_shared_buffers_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'shared_buffers', (_database_backend_memory_mib | int) * 25 // 100)
+         | int }}
+    _postgresql_effective_cache_size_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'effective_cache_size', (_database_backend_memory_mib | int) * 75 // 100)
+         | int }}
+    _postgresql_work_mem_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'work_mem', [1, (_database_backend_memory_mib | int) // 800] | max)
+         | int }}
+
+- name: PostgreSQL | Require positive memory settings
+  ansible.builtin.assert:
+    that:
+      - _postgresql_shared_buffers_mib | int > 0
+      - _postgresql_effective_cache_size_mib | int > 0
+      - _postgresql_work_mem_mib | int > 0
+    fail_msg: >-
+      PostgreSQL memory settings for {{ instance }} must be positive MiB values.

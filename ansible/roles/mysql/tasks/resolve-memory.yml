@@ -1,0 +1,13 @@
+---
+# MySQL recommends 50–75% for InnoDB on a dedicated server; use the 50% lower end.
+- name: MySQL | Derive InnoDB buffer pool from the configured guest size
+  ansible.builtin.set_fact:
+    _mysql_innodb_buffer_pool_size_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'innodb_buffer_pool_size', (_database_backend_memory_mib | int) // 2)
+         | int }}
+
+- name: MySQL | Require a positive InnoDB buffer pool size
+  ansible.builtin.assert:
+    that: _mysql_innodb_buffer_pool_size_mib | int > 0
+    fail_msg: MySQL app.memory.innodb_buffer_pool_size must be a positive MiB value.
