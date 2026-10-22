@@ -2,6 +2,12 @@
 # PostgreSQL backend. Package-managed PostgreSQL is intentionally kept outside
 # application Compose files so its lifecycle, backup coverage and credentials are
 # explicit and independently recoverable.
+- name: PostgreSQL | Resolve configured guest memory
+  ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+
+- name: PostgreSQL | Resolve database memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
 - name: PostgreSQL | Derive the service unit from the selected major
   ansible.builtin.set_fact:
     app_config: >-
@@ -192,6 +198,27 @@
   ansible.builtin.set_fact:
     _postgresql_conf: "{{ _postgresql_conf_files.files[0].path }}"
     _postgresql_hba: "{{ _postgresql_conf_files.files[0].path | dirname }}/pg_hba.conf"
+
+- name: PostgreSQL | Set shared buffer size
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: '^#?\s*shared_buffers\s*='
+    line: "shared_buffers = {{ _postgresql_shared_buffers_mib }}MB"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Set planner cache estimate
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: '^#?\s*effective_cache_size\s*='
+    line: "effective_cache_size = {{ _postgresql_effective_cache_size_mib }}MB"
+  notify: Restart PostgreSQL
+
+- name: PostgreSQL | Set per-operation work memory
+  ansible.builtin.lineinfile:
+    path: "{{ _postgresql_conf }}"
+    regexp: '^#?\s*work_mem\s*='
+    line: "work_mem = {{ _postgresql_work_mem_mib }}MB"
+  notify: Restart PostgreSQL
 
 - name: PostgreSQL | Listen on the guest address
   ansible.builtin.lineinfile:

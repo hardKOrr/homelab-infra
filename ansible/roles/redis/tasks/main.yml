@@ -1,4 +1,10 @@
 ---
+- name: Redis | Resolve configured guest memory
+  ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+
+- name: Redis | Resolve database memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
 - name: Redis | Install the PBS client repository when this lab declares app backups
   ansible.builtin.include_tasks: install-pbs-client.yml
   when:

@@ -1,5 +1,11 @@
 ---
 # Debian default-mysql-server is MariaDB; Ghost requires Oracle MySQL 8.
+- name: MySQL | Resolve configured guest memory
+  ansible.builtin.import_tasks: ../../../tasks/database/resolve-guest-memory.yml
+
+- name: MySQL | Resolve database memory settings
+  ansible.builtin.import_tasks: resolve-memory.yml
+
 - name: MySQL | Require a supported Debian release
   ansible.builtin.assert:
     that:

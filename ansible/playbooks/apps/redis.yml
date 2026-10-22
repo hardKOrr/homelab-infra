@@ -24,6 +24,7 @@
         ansible_host: "{{ hostvars[_existing_hosts[0]].ansible_host }}"
         ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
         app_config: "{{ app_config }}"
+        _database_backend_guest_type: "{{ _database_backend_guest_type }}"
         homelabinfra_infra: "{{ homelabinfra_infra | default({}) }}"
       changed_when: false
       when: _existing_hosts | length > 0

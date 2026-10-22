@@ -2,3 +2,4 @@
 # loopback; the guest remains protected by its application-user grants.
 [mariadbd]
 bind-address = 0.0.0.0
+innodb_buffer_pool_size = {{ _mariadb_innodb_buffer_pool_size_mib }}M

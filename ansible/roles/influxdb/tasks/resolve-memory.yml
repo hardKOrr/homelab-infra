@@ -1,0 +1,28 @@
+---
+# InfluxDB's cache limit is per shard. Budget 1/32 of guest RAM per shard and snapshot
+# at 1/40 of that limit, matching the documented 1 GiB cache / 25 MiB snapshot defaults.
+- name: InfluxDB | Derive per-shard cache limits from the configured guest size
+  ansible.builtin.set_fact:
+    _influxdb_cache_max_memory_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'storage_cache_max_memory_size_mib',
+           [1, (_database_backend_memory_mib | int) // 32] | max)
+         | int }}
+
+- name: InfluxDB | Derive the cache snapshot threshold
+  ansible.builtin.set_fact:
+    _influxdb_cache_snapshot_memory_mib: >-
+      {{ app_config.app.get('memory', {}).get(
+           'storage_cache_snapshot_memory_size_mib',
+           [1, (_influxdb_cache_max_memory_mib | int) // 40] | max)
+         | int }}
+
+- name: InfluxDB | Require positive, ordered cache limits
+  ansible.builtin.assert:
+    that:
+      - _influxdb_cache_max_memory_mib | int > 0
+      - _influxdb_cache_snapshot_memory_mib | int > 0
+      - _influxdb_cache_snapshot_memory_mib | int < _influxdb_cache_max_memory_mib | int
+    fail_msg: >-
+      InfluxDB cache limits must be positive MiB values and the snapshot threshold must
+      be smaller than the per-shard cache maximum.

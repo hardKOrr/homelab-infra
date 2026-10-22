@@ -19,6 +19,11 @@
 #   organization: homelab
 #   bucket: default
 #   admin_user: homelab
+#   # Optional per-instance cache overrides, in MiB. The cache maximum is per shard;
+#   # defaults allocate 1/32 of proxmox.memory per shard and snapshot at 1/40 of that.
+#   memory:
+#     storage_cache_max_memory_size_mib: 128
+#     storage_cache_snapshot_memory_size_mib: 4
 
 # The native UI is served at https://influxdb.<lab-domain> through an internal
 # Caddy route. InfluxDB keeps its own login; Authentik provides a catalog tile.

@@ -19,3 +19,7 @@
 # app:
 #   # MariaDB account-host patterns for application guests. Never use `%`.
 #   client_hosts: ["10.%"]
+#   # Optional per-instance override in MiB. The default is 50% of proxmox.memory,
+#   # the lower end of MariaDB's 50–75% InnoDB buffer-pool guidance.
+#   memory:
+#     innodb_buffer_pool_size: 1024
