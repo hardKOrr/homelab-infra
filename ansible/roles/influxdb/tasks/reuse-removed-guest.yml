@@ -1,17 +1,17 @@
 ---
-# Remove keeps the empty, _+lab-owned LXC so it can be reused. Its application tag and
+# Remove keeps the empty, _+lab-owned guest so it can be reused. Its application tag and
 # guest note have been withdrawn, so an ordinary app-tag lookup cannot find it. Reclaim
-# only one exact-name LXC that belongs to this lab, has no other app ownership tags, and
-# sits on the declared network. Explicit address or VMID settings still have to match.
+# only one exact-name LXC or VM that belongs to this lab, has no other app ownership tags,
+# and sits on the declared network. Explicit address or VMID settings still have to match.
 - name: Require the planned InfluxDB guest to keep its ownership tags
   ansible.builtin.assert:
     that:
       - instance is match('^[A-Za-z0-9_.-]+$')
       - "'_+lab' in app_config.proxmox.tags"
-    fail_msg: Refusing to reuse an InfluxDB LXC without its exact planned identity and ownership tags.
+    fail_msg: Refusing to reuse an InfluxDB guest without its exact planned identity and ownership tags.
   no_log: true
 
-- name: Find an exact lab-owned InfluxDB LXC in the refreshed inventory
+- name: Find an exact lab-owned InfluxDB guest in the refreshed inventory
   ansible.builtin.set_fact:
     _influxdb_removed_guest_hosts: >-
       {%- set matches = [] -%}
@@ -24,7 +24,7 @@
       {%- set configured_ip = app_config.proxmox.ip_address | default('', true)
                                | regex_replace('/.*$', '') -%}
       {%- set configured_vmid = app_config.proxmox.vmid | default(0, true) | int -%}
-      {%- if guest.proxmox_vmtype | default('') == 'lxc'
+      {%- if guest.proxmox_vmtype | default('') in ['lxc', 'qemu']
             and guest.proxmox_vmid | default(0) | int > 0
             and guest.proxmox_name | default('') == instance
             and '_+lab' in tags
@@ -48,6 +48,6 @@
   ansible.builtin.assert:
     that: _influxdb_removed_guest_hosts | length <= 1
     fail_msg: >-
-      Multiple lab-owned LXC guests match the removed InfluxDB instance identity;
+      Multiple lab-owned guests match the removed InfluxDB instance identity;
       refusing to choose one for redeployment.
   no_log: true

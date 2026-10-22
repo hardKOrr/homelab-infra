@@ -26,14 +26,17 @@ proxmox:
   # Database backends can override guest type, node and storage per instance in
   # config/apps/<instance>.yml. Without those keys they use an LXC on this file's
   # proxmox.node and proxmox.storage. Existing guests are never converted when the
-  # configured guest_type changes.
+  # configured guest_type changes. With complete node_roles/storage_ids maps,
+  # database VMs default to node_roles.storage/storage_ids.database_vm; database LXCs
+  # use storage_ids.floating_lxc and an eligible compute node. Per-instance node and
+  # storage values still override those classed defaults.
   #
   # Optional class-based placement for multi-node labs. Basic installs need only node
-  # and storage above; database instances default to LXC on those values. To enable the
-  # advanced placement classes, populate all of these maps and add every named node to
-  # `nodes` below. GPU VMs use the floating VM store but are pinned to their device node.
+  # and storage above. To enable the advanced placement classes, populate all of these
+  # maps and add every named node to `nodes` below. GPU VMs use the floating VM store
+  # but are pinned to their device node.
   # node_roles:
-  #   storage: <pve-node-1>       # pinned node for other classed database VMs
+  #   storage: <pve-node-1>       # pinned node for classed database VMs
   #   compute: [<pve-node-2>]     # eligible floating-guest nodes; order breaks memory ties
   # storage_ids:
   #   database_vm: <pve-storage>  # local storage with 16K zvol blocksize; VM images

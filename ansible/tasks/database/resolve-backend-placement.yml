@@ -20,6 +20,18 @@
       Database backend instance {{ instance }} has an unsupported proxmox.guest_type
       '{{ _database_backend_guest_type }}'; choose lxc or vm.
 
+- name: Database backend | Normalize classed placement maps
+  ansible.builtin.set_fact:
+    _database_backend_classed_placement: >-
+      {{ 'node_roles' in homelabinfra_config.proxmox
+         or 'storage_ids' in homelabinfra_config.proxmox }}
+    _database_backend_node_roles: >-
+      {{ homelabinfra_config.proxmox.get('node_roles', {})
+         if homelabinfra_config.proxmox.get('node_roles', {}) is mapping else {} }}
+    _database_backend_storage_ids: >-
+      {{ homelabinfra_config.proxmox.get('storage_ids', {})
+         if homelabinfra_config.proxmox.get('storage_ids', {}) is mapping else {} }}
+
 - name: Database backend | Resolve the node and storage
   ansible.builtin.set_fact:
     _database_backend_node: >-
@@ -27,24 +39,76 @@
            if _database_backend_guest_type == 'lxc'
            else app_config.proxmox.get('vm', {}).get('node', ''))
           or app_config.proxmox.get('node', '')
-          or homelabinfra_config.proxmox.get('node', '')) | string | trim }}
+          or (_database_backend_node_roles.get('storage', '')
+              if _database_backend_guest_type == 'vm'
+                 and ('node_roles' in homelabinfra_config.proxmox
+                      or 'storage_ids' in homelabinfra_config.proxmox)
+              else ''
+              if _database_backend_guest_type == 'lxc'
+                 and ('node_roles' in homelabinfra_config.proxmox
+                      or 'storage_ids' in homelabinfra_config.proxmox)
+              else homelabinfra_config.proxmox.get('node', ''))) | string | trim }}
     _database_backend_storage: >-
       {{ (((app_config.proxmox.get('disk_volume', {}).get('storage', '')
             or app_config.proxmox.get('lxc', {}).get('disk_volume', {}).get('storage', ''))
            if _database_backend_guest_type == 'lxc'
            else app_config.proxmox.get('vm', {}).get('storage', ''))
           or app_config.proxmox.get('storage', '')
-          or homelabinfra_config.proxmox.get('storage', '')) | string | trim }}
+          or (_database_backend_storage_ids.get(
+                'floating_lxc' if _database_backend_guest_type == 'lxc' else 'database_vm', '')
+              if ('node_roles' in homelabinfra_config.proxmox
+                  or 'storage_ids' in homelabinfra_config.proxmox)
+              else homelabinfra_config.proxmox.get('storage', ''))) | string | trim }}
+
+- name: Database backend | Validate classed placement configuration
+  ansible.builtin.assert:
+    that:
+      - _database_backend_node_roles.storage | default('') | string | trim | length > 0
+      - _database_backend_node_roles.compute is sequence
+      - _database_backend_node_roles.compute is not string
+      - _database_backend_node_roles.compute | length > 0
+      - >-
+        (_database_backend_node_roles.compute | select('string') | list | length)
+        == (_database_backend_node_roles.compute | length)
+      - >-
+        (_database_backend_node_roles.compute | unique | list | length)
+        == (_database_backend_node_roles.compute | length)
+      - >-
+        _database_backend_node_roles.storage not in _database_backend_node_roles.compute
+      - _database_backend_storage_ids is mapping
+      - >-
+        _database_backend_storage_ids.get(
+          'floating_lxc' if _database_backend_guest_type == 'lxc' else 'database_vm', '')
+        | string | trim | length > 0
+    fail_msg: >-
+      Classed database placement requires valid proxmox.node_roles.storage,
+      proxmox.node_roles.compute and proxmox.storage_ids.{floating_lxc,database_vm}
+      values in config/proxmox.yml.
+  when:
+    - _existing_hosts | length == 0
+    - _database_backend_classed_placement | bool
+
+- name: Database backend | Resolve nodes whose addresses are needed for creation
+  ansible.builtin.set_fact:
+    _database_backend_nodes_to_validate: >-
+      {{ [_database_backend_node]
+         if _database_backend_node | length > 0
+         else (_database_backend_node_roles.get('compute', []) | list) }}
 
 - name: Database backend | Require a node and storage
   ansible.builtin.assert:
     that:
-      - _database_backend_node | length > 0
+      - >-
+        _database_backend_node | length > 0
+        or (_database_backend_classed_placement | bool
+            and _database_backend_guest_type == 'lxc'
+            and _database_backend_nodes_to_validate | length > 0)
       - _database_backend_storage | length > 0
     fail_msg: >-
       Database backend instance {{ instance }} needs a Proxmox node and storage. Set
       proxmox.node and proxmox.storage in config/apps/{{ instance }}.yml, or configure
       the lab-wide proxmox.node and proxmox.storage.
+  when: _existing_hosts | length == 0
 
 - name: Database backend | Validate the selected node address map
   ansible.builtin.assert:
@@ -52,16 +116,19 @@
     fail_msg: >-
       Database backend instance {{ instance }} requires proxmox.nodes to be a mapping
       from Proxmox node names to addresses.
+  when: _existing_hosts | length == 0
 
-- name: Database backend | Require an address for a per-instance node
+- name: Database backend | Require addresses for every configured target node
   ansible.builtin.assert:
     that: >-
-      _database_backend_node == homelabinfra_config.proxmox.get('node', '')
-      or homelabinfra_config.proxmox.get('nodes', {}).get(_database_backend_node, '')
+      item == homelabinfra_config.proxmox.get('node', '')
+      or homelabinfra_config.proxmox.get('nodes', {}).get(item, '')
          | string | trim | length > 0
     fail_msg: >-
-      Database backend instance {{ instance }} targets a node that has no address in
-      proxmox.nodes. Add proxmox.nodes.{{ _database_backend_node }} to config/proxmox.yml.
+      Database backend instance {{ instance }} targets node {{ item }}, which has no
+      address in proxmox.nodes. Add proxmox.nodes.{{ item }} to config/proxmox.yml.
+  loop: "{{ _database_backend_nodes_to_validate }}"
+  when: _existing_hosts | length == 0
 
 - name: Database backend | Publish normalized placement to the guest resolver
   ansible.builtin.set_fact:

@@ -53,21 +53,21 @@ def run_playbook(plays, inventory, env=None):
         return result
 
 
-def prepare_vars(instance_config, app_proxmox, existing_hosts=None):
+def prepare_vars(instance_config, app_proxmox, existing_hosts=None, placement=None):
+    proxmox = {
+        "node": "control-node",
+        "storage": "global-store",
+        "nodes": {
+            "node-2": "192.0.2.2",
+            "node-lxc": "192.0.2.3",
+        },
+    }
+    proxmox.update(placement or {})
     return {
         "instance": "database-test",
         "_instance_config": instance_config,
         "app_config": {"proxmox": app_proxmox},
-        "homelabinfra_config": {
-            "proxmox": {
-                "node": "control-node",
-                "storage": "global-store",
-                "nodes": {
-                    "node-2": "192.0.2.2",
-                    "node-lxc": "192.0.2.3",
-                },
-            }
-        },
+        "homelabinfra_config": {"proxmox": proxmox},
         "_existing_hosts": existing_hosts or [],
     }
 
@@ -142,6 +142,51 @@ def check_prepare_task():
                 ]}},
             ],
         ),
+        (
+            "classed VM defaults",
+            prepare_vars(
+                {"proxmox": {"guest_type": "vm"}},
+                {"guest_type": "vm"},
+                placement={
+                    "node_roles": {"storage": "node-2", "compute": ["node-lxc"]},
+                    "storage_ids": {
+                        "database_vm": "database-vm-store",
+                        "floating_lxc": "floating-lxc-store",
+                    },
+                },
+            ),
+            [
+                {"ansible.builtin.include_tasks": str(PREPARE)},
+                {"ansible.builtin.assert": {"that": [
+                    "_database_backend_classed_placement | bool",
+                    "_database_backend_node == 'node-2'",
+                    "_database_backend_storage == 'database-vm-store'",
+                ]}},
+            ],
+        ),
+        (
+            "classed LXC defaults",
+            prepare_vars(
+                {"proxmox": {"guest_type": "lxc"}},
+                {"guest_type": "lxc"},
+                placement={
+                    "node_roles": {"storage": "node-2", "compute": ["node-lxc"]},
+                    "storage_ids": {
+                        "database_vm": "database-vm-store",
+                        "floating_lxc": "floating-lxc-store",
+                    },
+                },
+            ),
+            [
+                {"ansible.builtin.include_tasks": str(PREPARE)},
+                {"ansible.builtin.assert": {"that": [
+                    "_database_backend_classed_placement | bool",
+                    "_database_backend_node == ''",
+                    "_database_backend_storage == 'floating-lxc-store'",
+                    "_database_backend_nodes_to_validate == ['node-lxc']",
+                ]}},
+            ],
+        ),
     ]
 
     for name, variables, tasks in cases:
@@ -158,6 +203,29 @@ def check_prepare_task():
         )
         output = result.stdout + result.stderr
         assert result.returncode == 0, f"{name} failed\n{output}"
+
+    existing_vars = prepare_vars(
+        {"proxmox": {"guest_type": "lxc", "node": "unregistered-node", "storage": "old-store"}},
+        {"guest_type": "lxc", "node": "unregistered-node", "storage": "old-store"},
+        ["existing_guest"],
+    )
+    existing = run_playbook(
+        [{
+            "name": "reuse existing database backend without target node address",
+            "hosts": "localhost",
+            "connection": "local",
+            "gather_facts": False,
+            "vars": existing_vars,
+            "tasks": [
+                {"ansible.builtin.include_tasks": str(PREPARE)},
+                {"ansible.builtin.assert": {"that": "_database_backend_node == 'unregistered-node'"}},
+            ],
+        }],
+        "[local]\nlocalhost ansible_connection=local\n"
+        "existing_guest ansible_connection=local proxmox_vmtype=lxc\n",
+    )
+    output = existing.stdout + existing.stderr
+    assert existing.returncode == 0, f"existing guest placement asserts were not skipped\n{output}"
 
     mismatch_vars = prepare_vars(
         {"proxmox": {"guest_type": "vm"}},
@@ -313,7 +381,8 @@ def check_all_engines_share_placement():
     provision_text = PROVISION.read_text(encoding="utf-8")
     assert "_database_backend_guest_type == 'lxc'" in provision_text
     assert "_database_backend_guest_type == 'vm'" in provision_text
-    assert "proxmox_placement_database_backend: true" in provision_text
+    assert provision_text.count("proxmox_placement_database_backend:") == 3
+    assert "{{ not (_database_backend_classed_placement | bool) }}" in provision_text
 
     provision_tasks = list(iter_tasks(yaml.safe_load(provision_text)))
     lxc_identity = next(

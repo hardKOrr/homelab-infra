@@ -966,7 +966,7 @@
     - name: Verify ownership and non-shared tags before unwiring
       ansible.builtin.assert:
         that:
-          - hostvars[_rm_destroy_guest_host].proxmox_vmtype | default('') == 'lxc'
+          - hostvars[_rm_destroy_guest_host].proxmox_vmtype | default('') in ['lxc', 'qemu']
           - hostvars[_rm_destroy_guest_host].proxmox_vmid | default(0) | int > 0
           - hostvars[_rm_destroy_guest_host].proxmox_name | default(_rm_destroy_guest_host, true) == instance
           - "'_+lab' in (hostvars[_rm_destroy_guest_host].proxmox_tags_parsed | default([]))"
@@ -984,7 +984,7 @@
              | reject('equalto', '_' ~ instance) | list | length) == 0
         fail_msg: >-
           Refusing destroy_guest=true because the native instance does not resolve to its
-          own LXC with the _+lab ownership tag and exact instance tag.
+          own LXC or VM with the _+lab ownership tag and exact instance tag.
       when:
         - destroy_guest | default(false) | bool
         - _rm_destroy_guest_host | length > 0
@@ -2057,6 +2057,21 @@
         - _rm_destroy_guest | bool
         - _rm_delete_data | bool
         - remove_kind == 'native'
+        - proxmox_vmtype == 'lxc'
+
+    - name: Destroy the explicitly selected native VM
+      ansible.builtin.include_tasks: ../../tasks/proxmox/destroy-owned-vm.yml
+      vars:
+        destroy_vm_instance: "{{ instance }}"
+        destroy_vm_name: "{{ remove_guest_name }}"
+        destroy_vm_node: "{{ remove_guest_node }}"
+        destroy_vm_vmid: "{{ remove_guest_vmid }}"
+        destroy_vm_original_tags: "{{ remove_guest_original_tags }}"
+      when:
+        - _rm_destroy_guest | bool
+        - _rm_delete_data | bool
+        - remove_kind == 'native'
+        - proxmox_vmtype == 'qemu'
 
 
 # ── Play 3: Remove Hi.Events' named database after its namespace is gone ────────

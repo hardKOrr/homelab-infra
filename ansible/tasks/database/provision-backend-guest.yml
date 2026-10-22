@@ -50,7 +50,7 @@
       ansible.builtin.include_tasks: ../proxmox/lxc-create.yml
       vars:
         proxmox_placement_class: floating_lxc
-        proxmox_placement_database_backend: true
+        proxmox_placement_database_backend: "{{ not (_database_backend_classed_placement | bool) }}"
 
     - name: Database backend | Add the LXC to its deploy group
       ansible.builtin.add_host:
@@ -116,7 +116,7 @@
       ansible.builtin.include_tasks: ../proxmox/ensure-cloud-template.yml
       vars:
         proxmox_placement_class: database_vm
-        proxmox_placement_database_backend: true
+        proxmox_placement_database_backend: "{{ not (_database_backend_classed_placement | bool) }}"
         proxmox_placement_node: "{{ _database_backend_node }}"
         proxmox_placement_storage: "{{ _database_backend_storage }}"
         cloud_template_name: "{{ app_config.proxmox.cloud_template.name | default('debian-12-cloud') }}"
@@ -132,7 +132,7 @@
       ansible.builtin.include_tasks: ../proxmox/vm-clone.yml
       vars:
         proxmox_placement_class: database_vm
-        proxmox_placement_database_backend: true
+        proxmox_placement_database_backend: "{{ not (_database_backend_classed_placement | bool) }}"
         proxmox_placement_node: "{{ _database_backend_node }}"
         proxmox_placement_storage: "{{ _database_backend_storage }}"
 
