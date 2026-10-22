@@ -46,7 +46,7 @@
     # App deploys carry their effective per-instance config on localhost. Other callers
     # (for example the reviewed start-only helper) may not, so absence stays a no-op.
     _egr_balloon_requested: >-
-      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get('balloon', '') }}
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get('balloon') or '' }}
 
 # A guest in the inventory always carries these. Missing them means the caller passed
 # a host the Proxmox inventory did not produce, which is worth failing on rather than

@@ -3,6 +3,7 @@
 
 from pathlib import Path
 
+from jinja2 import Environment, StrictUndefined
 import yaml
 
 repo = Path(__file__).resolve().parents[1]
@@ -92,6 +93,15 @@ assert "installer_vm.balloon is none" in match_expression
 assert "_installer_vm_current_config.balloon" in match_expression
 
 ensure = load_tasks(task_dir / "ensure-guest-running.yml")
+ensure_identity = task_index(ensure, "Ensure running | Resolve the guest's identity from inventory facts")
+ensure_balloon_requested = ensure[ensure_identity]["ansible.builtin.set_fact"]["_egr_balloon_requested"]
+assert ".get('balloon') or ''" in ensure_balloon_requested
+jinja = Environment(undefined=StrictUndefined)
+explicit_null = jinja.from_string(ensure_balloon_requested).render(
+    app_config={"proxmox": {"vm": {"balloon": None}}}
+)
+assert explicit_null == "", explicit_null
+
 ensure_config = ensure[task_index(
     ensure,
     "Ensure running | Read the guest config needed for memory checks or balloon convergence",
