@@ -1,0 +1,85 @@
+---
+- name: Read Jellyfin's current encoding settings
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/System/Configuration/encoding"
+    headers:
+      Authorization: "{{ _jf_auth_header }}"
+    return_content: true
+    status_code: 200
+  register: _jf_encoding_options_before
+  changed_when: false
+  no_log: true
+
+- name: Resolve the desired Jellyfin hardware encoding settings
+  ansible.builtin.set_fact:
+    _jf_hardware_acceleration_type: >-
+      {{ 'vaapi' if _jf_dri_device_declared | bool else 'none' }}
+    _jf_hardware_encoding_enabled: "{{ _jf_dri_device_declared | bool }}"
+    _jf_hardware_decoding_codecs: >-
+      {{ ((_jf_encoding_options_before.json.HardwareDecodingCodecs
+           | default([], true) | list)
+          + (['hevc'] if _jf_dri_device_declared | bool else [])) | unique | list }}
+
+- name: Resolve Jellyfin's complete desired encoding options
+  ansible.builtin.set_fact:
+    _jf_encoding_options_desired: >-
+      {{ _jf_encoding_options_before.json
+         | combine(
+             {
+               'HardwareAccelerationType': 'vaapi' if _jf_dri_device_declared | bool else 'none',
+               'EnableHardwareEncoding': _jf_dri_device_declared | bool
+             }
+             | combine(
+                 {'HardwareDecodingCodecs': _jf_hardware_decoding_codecs}
+                 if _jf_dri_device_declared | bool else {},
+                 recursive=True
+               ),
+             recursive=True
+           ) }}
+  no_log: true
+
+- name: Save Jellyfin's hardware encoding settings
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/System/Configuration/encoding"
+    method: POST
+    headers:
+      Authorization: "{{ _jf_auth_header }}"
+    body_format: json
+    body: "{{ _jf_encoding_options_desired }}"
+    status_code: 204
+  when: _jf_encoding_options_desired != _jf_encoding_options_before.json
+  changed_when: true
+  no_log: true
+
+- name: Read Jellyfin's encoding settings back
+  ansible.builtin.uri:
+    url: "{{ _jf_base }}/System/Configuration/encoding"
+    headers:
+      Authorization: "{{ _jf_auth_header }}"
+    return_content: true
+    status_code: 200
+  register: _jf_encoding_options_after
+  until: >-
+    (_jf_encoding_options_after.json.HardwareAccelerationType | default('none') | lower)
+      == _jf_hardware_acceleration_type
+    and
+    (_jf_encoding_options_after.json.EnableHardwareEncoding | default(false) | bool)
+      == (_jf_hardware_encoding_enabled | bool)
+    and
+    (not (_jf_dri_device_declared | bool)
+     or 'hevc' in (_jf_encoding_options_after.json.HardwareDecodingCodecs | default([], true)))
+  retries: 10
+  delay: 1
+  changed_when: false
+  no_log: true
+
+- name: Assert Jellyfin applied the requested hardware transcoding settings
+  ansible.builtin.assert:
+    that:
+      - (_jf_encoding_options_after.json.HardwareAccelerationType | default('none') | lower) == _jf_hardware_acceleration_type
+      - (_jf_encoding_options_after.json.EnableHardwareEncoding | default(false) | bool) == (_jf_hardware_encoding_enabled | bool)
+      - not (_jf_dri_device_declared | bool) or 'hevc' in (_jf_encoding_options_after.json.HardwareDecodingCodecs | default([], true))
+    fail_msg: >-
+      Jellyfin encoding settings did not match the declared DRI device:
+      expected {{ _jf_hardware_acceleration_type }} acceleration and hardware
+      encoding {{ 'enabled' if _jf_hardware_encoding_enabled | bool else 'disabled' }}.

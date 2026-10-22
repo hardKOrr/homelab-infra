@@ -41,6 +41,12 @@ services:
       # stack host publishes. They differ whenever two apps on one stack would
       # otherwise collide.
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
+{% if _jf_dri_device_declared | bool and _jf_dri_group_ids | length > 0 %}
+    group_add:
+{% for group_id in _jf_dri_group_ids %}
+      - "{{ group_id }}"
+{% endfor %}
+{% endif %}
 {% set jellyfin_devices = app_config.app.devices | default([]) %}
 {% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
 {% set jellyfin_devices = (jellyfin_devices + ['/dev/dri']) | unique | list %}

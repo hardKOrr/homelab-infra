@@ -58,8 +58,8 @@ jellyfin_defaults:
         subpath: music
 
     # Optional dedicated GPU declaration from proxmox.devices. When set, the stack
-    # VM is pinned to that device's node and /dev/dri is exposed to Jellyfin.
-    # Codecs still need enabling in Jellyfin's playback settings.
+    # VM is pinned to that device's node, /dev/dri and its host groups are exposed
+    # to Jellyfin, and Deploy enables VA-API decoding and encoding in Jellyfin.
     gpu_device: ""
     devices: []
 
