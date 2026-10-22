@@ -40,6 +40,7 @@ templates.
 - `test-database-facts.py`: generated database registry cleanup, PostgreSQL privilege/extension setup and delete/redeploy cluster lifecycle.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.
 - `test-template-rendering.py`: app templates and defaults, including Caddy, the media apps and the Kubernetes manifests.
+- `test-dns-rename.py`: DNS-name renames remove only the instance-owned OPNsense override or the former Caddy route hostname in Pi-hole, while preserving foreign and sibling records.
 - `test-jellyfin-hardware-transcoding.py`: Jellyfin's VA-API settings and DRI group access follow the declared device, converge on repeat runs, and turn hardware encoding off when no device is declared.
 - `test-vaultwarden-login.py`: the vaulted Vaultwarden login round trip and `lab-run.sh` loading it.
 - `test-lab-refresh.py`: ordinary runs keep the shared checkout pinned across concurrent jobs and a remote push; explicit refresh still updates it.

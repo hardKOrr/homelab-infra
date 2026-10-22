@@ -256,6 +256,20 @@
         return_content: true
       register: _caddy_existing
 
+    # Pi-hole DNS hosts have no per-record description. Preserve the old host match
+    # under Caddy's stable instance route id so its DNS wiring can remove only that
+    # application's previous name during the same Deploy.
+    - name: Wire Caddy | Remember existing route hosts for DNS cleanup
+      ansible.builtin.set_fact:
+        wiring_previous_domains_by_app: >-
+          {{ (wiring_previous_domains_by_app | default({}))
+             | combine({wiring_app_name:
+                 ((_caddy_existing.json.match | default([])
+                   | selectattr('host', 'defined')
+                   | map(attribute='host') | flatten | unique | list)
+                  if _caddy_existing.status == 200 else [])}) }}
+      no_log: true
+
     - name: Wire Caddy | Create route
       ansible.builtin.uri:
         url: "{{ _caddy_admin_url }}/config/apps/http/servers/srv0/routes"
