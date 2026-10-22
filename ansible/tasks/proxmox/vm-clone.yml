@@ -11,7 +11,7 @@
 #
 # Sequence — each step is a separate module call because Proxmox requires it:
 #   1. clone template -> newid
-#   2. update the clone with cores/memory/cloud-init/network
+#   2. update the clone with cores/memory/optional balloon/cloud-init/network
 #   3. start it
 #   4. wait for the guest agent, then resolve the address
 #
@@ -46,6 +46,14 @@
     fail_msg: >-
       Required inputs: homelabinfra_cloud_template.vmid, ansible[ssh_public_key],
       proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name]].
+
+- name: VM clone | Validate the configured balloon minimum
+  ansible.builtin.include_tasks: validate-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_mib: "{{ homelabinfra_config.proxmox.vm.balloon }}"
+    proxmox_vm_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) }}"
+    proxmox_vm_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
+  when: homelabinfra_config.proxmox.vm.balloon is defined
 
 - name: VM clone | Read cluster resources to preserve an existing guest's node
   ansible.builtin.command:
@@ -325,6 +333,7 @@
     # untouched; a caller that needs a modern baseline sets proxmox.vm.cpu.
     cpu: "{{ homelabinfra_config.proxmox.vm.cpu | default(omit) }}"
     memory: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) | int }}"
+    balloon: "{{ homelabinfra_config.proxmox.vm.balloon | default(omit) }}"
     agent: "{{ homelabinfra_config.proxmox.vm.agent | default(1) }}"
     onboot: "{{ homelabinfra_config.proxmox.vm.onboot | default(true) }}"
     startup: "{{ _proxmox_startup if (_proxmox_startup | length > 0) else omit }}"

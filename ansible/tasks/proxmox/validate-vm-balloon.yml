@@ -1,0 +1,14 @@
+# Inputs:
+#   proxmox_vm_balloon_mib — requested balloon minimum in MiB
+#   proxmox_vm_memory_mib  — VM's maximum memory in MiB
+#   proxmox_vm_guest       — guest name for the failure message
+- name: Proxmox VM balloon | Validate the configured minimum
+  ansible.builtin.assert:
+    that:
+      - proxmox_vm_balloon_mib | string is match('^[1-9][0-9]*$')
+      - proxmox_vm_memory_mib | string is match('^[1-9][0-9]*$')
+      - (proxmox_vm_balloon_mib | int) <= (proxmox_vm_memory_mib | int)
+    fail_msg: >-
+      VM '{{ proxmox_vm_guest }}' requires balloon to be a positive whole number
+      of MiB no greater than its positive whole-number memory maximum; received
+      balloon={{ proxmox_vm_balloon_mib }} MiB and memory={{ proxmox_vm_memory_mib }} MiB.

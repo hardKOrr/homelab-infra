@@ -51,6 +51,7 @@
           iso: "{{ pdm_config.install.iso }}"
           cores: "{{ pdm_config.proxmox.vm.cores }}"
           memory: "{{ pdm_config.proxmox.vm.memory }}"
+          balloon: "{{ pdm_config.proxmox.vm.balloon | default(none) }}"
           disk_size: "{{ pdm_config.proxmox.vm.disk_size }}"
           net0: >-
             {{ 'virtio,bridge=' ~ (pdm_config.proxmox.bridge | default('vmbr0'))

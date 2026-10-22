@@ -55,8 +55,14 @@ for filename, operation_names in expected.items():
 ensure = named_tasks("ensure-guest-running.yml")
 memory_check = task_index(ensure, include="check-node-free-memory.yml")
 start = task_index(ensure, name="Ensure running | Start the guest if it is not running")
-config = task_index(ensure, name="Ensure running | Read the stopped guest's configured memory")
+config = task_index(
+    ensure,
+    name="Ensure running | Read the guest config needed for memory checks or balloon convergence",
+)
 assert config < memory_check < start
+assert ensure[config]["when"] == [
+    "_egr_status != 'running' or (_egr_vmtype == 'qemu' and (_egr_balloon_requested | string | length > 0))"
+]
 assert ensure[memory_check]["when"] == "_egr_status != 'running'"
 assert "_egr_guest_config.stdout | from_json" in str(ensure[memory_check]["vars"])
 

@@ -76,6 +76,14 @@
 
 # Node names are not resolvable on their own — see the file's header. Every delegate_to
 # below depends on this having run.
+- name: Validate the VM balloon minimum before touching the cloud template
+  ansible.builtin.include_tasks: validate-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_mib: "{{ homelabinfra_config.proxmox.vm.balloon }}"
+    proxmox_vm_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(2048) }}"
+    proxmox_vm_guest: "{{ homelabinfra_config.proxmox.vm.name | default(cloud_template_name | default('VM')) }}"
+  when: homelabinfra_config.proxmox.vm.balloon is defined
+
 - name: Make Proxmox nodes addressable for delegation
   ansible.builtin.import_tasks: register-nodes.yml
 

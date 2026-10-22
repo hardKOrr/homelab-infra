@@ -33,6 +33,14 @@
       - homelabinfra_config.proxmox.vm.ansible_host is defined or homelabinfra_config.proxmox.vm.ip_address is defined
     fail_msg: "Required homelabinfra_config inputs: proxmox[api_host,api_token_id,api_token_secret,node,vm[vmid,name,ansible_host|ip_address]]"
 
+- name: Validate the configured VM balloon minimum
+  ansible.builtin.include_tasks: validate-vm-balloon.yml
+  vars:
+    proxmox_vm_balloon_mib: "{{ homelabinfra_config.proxmox.vm.balloon }}"
+    proxmox_vm_memory_mib: "{{ homelabinfra_config.proxmox.vm.memory | default(512) }}"
+    proxmox_vm_guest: "{{ homelabinfra_config.proxmox.vm.name }}"
+  when: homelabinfra_config.proxmox.vm.balloon is defined
+
 - name: Build facts for usage in proxmox vm creation
   ansible.builtin.set_fact:
     homelabinfra_instance: >-

@@ -778,7 +778,10 @@ Template resolution does not migrate or recreate an existing instance guest.
 **Instance-file schema.** `config/apps/<instance>.yml` is loaded whole by
 filename. The filename is the instance name (`-e instance=<name>`) and identifies the
 guest, application record, and provider objects. Routing uses `routing.subdomain` as
-described below. Top-level keys mirror the `<app>_defaults` dict in
+described below. VM instances may set `proxmox.vm.balloon` to a positive whole-number
+minimum in MiB, no greater than `proxmox.vm.memory` (the maximum). Leave it unset to
+preserve Proxmox's default on creation and the existing guest's configured value on
+convergence. Top-level keys mirror the `<app>_defaults` dict in
 `vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
 as `media`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
 (`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`,
