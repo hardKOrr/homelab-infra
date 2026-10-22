@@ -571,6 +571,8 @@
           - "instance={{ _ra_target }}"
           - -e
           - recovery_isolated=true
+      environment:
+        ANSIBLE_CONFIG: "{{ playbook_dir }}/../../ansible.cfg"
       changed_when: true
 
     - name: Refresh inventory after provisioning the new restore target

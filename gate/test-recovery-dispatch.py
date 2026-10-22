@@ -26,6 +26,9 @@ def check_native_restore_storage_scopes():
     provision_argv = provision_task["ansible.builtin.command"]["argv"]
     nested_ansible = provision_argv[0]
     assert nested_ansible == "{{ ansible_playbook_python | dirname }}/ansible-playbook"
+    assert provision_task["environment"]["ANSIBLE_CONFIG"] == (
+        "{{ playbook_dir }}/../../ansible.cfg"
+    )
     assert provision_argv[1:4] == [
         "-i", "{{ playbook_dir }}/../../inventory/",
         "{{ playbook_dir }}/../apps/{{ _ra_app }}.yml",
@@ -74,23 +77,29 @@ def check_native_restore_storage_scopes():
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
 
-    # The runner invokes its primary playbook through an absolute venv path. Keep the
-    # nested provisioning process runnable even when Ansible's command PATH omits venv.
+    # Keep the nested provisioning process runnable when command PATH omits the venv,
+    # and prove it loads the candidate's custom inventory plugin path without relying
+    # on an inherited ANSIBLE_CONFIG from the parent process.
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "nested-ansible-path.yml"
+        nested_config = nested_ansible.replace("ansible-playbook", "ansible-config")
         path.write_text(yaml.safe_dump([{
             "hosts": "localhost", "gather_facts": False, "connection": "local",
             "tasks": [
-                {"ansible.builtin.command": {"argv": [nested_ansible, "--version"]},
+                {"ansible.builtin.command": {
+                    "argv": [nested_config, "dump", "--only-changed"]},
+                 "environment": {"ANSIBLE_CONFIG": str(repo / "ansible/ansible.cfg")},
                  "register": "nested_ansible_result", "changed_when": False},
                 {"ansible.builtin.assert": {"that": [
                     "nested_ansible_result.rc == 0",
-                    "nested_ansible_result.stdout is search('ansible-playbook')",
+                    "nested_ansible_result.stdout is search('DEFAULT_INVENTORY_PLUGIN_PATH')",
+                    f"nested_ansible_result.stdout is search({json.dumps(str(repo / 'ansible/inventory_plugins'))})",
                 ]}},
             ],
         }]))
         env = os.environ | {"ANSIBLE_STDOUT_CALLBACK": "default", "ANSIBLE_NOCOLOR": "1",
                             "PATH": "/usr/bin:/bin"}
+        env.pop("ANSIBLE_CONFIG", None)
         result = subprocess.run([str(ansible), "-i", "localhost,", "-c", "local", str(path)],
                                 env=env, text=True, capture_output=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
