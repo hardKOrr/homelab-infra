@@ -66,6 +66,8 @@
   ansible.builtin.apt:
     name: qemu-guest-agent
     state: present
+    # Fresh cloud clones may still hold the apt lock after SSH is available.
+    lock_timeout: 300
   when: ansible_virtualization_type | default('') != 'lxc'
 
 - name: Enable and start the QEMU guest agent on VMs
