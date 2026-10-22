@@ -23,8 +23,15 @@ def check_native_restore_storage_scopes():
                             if task.get("name") == "Scope native guest paths to their owning guest")
     provision_task = next(task for task in source["pre_tasks"]
                           if task.get("name") == "Provision the isolated new restore target")
-    nested_ansible = provision_task["ansible.builtin.command"]["argv"][0]
+    provision_argv = provision_task["ansible.builtin.command"]["argv"]
+    nested_ansible = provision_argv[0]
     assert nested_ansible == "{{ ansible_playbook_python | dirname }}/ansible-playbook"
+    assert provision_argv[1:4] == [
+        "-i", "{{ playbook_dir }}/../../inventory/",
+        "{{ playbook_dir }}/../apps/{{ _ra_app }}.yml",
+    ]
+    assert (repo / "ansible/playbooks/maintenance/../../inventory").is_dir()
+    assert (repo / "ansible/playbooks/maintenance/../apps/mariadb.yml").is_file()
     cases = [
         # The same guest-local path belongs to separate root filesystems when a native
         # database is staged as another Proxmox guest.

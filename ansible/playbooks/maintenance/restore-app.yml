@@ -565,8 +565,8 @@
         argv:
           - "{{ ansible_playbook_python | dirname }}/ansible-playbook"
           - -i
-          - inventory/
-          - "playbooks/apps/{{ _ra_app }}.yml"
+          - "{{ playbook_dir }}/../../inventory/"
+          - "{{ playbook_dir }}/../apps/{{ _ra_app }}.yml"
           - -e
           - "instance={{ _ra_target }}"
           - -e
