@@ -106,9 +106,14 @@ assert "_pbs_disk_restart_required | bool" in str(shutdown["when"])
 start = task(ensure_disk, "PBS disk | Start the VM with discard active")
 assert start["ansible.builtin.command"]["argv"][:2] == ["qm", "start"]
 assert "_pbs_disk_restart_required | bool" in str(start["when"])
+running_before_restart = "'status: running' in _pbs_disk_status_before_restart.stdout"
+assert running_before_restart in str(start["when"])
+start_wait = task(ensure_disk, "PBS disk | Wait for the QEMU VM to start")
+assert running_before_restart in str(start_wait["when"])
 ssh_wait = task(ensure_disk, "PBS disk | Wait for PBS SSH after the QEMU restart")
 assert ssh_wait["ansible.builtin.wait_for"]["port"] == 22
 assert "_pbs_disk_restart_required | bool" in str(ssh_wait["when"])
+assert running_before_restart in str(ssh_wait["when"])
 
 pbs_role = load_yaml("ansible/roles/pbs/tasks/main.yml")
 disk_include = task(pbs_role, "Configure the persistent PBS datastore disk")
