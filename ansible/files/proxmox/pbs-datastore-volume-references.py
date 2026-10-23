@@ -17,7 +17,13 @@ def main():
     for guest_type in ("qemu-server", "lxc"):
         for config in sorted((root / "nodes").glob(f"*/{guest_type}/*.conf")):
             vmid = config.stem
+            in_snapshot = False
             for line in config.read_text(encoding="utf-8").splitlines():
+                if re.match(r"^\s*\[[^]]+\]\s*$", line):
+                    in_snapshot = line.strip() != "[PENDING]"
+                    continue
+                if in_snapshot:
+                    continue
                 match = re.match(
                     r"^\s*((?:scsi|sata|ide|virtio|unused|mp|rootfs|efidisk|tpmstate)\d*):\s*([^,\s]+)",
                     line,
