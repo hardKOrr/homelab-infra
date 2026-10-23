@@ -146,6 +146,9 @@ def check_admin_binding_scope():
     play_vars = DEEMIX_PLAYBOOK[2]["vars"]
     assert "wiring_auth_users" in play_vars
     assert "sso.admin_user" in play_vars["wiring_auth_users"]
+    play_text = str(DEEMIX_PLAYBOOK)
+    assert "automatic Deezer sign-in" in play_text
+    assert "Confirm the Deezer login succeeded" not in play_text
     occurrences = []
     for path in (ROOT / "ansible/playbooks/apps").glob("*.yml"):
         doc = yaml.safe_load(path.read_text())

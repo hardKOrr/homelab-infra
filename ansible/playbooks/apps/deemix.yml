@@ -277,8 +277,8 @@
         msg: >-
           {{ instance }} is registered in the media registry. Run the Wire Media
           Stack job to register it as a download client in every Lidarr running
-          the plugins branch. Confirm the Deezer login succeeded in the Deemix web
-          interface — a bad or expired ARL fails there, visibly.
+          the plugins branch. Deemix Deploy reports the automatic Deezer sign-in
+          result above when an ARL is configured.
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops
