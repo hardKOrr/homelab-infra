@@ -148,6 +148,45 @@
 - name: Apply pending restarts before the health check
   ansible.builtin.meta: flush_handlers
 
+- name: Reboot PBS once to apply retained datastore discard
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 10
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
+    - >-
+      hostvars['localhost']._pbs_disk_current_active_config | default('')
+      is not search('(^|,)discard=on(,|$)')
+
+- name: Read the active PBS datastore disk configuration
+  ansible.builtin.command:
+    argv:
+      - qm
+      - config
+      - "{{ hostvars['localhost']._pbs_disk_vmid }}"
+      - --current
+  delegate_to: "{{ hostvars['localhost']._pbs_disk_node }}"
+  register: _pbs_disk_active_config_after
+  changed_when: false
+  no_log: true
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
+
+- name: Confirm discard is active on the retained PBS datastore disk
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_disk_active_config_after.stdout is search(
+          '(?m)^scsi1:\s*[^\n]*,discard=on(,|$)')
+    fail_msg: >-
+      The retained PBS datastore disk is configured with discard but its active QEMU
+      device did not apply the option after restart.
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
+
 - name: Wait for the PBS API to answer
   ansible.builtin.uri:
     url: "https://localhost:{{ app_config.app.port }}/api2/json/ping"

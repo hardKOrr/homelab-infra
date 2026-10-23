@@ -41,6 +41,14 @@
   changed_when: false
   no_log: true
 
+- name: PBS disk | Read active target VM configuration from PVE
+  ansible.builtin.command:
+    argv: [qm, config, "{{ pbs_disk_vmid }}", --current]
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_active_config
+  changed_when: false
+  no_log: true
+
 - name: PBS disk | Confirm live ownership and reject a different scsi1 disk
   ansible.builtin.assert:
     that:
@@ -73,10 +81,15 @@
 
 - name: PBS disk | Find the exact retained volume
   ansible.builtin.set_fact:
+    _pbs_disk_vmid: "{{ pbs_disk_vmid }}"
+    _pbs_disk_node: "{{ pbs_disk_node }}"
     _pbs_disk_volumes: >-
       {{ (_pbs_disk_storage_content.stdout | from_json)
          | selectattr('volid', 'equalto', _pbs_disk_expected_volid) | list }}
     _pbs_disk_current_config: "{{ _pbs_disk_config_parsed.scsi1 | default('') }}"
+    _pbs_disk_current_active_config: >-
+      {{ _pbs_disk_active_config.stdout
+         | regex_findall('(?m)^scsi1:\s*(.+)$') | first | default('') | trim }}
     _pbs_disk_current: >-
       {{ (_pbs_disk_config_parsed.scsi1 | default('')).split(',') | first }}
   vars:
@@ -195,7 +208,7 @@
 
 - name: PBS disk | Read back the attached disk configuration
   ansible.builtin.command:
-    argv: [qm, config, "{{ pbs_disk_vmid }}", --current]
+    argv: [qm, config, "{{ pbs_disk_vmid }}"]
   delegate_to: "{{ pbs_disk_node }}"
   register: _pbs_disk_config_after
   changed_when: false
