@@ -33,5 +33,6 @@
 - name: Resolve Emby's unique DRI supplemental group IDs
   ansible.builtin.set_fact:
     _emby_dri_group_ids: >-
-      {{ _emby_dri_group_ids_found.stdout_lines | map('trim') | unique | list }}
+      {{ _emby_dri_group_ids_found.stdout_lines
+         | map('trim') | map('int') | unique | sort | map('string') | list }}
   when: _emby_dri_device_declared | bool

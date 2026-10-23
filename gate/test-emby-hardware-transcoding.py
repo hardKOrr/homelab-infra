@@ -95,7 +95,7 @@ def run_playbook(server, root, devices, gpu_device=""):
     fake_find.write_text(
         "#!/bin/sh\n"
         "[ \"${1:-}\" = /dev/dri ] || exit 9\n"
-        "printf '44\\n104\\n104\\n'\n"
+        "printf '104\\n44\\n104\\n'\n"
     )
     fake_find.chmod(0o755)
     env = os.environ | {
