@@ -286,6 +286,7 @@
   no_log: true
   when:
     - _pbs_disk_restart_required | bool
+    - "'status: running' in _pbs_disk_status_before_restart.stdout"
     - "'status: stopped' in _pbs_disk_status_after_shutdown.stdout"
 
 - name: PBS disk | Wait for the QEMU VM to start
@@ -298,7 +299,9 @@
   until: "'status: running' in _pbs_disk_status_after_start.stdout"
   retries: 60
   delay: 5
-  when: _pbs_disk_restart_required | bool
+  when:
+    - _pbs_disk_restart_required | bool
+    - "'status: running' in _pbs_disk_status_before_restart.stdout"
 
 - name: PBS disk | Wait for PBS SSH after the QEMU restart
   ansible.builtin.wait_for:
@@ -307,4 +310,6 @@
     state: started
     timeout: 600
   no_log: true
-  when: _pbs_disk_restart_required | bool
+  when:
+    - _pbs_disk_restart_required | bool
+    - "'status: running' in _pbs_disk_status_before_restart.stdout"
