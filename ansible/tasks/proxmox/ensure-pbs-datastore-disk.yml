@@ -76,6 +76,7 @@
     _pbs_disk_volumes: >-
       {{ (_pbs_disk_storage_content.stdout | from_json)
          | selectattr('volid', 'equalto', _pbs_disk_expected_volid) | list }}
+    _pbs_disk_current_config: "{{ _pbs_disk_config_parsed.scsi1 | default('') }}"
     _pbs_disk_current: >-
       {{ (_pbs_disk_config_parsed.scsi1 | default('')).split(',') | first }}
   vars:
@@ -168,12 +169,29 @@
       - set
       - "{{ pbs_disk_vmid }}"
       - --scsi1
-      - "{{ _pbs_disk_expected_volid }},backup=0,serial=homelab-pbs-store"
+      - "{{ _pbs_disk_expected_volid }},backup=0,serial=homelab-pbs-store,discard=on"
   delegate_to: "{{ pbs_disk_node }}"
   register: _pbs_disk_attach
   changed_when: _pbs_disk_attach.rc == 0
   when:
     - _pbs_disk_current | length == 0
+
+- name: PBS disk | Enable discard on the retained volume
+  ansible.builtin.command:
+    argv:
+      - qm
+      - set
+      - "{{ pbs_disk_vmid }}"
+      - --scsi1
+      - >-
+        {{ ((_pbs_disk_current_config.split(',') | reject('match', '^discard=') | list)
+            + ['discard=on']) | join(',') }}
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_discard
+  changed_when: _pbs_disk_discard.rc == 0
+  when:
+    - _pbs_disk_current | length > 0
+    - _pbs_disk_current_config is not search('(^|,)discard=on(,|$)')
 
 - name: PBS disk | Read back the attached disk configuration
   ansible.builtin.command:
@@ -183,15 +201,16 @@
   changed_when: false
   no_log: true
 
-- name: PBS disk | Confirm volume, backup exclusion and stable guest serial
+- name: PBS disk | Confirm volume, backup exclusion, stable guest serial and discard
   ansible.builtin.assert:
     that:
       - _pbs_disk_final | regex_search('(^|,)' ~ (_pbs_disk_expected_volid | regex_escape) ~ '(,|$)')
       - _pbs_disk_final is search('(^|,)backup=0(,|$)')
       - _pbs_disk_final is search('(^|,)serial=homelab-pbs-store(,|$)')
+      - _pbs_disk_final is search('(^|,)discard=on(,|$)')
     fail_msg: >-
       The PBS data disk did not read back with its exact retained volume identity,
-      backup=0 and the stable guest serial. Refusing guest deployment.
+      backup=0, the stable guest serial and discard=on. Refusing guest deployment.
   vars:
     _pbs_disk_final: >-
       {{ _pbs_disk_config_after.stdout

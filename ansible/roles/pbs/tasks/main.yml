@@ -97,6 +97,12 @@
     state: present
   notify: Restart pbs
 
+- name: Install util-linux for datastore trimming
+  ansible.builtin.apt:
+    name: util-linux
+    state: present
+  when: app_config.proxmox.vm.datastore_disk is defined
+
 - name: Disable the subscription-only enterprise repository (installed by the package)
   ansible.builtin.file:
     path: /etc/apt/sources.list.d/pbs-enterprise.list
@@ -131,6 +137,13 @@
   loop:
     - proxmox-backup
     - proxmox-backup-proxy
+
+- name: Enable and start periodic trimming of the PBS datastore
+  ansible.builtin.systemd:
+    name: fstrim.timer
+    state: started
+    enabled: true
+  when: app_config.proxmox.vm.datastore_disk is defined
 
 - name: Apply pending restarts before the health check
   ansible.builtin.meta: flush_handlers
