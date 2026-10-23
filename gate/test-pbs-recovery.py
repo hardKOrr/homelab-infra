@@ -364,9 +364,13 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     remote_lxc.mkdir(parents=True)
     (local_qemu / "100.conf").write_text(
         "scsi1: store:vm-100-disk-1,backup=0\n"
+        "[current]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n"
         "[before-upgrade]\n"
         "scsi1: store:vm-100-disk-1,backup=0\n"
-        "snaptime: 1700000000\n",
+        "snaptime: 1700000000\n"
+        "[before-discard]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
         encoding="utf-8",
     )
     (remote_lxc / "101.conf").write_text(
@@ -382,6 +386,12 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     )
     (remote_qemu / "102.conf").write_text(
         "scsi1: store:vm-100-disk-10,backup=0\n", encoding="utf-8"
+    )
+    (remote_qemu / "104.conf").write_text(
+        "scsi1: store:vm-104-disk-1,backup=0\n"
+        "[current]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
     )
     result = subprocess.run(
         [
