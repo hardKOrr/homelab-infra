@@ -330,6 +330,11 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     (remote_qemu / "103.conf").write_text(
         "scsi1: store:vm-100-disk-1,backup=0\n", encoding="utf-8"
     )
+    (remote_qemu / "104.conf").write_text(
+        "[PENDING]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
+    )
     (remote_qemu / "102.conf").write_text(
         "scsi1: store:vm-100-disk-10,backup=0\n", encoding="utf-8"
     )
@@ -348,6 +353,7 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     assert json.loads(result.stdout) == [
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "100"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "103"},
+        {"device": "scsi1", "guest_type": "qemu-server", "vmid": "104"},
         {"device": "mp0", "guest_type": "lxc", "vmid": "101"},
     ]
 

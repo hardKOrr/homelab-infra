@@ -20,7 +20,7 @@ def main():
             in_snapshot = False
             for line in config.read_text(encoding="utf-8").splitlines():
                 if re.match(r"^\s*\[[^]]+\]\s*$", line):
-                    in_snapshot = True
+                    in_snapshot = line.strip() != "[PENDING]"
                     continue
                 if in_snapshot:
                     continue
