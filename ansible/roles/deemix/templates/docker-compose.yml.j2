@@ -2,10 +2,10 @@
 # Managed by homelab-infra — changes made here are overwritten on the next deploy.
 # To make permanent changes, edit config/apps/{{ instance }}.yml.
 #
-# DEEMIX_SINGLE_USER is always on: it is what makes the seeded .arl file
-# (roles/deemix/tasks/main.yml) apply server-wide instead of asking every
-# visitor to log in, and it is also why routing.identity is forward_auth in
-# vars/app-defaults/deemix.yml — see that file for the reasoning.
+# DEEMIX_SINGLE_USER is always on: it makes the login applied by
+# roles/deemix/tasks/main.yml through Deemix's login API shared server-wide
+# instead of asking every visitor to log in, and it is also why
+# routing.identity is forward_auth in vars/app-defaults/deemix.yml.
 #
 # /downloads is this image's own fixed mount point, not a configurable path
 # the way SABnzbd's and qBittorrent's are: app.download_path (a directory

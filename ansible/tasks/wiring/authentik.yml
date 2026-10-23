@@ -60,6 +60,7 @@
   when: homelabinfra_infra.sso.provider | default('none') == 'authentik'
   vars:
     _ak_mode: "{{ wiring_identity_mode | default('forward_auth') }}"
+    _ak_auth_usernames: "{{ wiring_auth_users | default([]) | unique | list }}"
     _ak_api: "{{ homelabinfra_infra.sso.host }}/api/v3"
     _ak_headers:
       Authorization: "Bearer {{ homelabinfra_infra.sso.token | default('') }}"
@@ -441,7 +442,9 @@
              }
              | combine({'provider': _ak_provider_pk | int}
                        if _ak_mode in ['oidc', 'forward_auth']
-                       else {'provider': none}) }}
+                       else {'provider': none})
+             | combine({'policy_engine_mode': 'any'}
+                       if _ak_auth_usernames | length > 0 else {}) }}
       no_log: true
 
     - name: Wire Authentik | Reject duplicate application slugs
@@ -478,6 +481,8 @@
           _ak_app.provider | default(none) != _ak_app_payload.provider
           or _ak_app.name | default('') != _ak_display
           or _ak_app.meta_launch_url | default('') != _ak_external_url
+          or (_ak_auth_usernames | length > 0
+              and (_ak_app.policy_engine_mode | default('any') | lower) != 'any')
       changed_when: true
       no_log: true
 
@@ -629,6 +634,85 @@
       when:
         - _ak_group.pk is defined
         - _ak_binding_list.json.results | default([]) | length == 0
+      changed_when: true
+      no_log: true
+
+    # Explicit user grants are additive to the group binding. They are useful
+    # for the stored Authentik administrator login that verifies an app's gate;
+    # this never edits account or group membership.
+    - name: Wire Authentik | Find configured access users
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/core/users/?username={{ item | urlencode }}"
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      loop: "{{ _ak_auth_usernames }}"
+      loop_control:
+        label: "{{ item }}"
+      register: _ak_auth_user_search
+      when: _ak_auth_usernames | length > 0
+      no_log: true
+
+    - name: Wire Authentik | Require every configured access user to resolve
+      ansible.builtin.assert:
+        that: item.json.results | default([]) | length == 1
+        fail_msg: >-
+          Authentik access user '{{ item.item }}' must resolve to exactly one account.
+      loop: "{{ _ak_auth_user_search.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: _ak_auth_usernames | length > 0
+
+    - name: Wire Authentik | Index configured access users
+      ansible.builtin.set_fact:
+        _ak_auth_user_pk_by_name: >-
+          {{ dict(_ak_auth_user_search.results
+                  | map(attribute='item')
+                  | zip(_ak_auth_user_search.results
+                       | map(attribute='json.results') | map('first')
+                       | map(attribute='pk'))) }}
+      when: _ak_auth_usernames | length > 0
+      no_log: true
+
+    # The bindings API filters by target, but does not expose a `user` query
+    # parameter. Read the application's bindings and select the user locally;
+    # an ignored `user` filter would return the group binding and suppress the
+    # direct grant this task owns.
+    - name: Wire Authentik | Find existing application bindings
+      ansible.builtin.uri:
+        url: >-
+          {{ _ak_api }}/policies/bindings/?target={{ _ak_app_final.json.pk }}&page_size=1000
+        method: GET
+        headers: "{{ _ak_headers }}"
+        status_code: 200
+      register: _ak_auth_user_bindings
+      when: _ak_auth_usernames | length > 0
+      changed_when: false
+      no_log: true
+
+    - name: Wire Authentik | Bind configured users to the application
+      ansible.builtin.uri:
+        url: "{{ _ak_api }}/policies/bindings/"
+        method: POST
+        headers: "{{ _ak_headers }}"
+        body_format: json
+        body: >-
+          {{ {'target': _ak_app_final.json.pk,
+              'user': _ak_auth_user_pk_by_name[item],
+              'order': 1,
+              'enabled': true,
+              'negate': false,
+              'timeout': 30} }}
+        status_code: 201
+      loop: "{{ _ak_auth_usernames }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - _ak_auth_usernames | length > 0
+        - >-
+          (_ak_auth_user_bindings.json.results | default([])
+           | selectattr('user', 'equalto', _ak_auth_user_pk_by_name[item] | int)
+           | list | length) == 0
       changed_when: true
       no_log: true
 

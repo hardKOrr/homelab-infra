@@ -221,6 +221,11 @@
     wiring_app_display: "Deemix ({{ instance }})"
     wiring_monitor_url: "https://{{ wiring_subdomain }}.{{ homelabinfra_infra.domain }}/"
     wiring_auth_group: "homelab-users"   # Authentik group granted access
+    # Keep the admin login that Deploy stored able to verify this app's gate
+    # without changing any Authentik group membership.
+    wiring_auth_users: >-
+      {{ [homelabinfra_infra.sso.admin_user]
+         if homelabinfra_infra.sso.admin_user | default('') | length > 0 else [] }}
     # forward_auth by default: DEEMIX_SINGLE_USER removes this app's own login
     # screen, so Authentik is what gates the browser route. See
     # vars/app-defaults/deemix.yml for why this does not affect Lidarr's wiring.
@@ -272,8 +277,8 @@
         msg: >-
           {{ instance }} is registered in the media registry. Run the Wire Media
           Stack job to register it as a download client in every Lidarr running
-          the plugins branch. Confirm the Deezer login succeeded in the Deemix web
-          interface — a bad or expired ARL fails there, visibly.
+          the plugins branch. Deemix Deploy reports the automatic Deezer sign-in
+          result above when an ARL is configured.
 
     # Last task in the play, deliberately. Wiring records what it could not do rather than
     # aborting, so a failure in one provider does not strand the others; this is what stops
