@@ -412,6 +412,10 @@ def caddy_missing_or_invalid_resolvers_fail_without_external_fallback(self):
 
 def emby_rendering():
     compose_template = read("ansible/roles/emby/templates/docker-compose.yml.j2")
+    defaults = yaml.safe_load(read("ansible/vars/app-defaults/emby.yml"))
+    assert defaults["emby_defaults"]["app"]["gpu_device"] == "", (
+        "Emby's default GPU device remains empty"
+    )
     compose = render(
         compose_template,
         {

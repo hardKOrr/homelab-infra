@@ -1,0 +1,37 @@
+---
+- name: Resolve whether Emby declares DRI hardware
+  ansible.builtin.set_fact:
+    _emby_dri_device_declared: >-
+      {{ (app_config.app.devices | default([], true)
+          | select('match', '^/dev/dri(?:/|$)') | list | length > 0)
+         or (app_config.app.gpu_device | default('', true) | trim | length > 0) }}
+    _emby_dri_group_ids: []
+
+- name: Read the stack host's DRI device group IDs
+  ansible.builtin.command:
+    argv:
+      - find
+      - /dev/dri
+      - -maxdepth
+      - "1"
+      - -type
+      - c
+      - -printf
+      - "%G\\n"
+  register: _emby_dri_group_ids_found
+  changed_when: false
+  when: _emby_dri_device_declared | bool
+
+- name: Assert the stack host exposes DRI device nodes
+  ansible.builtin.assert:
+    that: _emby_dri_group_ids_found.stdout_lines | default([]) | length > 0
+    fail_msg: >-
+      Emby declares DRI hardware, but the stack host exposes no character devices
+      under /dev/dri.
+  when: _emby_dri_device_declared | bool
+
+- name: Resolve Emby's unique DRI supplemental group IDs
+  ansible.builtin.set_fact:
+    _emby_dri_group_ids: >-
+      {{ _emby_dri_group_ids_found.stdout_lines | map('trim') | unique | list }}
+  when: _emby_dri_device_declared | bool

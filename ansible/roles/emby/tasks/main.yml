@@ -9,6 +9,9 @@
       {{ ((app_config.media_storage | default({})).library | default('', true))
          | regex_replace('/+$', '') }}
 
+- name: Configure Emby access to declared DRI devices
+  ansible.builtin.include_tasks: configure-devices.yml
+
 - name: Create Emby project directory
   ansible.builtin.file:
     path: "{{ emby_project_dir }}"
@@ -250,6 +253,9 @@
     _emby_token: "{{ _emby_auth.json.AccessToken }}"
     _emby_token_header: "{{ _emby_auth.json.AccessToken }}"
   no_log: true
+
+- name: Configure Emby hardware transcoding from its declared device
+  ansible.builtin.include_tasks: configure-transcoding.yml
 
 - name: Verify Emby does not expose user API without authentication
   ansible.builtin.uri:
