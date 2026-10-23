@@ -235,6 +235,7 @@
       vars:
         pbs_disk_vmid: "{{ hostvars[_existing_hosts[0]].proxmox_vmid }}"
         pbs_disk_node: "{{ hostvars[_existing_hosts[0]].proxmox_node }}"
+        pbs_disk_guest_ip: "{{ hostvars[_existing_hosts[0]].ansible_host | default('') }}"
         pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
         pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
       when: app_config.proxmox.vm.datastore_disk is defined and _existing_hosts | length > 0
@@ -320,6 +321,7 @@
           vars:
             pbs_disk_vmid: "{{ homelabinfra_instance.vm.vmid }}"
             pbs_disk_node: "{{ homelabinfra_config.proxmox.node }}"
+            pbs_disk_guest_ip: "{{ homelabinfra_instance.vm_ansible_host | default('') }}"
             pbs_disk_config: "{{ app_config.proxmox.vm.datastore_disk }}"
             pbs_disk_mode: "{{ app_config.app.datastore_mode | default('create') }}"
           when: app_config.proxmox.vm.datastore_disk is defined
