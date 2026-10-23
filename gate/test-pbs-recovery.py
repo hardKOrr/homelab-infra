@@ -211,7 +211,7 @@ restore_values = task(configure, "PBS | Resolve restore bandwidth values")["ansi
 restore_conversion = task(configure, "PBS | Convert restore bandwidth to Proxmox units")["ansible.builtin.set_fact"]
 restore_current_value = task(configure, "PBS | Resolve the current restore bandwidth value")["ansible.builtin.set_fact"]
 restore_decisions = task(configure, "PBS | Decide whether restore bandwidth needs a change")["ansible.builtin.set_fact"]
-assert "| default(none)" in restore_values["_pbs_restore_bandwidth_mib_s"]
+assert "| default('', true) | string" in restore_values["_pbs_restore_bandwidth_mib_s"]
 assert "_pbs_storage_current.bwlimit" in restore_values["_pbs_storage_bwlimit"]
 assert "| int * 1024" in restore_conversion["_pbs_restore_bwlimit_kib"]
 assert "regex_findall" in restore_current_value["_pbs_storage_restore_bwlimit_kib"]
@@ -238,8 +238,10 @@ template_environment = Environment(undefined=StrictUndefined)
 template_environment.filters["regex_findall"] = lambda value, pattern: re.findall(pattern, str(value))
 
 
-def render_ansible_value(expression, context):
+def render_ansible_value(expression, context, preserve_string=False):
     rendered = template_environment.from_string(expression).render(**context)
+    if preserve_string:
+        return rendered
     if rendered == "None":
         return None
     if rendered == "":
@@ -256,7 +258,9 @@ def restore_bandwidth_actions(configured_mib_s, storage_bwlimit):
         "_pbs_storage_current": {"bwlimit": storage_bwlimit},
     }
     for key, expression in restore_values.items():
-        context[key] = render_ansible_value(expression, context)
+        context[key] = render_ansible_value(
+            expression, context, preserve_string=key == "_pbs_restore_bandwidth_mib_s"
+        )
     for key, expression in restore_conversion.items():
         context[key] = render_ansible_value(expression, context)
     for key, expression in restore_current_value.items():
@@ -271,6 +275,7 @@ assert restore_bandwidth_actions(64, "") == (True, False)
 assert restore_bandwidth_actions(64, "restore=65536") == (False, False)
 assert restore_bandwidth_actions(64, "restore=32768") == (True, False)
 assert restore_bandwidth_actions(..., "restore=65536") == (False, True)
+assert restore_bandwidth_actions(None, "restore=65536") == (False, True)
 assert restore_bandwidth_actions(..., "") == (False, False)
 
 backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")

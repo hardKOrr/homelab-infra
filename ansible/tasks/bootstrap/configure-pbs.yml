@@ -486,7 +486,8 @@
 - name: PBS | Resolve restore bandwidth values
   ansible.builtin.set_fact:
     _pbs_restore_bandwidth_mib_s: >-
-      {{ homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | default(none) }}
+      {{ homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s
+         | default('', true) | string }}
     _pbs_storage_bwlimit: "{{ _pbs_storage_current.bwlimit | default('', true) | string }}"
   no_log: true
 
@@ -494,7 +495,7 @@
   ansible.builtin.set_fact:
     _pbs_restore_bwlimit_kib: >-
       {{ (_pbs_restore_bandwidth_mib_s | int * 1024)
-         if _pbs_restore_bandwidth_mib_s is not none else none }}
+         if _pbs_restore_bandwidth_mib_s | length > 0 else '' }}
   no_log: true
 
 - name: PBS | Resolve the current restore bandwidth value
@@ -507,10 +508,10 @@
 - name: PBS | Decide whether restore bandwidth needs a change
   ansible.builtin.set_fact:
     _pbs_restore_bwlimit_needs_update: >-
-      {{ _pbs_restore_bandwidth_mib_s is not none
+      {{ _pbs_restore_bandwidth_mib_s | length > 0
          and _pbs_storage_restore_bwlimit_kib | string != _pbs_restore_bwlimit_kib | string }}
     _pbs_restore_bwlimit_needs_clear: >-
-      {{ _pbs_restore_bandwidth_mib_s is none
+      {{ _pbs_restore_bandwidth_mib_s | length == 0
          and _pbs_storage_bwlimit | string | length > 0 }}
 
 - name: PBS | Set the PBS storage restore bandwidth limit
@@ -559,14 +560,14 @@
       - _pbs_storage_after_bandwidth.server == _pbs_pve_server
       - _pbs_storage_after_bandwidth.datastore == _pbs_datastore
       - >-
-        _pbs_restore_bandwidth_mib_s is none
+        _pbs_restore_bandwidth_mib_s | length == 0
         or
         (((_pbs_storage_after_bandwidth.bwlimit | default('', true) | string)
           | replace(' ', '')
           | regex_findall('(?:^|,)restore=([^,]+)') | first | default('', true))
          | string == (_pbs_restore_bwlimit_kib | string))
       - >-
-        _pbs_restore_bandwidth_mib_s is not none
+        _pbs_restore_bandwidth_mib_s | length > 0
         or _pbs_storage_after_bandwidth.bwlimit | default('', true) | string | length == 0
     fail_msg: >-
       PVE PBS storage pbs-homelab does not have the configured restore bandwidth limit.
