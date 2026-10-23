@@ -262,7 +262,12 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     remote_qemu.mkdir(parents=True)
     remote_lxc.mkdir(parents=True)
     (local_qemu / "100.conf").write_text(
-        "scsi1: store:vm-100-disk-1,backup=0\n", encoding="utf-8"
+        "scsi1: store:vm-100-disk-1,backup=0\n"
+        "[current]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n"
+        "[before-discard]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
     )
     (remote_lxc / "101.conf").write_text(
         "mp0: store:vm-100-disk-1,mp=/data\n", encoding="utf-8"
@@ -272,6 +277,12 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     )
     (remote_qemu / "102.conf").write_text(
         "scsi1: store:vm-100-disk-10,backup=0\n", encoding="utf-8"
+    )
+    (remote_qemu / "104.conf").write_text(
+        "scsi1: store:vm-104-disk-1,backup=0\n"
+        "[current]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
     )
     result = subprocess.run(
         [
@@ -288,6 +299,7 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     assert json.loads(result.stdout) == [
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "100"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "103"},
+        {"device": "scsi1", "guest_type": "qemu-server", "vmid": "104"},
         {"device": "mp0", "guest_type": "lxc", "vmid": "101"},
     ]
 
