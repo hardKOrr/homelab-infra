@@ -77,15 +77,31 @@ assert "pbs_disk_config.source_vmid is defined" in str(disk_identity_guard["ansi
 assert "pbs_disk_config.source_vmid | int != pbs_disk_vmid | int" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
 attach = task(ensure_disk, "PBS disk | Attach the retained volume")
 assert "_pbs_disk_expected_volid" in attach["ansible.builtin.command"]["argv"][-1]
+assert "discard=on" in attach["ansible.builtin.command"]["argv"][-1]
 assert "_pbs_disk_current | length == 0" in str(attach["when"])
+enable_discard = task(ensure_disk, "PBS disk | Enable discard on the retained volume")
+assert "qm" in enable_discard["ansible.builtin.command"]["argv"]
+update_args = str(enable_discard["ansible.builtin.command"]["argv"][-1])
+assert "_pbs_disk_current_config.split(',')" in update_args
+assert "discard=on" in update_args
+assert "_pbs_disk_current | length > 0" in str(enable_discard["when"])
 assert "_+lab" in str(task(ensure_disk, "PBS disk | Confirm live ownership and reject a different scsi1 disk"))
-assert "backup=0" in str(task(ensure_disk, "PBS disk | Confirm volume, backup exclusion and stable guest serial"))
+disk_config = task(ensure_disk, "PBS disk | Confirm volume, backup exclusion, stable guest serial and discard")
+assert "backup=0" in str(disk_config)
+assert "discard=on" in str(disk_config)
 
 pbs_role = load_yaml("ansible/roles/pbs/tasks/main.yml")
 disk_include = task(pbs_role, "Configure the persistent PBS datastore disk")
 service_start = task(pbs_role, "Enable and start the PBS services")
 assert pbs_role.index(disk_include) < pbs_role.index(service_start)
 assert pbs_role.index(task(pbs_role, "Give PBS ownership of an empty datastore directory")) < pbs_role.index(service_start)
+trim_package = task(pbs_role, "Install util-linux for datastore trimming")
+trim_timer = task(pbs_role, "Enable and start periodic trimming of the PBS datastore")
+assert trim_package["ansible.builtin.apt"]["name"] == "util-linux"
+assert "datastore_disk is defined" in str(trim_package["when"])
+assert trim_timer["ansible.builtin.systemd"]["name"] == "fstrim.timer"
+assert trim_timer["ansible.builtin.systemd"]["enabled"] is True
+assert "datastore_disk is defined" in str(trim_timer["when"])
 register_reuse = task(pbs_role, "Register the retained datastore without initialising it")
 assert "reuse" in str(register_reuse["when"])
 
