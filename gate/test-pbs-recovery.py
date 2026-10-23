@@ -72,6 +72,9 @@ allocate_argv = allocate_disk["ansible.builtin.command"]["argv"]
 assert allocate_argv[:2] == ["pvesm", "alloc"]
 assert any("_pbs_disk_source_vmid" in arg for arg in allocate_argv)
 assert "vm-{{ _pbs_disk_source_vmid }}-disk-1" in allocate_argv
+active_config = task(ensure_disk, "PBS disk | Read active target VM configuration from PVE")
+assert active_config["ansible.builtin.command"]["argv"][-1] == "--current"
+assert active_config["no_log"] is True
 disk_identity_guard = task(ensure_disk, "PBS disk | Validate the retained volume declaration")
 assert "pbs_disk_config.source_vmid is defined" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
 assert "pbs_disk_config.source_vmid | int != pbs_disk_vmid | int" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
@@ -89,6 +92,8 @@ assert "_+lab" in str(task(ensure_disk, "PBS disk | Confirm live ownership and r
 disk_config = task(ensure_disk, "PBS disk | Confirm volume, backup exclusion, stable guest serial and discard")
 assert "backup=0" in str(disk_config)
 assert "discard=on" in str(disk_config)
+readback = task(ensure_disk, "PBS disk | Read back the attached disk configuration")
+assert readback["ansible.builtin.command"]["argv"] == ["qm", "config", "{{ pbs_disk_vmid }}"]
 
 pbs_role = load_yaml("ansible/roles/pbs/tasks/main.yml")
 disk_include = task(pbs_role, "Configure the persistent PBS datastore disk")
@@ -102,6 +107,12 @@ assert "datastore_disk is defined" in str(trim_package["when"])
 assert trim_timer["ansible.builtin.systemd"]["name"] == "fstrim.timer"
 assert trim_timer["ansible.builtin.systemd"]["enabled"] is True
 assert "datastore_disk is defined" in str(trim_timer["when"])
+reboot_discard = task(pbs_role, "Reboot PBS once to apply retained datastore discard")
+assert reboot_discard["ansible.builtin.reboot"]["reboot_timeout"] == 900
+assert "_pbs_disk_current | default('') | length > 0" in str(reboot_discard["when"])
+assert "_pbs_disk_current_active_config" in str(reboot_discard["when"])
+active_discard_check = task(pbs_role, "Confirm discard is active on the retained PBS datastore disk")
+assert "discard=on" in str(active_discard_check["ansible.builtin.assert"]["that"])
 register_reuse = task(pbs_role, "Register the retained datastore without initialising it")
 assert "reuse" in str(register_reuse["when"])
 
