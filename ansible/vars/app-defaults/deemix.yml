@@ -18,8 +18,8 @@ deemix_defaults:
 
     # registry.gitlab.com/bockiii/deemix-docker is the actively maintained
     # continuation of the original deemix web UI. DEEMIX_SINGLE_USER (set
-    # unconditionally in the Compose template) is what makes the ARL seeded
-    # below apply server-wide without an interactive per-visitor login.
+    # unconditionally in the Compose template) makes the login applied through
+    # Deemix's login API shared server-wide instead of per visitor.
     image: "registry.gitlab.com/bockiii/deemix-docker:latest"
     port: 6595
     container_port: 6595

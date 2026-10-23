@@ -160,7 +160,9 @@
       on the Proxmox node.
 
 # ── Credential ─────────────────────────────────────────────────────────────────
-# Plain text, no trailing newline: the backend reads this cookie at startup.
+# Plain text, no trailing newline. Keep the operator-owned cookie in Deemix's
+# config directory for continuity; single-user mode does not consume this file
+# as a login, so the role submits it through the login API after startup below.
 # Preserve restored state when no rotation is supplied, including when the
 # operator has not populated the app's Vaultwarden ARL field. Publish the
 # effective value below so subsequent media wiring agrees with the app.
@@ -243,8 +245,94 @@
   delay: "{{ deemix_webui_delay }}"
   changed_when: false
 
-# HTTPS human login is enforced by Authentik. A Deezer account is optional;
-# the operator verifies any supplied ARL through the Deemix web interface.
+# Lidarr's Deemix plugin rejects a client unless Deemix writes individual tracks
+# into the artist/album folder structure. Own that one setting while preserving
+# every other Deemix setting the operator has changed in the UI.
+- name: Check the Deemix settings file
+  ansible.builtin.stat:
+    path: "{{ app_config.app.config_path }}/config.json"
+  register: _dmx_settings_file
+  no_log: true
+
+- name: Require Deemix to have created its settings file
+  ansible.builtin.assert:
+    that: _dmx_settings_file.stat.exists
+    fail_msg: "Deemix did not create config.json after its web interface became ready."
+
+- name: Read the current Deemix settings
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.config_path }}/config.json"
+  register: _dmx_settings_raw
+  no_log: true
+
+- name: Parse the current Deemix settings
+  ansible.builtin.set_fact:
+    _dmx_settings: "{{ _dmx_settings_raw.content | b64decode | from_json }}"
+  no_log: true
+
+- name: Require Deemix settings to be a JSON object
+  ansible.builtin.assert:
+    that: _dmx_settings is mapping
+    fail_msg: "Deemix config.json must contain a JSON object."
+  no_log: true
+
+- name: Enable the folder structure required by Lidarr
+  ansible.builtin.copy:
+    content: "{{ _dmx_settings | combine({'createSingleFolder': true}) | to_json }}"
+    dest: "{{ app_config.app.config_path }}/config.json"
+    owner: "{{ app_config.app.puid | default(1000) }}"
+    group: "{{ app_config.app.pgid | default(1000) }}"
+    mode: "0640"
+  when: not (_dmx_settings.createSingleFolder | default(false) | bool)
+  notify: Restart deemix
+  no_log: true
+
+- name: Apply the Lidarr-compatible Deemix setting
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Deemix after applying its settings
+  ansible.builtin.uri:
+    url: "{{ _dmx_base }}/"
+    status_code: [200, 301, 302]
+  register: _dmx_settings_up
+  until: _dmx_settings_up.status | default(0) in [200, 301, 302]
+  retries: "{{ deemix_webui_retries }}"
+  delay: "{{ deemix_webui_delay }}"
+  changed_when: false
+
+# DEEMIX_SINGLE_USER enables one shared login but the image does not process
+# the seeded .arl file as a login. Submit the Vaultwarden value through Deemix's
+# login API so a fresh deployment is signed in without a browser step. Both the
+# request and its response can contain the ARL, so they stay hidden in output.
+- name: Sign in to Deezer with the stored ARL
+  ansible.builtin.uri:
+    url: "{{ _dmx_base }}/api/loginArl"
+    method: POST
+    body_format: json
+    body:
+      arl: "{{ _dmx_arl }}"
+    status_code: 200
+    return_content: true
+    timeout: 120
+  register: _dmx_login
+  changed_when: false
+  when: _dmx_arl | length > 0
+  no_log: true
+
+- name: Require Deemix to authenticate the stored ARL
+  ansible.builtin.assert:
+    that:
+      - _dmx_login.json.status | default(0) | int in [1, 2, 3]
+      - _dmx_login.json.user is defined
+      - _dmx_login.json.user is not none
+    fail_msg: "Deemix could not sign in with the stored Deezer ARL. Verify the ARL and retry Deploy."
+  when: _dmx_arl | length > 0
+  no_log: true
+
+- name: Report that Deemix signed in to Deezer
+  ansible.builtin.debug:
+    msg: "Deemix authenticated the configured Deezer account."
+  when: _dmx_arl | length > 0
 
 # ── Store the credential ──────────────────────────────────────────────────────
 # Written under the same canonical item name wire-media-stack.yml reads, and
