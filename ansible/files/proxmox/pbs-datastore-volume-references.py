@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List exact current guest-device references to a PBS datastore volume."""
+"""List configured, active, and pending references to a PBS datastore volume."""
 
 import argparse
 import json
@@ -23,10 +23,10 @@ def main():
                 if section_match:
                     section = section_match.group(1)
                     continue
-                # The base and [current] sections describe the configured and active
-                # device respectively. Named snapshot sections are historical and do
-                # not represent another concurrent guest writer.
-                if section not in (None, "current"):
+                # The base, [current], and [PENDING] sections can all describe a
+                # configured or soon-to-be-active device. Named snapshot sections are
+                # historical and do not represent another concurrent guest writer.
+                if section not in (None, "current", "PENDING"):
                     continue
                 match = re.match(
                     r"^\s*((?:scsi|sata|ide|virtio|unused|mp|rootfs|efidisk|tpmstate)\d*):\s*([^,\s]+)",
