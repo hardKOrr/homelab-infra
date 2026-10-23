@@ -71,6 +71,7 @@
   retries: 10
   delay: 1
   changed_when: false
+  failed_when: false
   no_log: true
 
 - name: Assert Emby applied the requested hardware transcoding settings
@@ -82,4 +83,7 @@
     fail_msg: >-
       Emby encoding settings did not match the declared DRI device: expected
       {{ _emby_hardware_acceleration_type }} acceleration and hardware encoding
-      {{ 'enabled' if _emby_hardware_encoding_enabled | bool else 'disabled' }}.
+      {{ 'enabled' if _emby_hardware_encoding_enabled | bool else 'disabled' }};
+      read back acceleration={{ _emby_encoding_options_after.json.HardwareAccelerationType | default('missing') }},
+      hardware encoding={{ _emby_encoding_options_after.json.EnableHardwareEncoding | default('missing') }},
+      and decoding codecs={{ _emby_encoding_options_after.json.HardwareDecodingCodecs | default([], true) }}.
