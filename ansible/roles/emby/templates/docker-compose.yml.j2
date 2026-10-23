@@ -20,6 +20,12 @@ services:
 {% endfor %}
     ports:
       - "{{ app_config.app.port }}:{{ app_config.app.container_port | default(app_config.app.port) }}"
+{% if _emby_dri_device_declared | default(false) | bool and _emby_dri_group_ids | default([], true) | length > 0 %}
+    group_add:
+{% for group_id in _emby_dri_group_ids | unique %}
+      - "{{ group_id }}"
+{% endfor %}
+{% endif %}
 {% set emby_devices = app_config.app.devices | default([]) %}
 {% if app_config.app.gpu_device | default('', true) | trim | length > 0 %}
 {% set emby_devices = (emby_devices + ['/dev/dri']) | unique | list %}
@@ -27,6 +33,7 @@ services:
 {% if emby_devices | length > 0 %}
     devices:
 {% for device in emby_devices %}
+      # Docker requires each configured device to exist on the stack host.
       - "{{ device }}:{{ device }}"
 {% endfor %}
 {% endif %}

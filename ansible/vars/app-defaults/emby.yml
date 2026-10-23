@@ -21,6 +21,8 @@ emby_defaults:
     admin_user: admin
     puid: 1313
     pgid: 1313
+    # Optional dedicated Proxmox iGPU. Deploy maps /dev/dri, adds its host device
+    # groups and enables VA-API when set; an empty value keeps Emby software-only.
     gpu_device: ""
     devices: []
     libraries:
