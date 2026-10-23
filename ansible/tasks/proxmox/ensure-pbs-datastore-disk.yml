@@ -1,7 +1,7 @@
 ---
 # Attach the one declared, retained PBS data volume to an owned PBS VM.
 #
-# Inputs: pbs_disk_vmid, pbs_disk_node, pbs_disk_tags, pbs_disk_config, pbs_disk_mode.
+# Inputs: pbs_disk_vmid, pbs_disk_node, pbs_disk_guest_ip, pbs_disk_config, pbs_disk_mode.
 # The PVE volume is stable across guest replacement: storage:vm-<source_vmid>-disk-1.
 # source_vmid is reserved for the datastore volume, not a PBS guest, so PVE guest destroy
 # cannot free the retained disk. Reuse never allocates storage or overwrites a volume.
@@ -90,6 +90,9 @@
     _pbs_disk_current_active_config: >-
       {{ _pbs_disk_active_config.stdout
          | regex_findall('(?m)^scsi1:\s*(.+)$') | first | default('') | trim }}
+    _pbs_disk_restart_required: >-
+      {{ _pbs_disk_config_parsed.scsi1 is defined and
+         _pbs_disk_active_config.stdout is not search('(?m)^scsi1:[^\n]*,discard=on(,|$)') }}
     _pbs_disk_current: >-
       {{ (_pbs_disk_config_parsed.scsi1 | default('')).split(',') | first }}
   vars:
@@ -228,3 +231,80 @@
     _pbs_disk_final: >-
       {{ _pbs_disk_config_after.stdout
          | regex_findall('(?m)^scsi1:\s*(.+)$') | first | default('') | trim }}
+
+- name: PBS disk | Require a guest address before restarting QEMU for discard
+  ansible.builtin.assert:
+    that: pbs_disk_guest_ip | default('', true) | length > 0
+    fail_msg: >-
+      The retained PBS disk needs a QEMU restart to activate discard, but its guest
+      address is unavailable. No guest restart was attempted.
+  when: _pbs_disk_restart_required | bool
+
+- name: PBS disk | Read the current VM power state before applying discard
+  ansible.builtin.command:
+    argv: [qm, status, "{{ pbs_disk_vmid }}"]
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_status_before_restart
+  changed_when: false
+  no_log: true
+  when: _pbs_disk_restart_required | bool
+
+- name: PBS disk | Gracefully stop the running VM to apply discard
+  ansible.builtin.command:
+    argv:
+      - qm
+      - shutdown
+      - "{{ pbs_disk_vmid }}"
+      - --timeout
+      - "300"
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_shutdown
+  changed_when: _pbs_disk_shutdown.rc == 0
+  no_log: true
+  when:
+    - _pbs_disk_restart_required | bool
+    - "'status: running' in _pbs_disk_status_before_restart.stdout"
+
+- name: PBS disk | Wait for the VM to stop gracefully
+  ansible.builtin.command:
+    argv: [qm, status, "{{ pbs_disk_vmid }}"]
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_status_after_shutdown
+  changed_when: false
+  no_log: true
+  until: "'status: stopped' in _pbs_disk_status_after_shutdown.stdout"
+  retries: 60
+  delay: 5
+  when: _pbs_disk_restart_required | bool
+
+- name: PBS disk | Start the VM with discard active
+  ansible.builtin.command:
+    argv: [qm, start, "{{ pbs_disk_vmid }}"]
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_start
+  changed_when: _pbs_disk_start.rc == 0
+  no_log: true
+  when:
+    - _pbs_disk_restart_required | bool
+    - "'status: stopped' in _pbs_disk_status_after_shutdown.stdout"
+
+- name: PBS disk | Wait for the QEMU VM to start
+  ansible.builtin.command:
+    argv: [qm, status, "{{ pbs_disk_vmid }}"]
+  delegate_to: "{{ pbs_disk_node }}"
+  register: _pbs_disk_status_after_start
+  changed_when: false
+  no_log: true
+  until: "'status: running' in _pbs_disk_status_after_start.stdout"
+  retries: 60
+  delay: 5
+  when: _pbs_disk_restart_required | bool
+
+- name: PBS disk | Wait for PBS SSH after the QEMU restart
+  ansible.builtin.wait_for:
+    host: "{{ pbs_disk_guest_ip }}"
+    port: 22
+    state: started
+    timeout: 600
+  no_log: true
+  when: _pbs_disk_restart_required | bool

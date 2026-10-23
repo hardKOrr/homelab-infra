@@ -148,17 +148,6 @@
 - name: Apply pending restarts before the health check
   ansible.builtin.meta: flush_handlers
 
-- name: Reboot PBS once to apply retained datastore discard
-  ansible.builtin.reboot:
-    reboot_timeout: 900
-    post_reboot_delay: 10
-  when:
-    - app_config.proxmox.vm.datastore_disk is defined
-    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
-    - >-
-      hostvars['localhost']._pbs_disk_current_active_config | default('')
-      is not search('(^|,)discard=on(,|$)')
-
 - name: Read the active PBS datastore disk configuration
   ansible.builtin.command:
     argv:
