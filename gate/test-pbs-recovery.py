@@ -296,6 +296,12 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
         "scsi1: store:vm-100-disk-1,backup=0\n",
         encoding="utf-8",
     )
+    (remote_qemu / "105.conf").write_text(
+        "scsi1: store:vm-105-disk-1,backup=0\n"
+        "[PENDING]\n"
+        "scsi2: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
+    )
     result = subprocess.run(
         [
             "python3",
@@ -312,6 +318,7 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "100"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "103"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "104"},
+        {"device": "scsi2", "guest_type": "qemu-server", "vmid": "105"},
         {"device": "mp0", "guest_type": "lxc", "vmid": "101"},
     ]
 
