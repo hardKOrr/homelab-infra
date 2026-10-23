@@ -674,18 +674,20 @@
       when: _ak_auth_usernames | length > 0
       no_log: true
 
-    - name: Wire Authentik | Find existing direct user bindings
+    # The bindings API filters by target, but does not expose a `user` query
+    # parameter. Read the application's bindings and select the user locally;
+    # an ignored `user` filter would return the group binding and suppress the
+    # direct grant this task owns.
+    - name: Wire Authentik | Find existing application bindings
       ansible.builtin.uri:
         url: >-
-          {{ _ak_api }}/policies/bindings/?target={{ _ak_app_final.json.pk }}&user={{ _ak_auth_user_pk_by_name[item] }}
+          {{ _ak_api }}/policies/bindings/?target={{ _ak_app_final.json.pk }}&page_size=1000
         method: GET
         headers: "{{ _ak_headers }}"
         status_code: 200
-      loop: "{{ _ak_auth_usernames }}"
-      loop_control:
-        label: "{{ item }}"
       register: _ak_auth_user_bindings
       when: _ak_auth_usernames | length > 0
+      changed_when: false
       no_log: true
 
     - name: Wire Authentik | Bind configured users to the application
@@ -708,9 +710,9 @@
       when:
         - _ak_auth_usernames | length > 0
         - >-
-          (_ak_auth_user_bindings.results
-           | selectattr('item', 'equalto', item) | list | first).json.results
-          | default([]) | length == 0
+          (_ak_auth_user_bindings.json.results | default([])
+           | selectattr('user', 'equalto', _ak_auth_user_pk_by_name[item] | int)
+           | list | length) == 0
       changed_when: true
       no_log: true
 

@@ -38,6 +38,30 @@ class LoginAPI(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class AuthentikBindingAPI(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.server.binding_queries.append(self.path)
+        body = json.dumps({"results": self.server.bindings}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        self.server.created_bindings.append(json.loads(self.rfile.read(length)))
+        body = json.dumps({"pk": "fixture-binding"}).encode()
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+
 def run_playbook(path):
     return subprocess.run(
         [str(ANSIBLE), "-i", "localhost,", "-c", "local", str(path)],
@@ -161,8 +185,62 @@ def check_admin_binding_scope():
     assert "core/users/?username=" in text
     assert "'user': _ak_auth_user_pk_by_name[item]" in text
     assert "core/groups/" not in text[text.index("Find configured access users"):]
+    find_bindings = task("Wire Authentik | Find existing application bindings", tasks=AUTHENTIK[0]["block"])
+    bind_users = task("Wire Authentik | Bind configured users to the application", tasks=AUTHENTIK[0]["block"])
+    assert "&user=" not in find_bindings["ansible.builtin.uri"]["url"]
+    assert "selectattr('user', 'equalto'" in bind_users["when"][1]
+
+
+def check_admin_binding_reconcile():
+    find_bindings = task("Wire Authentik | Find existing application bindings", tasks=AUTHENTIK[0]["block"])
+    bind_users = task("Wire Authentik | Bind configured users to the application", tasks=AUTHENTIK[0]["block"])
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), AuthentikBindingAPI)
+    server.bindings = []
+    server.binding_queries = []
+    server.created_bindings = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for bindings, expected_creates in [
+            ([{"pk": "group", "user": None, "group": 42, "enabled": True}], 1),
+            ([
+                {"pk": "group", "user": None, "group": 42, "enabled": True},
+                {"pk": "direct", "user": 77, "group": None, "enabled": True},
+            ], 0),
+        ]:
+            server.bindings = bindings
+            server.binding_queries = []
+            server.created_bindings = []
+            with tempfile.TemporaryDirectory(prefix="authentik-binding-") as directory:
+                root = Path(directory)
+                plays = [{
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "vars": {
+                        "_ak_api": f"http://127.0.0.1:{server.server_port}/api/v3",
+                        "_ak_headers": {"Authorization": "Bearer fixture-token-never-print"},
+                        "_ak_app_final": {"json": {"pk": 123}},
+                        "_ak_auth_usernames": ["fixture-admin"],
+                        "_ak_auth_user_pk_by_name": {"fixture-admin": 77},
+                    },
+                    "tasks": [find_bindings, bind_users],
+                }]
+                playbook = root / "bindings.yml"
+                playbook.write_text(yaml.safe_dump(plays))
+                result = run_playbook(playbook)
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert "fixture-token-never-print" not in result.stdout + result.stderr
+                assert server.binding_queries == ["/api/v3/policies/bindings/?target=123&page_size=1000"]
+                assert len(server.created_bindings) == expected_creates
+                if expected_creates:
+                    assert server.created_bindings[0]["user"] == 77
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 check_settings_reconcile()
 check_login_api()
 check_admin_binding_scope()
+check_admin_binding_reconcile()
