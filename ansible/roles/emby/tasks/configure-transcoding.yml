@@ -22,8 +22,8 @@
       {{ _emby_encoding_options_before.json
          | combine(
              {
-               'HardwareAccelerationType': 'vaapi' if _emby_dri_device_declared | bool else 'none',
-               'EnableHardwareEncoding': _emby_dri_device_declared | bool
+               'HardwareAccelerationType': _emby_hardware_acceleration_type,
+               'EnableHardwareEncoding': _emby_hardware_encoding_enabled | bool
              },
              recursive=True
            ) }}
