@@ -8,6 +8,11 @@ The role installs PBS packages and verifies its API token. An optional
 datastore path. This gives the datastore a storage identity independent of the replaceable
 PBS OS disk.
 
+`infrastructure.backups.restore_bandwidth_mib_s` optionally caps restores through the
+owned `pbs-homelab` PVE storage entry. The value is MiB/s and Deploy converts it to
+Proxmox's KiB/s setting. When omitted, Deploy removes the entry's `bwlimit` setting; it
+does not change cluster-wide `datacenter.cfg` options.
+
 ## Reusing an owned VM
 
 The instance tag must select one `_+lab` VM. Before adding it to the deployment group

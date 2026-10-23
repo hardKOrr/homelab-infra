@@ -5,9 +5,11 @@ import json
 import importlib.util
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
+from jinja2 import Environment, StrictUndefined
 import yaml
 
 
@@ -194,6 +196,82 @@ assert "pbs_token_rotated" in str(task(configure, "PBS | Decide whether the PVE 
 assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing backup job (vmid list + schedule)")["when"])
 assert "_pbs_datastore_config.json.data[item.key]" in str(task(configure, "PBS | Apply only drifted retention settings")["when"])
 assert task(configure, "PBS | Require the PVE storage backend to be active")["ansible.builtin.assert"]
+
+restore_limit_validation = task(configure, "PBS | Validate configured restore bandwidth")
+assert "restore_bandwidth_mib_s is number" in str(restore_limit_validation["ansible.builtin.assert"]["that"])
+assert "restore_bandwidth_mib_s is not boolean" in str(restore_limit_validation["ansible.builtin.assert"]["that"])
+assert "| int > 0" in str(restore_limit_validation["ansible.builtin.assert"]["that"])
+assert restore_limit_validation["when"] == [
+    "homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is defined",
+    "homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not none",
+]
+current_storage = task(configure, "PBS | Resolve the owned storage entry for restore bandwidth")
+assert "pbs-homelab" in str(current_storage["ansible.builtin.set_fact"]["_pbs_storage_current"])
+restore_values = task(configure, "PBS | Resolve restore bandwidth values")["ansible.builtin.set_fact"]
+restore_conversion = task(configure, "PBS | Convert restore bandwidth to Proxmox units")["ansible.builtin.set_fact"]
+restore_current_value = task(configure, "PBS | Resolve the current restore bandwidth value")["ansible.builtin.set_fact"]
+restore_decisions = task(configure, "PBS | Decide whether restore bandwidth needs a change")["ansible.builtin.set_fact"]
+assert "| default(none)" in restore_values["_pbs_restore_bandwidth_mib_s"]
+assert "_pbs_storage_current.bwlimit" in restore_values["_pbs_storage_bwlimit"]
+assert "| int * 1024" in restore_conversion["_pbs_restore_bwlimit_kib"]
+assert "regex_findall" in restore_current_value["_pbs_storage_restore_bwlimit_kib"]
+assert "_pbs_storage_restore_bwlimit_kib" in restore_decisions["_pbs_restore_bwlimit_needs_update"]
+assert "_pbs_storage_bwlimit" in restore_decisions["_pbs_restore_bwlimit_needs_clear"]
+
+restore_bandwidth_set = task(configure, "PBS | Set the PBS storage restore bandwidth limit")
+assert restore_bandwidth_set["ansible.builtin.command"]["argv"] == [
+    "pvesm", "set", "pbs-homelab", "--bwlimit", "restore={{ _pbs_restore_bwlimit_kib }}"
+]
+assert restore_bandwidth_set["delegate_to"] == "{{ homelabinfra_config.proxmox.node }}"
+assert restore_bandwidth_set["become"] is True
+assert restore_bandwidth_set["when"] == "_pbs_restore_bwlimit_needs_update"
+restore_bandwidth_clear = task(configure, "PBS | Remove the PBS storage bandwidth limit when unset")
+assert restore_bandwidth_clear["ansible.builtin.command"]["argv"] == [
+    "pvesm", "set", "pbs-homelab", "--delete", "bwlimit"
+]
+assert restore_bandwidth_clear["when"] == "_pbs_restore_bwlimit_needs_clear"
+restore_bandwidth_final = task(configure, "PBS | Require the restore bandwidth configuration to match")
+assert "restore=([^,]+)" in str(restore_bandwidth_final["ansible.builtin.assert"]["that"])
+assert "bwlimit" in str(restore_bandwidth_final["ansible.builtin.assert"]["that"])
+
+template_environment = Environment(undefined=StrictUndefined)
+template_environment.filters["regex_findall"] = lambda value, pattern: re.findall(pattern, str(value))
+
+
+def render_ansible_value(expression, context):
+    rendered = template_environment.from_string(expression).render(**context)
+    if rendered == "None":
+        return None
+    if rendered == "":
+        return ""
+    return yaml.safe_load(rendered)
+
+
+def restore_bandwidth_actions(configured_mib_s, storage_bwlimit):
+    backups = {}
+    if configured_mib_s is not ...:
+        backups["restore_bandwidth_mib_s"] = configured_mib_s
+    context = {
+        "homelabinfra_config": {"infrastructure": {"backups": backups}},
+        "_pbs_storage_current": {"bwlimit": storage_bwlimit},
+    }
+    for key, expression in restore_values.items():
+        context[key] = render_ansible_value(expression, context)
+    for key, expression in restore_conversion.items():
+        context[key] = render_ansible_value(expression, context)
+    for key, expression in restore_current_value.items():
+        context[key] = render_ansible_value(expression, context)
+    return tuple(
+        render_ansible_value(expression, context)
+        for expression in restore_decisions.values()
+    )
+
+
+assert restore_bandwidth_actions(64, "") == (True, False)
+assert restore_bandwidth_actions(64, "restore=65536") == (False, False)
+assert restore_bandwidth_actions(64, "restore=32768") == (True, False)
+assert restore_bandwidth_actions(..., "restore=65536") == (False, True)
+assert restore_bandwidth_actions(..., "") == (False, False)
 
 backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")
 backup_tasks = backup_guest[0]["tasks"]

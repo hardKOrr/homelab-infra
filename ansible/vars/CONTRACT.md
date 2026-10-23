@@ -403,6 +403,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |
 | `backups.retention` | optional | |
+| `backups.restore_bandwidth_mib_s` | optional | positive integer MiB/s restore limit for the PBS PVE storage entry; absent or null removes its `bwlimit` setting |
 | `vaultwarden.admin_token` | Seed/recovery override only | removed from authored config after cutover |
 | `vaultwarden.instance` | optional | |
 | `media_storage.library` | required for media apps with a `library_subpath` | the library root as the containers see it; `app.library_subpath` hangs off it |

@@ -1,6 +1,6 @@
 ---
 # Configure Proxmox Backup Server after its VM is deployed (bootstrap step 7).
-# Runs in a localhost play — everything here is API calls.
+# Runs in a localhost play, with the owned PVE storage bandwidth setting delegated to its node.
 #
 # Architecture note: PBS cannot pull guest backups from PVE (PBS "remotes" are
 # other PBS instances, used for sync). The working direction is:
@@ -25,7 +25,8 @@
 #   pbs_datastore_name    — optional, default 'homelab'
 #   pbs_datastore_mode    — create (default) or reuse: require the recovered
 #                           registration/path and never initialise a datastore
-#   homelabinfra_config.infrastructure.backups.{datastore_path, schedule, retention}
+#   homelabinfra_config.infrastructure.backups.{datastore_path, schedule, retention,
+#     restore_bandwidth_mib_s}
 #   homelabinfra_config.proxmox.{api_host, api_port, api_user, api_token_id, api_token_secret}
 #   homelabinfra_infra.notifications — optional (Shape B); when provider == 'ntfy',
 #     PBS notifications and the configure-complete test message go to Ntfy
@@ -48,6 +49,22 @@
       configure-pbs.yml requires pbs_api_host, pbs_api_token_id,
       pbs_api_token_secret, infrastructure.backups.datastore_path and the
       proxmox.* connection keys; pbs_datastore_mode must be create or reuse.
+
+- name: PBS | Validate configured restore bandwidth
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is number
+      - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not boolean
+      - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | int > 0
+      - >-
+        homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | int
+        == homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | float
+    fail_msg: >-
+      infrastructure.backups.restore_bandwidth_mib_s must be a positive integer MiB/s
+      value when set; omit it for no restore bandwidth limit.
+  when:
+    - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is defined
+    - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not none
 
 - name: PBS | Set connection facts
   ansible.builtin.set_fact:
@@ -458,6 +475,102 @@
     fail_msg: >-
       PVE storage pbs-homelab is not unique or does not point to the configured PBS
       server and datastore.
+
+- name: PBS | Resolve the owned storage entry for restore bandwidth
+  ansible.builtin.set_fact:
+    _pbs_storage_current: >-
+      {{ _pbs_storages_after_repair.json.data
+         | selectattr('storage', 'equalto', 'pbs-homelab') | first }}
+  no_log: true
+
+- name: PBS | Resolve restore bandwidth values
+  ansible.builtin.set_fact:
+    _pbs_restore_bandwidth_mib_s: >-
+      {{ homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | default(none) }}
+    _pbs_storage_bwlimit: "{{ _pbs_storage_current.bwlimit | default('', true) | string }}"
+  no_log: true
+
+- name: PBS | Convert restore bandwidth to Proxmox units
+  ansible.builtin.set_fact:
+    _pbs_restore_bwlimit_kib: >-
+      {{ (_pbs_restore_bandwidth_mib_s | int * 1024)
+         if _pbs_restore_bandwidth_mib_s is not none else none }}
+  no_log: true
+
+- name: PBS | Resolve the current restore bandwidth value
+  ansible.builtin.set_fact:
+    _pbs_storage_restore_bwlimit_kib: >-
+      {{ _pbs_storage_bwlimit | replace(' ', '')
+         | regex_findall('(?:^|,)restore=([^,]+)') | first | default('', true) }}
+  no_log: true
+
+- name: PBS | Decide whether restore bandwidth needs a change
+  ansible.builtin.set_fact:
+    _pbs_restore_bwlimit_needs_update: >-
+      {{ _pbs_restore_bandwidth_mib_s is not none
+         and _pbs_storage_restore_bwlimit_kib | string != _pbs_restore_bwlimit_kib | string }}
+    _pbs_restore_bwlimit_needs_clear: >-
+      {{ _pbs_restore_bandwidth_mib_s is none
+         and _pbs_storage_bwlimit | string | length > 0 }}
+
+- name: PBS | Set the PBS storage restore bandwidth limit
+  ansible.builtin.command:
+    argv:
+      - pvesm
+      - set
+      - pbs-homelab
+      - --bwlimit
+      - "restore={{ _pbs_restore_bwlimit_kib }}"
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  changed_when: true
+  when: _pbs_restore_bwlimit_needs_update
+
+- name: PBS | Remove the PBS storage bandwidth limit when unset
+  ansible.builtin.command:
+    argv: [pvesm, set, pbs-homelab, --delete, bwlimit]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  become: true
+  changed_when: true
+  when: _pbs_restore_bwlimit_needs_clear
+
+- name: PBS | List PVE storage backends after bandwidth reconciliation
+  ansible.builtin.uri:
+    url: "{{ _pve_url }}/storage"
+    headers: "{{ _pve_headers }}"
+    validate_certs: false
+  register: _pbs_storages_after_bandwidth
+  no_log: true
+
+- name: PBS | Resolve the PBS storage entry after bandwidth reconciliation
+  ansible.builtin.set_fact:
+    _pbs_storage_after_bandwidth: >-
+      {{ _pbs_storages_after_bandwidth.json.data
+         | selectattr('storage', 'equalto', 'pbs-homelab') | first }}
+  no_log: true
+
+- name: PBS | Require the restore bandwidth configuration to match
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_storages_after_bandwidth.json.data
+        | selectattr('storage', 'equalto', 'pbs-homelab') | list | length == 1
+      - _pbs_storage_after_bandwidth.type == 'pbs'
+      - _pbs_storage_after_bandwidth.server == _pbs_pve_server
+      - _pbs_storage_after_bandwidth.datastore == _pbs_datastore
+      - >-
+        _pbs_restore_bandwidth_mib_s is none
+        or
+        (((_pbs_storage_after_bandwidth.bwlimit | default('', true) | string)
+          | replace(' ', '')
+          | regex_findall('(?:^|,)restore=([^,]+)') | first | default('', true))
+         | string == (_pbs_restore_bwlimit_kib | string))
+      - >-
+        _pbs_restore_bandwidth_mib_s is not none
+        or _pbs_storage_after_bandwidth.bwlimit | default('', true) | string | length == 0
+    fail_msg: >-
+      PVE PBS storage pbs-homelab does not have the configured restore bandwidth limit.
+      Check the storage entry; the cluster-wide datacenter options were not changed.
 
 # Only a registration created by this task is recorded in the node-root-private journal.
 - name: PBS | Register provenance delegation
