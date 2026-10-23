@@ -15,10 +15,6 @@
     _emby_hardware_acceleration_type: >-
       {{ 'vaapi' if _emby_dri_device_declared | bool else 'none' }}
     _emby_hardware_encoding_enabled: "{{ _emby_dri_device_declared | bool }}"
-    _emby_hardware_decoding_codecs: >-
-      {{ ((_emby_encoding_options_before.json.HardwareDecodingCodecs
-           | default([], true) | list)
-          + (['hevc'] if _emby_dri_device_declared | bool else [])) | unique | list }}
 
 - name: Resolve Emby's complete desired encoding options
   ansible.builtin.set_fact:
@@ -28,12 +24,7 @@
              {
                'HardwareAccelerationType': 'vaapi' if _emby_dri_device_declared | bool else 'none',
                'EnableHardwareEncoding': _emby_dri_device_declared | bool
-             }
-             | combine(
-                 {'HardwareDecodingCodecs': _emby_hardware_decoding_codecs}
-                 if _emby_dri_device_declared | bool else {},
-                 recursive=True
-               ),
+             },
              recursive=True
            ) }}
   no_log: true
@@ -65,9 +56,6 @@
     and
     (_emby_encoding_options_after.json.EnableHardwareEncoding | default(false) | bool)
       == (_emby_hardware_encoding_enabled | bool)
-    and
-    (not (_emby_dri_device_declared | bool)
-     or 'hevc' in (_emby_encoding_options_after.json.HardwareDecodingCodecs | default([], true)))
   retries: 10
   delay: 1
   changed_when: false
@@ -79,11 +67,9 @@
     that:
       - (_emby_encoding_options_after.json.HardwareAccelerationType | default('none') | lower) == _emby_hardware_acceleration_type
       - (_emby_encoding_options_after.json.EnableHardwareEncoding | default(false) | bool) == (_emby_hardware_encoding_enabled | bool)
-      - not (_emby_dri_device_declared | bool) or 'hevc' in (_emby_encoding_options_after.json.HardwareDecodingCodecs | default([], true))
     fail_msg: >-
       Emby encoding settings did not match the declared DRI device: expected
       {{ _emby_hardware_acceleration_type }} acceleration and hardware encoding
       {{ 'enabled' if _emby_hardware_encoding_enabled | bool else 'disabled' }};
       read back acceleration={{ _emby_encoding_options_after.json.HardwareAccelerationType | default('missing') }},
-      hardware encoding={{ _emby_encoding_options_after.json.EnableHardwareEncoding | default('missing') }},
-      and decoding codecs={{ _emby_encoding_options_after.json.HardwareDecodingCodecs | default([], true) }}.
+      hardware encoding={{ _emby_encoding_options_after.json.EnableHardwareEncoding | default('missing') }}.

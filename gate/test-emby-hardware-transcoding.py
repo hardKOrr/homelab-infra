@@ -148,7 +148,7 @@ def main():
             assert gpu_service["group_add"] == ["44", "104"]
             assert server.encoding["HardwareAccelerationType"] == "vaapi"
             assert server.encoding["EnableHardwareEncoding"] is True
-            assert server.encoding["HardwareDecodingCodecs"] == ["h264", "hevc"]
+            assert server.encoding["HardwareDecodingCodecs"] == ["h264"]
             assert server.encoding["EnableThrottling"] is True
             assert len(server.requests) == 1
 
@@ -164,7 +164,7 @@ def main():
             assert "group_add" not in cpu_service
             assert server.encoding["HardwareAccelerationType"] == "none"
             assert server.encoding["EnableHardwareEncoding"] is False
-            assert server.encoding["HardwareDecodingCodecs"] == ["h264", "hevc"]
+            assert server.encoding["HardwareDecodingCodecs"] == ["h264"]
             assert server.encoding["EnableThrottling"] is True
             assert len(server.requests) == 2
 
@@ -175,7 +175,7 @@ def main():
         server.shutdown()
         server.server_close()
     print(
-        "Emby transcoding: declared DRI enables VA-API and HEVC decoding, passes unique host groups, "
+        "Emby transcoding: declared DRI enables VA-API and hardware encoding, passes unique host groups, "
         "and empty device disables hardware; both modes converge on repeat runs"
     )
 
