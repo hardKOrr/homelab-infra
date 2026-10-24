@@ -547,3 +547,11 @@
       - homelabinfra_instance.vm_ansible_host | string | trim | length > 0
       - homelabinfra_instance.vm_ansible_host | string | trim | lower != 'dhcp'
     fail_msg: "The VM connection address is empty or still set to DHCP"
+
+- name: VM clone | Reconcile the guest's optional HA resource
+  ansible.builtin.include_tasks: reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ _vmc_api.node }}"
+    proxmox_ha_vmid: "{{ _vmc_vmid }}"
+    proxmox_ha_name: "{{ homelabinfra_config.proxmox.vm.name }}"
+    proxmox_ha_enabled: "{{ homelabinfra_config.proxmox.vm.ha | default(false) }}"

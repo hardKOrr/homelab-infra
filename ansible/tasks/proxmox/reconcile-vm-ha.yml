@@ -1,0 +1,232 @@
+---
+# Reconcile one owned VM's Proxmox HA resource.
+#
+# Inputs:
+#   proxmox_ha_node          — registered Proxmox node hosting the VM
+#   proxmox_ha_vmid          — VMID
+#   proxmox_ha_name          — expected VM name
+#   proxmox_ha_enabled       — optional per-guest setting, defaults off
+#   proxmox_ha_require_owned — fail on an unowned HA record before guest destruction
+#
+# The HA comment is this task's provenance marker. A matching VMID alone is not enough
+# to take over or remove a resource another operator created.
+- name: VM HA | Validate the guest identity inputs
+  ansible.builtin.assert:
+    that:
+      - proxmox_ha_node | default('') | string | trim | length > 0
+      - proxmox_ha_vmid | default(0) | int > 0
+      - proxmox_ha_name | default('') | string | trim | length > 0
+    fail_msg: Refusing VM HA reconciliation without an exact VM identity and Proxmox node.
+
+- name: VM HA | Read the live VM configuration
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "/nodes/{{ proxmox_ha_node }}/qemu/{{ proxmox_ha_vmid }}/config"
+      - --output-format
+      - json
+  delegate_to: "{{ proxmox_ha_node }}"
+  register: _proxmox_ha_vm_config_raw
+  changed_when: false
+  no_log: true
+
+- name: VM HA | Resolve the live VM ownership tags
+  ansible.builtin.set_fact:
+    _proxmox_ha_vm_config: "{{ _proxmox_ha_vm_config_raw.stdout | from_json }}"
+    _proxmox_ha_vm_tags: >-
+      {{ (_proxmox_ha_vm_config_raw.stdout | from_json).tags | default('', true)
+         | split(';') | reject('equalto', '') | list }}
+  no_log: true
+
+- name: VM HA | Require the exact lab-owned VM
+  ansible.builtin.assert:
+    that:
+      - _proxmox_ha_vm_config.name | default('') == proxmox_ha_name
+      - "'_+lab' in _proxmox_ha_vm_tags"
+    fail_msg: >-
+      Refusing HA reconciliation for VM {{ proxmox_ha_vmid }}: its live name or _+lab
+      ownership tag does not match the requested guest {{ proxmox_ha_name }}.
+
+- name: VM HA | Read configured Proxmox storage
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /storage
+      - --output-format
+      - json
+  delegate_to: "{{ proxmox_ha_node }}"
+  register: _proxmox_ha_storage_raw
+  changed_when: false
+  no_log: true
+  when: proxmox_ha_enabled | default(false) | bool
+
+- name: VM HA | Resolve the VM disks
+  ansible.builtin.set_fact:
+    _proxmox_ha_disks: >-
+      {{ _proxmox_ha_vm_config | dict2items
+         | selectattr('key', 'match', '^(ide|sata|scsi|virtio|efidisk|tpmstate|unused)[0-9]+$')
+         | rejectattr('value', 'match', '^none(?:,|$)') | list }}
+    _proxmox_ha_storage: "{{ _proxmox_ha_storage_raw.stdout | from_json }}"
+  no_log: true
+  when: proxmox_ha_enabled | default(false) | bool
+
+- name: VM HA | Require each VM disk to use configured shared storage
+  vars:
+    _proxmox_ha_disk_storage_id: "{{ item.value.split(':', 1)[0] if ':' in item.value else '' }}"
+    _proxmox_ha_disk_storage_matches: >-
+      {{ _proxmox_ha_storage
+         | selectattr('storage', 'defined')
+         | selectattr('storage', 'equalto', _proxmox_ha_disk_storage_id)
+         | list }}
+    _proxmox_ha_disk_storage: "{{ _proxmox_ha_disk_storage_matches | first | default({}) }}"
+  ansible.builtin.assert:
+    that:
+      - _proxmox_ha_disk_storage_id | length > 0
+      - _proxmox_ha_disk_storage_matches | length == 1
+      - _proxmox_ha_disk_storage.shared | default(0) | bool
+    fail_msg: >-
+      Refusing HA for VM {{ proxmox_ha_vmid }}: disk {{ item.key }} uses
+      {{ ('non-shared storage ' ~ _proxmox_ha_disk_storage_id)
+         if _proxmox_ha_disk_storage_matches | length == 1
+            and not (_proxmox_ha_disk_storage.shared | default(0) | bool)
+         else ('unrecognized storage ' ~ (item.value | string)) }}.
+      Every VM disk must use Proxmox storage explicitly marked shared.
+  loop: "{{ _proxmox_ha_disks | default([]) }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: proxmox_ha_enabled | default(false) | bool
+
+- name: VM HA | Read the HA resource configuration
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/ha/resources
+      - --output-format
+      - json
+  delegate_to: "{{ proxmox_ha_node }}"
+  register: _proxmox_ha_resources_raw
+  changed_when: false
+  no_log: true
+
+- name: VM HA | Resolve this VM's HA resource
+  ansible.builtin.set_fact:
+    _proxmox_ha_sid: "vm:{{ proxmox_ha_vmid }}"
+    _proxmox_ha_owner_comment: managed by homelab-infra
+    _proxmox_ha_resources: "{{ _proxmox_ha_resources_raw.stdout | from_json }}"
+    _proxmox_ha_resource: >-
+      {{ (_proxmox_ha_resources_raw.stdout | from_json
+          | selectattr('sid', 'equalto', 'vm:' ~ (proxmox_ha_vmid | string))
+          | list | first | default({})) }}
+  no_log: true
+
+- name: VM HA | Refuse to take over an HA resource owned elsewhere
+  ansible.builtin.assert:
+    that:
+      - _proxmox_ha_resource.comment | default('') == _proxmox_ha_owner_comment
+    fail_msg: >-
+      Refusing to manage HA resource {{ _proxmox_ha_sid }} because its ownership comment
+      is not '{{ _proxmox_ha_owner_comment }}'. The existing resource is unchanged.
+  when:
+    - _proxmox_ha_resource | length > 0
+    - proxmox_ha_enabled | default(false) | bool
+
+- name: VM HA | Refuse to destroy a VM with an HA resource owned elsewhere
+  ansible.builtin.assert:
+    that:
+      - _proxmox_ha_resource.comment | default('') == _proxmox_ha_owner_comment
+    fail_msg: >-
+      Refusing to destroy VM {{ proxmox_ha_vmid }} because HA resource {{ _proxmox_ha_sid }}
+      is not marked as managed by homelab-infra. Remove ownership from that resource before
+      destroying the guest.
+  when:
+    - _proxmox_ha_resource | length > 0
+    - proxmox_ha_require_owned | default(false) | bool
+
+- name: VM HA | Add the started HA resource
+  ansible.builtin.command:
+    argv:
+      - ha-manager
+      - add
+      - "{{ _proxmox_ha_sid }}"
+      - --state
+      - started
+      - --comment
+      - "{{ _proxmox_ha_owner_comment }}"
+  delegate_to: "{{ proxmox_ha_node }}"
+  changed_when: true
+  when:
+    - proxmox_ha_enabled | default(false) | bool
+    - _proxmox_ha_resource | length == 0
+
+- name: VM HA | Converge the owned resource to started
+  ansible.builtin.command:
+    argv:
+      - ha-manager
+      - set
+      - "{{ _proxmox_ha_sid }}"
+      - --state
+      - started
+      - --comment
+      - "{{ _proxmox_ha_owner_comment }}"
+  delegate_to: "{{ proxmox_ha_node }}"
+  changed_when: true
+  when:
+    - proxmox_ha_enabled | default(false) | bool
+    - _proxmox_ha_resource | length > 0
+    - _proxmox_ha_resource.comment | default('') == _proxmox_ha_owner_comment
+    - _proxmox_ha_resource.state | default('') != 'started'
+
+- name: VM HA | Remove the owned resource when HA is disabled
+  ansible.builtin.command:
+    argv:
+      - ha-manager
+      - remove
+      - "{{ _proxmox_ha_sid }}"
+  delegate_to: "{{ proxmox_ha_node }}"
+  changed_when: true
+  when:
+    - not (proxmox_ha_enabled | default(false) | bool)
+    - _proxmox_ha_resource | length > 0
+    - _proxmox_ha_resource.comment | default('') == _proxmox_ha_owner_comment
+
+- name: VM HA | Read the resulting HA resource configuration
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - /cluster/ha/resources
+      - --output-format
+      - json
+  delegate_to: "{{ proxmox_ha_node }}"
+  register: _proxmox_ha_resources_after_raw
+  changed_when: false
+  no_log: true
+  when: >-
+    (proxmox_ha_enabled | default(false) | bool)
+    or (_proxmox_ha_resource.comment | default('') == _proxmox_ha_owner_comment)
+
+- name: VM HA | Verify the requested HA state
+  vars:
+    _proxmox_ha_resource_after: >-
+      {{ (_proxmox_ha_resources_after_raw.stdout | from_json
+          | selectattr('sid', 'equalto', _proxmox_ha_sid)
+          | list | first | default({})) }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (proxmox_ha_enabled | default(false) | bool)
+        or (_proxmox_ha_resource_after | length > 0
+            and _proxmox_ha_resource_after.comment | default('') == _proxmox_ha_owner_comment
+            and _proxmox_ha_resource_after.state | default('') == 'started')
+      - >-
+        (proxmox_ha_enabled | default(false) | bool)
+        or (_proxmox_ha_resource.comment | default('') != _proxmox_ha_owner_comment)
+        or (_proxmox_ha_resource_after | length == 0)
+    fail_msg: >-
+      Proxmox did not converge HA resource {{ _proxmox_ha_sid }} to the requested state.
+  when: >-
+    (proxmox_ha_enabled | default(false) | bool)
+    or (_proxmox_ha_resource.comment | default('') == _proxmox_ha_owner_comment)

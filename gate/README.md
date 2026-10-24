@@ -60,6 +60,7 @@ templates.
 - `test-deemix-restore.py`: read-only preview, group guard and rollback after extraction, move, copy, ownership, start or health failures.
 - `test-recovery-dispatch.py`: backup and restore inputs remain available across dispatch plays, and LiteLLM, Plane and Odoo Remove guard and delete only their validated, unshared named PostgreSQL state.
 - `test-proxmox-task.py`: guest backup/restore task IDs, exact polling paths and invalid-output guards.
+- `test-proxmox-ha.py`: opt-in HA resource creation, idempotence, owned-resource removal, shared-storage refusal and Remove ordering.
 - `test-guest-placement.py`: database pinning, ordered floating node selection, class storage and placement refusal paths.
 - `test-database-backend-placement.py`: shared backend placement for all five engines, per-instance node/storage defaults, legacy type compatibility, mismatch refusal and single-node LXC/VM placement.
 - `test-database-memory.py`: database memory ratios, LXC/VM guest inputs, per-instance overrides and rendered or managed engine settings.

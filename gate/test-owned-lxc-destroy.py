@@ -32,6 +32,8 @@ def main():
             "    print(json.dumps({'hostname': 'postgresql', 'tags': '_+lab;_postgresql'}))\n"
             "elif args[:2] == ['get', '/nodes/test-node/qemu/456/config']:\n"
             "    print(json.dumps({'name': 'influxdb', 'tags': '_+lab;_influxdb'}))\n"
+            "elif args[:2] == ['get', '/cluster/ha/resources']:\n"
+            "    print('[]')\n"
             "elif args[:2] == ['get', '/cluster/resources']:\n"
             "    print('[]')\n"
             "else:\n"
@@ -173,12 +175,13 @@ def main():
         assert vm_result.returncode == 0, vm_result.stdout + vm_result.stderr
         vm_requests = [json.loads(line) for line in calls.read_text().splitlines()]
         assert [request[0] for request in vm_requests] == [
-            "pvesh", "qm", "qm", "qm", "qm", "pvesh"
+            "pvesh", "pvesh", "pvesh", "qm", "qm", "qm", "qm", "pvesh"
         ], vm_requests
         assert vm_requests[0][2] == "/nodes/test-node/qemu/456/config", vm_requests
-        assert vm_requests[2][1:] == ["shutdown", "456", "--timeout", "60"], vm_requests
-        assert vm_requests[4][1:] == ["destroy", "456", "--purge", "1"], vm_requests
-        assert vm_requests[5][2:4] == ["/cluster/resources", "--type"], vm_requests
+        assert vm_requests[2][2] == "/cluster/ha/resources", vm_requests
+        assert vm_requests[4][1:] == ["shutdown", "456", "--timeout", "60"], vm_requests
+        assert vm_requests[6][1:] == ["destroy", "456", "--purge", "1"], vm_requests
+        assert vm_requests[7][2:4] == ["/cluster/resources", "--type"], vm_requests
     print("Owned LXC and VM destruction: registered-node delegation and ownership checks passed")
 
 

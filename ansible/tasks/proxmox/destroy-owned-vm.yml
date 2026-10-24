@@ -66,6 +66,15 @@
       Refusing to destroy the native VM: it changed identity, lost the _+lab ownership
       tag, or now carries another application's managed tag.
 
+- name: Destroy owned VM | Remove its homelab-infra HA resource first
+  ansible.builtin.include_tasks: reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ destroy_vm_node }}"
+    proxmox_ha_vmid: "{{ destroy_vm_vmid }}"
+    proxmox_ha_name: "{{ destroy_vm_name }}"
+    proxmox_ha_enabled: false
+    proxmox_ha_require_owned: true
+
 - name: Destroy owned VM | Read the guest state
   ansible.builtin.command:
     argv: [qm, status, "{{ destroy_vm_vmid }}"]

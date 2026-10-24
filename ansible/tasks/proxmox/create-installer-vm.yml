@@ -136,3 +136,11 @@
   failed_when:
     - _installer_vm_start.rc != 0
     - "'already running' not in (_installer_vm_start.stderr | default('') | lower)"
+
+- name: Installer VM | Reconcile its optional HA resource
+  ansible.builtin.include_tasks: reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ installer_vm_node }}"
+    proxmox_ha_vmid: "{{ installer_vm.vmid }}"
+    proxmox_ha_name: "{{ installer_vm.name }}"
+    proxmox_ha_enabled: "{{ installer_vm.ha | default(false) }}"

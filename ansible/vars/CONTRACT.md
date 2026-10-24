@@ -802,7 +802,13 @@ guest, application record, and provider objects. Routing uses `routing.subdomain
 described below. VM instances may set `proxmox.vm.balloon` to a positive whole-number
 minimum in MiB, no greater than `proxmox.vm.memory` (the maximum). Leave it unset to
 preserve Proxmox's default on creation and the existing guest's configured value on
-convergence. Top-level keys mirror the `<app>_defaults` dict in
+convergence. VM instances may set `proxmox.vm.ha: true` to create and maintain a Proxmox
+HA resource in state `started`; it defaults off. Disabling it removes only the resource
+whose comment is the exact homelab-infra ownership marker. HA is refused when any VM disk
+uses a Proxmox storage that is not explicitly marked `shared`, and the refusal names the
+disk slot. Remove withdraws the owned HA resource before destroying its VM. For the k3s
+cluster, `proxmox.vm.ha` applies to each node VM described by that cluster instance file.
+Top-level keys mirror the `<app>_defaults` dict in
 `vars/app-defaults/<app>.yml`: `proxmox:` (native LXC) **or** `stack:` (Docker apps — a scalar such
 as `media`), `app:` (port, data_path, config_path, plus app-specific keys), optional `update:`
 (`github_repo`, `binary_path` — native GitHub-release apps only), and `routing:` (`proxy`,
