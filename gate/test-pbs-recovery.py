@@ -237,18 +237,23 @@ assert ".datastore == _pbs_datastore" in str(storage_check["ansible.builtin.asse
 assert "datastore" in str(task(configure, "PBS | Validate the existing PVE storage identity"))
 assert "pbs_token_rotated" in str(task(configure, "PBS | Decide whether the PVE storage entry needs repair"))
 assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing backup job (vmid list + schedule)")["when"])
-assert "_pbs_datastore_config.json.data[item.key]" in str(task(configure, "PBS | Apply only drifted retention settings")["when"])
+assert task(configure, "PBS | Read current datastore configuration")["register"] == "_pbs_datastore_config"
 policy_defaults = task(configure, "PBS | Resolve effective retention and schedules")["ansible.builtin.set_fact"]
 assert "homelabinfra_config.infrastructure.backups.retention" in policy_defaults["_pbs_retention"]
 assert "prune_schedule" in policy_defaults["_pbs_prune_schedule"]
 assert "gc_schedule" in policy_defaults["_pbs_gc_schedule"]
-retention_options = task(configure, "PBS | Resolve retention options for the datastore and prune job")["ansible.builtin.set_fact"]["_pbs_keep"]
+retention_options = task(configure, "PBS | Resolve retention options for the prune job")["ansible.builtin.set_fact"]["_pbs_keep"]
 assert "selectattr('key', 'match', '^keep_')" in retention_options
 assert "map('replace', '_', '-')" in retention_options
-assert "_pbs_keep | dict2items" in task(configure, "PBS | Apply only drifted retention settings")["loop"]
 gc_schedule = task(configure, "PBS | Apply only a drifted garbage-collection schedule")
 assert gc_schedule["ansible.builtin.uri"]["body"] == {"gc-schedule": "{{ _pbs_gc_schedule }}"}
 assert "_pbs_datastore_config.json.data['gc-schedule']" in gc_schedule["when"]
+assert all(
+    "keep-" not in str(item.get("ansible.builtin.uri", {}).get("body", ""))
+    for item in configure
+    if item.get("ansible.builtin.uri", {}).get("url")
+    == "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
+)
 prune_jobs = task(configure, "PBS | Read configured prune jobs")
 assert prune_jobs["ansible.builtin.uri"]["url"] == "{{ _pbs_url }}/config/prune"
 assert "selectattr('id', 'equalto', _pbs_prune_job_id)" in str(task(configure, "PBS | Resolve the managed datastore prune job")["ansible.builtin.set_fact"])

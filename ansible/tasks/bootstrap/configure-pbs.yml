@@ -6,7 +6,7 @@
 # other PBS instances, used for sync). The working direction is:
 #   PBS side (REST API, port 8007 — NOT the PVE API):
 #     1. Ensure datastore exists at infrastructure.backups.datastore_path
-#     2. Apply retention and the garbage-collection schedule on the datastore
+#     2. Apply the garbage-collection schedule on the datastore
 #     3. Create/update a scheduled prune job with the effective retention policy
 #     4. Point a webhook notification target + matcher at Ntfy
 #   PVE side (REST API, port 8006):
@@ -75,7 +75,7 @@
     _pbs_gc_schedule: >-
       {{ homelabinfra_config.infrastructure.backups.gc_schedule | default('04:00') }}
 
-- name: PBS | Resolve retention options for the datastore and prune job
+- name: PBS | Resolve retention options for the prune job
   ansible.builtin.set_fact:
     _pbs_keep: >-
       {{ dict(_pbs_retention | dict2items | selectattr('key', 'match', '^keep_')
@@ -166,27 +166,14 @@
   delay: 5
   changed_when: false
 
-- name: PBS | Read current datastore retention settings
+# PBS 3.4 rejects keep-* parameters on datastore config: retention is configured on
+# prune jobs now. Keep the datastore update limited to its garbage-collection schedule.
+- name: PBS | Read current datastore configuration
   ansible.builtin.uri:
     url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
     headers: "{{ _pbs_headers }}"
     validate_certs: false
   register: _pbs_datastore_config
-
-- name: PBS | Apply only drifted retention settings
-  ansible.builtin.uri:
-    url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
-    method: PUT
-    headers: "{{ _pbs_headers }}"
-    body_format: form-urlencoded
-    body: "{{ {item.key: item.value} }}"
-    validate_certs: false
-  loop: "{{ _pbs_keep | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
-  when: >-
-    (_pbs_datastore_config.json.data[item.key] | default(none) | string)
-    != (item.value | string)
 
 - name: PBS | Apply only a drifted garbage-collection schedule
   ansible.builtin.uri:
