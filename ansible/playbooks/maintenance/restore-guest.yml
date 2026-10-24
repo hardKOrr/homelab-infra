@@ -41,6 +41,40 @@
     - name: Load platform vars
       ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
 
+    - name: Validate configured restore bandwidth
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is number
+          - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not boolean
+          - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | int > 0
+          - >-
+            homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | int
+            == homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s | float
+        fail_msg: >-
+          infrastructure.backups.restore_bandwidth_mib_s must be a positive integer MiB/s
+          value when set; omit it for no restore bandwidth limit.
+      when:
+        - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is defined
+        - homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not none
+
+    - name: Resolve configured restore bandwidth
+      ansible.builtin.set_fact:
+        _rg_restore_bandwidth_mib_s: >-
+          {{ homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s
+             | default('', true) | string }}
+
+    - name: Convert restore bandwidth to Proxmox KiB/s
+      ansible.builtin.set_fact:
+        _rg_restore_bwlimit_kib: >-
+          {{ ((_rg_restore_bandwidth_mib_s | int) * 1024) | string
+             if _rg_restore_bandwidth_mib_s | length > 0 else '' }}
+
+    - name: Resolve restore bandwidth command arguments
+      ansible.builtin.set_fact:
+        _rg_restore_bwlimit_args: >-
+          {{ ['--bwlimit', _rg_restore_bwlimit_kib]
+             if _rg_restore_bwlimit_kib | length > 0 else [] }}
+
     - name: Register Proxmox delegation targets
       ansible.builtin.import_tasks: ../../tasks/proxmox/register-nodes.yml
 
@@ -489,22 +523,14 @@
 
         - name: Restore a VM from the native PBS artifact
           ansible.builtin.command:
-            argv:
-              - pvesh
-              - create
-              - "/nodes/{{ _rg_target_node }}/qemu"
-              - --vmid
-              - "{{ _rg_target_vmid }}"
-              - --archive
-              - "{{ _rg_storage }}:{{ _rg_artifact }}"
-              - --storage
-              - "{{ target_storage }}"
-              - --unique
-              - "{{ '1' if _rg_destination == 'new' else '0' }}"
-              - --force
-              - "{{ '0' if _rg_destination == 'new' else '1' }}"
-              - --start
-              - '0'
+            argv: >-
+              {{ ['pvesh', 'create', '/nodes/' ~ _rg_target_node ~ '/qemu',
+                  '--vmid', _rg_target_vmid,
+                  '--archive', _rg_storage ~ ':' ~ _rg_artifact,
+                  '--storage', target_storage,
+                  '--unique', '1' if _rg_destination == 'new' else '0',
+                  '--force', '0' if _rg_destination == 'new' else '1',
+                  '--start', '0'] + _rg_restore_bwlimit_args }}
           delegate_to: "{{ _rg_target_node }}"
           register: _rg_restore_task
           changed_when: true
@@ -514,24 +540,15 @@
 
         - name: Restore an LXC from the native PBS artifact
           ansible.builtin.command:
-            argv:
-              - pvesh
-              - create
-              - "/nodes/{{ _rg_target_node }}/lxc"
-              - --vmid
-              - "{{ _rg_target_vmid }}"
-              - --ostemplate
-              - "{{ _rg_storage }}:{{ _rg_artifact }}"
-              - --storage
-              - "{{ target_storage }}"
-              - --restore
-              - '1'
-              - --unique
-              - "{{ '1' if _rg_destination == 'new' else '0' }}"
-              - --force
-              - "{{ '0' if _rg_destination == 'new' else '1' }}"
-              - --start
-              - '0'
+            argv: >-
+              {{ ['pvesh', 'create', '/nodes/' ~ _rg_target_node ~ '/lxc',
+                  '--vmid', _rg_target_vmid,
+                  '--ostemplate', _rg_storage ~ ':' ~ _rg_artifact,
+                  '--storage', target_storage,
+                  '--restore', '1',
+                  '--unique', '1' if _rg_destination == 'new' else '0',
+                  '--force', '0' if _rg_destination == 'new' else '1',
+                  '--start', '0'] + _rg_restore_bwlimit_args }}
           delegate_to: "{{ _rg_target_node }}"
           register: _rg_restore_task
           changed_when: true

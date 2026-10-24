@@ -61,7 +61,9 @@ reboot that shuts down its own runner.
 Proxmox VMs and LXCs. Rundeck exposes them under **Recover / Guests**. The exact VMID is
 the recovery unit; selecting an application is not an application-only restore. A shared
 Docker guest or Kubernetes node must be handled as a whole guest, with its workload scope
-shown in the job output.
+shown in the job output. When configured, `infrastructure.backups.restore_bandwidth_mib_s`
+sets the Restore Guest request's per-restore `--bwlimit`; an unset value leaves the
+Proxmox default in effect.
 
 Backup coverage is read from the current PVE backup jobs before an on-demand `vzdump`
 request. PVE returns an UPID for backup, stop, start, and restore workers, so the shared
