@@ -1,5 +1,15 @@
 homelabinfra_defaults:
   infrastructure:
+    # PBS keeps a short rolling history by default, prunes after nightly backups,
+    # and collects unreferenced chunks after pruning. Operators can override any
+    # retention key or either schedule in config/infrastructure.yml.
+    backups:
+      prune_schedule: "03:00"
+      gc_schedule: "04:00"
+      retention:
+        keep_last: 3
+        keep_daily: 7
+        keep_weekly: 4
     media_storage:
       # The identity that owns the media library, on the node and inside the
       # unprivileged stack host alike. A guest maps its ids into the node's

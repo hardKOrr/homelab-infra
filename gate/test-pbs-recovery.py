@@ -238,6 +238,28 @@ assert "datastore" in str(task(configure, "PBS | Validate the existing PVE stora
 assert "pbs_token_rotated" in str(task(configure, "PBS | Decide whether the PVE storage entry needs repair"))
 assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing backup job (vmid list + schedule)")["when"])
 assert "_pbs_datastore_config.json.data[item.key]" in str(task(configure, "PBS | Apply only drifted retention settings")["when"])
+policy_defaults = task(configure, "PBS | Resolve effective retention and schedules")["ansible.builtin.set_fact"]
+assert "homelabinfra_config.infrastructure.backups.retention" in policy_defaults["_pbs_retention"]
+assert "prune_schedule" in policy_defaults["_pbs_prune_schedule"]
+assert "gc_schedule" in policy_defaults["_pbs_gc_schedule"]
+retention_options = task(configure, "PBS | Resolve retention options for the datastore and prune job")["ansible.builtin.set_fact"]["_pbs_keep"]
+assert "selectattr('key', 'match', '^keep_')" in retention_options
+assert "map('replace', '_', '-')" in retention_options
+assert "_pbs_keep | dict2items" in task(configure, "PBS | Apply only drifted retention settings")["loop"]
+gc_schedule = task(configure, "PBS | Apply only a drifted garbage-collection schedule")
+assert gc_schedule["ansible.builtin.uri"]["body"] == {"gc-schedule": "{{ _pbs_gc_schedule }}"}
+assert "_pbs_datastore_config.json.data['gc-schedule']" in gc_schedule["when"]
+prune_jobs = task(configure, "PBS | Read configured prune jobs")
+assert prune_jobs["ansible.builtin.uri"]["url"] == "{{ _pbs_url }}/config/prune"
+assert "selectattr('id', 'equalto', _pbs_prune_job_id)" in str(task(configure, "PBS | Resolve the managed datastore prune job")["ansible.builtin.set_fact"])
+assert "(_pbs_managed_prune_jobs | first).store == _pbs_datastore" in str(task(configure, "PBS | Validate the managed prune-job identity")["ansible.builtin.assert"]["that"])
+create_prune = task(configure, "PBS | Create the scheduled datastore prune job")
+assert create_prune["ansible.builtin.uri"]["method"] == "POST"
+assert "_pbs_prune_job_config" in create_prune["ansible.builtin.uri"]["body"]
+assert "combine(_pbs_keep" in str(task(configure, "PBS | Build the desired scheduled prune-job configuration")["ansible.builtin.set_fact"])
+update_prune = task(configure, "PBS | Update only drifted prune-job settings")
+assert update_prune["ansible.builtin.uri"]["method"] == "PUT"
+assert "_pbs_prune_job_config | dict2items" in update_prune["loop"]
 assert task(configure, "PBS | Require the PVE storage backend to be active")["ansible.builtin.assert"]
 
 assert not any("restore_bandwidth" in str(item) for item in configure)

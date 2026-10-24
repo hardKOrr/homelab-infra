@@ -475,16 +475,79 @@ def fixture_layers_and_provider_gates():
         (fixtures / "valid" / "infrastructure.yml").read_text(encoding="utf-8")
     )
 
-    def merged(pre_existing_config=None):
+    def merged(pre_existing_config=None, infrastructure=config_infrastructure):
         return render(
             merge_expr,
             homelabinfra_defaults=homelabinfra_defaults,
             _config_proxmox=config_proxmox,
-            _config_infrastructure=config_infrastructure,
+            _config_infrastructure=infrastructure,
             homelabinfra_config=pre_existing_config or {},
         )
 
     result = merged()
+    pbs_defaults = homelabinfra_defaults["infrastructure"]["backups"]
+    expected_pbs_retention = {
+        "keep_last": 3,
+        "keep_daily": 7,
+        "keep_weekly": 4,
+    }
+    check("PBS retention defaults are defined", pbs_defaults["retention"], expected_pbs_retention)
+    check("PBS prune schedule default is defined", pbs_defaults["prune_schedule"], "03:00")
+    check("PBS GC schedule default is defined", pbs_defaults["gc_schedule"], "04:00")
+
+    example_backups = yaml.safe_load(
+        (repo / "config.example" / "infrastructure.yml").read_text(encoding="utf-8")
+    )["backups"]
+    check("config.example documents PBS default retention", example_backups["retention"], expected_pbs_retention)
+    check("config.example documents the default PBS prune schedule", example_backups["prune_schedule"], pbs_defaults["prune_schedule"])
+    check("config.example documents the default PBS GC schedule", example_backups["gc_schedule"], pbs_defaults["gc_schedule"])
+
+    infrastructure_without_retention = dict(config_infrastructure)
+    infrastructure_without_retention["backups"] = dict(config_infrastructure["backups"])
+    infrastructure_without_retention["backups"].pop("retention", None)
+    loaded_without_retention = merged(infrastructure=infrastructure_without_retention)
+    check(
+        "PBS retention defaults apply when infrastructure.backups.retention is unset",
+        loaded_without_retention["infrastructure"]["backups"]["retention"],
+        expected_pbs_retention,
+    )
+    check(
+        "PBS schedule defaults apply when their config values are unset",
+        (
+            loaded_without_retention["infrastructure"]["backups"]["prune_schedule"],
+            loaded_without_retention["infrastructure"]["backups"]["gc_schedule"],
+        ),
+        ("03:00", "04:00"),
+    )
+
+    infrastructure_with_partial_retention = dict(infrastructure_without_retention)
+    infrastructure_with_partial_retention["backups"] = dict(
+        infrastructure_without_retention["backups"]
+    )
+    infrastructure_with_partial_retention["backups"].update(
+        {
+            "retention": {"keep_daily": 14},
+            "prune_schedule": "02:30",
+            "gc_schedule": "05:00",
+        }
+    )
+    loaded_with_partial_retention = merged(
+        infrastructure=infrastructure_with_partial_retention
+    )
+    check(
+        "configured PBS retention wins while omitted retention keys keep defaults",
+        loaded_with_partial_retention["infrastructure"]["backups"]["retention"],
+        {"keep_last": 3, "keep_daily": 14, "keep_weekly": 4},
+    )
+    check(
+        "configured PBS schedules override defaults independently",
+        (
+            loaded_with_partial_retention["infrastructure"]["backups"]["prune_schedule"],
+            loaded_with_partial_retention["infrastructure"]["backups"]["gc_schedule"],
+        ),
+        ("02:30", "05:00"),
+    )
+
     if not homelabinfra_defaults:
         raise AssertionError(
             "vars/homelabinfra-defaults.yml unwrapped to nothing; fixture assumption stale"

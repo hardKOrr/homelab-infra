@@ -6,11 +6,12 @@
 # other PBS instances, used for sync). The working direction is:
 #   PBS side (REST API, port 8007 — NOT the PVE API):
 #     1. Ensure datastore exists at infrastructure.backups.datastore_path
-#     2. Apply retention (keep-*) settings on the datastore
-#     3. Point a webhook notification target + matcher at Ntfy
+#     2. Apply retention and the garbage-collection schedule on the datastore
+#     3. Create/update a scheduled prune job with the effective retention policy
+#     4. Point a webhook notification target + matcher at Ntfy
 #   PVE side (REST API, port 8006):
-#     4. Register PBS as a storage backend (with the PBS cert fingerprint)
-#     5. Create a vzdump backup job covering every guest tagged `_+lab`
+#     5. Register PBS as a storage backend (with the PBS cert fingerprint)
+#     6. Create a vzdump backup job covering every guest tagged `_+lab`
 #
 # PVE backup jobs cannot select guests by tag, so the job is created with the
 # explicit vmid list of `_+lab`-tagged guests at configure time.
@@ -25,7 +26,8 @@
 #   pbs_datastore_name    — optional, default 'homelab'
 #   pbs_datastore_mode    — create (default) or reuse: require the recovered
 #                           registration/path and never initialise a datastore
-#   homelabinfra_config.infrastructure.backups.{datastore_path, schedule, retention}
+#   homelabinfra_config.infrastructure.backups.{datastore_path, schedule, retention,
+#     prune_schedule, gc_schedule}
 #   homelabinfra_config.proxmox.{api_host, api_port, api_user, api_token_id, api_token_secret}
 #   homelabinfra_infra.notifications — optional (Shape B); when provider == 'ntfy',
 #     PBS notifications and the configure-complete test message go to Ntfy
@@ -63,6 +65,23 @@
           homelabinfra_config.proxmox.api_token_id }}={{
           homelabinfra_config.proxmox.api_token_secret }}
     _pbs_datastore: "{{ pbs_datastore_name | default('homelab') }}"
+    _pbs_prune_job_id: "homelab-infra-{{ pbs_datastore_name | default('homelab') }}"
+
+- name: PBS | Resolve effective retention and schedules
+  ansible.builtin.set_fact:
+    _pbs_retention: "{{ homelabinfra_config.infrastructure.backups.retention | default({}) }}"
+    _pbs_prune_schedule: >-
+      {{ homelabinfra_config.infrastructure.backups.prune_schedule | default('03:00') }}
+    _pbs_gc_schedule: >-
+      {{ homelabinfra_config.infrastructure.backups.gc_schedule | default('04:00') }}
+
+- name: PBS | Resolve retention options for the datastore and prune job
+  ansible.builtin.set_fact:
+    _pbs_keep: >-
+      {{ dict(_pbs_retention | dict2items | selectattr('key', 'match', '^keep_')
+              | map(attribute='key') | map('replace', '_', '-')
+              | zip(_pbs_retention | dict2items | selectattr('key', 'match', '^keep_')
+                    | map(attribute='value'))) }}
 
 # ── PBS side ──────────────────────────────────────────────────────────────────
 
@@ -162,20 +181,83 @@
     body_format: form-urlencoded
     body: "{{ {item.key: item.value} }}"
     validate_certs: false
-  vars:
-    _retention: "{{ homelabinfra_config.infrastructure.backups.retention | default({}) }}"
-    # keep_last/keep_daily/… (config style) → keep-last/keep-daily/… (PBS API style)
-    _pbs_keep: >-
-      {{ dict(_retention | dict2items | selectattr('key', 'match', '^keep_')
-              | map(attribute='key') | map('replace', '_', '-')
-              | zip(_retention | dict2items | selectattr('key', 'match', '^keep_')
-                    | map(attribute='value'))) }}
   loop: "{{ _pbs_keep | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
   when: >-
     (_pbs_datastore_config.json.data[item.key] | default(none) | string)
     != (item.value | string)
+
+- name: PBS | Apply only a drifted garbage-collection schedule
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/datastore/{{ _pbs_datastore }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body:
+      gc-schedule: "{{ _pbs_gc_schedule }}"
+    validate_certs: false
+  when: >-
+    (_pbs_datastore_config.json.data['gc-schedule'] | default(none) | string)
+    != (_pbs_gc_schedule | string)
+
+- name: PBS | Build the desired scheduled prune-job configuration
+  ansible.builtin.set_fact:
+    _pbs_prune_job_config: >-
+      {{ {'store': _pbs_datastore, 'schedule': _pbs_prune_schedule}
+         | combine(_pbs_keep, recursive=True) }}
+
+- name: PBS | Read configured prune jobs
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune"
+    headers: "{{ _pbs_headers }}"
+    validate_certs: false
+  register: _pbs_prune_jobs
+
+- name: PBS | Resolve the managed datastore prune job
+  ansible.builtin.set_fact:
+    _pbs_managed_prune_jobs: >-
+      {{ _pbs_prune_jobs.json.data
+         | selectattr('id', 'equalto', _pbs_prune_job_id) | list }}
+  changed_when: false
+
+- name: PBS | Validate the managed prune-job identity
+  ansible.builtin.assert:
+    that:
+      - _pbs_managed_prune_jobs | length <= 1
+      - >-
+        _pbs_managed_prune_jobs | length == 0
+        or (_pbs_managed_prune_jobs | first).store == _pbs_datastore
+    fail_msg: >-
+      PBS prune job {{ _pbs_prune_job_id }} already belongs to a different datastore;
+      refusing to overwrite it.
+
+- name: PBS | Create the scheduled datastore prune job
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune"
+    method: POST
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ _pbs_prune_job_config | combine({'id': _pbs_prune_job_id}) }}"
+    validate_certs: false
+  when: _pbs_managed_prune_jobs | length == 0
+
+- name: PBS | Update only drifted prune-job settings
+  ansible.builtin.uri:
+    url: "{{ _pbs_url }}/config/prune/{{ _pbs_prune_job_id }}"
+    method: PUT
+    headers: "{{ _pbs_headers }}"
+    body_format: form-urlencoded
+    body: "{{ {item.key: item.value} }}"
+    validate_certs: false
+  loop: "{{ _pbs_prune_job_config | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - _pbs_managed_prune_jobs | length == 1
+    - >-
+      ((_pbs_managed_prune_jobs | first)[item.key] | default(none) | string)
+      != (item.value | string)
 
 - name: PBS | Configure Ntfy notifications
   when:
