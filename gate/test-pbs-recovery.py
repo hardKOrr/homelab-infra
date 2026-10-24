@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from jinja2 import Environment, StrictUndefined
 import yaml
 
 
@@ -195,6 +196,107 @@ assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing
 assert "_pbs_datastore_config.json.data[item.key]" in str(task(configure, "PBS | Apply only drifted retention settings")["when"])
 assert task(configure, "PBS | Require the PVE storage backend to be active")["ansible.builtin.assert"]
 
+assert not any("restore_bandwidth" in str(item) for item in configure)
+
+restore_guest = load_yaml("ansible/playbooks/maintenance/restore-guest.yml")
+restore_pre_tasks = restore_guest[0]["pre_tasks"]
+restore_limit_validation = task(restore_pre_tasks, "Validate configured restore bandwidth")
+assert "restore_bandwidth_mib_s is number" in str(restore_limit_validation["ansible.builtin.assert"]["that"])
+assert "restore_bandwidth_mib_s is not boolean" in str(restore_limit_validation["ansible.builtin.assert"]["that"])
+assert "| int > 0" in str(restore_limit_validation["ansible.builtin.assert"]["that"])
+assert restore_limit_validation["when"] == [
+    "homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is defined",
+    "homelabinfra_config.infrastructure.backups.restore_bandwidth_mib_s is not none",
+]
+assert task(restore_pre_tasks, "Resolve configured restore bandwidth")["ansible.builtin.set_fact"]["_rg_restore_bandwidth_mib_s"].find("default('', true)") >= 0
+restore_conversion = task(restore_pre_tasks, "Convert restore bandwidth to Proxmox KiB/s")["ansible.builtin.set_fact"]
+assert "* 1024" in restore_conversion["_rg_restore_bwlimit_kib"]
+restore_args = task(restore_pre_tasks, "Resolve restore bandwidth command arguments")["ansible.builtin.set_fact"]
+assert "'--bwlimit'" in restore_args["_rg_restore_bwlimit_args"]
+assert "else []" in restore_args["_rg_restore_bwlimit_args"]
+
+template_environment = Environment(undefined=StrictUndefined)
+
+
+def render_ansible_value(expression, context, preserve_string=False):
+    rendered = template_environment.from_string(expression).render(**context)
+    if preserve_string:
+        return rendered
+    if rendered == "None":
+        return None
+    if rendered == "":
+        return ""
+    return yaml.safe_load(rendered)
+
+
+def restore_bandwidth_context(configured_mib_s):
+    backups = {}
+    if configured_mib_s is not ...:
+        backups["restore_bandwidth_mib_s"] = configured_mib_s
+    context = {
+        "homelabinfra_config": {"infrastructure": {"backups": backups}},
+    }
+    for variable, expression in task(
+        restore_pre_tasks, "Resolve configured restore bandwidth"
+    )["ansible.builtin.set_fact"].items():
+        context[variable] = render_ansible_value(expression, context, preserve_string=True)
+    for variable, expression in restore_conversion.items():
+        context[variable] = render_ansible_value(expression, context, preserve_string=True)
+    for variable, expression in restore_args.items():
+        context[variable] = render_ansible_value(expression, context)
+    return context
+
+
+def restore_bandwidth_args(configured_mib_s):
+    return restore_bandwidth_context(configured_mib_s)["_rg_restore_bwlimit_args"]
+
+
+assert restore_bandwidth_args(64) == ["--bwlimit", "65536"]
+assert restore_bandwidth_args(32) == ["--bwlimit", "32768"]
+assert restore_bandwidth_args(...) == []
+assert restore_bandwidth_args(None) == []
+
+restore_guest_tasks = restore_guest[0]["tasks"]
+restore_guest_block = task(restore_guest_tasks, "Restore the guest without activating the target")["block"]
+restore_bandwidth_report = task(
+    restore_guest_block, "Report the effective Restore Guest bandwidth limit"
+)["ansible.builtin.debug"]["msg"]
+assert "--bwlimit" in restore_bandwidth_report
+assert "_rg_restore_bwlimit_kib" in restore_bandwidth_report
+assert "Proxmox defaults apply" in restore_bandwidth_report
+assert render_ansible_value(
+    restore_bandwidth_report,
+    restore_bandwidth_context(64),
+    preserve_string=True,
+) == "Restore Guest restore limit: 64 MiB/s (--bwlimit 65536 KiB/s)."
+assert render_ansible_value(
+    restore_bandwidth_report,
+    restore_bandwidth_context(None),
+    preserve_string=True,
+) == "Restore Guest has no configured --bwlimit; Proxmox defaults apply."
+for name in ("Restore a VM from the native PBS artifact", "Restore an LXC from the native PBS artifact"):
+    command = task(restore_guest_block, name)["ansible.builtin.command"]
+    argv_expression = command["argv"]
+    for configured_mib_s, expected in (
+        (64, ["--bwlimit", "65536"]),
+        (32, ["--bwlimit", "32768"]),
+        (..., []),
+        (None, []),
+    ):
+        args = restore_bandwidth_args(configured_mib_s)
+        context = {
+            "_rg_target_node": "pve-node",
+            "_rg_target_vmid": "200",
+            "_rg_storage": "pbs-homelab",
+            "_rg_artifact": "backup/vm/100/2026-01-01T00:00:00Z",
+            "target_storage": "local-lvm",
+            "_rg_destination": "new",
+            "_rg_restore_bwlimit_args": args,
+        }
+        rendered_argv = render_ansible_value(argv_expression, context)
+        assert rendered_argv[-len(expected):] == expected if expected else "--bwlimit" not in rendered_argv
+        assert ("--bwlimit" in rendered_argv) == bool(expected)
+
 backup_guest = load_yaml("ansible/playbooks/maintenance/backup-guest.yml")
 backup_tasks = backup_guest[0]["tasks"]
 backup_response = task(backup_tasks, "Normalize the PBS backup task response")
@@ -206,7 +308,6 @@ assert async_wait["when"] == "_bg_task_upid | length > 0"
 sync_assert = task(backup_tasks, "Require a successful synchronous PBS backup result")
 assert "INFO: Backup job finished successfully" in str(sync_assert["ansible.builtin.assert"])
 
-restore_guest = load_yaml("ansible/playbooks/maintenance/restore-guest.yml")
 restore_tasks = restore_guest[0]["tasks"]
 pre_restore_tasks = task(
     restore_guest[0]["pre_tasks"], "Capture and verify an independent pre-restore recovery point"
@@ -235,13 +336,22 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     remote_qemu.mkdir(parents=True)
     remote_lxc.mkdir(parents=True)
     (local_qemu / "100.conf").write_text(
-        "scsi1: store:vm-100-disk-1,backup=0\n", encoding="utf-8"
+        "scsi1: store:vm-100-disk-1,backup=0\n"
+        "[before-upgrade]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n"
+        "snaptime: 1700000000\n",
+        encoding="utf-8",
     )
     (remote_lxc / "101.conf").write_text(
         "mp0: store:vm-100-disk-1,mp=/data\n", encoding="utf-8"
     )
     (remote_qemu / "103.conf").write_text(
         "scsi1: store:vm-100-disk-1,backup=0\n", encoding="utf-8"
+    )
+    (remote_qemu / "104.conf").write_text(
+        "[PENDING]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
     )
     (remote_qemu / "102.conf").write_text(
         "scsi1: store:vm-100-disk-10,backup=0\n", encoding="utf-8"
@@ -261,6 +371,7 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     assert json.loads(result.stdout) == [
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "100"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "103"},
+        {"device": "scsi1", "guest_type": "qemu-server", "vmid": "104"},
         {"device": "mp0", "guest_type": "lxc", "vmid": "101"},
     ]
 

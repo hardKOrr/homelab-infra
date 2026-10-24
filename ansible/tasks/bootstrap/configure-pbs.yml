@@ -1,6 +1,6 @@
 ---
 # Configure Proxmox Backup Server after its VM is deployed (bootstrap step 7).
-# Runs in a localhost play — everything here is API calls.
+# Runs in a localhost play after PBS is deployed.
 #
 # Architecture note: PBS cannot pull guest backups from PVE (PBS "remotes" are
 # other PBS instances, used for sync). The working direction is:

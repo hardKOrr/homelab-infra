@@ -334,6 +334,8 @@ mail:
 backups:
   datastore_path: "/mnt/backup"   # path on the PBS VM where backups are stored
   schedule: "daily"               # daily | weekly | custom cron
+  # Optional Restore Guest bandwidth cap in MiB/s; omit for no per-restore cap.
+  # restore_bandwidth_mib_s: 64
   retention:
     keep_last: 3
     keep_daily: 7

@@ -8,6 +8,11 @@ The role installs PBS packages and verifies its API token. An optional
 datastore path. This gives the datastore a storage identity independent of the replaceable
 PBS OS disk.
 
+`infrastructure.backups.restore_bandwidth_mib_s` optionally caps **Restore Guest** at the
+per-restore limit. The value is MiB/s; Restore Guest converts it to KiB/s and passes it as
+`--bwlimit` on the PVE restore request. When omitted or null, it omits the option. Deploy
+does not change PBS storage or cluster-wide `datacenter.cfg` bandwidth settings.
+
 ## Reusing an owned VM
 
 The instance tag must select one `_+lab` VM. Before adding it to the deployment group
