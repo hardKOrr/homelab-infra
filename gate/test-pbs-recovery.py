@@ -43,6 +43,8 @@ assert owner_query["ansible.builtin.command"]["argv"][:3] == ["pvesh", "get", "/
 owner_guard = task(provision_tasks, "Refuse a PBS datastore owner VMID assigned to a guest")
 assert "_pbs_datastore_source_vmid | int not in" in str(owner_guard["ansible.builtin.assert"]["that"])
 assert provision_tasks.index(owner_guard) < clone_index
+existing_disk_include = task(provision_tasks, "Attach the retained PBS datastore disk to the existing guest")
+assert "ansible_host" in existing_disk_include["vars"]["pbs_disk_guest_ip"]
 provision_block = task(provision_tasks, "Provision new VM")["block"]
 derive_index = next(i for i, item in enumerate(provision_block) if item.get("name") == "Derive VMID from IP")
 avoid_vmid = task(provision_block, "Avoid colliding with the retained PBS datastore VMID")
@@ -50,6 +52,8 @@ assert provision_block.index(avoid_vmid) == derive_index + 1
 assert provision_block.index(
     task(provision_block, "Clone the VM from the cloud-init template")
 ) > provision_block.index(avoid_vmid)
+new_disk_include = task(provision_block, "Attach the retained PBS datastore disk to the new guest")
+assert "vm_ansible_host" in new_disk_include["vars"]["pbs_disk_guest_ip"]
 avoid_vmid_tasks = load_yaml("ansible/tasks/proxmox/avoid-vmid-collision.yml")
 assert "avoid_vmid_source_ip == avoid_vmid_current_ip" in str(
     task(avoid_vmid_tasks, "PBS VMID | Reject an explicit VMID colliding with the datastore owner")["ansible.builtin.assert"]["that"]
@@ -72,20 +76,60 @@ allocate_argv = allocate_disk["ansible.builtin.command"]["argv"]
 assert allocate_argv[:2] == ["pvesm", "alloc"]
 assert any("_pbs_disk_source_vmid" in arg for arg in allocate_argv)
 assert "vm-{{ _pbs_disk_source_vmid }}-disk-1" in allocate_argv
+active_config = task(ensure_disk, "PBS disk | Read active target VM configuration from PVE")
+assert active_config["ansible.builtin.command"]["argv"][-1] == "--current"
+assert active_config["no_log"] is True
+assert "_pbs_disk_restart_required" in str(task(ensure_disk, "PBS disk | Find the exact retained volume")["ansible.builtin.set_fact"])
 disk_identity_guard = task(ensure_disk, "PBS disk | Validate the retained volume declaration")
 assert "pbs_disk_config.source_vmid is defined" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
 assert "pbs_disk_config.source_vmid | int != pbs_disk_vmid | int" in str(disk_identity_guard["ansible.builtin.assert"]["that"])
 attach = task(ensure_disk, "PBS disk | Attach the retained volume")
 assert "_pbs_disk_expected_volid" in attach["ansible.builtin.command"]["argv"][-1]
+assert "discard=on" in attach["ansible.builtin.command"]["argv"][-1]
 assert "_pbs_disk_current | length == 0" in str(attach["when"])
+enable_discard = task(ensure_disk, "PBS disk | Enable discard on the retained volume")
+assert "qm" in enable_discard["ansible.builtin.command"]["argv"]
+update_args = str(enable_discard["ansible.builtin.command"]["argv"][-1])
+assert "_pbs_disk_current_config.split(',')" in update_args
+assert "discard=on" in update_args
+assert "_pbs_disk_current | length > 0" in str(enable_discard["when"])
 assert "_+lab" in str(task(ensure_disk, "PBS disk | Confirm live ownership and reject a different scsi1 disk"))
-assert "backup=0" in str(task(ensure_disk, "PBS disk | Confirm volume, backup exclusion and stable guest serial"))
+disk_config = task(ensure_disk, "PBS disk | Confirm volume, backup exclusion, stable guest serial and discard")
+assert "backup=0" in str(disk_config)
+assert "discard=on" in str(disk_config)
+readback = task(ensure_disk, "PBS disk | Read back the attached disk configuration")
+assert readback["ansible.builtin.command"]["argv"] == ["qm", "config", "{{ pbs_disk_vmid }}"]
+shutdown = task(ensure_disk, "PBS disk | Gracefully stop the running VM to apply discard")
+assert shutdown["ansible.builtin.command"]["argv"][:3] == ["qm", "shutdown", "{{ pbs_disk_vmid }}"]
+assert "--timeout" in shutdown["ansible.builtin.command"]["argv"]
+assert "--forceStop" not in shutdown["ansible.builtin.command"]["argv"]
+assert "_pbs_disk_restart_required | bool" in str(shutdown["when"])
+start = task(ensure_disk, "PBS disk | Start the VM with discard active")
+assert start["ansible.builtin.command"]["argv"][:2] == ["qm", "start"]
+assert "_pbs_disk_restart_required | bool" in str(start["when"])
+running_before_restart = "'status: running' in _pbs_disk_status_before_restart.stdout"
+assert running_before_restart in str(start["when"])
+start_wait = task(ensure_disk, "PBS disk | Wait for the QEMU VM to start")
+assert running_before_restart in str(start_wait["when"])
+ssh_wait = task(ensure_disk, "PBS disk | Wait for PBS SSH after the QEMU restart")
+assert ssh_wait["ansible.builtin.wait_for"]["port"] == 22
+assert "_pbs_disk_restart_required | bool" in str(ssh_wait["when"])
+assert running_before_restart in str(ssh_wait["when"])
 
 pbs_role = load_yaml("ansible/roles/pbs/tasks/main.yml")
 disk_include = task(pbs_role, "Configure the persistent PBS datastore disk")
 service_start = task(pbs_role, "Enable and start the PBS services")
 assert pbs_role.index(disk_include) < pbs_role.index(service_start)
 assert pbs_role.index(task(pbs_role, "Give PBS ownership of an empty datastore directory")) < pbs_role.index(service_start)
+trim_package = task(pbs_role, "Install util-linux for datastore trimming")
+trim_timer = task(pbs_role, "Enable and start periodic trimming of the PBS datastore")
+assert trim_package["ansible.builtin.apt"]["name"] == "util-linux"
+assert "datastore_disk is defined" in str(trim_package["when"])
+assert trim_timer["ansible.builtin.systemd"]["name"] == "fstrim.timer"
+assert trim_timer["ansible.builtin.systemd"]["enabled"] is True
+assert "datastore_disk is defined" in str(trim_timer["when"])
+active_discard_check = task(pbs_role, "Confirm discard is active on the retained PBS datastore disk")
+assert "discard=on" in str(active_discard_check["ansible.builtin.assert"]["that"])
 register_reuse = task(pbs_role, "Register the retained datastore without initialising it")
 assert "reuse" in str(register_reuse["when"])
 
@@ -337,9 +381,13 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     remote_lxc.mkdir(parents=True)
     (local_qemu / "100.conf").write_text(
         "scsi1: store:vm-100-disk-1,backup=0\n"
+        "[current]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n"
         "[before-upgrade]\n"
         "scsi1: store:vm-100-disk-1,backup=0\n"
-        "snaptime: 1700000000\n",
+        "snaptime: 1700000000\n"
+        "[before-discard]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
         encoding="utf-8",
     )
     (remote_lxc / "101.conf").write_text(
@@ -355,6 +403,18 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
     )
     (remote_qemu / "102.conf").write_text(
         "scsi1: store:vm-100-disk-10,backup=0\n", encoding="utf-8"
+    )
+    (remote_qemu / "104.conf").write_text(
+        "scsi1: store:vm-104-disk-1,backup=0\n"
+        "[current]\n"
+        "scsi1: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
+    )
+    (remote_qemu / "105.conf").write_text(
+        "scsi1: store:vm-105-disk-1,backup=0\n"
+        "[PENDING]\n"
+        "scsi2: store:vm-100-disk-1,backup=0\n",
+        encoding="utf-8",
     )
     result = subprocess.run(
         [
@@ -372,6 +432,7 @@ with tempfile.TemporaryDirectory(prefix="pbs-volume-references-") as tmp:
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "100"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "103"},
         {"device": "scsi1", "guest_type": "qemu-server", "vmid": "104"},
+        {"device": "scsi2", "guest_type": "qemu-server", "vmid": "105"},
         {"device": "mp0", "guest_type": "lxc", "vmid": "101"},
     ]
 

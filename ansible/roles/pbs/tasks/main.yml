@@ -97,6 +97,12 @@
     state: present
   notify: Restart pbs
 
+- name: Install util-linux for datastore trimming
+  ansible.builtin.apt:
+    name: util-linux
+    state: present
+  when: app_config.proxmox.vm.datastore_disk is defined
+
 - name: Disable the subscription-only enterprise repository (installed by the package)
   ansible.builtin.file:
     path: /etc/apt/sources.list.d/pbs-enterprise.list
@@ -132,8 +138,43 @@
     - proxmox-backup
     - proxmox-backup-proxy
 
+- name: Enable and start periodic trimming of the PBS datastore
+  ansible.builtin.systemd:
+    name: fstrim.timer
+    state: started
+    enabled: true
+  when: app_config.proxmox.vm.datastore_disk is defined
+
 - name: Apply pending restarts before the health check
   ansible.builtin.meta: flush_handlers
+
+- name: Read the active PBS datastore disk configuration
+  ansible.builtin.command:
+    argv:
+      - qm
+      - config
+      - "{{ hostvars['localhost']._pbs_disk_vmid }}"
+      - --current
+  delegate_to: "{{ hostvars['localhost']._pbs_disk_node }}"
+  register: _pbs_disk_active_config_after
+  changed_when: false
+  no_log: true
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
+
+- name: Confirm discard is active on the retained PBS datastore disk
+  ansible.builtin.assert:
+    that:
+      - >-
+        _pbs_disk_active_config_after.stdout is search(
+          '(?m)^scsi1:\s*[^\n]*,discard=on(,|$)')
+    fail_msg: >-
+      The retained PBS datastore disk is configured with discard but its active QEMU
+      device did not apply the option after restart.
+  when:
+    - app_config.proxmox.vm.datastore_disk is defined
+    - hostvars['localhost']._pbs_disk_current | default('') | length > 0
 
 - name: Wait for the PBS API to answer
   ansible.builtin.uri:
