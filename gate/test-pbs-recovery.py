@@ -229,7 +229,7 @@ def render_ansible_value(expression, context, preserve_string=False):
     return yaml.safe_load(rendered)
 
 
-def restore_bandwidth_args(configured_mib_s):
+def restore_bandwidth_context(configured_mib_s):
     backups = {}
     if configured_mib_s is not ...:
         backups["restore_bandwidth_mib_s"] = configured_mib_s
@@ -244,7 +244,11 @@ def restore_bandwidth_args(configured_mib_s):
         context[variable] = render_ansible_value(expression, context, preserve_string=True)
     for variable, expression in restore_args.items():
         context[variable] = render_ansible_value(expression, context)
-    return context["_rg_restore_bwlimit_args"]
+    return context
+
+
+def restore_bandwidth_args(configured_mib_s):
+    return restore_bandwidth_context(configured_mib_s)["_rg_restore_bwlimit_args"]
 
 
 assert restore_bandwidth_args(64) == ["--bwlimit", "65536"]
@@ -254,6 +258,22 @@ assert restore_bandwidth_args(None) == []
 
 restore_guest_tasks = restore_guest[0]["tasks"]
 restore_guest_block = task(restore_guest_tasks, "Restore the guest without activating the target")["block"]
+restore_bandwidth_report = task(
+    restore_guest_block, "Report the effective Restore Guest bandwidth limit"
+)["ansible.builtin.debug"]["msg"]
+assert "--bwlimit" in restore_bandwidth_report
+assert "_rg_restore_bwlimit_kib" in restore_bandwidth_report
+assert "Proxmox defaults apply" in restore_bandwidth_report
+assert render_ansible_value(
+    restore_bandwidth_report,
+    restore_bandwidth_context(64),
+    preserve_string=True,
+) == "Restore Guest restore limit: 64 MiB/s (--bwlimit 65536 KiB/s)."
+assert render_ansible_value(
+    restore_bandwidth_report,
+    restore_bandwidth_context(None),
+    preserve_string=True,
+) == "Restore Guest has no configured --bwlimit; Proxmox defaults apply."
 for name in ("Restore a VM from the native PBS artifact", "Restore an LXC from the native PBS artifact"):
     command = task(restore_guest_block, name)["ansible.builtin.command"]
     argv_expression = command["argv"]

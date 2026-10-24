@@ -521,6 +521,15 @@
             - _rg_destination == 'existing'
             - _rg_was_running | bool
 
+        - name: Report the effective Restore Guest bandwidth limit
+          ansible.builtin.debug:
+            msg: >-
+              {{ 'Restore Guest restore limit: ' ~ _rg_restore_bandwidth_mib_s ~
+                 ' MiB/s (--bwlimit ' ~ _rg_restore_bwlimit_kib ~ ' KiB/s).'
+                 if _rg_restore_bwlimit_kib | length > 0 else
+                 'Restore Guest has no configured --bwlimit; Proxmox defaults apply.' }}
+          when: _rg_execute | bool
+
         - name: Restore a VM from the native PBS artifact
           ansible.builtin.command:
             argv: >-
