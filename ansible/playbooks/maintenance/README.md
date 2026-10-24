@@ -63,7 +63,8 @@ the recovery unit; selecting an application is not an application-only restore. 
 Docker guest or Kubernetes node must be handled as a whole guest, with its workload scope
 shown in the job output. When configured, `infrastructure.backups.restore_bandwidth_mib_s`
 sets the Restore Guest request's per-restore `--bwlimit`; an unset value leaves the
-Proxmox default in effect.
+Proxmox default in effect. This is a request to PVE, not a guaranteed cap: current PVE
+does not forward `--bwlimit` to `proxmox-backup-client` for LXC restores from PBS.
 
 Backup coverage is read from the current PVE backup jobs before an on-demand `vzdump`
 request. PVE returns an UPID for backup, stop, start, and restore workers, so the shared

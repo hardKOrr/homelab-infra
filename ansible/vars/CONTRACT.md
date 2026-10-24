@@ -403,7 +403,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `backups.datastore_path` | required | |
 | `backups.schedule` | optional | |
 | `backups.retention` | optional | |
-| `backups.restore_bandwidth_mib_s` | optional | positive integer MiB/s restore limit passed as `--bwlimit` (KiB/s) by Restore Guest; absent or null omits the command option |
+| `backups.restore_bandwidth_mib_s` | optional | positive integer MiB/s restore limit passed as `--bwlimit` (KiB/s) by Restore Guest; absent or null omits the command option. This is a request to PVE, not a guaranteed cap: current PVE does not forward it to `proxmox-backup-client` for LXC restores from PBS |
 | `vaultwarden.admin_token` | Seed/recovery override only | removed from authored config after cutover |
 | `vaultwarden.instance` | optional | |
 | `media_storage.library` | required for media apps with a `library_subpath` | the library root as the containers see it; `app.library_subpath` hangs off it |
