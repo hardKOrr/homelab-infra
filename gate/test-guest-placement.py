@@ -358,6 +358,69 @@ def verify_vm_clone_existing_node_contract():
     assert stack_ensure["vars"]["proxmox_placement_node"] == "{{ _stack_sizing.node | default('') }}"
 
 
+def verify_vm_clone_connection_follows_relocated_guest():
+    tasks = yaml.safe_load(VM_CLONE.read_text())
+    preserve_node = next(
+        task for task in tasks
+        if task.get("name") == "VM clone | Keep an existing guest on its current node"
+    )
+    connection = next(
+        task for task in tasks
+        if task.get("name") == "VM clone | Set connection facts"
+    )
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        inventory = root / "inventory.ini"
+        inventory.write_text("[local]\nlocalhost ansible_connection=local\n")
+        playbook = root / "connection.yml"
+        cases = (
+            ("existing VM moved by HA", {"node": "live-node"}, "stale-placement", "live-node"),
+            ("new VM uses selected placement", {}, "selected-node", "selected-node"),
+        )
+        for label, existing_guest, placement_node, expected_node in cases:
+            playbook.write_text(
+                yaml.safe_dump([{
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "vars": {
+                        "homelabinfra_config": {"proxmox": {
+                            "api_host": "pve.example.invalid",
+                            "api_user": "fixture@pve",
+                            "api_token_id": "fixture-token",
+                            "api_token_secret": "fixture-secret",
+                            "node": "configured-node",
+                            "vm": {"vmid": 204},
+                        }},
+                        "_vmc_existing_guest": existing_guest,
+                        "_guest_placement": {"node": placement_node},
+                    },
+                    "tasks": [
+                        preserve_node,
+                        connection,
+                        {"ansible.builtin.assert": {"that": [
+                            f"_vmc_api.node == '{expected_node}'",
+                        ]}},
+                    ],
+                }]),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [str(ANSIBLE), "-i", str(inventory), str(playbook)],
+                cwd=REPO,
+                env=os.environ | {
+                    "ANSIBLE_CONFIG": str(REPO / "ansible/ansible.cfg"),
+                    "ANSIBLE_STDOUT_CALLBACK": "default",
+                    "ANSIBLE_NOCOLOR": "1",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            output = result.stdout + result.stderr
+            assert result.returncode == 0, f"{label}: VM clone selected the wrong node\n{output}"
+
+
 def verify_existing_guest_node_helper():
     helper = REPO / "ansible/tasks/proxmox/preserve-existing-guest-node.yml"
     with tempfile.TemporaryDirectory() as directory:
@@ -669,6 +732,7 @@ def main():
     verify_pci_mapping_contract()
     verify_virtiofs_mount_contract()
     verify_vm_clone_existing_node_contract()
+    verify_vm_clone_connection_follows_relocated_guest()
     verify_existing_guest_node_helper()
     run_case(
         "database pinned to storage role",

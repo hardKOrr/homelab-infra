@@ -143,7 +143,10 @@
       api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
       api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
       validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
-      node: "{{ _guest_placement.node | default(homelabinfra_config.proxmox.node) }}"
+      node: >-
+        {{ _vmc_existing_guest.node
+           if _vmc_existing_guest | length > 0
+           else (_guest_placement.node | default(homelabinfra_config.proxmox.node)) }}
     _vmc_vmid: "{{ homelabinfra_config.proxmox.vm.vmid | int }}"
 
 - name: VM clone | Build network settings
