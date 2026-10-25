@@ -1,0 +1,110 @@
+---
+# Remove one declared k3s hosting cluster after its Kubernetes applications have been
+# removed. This intentionally destroys the node VMs and their disks; the typed confirmation
+# is the acknowledgement that local-path volumes disappear with those disks.
+- name: "k3s cluster Remove | Resolve"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+    - name: Assert the selected cluster and destructive confirmation
+      ansible.builtin.assert:
+        that:
+          - instance is defined
+          - (instance | default('')) is match('^[A-Za-z0-9][A-Za-z0-9_.-]*$')
+          - confirm | default('') == 'REMOVE-K3S-CLUSTER'
+        fail_msg: >-
+          Select a cluster instance and set confirm=REMOVE-K3S-CLUSTER. Remove permanently
+          destroys every owned node VM disk, including retained local-path application
+          volumes.
+
+    - name: Load cluster defaults
+      ansible.builtin.include_vars:
+        file: "../../vars/app-defaults/k3s-cluster.yml"
+        name: _k3s_remove_defaults
+
+    - name: Load the selected cluster config when present
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/apps/{{ instance }}.yml"
+        name: _k3s_remove_config
+      failed_when: false
+
+    - name: Load generated topology facts when present
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+        name: _k3s_remove_generated
+      failed_when: false
+
+    - name: Merge user vars and generated topology without replacing their namespaces
+      ansible.builtin.set_fact:
+        k3s_cluster_remove_config: >-
+          {{ _k3s_remove_defaults.k3s_cluster_defaults
+             | combine(_k3s_remove_config | default({}), recursive=True) }}
+        homelabinfra_infra: >-
+          {{ homelabinfra_infra | default({})
+             | combine(_k3s_remove_generated | default({}), recursive=True) }}
+
+    - name: Resolve whether the selected cluster owns the current registry entry
+      ansible.builtin.set_fact:
+        _k3s_remove_registry: "{{ homelabinfra_infra.kubernetes | default({}) }}"
+        k3s_cluster_remove_registry_matches: >-
+          {{ (homelabinfra_infra.kubernetes | default({})).instance | default('') == instance }}
+
+    - name: Resolve the node list to remove
+      ansible.builtin.set_fact:
+        k3s_cluster_remove_nodes: >-
+          {{ (_k3s_remove_registry.nodes | default([], true))
+             if k3s_cluster_remove_registry_matches | bool
+                and _k3s_remove_registry.nodes | default([]) | length > 0
+             else (k3s_cluster_remove_config.cluster.nodes | default([])) }}
+        k3s_cluster_remove_alias: >-
+          {{ (_k3s_remove_registry.firewall_alias | default('', true)
+              if k3s_cluster_remove_registry_matches | bool else '')
+             or (('homelabinfra_k3s_' ~ (instance | regex_replace('[^A-Za-z0-9_]', '_')))
+                 if homelabinfra_infra.get('firewall', {}).get('provider', 'none') == 'opnsense'
+                 else '') }}
+        k3s_cluster_remove_in_progress: >-
+          {{ k3s_cluster_remove_registry_matches | bool
+             and (_k3s_remove_registry.removal_in_progress | default(false) | bool) }}
+
+  tasks:
+    - name: Assert the selected cluster has a recorded or configured node list
+      ansible.builtin.assert:
+        that:
+          - k3s_cluster_remove_nodes | length > 0
+          - >-
+            (k3s_cluster_remove_nodes | map(attribute='name') | unique | list | length)
+            == (k3s_cluster_remove_nodes | length)
+          - >-
+            (k3s_cluster_remove_nodes | map(attribute='ip_address') | unique | list | length)
+            == (k3s_cluster_remove_nodes | length)
+        fail_msg: >-
+          No valid k3s node topology is available for {{ instance }}. Keep its config file
+          or Deploy it successfully before running cluster Remove.
+
+    - name: Assert every selected node has a stable Proxmox identity
+      ansible.builtin.assert:
+        that:
+          - k3s_remove_node.name | default('') | length > 0
+          - k3s_remove_node.proxmox_node | default('') | length > 0
+          - k3s_remove_node.ip_address is ansible.utils.ipv4_address
+        fail_msg: >-
+          Cluster Remove requires each node's name, Proxmox node and literal IPv4 address
+          so it can verify the exact VM before destroying it.
+      loop: "{{ k3s_cluster_remove_nodes }}"
+      loop_control:
+        loop_var: k3s_remove_node
+        label: "{{ k3s_remove_node.name | default('cluster node') }}"
+
+    - name: Remove the selected k3s cluster
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/remove-cluster.yml
+      vars:
+        k3s_remove_instance: "{{ instance }}"
+        k3s_remove_nodes: "{{ k3s_cluster_remove_nodes }}"
+        k3s_remove_alias: "{{ k3s_cluster_remove_alias }}"
+        k3s_remove_registry_matches: "{{ k3s_cluster_remove_registry_matches }}"
+        k3s_remove_in_progress: "{{ k3s_cluster_remove_in_progress }}"

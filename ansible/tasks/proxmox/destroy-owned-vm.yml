@@ -1,7 +1,8 @@
 ---
-# Destroy one dedicated native VM after Remove App has stopped its service and
-# withdrawn its instance row/tag. The caller verifies the original target identity;
-# this task rechecks the live PVE config and refuses to destroy a newly shared guest.
+# Destroy one explicitly authorized homelab-infra VM. Remove App normally calls this after
+# stopping its service and withdrawing its instance row/tag. Cluster Remove opts into the
+# exact `_.cluster+k3s` owner tag for its shared cluster nodes. In both cases the caller
+# verifies the original identity and this task rechecks the live Proxmox config.
 - name: Register Proxmox nodes before native VM destruction
   ansible.builtin.import_tasks: register-nodes.yml
 
@@ -12,10 +13,21 @@
       - destroy_vm_name | length > 0
       - destroy_vm_node | length > 0
       - destroy_vm_instance | length > 0
+      - destroy_vm_owner_tag | default('') in ['', '_.cluster+k3s']
       - destroy_vm_original_tags is sequence
       - destroy_vm_original_tags is not string
       - "'_+lab' in destroy_vm_original_tags"
-      - "('_' ~ destroy_vm_instance) in destroy_vm_original_tags"
+      - >-
+        (destroy_vm_owner_tag | default('') == ''
+         and ('_' ~ destroy_vm_instance) in destroy_vm_original_tags)
+        or (destroy_vm_owner_tag | default('') in destroy_vm_original_tags)
+      - >-
+        destroy_vm_owner_tag | default('') == ''
+        or (destroy_vm_original_tags | select('match', '^_[.]cluster[+]') | list)
+           == [destroy_vm_owner_tag]
+      - >-
+        destroy_vm_owner_tag | default('') == ''
+        or (destroy_vm_original_tags | select('match', '^_[A-Za-z0-9]') | list | length) == 0
     fail_msg: >-
       Refusing to destroy the native VM because its original lab ownership or instance
       identity was not verified.
@@ -49,22 +61,28 @@
          | split(';') | reject('equalto', '') | list }}
   no_log: true
 
-- name: Destroy owned VM | Require current lab ownership and an unshared guest
+- name: Destroy owned VM | Require current lab ownership and matching managed tags
   ansible.builtin.assert:
     that:
       - _destroy_vm_live_config.name | default('') == destroy_vm_name
       - "'_+lab' in _destroy_vm_live_tags"
-      - "'_.shared' not in _destroy_vm_live_tags"
+      - >-
+        '_.shared' not in _destroy_vm_live_tags
+        or destroy_vm_owner_tag | default('') == '_.cluster+k3s'
       - >-
         (_destroy_vm_live_tags | select('match', '^_[.]stack[+]') | list | length) == 0
       - >-
-        (_destroy_vm_live_tags | select('match', '^_[.]cluster[+]') | list | length) == 0
+        (_destroy_vm_live_tags | select('match', '^_[.]cluster[+]') | list)
+        == ([destroy_vm_owner_tag] if destroy_vm_owner_tag | default('') else [])
       - >-
-        (_destroy_vm_live_tags | select('match', '^_[A-Za-z0-9]')
-         | reject('equalto', '_' ~ destroy_vm_instance) | list | length) == 0
+        ((_destroy_vm_live_tags | select('match', '^_[A-Za-z0-9]')
+          | reject('equalto', '_' ~ destroy_vm_instance)
+          | list | length) == 0)
+        and (destroy_vm_owner_tag | default('') == ''
+             or (_destroy_vm_live_tags | select('match', '^_[A-Za-z0-9]') | list | length) == 0)
     fail_msg: >-
       Refusing to destroy the native VM: it changed identity, lost the _+lab ownership
-      tag, or now carries another application's managed tag.
+      tag, lost the requested owner tag, or now carries another managed tag.
 
 - name: Destroy owned VM | Remove its homelab-infra HA resource first
   ansible.builtin.include_tasks: reconcile-vm-ha.yml

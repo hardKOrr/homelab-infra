@@ -179,8 +179,8 @@ dns:
 # instance (`enabled: true` in config/apps/<instance>.yml).
 #
 # api_key/api_secret are read from the homelab-infra/firewall vault item (Store Secret
-# job). Give that OPNsense account only the "Firewall: Rules [new]" and
-# "Firewall: NAT: Destination NAT" privileges.
+# job). Give that OPNsense account only the "Firewall: Rules [new]", "Firewall: NAT:
+# Destination NAT", and "Firewall: Aliases" privileges.
 #
 # `host` is the address the runner reaches the OPNsense API on. Use the address your
 # runner is allowed to open HTTPS to (the same one `dns.host` uses), not the gateway

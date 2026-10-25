@@ -79,6 +79,11 @@ actions:
     hosting: [native, docker, kubernetes, appliance]
     essential_excluded: true
 
+  remove_k3s_cluster:
+    template: remove-k3s-cluster.yaml
+    hosting: []
+    opt_in: true
+
   restart:
     template: restart-app.yaml
     hosting: [native, docker]

@@ -237,10 +237,9 @@ applications:
     root: Platform
     category: Hosting
     scope: lab                          # one cluster hosts workloads from every estate
-    # The cluster is a hosting backend, not an app instance: it has no container to
-    # restart, no compose project to tail and no removal path. Re-running Deploy is the
-    # whole of its day-2 story, so only its config file is separately editable.
-    actions: [configure]
+    # Cluster Remove is explicit and destructive: remove hosted apps first, then confirm
+    # that every node VM disk and local-path volume can be deleted.
+    actions: [configure, remove_k3s_cluster]
 
   lidarr:
     name: Lidarr

@@ -51,6 +51,16 @@
       with the `Deploy k3s Cluster` job (playbooks/apps/k3s-cluster.yml); a
       `kind: kubernetes` app has no guest of its own to fall back to.
 
+- name: k8s resolve | Refuse new cluster operations while cluster Remove is in progress
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (homelabinfra_infra.kubernetes.removal_in_progress | default(false) | bool)
+        or (k8s_resolve_allow_removing | default(false) | bool)
+    fail_msg: >-
+      The Kubernetes cluster is being removed. Finish cluster Remove before deploying,
+      restoring or running another cluster operation.
+
 # Every node, not only the first: a later task or a status job may want to reach a specific
 # one, and registering the whole cluster costs nothing. The private key comes from
 # ANSIBLE_PRIVATE_KEY_FILE, exported by scripts/lab-run.sh, so it is not set per host —

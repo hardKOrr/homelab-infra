@@ -63,6 +63,9 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
+    - name: Open the app's declared network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+
     - name: Deploy FlareSolverr onto the cluster
       ansible.builtin.include_role:
         name: flaresolverr

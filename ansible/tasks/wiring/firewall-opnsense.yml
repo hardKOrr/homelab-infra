@@ -9,7 +9,8 @@
 # Wiring contract (vars supplied by the calling playbook):
 #   wiring_app_name       — instance name; every rule is described
 #                           "homelab-infra: <instance> <direction> <name>"
-#   wiring_upstream_host  — the guest's IPv4 address (the rules' source / NAT target)
+#   wiring_upstream_host  — the guest's IPv4 address (interface selector / NAT target)
+#   wiring_firewall_source — optional OPNsense alias used as the egress source
 #   wiring_firewall       — the merged app_config.firewall:
 #       egress:   list of {name, protocol, port, source_port, destination, sequence}
 #                 protocol TCP | UDP | TCP/UDP; port '' means any destination port;
@@ -40,6 +41,7 @@
       {{ _fw_cfg.host if _fw_cfg.host is search('^https?://') else 'https://' ~ _fw_cfg.host }}
     fw_validate: "{{ _fw_cfg.validate_certs | default(false) }}"
     fw_owner_prefix: "homelab-infra: {{ wiring_app_name }} "
+    _fw_source_net: "{{ wiring_firewall_source | default(wiring_upstream_host, true) }}"
     _fw_interfaces_json: >-
       {%- set found = [] -%}
       {%- for entry in _fw_cfg.interfaces | default([]) -%}
@@ -56,6 +58,7 @@
         that:
           - wiring_app_name | default('') | length > 0
           - wiring_upstream_host | default('') is ansible.utils.ipv4_address
+          - _fw_source_net | default('') | length > 0
           - _fw_cfg.host | default('') | length > 0
           - _fw_cfg.api_key | default('') | length > 0
           - _fw_cfg.api_secret | default('') | length > 0
@@ -79,7 +82,7 @@
                   'enabled': '1', 'action': 'pass', 'quick': '1',
                   'interface': _fw_interfaces[0], 'direction': 'in',
                   'ipprotocol': 'inet', 'protocol': e.protocol | default('TCP') | upper,
-                  'source_net': wiring_upstream_host,
+                  'source_net': _fw_source_net,
                   'destination_net': e.destination | default('any', true),
                   'destination_port': e.port | default('', true) | string,
                   'sequence': e.sequence | default(_fw_cfg.sequence | default(1000)) | string,

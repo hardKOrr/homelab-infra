@@ -1,0 +1,50 @@
+# Remove k3s Cluster — the explicit destructive teardown for the hosting backend.
+# Expanded once from catalog/applications.yml and imported with the other day-2 actions.
+
+- id: '%UUID%'
+  uuid: '%UUID%'
+  name: Remove %NAME%
+  group: '%GROUP%'
+  description: |-
+    Remove one k3s cluster after its hosted applications have been removed.
+
+    - Refuses while homelab-infra application namespaces or node application tags remain
+    - Destroys only the declared homelab-infra k3s node VMs after verifying their identity
+    - Deletes the cluster's owned OPNsense node alias and generated topology
+    - Keeps `config/apps/<instance>.yml`, its Vaultwarden item and PBS backups
+    - Permanently deletes the node disks, including retained local-path application data
+
+    Run **Remove App** for every Kubernetes application first. To authorize the VM and
+    local-data deletion, type `REMOVE-K3S-CLUSTER` below.
+  loglevel: INFO
+  executionEnabled: true
+  scheduleEnabled: false
+  nodeFilterEditable: false
+  multipleExecutions: false
+  options:
+  - name: instance
+    description: '**Default:** Keep the selected cluster. Choose another only when this lab
+      has another configured k3s cluster.'
+    required: true
+    value: '%SLUG%'
+  - name: confirm
+    description: '**Required:** Type `REMOVE-K3S-CLUSTER` to destroy the cluster node VMs and
+      all data stored on their disks.'
+    required: true
+    value: ''
+  sequence:
+    keepgoing: false
+    strategy: node-first
+    commands:
+    - description: Run playbooks/apps/remove-k3s-cluster.yml
+      script: |-
+          #!/bin/bash
+          set -euo pipefail
+          ARGS=()
+          : "${RD_OPTION_INSTANCE:?instance is required}"
+          : "${RD_OPTION_CONFIRM:?confirm is required}"
+          ARGS+=(-e "instance=$RD_OPTION_INSTANCE")
+          ARGS+=(-e "confirm=$RD_OPTION_CONFIRM")
+
+          # lab-run validates config/ and runs ansible-playbook through the managed env.
+          exec lab-run playbooks/apps/remove-k3s-cluster.yml "${ARGS[@]}"

@@ -42,6 +42,8 @@
           {{ (app_config.routing.subdomain | default(instance, true)) }}.{{ homelabinfra_infra.domain }}
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
+    - name: Open the app's declared network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
     - name: Deploy Homepage onto the cluster
       ansible.builtin.include_role:
         name: homepage

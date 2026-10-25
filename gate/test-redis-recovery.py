@@ -356,7 +356,7 @@ def check_remove_scope():
     assert destroy_vm["ansible.builtin.include_tasks"] == "../../tasks/proxmox/destroy-owned-vm.yml"
     assert "proxmox_vmtype == 'qemu'" in str(destroy_vm["when"])
     vm_destroy_tasks = read_yaml("ansible/tasks/proxmox/destroy-owned-vm.yml")
-    vm_live_guard = task_named(vm_destroy_tasks, "Destroy owned VM | Require current lab ownership and an unshared guest")
+    vm_live_guard = task_named(vm_destroy_tasks, "Destroy owned VM | Require current lab ownership and matching managed tags")
     assert "_+lab" in str(vm_live_guard["ansible.builtin.assert"]["that"])
     assert "_.shared" in str(vm_live_guard["ansible.builtin.assert"]["that"])
     assert "destroy_vm_instance" in str(vm_live_guard["ansible.builtin.assert"]["that"])
