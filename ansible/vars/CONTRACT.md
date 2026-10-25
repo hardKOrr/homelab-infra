@@ -393,19 +393,20 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `domains.<estate>.mail.from_name` | optional | estate display name |
 | `domains.<estate>.mail.username` | optional | estate-specific SMTP AUTH username |
 | `domains.<estate>.mail.password`, `api_key`, `api_secret`, `token` | rejected | credentials never belong in authored config; store a password in `homelab-infra/estates/<estate>/mail` when the relay needs one |
-| `domains.<estate>.public_dns` | optional | public apex and wildcard resolution for this estate only; absent or disabled is inert |
-| `domains.<estate>.public_dns.enabled` | optional, default `false` | when enabled, publish only `<ESTATE-domain>` and `*.<ESTATE-domain>`; there are no per-app records |
+| `public_dns` | optional | lab-wide public address settings, shared by every estate that sets `domains.<estate>.public_dns.enabled`; the lab has one WAN, so one address source serves all estates; inert while no estate enables it |
+| `public_dns.ttl` | optional, default `300` | positive integer record TTL in seconds, for every published record |
+| `public_dns.families` | optional, default `[ipv4]` | non-empty list containing `ipv4`, `ipv6`, or both; AAAA is published only when `ipv6` is listed |
+| `public_dns.allow_private` | optional, default `false` | permit private, loopback, link-local, or CGNAT (`100.64.0.0/10`) addresses; this is an explicit exception |
+| `public_dns.address.source` | required when any estate enables public DNS | `static`, `lookup`, or `cname` |
+| `public_dns.address.address` | required for `static` | IP address whose family must appear in `families`; private, loopback, link-local, and CGNAT addresses require `allow_private: true` |
+| `public_dns.address.urls` | required for `lookup` | at least two HTTPS echo URLs; the updater uses the first that answers, and the Deploy preflight refuses to publish when they disagree |
+| `public_dns.address.target` | required for `cname` | valid hostname outside every enabled estate's domain |
+| `public_dns` and `.address` unknown keys | rejected | source-specific address keys are also rejected when they do not match `address.source` |
+| `domains.<estate>.public_dns` | optional | turns public apex and wildcard resolution on for this estate; absent or disabled is inert |
+| `domains.<estate>.public_dns.enabled` | optional, default `false` | when enabled, publish only `<ESTATE-domain>` and `*.<ESTATE-domain>` at the lab-wide address; there are no per-app records |
 | `domains.<estate>.public_dns.provider` | optional | `github.com/caddy-dns/<provider>` module name; defaults to this estate's `dns_challenge.provider` and uses that challenge's credentials |
-| `domains.<estate>.public_dns.ttl` | optional, default `300` | positive integer record TTL in seconds |
-| `domains.<estate>.public_dns.families` | optional, default `[ipv4]` | non-empty list containing `ipv4`, `ipv6`, or both; AAAA is published only when `ipv6` is listed |
-| `domains.<estate>.public_dns.proxied` | optional, default `false` | provider proxying preference |
 | `domains.<estate>.public_dns.adopt_existing` | optional, default `false` | whether pre-existing records may be adopted; otherwise only records created by this feature may be changed |
-| `domains.<estate>.public_dns.allow_private` | optional, default `false` | permit private, loopback, link-local, or CGNAT addresses; this is an explicit exception |
-| `domains.<estate>.public_dns.address.source` | required when enabled | `static`, `lookup`, or `cname` |
-| `domains.<estate>.public_dns.address.address` | required for `static` | IP address whose family must appear in `families`; private, loopback, link-local, and CGNAT addresses require `allow_private: true` |
-| `domains.<estate>.public_dns.address.urls` | required for `lookup` | at least two HTTPS echo URLs; the lookups must agree |
-| `domains.<estate>.public_dns.address.target` | required for `cname` | valid hostname outside this estate's own domain |
-| `domains.<estate>.public_dns` and `.address` unknown keys | rejected | source-specific address keys are also rejected when they do not match `address.source` |
+| `domains.<estate>.public_dns` unknown keys | rejected | `ttl`, `families`, `allow_private` and `address` are lab-wide and belong in top-level `public_dns` |
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
 | `maintenance.schedule` | optional | when the lab may be DISRUPTED — `always`, `never`, or a window `{days, start, duration}`. Defaults to nightly 04:00 for 120 minutes. Update cadence is unaffected; only reboots and container restarts wait for it. `never` is notify-only |
@@ -737,28 +738,35 @@ domains:
     public_dns:                    # optional; opt-in public apex and wildcard only
       enabled: false               # absent or false leaves existing behavior unchanged
       # provider: cloudflare       # defaults to this estate's dns_challenge.provider
-      ttl: 300
-      families: [ipv4]             # list ipv6 to publish AAAA too
-      proxied: false
       adopt_existing: false
-      allow_private: false         # otherwise private, loopback, link-local and CGNAT are refused
-      address:
-        source: lookup             # static | lookup | cname; required when enabled
-        # static: address: 203.0.113.10
-        # lookup: urls: [<https-echo-url-1>, <https-echo-url-2>]
-        # cname: target: ddns.operator.example.net
     dns:                           # optional — which DNS provider serves THIS estate
       provider: opnsense           # pihole | adguard | opnsense | none
       host: 192.0.2.1            # non-secret half only; see below
+
+public_dns:                        # lab-wide; one WAN address for every enabled estate
+  ttl: 300
+  families: [ipv4]                 # list ipv6 to publish AAAA too
+  allow_private: false             # otherwise private, loopback, link-local and CGNAT are refused
+  address:
+    source: lookup                 # static | lookup | cname; required when an estate enables it
+    # static: address: 203.0.113.10
+    # lookup: urls: [<https-echo-url-1>, <https-echo-url-2>]
+    # cname: target: ddns.operator.example.net
 ```
 
-This issue only carries and validates the contract; the follow-up Caddy updater applies
-it. Public DNS is independent of application routing and creates no per-app records or
-WAN port forwards. It is off unless that estate sets `public_dns.enabled: true`; the
+Public DNS is independent of application routing and creates no per-app records or
+WAN port forwards. The lab has one WAN behind one firewall, so the address settings are
+lab-wide in top-level `public_dns`, like the Caddy guest itself; each estate only opts in
+and names its provider. It is off unless that estate sets `public_dns.enabled: true`; the
 DNS-01 provider credentials already loaded for that estate are reused, with no second
 token in `public_dns`. Existing records are not adopted by default; `adopt_existing: true`
 is the explicit exception. Private, loopback, link-local and CGNAT addresses are refused
 unless `allow_private: true`; inbound ports remain an explicit `firewall.inbound` choice.
+
+Caddy's dynamic DNS app keeps the published records current. When a provider write fails
+it logs the error but does not retry until the WAN address changes or the Caddy service
+restarts (a config reload is not enough). Lab Status reports that estate as `stale`;
+restart Caddy on the proxy guest to publish again.
 
 The configuration is resolved alongside that estate's `dns_challenge` on the Caddy guest.
 The loader recursively overlays the estate's existing DNS-01 credentials onto authored

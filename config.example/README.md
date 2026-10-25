@@ -30,13 +30,12 @@ The authoritative schema and merge behavior are in
 `ansible/vars/app-defaults/`. An instance file should contain only values that differ from
 those defaults.
 
-## Per-estate public DNS
+## Public DNS
 
-Public DNS is an optional estate setting. The contract in this change loads and validates
-the block; the follow-up Caddy updater applies it. That updater is intended to maintain the
-estate apex and wildcard only, without app records or port forwards, using the estate's
-DNS-01 provider credentials. This example is commented out, so copying it keeps the feature
-disabled:
+Public DNS publishes each opted-in estate's apex and wildcard, without app records or port
+forwards, using the estate's DNS-01 provider credentials. The address settings are
+lab-wide in top-level `public_dns` because the lab has one WAN; each estate only opts in.
+This example is commented out, so copying it keeps the feature disabled:
 
 ```yaml
 # domains:
@@ -45,16 +44,17 @@ disabled:
 #     public_dns:
 #       enabled: false
 #       # provider: cloudflare  # defaults to this estate's dns_challenge.provider
-#       ttl: 300
-#       families: [ipv4]        # list ipv6 to publish AAAA too
-#       proxied: false
 #       adopt_existing: false
-#       allow_private: false
-#       address:
-#         source: lookup        # static | lookup | cname; required when enabled
-#         # static: address: 203.0.113.10
-#         # lookup: urls: [<https-echo-url-1>, <https-echo-url-2>]
-#         # cname: target: ddns.operator.example.net
+#
+# public_dns:                   # lab-wide; one WAN address for every enabled estate
+#   ttl: 300
+#   families: [ipv4]            # list ipv6 to publish AAAA too
+#   allow_private: false
+#   address:
+#     source: lookup            # static | lookup | cname; required when an estate enables it
+#     # static: address: 203.0.113.10
+#     # lookup: urls: [<https-echo-url-1>, <https-echo-url-2>]
+#     # cname: target: ddns.operator.example.net
 ```
 
 ## Safety
