@@ -443,3 +443,6 @@
   delegate_to: "{{ _guest_placement.node }}"
   args:
     executable: /bin/bash
+
+- name: Refresh the PBS backup job after creating the LXC
+  ansible.builtin.include_tasks: refresh-backup-job.yml

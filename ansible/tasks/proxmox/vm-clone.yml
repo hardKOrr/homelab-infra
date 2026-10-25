@@ -561,3 +561,6 @@
     proxmox_ha_vmid: "{{ _vmc_vmid }}"
     proxmox_ha_name: "{{ homelabinfra_config.proxmox.vm.name }}"
     proxmox_ha_enabled: "{{ homelabinfra_config.proxmox.vm.ha | default(false) }}"
+
+- name: Refresh the PBS backup job after creating the VM clone
+  ansible.builtin.include_tasks: refresh-backup-job.yml

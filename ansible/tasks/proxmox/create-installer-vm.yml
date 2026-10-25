@@ -144,3 +144,8 @@
     proxmox_ha_vmid: "{{ installer_vm.vmid }}"
     proxmox_ha_name: "{{ installer_vm.name }}"
     proxmox_ha_enabled: "{{ installer_vm.ha | default(false) }}"
+
+- name: Installer VM | Refresh PBS backup VMIDs after guest creation
+  ansible.builtin.include_tasks: refresh-backup-job.yml
+  vars:
+    backup_job_create_if_missing: false

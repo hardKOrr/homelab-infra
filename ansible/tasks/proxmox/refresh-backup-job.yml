@@ -1,0 +1,182 @@
+# Keep the managed nightly vzdump job aligned with the guests this repository owns.
+#
+# PVE backup jobs cannot select by tag, so keep their explicit VMID list current at the
+# shared guest create/destroy seams. PBS configuration sets
+# backup_job_create_if_missing=true; ordinary guest lifecycle calls only update an
+# existing managed job, so application Deploy still works before PBS is configured.
+# When no guests are eligible, do not create a job; disable an existing managed job
+# until an eligible guest is created again.
+#
+# Inputs:
+#   homelabinfra_config.proxmox.* — PVE API connection
+#   homelabinfra_config.infrastructure.backups.schedule — configured schedule
+#   pbs_instance — instance name to exclude from its own datastore backup (default: pbs)
+#   backup_job_create_if_missing — create the job only from PBS configuration
+
+- name: PBS backup | Require PVE API configuration
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_config.proxmox.api_host is defined
+      - homelabinfra_config.proxmox.api_user is defined
+      - homelabinfra_config.proxmox.api_token_id is defined
+      - homelabinfra_config.proxmox.api_token_secret is defined
+    fail_msg: The managed PBS backup job requires the configured Proxmox API connection.
+
+- name: PBS backup | Resolve PVE connection and schedule
+  ansible.builtin.set_fact:
+    _backup_job_url: >-
+      https://{{ homelabinfra_config.proxmox.api_host }}:{{
+        homelabinfra_config.proxmox.api_port | default(8006) }}/api2/json
+    _backup_job_headers:
+      Authorization: >-
+        PVEAPIToken={{ homelabinfra_config.proxmox.api_user }}!{{
+          homelabinfra_config.proxmox.api_token_id }}={{
+          homelabinfra_config.proxmox.api_token_secret }}
+    _backup_job_pbs_instance: "{{ pbs_instance | default('pbs') }}"
+    _backup_job_comment: managed by homelab-infra
+    _backup_job_schedule: >-
+      {{ {'daily': '02:00', 'weekly': 'sun 02:00'}.get(_backup_job_schedule_raw,
+           _backup_job_schedule_raw) }}
+  vars:
+    _backup_job_schedule_raw: >-
+      {{ homelabinfra_config.get('infrastructure', {}).get('backups', {}).get(
+           'schedule', 'daily') }}
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Read current Proxmox guest resources
+  ansible.builtin.uri:
+    url: "{{ _backup_job_url }}/cluster/resources?type=vm"
+    headers: "{{ _backup_job_headers }}"
+    validate_certs: false
+  register: _backup_job_guests
+  delegate_to: localhost
+  become: false
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Build the exact managed guest VMID list
+  ansible.builtin.set_fact:
+    # Templates carry the ownership tag so their own lifecycle task can identify them,
+    # but they are rebuildable and are not backup targets. PBS is also excluded from its
+    # own datastore because its backup stream cannot be stored inside the VM being backed up.
+    _backup_job_vmids: >-
+      {{ _backup_job_guests.json.data
+         | selectattr('tags', 'defined')
+         | selectattr('tags', 'search', '(^|;)' ~ ('_+lab' | regex_escape) ~ '(;|$)')
+         | rejectattr('template', 'equalto', 1)
+         | rejectattr('tags', 'search',
+             '(^|;)' ~ (('_' ~ _backup_job_pbs_instance) | regex_escape) ~ '(;|$)')
+         | map(attribute='vmid') | sort | join(',') }}
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Read configured Proxmox backup jobs
+  ansible.builtin.uri:
+    url: "{{ _backup_job_url }}/cluster/backup"
+    headers: "{{ _backup_job_headers }}"
+    validate_certs: false
+  register: _backup_job_list
+  delegate_to: localhost
+  become: false
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Find the managed backup job
+  ansible.builtin.set_fact:
+    _backup_job_matches: >-
+      {{ _backup_job_list.json.data
+         | selectattr('comment', 'defined')
+         | selectattr('comment', 'search', 'managed by homelab-infra')
+         | list }}
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Reject duplicate managed backup jobs
+  ansible.builtin.assert:
+    that: _backup_job_matches | length <= 1
+    fail_msg: >-
+      Proxmox has multiple managed PBS backup jobs. Refusing to update an arbitrary job.
+
+- name: PBS backup | Resolve the managed backup job
+  ansible.builtin.set_fact:
+    _backup_job: "{{ _backup_job_matches | first | default({}) }}"
+    _backup_job_id: "{{ (_backup_job_matches | first | default({})).id | default('') }}"
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Detect backup job drift
+  ansible.builtin.set_fact:
+    _backup_job_needs_update: >-
+      {{ _backup_job_id | length > 0
+         and (
+           (_backup_job.schedule | default('') | string) != (_backup_job_schedule | string)
+           or (_backup_job.vmid | default('') | string) != (_backup_job_vmids | string)
+           or (_backup_job.storage | default('') | string) != 'pbs-homelab'
+           or (_backup_job.mode | default('') | string) != 'snapshot'
+           or (_backup_job.enabled | default(0) | int != 1)
+           or (_backup_job.comment | default('') | string) != (_backup_job_comment | string)
+         ) }}
+  no_log: true
+  changed_when: false
+
+- name: PBS backup | Disable the managed job when no guests are eligible
+  ansible.builtin.uri:
+    url: "{{ _backup_job_url }}/cluster/backup/{{ _backup_job_id }}"
+    method: PUT
+    headers: "{{ _backup_job_headers }}"
+    body_format: form-urlencoded
+    body:
+      enabled: 0
+    validate_certs: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - _backup_job_id | length > 0
+    - _backup_job_vmids | length == 0
+    - _backup_job.enabled | default(1) | int != 0
+
+- name: PBS backup | Create the managed backup job
+  ansible.builtin.uri:
+    url: "{{ _backup_job_url }}/cluster/backup"
+    method: POST
+    headers: "{{ _backup_job_headers }}"
+    body_format: form-urlencoded
+    body:
+      storage: pbs-homelab
+      schedule: "{{ _backup_job_schedule }}"
+      vmid: "{{ _backup_job_vmids }}"
+      mode: snapshot
+      enabled: 1
+      comment: "{{ _backup_job_comment }}"
+    validate_certs: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - _backup_job_vmids | length > 0
+    - _backup_job_id | length == 0
+    - backup_job_create_if_missing | default(false) | bool
+
+- name: PBS backup | Refresh the managed backup job
+  ansible.builtin.uri:
+    url: "{{ _backup_job_url }}/cluster/backup/{{ _backup_job_id }}"
+    method: PUT
+    headers: "{{ _backup_job_headers }}"
+    body_format: form-urlencoded
+    body:
+      storage: pbs-homelab
+      schedule: "{{ _backup_job_schedule }}"
+      vmid: "{{ _backup_job_vmids }}"
+      mode: snapshot
+      enabled: 1
+      comment: "{{ _backup_job_comment }}"
+    validate_certs: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - _backup_job_vmids | length > 0
+    - _backup_job_id | length > 0
+    - _backup_job_needs_update | bool

@@ -641,6 +641,14 @@
               stopped; retry from the retained pre-restore point after inspection.
           when: _rg_execute | bool
 
+        - name: Refresh PBS backup VMIDs after restoring a new managed guest
+          ansible.builtin.include_tasks: ../../tasks/proxmox/refresh-backup-job.yml
+          vars:
+            backup_job_create_if_missing: false
+          when:
+            - _rg_execute | bool
+            - _rg_destination == 'new'
+
         - name: Start an existing target that was running before restore
           ansible.builtin.command:
             argv:

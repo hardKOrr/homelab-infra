@@ -15,6 +15,12 @@ creation path. The clone task finds an existing VM's live Proxmox node before se
 the node for its updates, so a k3s VM moved by HA is reused in place on the next Deploy.
 It starts only a new or stopped VM; an already-running guest is left unchanged.
 
+Shared LXC/VM create seams, the OPNsense installer VM task and new-target PBS restores
+refresh the managed PBS vzdump job's VMID list from current `_+lab` guests after the guest
+is ready. The shared owned-guest destroy seams refresh it after Proxmox confirms the guest
+is gone. PBS configuration uses the same task and creates the job when needed, so Deploy
+and Remove cannot leave stale VMIDs behind.
+
 VM Deploy paths call `reconcile-vm-ha.yml` for the optional per-VM `proxmox.vm.ha`
 setting, including reused guests. HA requires every configured VM disk to use storage
 marked `shared` in Proxmox. The HA resource comment is the ownership marker: Deploy only

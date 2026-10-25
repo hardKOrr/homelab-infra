@@ -136,3 +136,6 @@
     fail_msg: >-
       Proxmox still reports the destroyed native VM; inspect its configuration before
       deploying a replacement.
+
+- name: Refresh the PBS backup job after destroying the VM
+  ansible.builtin.include_tasks: refresh-backup-job.yml
