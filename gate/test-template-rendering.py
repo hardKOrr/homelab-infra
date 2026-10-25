@@ -36,6 +36,11 @@ class CaddyRendering:
             "caddy_defaults"
         ]
         self.tasks = yaml.safe_load(ROLE_FILE.read_text(encoding="utf-8"))
+        self.public_dns_tasks = yaml.safe_load(
+            (ROOT / "ansible/roles/caddy/tasks/public-dns-contract.yml").read_text(
+                encoding="utf-8"
+            )
+        )
         self.policy_task = task_named(
             self.tasks, "Build per-estate DNS-challenge TLS policies"
         )
@@ -57,6 +62,10 @@ class CaddyRendering:
         self.policy_vars = self.policy_task["vars"]
         self.base_vars = self.base_task["vars"]
         self.content_expression = self.write_task["ansible.builtin.copy"]["content"]
+        self.public_dns_resolve_task = task_named(
+            self.public_dns_tasks,
+            "Resolve public DNS config beside each estate DNS challenge",
+        )
         self.estates = [
             {
                 "domain": "alpha.example.test",
@@ -96,6 +105,16 @@ class CaddyRendering:
             variables[key] = render(expression, variables)
         return render(
             self.collect_task["ansible.builtin.set_fact"]["_caddy_dns_domains"],
+            variables,
+        )
+
+    def resolve_public_dns_estates(self, infrastructure):
+        task = self.public_dns_resolve_task
+        variables = {"homelabinfra_config": {"infrastructure": infrastructure}}
+        for key, expression in task["vars"].items():
+            variables[key] = render(expression, variables)
+        return render(
+            task["ansible.builtin.set_fact"]["_caddy_public_dns_estates"],
             variables,
         )
 
@@ -309,6 +328,61 @@ def caddy_declared_lab_dns_reaches_guest_and_disabled_propagation_policy(self):
             assert (
                 policy["issuers"][0]["ca"] == STAGING_DIRECTORY
             ), "policy['issuers'][0]['ca'] == STAGING_DIRECTORY"
+
+
+def caddy_public_dns_is_resolved_beside_its_estate_challenge(self):
+    estate = {
+        "domain": "alpha.example.test",
+        "dns_challenge": {
+            "provider": "cloudflare",
+            "api_token": "fixture-token-alpha",
+        },
+        "public_dns": {
+            "enabled": True,
+            "address": {
+                "source": "lookup",
+                "urls": ["https://one.example.test/ip", "https://two.example.test/ip"],
+            },
+        },
+    }
+    loaded = self.resolve_public_dns_estates({"domains": {"alpha": estate}})
+    assert len(loaded) == 1, "len(loaded) == 1"
+    assert loaded[0]["dns_challenge_provider"] == "cloudflare", (
+        "loaded[0]['dns_challenge_provider'] == 'cloudflare'"
+    )
+    assert loaded[0]["has_dns_challenge_credentials"] is True, (
+        "loaded[0]['has_dns_challenge_credentials'] is True"
+    )
+    assert loaded[0]["public_dns"] == {
+        "enabled": True,
+        "provider": "cloudflare",
+        "ttl": 300,
+        "families": ["ipv4"],
+        "proxied": False,
+        "adopt_existing": False,
+        "allow_private": False,
+        "address": estate["public_dns"]["address"],
+    }, "loaded[0]['public_dns'] == the estate block merged over per-estate defaults"
+
+    raw_dns_domains = self.collect_domains({"domains": {"alpha": estate}}, {})
+    assert raw_dns_domains == [estate], (
+        "the DNS-01 domain remains the authored estate mapping, including public_dns"
+    )
+
+    without_public_dns = self.collect_domains(
+        {
+            "domains": {
+                "alpha": {
+                    "domain": "alpha.example.test",
+                    "dns_challenge": estate["dns_challenge"],
+                }
+            }
+        },
+        {},
+    )
+    assert without_public_dns == [
+        {"domain": "alpha.example.test", "dns_challenge": estate["dns_challenge"]}
+    ], "a config without public_dns keeps the old estate DNS input shape"
 
 
 def caddy_explicit_estate_options_are_isolated_and_provider_fields_preserved(self):
@@ -1833,6 +1907,7 @@ if __name__ == "__main__":
     caddy_configured_ca_reaches_every_acme_issuer_and_keeps_email(caddy)
     caddy_internal_mode_ignores_configured_ca(caddy)
     caddy_declared_lab_dns_reaches_guest_and_disabled_propagation_policy(caddy)
+    caddy_public_dns_is_resolved_beside_its_estate_challenge(caddy)
     caddy_explicit_estate_options_are_isolated_and_provider_fields_preserved(caddy)
     caddy_infrastructure_overrides_legacy_instance_resolvers_only_for_default_policy(
         caddy

@@ -51,6 +51,19 @@ domain: "homelab.example.com"
 #       # Provider-specific fields stay flat in this block. For Cloudflare, api_token
 #       # is read from homelab-infra/estates/foxglove/reverse_proxy field
 #       # dns_api_token after cutover — the same shape as the lab-wide token below.
+#     public_dns:                  # optional; absent or disabled has no effect
+#       enabled: false             # one estate apex and wildcard; never per-app records
+#       # provider: cloudflare     # defaults to this estate's dns_challenge.provider
+#       ttl: 300
+#       families: [ipv4]           # list ipv6 to publish AAAA too
+#       proxied: false
+#       adopt_existing: false
+#       allow_private: false
+#       address:
+#         source: lookup           # static | lookup | cname; required when enabled
+#         # static: address: 203.0.113.10
+#         # lookup: urls: [<https-echo-url-1>, <https-echo-url-2>]
+#         # cname: target: ddns.operator.example.net
 #     dns:                         # optional — which DNS provider serves THIS estate
 #       provider: opnsense         # pihole | adguard | opnsense | none
 #       host: "192.168.1.1"

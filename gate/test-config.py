@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Configuration precedence, estate isolation, provider gates and network selection."""
+"""Configuration precedence, estate isolation, public DNS, providers and networks."""
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,288 @@ def render(expr, **ctx):
 
 def check(label, got, want):
     assert got == want, f"{label}: expected {want!r}, got {got!r}"
+
+
+def public_dns_contract():
+    plugin_path = repo / "ansible/roles/caddy/filter_plugins/public_dns.py"
+    spec = importlib.util.spec_from_file_location("public_dns_filter", plugin_path)
+    if spec is None or spec.loader is None:
+        raise SystemExit("could not load the Caddy public DNS validation filter")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    validate = module.public_dns_errors
+
+    estate_domain = "personal.example.test"
+
+    def errors(config, *, domain=estate_domain, provider="cloudflare", credentials=True):
+        return validate(
+            [
+                {
+                    "name": "personal",
+                    "domain": domain,
+                    "dns_challenge_provider": provider,
+                    "has_dns_challenge_credentials": credentials,
+                    "public_dns": config,
+                }
+            ]
+        )
+
+    check("public_dns absent is inert", validate([]), [])
+    check(
+        "disabled public_dns needs neither challenge credentials nor an address",
+        errors({"enabled": False}, credentials=False),
+        [],
+    )
+
+    enabled = {"enabled": True}
+    valid_sources = (
+        {
+            **enabled,
+            "address": {"source": "static", "address": "203.0.113.10"},
+        },
+        {
+            **enabled,
+            "families": ["ipv6"],
+            "address": {"source": "static", "address": "2001:db8::10"},
+        },
+        {
+            **enabled,
+            "allow_private": True,
+            "address": {"source": "static", "address": "192.168.1.10"},
+        },
+        {
+            **enabled,
+            "address": {
+                "source": "lookup",
+                "urls": ["https://one.example.test/ip", "https://two.example.test/ip"],
+            },
+        },
+        {
+            **enabled,
+            "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+        },
+    )
+    for index, config in enumerate(valid_sources, start=1):
+        check(f"public_dns source {index} validates", errors(config), [])
+
+    rejected = (
+        (
+            "unsupported address source",
+            {**enabled, "address": {"source": "automatic"}},
+            "domains.personal.public_dns.address.source must be static, lookup, or cname.",
+        ),
+        (
+            "invalid static IP",
+            {**enabled, "address": {"source": "static", "address": "not-an-ip"}},
+            "domains.personal.public_dns.address.address must be a valid IP address.",
+        ),
+        (
+            "static source with no address",
+            {**enabled, "address": {"source": "static"}},
+            "domains.personal.public_dns.address.address must be a valid IP address.",
+        ),
+        (
+            "static IP of a family not listed",
+            {
+                **enabled,
+                "families": ["ipv4"],
+                "address": {"source": "static", "address": "2001:db8::10"},
+            },
+            "domains.personal.public_dns.address.address must match one of public_dns.families.",
+        ),
+        (
+            "static RFC 1918 address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "192.168.1.10"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static loopback address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "127.0.0.1"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static link-local address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "169.254.1.10"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static CGNAT address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "100.64.0.1"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static IPv6 ULA address without allow_private",
+            {
+                **enabled,
+                "families": ["ipv6"],
+                "address": {"source": "static", "address": "fd00::1"},
+            },
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static IPv6 loopback address without allow_private",
+            {
+                **enabled,
+                "families": ["ipv6"],
+                "address": {"source": "static", "address": "::1"},
+            },
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static IPv6 link-local address without allow_private",
+            {
+                **enabled,
+                "families": ["ipv6"],
+                "address": {"source": "static", "address": "fe80::1"},
+            },
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "CNAME inside the estate domain",
+            {
+                **enabled,
+                "address": {
+                    "source": "cname",
+                    "target": "ddns.personal.example.test",
+                },
+            },
+            "domains.personal.public_dns.address.target must be a valid hostname outside this estate's own domain.",
+        ),
+        (
+            "invalid CNAME hostname",
+            {**enabled, "address": {"source": "cname", "target": "https://ddns.example.net"}},
+            "domains.personal.public_dns.address.target must be a valid hostname outside this estate's own domain.",
+        ),
+        (
+            "lookup with fewer than two URLs",
+            {
+                **enabled,
+                "address": {"source": "lookup", "urls": ["https://one.example.test/ip"]},
+            },
+            "domains.personal.public_dns.address.urls must contain at least two HTTPS echo URLs.",
+        ),
+        (
+            "lookup with a non-HTTPS URL",
+            {
+                **enabled,
+                "address": {
+                    "source": "lookup",
+                    "urls": ["http://one.example.test/ip", "https://two.example.test/ip"],
+                },
+            },
+            "domains.personal.public_dns.address.urls must contain valid HTTPS echo URLs.",
+        ),
+        (
+            "lookup URLs not supplied as a list",
+            {
+                **enabled,
+                "address": {"source": "lookup", "urls": "https://one.example.test/ip"},
+            },
+            "domains.personal.public_dns.address.urls must be a list of HTTPS echo URLs.",
+        ),
+        (
+            "provider outside the Caddy DNS-01 module name shape",
+            {
+                **enabled,
+                "provider": "cloudflare/other",
+                "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+            },
+            "domains.personal.public_dns.provider must name a Caddy DNS-01 provider module.",
+        ),
+        (
+            "unknown public_dns key",
+            {"enabled": False, "publish_apps": True},
+            "domains.personal.public_dns has unsupported key 'publish_apps'.",
+        ),
+        (
+            "unknown address key",
+            {
+                **enabled,
+                "address": {
+                    "source": "static",
+                    "address": "203.0.113.10",
+                    "api_token": None,
+                },
+            },
+            "domains.personal.public_dns.address has unsupported key 'api_token'.",
+        ),
+        (
+            "source-inappropriate address key",
+            {
+                **enabled,
+                "address": {
+                    "source": "static",
+                    "address": "203.0.113.10",
+                    "urls": ["https://one.example.test/ip"],
+                },
+            },
+            "domains.personal.public_dns.address has unsupported key 'urls'.",
+        ),
+        (
+            "invalid TTL",
+            {
+                **enabled,
+                "ttl": 0,
+                "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+            },
+            "domains.personal.public_dns.ttl must be a positive integer.",
+        ),
+        (
+            "invalid families",
+            {
+                **enabled,
+                "families": ["ipv5"],
+                "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+            },
+            "domains.personal.public_dns.families must be a non-empty list containing only ipv4 and/or ipv6.",
+        ),
+        (
+            "invalid proxied value",
+            {
+                **enabled,
+                "proxied": "false",
+                "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+            },
+            "domains.personal.public_dns.proxied must be true or false.",
+        ),
+        (
+            "invalid adopt_existing value",
+            {
+                **enabled,
+                "adopt_existing": "false",
+                "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+            },
+            "domains.personal.public_dns.adopt_existing must be true or false.",
+        ),
+        (
+            "invalid allow_private value",
+            {
+                **enabled,
+                "allow_private": "false",
+                "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+            },
+            "domains.personal.public_dns.allow_private must be true or false.",
+        ),
+    )
+    for label, config, message in rejected:
+        check(label, errors(config), [message])
+    check(
+        "missing DNS-01 provider credentials",
+        errors(
+            {
+                **enabled,
+                "address": {
+                    "source": "cname",
+                    "target": "dynamic.operator.example.net",
+                },
+            },
+            credentials=False,
+        ),
+        [
+            "domains.personal.public_dns.enabled requires provider credentials "
+            "in this estate's dns_challenge block."
+        ],
+    )
 
 
 def configuration_layers_and_estates():
@@ -65,6 +348,62 @@ def configuration_layers_and_estates():
         return rendered
 
     luv_tasks = load_tasks("ansible/tasks/load-user-vars.yml")
+    estate_secret_task = find_task(
+        luv_tasks, "Overlay canonical DNS secrets into authored provider shape"
+    )
+    estate_secret_expr = module_body(estate_secret_task, SET_FACT)[
+        "homelabinfra_config"
+    ]
+    estate_secret_vars = estate_secret_task["vars"]
+
+    def overlay_estate_dns_secret(domains):
+        ctx = {
+            "homelabinfra_config": {"infrastructure": {"domains": domains}},
+            "homelabinfra_vault": {
+                "estates": {
+                    "personal": {
+                        "reverse_proxy": {"dns_api_token": "fixture-token"}
+                    }
+                }
+            },
+        }
+        ctx = render_vars_in_order(estate_secret_vars, ctx)
+        return render(estate_secret_expr, **ctx)["infrastructure"]["domains"]
+
+    no_public_dns = overlay_estate_dns_secret(
+        {"personal": {"domain": "personal.example.test"}}
+    )
+    check(
+        "the Vault DNS-01 overlay does not add public_dns to an estate without it",
+        no_public_dns["personal"],
+        {
+            "domain": "personal.example.test",
+            "dns_challenge": {"api_token": "fixture-token"},
+        },
+    )
+    authored_public_dns = {
+        "enabled": True,
+        "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+    }
+    with_public_dns = overlay_estate_dns_secret(
+        {
+            "personal": {
+                "domain": "personal.example.test",
+                "public_dns": authored_public_dns,
+            }
+        }
+    )
+    check(
+        "the recursive estate DNS-01 overlay preserves authored public_dns",
+        with_public_dns["personal"]["public_dns"],
+        authored_public_dns,
+    )
+    check(
+        "the estate DNS-01 token remains beside public_dns",
+        with_public_dns["personal"]["dns_challenge"],
+        {"api_token": "fixture-token"},
+    )
+
     merge_task = find_task(luv_tasks, "Merge config layers into homelabinfra_config")
     merge_expr = module_body(merge_task, SET_FACT)["homelabinfra_config"]
     defaults = {
@@ -1289,4 +1628,7 @@ if __name__ == "__main__":
     fixture_layers_and_provider_gates()
     configuration_layers_and_estates()
     network_selection()
-    print("Config: doctor, precedence, estates, mail, providers and networks passed")
+    public_dns_contract()
+    print(
+        "Config: doctor, precedence, estates, mail, public DNS, providers and networks passed"
+    )
