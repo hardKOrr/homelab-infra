@@ -25,11 +25,12 @@ runner_labels = "docker:docker://docker.io/library/alpine:3.20"
 
 class RunnerApiState:
     def __init__(self, registrations_by_scope, fail_scopes=None, version="16.0.0",
-                 version_endpoint="/api/v1/version"):
+                 version_endpoint="/api/v1/version", max_page_size=None):
         self.registrations_by_scope = registrations_by_scope
         self.fail_scopes = set(fail_scopes or [])
         self.version = version
         self.version_endpoint = version_endpoint
+        self.max_page_size = max_page_size
         self.deletes = []
         self.authorizations = []
         self.registration_requests = []
@@ -58,8 +59,9 @@ class RunnerApi(http.server.BaseHTTPRequestHandler):
         scope = parts[2]
         query = parse_qs(parsed_url.query)
         page = int(query.get("page", ["1"])[0])
-        limit = int(query.get("limit", ["50"])[0])
-        state.registration_requests.append((scope, page, limit))
+        requested_limit = int(query.get("limit", ["50"])[0])
+        limit = min(requested_limit, state.max_page_size or requested_limit)
+        state.registration_requests.append((scope, page, requested_limit))
         if scope in state.fail_scopes:
             self.send_error(403)
             return
@@ -240,12 +242,13 @@ esac
 def run_reconciliation(marker_url, marker_token, current_token, registrations, expected_deletes,
                        keep_local_registration, fail_scopes=None, server_version="16.0.0",
                        version_endpoint="/api/v1/version", expected_list_pages=None,
-                       expect_version_failure=False):
+                       expect_version_failure=False, max_page_size=None):
     state = RunnerApiState(
         {"user": [], "admin": registrations},
         fail_scopes=fail_scopes,
         version=server_version,
         version_endpoint=version_endpoint,
+        max_page_size=max_page_size,
     )
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RunnerApi)
     server.state = state
@@ -361,7 +364,7 @@ def check_registration_reconciliation():
         True,
     )
 
-    # Registrations and duplicates beyond the first Forgejo API page are included.
+    # Honor server-side page-size clamps and include registrations on the final page.
     paged_registrations = [
         {"id": runner_id, "name": f"other-runner-{runner_id}"}
         for runner_id in range(1, 51)
@@ -377,7 +380,8 @@ def check_registration_reconciliation():
         paged_registrations,
         ["/api/v1/admin/actions/runners/43"],
         True,
-        expected_list_pages=[("admin", 1, 50), ("admin", 2, 50)],
+        expected_list_pages=[("admin", 1, 50), ("admin", 2, 50), ("admin", 3, 50)],
+        max_page_size=20,
     )
 
     # A registration-token change removes only this runner's old server registration.

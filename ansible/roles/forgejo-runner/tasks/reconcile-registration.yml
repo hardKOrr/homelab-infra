@@ -161,14 +161,43 @@
   loop: "{{ _forgejo_runner_registration_lists.results }}"
   no_log: true
 
+- name: Forgejo Runner | Normalize first page of registration results
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_first_pages: >-
+      {{ _forgejo_runner_registration_first_pages | default([])
+         + [{'scope': item.item.scope, 'token': item.item.token,
+            'total': item.x_total_count | int,
+            'runners': (item.json.runners
+                        if item.json is mapping and item.json.runners is defined
+                        else item.json | default([]))}] }}
+  loop: "{{ _forgejo_runner_registration_lists.results }}"
+  when: item.status | default(0) == 200
+  no_log: true
+
+- name: Forgejo Runner | Validate first page sizes against runner totals
+  ansible.builtin.assert:
+    that:
+      - item.total | int == 0 or item.runners | length > 0
+      - item.runners | length <= item.total | int
+    fail_msg: >-
+      Cannot safely reconcile {{ instance }} registration: Forgejo returned an
+      incomplete first page for a nonempty runner scope.
+  loop: "{{ _forgejo_runner_registration_first_pages | default([]) }}"
+  no_log: true
+
 - name: Forgejo Runner | Build remaining registration API page requests
   ansible.builtin.set_fact:
     _forgejo_runner_registration_pages_by_scope: >-
       {{ _forgejo_runner_registration_pages_by_scope | default([])
-         + [{'scope': item.item.scope, 'token': item.item.token,
-            'pages': range(2, (((item.x_total_count | int) + 49) // 50) + 1) | list}] }}
-  loop: "{{ _forgejo_runner_registration_lists.results }}"
-  when: item.status | default(0) == 200
+         + [item | combine({
+             'page_size': ([item.runners | length, 1] | max),
+             'pages': range(
+               2,
+               (((item.total | int) + ([item.runners | length, 1] | max) - 1)
+                // ([item.runners | length, 1] | max)) + 1
+             ) | list
+           })] }}
+  loop: "{{ _forgejo_runner_registration_first_pages | default([]) }}"
   no_log: true
 
 - name: Forgejo Runner | Query remaining scoped registration pages
@@ -242,14 +271,24 @@
   ansible.builtin.set_fact:
     _forgejo_runner_api_scopes_with_runners: >-
       {{ _forgejo_runner_api_scopes_with_runners | default([])
-         + [item.item | combine({'runners':
-             (item.json.runners
-              if item.json is mapping and item.json.runners is defined
-              else item.json | default([]))
+         + [item | combine({'runners':
+             item.runners
              + (_forgejo_runner_registration_page_runners | default([])
-                | selectattr('scope', 'equalto', item.item.scope)
+                | selectattr('scope', 'equalto', item.scope)
                 | map(attribute='runners') | flatten)})] }}
-  loop: "{{ _forgejo_runner_registration_lists.results }}"
+  loop: "{{ _forgejo_runner_registration_pages_by_scope | default([]) }}"
+  no_log: true
+
+- name: Forgejo Runner | Require all registration pages to match the reported runner count
+  ansible.builtin.assert:
+    that:
+      - item.runners | length == item.total | int
+    fail_msg: >-
+      Cannot safely reconcile {{ instance }} registration: Forgejo reported
+      {{ item.total }} runners in the {{ item.scope }} scope, but returned
+      {{ item.runners | length }} across its pages.
+  loop: "{{ _forgejo_runner_api_scopes_with_runners | default([]) }}"
+  when: _forgejo_runner_server_major | int >= 16
   no_log: true
 
 - name: Forgejo Runner | Determine whether the saved runner is known
