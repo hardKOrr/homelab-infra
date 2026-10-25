@@ -1,27 +1,18 @@
----
-# Resolve and validate the per-estate contract only. Public DNS record creation is
-# intentionally implemented by the follow-up dynamic-DNS work, not by this task.
-- name: Resolve public DNS config beside each estate DNS challenge
+# Resolve the lab-wide address settings and each estate's opt-in without replacing
+# sibling infrastructure fields. The values include DNS provider credentials.
+- name: Resolve public DNS config for each estate
   ansible.builtin.set_fact:
+    _caddy_public_dns_input: "{{ homelabinfra_config.infrastructure.public_dns | default({}) }}"
+    _caddy_public_dns_config: >-
+      {{ {'ttl': 300, 'families': ['ipv4'], 'allow_private': false}
+         | combine(_caddy_public_dns_input if _caddy_public_dns_input is mapping else {},
+                   recursive=True) }}
     _caddy_public_dns_estates: "{{ _caddy_public_dns_estates_json | from_json }}"
   vars:
     _caddy_public_dns_estates_json: >-
       {%- set result = [] -%}
       {%- for estate in (homelabinfra_config.infrastructure.domains | default({}) | dict2items) -%}
-      {%- if estate.value.public_dns is defined -%}
       {%- set challenge = estate.value.dns_challenge | default({}) -%}
-      {%- set public_dns = estate.value.public_dns -%}
-      {%- if public_dns is mapping -%}
-      {%- set public_dns = {
-            'enabled': false,
-            'provider': (challenge.provider | default('') if challenge is mapping else ''),
-            'ttl': 300,
-            'families': ['ipv4'],
-            'proxied': false,
-            'adopt_existing': false,
-            'allow_private': false
-          } | combine(public_dns, recursive=True) -%}
-      {%- endif -%}
       {%- set challenge_values = challenge | dict2items if challenge is mapping else [] -%}
       {%- set credentials = challenge_values
             | rejectattr('key', 'in', ['provider', 'resolvers', 'ttl', 'propagation_delay',
@@ -32,10 +23,10 @@
             'domain': estate.value.domain | default(''),
             'dns_challenge_provider': (challenge.provider | default('')
                                        if challenge is mapping else ''),
+            'dns_challenge': challenge,
             'has_dns_challenge_credentials': credentials | length > 0,
-            'public_dns': public_dns
+            'public_dns': estate.value.public_dns | default({})
           }) -%}
-      {%- endif -%}
       {%- endfor -%}
       {{ result | to_json }}
   no_log: true
@@ -46,4 +37,103 @@
       - _caddy_public_dns_errors | length == 0
     fail_msg: "{{ _caddy_public_dns_errors | first | default('Invalid public DNS configuration.') }}"
   vars:
-    _caddy_public_dns_errors: "{{ _caddy_public_dns_estates | public_dns_errors }}"
+    _caddy_public_dns_errors: >-
+      {{ _caddy_public_dns_input | public_dns_errors(_caddy_public_dns_estates) }}
+
+# Both apps consume the exact credential fields already used by that estate's
+# DNS-01 policy. dns_records is only used for a static CNAME source; it has no
+# polling loop and reconciles the declared CNAME RRsets when the task changes app
+# configuration. The Caddy admin API comparison below makes an unchanged deploy a
+# no-op.
+- name: Build public DNS Caddy app configurations
+  ansible.builtin.set_fact:
+    _caddy_public_dns_apps: "{{ _caddy_public_dns_apps_json | from_json }}"
+    _caddy_public_dns_provider_names: >-
+      {{ _caddy_public_dns_provider_names_json | from_json }}
+    _caddy_public_dns_enabled_estates: >-
+      {{ _caddy_public_dns_enabled_estates_json | from_json }}
+    _caddy_public_dns_source: >-
+      {{ _caddy_public_dns_config.address.source | default('')
+         if _caddy_public_dns_config.address is mapping else '' }}
+    _caddy_dynamic_dns_enabled: >-
+      {{ (_caddy_public_dns_enabled_estates_json | from_json | length > 0)
+         and (_caddy_public_dns_config.address.source | default('') in ['static', 'lookup']) }}
+    _caddy_dns_records_enabled: >-
+      {{ (_caddy_public_dns_enabled_estates_json | from_json | length > 0)
+         and (_caddy_public_dns_config.address.source | default('') == 'cname') }}
+  vars:
+    _caddy_public_dns_enabled_estates_json: >-
+      {{ _caddy_public_dns_estates
+         | selectattr('public_dns.enabled', 'defined')
+         | selectattr('public_dns.enabled', 'equalto', true) | list | to_json }}
+    _caddy_public_dns_apps_json: >-
+      {%- set enabled = _caddy_public_dns_enabled_estates_json | from_json -%}
+      {%- set ddns_providers = [] -%}
+      {%- set cname_providers = [] -%}
+      {%- set provider_names = [] -%}
+      {%- set challenge_option_names = ['resolvers', 'ttl', 'propagation_delay',
+                                         'propagation_timeout', 'override_domain'] -%}
+      {%- for estate in enabled -%}
+      {%- set challenge = estate.dns_challenge if estate.dns_challenge is mapping else {} -%}
+      {%- set public_dns = estate.public_dns -%}
+      {%- set provider_name = public_dns.provider | default(estate.dns_challenge_provider) -%}
+      {%- set provider_options = challenge | dict2items
+            | rejectattr('key', 'in', ['provider'] + challenge_option_names)
+            | list | items2dict -%}
+      {%- set provider = ({'name': provider_name} | combine(provider_options, recursive=True)) -%}
+      {%- set _ = provider_names.append(provider_name) -%}
+      {%- set _ = ddns_providers.append({
+            'dns_provider': provider,
+            'domains': {estate.domain: ['@', '*']}
+          }) -%}
+      {%- set target = _caddy_public_dns_config.address.target | default('') -%}
+      {%- set target = target ~ ('' if target.endswith('.') else '.') -%}
+      {%- set _ = cname_providers.append({
+            'dns_provider': provider,
+            'records': [
+              {'name': estate.domain, 'zone': estate.domain, 'type': 'CNAME', 'value': [target]},
+              {'name': '*.' ~ estate.domain, 'zone': estate.domain, 'type': 'CNAME', 'value': [target]}
+            ]
+          }) -%}
+      {%- endfor -%}
+      {%- set apps = {} -%}
+      {%- set address = _caddy_public_dns_config.address | default({}) -%}
+      {%- if enabled | length > 0 and address.source | default('') in ['static', 'lookup'] -%}
+        {%- set ip_source = (
+              {'source': 'static', 'ips': [address.address]}
+              if address.source == 'static'
+              else {'source': 'simple_http', 'endpoints': address.urls}
+            ) -%}
+        {%- set dynamic_dns = {
+              'providers': ddns_providers,
+              'ip_sources': [ip_source],
+              'versions': {
+                'ipv4': 'ipv4' in _caddy_public_dns_config.families,
+                'ipv6': 'ipv6' in _caddy_public_dns_config.families
+              },
+              'ttl': (_caddy_public_dns_config.ttl | string) ~ 's'
+            } -%}
+        {%- set dynamic_dns = dynamic_dns | combine(
+              {'exclude': [
+                '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
+                '127.0.0.0/8', '169.254.0.0/16', '100.64.0.0/10',
+                '::1/128', 'fc00::/7', 'fe80::/10'
+              ]} if not _caddy_public_dns_config.allow_private else {}) -%}
+        {%- set _ = apps.update({'dynamic_dns': dynamic_dns}) -%}
+      {%- elif enabled | length > 0 and address.source | default('') == 'cname' -%}
+        {%- set _ = apps.update({'dns_records': {
+              'providers': cname_providers,
+              'ttl': (_caddy_public_dns_config.ttl | string) ~ 's',
+              'best_effort': true
+            }}) -%}
+      {%- endif -%}
+      {{ apps | to_json }}
+    _caddy_public_dns_provider_names_json: >-
+      {%- set enabled = _caddy_public_dns_enabled_estates_json | from_json -%}
+      {%- set result = [] -%}
+      {%- for estate in enabled -%}
+      {%- set name = estate.public_dns.provider | default(estate.dns_challenge_provider) -%}
+      {%- if name not in result -%}{%- set _ = result.append(name) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+  no_log: true
