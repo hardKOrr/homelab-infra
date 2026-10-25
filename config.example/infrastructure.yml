@@ -330,10 +330,16 @@ mail:
 
 # ── Backups ────────────────────────────────────────────────────────────────────
 # PBS is deployed as a VM by bootstrap. Configure the datastore path here.
-# Bootstrap will configure the backup schedule — PBS runs backups autonomously.
+# `schedule` configures the PVE backup job; PBS runs it autonomously.
+# PBS prunes daily at 03:00 and garbage-collects at 04:00 by default. These PBS
+# calendar-event schedules can be overridden independently below.
+# If `retention` is omitted, Deploy keeps the last 3 snapshots, 7 daily snapshots,
+# and 4 weekly snapshots. Partial retention overrides keep the other defaults.
 backups:
   datastore_path: "/mnt/backup"   # path on the PBS VM where backups are stored
   schedule: "daily"               # daily | weekly | custom cron
+  prune_schedule: "03:00"         # PBS calendar event; default daily at 03:00
+  gc_schedule: "04:00"            # PBS calendar event; default daily at 04:00
   # Optional Restore Guest bandwidth cap in MiB/s; omit for no per-restore cap.
   # restore_bandwidth_mib_s: 64
   retention:
