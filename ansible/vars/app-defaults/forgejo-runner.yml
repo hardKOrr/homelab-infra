@@ -7,6 +7,7 @@ forgejo_runner_defaults:
     image: data.forgejo.org/forgejo/runner:13
     data_path: "/opt/{{ instance }}/data"
     registration_config_path: "/opt/{{ instance }}/data/runner-config.yml"
+    registration_runner_path: "/opt/{{ instance }}/data/.runner"
     registration_marker_path: "/opt/{{ instance }}/data/.homelab-infra-registered"
     registration_env_path: "/opt/{{ instance }}/runner.env"
     forgejo:

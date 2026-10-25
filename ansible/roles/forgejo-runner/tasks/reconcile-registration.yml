@@ -1,0 +1,177 @@
+---
+# The runner's registration token can create identities but cannot list or remove
+# registrations. Use the existing Forgejo API token(s) to preserve one exact-name
+# registration, or clear stale local/server state before the entrypoint registers again.
+- name: Forgejo Runner | Resolve registration API tokens
+  ansible.builtin.set_fact:
+    _forgejo_runner_user_api_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.forgejo.instance, {}).runner_api_token
+         | default('', true) }}
+    _forgejo_runner_admin_api_token: >-
+      {{ (homelabinfra_vault.apps | default({})).get(app_config.app.forgejo.instance, {}).admin_api_token
+         | default('', true) }}
+  no_log: true
+
+- name: Forgejo Runner | Build registration API scopes
+  ansible.builtin.set_fact:
+    _forgejo_runner_api_scopes: >-
+      {{ ([{'scope': 'user', 'token': _forgejo_runner_user_api_token}]
+          if _forgejo_runner_user_api_token | length > 0 else [])
+         + ([{'scope': 'admin', 'token': _forgejo_runner_admin_api_token}]
+          if _forgejo_runner_admin_api_token | length > 0 else []) }}
+  no_log: true
+
+- name: Forgejo Runner | Require a scoped Forgejo API token
+  ansible.builtin.assert:
+    that: _forgejo_runner_api_scopes | length > 0
+    fail_msg: >-
+      Cannot reconcile {{ instance }} registration: store runner_api_token for a
+      user-scoped runner or admin_api_token for a global runner on the named Forgejo
+      Vaultwarden item.
+  no_log: true
+
+- name: Forgejo Runner | Check saved registration files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ app_config.app.registration_marker_path }}"
+    - "{{ app_config.app.registration_runner_path }}"
+  register: _forgejo_runner_registration_files
+
+- name: Forgejo Runner | Read registration marker
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.registration_marker_path }}"
+  register: _forgejo_runner_registration_marker_file
+  when: _forgejo_runner_registration_files.results[0].stat.exists
+  no_log: true
+
+- name: Forgejo Runner | Read saved runner identity
+  ansible.builtin.slurp:
+    src: "{{ app_config.app.registration_runner_path }}"
+  register: _forgejo_runner_registration_record_file
+  when: _forgejo_runner_registration_files.results[1].stat.exists
+  no_log: true
+
+- name: Forgejo Runner | Parse saved runner identity
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_record: >-
+      {{ (_forgejo_runner_registration_record_file.content | b64decode | from_json)
+         if _forgejo_runner_registration_record_file is defined
+         and _forgejo_runner_registration_record_file.content is defined
+         else {} }}
+    _forgejo_runner_registration_marker: >-
+      {{ (_forgejo_runner_registration_marker_file.content | b64decode | trim)
+         if _forgejo_runner_registration_marker_file is defined
+         and _forgejo_runner_registration_marker_file.content is defined
+         else '' }}
+    _forgejo_runner_registration_fingerprint: >-
+      {{ ((app_config.app.forgejo_url | hash('sha256')) ~ ':'
+          ~ (_forgejo_runner_token | hash('sha256')) ~ ':'
+          ~ (app_config.app.runner_name | hash('sha256')) ~ ':'
+          ~ (app_config.app.labels | hash('sha256'))) | hash('sha256') }}
+  no_log: true
+
+- name: Forgejo Runner | Query existing scoped registrations
+  ansible.builtin.uri:
+    url: >-
+      {{ app_config.app.forgejo_url | regex_replace('/+$', '')
+         }}/api/v1/{{ item.scope }}/actions/runners
+    method: GET
+    headers:
+      Authorization: "token {{ item.token }}"
+    status_code: 200
+    return_content: true
+  loop: "{{ _forgejo_runner_api_scopes }}"
+  register: _forgejo_runner_registration_lists
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Forgejo Runner | Require the registration API to be reachable
+  ansible.builtin.assert:
+    that: >-
+      _forgejo_runner_registration_lists.results
+      | selectattr('status', 'equalto', 200) | list | length
+      == _forgejo_runner_api_scopes | length
+    fail_msg: >-
+      Cannot safely reconcile {{ instance }} registration: a configured Forgejo API
+      token could not list its runner scope. Check Forgejo reachability and the scoped
+      runner_api_token/admin_api_token on its Vaultwarden item.
+  no_log: true
+
+- name: Forgejo Runner | Normalize scoped registration results
+  ansible.builtin.set_fact:
+    _forgejo_runner_api_scopes_with_runners: >-
+      {{ _forgejo_runner_api_scopes_with_runners | default([])
+         + [item.item | combine({'runners':
+             (item.json.runners
+              if item.json is mapping and item.json.runners is defined
+              else item.json | default([]))})] }}
+  loop: "{{ _forgejo_runner_registration_lists.results }}"
+  no_log: true
+
+- name: Forgejo Runner | Determine whether the saved runner is known
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_id: >-
+      {{ _forgejo_runner_registration_record.id | default('') | string }}
+    _forgejo_runner_registration_ids: >-
+      {{ _forgejo_runner_api_scopes_with_runners
+         | map(attribute='runners') | flatten
+         | selectattr('name', 'equalto', app_config.app.runner_name)
+         | map(attribute='id') | map('string') | list }}
+    _forgejo_runner_registration_inputs_match: >-
+      {{ _forgejo_runner_registration_marker
+         == 'v1:' ~ _forgejo_runner_registration_fingerprint
+         and _forgejo_runner_registration_record.name | default('')
+         == app_config.app.runner_name
+         and (_forgejo_runner_registration_record.id | default('') | string) | length > 0 }}
+  no_log: true
+
+- name: Forgejo Runner | Decide whether to keep the current registration
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_is_current: >-
+      {{ _forgejo_runner_registration_inputs_match | bool
+         and _forgejo_runner_registration_id
+         in _forgejo_runner_registration_ids }}
+    _forgejo_runner_registration_needs_reset: >-
+      {{ not (_forgejo_runner_registration_inputs_match | bool
+              and _forgejo_runner_registration_id
+              in _forgejo_runner_registration_ids) }}
+  no_log: true
+
+- name: Forgejo Runner | Remove stale or duplicate exact-name registrations
+  ansible.builtin.uri:
+    url: >-
+      {{ app_config.app.forgejo_url | regex_replace('/+$', '')
+         }}/api/v1/{{ registration.0.scope }}/actions/runners/{{ registration.1.id }}
+    method: DELETE
+    headers:
+      Authorization: "token {{ registration.0.token }}"
+    status_code: [204, 404]
+  loop: "{{ _forgejo_runner_api_scopes_with_runners | subelements('runners') }}"
+  when:
+    - registration.1.name | default('') == app_config.app.runner_name
+    - >-
+      (_forgejo_runner_registration_needs_reset | bool)
+      or (registration.1.id | string) != _forgejo_runner_registration_id
+  register: _forgejo_runner_registration_deletions
+  changed_when: _forgejo_runner_registration_deletions.status | default(0) == 204
+  loop_control:
+    loop_var: registration
+  no_log: true
+
+- name: Forgejo Runner | Clear stale local registration files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ app_config.app.registration_runner_path }}"
+    - "{{ app_config.app.registration_marker_path }}"
+  when: _forgejo_runner_registration_needs_reset | bool
+
+- name: Forgejo Runner | Restart after registration state is cleared
+  ansible.builtin.debug:
+    msg: "The saved registration needs to be created again."
+  when: _forgejo_runner_registration_needs_reset | bool
+  changed_when: true
+  notify: Restart Forgejo Runner
