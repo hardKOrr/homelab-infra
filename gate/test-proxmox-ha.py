@@ -71,7 +71,10 @@ def ansible_command():
     raise AssertionError("ansible-playbook is unavailable")
 
 
-def run_case(case, *, enabled=None, require_owned=False, disk_storage="shared-vm", resource=None):
+def run_case(
+    case, *, enabled=None, require_owned=False, disk_storage="shared-vm",
+    resource=None, cdrom_slots=False,
+):
     with tempfile.TemporaryDirectory(prefix="homelab-proxmox-ha-") as temp:
         root = Path(temp)
         bindir = root / "bin"
@@ -87,6 +90,11 @@ def run_case(case, *, enabled=None, require_owned=False, disk_storage="shared-vm
             "scsi0": f"{disk_storage}:vm-456-disk-0,size=20G",
             "efidisk0": "shared-vm:vm-456-disk-1,size=4M",
         }
+        if cdrom_slots:
+            guest.update({
+                "ide2": "cdrom,media=cdrom",
+                "sata2": "local:iso/test.iso,media=cdrom",
+            })
         (root / "guest.json").write_text(json.dumps(guest))
         storages = [
             {"storage": "shared-vm", "shared": 1},
@@ -143,6 +151,15 @@ def module_tests():
     owned = {"sid": "vm:456", "state": "started", "comment": MARKER}
 
     result, calls, resources = run_case("enable", enabled=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [call for call in calls if call[0] == "ha-manager"] == [
+        ["ha-manager", "add", "vm:456", "--state", "started", "--comment", MARKER]
+    ], calls
+    assert resources == [owned], resources
+
+    result, calls, resources = run_case(
+        "cdrom-iso-slots", enabled=True, cdrom_slots=True,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert [call for call in calls if call[0] == "ha-manager"] == [
         ["ha-manager", "add", "vm:456", "--state", "started", "--comment", MARKER]

@@ -67,7 +67,8 @@
     _proxmox_ha_disks: >-
       {{ _proxmox_ha_vm_config | dict2items
          | selectattr('key', 'match', '^(ide|sata|scsi|virtio|efidisk|tpmstate|unused)[0-9]+$')
-         | rejectattr('value', 'match', '^none(?:,|$)') | list }}
+         | rejectattr('value', 'match', '^none(?:,|$)')
+         | rejectattr('value', 'search', '(^|,)(cdrom|media=cdrom)(,|$)') | list }}
     _proxmox_ha_storage: "{{ _proxmox_ha_storage_raw.stdout | from_json }}"
   no_log: true
   when: proxmox_ha_enabled | default(false) | bool
