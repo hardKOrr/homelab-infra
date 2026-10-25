@@ -1,33 +1,21 @@
 ---
 # Inputs: pbs_backup_namespace, pbs_backup_fingerprint, k8s_api_host.
 
-- name: PBS backup trust | Compare the namespace fingerprint ConfigMap
+- name: PBS backup trust | Read the namespace fingerprint ConfigMap
   ansible.builtin.command:
     argv:
       - k3s
       - kubectl
-      - diff
+      - get
+      - configmap
+      - pbs-backup-trust
       - --namespace
       - "{{ pbs_backup_namespace }}"
-      - --server-side=true
-      - --force-conflicts
-      - -f
-      - -
-    stdin: |
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: pbs-backup-trust
-        labels:
-          app.kubernetes.io/managed-by: homelab-infra
-          app.kubernetes.io/component: backup
-          homelab-infra.io/pbs-fingerprint: managed
-      data:
-        fingerprint: {{ pbs_backup_fingerprint | to_json }}
+      - --ignore-not-found
+      - --output=jsonpath={.data.fingerprint}
   delegate_to: "{{ k8s_api_host }}"
   become: true
-  register: _pbs_backup_fingerprint_diff
-  failed_when: _pbs_backup_fingerprint_diff.rc not in [0, 1]
+  register: _pbs_backup_current_fingerprint
   changed_when: false
 
 - name: PBS backup trust | Apply the current namespace fingerprint
@@ -55,5 +43,5 @@
         fingerprint: {{ pbs_backup_fingerprint | to_json }}
   delegate_to: "{{ k8s_api_host }}"
   become: true
-  when: _pbs_backup_fingerprint_diff.rc == 1
+  when: _pbs_backup_current_fingerprint.stdout | trim != pbs_backup_fingerprint
   changed_when: true

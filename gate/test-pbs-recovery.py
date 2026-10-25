@@ -76,19 +76,22 @@ assert "unique | list" in str(refresh_namespaces["loop"])
 refresh_namespace = load_yaml(
     "ansible/tasks/backup/refresh-k8s-pbs-fingerprint-namespace.yml"
 )
-fingerprint_diff = task(
-    refresh_namespace, "PBS backup trust | Compare the namespace fingerprint ConfigMap"
+fingerprint_current = task(
+    refresh_namespace, "PBS backup trust | Read the namespace fingerprint ConfigMap"
 )
-assert "diff" in fingerprint_diff["ansible.builtin.command"]["argv"]
-assert "data:\n  fingerprint:" in fingerprint_diff["ansible.builtin.command"]["stdin"]
-assert (
-    fingerprint_diff["failed_when"]
-    == "_pbs_backup_fingerprint_diff.rc not in [0, 1]"
-)
+fingerprint_current_argv = fingerprint_current["ansible.builtin.command"]["argv"]
+assert fingerprint_current_argv[2:5] == ["get", "configmap", "pbs-backup-trust"]
+assert "--ignore-not-found" in fingerprint_current_argv
+assert "--output=jsonpath={.data.fingerprint}" in fingerprint_current_argv
+assert fingerprint_current["changed_when"] is False
 fingerprint_apply = task(
     refresh_namespace, "PBS backup trust | Apply the current namespace fingerprint"
 )
-assert fingerprint_apply["when"] == "_pbs_backup_fingerprint_diff.rc == 1"
+assert (
+    fingerprint_apply["when"]
+    == "_pbs_backup_current_fingerprint.stdout | trim != pbs_backup_fingerprint"
+)
+assert "data:\n  fingerprint:" in fingerprint_apply["ansible.builtin.command"]["stdin"]
 assert fingerprint_apply["changed_when"] is True
 
 provision_tasks = playbook[0]["tasks"]
