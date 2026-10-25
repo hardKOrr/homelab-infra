@@ -17,6 +17,7 @@ backup_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/backup.yml").
 restore_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/restore.yml").read_text())
 deploy_source = yaml.safe_load((repo / "ansible/roles/mautic/tasks/main.yml").read_text())
 remove_source = yaml.safe_load((repo / "ansible/playbooks/apps/remove.yml").read_text())
+compose_template = (repo / "ansible/roles/mautic/templates/docker-compose.yml.j2").read_text()
 
 
 def tasks_recursive(tasks):
@@ -232,6 +233,8 @@ def static_contract():
     assert config["recovery"]["methods"] == ["native"]
     assert config["backup"]["application_consistent"] is True
     assert {"backup", "restore"} <= set(catalog["applications"]["mautic"]["actions"])
+    for transport in ["EMAIL", "HIT", "FAILED"]:
+        assert f"MAUTIC_MESSENGER_DSN_{transport}: doctrine://default" in compose_template
 
     deploy_tasks = list(tasks_recursive(deploy_source))
     seed_config = next(task for task in deploy_tasks
