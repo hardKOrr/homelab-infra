@@ -393,6 +393,9 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
     assert [estate["name"] for estate in rendered["_caddy_public_dns_enabled_estates"]] == [
         "alpha", "beta"
     ], "only opted-in estates are enabled"
+    assert rendered["_caddy_public_dns_enabled_estates"][1]["public_dns"] == beta["public_dns"], (
+        "the enabled estate settings, including adopt_existing, remain available to the preflight"
+    )
     assert apps["dynamic_dns"] == {
         "providers": expected_providers,
         "ip_sources": [{
