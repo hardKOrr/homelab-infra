@@ -87,17 +87,28 @@
   changed_when: false
   no_log: true
 
+- name: Forgejo Runner | Summarize registration API scope statuses
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_api_statuses: >-
+      {{ _forgejo_runner_registration_api_statuses | default([])
+         + [{'scope': item.item.scope, 'status': item.status | default(0)}] }}
+    _forgejo_runner_registration_api_status_summary: >-
+      {{ _forgejo_runner_registration_api_status_summary | default([])
+         + [item.item.scope ~ '=' ~ (item.status | default(0) | string)] }}
+  loop: "{{ _forgejo_runner_registration_lists.results }}"
+  no_log: true
+
 - name: Forgejo Runner | Require the registration API to be reachable
   ansible.builtin.assert:
     that: >-
-      _forgejo_runner_registration_lists.results
+      _forgejo_runner_registration_api_statuses
       | selectattr('status', 'equalto', 200) | list | length
       == _forgejo_runner_api_scopes | length
     fail_msg: >-
       Cannot safely reconcile {{ instance }} registration: a configured Forgejo API
       token could not list its runner scope. Check Forgejo reachability and the scoped
-      runner_api_token/admin_api_token on its Vaultwarden item.
-  no_log: true
+      runner_api_token/admin_api_token on its Vaultwarden item. Scope statuses:
+      {{ _forgejo_runner_registration_api_status_summary | join(', ') }}.
 
 - name: Forgejo Runner | Normalize scoped registration results
   ansible.builtin.set_fact:

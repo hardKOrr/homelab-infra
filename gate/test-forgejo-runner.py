@@ -23,8 +23,9 @@ runner_labels = "docker:docker://docker.io/library/alpine:3.20"
 
 
 class RunnerApiState:
-    def __init__(self, registrations_by_scope):
+    def __init__(self, registrations_by_scope, fail_scopes=None):
         self.registrations_by_scope = registrations_by_scope
+        self.fail_scopes = set(fail_scopes or [])
         self.deletes = []
         self.authorizations = []
 
@@ -38,6 +39,9 @@ class RunnerApi(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
             return
         scope = parts[2]
+        if scope in state.fail_scopes:
+            self.send_error(403)
+            return
         body = json.dumps({"runners": state.registrations_by_scope.get(scope, [])}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -210,8 +214,8 @@ esac
 
 
 def run_reconciliation(marker_url, marker_token, current_token, registrations, expected_deletes,
-                       keep_local_registration):
-    state = RunnerApiState({"user": [], "admin": registrations})
+                       keep_local_registration, fail_scopes=None):
+    state = RunnerApiState({"user": [], "admin": registrations}, fail_scopes=fail_scopes)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RunnerApi)
     server.state = state
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -269,12 +273,19 @@ def run_reconciliation(marker_url, marker_token, current_token, registrations, e
                 check=False,
             )
             output = result.stdout + result.stderr
-            assert result.returncode == 0, output
+            if fail_scopes:
+                assert result.returncode != 0, output
+                assert "admin=403" in output, output
+                assert state.deletes == [], state.deletes
+                assert runner_file.exists()
+                assert marker.exists()
+            else:
+                assert result.returncode == 0, output
+                assert state.deletes == expected_deletes, (state.deletes, output)
+                assert runner_file.exists() is keep_local_registration
+                assert marker.exists() is keep_local_registration
             assert "fixture-admin-token" not in output
             assert "saved-runner-secret" not in output
-            assert state.deletes == expected_deletes, (state.deletes, output)
-            assert runner_file.exists() is keep_local_registration
-            assert marker.exists() is keep_local_registration
         assert state.authorizations == [
             "token fixture-admin-token"
         ] * (1 + len(expected_deletes)), state.authorizations
@@ -333,6 +344,17 @@ def check_registration_reconciliation():
         [{"id": 42, "name": "other-runner"}],
         [],
         False,
+    )
+
+    # An unavailable API does not discard local registration state.
+    run_reconciliation(
+        None,
+        current_token,
+        current_token,
+        [{"id": 41, "name": "forgejo-runner"}],
+        [],
+        True,
+        fail_scopes={"admin"},
     )
 
 
