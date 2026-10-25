@@ -206,6 +206,8 @@ def main():
                   "description": "homelab-infra: k3s k3s-cluster"})
         check("unchanged cluster deploy makes no API write",
               run_k3s_alias(server, root, alias_name, "present", alias_nodes), [])
+        check("cluster Remove alias preflight is read-only",
+              run_k3s_alias(server, root, alias_name, "verify", []), [])
 
         alias_nodes.append({"name": "k3s-3", "ip_address": "198.51.100.23"})
         check("adding a cluster node updates the alias",
@@ -260,6 +262,11 @@ def main():
                             expect_failure=True), [])
         check("foreign alias is untouched", server.aliases["foreign-alias"]["content"],
               "198.51.100.21")
+        check("cluster Remove refuses a foreign alias before deleting it",
+              run_k3s_alias(server, root, alias_name, "verify", [], expect_failure=True), [])
+        check("foreign alias survives Remove preflight",
+              server.aliases["foreign-alias"]["description"],
+              "Operator-managed cluster nodes")
         server.aliases.clear()
 
         check("first deploy adds two egress rules and applies",

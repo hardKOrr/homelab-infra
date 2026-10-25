@@ -2,7 +2,7 @@
 # Reconcile the OPNsense host alias that represents one k3s cluster's nodes.
 #
 # Inputs:
-#   firewall_k3s_alias_state — present (Deploy) or absent (cluster Remove)
+#   firewall_k3s_alias_state — present (Deploy), verify (Remove preflight), or absent (Remove)
 #   firewall_k3s_alias_name  — deterministic OPNsense alias name
 #   firewall_k3s_cluster_name — cluster instance, used in the ownership description
 #   firewall_k3s_nodes        — cluster node declarations, required for present
@@ -13,7 +13,7 @@
 - name: k3s firewall alias | Assert reconciliation inputs
   ansible.builtin.assert:
     that:
-      - firewall_k3s_alias_state | default('') in ['present', 'absent']
+      - firewall_k3s_alias_state | default('') in ['present', 'verify', 'absent']
       - firewall_k3s_alias_name | default('') is match('^[A-Za-z][A-Za-z0-9_]*$')
       - firewall_k3s_cluster_name | default('') | length > 0
       - firewall_k3s_alias_state != 'present' or firewall_k3s_nodes | default([]) | length > 0

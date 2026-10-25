@@ -47,6 +47,14 @@ remains the target for an enabled inbound port forward. Docker, LXC, and VM apps
 to use their individual guest address. Remove App withdraws the app's rules and leaves the
 cluster alias in place.
 
+`Remove k3s Cluster` is a separate, explicitly confirmed destructive action. Remove every
+Kubernetes app first; the job refuses while app namespaces or app tags remain. It verifies
+each Proxmox guest's declared name, derived VMID and k3s ownership tags before destroying
+the node VMs, then removes the owned firewall alias and cluster topology. Destroying the
+VM disks also deletes retained local-path volumes. The cluster config, Vaultwarden item and
+PBS backups remain as recovery points. While a removal is interrupted, the generated
+registry marks it in progress so new Kubernetes app operations stop until Remove finishes.
+
 ## Availability and storage
 
 Read availability from the declared properties, not from the node count:

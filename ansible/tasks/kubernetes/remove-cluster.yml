@@ -1,0 +1,264 @@
+---
+# Remove one k3s cluster's owned Proxmox node VMs, firewall alias and generated topology.
+# The caller has required the explicit destructive confirmation and resolved its node list.
+
+- name: k3s Remove | Register Proxmox nodes for delegated operations
+  ansible.builtin.import_tasks: ../proxmox/register-nodes.yml
+
+- name: k3s Remove | Derive each node's deterministic VMID
+  ansible.builtin.set_fact:
+    _k3s_remove_plan: >-
+      {{ _k3s_remove_plan | default([])
+         + [k3s_remove_node | combine({'vmid': _k3s_remove_vmid | int})] }}
+  vars:
+    _k3s_remove_octets: "{{ k3s_remove_node.ip_address.split('.') | map('int') | list }}"
+    _k3s_remove_prefix_octet: >-
+      {{ (_k3s_remove_octets[1] | int)
+         if (_k3s_remove_octets[1] | int) != 0 else (_k3s_remove_octets[0] | int) }}
+    _k3s_remove_vmid: >-
+      {{ ((_k3s_remove_prefix_octet | string)
+          ~ ('%03d' | format(_k3s_remove_octets[2] | int))
+          ~ ('%03d' | format(_k3s_remove_octets[3] | int))) | int }}
+  loop: "{{ k3s_remove_nodes }}"
+  loop_control:
+    loop_var: k3s_remove_node
+    label: "{{ k3s_remove_node.name }}"
+
+- name: k3s Remove | Refuse duplicate node VMIDs
+  ansible.builtin.assert:
+    that:
+      - (_k3s_remove_plan | map(attribute='vmid') | unique | list | length)
+        == (_k3s_remove_plan | length)
+    fail_msg: "Two k3s node declarations resolve to the same VMID. Refusing cluster Remove."
+
+- name: k3s Remove | Verify the firewall alias before destroying node VMs
+  ansible.builtin.include_tasks: ../firewall/k3s-cluster-alias.yml
+  vars:
+    firewall_k3s_alias_state: verify
+    firewall_k3s_alias_name: "{{ k3s_remove_alias }}"
+    firewall_k3s_cluster_name: "{{ k3s_remove_instance }}"
+    firewall_k3s_nodes: []
+  when: k3s_remove_alias | length > 0
+
+- name: k3s Remove | Read the Proxmox cluster guest inventory
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _k3s_remove_pve_resources
+  changed_when: false
+
+- name: k3s Remove | Validate the Proxmox inventory response
+  ansible.builtin.assert:
+    that:
+      - (_k3s_remove_pve_resources.stdout | from_json | type_debug) == 'list'
+    fail_msg: "Proxmox returned an unexpected guest inventory; no k3s node was removed."
+
+- name: k3s Remove | Match each declaration to its exact VMID and name
+  ansible.builtin.set_fact:
+    _k3s_remove_enriched_plan: >-
+      {{ _k3s_remove_enriched_plan | default([])
+         + [k3s_remove_node | combine({
+           'vmid_matches': (_k3s_remove_pve_resources.stdout | from_json
+             | selectattr('vmid', 'defined')
+             | selectattr('vmid', 'equalto', k3s_remove_node.vmid | int) | list),
+           'name_matches': (_k3s_remove_pve_resources.stdout | from_json
+             | selectattr('name', 'defined')
+             | selectattr('name', 'equalto', k3s_remove_node.name) | list)
+         })] }}
+  loop: "{{ _k3s_remove_plan }}"
+  loop_control:
+    loop_var: k3s_remove_node
+    label: "{{ k3s_remove_node.name }}"
+
+- name: k3s Remove | Read the current ownership tags for each node
+  ansible.builtin.set_fact:
+    _k3s_remove_verified_plan: >-
+      {{ _k3s_remove_verified_plan | default([])
+         + [k3s_remove_node | combine({'live_tags': _k3s_remove_live_tags})] }}
+  vars:
+    _k3s_remove_live_guest: "{{ k3s_remove_node.vmid_matches | first | default({}) }}"
+    _k3s_remove_live_tags: >-
+      {{ _k3s_remove_live_guest.tags | default('', true)
+         | split(';') | reject('equalto', '') | list }}
+  loop: "{{ _k3s_remove_enriched_plan }}"
+  loop_control:
+    loop_var: k3s_remove_node
+    label: "{{ k3s_remove_node.name }}"
+
+- name: k3s Remove | Refuse foreign, shared-workload or changed guests before teardown
+  ansible.builtin.assert:
+    that:
+      - k3s_remove_node.vmid_matches | length <= 1
+      - k3s_remove_node.name_matches | length <= 1
+      - k3s_remove_node.vmid_matches | length > 0 or k3s_remove_node.name_matches | length == 0
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or (k3s_remove_node.vmid_matches[0].type | default('')) == 'qemu'
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or (k3s_remove_node.vmid_matches[0].name | default('')) == k3s_remove_node.name
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or (k3s_remove_node.vmid_matches[0].node | default('') | length > 0)
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or '_+lab' in k3s_remove_node.live_tags
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or '_.cluster+k3s' in k3s_remove_node.live_tags
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or (k3s_remove_node.live_tags | select('match', '^_[.]cluster[+]') | list)
+           == ['_.cluster+k3s']
+      - >-
+        k3s_remove_node.vmid_matches | length == 0
+        or (k3s_remove_node.live_tags | select('match', '^_[A-Za-z0-9]') | list | length) == 0
+    fail_msg: >-
+      Refusing cluster Remove because {{ k3s_remove_node.name }} does not match its
+      declared Proxmox identity, is not a homelab-infra k3s VM, or still carries an
+      application tag. Remove Kubernetes apps first and repair any Proxmox drift before
+      retrying.
+  loop: "{{ _k3s_remove_verified_plan }}"
+  loop_control:
+    loop_var: k3s_remove_node
+    label: "{{ k3s_remove_node.name }}"
+
+- name: k3s Remove | Record which node VMs still exist
+  ansible.builtin.set_fact:
+    _k3s_remove_live_nodes: >-
+      {{ _k3s_remove_verified_plan | selectattr('vmid_matches') | list }}
+
+- name: k3s Remove | Register live nodes as kubectl targets
+  ansible.builtin.add_host:
+    name: "{{ k3s_remove_node.name }}"
+    groups: k3s_remove_api_targets
+    ansible_host: "{{ k3s_remove_node.ip_address }}"
+    ansible_user: "{{ homelabinfra_config.ansible.ssh_user }}"
+  loop: "{{ _k3s_remove_live_nodes }}"
+  loop_control:
+    loop_var: k3s_remove_node
+    label: "{{ k3s_remove_node.name }}"
+  changed_when: false
+
+- name: k3s Remove | Choose a live node for the workload preflight
+  ansible.builtin.set_fact:
+    _k3s_remove_api_host: "{{ _k3s_remove_live_nodes[0].name }}"
+  when:
+    - _k3s_remove_live_nodes | length > 0
+    - not (k3s_remove_in_progress | bool)
+
+- name: k3s Remove | Check for remaining homelab-infra app namespaces
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - namespaces
+      - -l
+      - homelab-infra.io/instance
+      - -o
+      - name
+  delegate_to: "{{ _k3s_remove_api_host }}"
+  become: true
+  register: _k3s_remove_namespaces
+  failed_when: false
+  changed_when: false
+  when:
+    - _k3s_remove_live_nodes | length > 0
+    - not (k3s_remove_in_progress | bool)
+
+- name: k3s Remove | Require app namespaces to be removed first
+  ansible.builtin.assert:
+    that:
+      - _k3s_remove_namespaces.rc == 0
+      - _k3s_remove_namespaces.stdout_lines | default([]) | length == 0
+    fail_msg: >-
+      Refusing cluster Remove because the Kubernetes API could not be checked or still
+      has homelab-infra app namespaces
+      ({{ _k3s_remove_namespaces.stdout_lines | default([]) | join(', ') }}). Run Remove App
+      for each Kubernetes application first, then retry this job.
+  when:
+    - _k3s_remove_live_nodes | length > 0
+    - not (k3s_remove_in_progress | bool)
+
+- name: k3s Remove | Mark the selected registry as removing
+  ansible.builtin.include_tasks: ../bootstrap/write-generated-facts.yml
+  vars:
+    generated_facts_service: kubernetes
+    generated_facts_file: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    generated_facts_data:
+      instance: "{{ k3s_remove_instance }}"
+      provider: k3s
+      nodes: "{{ k3s_remove_nodes }}"
+      firewall_alias: "{{ k3s_remove_alias }}"
+      removal_in_progress: true
+  when:
+    - not (k3s_remove_in_progress | bool)
+    - _k3s_remove_live_nodes | length > 0
+    - >-
+      _k3s_remove_registry | length == 0
+      or _k3s_remove_registry.instance | default('') == k3s_remove_instance
+
+- name: k3s Remove | Destroy each verified cluster node VM
+  ansible.builtin.include_tasks: ../proxmox/destroy-owned-vm.yml
+  loop: "{{ _k3s_remove_live_nodes }}"
+  loop_control:
+    loop_var: k3s_remove_node
+    label: "{{ k3s_remove_node.name }} (VMID {{ k3s_remove_node.vmid }})"
+  vars:
+    destroy_vm_vmid: "{{ k3s_remove_node.vmid }}"
+    destroy_vm_name: "{{ k3s_remove_node.name }}"
+    destroy_vm_node: "{{ k3s_remove_node.vmid_matches[0].node }}"
+    destroy_vm_instance: "{{ k3s_remove_instance }}"
+    destroy_vm_owner_tag: _.cluster+k3s
+    destroy_vm_original_tags: "{{ k3s_remove_node.live_tags }}"
+
+- name: k3s Remove | Delete the cluster's owned firewall alias
+  ansible.builtin.include_tasks: ../firewall/k3s-cluster-alias.yml
+  vars:
+    firewall_k3s_alias_state: absent
+    firewall_k3s_alias_name: "{{ k3s_remove_alias }}"
+    firewall_k3s_cluster_name: "{{ k3s_remove_instance }}"
+    firewall_k3s_nodes: []
+  when: k3s_remove_alias | length > 0
+
+- name: k3s Remove | Read generated topology for registry cleanup
+  ansible.builtin.set_fact:
+    _k3s_remove_facts_on_disk: >-
+      {{ lookup('ansible.builtin.file',
+                playbook_dir ~ '/../../../config/.generated/facts.yml',
+                errors='ignore') | from_yaml | default({}, true) }}
+
+- name: k3s Remove | Refuse to unregister a different cluster
+  ansible.builtin.assert:
+    that:
+      - >-
+        'kubernetes' not in _k3s_remove_facts_on_disk
+        or (_k3s_remove_facts_on_disk.kubernetes.instance | default('')) == k3s_remove_instance
+    fail_msg: >-
+      Refusing to remove the Kubernetes topology registry because it now belongs to a
+      different cluster.
+  when: k3s_remove_registry_matches | bool
+
+- name: k3s Remove | Remove the selected cluster from generated topology
+  ansible.builtin.copy:
+    dest: "{{ playbook_dir }}/../../../config/.generated/facts.yml"
+    mode: "0600"
+    content: >-
+      {{ _k3s_remove_facts_on_disk
+         | dict2items
+         | rejectattr('key', 'equalto', 'kubernetes')
+         | items2dict
+         | to_nice_yaml(indent=2) }}
+  become: false
+  delegate_to: localhost
+  when:
+    - >-
+      _k3s_remove_facts_on_disk.get('kubernetes', {}).get('instance', '')
+      == k3s_remove_instance
+
+- name: k3s Remove | Report the retained recovery points
+  ansible.builtin.debug:
+    msg: >-
+      k3s cluster {{ k3s_remove_instance }} is removed. Its node disks and local-path data
+      were destroyed; the cluster config, Vaultwarden item and PBS backups remain.

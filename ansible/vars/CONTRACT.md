@@ -60,7 +60,7 @@ vaultwarden:   { host, port }
 kubernetes:    { instance, provider, version, host, ingress_vip, ingress_controller,
                  storage_class, storage_reclaim_policy, storage_path,
                  shared_storage_enabled, shared_storage_class, shared_storage_snapshot_class, shared_storage_target,
-                 failure_domain_mode, nodes }
+                 firewall_alias, failure_domain_mode, nodes, removal_in_progress }
 media:                               # optional — app-to-app wiring for the media stack
   <instance>: { app, host, config_path, ... }   # credentials overlay from Vaultwarden
 databases:                           # optional — independently deployed database backends

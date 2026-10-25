@@ -26,6 +26,8 @@
 
 - name: k8s unwire | Resolve the cluster
   ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+  vars:
+    k8s_resolve_allow_removing: true
 
 - name: k8s unwire | Derive the instance's namespace
   ansible.builtin.include_tasks: ../kubernetes/derive-namespace.yml

@@ -56,6 +56,14 @@
         name: homelabinfra_infra
       failed_when: false
 
+    - name: Refuse Deploy while this cluster's Remove is in progress
+      ansible.builtin.assert:
+        that:
+          - not (homelabinfra_infra.kubernetes.removal_in_progress | default(false) | bool)
+        fail_msg: >-
+          {{ instance }} is being removed. Finish cluster Remove before deploying it again.
+      when: (homelabinfra_infra.kubernetes.instance | default('')) == instance
+
     - name: Merge cluster config (instance overrides defaults)
       ansible.builtin.set_fact:
         k8s_cluster_config: >-
