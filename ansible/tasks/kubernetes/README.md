@@ -33,6 +33,20 @@ The Kubernetes API, node addresses, and ingress virtual IP remain private. The p
 Caddy is the public TLS edge and proxies a routed application to the stable internal
 MetalLB virtual IP. The cluster does not create a second public edge.
 
+### Firewall access
+
+When `firewall.provider: opnsense` is configured, cluster Deploy keeps one host alias named
+`homelabinfra_k3s_<cluster>` in sync with every declared node address. Its description is
+`homelab-infra: k3s <cluster>`, which is the ownership marker used before any update or
+removal. A same-name alias without that marker makes Deploy fail without changing it.
+Cluster facts record the alias name for Kubernetes app Deploys.
+
+A Kubernetes app's declared `firewall:` rules use that alias as their egress source, so
+traffic from any node can match. The ingress VIP still selects the OPNsense interface and
+remains the target for an enabled inbound port forward. Docker, LXC, and VM apps continue
+to use their individual guest address. Remove App withdraws the app's rules and leaves the
+cluster alias in place.
+
 ## Availability and storage
 
 Read availability from the declared properties, not from the node count:

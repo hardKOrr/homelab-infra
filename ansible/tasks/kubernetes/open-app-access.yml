@@ -1,0 +1,29 @@
+---
+# Open a Kubernetes app's declared OPNsense access through the alias for every node in
+# its cluster. The ingress VIP remains the address used for interface selection and
+# inbound NAT targets; only egress rules use the cluster-node alias as their source.
+
+- name: k8s firewall | Open declared cluster access
+  when:
+    - not (recovery_isolated | default(false) | bool)
+    - homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+    - >-
+      (app_config.firewall.egress | default([]) | length > 0)
+      or (app_config.firewall.inbound | default([]) | length > 0)
+  block:
+    - name: k8s firewall | Require the deployed cluster alias
+      ansible.builtin.assert:
+        that:
+          - homelabinfra_infra.kubernetes.firewall_alias | default('') | length > 0
+          - homelabinfra_infra.kubernetes.ingress_vip | default('') is ansible.utils.ipv4_address
+        fail_msg: >-
+          {{ instance }} declares firewall access but the Kubernetes registry has no
+          OPNsense node alias. Re-run Deploy k3s Cluster with firewall.provider: opnsense.
+
+    - name: k8s firewall | Open the app's network access
+      ansible.builtin.include_tasks: ../firewall/open-app-access.yml
+      vars:
+        wiring_app_name: "{{ instance }}"
+        wiring_upstream_host: "{{ homelabinfra_infra.kubernetes.ingress_vip }}"
+        wiring_firewall_source: "{{ homelabinfra_infra.kubernetes.firewall_alias }}"
+        wiring_firewall: "{{ app_config.firewall | default({}) }}"

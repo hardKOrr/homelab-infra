@@ -8,7 +8,9 @@
 #
 # Inputs (localhost):
 #   wiring_app_name       — instance name
-#   wiring_upstream_host  — the guest's IPv4 address
+#   wiring_upstream_host  — the guest's IPv4 address (or NAT target for Kubernetes apps)
+#   wiring_firewall_source — optional OPNsense source alias for egress rules; defaults to
+#                            wiring_upstream_host
 #   wiring_firewall       — the app's declared firewall access ({egress, inbound})
 #   app_config            — the app's merged config (for the mail estate)
 #   firewall_sends_mail   — true for a mail consumer (default false)

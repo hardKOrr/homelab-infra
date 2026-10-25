@@ -366,6 +366,23 @@
           {{ _k3s_nodes.stdout_lines | select('search', '=True$')
              | map('regex_replace', '=True$', '') | list }}
 
+    # The alias name is stable across runs. The description, not the name alone, is the
+    # ownership boundary checked by the reconciliation task.
+    - name: Resolve the OPNsense alias name for this cluster
+      ansible.builtin.set_fact:
+        k8s_firewall_alias: >-
+          {{ ('homelabinfra_k3s_' ~ (instance | regex_replace('[^A-Za-z0-9_]', '_')))
+             if homelabinfra_infra.firewall.provider | default('none') == 'opnsense' else '' }}
+
+    - name: Reconcile the OPNsense host alias for the cluster nodes
+      ansible.builtin.include_tasks: ../../tasks/firewall/k3s-cluster-alias.yml
+      vars:
+        firewall_k3s_alias_state: present
+        firewall_k3s_alias_name: "{{ k8s_firewall_alias }}"
+        firewall_k3s_cluster_name: "{{ instance }}"
+        firewall_k3s_nodes: "{{ k8s_cluster_config.cluster.nodes }}"
+      when: homelabinfra_infra.firewall.provider | default('none') == 'opnsense'
+
     # The join token and the administrative kubeconfig are credentials. k3s keeps its own
     # copies at protected node paths, which it requires; the canonical copies live in
     # organization-owned Vaultwarden items. Nothing here reaches tracked config, generated
@@ -430,6 +447,7 @@
             {{ k8s_cluster_config.shared_storage.snapshot.class
                if (k8s_cluster_config.shared_storage.enabled | default(false) | bool) else '' }}
           shared_storage_target: "{{ k8s_cluster_config.shared_storage.target | default({}) }}"
+          firewall_alias: "{{ k8s_firewall_alias | default('') }}"
           failure_domain_mode: "{{ k8s_cluster_config.cluster.failure_domain_mode }}"
           # The declarations verbatim. Every field in them is topology — name, Proxmox
           # placement, address, sizing, taints, template vmid — so there is nothing to

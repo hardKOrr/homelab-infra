@@ -127,7 +127,7 @@ and read only by that provider's wiring tasks:
 | `dns` | `api_secret` | opnsense | second half of the OPNsense API key/secret basic-auth pair |
 | `dns` | `api_key` | pihole | the Pi-hole app password, exchanged for a session SID (v6+ only) |
 | `dns` | `validate_certs` | opnsense, pihole | default `false` — lab DNS hosts serve self-signed certificates |
-| `firewall` | `api_key`, `api_secret` | opnsense | OPNsense API key/secret for an account holding only the `Firewall: Rules [new]` and `Firewall: NAT: Destination NAT` privileges; a separate account from the Unbound-only DNS key |
+| `firewall` | `api_key`, `api_secret` | opnsense | OPNsense API key/secret for an account holding only the `Firewall: Rules [new]`, `Firewall: NAT: Destination NAT`, and `Firewall: Aliases` privileges; a separate account from the Unbound-only DNS key |
 | `mail` | `password` | smtp | Shared SMTP AUTH password for `mail.username`; Vaultwarden-only, never authored |
 | `estates.<estate>.mail` | `password` | smtp | Optional estate-specific SMTP AUTH password; selected only for that estate, never authored |
 
@@ -143,6 +143,7 @@ Vaultwarden item `homelab-infra/<instance>` and never appear here.
 |---|---|
 | `host` | Kubernetes API base URL including scheme, addressed at the founding node |
 | `ingress_vip` | the one stable internal ingress address; what the platform Caddy proxies to |
+| `firewall_alias` | the OPNsense host alias containing every node address; present when `firewall.provider` is `opnsense` |
 | `ingress_controller` | in-cluster controller terminating plain HTTP on the VIP (`traefik`) |
 | `storage_class` | default StorageClass. The current `homelab-local-path` class is node-pinned: a pod whose volume lives on an unavailable node stays Pending rather than rescheduling |
 | `storage_reclaim_policy` | `Retain` — only the removal job's explicit `delete_data` removes a volume |

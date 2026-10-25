@@ -85,6 +85,9 @@
     - name: Refresh inventory to get current Proxmox state
       ansible.builtin.meta: refresh_inventory
 
+    - name: Open the app's declared network access
+      ansible.builtin.include_tasks: ../../tasks/kubernetes/open-app-access.yml
+
     - name: Deploy Hi.Events onto the cluster
       ansible.builtin.include_role:
         name: hi-events

@@ -1,0 +1,204 @@
+---
+# Reconcile the OPNsense host alias that represents one k3s cluster's nodes.
+#
+# Inputs:
+#   firewall_k3s_alias_state — present (Deploy) or absent (cluster Remove)
+#   firewall_k3s_alias_name  — deterministic OPNsense alias name
+#   firewall_k3s_cluster_name — cluster instance, used in the ownership description
+#   firewall_k3s_nodes        — cluster node declarations, required for present
+#
+# Only an alias with the exact homelab-infra description is managed. Every API request
+# is no_log so OPNsense credentials and response bodies stay out of job output.
+
+- name: k3s firewall alias | Assert reconciliation inputs
+  ansible.builtin.assert:
+    that:
+      - firewall_k3s_alias_state | default('') in ['present', 'absent']
+      - firewall_k3s_alias_name | default('') is match('^[A-Za-z][A-Za-z0-9_]*$')
+      - firewall_k3s_cluster_name | default('') | length > 0
+      - firewall_k3s_alias_state != 'present' or firewall_k3s_nodes | default([]) | length > 0
+    fail_msg: >-
+      The k3s OPNsense alias needs a safe alias name, cluster name, and a nonempty node
+      list when ensuring the alias.
+
+- name: k3s firewall alias | Assert the node list has unique IPv4 addresses
+  ansible.builtin.assert:
+    that:
+      - firewall_k3s_node.ip_address is ansible.utils.ipv4_address
+      - (firewall_k3s_nodes | map(attribute='ip_address') | unique | list | length)
+        == (firewall_k3s_nodes | length)
+    fail_msg: "The k3s OPNsense alias requires a unique IPv4 address for each cluster node."
+  loop: "{{ firewall_k3s_nodes | default([]) }}"
+  loop_control:
+    loop_var: firewall_k3s_node
+    label: "{{ firewall_k3s_node.name | default('cluster node') }}"
+  when: firewall_k3s_alias_state == 'present'
+
+- name: k3s firewall alias | Assert OPNsense API settings
+  ansible.builtin.assert:
+    that:
+      - homelabinfra_infra.firewall.host | default('') | length > 0
+      - homelabinfra_infra.firewall.api_key | default('') | length > 0
+      - homelabinfra_infra.firewall.api_secret | default('') | length > 0
+    fail_msg: >-
+      Managing the k3s firewall alias needs firewall.host in config/infrastructure.yml
+      and api_key + api_secret in the homelab-infra/firewall vault item.
+
+- name: k3s firewall alias | Build the desired host alias
+  ansible.builtin.set_fact:
+    _k3s_firewall_base: >-
+      {{ homelabinfra_infra.firewall.host
+         if homelabinfra_infra.firewall.host is search('^https?://')
+         else 'https://' ~ homelabinfra_infra.firewall.host }}
+    _k3s_firewall_validate: "{{ homelabinfra_infra.firewall.validate_certs | default(false) }}"
+    _k3s_firewall_alias_owner: "homelab-infra: k3s {{ firewall_k3s_cluster_name }}"
+    _k3s_firewall_alias_content: |-
+      {%- for address in (firewall_k3s_nodes | default([])
+                          | map(attribute='ip_address') | unique | sort) %}{{ address }}
+      {% endfor -%}
+
+- name: k3s firewall alias | Assemble desired alias fields
+  ansible.builtin.set_fact:
+    _k3s_firewall_alias_desired: >-
+      {{ {'enabled': '1', 'name': firewall_k3s_alias_name, 'type': 'host',
+          'content': _k3s_firewall_alias_content | trim,
+          'description': 'homelab-infra: k3s ' ~ firewall_k3s_cluster_name} }}
+
+- name: k3s firewall alias | Search by alias name
+  ansible.builtin.uri:
+    url: "{{ _k3s_firewall_base }}/api/firewall/alias/searchItem"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _k3s_firewall_validate | bool }}"
+    body_format: json
+    body: "{{ {'current': 1, 'rowCount': 1000, 'searchPhrase': firewall_k3s_alias_name} }}"
+    status_code: 200
+  register: _k3s_firewall_alias_search
+  changed_when: false
+  no_log: true
+
+- name: k3s firewall alias | Validate the alias search response
+  ansible.builtin.assert:
+    that:
+      - _k3s_firewall_alias_search.json is defined
+      - _k3s_firewall_alias_search.json is mapping
+      - _k3s_firewall_alias_search.json.rows is defined
+      - _k3s_firewall_alias_search.json.rows | type_debug == 'list'
+      - _k3s_firewall_alias_search.json.total | default(0) | int
+        <= _k3s_firewall_alias_search.json.rows | length
+    fail_msg: >-
+      OPNsense alias search returned an unexpected shape. Check that the
+      homelab-infra/firewall API key can manage firewall aliases.
+
+- name: k3s firewall alias | Select exact-name matches
+  ansible.builtin.set_fact:
+    _k3s_firewall_alias_matches: >-
+      {{ _k3s_firewall_alias_search.json.rows
+         | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', firewall_k3s_alias_name)
+         | list }}
+
+- name: k3s firewall alias | Refuse an unowned alias or ambiguous name
+  ansible.builtin.assert:
+    that:
+      - _k3s_firewall_alias_matches | length <= 1
+      - _k3s_firewall_alias_matches | length == 0 or
+        (_k3s_firewall_alias_matches[0].description | default('')) == _k3s_firewall_alias_owner
+      - _k3s_firewall_alias_matches | length == 0 or
+        _k3s_firewall_alias_matches[0].uuid | default('') | length > 0
+    fail_msg: >-
+      Refusing to change OPNsense alias {{ firewall_k3s_alias_name }}: its name is already
+      in use by an alias that is not marked {{ _k3s_firewall_alias_owner }}.
+
+- name: k3s firewall alias | Resolve current alias and drift
+  ansible.builtin.set_fact:
+    _k3s_firewall_alias_current: >-
+      {{ _k3s_firewall_alias_matches[0] if _k3s_firewall_alias_matches | length == 1 else {} }}
+    _k3s_firewall_alias_changed: >-
+      {{ (firewall_k3s_alias_state == 'present'
+          and (_k3s_firewall_alias_matches | length == 0
+               or (_k3s_firewall_alias_matches[0].enabled | default('') | string) != '1'
+               or (_k3s_firewall_alias_matches[0].type | default('')) != 'host'
+               or (_k3s_firewall_alias_matches[0].content | default(''))
+                  != _k3s_firewall_alias_desired.content
+               or (_k3s_firewall_alias_matches[0].description | default(''))
+                  != _k3s_firewall_alias_desired.description))
+         or (firewall_k3s_alias_state == 'absent'
+             and _k3s_firewall_alias_matches | length == 1) }}
+
+- name: k3s firewall alias | Create the owned host alias
+  ansible.builtin.uri:
+    url: "{{ _k3s_firewall_base }}/api/firewall/alias/addItem"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _k3s_firewall_validate | bool }}"
+    body_format: json
+    body: "{{ {'alias': _k3s_firewall_alias_desired} }}"
+    status_code: 200
+  register: _k3s_firewall_alias_add
+  changed_when: true
+  failed_when: _k3s_firewall_alias_add.json.result | default('') != 'saved'
+  no_log: true
+  when:
+    - firewall_k3s_alias_state == 'present'
+    - _k3s_firewall_alias_matches | length == 0
+
+- name: k3s firewall alias | Update the owned host alias
+  ansible.builtin.uri:
+    url: "{{ _k3s_firewall_base }}/api/firewall/alias/setItem/{{ _k3s_firewall_alias_current.uuid }}"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _k3s_firewall_validate | bool }}"
+    body_format: json
+    body: "{{ {'alias': _k3s_firewall_alias_desired} }}"
+    status_code: 200
+  register: _k3s_firewall_alias_set
+  changed_when: true
+  failed_when: _k3s_firewall_alias_set.json.result | default('') != 'saved'
+  no_log: true
+  when:
+    - firewall_k3s_alias_state == 'present'
+    - _k3s_firewall_alias_matches | length == 1
+    - _k3s_firewall_alias_changed | bool
+
+- name: k3s firewall alias | Delete the owned host alias
+  ansible.builtin.uri:
+    url: "{{ _k3s_firewall_base }}/api/firewall/alias/delItem/{{ _k3s_firewall_alias_current.uuid }}"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _k3s_firewall_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _k3s_firewall_alias_delete
+  changed_when: true
+  failed_when: _k3s_firewall_alias_delete.json.result | default('') not in ['deleted', 'saved']
+  no_log: true
+  when:
+    - firewall_k3s_alias_state == 'absent'
+    - _k3s_firewall_alias_matches | length == 1
+
+- name: k3s firewall alias | Reload OPNsense alias tables after a change
+  ansible.builtin.uri:
+    url: "{{ _k3s_firewall_base }}/api/firewall/alias/reconfigure"
+    method: POST
+    url_username: "{{ homelabinfra_infra.firewall.api_key }}"
+    url_password: "{{ homelabinfra_infra.firewall.api_secret }}"
+    force_basic_auth: true
+    validate_certs: "{{ _k3s_firewall_validate | bool }}"
+    body_format: json
+    body: {}
+    status_code: 200
+  register: _k3s_firewall_alias_reload
+  changed_when: true
+  failed_when: _k3s_firewall_alias_reload.json.status | default('') != 'ok'
+  no_log: true
+  when: _k3s_firewall_alias_changed | bool

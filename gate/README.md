@@ -85,7 +85,7 @@ templates.
   login, Restore checks a recent readable safety point and the login endpoint, and a failed
   replacement restores the original `wp-content` tree and database. It also checks that
   the bind-mounted data directory is accessible to Apache's `www-data` user.
-- `test-firewall-wiring.py`: OPNsense egress rules and opt-in port forwards against a fake API: create, rerun, drift, opt-out and scoped removal.
+- `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
 - `test-mariadb-recovery.py`: native root-socket exports, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem restore rollback.
 
 On a Windows checkout accessed through WSL, wrap each command:
