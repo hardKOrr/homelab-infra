@@ -23,9 +23,10 @@ runner_labels = "docker:docker://docker.io/library/alpine:3.20"
 
 
 class RunnerApiState:
-    def __init__(self, registrations_by_scope, fail_scopes=None):
+    def __init__(self, registrations_by_scope, fail_scopes=None, version="16.0.0"):
         self.registrations_by_scope = registrations_by_scope
         self.fail_scopes = set(fail_scopes or [])
+        self.version = version
         self.deletes = []
         self.authorizations = []
 
@@ -33,8 +34,16 @@ class RunnerApiState:
 class RunnerApi(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         state = self.server.state
-        state.authorizations.append(self.headers.get("Authorization", ""))
         parts = self.path.strip("/").split("/")
+        if parts == ["api", "v1", "version"]:
+            body = json.dumps({"version": state.version}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        state.authorizations.append(self.headers.get("Authorization", ""))
         if len(parts) != 5 or parts[:2] != ["api", "v1"] or parts[3:] != ["actions", "runners"]:
             self.send_error(404)
             return
@@ -214,8 +223,12 @@ esac
 
 
 def run_reconciliation(marker_url, marker_token, current_token, registrations, expected_deletes,
-                       keep_local_registration, fail_scopes=None):
-    state = RunnerApiState({"user": [], "admin": registrations}, fail_scopes=fail_scopes)
+                       keep_local_registration, fail_scopes=None, server_version="16.0.0"):
+    state = RunnerApiState(
+        {"user": [], "admin": registrations},
+        fail_scopes=fail_scopes,
+        version=server_version,
+    )
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RunnerApi)
     server.state = state
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -286,9 +299,12 @@ def run_reconciliation(marker_url, marker_token, current_token, registrations, e
                 assert marker.exists() is keep_local_registration
             assert "fixture-admin-token" not in output
             assert "saved-runner-secret" not in output
-        assert state.authorizations == [
-            "token fixture-admin-token"
-        ] * (1 + len(expected_deletes)), state.authorizations
+        expected_authorizations = (
+            ["token fixture-admin-token"] * (1 + len(expected_deletes))
+            if int(server_version.split(".", 1)[0]) >= 16
+            else []
+        )
+        assert state.authorizations == expected_authorizations, state.authorizations
     finally:
         server.shutdown()
         thread.join()
@@ -355,6 +371,18 @@ def check_registration_reconciliation():
         [],
         True,
         fail_scopes={"admin"},
+    )
+
+    # Older Forgejo releases have no runner listing API, so an unchanged local identity
+    # remains idempotent until the server is upgraded to a version that can verify it.
+    run_reconciliation(
+        None,
+        current_token,
+        current_token,
+        [{"id": 41, "name": "forgejo-runner"}],
+        [],
+        True,
+        server_version="14.0.0+gitea-1.22.0",
     )
 
 
