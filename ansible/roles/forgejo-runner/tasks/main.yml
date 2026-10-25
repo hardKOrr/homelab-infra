@@ -31,6 +31,9 @@
       homelab-infra/apps/{{ instance }}; do not add it to tracked configuration.
   no_log: true
 
+- name: Forgejo Runner | Reconcile the saved registration against Forgejo
+  ansible.builtin.include_tasks: reconcile-registration.yml
+
 - name: Forgejo Runner | Store registration metadata in Vaultwarden
   ansible.builtin.include_tasks: ../../../tasks/bitwarden/upsert-item.yml
   vars:

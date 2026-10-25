@@ -103,7 +103,8 @@
         notify_title: "Forgejo Runner deployed"
         notify_message: >-
           {{ instance }} is registered against named Forgejo instance
-          {{ _runner_host.app_config.app.forgejo_instance }} and will reconnect on rerun.
+          {{ _runner_host.app_config.app.forgejo_instance }} and will re-register
+          when its URL or token changes or Forgejo forgets the registration.
     - name: Fail on wiring degradations
       ansible.builtin.include_tasks: ../../tasks/assert-no-degradations.yml
       vars:
