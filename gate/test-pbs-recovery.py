@@ -324,6 +324,24 @@ assert "pbs_token_rotated" in str(task(configure, "PBS | Decide whether the PVE 
 configure_backup_refresh = task(configure, "PBS | Refresh managed backup job from current guests")
 assert configure_backup_refresh["ansible.builtin.include_tasks"] == "../proxmox/refresh-backup-job.yml"
 assert configure_backup_refresh["vars"]["backup_job_create_if_missing"] is True
+configure_notice = task(configure, "PBS | Send configure-complete test notification to Ntfy")
+configure_notice_body = configure_notice["ansible.builtin.uri"]["body"]
+assert "_backup_job_vmids | length > 0" in configure_notice_body
+assert "backup job is disabled or was not created" in configure_notice_body
+notice_env = Environment(undefined=StrictUndefined)
+notice_env.filters["split"] = lambda value, separator=",": value.split(separator)
+notice_template = notice_env.from_string(configure_notice_body)
+notice_context = {
+    "_pbs_datastore": "pbs-data",
+    "_backup_job_schedule": "daily",
+}
+nonempty_notice = notice_template.render(
+    **notice_context, _backup_job_vmids="101,102"
+)
+assert "backup job covers 2 guest(s) on schedule 'daily'" in nonempty_notice
+empty_notice = notice_template.render(**notice_context, _backup_job_vmids="")
+assert "backup job is disabled or was not created" in empty_notice
+assert "covers 1 guest(s)" not in empty_notice
 refresh_backup_job = load_yaml("ansible/tasks/proxmox/refresh-backup-job.yml")
 assert not any(
     item.get("name") == "PBS backup | Require at least one eligible managed guest"

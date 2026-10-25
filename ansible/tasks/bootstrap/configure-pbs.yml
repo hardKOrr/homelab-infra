@@ -591,10 +591,12 @@
                    if homelabinfra_infra.notifications.token | default('') | length > 0
                    else {}) }}
     body: >-
-      Datastore '{{ _pbs_datastore }}' ready; backup job covers
-      {{ _backup_job_vmids | split(',') | length }}
-      guest(s) on schedule '{{ _backup_job_schedule }}'. PBS notifications route to
-      this topic.
+      Datastore '{{ _pbs_datastore }}' ready;
+      {{ ('backup job covers ' ~ (_backup_job_vmids | split(',') | length)
+          ~ " guest(s) on schedule '" ~ _backup_job_schedule ~ "'")
+         if _backup_job_vmids | length > 0 else
+         'backup job is disabled or was not created because no eligible guests were found' }}.
+      PBS notifications route to this topic.
     body_format: raw
   changed_when: false
   when:
