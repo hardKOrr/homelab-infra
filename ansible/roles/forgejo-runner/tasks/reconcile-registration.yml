@@ -62,6 +62,17 @@
          | default('0', true) | int }}
   no_log: true
 
+- name: Forgejo Runner | Require a usable Forgejo API version
+  ansible.builtin.assert:
+    that:
+      - >-
+        _forgejo_runner_version_response.status | default(0) == 200
+        or _forgejo_runner_forgejo_version_response.status | default(0) == 200
+      - _forgejo_runner_server_version is match('^[0-9]+')
+    fail_msg: >-
+      Cannot safely reconcile {{ instance }} registration: neither Forgejo version
+      endpoint returned a usable version. Check Forgejo reachability and API availability.
+
 - name: Forgejo Runner | Build registration API scopes
   ansible.builtin.set_fact:
     _forgejo_runner_api_scopes: >-

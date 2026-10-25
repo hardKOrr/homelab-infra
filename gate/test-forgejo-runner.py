@@ -239,7 +239,8 @@ esac
 
 def run_reconciliation(marker_url, marker_token, current_token, registrations, expected_deletes,
                        keep_local_registration, fail_scopes=None, server_version="16.0.0",
-                       version_endpoint="/api/v1/version", expected_list_pages=None):
+                       version_endpoint="/api/v1/version", expected_list_pages=None,
+                       expect_version_failure=False):
     state = RunnerApiState(
         {"user": [], "admin": registrations},
         fail_scopes=fail_scopes,
@@ -303,7 +304,14 @@ def run_reconciliation(marker_url, marker_token, current_token, registrations, e
                 check=False,
             )
             output = result.stdout + result.stderr
-            if fail_scopes:
+            if expect_version_failure:
+                assert result.returncode != 0, output
+                assert "neither Forgejo version endpoint returned a usable version" in output, output
+                assert state.registration_requests == [], state.registration_requests
+                assert state.deletes == [], state.deletes
+                assert runner_file.exists()
+                assert marker.exists()
+            elif fail_scopes:
                 assert result.returncode != 0, output
                 assert "admin=403" in output, output
                 assert state.deletes == [], state.deletes
@@ -442,7 +450,7 @@ def check_registration_reconciliation():
         version_endpoint="/api/forgejo/v1/version",
     )
 
-    # If neither version endpoint exists, preserve an unchanged local identity.
+    # If neither version endpoint exists, fail clearly before touching registration state.
     run_reconciliation(
         None,
         current_token,
@@ -451,6 +459,7 @@ def check_registration_reconciliation():
         [],
         True,
         server_version=None,
+        expect_version_failure=True,
     )
 
 
