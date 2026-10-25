@@ -51,8 +51,9 @@
       - _forgejo_runner_server_version | length > 0
     fail_msg: >-
       Cannot reconcile {{ instance }} registration: the configured Forgejo endpoint
-      did not return its API version.
-  no_log: true
+      did not return its API version (HTTP {{ _forgejo_runner_version_response.status
+      | default(0) }}; version field found:
+      {{ _forgejo_runner_server_version | length > 0 }}).
 
 - name: Forgejo Runner | Build registration API scopes
   ansible.builtin.set_fact:
