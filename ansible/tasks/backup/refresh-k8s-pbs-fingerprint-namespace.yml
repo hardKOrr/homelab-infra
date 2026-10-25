@@ -19,29 +19,51 @@
   changed_when: false
 
 - name: PBS backup trust | Apply the current namespace fingerprint
-  ansible.builtin.command:
-    argv:
-      - k3s
-      - kubectl
-      - apply
-      - --namespace
-      - "{{ pbs_backup_namespace }}"
-      - --server-side
-      - --force-conflicts
-      - -f
-      - -
-    stdin: |
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: pbs-backup-trust
-        labels:
-          app.kubernetes.io/managed-by: homelab-infra
-          app.kubernetes.io/component: backup
-          homelab-infra.io/pbs-fingerprint: managed
-      data:
-        fingerprint: {{ pbs_backup_fingerprint | to_json }}
+  block:
+    - name: PBS backup trust | Create a temporary ConfigMap manifest
+      ansible.builtin.tempfile:
+        state: file
+        path: /tmp
+        prefix: homelab-infra-pbs-backup-trust-
+      register: _pbs_backup_manifest
+
+    - name: PBS backup trust | Write the temporary ConfigMap manifest
+      ansible.builtin.copy:
+        dest: "{{ _pbs_backup_manifest.path }}"
+        content: |
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: pbs-backup-trust
+            labels:
+              app.kubernetes.io/managed-by: homelab-infra
+              app.kubernetes.io/component: backup
+              homelab-infra.io/pbs-fingerprint: managed
+          data:
+            fingerprint: {{ pbs_backup_fingerprint | to_json }}
+        mode: "0600"
+
+    - name: PBS backup trust | Apply the temporary ConfigMap manifest
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - apply
+          - --namespace
+          - "{{ pbs_backup_namespace }}"
+          - --server-side
+          - --force-conflicts
+          - -f
+          - "{{ _pbs_backup_manifest.path }}"
+      changed_when: true
+
+  always:
+    - name: PBS backup trust | Remove the temporary ConfigMap manifest
+      ansible.builtin.file:
+        path: "{{ _pbs_backup_manifest.path }}"
+        state: absent
+      when: _pbs_backup_manifest.path is defined
+
   delegate_to: "{{ k8s_api_host }}"
   become: true
   when: _pbs_backup_current_fingerprint.stdout | trim != pbs_backup_fingerprint
-  changed_when: true

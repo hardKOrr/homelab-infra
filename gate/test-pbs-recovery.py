@@ -91,8 +91,28 @@ assert (
     fingerprint_apply["when"]
     == "_pbs_backup_current_fingerprint.stdout | trim != pbs_backup_fingerprint"
 )
-assert "data:\n  fingerprint:" in fingerprint_apply["ansible.builtin.command"]["stdin"]
-assert fingerprint_apply["changed_when"] is True
+assert fingerprint_apply["delegate_to"] == "{{ k8s_api_host }}"
+apply_block = fingerprint_apply["block"]
+manifest_tempfile = task(
+    apply_block, "PBS backup trust | Create a temporary ConfigMap manifest"
+)
+assert manifest_tempfile["ansible.builtin.tempfile"]["path"] == "/tmp"
+manifest_copy = task(
+    apply_block, "PBS backup trust | Write the temporary ConfigMap manifest"
+)
+assert "data:\n  fingerprint:" in manifest_copy["ansible.builtin.copy"]["content"]
+apply_manifest = task(
+    apply_block, "PBS backup trust | Apply the temporary ConfigMap manifest"
+)
+assert apply_manifest["ansible.builtin.command"]["argv"][-2:] == [
+    "-f",
+    "{{ _pbs_backup_manifest.path }}",
+]
+assert apply_manifest["changed_when"] is True
+cleanup_manifest = task(
+    fingerprint_apply["always"], "PBS backup trust | Remove the temporary ConfigMap manifest"
+)
+assert cleanup_manifest["ansible.builtin.file"]["state"] == "absent"
 
 provision_tasks = playbook[0]["tasks"]
 provision_pre_tasks = playbook[0]["pre_tasks"]
