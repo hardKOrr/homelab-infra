@@ -376,3 +376,11 @@
     fail_msg: "The VM guest agent failed to write protected instance metadata"
   vars:
     vm_instance_metadata_write_result: "{{ vm_instance_metadata_write.stdout | from_json }}"
+
+- name: Reconcile the VM's optional HA resource
+  ansible.builtin.include_tasks: reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ homelabinfra_config.proxmox.node }}"
+    proxmox_ha_vmid: "{{ homelabinfra_instance.vm.vmid }}"
+    proxmox_ha_name: "{{ homelabinfra_instance.vm.name }}"
+    proxmox_ha_enabled: "{{ homelabinfra_instance.vm.ha | default(false) }}"

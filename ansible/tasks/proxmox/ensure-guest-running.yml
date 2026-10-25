@@ -60,6 +60,18 @@
       Cannot determine the Proxmox vmid/node for '{{ ensure_guest_host }}'. Expected
       proxmox_vmid and proxmox_node hostvars from the dynamic inventory.
 
+- name: Ensure running | Reconcile the deployed VM's optional HA resource
+  ansible.builtin.include_tasks: reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ _egr_node }}"
+    proxmox_ha_vmid: "{{ _egr_vmid }}"
+    proxmox_ha_name: "{{ hostvars[ensure_guest_host].proxmox_name | default(ensure_guest_host) }}"
+    proxmox_ha_enabled: >-
+      {{ (app_config | default({})).get('proxmox', {}).get('vm', {}).get('ha', false) }}
+  when:
+    - _egr_vmtype == 'qemu'
+    - app_config is defined
+
 - name: Ensure running | Read the guest config needed for memory checks or balloon convergence
   ansible.builtin.command:
     argv:

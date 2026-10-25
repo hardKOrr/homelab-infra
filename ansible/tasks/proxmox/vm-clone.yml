@@ -143,7 +143,10 @@
       api_token_id: "{{ homelabinfra_config.proxmox.api_token_id }}"
       api_token_secret: "{{ homelabinfra_config.proxmox.api_token_secret }}"
       validate_certs: "{{ homelabinfra_config.proxmox.validate_certs | default(false) }}"
-      node: "{{ _guest_placement.node | default(homelabinfra_config.proxmox.node) }}"
+      node: >-
+        {{ _vmc_existing_guest.node
+           if _vmc_existing_guest | length > 0
+           else (_guest_placement.node | default(homelabinfra_config.proxmox.node)) }}
     _vmc_vmid: "{{ homelabinfra_config.proxmox.vm.vmid | int }}"
 
 - name: VM clone | Build network settings
@@ -427,6 +430,9 @@
   failed_when:
     - _vmc_start.rc != 0
     - "'already running' not in (_vmc_start.stderr | default('')) | lower"
+  when: >-
+    (_vmc_clone.changed | default(false))
+    or (_vmc_reused_status.stdout | default('') | trim != 'status: running')
 
 - name: VM clone | Wait for the VM to be running
   ansible.builtin.command:
@@ -547,3 +553,11 @@
       - homelabinfra_instance.vm_ansible_host | string | trim | length > 0
       - homelabinfra_instance.vm_ansible_host | string | trim | lower != 'dhcp'
     fail_msg: "The VM connection address is empty or still set to DHCP"
+
+- name: VM clone | Reconcile the guest's optional HA resource
+  ansible.builtin.include_tasks: reconcile-vm-ha.yml
+  vars:
+    proxmox_ha_node: "{{ _vmc_api.node }}"
+    proxmox_ha_vmid: "{{ _vmc_vmid }}"
+    proxmox_ha_name: "{{ homelabinfra_config.proxmox.vm.name }}"
+    proxmox_ha_enabled: "{{ homelabinfra_config.proxmox.vm.ha | default(false) }}"

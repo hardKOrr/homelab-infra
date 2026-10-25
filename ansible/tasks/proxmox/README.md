@@ -11,7 +11,15 @@ set by that pattern belong to the selected inventory host rather than to `localh
 
 The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.yml`.
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
-creation path.
+creation path. The clone task finds an existing VM's live Proxmox node before selecting
+the node for its updates, so a k3s VM moved by HA is reused in place on the next Deploy.
+It starts only a new or stopped VM; an already-running guest is left unchanged.
+
+VM Deploy paths call `reconcile-vm-ha.yml` for the optional per-VM `proxmox.vm.ha`
+setting, including reused guests. HA requires every configured VM disk to use storage
+marked `shared` in Proxmox. The HA resource comment is the ownership marker: Deploy only
+removes a matching resource, and VM destruction refuses an unmarked HA resource before
+the guest can be purged.
 
 `resolve-guest-placement.yml` is the placement source for those creation seams. It honors
 an explicit `proxmox.vm.node`, `proxmox.lxc.node`, or `stacks.<name>.node`, then
