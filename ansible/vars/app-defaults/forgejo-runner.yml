@@ -12,6 +12,8 @@ forgejo_runner_defaults:
     registration_env_path: "/opt/{{ instance }}/runner.env"
     forgejo:
       instance: forgejo
+    # The default global runner appears in Forgejo's admin runner list.
+    registration_scope: admin
     runner_name: "{{ instance }}"
     labels: "docker:docker://docker.io/library/alpine:3.20"
   routing:

@@ -12,21 +12,33 @@
          | default('', true) }}
   no_log: true
 
+- name: Forgejo Runner | Select registration API scope and token
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_scope: "{{ app_config.app.registration_scope | default('admin') }}"
+    _forgejo_runner_registration_api_token: >-
+      {{ _forgejo_runner_user_api_token
+         if app_config.app.registration_scope | default('admin') == 'user'
+         else (_forgejo_runner_admin_api_token
+               if _forgejo_runner_admin_api_token | length > 0
+               else _forgejo_runner_user_api_token) }}
+  no_log: true
+
 - name: Forgejo Runner | Build registration API scopes
   ansible.builtin.set_fact:
     _forgejo_runner_api_scopes: >-
-      {{ ([{'scope': 'user', 'token': _forgejo_runner_user_api_token}]
-          if _forgejo_runner_user_api_token | length > 0 else [])
-         + ([{'scope': 'admin', 'token': _forgejo_runner_admin_api_token}]
-          if _forgejo_runner_admin_api_token | length > 0 else []) }}
+      {{ [{'scope': _forgejo_runner_registration_scope,
+           'token': _forgejo_runner_registration_api_token}]
+         if _forgejo_runner_registration_api_token | length > 0 else [] }}
   no_log: true
 
 - name: Forgejo Runner | Require a scoped Forgejo API token
   ansible.builtin.assert:
-    that: _forgejo_runner_api_scopes | length > 0
+    that:
+      - _forgejo_runner_registration_scope in ['user', 'admin']
+      - _forgejo_runner_api_scopes | length > 0
     fail_msg: >-
-      Cannot reconcile {{ instance }} registration: store runner_api_token for a
-      user-scoped runner or admin_api_token for a global runner on the named Forgejo
+      Cannot reconcile {{ instance }} registration: store a scoped runner_api_token for
+      a user runner or admin_api_token for a global runner on the named Forgejo
       Vaultwarden item.
   no_log: true
 
