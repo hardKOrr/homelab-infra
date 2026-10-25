@@ -30,6 +30,67 @@ defaults = load_yaml("ansible/vars/app-defaults/pbs.yml")["pbs_defaults"]
 assert "datastore_disk" not in defaults["proxmox"]["vm"]
 
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
+
+pbs_record_tasks = playbook[2]["tasks"]
+reload_facts = task(pbs_record_tasks, "Reload infrastructure facts")
+refresh_backup_fingerprints = task(
+    pbs_record_tasks, "PBS | Refresh the fingerprint used by Kubernetes backup CronJobs"
+)
+assert (
+    pbs_record_tasks.index(refresh_backup_fingerprints)
+    > pbs_record_tasks.index(reload_facts)
+)
+assert refresh_backup_fingerprints["ansible.builtin.include_tasks"] == (
+    "../../tasks/backup/refresh-k8s-pbs-fingerprint.yml"
+)
+assert (
+    refresh_backup_fingerprints["vars"]["pbs_backup_fingerprint"]
+    == "{{ _pbs_pve_fingerprint }}"
+)
+assert "kubernetes" in refresh_backup_fingerprints["when"]
+
+refresh_fingerprints = load_yaml(
+    "ansible/tasks/backup/refresh-k8s-pbs-fingerprint.yml"
+)
+resolve_cluster = task(
+    refresh_fingerprints,
+    "PBS backup trust | Resolve the Kubernetes cluster node",
+)
+assert (
+    resolve_cluster["ansible.builtin.include_tasks"]
+    == "../kubernetes/resolve-cluster.yml"
+)
+find_backup_namespaces = task(
+    refresh_fingerprints,
+    "PBS backup trust | Find namespaces with managed backup CronJobs",
+)
+find_argv = find_backup_namespaces["ansible.builtin.command"]["argv"]
+assert find_argv[2:5] == ["get", "cronjobs", "--all-namespaces"]
+assert "--selector=homelab-infra.io/pbs-fingerprint=managed" in find_argv
+assert find_backup_namespaces["changed_when"] is False
+refresh_namespaces = task(
+    refresh_fingerprints, "PBS backup trust | Refresh each backup namespace"
+)
+assert "unique | list" in str(refresh_namespaces["loop"])
+
+refresh_namespace = load_yaml(
+    "ansible/tasks/backup/refresh-k8s-pbs-fingerprint-namespace.yml"
+)
+fingerprint_diff = task(
+    refresh_namespace, "PBS backup trust | Compare the namespace fingerprint ConfigMap"
+)
+assert "diff" in fingerprint_diff["ansible.builtin.command"]["argv"]
+assert "data:\n  fingerprint:" in fingerprint_diff["ansible.builtin.command"]["stdin"]
+assert (
+    fingerprint_diff["failed_when"]
+    == "_pbs_backup_fingerprint_diff.rc not in [0, 1]"
+)
+fingerprint_apply = task(
+    refresh_namespace, "PBS backup trust | Apply the current namespace fingerprint"
+)
+assert fingerprint_apply["when"] == "_pbs_backup_fingerprint_diff.rc == 1"
+assert fingerprint_apply["changed_when"] is True
+
 provision_tasks = playbook[0]["tasks"]
 provision_pre_tasks = playbook[0]["pre_tasks"]
 reuse_preflight = task(provision_tasks, "Refuse provisioning without the exact retained PBS volume")

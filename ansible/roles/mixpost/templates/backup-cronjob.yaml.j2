@@ -39,7 +39,19 @@
 app.kubernetes.io/instance: {{ instance }}
 app.kubernetes.io/managed-by: homelab-infra
 app.kubernetes.io/component: backup
+homelab-infra.io/pbs-fingerprint: managed
 {% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pbs-backup-trust
+  labels:
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: backup
+    homelab-infra.io/pbs-fingerprint: managed
+data:
+  fingerprint: "{{ k8s_pbs_fingerprint }}"
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -241,11 +253,13 @@ spec:
                   value: "{{ _mp_backup_repository }}"
                 # PBS serves a self-signed certificate. Pinning its fingerprint is what
                 # lets the client verify the server without a prompt it cannot answer from
-                # a Job. It is read from PBS at DEPLOY time, so regenerating the PBS
-                # certificate breaks this job until the deploy is re-run — which is stated
-                # here because the failure would otherwise look like a network problem.
+                # a Job. Deploy PBS refreshes the shared ConfigMap, which this CronJob
+                # reads when Kubernetes creates each backup pod.
                 - name: PBS_FINGERPRINT
-                  value: "{{ _mp_backup_fingerprint }}"
+                  valueFrom:
+                    configMapKeyRef:
+                      name: pbs-backup-trust
+                      key: fingerprint
                 - name: PBS_PASSWORD
                   valueFrom:
                     secretKeyRef: { name: {{ instance }}-backup, key: pbs-password }

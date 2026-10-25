@@ -1469,6 +1469,87 @@ def backup_prune_keeps_the_previous_point():
             )
 
 
+def k3s_pbs_backup_jobs_read_the_rotated_fingerprint():
+    # These CronJobs live for months between app deploys. Keep the fingerprint in a
+    # namespace ConfigMap and have PBS refresh it after reading the active certificate.
+    fingerprint = ":".join(["AA"] * 32)
+    backup = {
+        "schedule": "0 3 * * *",
+        "retention_days": 14,
+        "timeout_seconds": 1800,
+        "scratch_size": 2,
+        "client": {
+            "image": "buildpack-deps:bookworm-curl",
+            "key_url": "https://example.test/key",
+            "repository": "https://example.test/repo",
+            "suite": "bookworm",
+            "component": "main",
+        },
+    }
+    for app in ("jellyseerr", "litellm", "maintainerr", "mixpost"):
+        path = f"ansible/roles/{app}/templates/backup-cronjob.yaml.j2"
+        template = read(path)
+        assert "kind: ConfigMap" in template, path
+        assert "name: pbs-backup-trust" in template, path
+        assert "fingerprint: \"{{ k8s_pbs_fingerprint }}\"" in template, path
+        assert "homelab-infra.io/pbs-fingerprint: managed" in template, path
+        fingerprint_env = template.split("- name: PBS_FINGERPRINT", 1)[1].split(
+            "- name:", 1
+        )[0]
+        assert "configMapKeyRef:" in fingerprint_env, path
+        assert "name: pbs-backup-trust" in fingerprint_env, path
+        assert "key: fingerprint" in fingerprint_env, path
+        assert "value: \"{{" not in fingerprint_env, path
+
+        context = {
+            "instance": app,
+            "k8s_namespace": f"app-{app}",
+            "k8s_pbs_fingerprint": fingerprint,
+            "app_config": {
+                "backup": backup,
+                "app": {
+                    "database": {"version": 16, "image": "mysql:8", "name": app},
+                },
+            },
+            "_js_backup_id": app,
+            "_js_backup_datastore": "store",
+            "_js_backup_repository": "token@pbs:store",
+            "_js_backup_timezone": "UTC",
+            "_js_ntfy_url": "",
+            "_js_ntfy_token": "",
+            "_litellm_backup_id": app,
+            "_litellm_backup_repository": "token@pbs:store",
+            "_litellm_backup_timezone": "UTC",
+            "_litellm_database_host": "postgres",
+            "_litellm_database_name": app,
+            "_litellm_database_port": 5432,
+            "_litellm_database_user": app,
+            "_litellm_ntfy_url": "",
+            "_litellm_ntfy_token": "",
+            "_mp_backup_id": app,
+            "_mp_backup_datastore": "store",
+            "_mp_backup_repository": "token@pbs:store",
+            "_mp_backup_timezone": "UTC",
+            "_mp_ntfy_url": "",
+            "_mp_ntfy_token": "",
+        }
+        documents = list(yaml.safe_load_all(render(template, context)))
+        trust = next(item for item in documents if item["kind"] == "ConfigMap")
+        cronjob = next(item for item in documents if item["kind"] == "CronJob")
+        assert trust["metadata"]["name"] == "pbs-backup-trust", path
+        assert trust["data"]["fingerprint"] == fingerprint, path
+        environment = (
+            cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"]
+        )
+        fingerprint_setting = next(
+            item for item in environment if item["name"] == "PBS_FINGERPRINT"
+        )
+        assert fingerprint_setting["valueFrom"]["configMapKeyRef"] == {
+            "name": "pbs-backup-trust",
+            "key": "fingerprint",
+        }, path
+
+
 def litellm_recovery_jobs_use_the_database_client_major():
     templates = (
         "ansible/roles/litellm/templates/backup-cronjob.yaml.j2",
@@ -1794,5 +1875,6 @@ if __name__ == "__main__":
     vm_clone_keeps_recorded_app_tags_and_notes()
     bazarr_wiring_sends_lowercase_booleans()
     backup_prune_keeps_the_previous_point()
+    k3s_pbs_backup_jobs_read_the_rotated_fingerprint()
     litellm_recovery_jobs_use_the_database_client_major()
     print("Template rendering: Caddy, Emby, Unpackerr, Navidrome, Maintainerr, Mautic, Bazarr, k3s defaults, VM clone tags, backup pruning and LiteLLM recovery clients passed")

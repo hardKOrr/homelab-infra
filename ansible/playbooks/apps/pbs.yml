@@ -436,6 +436,17 @@
         name: homelabinfra_infra
       failed_when: false
 
+    # Backup CronJobs read the PBS certificate fingerprint from a namespace-local
+    # ConfigMap. Refresh every marked namespace now that configure-pbs.yml has read the
+    # active certificate, so a PBS certificate rotation does not require app redeploys.
+    - name: PBS | Refresh the fingerprint used by Kubernetes backup CronJobs
+      ansible.builtin.include_tasks: ../../tasks/backup/refresh-k8s-pbs-fingerprint.yml
+      vars:
+        pbs_backup_fingerprint: "{{ _pbs_pve_fingerprint }}"
+      when: >-
+        ((homelabinfra_infra | default({})).kubernetes | default({})).nodes
+        | default([]) | length > 0
+
     - name: Wire reverse proxy
       ansible.builtin.include_tasks: "../../tasks/wiring/{{ homelabinfra_infra.reverse_proxy.provider }}.yml"
       when:
