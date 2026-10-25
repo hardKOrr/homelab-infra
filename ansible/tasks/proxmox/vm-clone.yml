@@ -430,6 +430,9 @@
   failed_when:
     - _vmc_start.rc != 0
     - "'already running' not in (_vmc_start.stderr | default('')) | lower"
+  when: >-
+    (_vmc_clone.changed | default(false))
+    or (_vmc_reused_status.stdout | default('') | trim != 'status: running')
 
 - name: VM clone | Wait for the VM to be running
   ansible.builtin.command:

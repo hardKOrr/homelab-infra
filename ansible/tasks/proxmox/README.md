@@ -13,6 +13,7 @@ The shared creation seams are `lxc-create.yml`, `vm-create.yml`, and `vm-clone.y
 Kubernetes node provisioning uses `vm-clone.yml`; it does not maintain a second VM
 creation path. The clone task finds an existing VM's live Proxmox node before selecting
 the node for its updates, so a k3s VM moved by HA is reused in place on the next Deploy.
+It starts only a new or stopped VM; an already-running guest is left unchanged.
 
 VM Deploy paths call `reconcile-vm-ha.yml` for the optional per-VM `proxmox.vm.ha`
 setting, including reused guests. HA requires every configured VM disk to use storage
