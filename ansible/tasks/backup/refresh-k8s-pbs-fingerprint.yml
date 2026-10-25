@@ -1,0 +1,42 @@
+---
+# Refresh the current PBS certificate fingerprint in namespaces whose backup CronJobs
+# consume the shared value. PBS runs on a VM, so Kubernetes is reached through the
+# cluster's own kubectl on the first registered node; no kubeconfig is copied to the
+# runner or PBS guest.
+#
+# Input:
+#   pbs_backup_fingerprint — read from the active PBS certificate by configure-pbs.yml
+
+- name: PBS backup trust | Validate the active certificate fingerprint
+  ansible.builtin.assert:
+    that:
+      - pbs_backup_fingerprint is match('^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$')
+    fail_msg: >-
+      PBS did not return a SHA-256 certificate fingerprint. Kubernetes backup trust was
+      not changed.
+
+- name: PBS backup trust | Resolve the Kubernetes cluster node
+  ansible.builtin.include_tasks: ../kubernetes/resolve-cluster.yml
+
+- name: PBS backup trust | Find namespaces with managed backup CronJobs
+  ansible.builtin.command:
+    argv:
+      - k3s
+      - kubectl
+      - get
+      - cronjobs
+      - --all-namespaces
+      - --selector=homelab-infra.io/pbs-fingerprint=managed
+      - -o
+      - 'jsonpath={range .items[*]}{.metadata.namespace}{"\n"}{end}'
+  delegate_to: "{{ k8s_api_host }}"
+  become: true
+  register: _pbs_backup_namespaces
+  changed_when: false
+
+- name: PBS backup trust | Refresh each backup namespace
+  ansible.builtin.include_tasks: refresh-k8s-pbs-fingerprint-namespace.yml
+  loop: "{{ _pbs_backup_namespaces.stdout_lines | reject('equalto', '') | unique | list }}"
+  loop_control:
+    loop_var: pbs_backup_namespace
+    label: "{{ pbs_backup_namespace }}"

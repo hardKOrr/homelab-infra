@@ -30,6 +30,90 @@ defaults = load_yaml("ansible/vars/app-defaults/pbs.yml")["pbs_defaults"]
 assert "datastore_disk" not in defaults["proxmox"]["vm"]
 
 playbook = load_yaml("ansible/playbooks/apps/pbs.yml")
+
+pbs_record_tasks = playbook[2]["tasks"]
+reload_facts = task(pbs_record_tasks, "Reload infrastructure facts")
+refresh_backup_fingerprints = task(
+    pbs_record_tasks, "PBS | Refresh the fingerprint used by Kubernetes backup CronJobs"
+)
+assert (
+    pbs_record_tasks.index(refresh_backup_fingerprints)
+    > pbs_record_tasks.index(reload_facts)
+)
+assert refresh_backup_fingerprints["ansible.builtin.include_tasks"] == (
+    "../../tasks/backup/refresh-k8s-pbs-fingerprint.yml"
+)
+assert (
+    refresh_backup_fingerprints["vars"]["pbs_backup_fingerprint"]
+    == "{{ _pbs_pve_fingerprint }}"
+)
+assert "kubernetes" in refresh_backup_fingerprints["when"]
+
+refresh_fingerprints = load_yaml(
+    "ansible/tasks/backup/refresh-k8s-pbs-fingerprint.yml"
+)
+resolve_cluster = task(
+    refresh_fingerprints,
+    "PBS backup trust | Resolve the Kubernetes cluster node",
+)
+assert (
+    resolve_cluster["ansible.builtin.include_tasks"]
+    == "../kubernetes/resolve-cluster.yml"
+)
+find_backup_namespaces = task(
+    refresh_fingerprints,
+    "PBS backup trust | Find namespaces with managed backup CronJobs",
+)
+find_argv = find_backup_namespaces["ansible.builtin.command"]["argv"]
+assert find_argv[2:5] == ["get", "cronjobs", "--all-namespaces"]
+assert "--selector=homelab-infra.io/pbs-fingerprint=managed" in find_argv
+assert find_backup_namespaces["changed_when"] is False
+refresh_namespaces = task(
+    refresh_fingerprints, "PBS backup trust | Refresh each backup namespace"
+)
+assert "unique | list" in str(refresh_namespaces["loop"])
+
+refresh_namespace = load_yaml(
+    "ansible/tasks/backup/refresh-k8s-pbs-fingerprint-namespace.yml"
+)
+fingerprint_current = task(
+    refresh_namespace, "PBS backup trust | Read the namespace fingerprint ConfigMap"
+)
+fingerprint_current_argv = fingerprint_current["ansible.builtin.command"]["argv"]
+assert fingerprint_current_argv[2:5] == ["get", "configmap", "pbs-backup-trust"]
+assert "--ignore-not-found" in fingerprint_current_argv
+assert "--output=jsonpath={.data.fingerprint}" in fingerprint_current_argv
+assert fingerprint_current["changed_when"] is False
+fingerprint_apply = task(
+    refresh_namespace, "PBS backup trust | Apply the current namespace fingerprint"
+)
+assert (
+    fingerprint_apply["when"]
+    == "_pbs_backup_current_fingerprint.stdout | trim != pbs_backup_fingerprint"
+)
+assert fingerprint_apply["delegate_to"] == "{{ k8s_api_host }}"
+apply_block = fingerprint_apply["block"]
+manifest_tempfile = task(
+    apply_block, "PBS backup trust | Create a temporary ConfigMap manifest"
+)
+assert manifest_tempfile["ansible.builtin.tempfile"]["path"] == "/tmp"
+manifest_copy = task(
+    apply_block, "PBS backup trust | Write the temporary ConfigMap manifest"
+)
+assert "data:\n  fingerprint:" in manifest_copy["ansible.builtin.copy"]["content"]
+apply_manifest = task(
+    apply_block, "PBS backup trust | Apply the temporary ConfigMap manifest"
+)
+assert apply_manifest["ansible.builtin.command"]["argv"][-2:] == [
+    "-f",
+    "{{ _pbs_backup_manifest.path }}",
+]
+assert apply_manifest["changed_when"] is True
+cleanup_manifest = task(
+    fingerprint_apply["always"], "PBS backup trust | Remove the temporary ConfigMap manifest"
+)
+assert cleanup_manifest["ansible.builtin.file"]["state"] == "absent"
+
 provision_tasks = playbook[0]["tasks"]
 provision_pre_tasks = playbook[0]["pre_tasks"]
 reuse_preflight = task(provision_tasks, "Refuse provisioning without the exact retained PBS volume")

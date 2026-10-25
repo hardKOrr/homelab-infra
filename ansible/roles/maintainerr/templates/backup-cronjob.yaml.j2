@@ -33,7 +33,19 @@
 app.kubernetes.io/instance: {{ instance }}
 app.kubernetes.io/managed-by: homelab-infra
 app.kubernetes.io/component: backup
+homelab-infra.io/pbs-fingerprint: managed
 {% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pbs-backup-trust
+  labels:
+    app.kubernetes.io/managed-by: homelab-infra
+    app.kubernetes.io/component: backup
+    homelab-infra.io/pbs-fingerprint: managed
+data:
+  fingerprint: "{{ k8s_pbs_fingerprint }}"
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -129,7 +141,10 @@ spec:
                 - name: PBS_REPOSITORY
                   value: "{{ _js_backup_repository }}"
                 - name: PBS_FINGERPRINT
-                  value: "{{ _js_backup_fingerprint }}"
+                  valueFrom:
+                    configMapKeyRef:
+                      name: pbs-backup-trust
+                      key: fingerprint
                 - name: PBS_PASSWORD
                   valueFrom:
                     secretKeyRef: { name: {{ instance }}-backup, key: pbs-password }

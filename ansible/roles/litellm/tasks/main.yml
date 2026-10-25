@@ -172,7 +172,6 @@
           {{ app_config.backup.timezone | default('', true)
              or homelabinfra_config.timezone | default('UTC') }}
         _litellm_backup_repository: "{{ k8s_pbs_repository }}"
-        _litellm_backup_fingerprint: "{{ k8s_pbs_fingerprint }}"
         _litellm_backup_datastore: "{{ k8s_pbs_datastore }}"
         _litellm_ntfy_url: >-
           {{ (homelabinfra_infra.notifications.host ~ '/'
