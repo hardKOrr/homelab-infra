@@ -763,16 +763,18 @@ token in `public_dns`. Existing records are not adopted by default; `adopt_exist
 is the explicit exception. Private, loopback, link-local and CGNAT addresses are refused
 unless `allow_private: true`; inbound ports remain an explicit `firewall.inbound` choice.
 
-Caddy's dynamic DNS app keeps the published records current. When a provider write fails
-it logs the error but does not retry until the WAN address changes or the Caddy service
-restarts (a config reload is not enough). Lab Status reports that estate as `stale`;
-restart Caddy on the proxy guest to publish again.
+Caddy's dynamic DNS app keeps `static` and `lookup` records current. When a provider write
+fails it logs the error but does not retry until the WAN address changes or the Caddy
+service restarts (a config reload is not enough). Lab Status reports that estate as
+`stale`; restart Caddy on the proxy guest to publish again. A `cname` source uses Caddy's
+static DNS records app to reconcile the apex and wildcard CNAMEs through each estate's
+provider, with no address polling.
 
-The configuration is resolved alongside that estate's `dns_challenge` on the Caddy guest.
-The loader recursively overlays the estate's existing DNS-01 credentials onto authored
-`domains.<estate>` data, so `public_dns` stays beside that estate's challenge without
-replacing sibling fields. A config with no `public_dns` block gets no additional resolved
-key and keeps its prior behavior.
+The Caddy role reads the shared address settings from top-level `public_dns` and each
+estate's opt-in and optional provider beside its `dns_challenge`. It reuses that challenge's
+provider-specific credential fields when it renders the Caddy provider block; it does not
+load or create a second token. A config with no enabled estate renders neither public DNS
+app and keeps prior behavior.
 
 Caddy resolver precedence is policy-local: `domains.<estate>.dns_challenge` uses
 its own options over guest-DNS defaults, without inheriting another estate's

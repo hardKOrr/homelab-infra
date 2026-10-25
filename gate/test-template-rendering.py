@@ -63,8 +63,10 @@ class CaddyRendering:
         self.base_vars = self.base_task["vars"]
         self.content_expression = self.write_task["ansible.builtin.copy"]["content"]
         self.public_dns_resolve_task = task_named(
-            self.public_dns_tasks,
-            "Resolve public DNS config beside each estate DNS challenge",
+            self.public_dns_tasks, "Resolve public DNS config for each estate"
+        )
+        self.public_dns_apps_task = task_named(
+            self.public_dns_tasks, "Build public DNS Caddy app configurations"
         )
         self.estates = [
             {
@@ -108,15 +110,23 @@ class CaddyRendering:
             variables,
         )
 
-    def resolve_public_dns_estates(self, infrastructure):
+    def resolve_public_dns(self, infrastructure):
         task = self.public_dns_resolve_task
         variables = {"homelabinfra_config": {"infrastructure": infrastructure}}
         for key, expression in task["vars"].items():
             variables[key] = render(expression, variables)
-        return render(
-            task["ansible.builtin.set_fact"]["_caddy_public_dns_estates"],
-            variables,
-        )
+        for key, expression in task["ansible.builtin.set_fact"].items():
+            variables[key] = render(expression, variables)
+        return variables
+
+    def build_public_dns_apps(self, infrastructure):
+        variables = self.resolve_public_dns(infrastructure)
+        task = self.public_dns_apps_task
+        for key, expression in task["vars"].items():
+            variables[key] = render(expression, variables)
+        for key, expression in task["ansible.builtin.set_fact"].items():
+            variables[key] = render(expression, variables)
+        return variables
 
     def resolvers_valid(self, challenge, facts=None):
         variables = {
@@ -165,13 +175,14 @@ class CaddyRendering:
             policies = render(self.policy_expression, variables)
         return policies
 
-    def render_config(self, app: dict[str, object]) -> str:
+    def render_config(self, app: dict[str, object], *, public_dns_apps=None) -> str:
         policies = self.render_policies(app)
         variables: dict[str, object] = {
             "app_config": {"app": app},
             "_caddy_dns_policies": policies,
             "_caddy_automate_names": ["*.alpha.example.test", "*.beta.example.test"],
             "_caddy_bind_ip": "192.0.2.10",
+            "_caddy_public_dns_apps": public_dns_apps or {},
         }
         for key, expression in self.base_vars.items():
             variables[key] = render(expression, variables)
@@ -330,59 +341,151 @@ def caddy_declared_lab_dns_reaches_guest_and_disabled_propagation_policy(self):
             ), "policy['issuers'][0]['ca'] == STAGING_DIRECTORY"
 
 
-def caddy_public_dns_is_resolved_beside_its_estate_challenge(self):
-    estate = {
+def caddy_public_dns_renders_each_address_source_and_provider(self):
+    alpha = {
         "domain": "alpha.example.test",
+        "dns_challenge": {"provider": "cloudflare", "api_token": "fixture-token-alpha"},
+        "public_dns": {"enabled": True},
+    }
+    beta = {
+        "domain": "beta.example.test",
         "dns_challenge": {
-            "provider": "cloudflare",
-            "api_token": "fixture-token-alpha",
+            "provider": "route53",
+            "access_key_id": "fixture-access-id-beta",
+            "secret_access_key": "fixture-secret-key-beta",
+            "region": "fixture-region",
         },
+        "public_dns": {"enabled": True, "provider": "route53", "adopt_existing": True},
+    }
+    gamma = {"domain": "gamma.example.test", "public_dns": {"enabled": False}}
+    infra = {
         "public_dns": {
-            "enabled": True,
+            "ttl": 180,
+            "families": ["ipv4"],
+            "allow_private": False,
             "address": {
                 "source": "lookup",
                 "urls": ["https://one.example.test/ip", "https://two.example.test/ip"],
             },
         },
+        "domains": {"alpha": alpha, "beta": beta, "gamma": gamma},
     }
-    loaded = self.resolve_public_dns_estates({"domains": {"alpha": estate}})
-    assert len(loaded) == 1, "len(loaded) == 1"
-    assert loaded[0]["dns_challenge_provider"] == "cloudflare", (
-        "loaded[0]['dns_challenge_provider'] == 'cloudflare'"
-    )
-    assert loaded[0]["has_dns_challenge_credentials"] is True, (
-        "loaded[0]['has_dns_challenge_credentials'] is True"
-    )
-    assert loaded[0]["public_dns"] == {
-        "enabled": True,
-        "provider": "cloudflare",
-        "ttl": 300,
-        "families": ["ipv4"],
-        "proxied": False,
-        "adopt_existing": False,
-        "allow_private": False,
-        "address": estate["public_dns"]["address"],
-    }, "loaded[0]['public_dns'] == the estate block merged over per-estate defaults"
-
-    raw_dns_domains = self.collect_domains({"domains": {"alpha": estate}}, {})
-    assert raw_dns_domains == [estate], (
-        "the DNS-01 domain remains the authored estate mapping, including public_dns"
-    )
-
-    without_public_dns = self.collect_domains(
+    rendered = self.build_public_dns_apps(infra)
+    apps = rendered["_caddy_public_dns_apps"]
+    expected_providers = [
         {
-            "domains": {
-                "alpha": {
-                    "domain": "alpha.example.test",
-                    "dns_challenge": estate["dns_challenge"],
-                }
-            }
+            "dns_provider": {"name": "cloudflare", "api_token": "fixture-token-alpha"},
+            "domains": {"alpha.example.test": ["@", "*"]},
         },
-        {},
+        {
+            "dns_provider": {
+                "name": "route53",
+                "access_key_id": "fixture-access-id-beta",
+                "secret_access_key": "fixture-secret-key-beta",
+                "region": "fixture-region",
+            },
+            "domains": {"beta.example.test": ["@", "*"]},
+        },
+    ]
+    assert rendered["_caddy_public_dns_config"] == infra["public_dns"], (
+        "the lab-wide public_dns settings are preserved"
     )
-    assert without_public_dns == [
-        {"domain": "alpha.example.test", "dns_challenge": estate["dns_challenge"]}
-    ], "a config without public_dns keeps the old estate DNS input shape"
+    assert [estate["name"] for estate in rendered["_caddy_public_dns_enabled_estates"]] == [
+        "alpha", "beta"
+    ], "only opted-in estates are enabled"
+    assert apps["dynamic_dns"] == {
+        "providers": expected_providers,
+        "ip_sources": [{
+            "source": "simple_http",
+            "endpoints": ["https://one.example.test/ip", "https://two.example.test/ip"],
+        }],
+        "versions": {"ipv4": True, "ipv6": False},
+        "ttl": "180s",
+        "exclude": [
+            "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+            "127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
+            "::1/128", "fc00::/7", "fe80::/10",
+        ],
+    }, "lookup app has expected providers, source, families, TTL and exclusions"
+    base = json.loads(self.render_config(self.app_config(), public_dns_apps=apps))
+    assert base["apps"]["dynamic_dns"] == apps["dynamic_dns"], (
+        "the base Caddy JSON contains the dynamic DNS app"
+    )
+    assert self.build_public_dns_apps(infra)["_caddy_public_dns_apps"] == apps, (
+        "a second public DNS render is identical"
+    )
+
+    static_infra = {
+        "domains": {"alpha": alpha},
+        "public_dns": {
+            "families": ["ipv4", "ipv6"],
+            "address": {"source": "static", "address": "203.0.113.10"},
+        },
+    }
+    static_apps = self.build_public_dns_apps(static_infra)["_caddy_public_dns_apps"]
+    assert static_apps["dynamic_dns"]["ip_sources"] == [
+        {"source": "static", "ips": ["203.0.113.10"]}
+    ], "static source uses Caddy's static IP source"
+    assert static_apps["dynamic_dns"]["versions"] == {
+        "ipv4": True, "ipv6": True
+    }, "both requested IP families are enabled"
+
+    cname_infra = {
+        "domains": {"alpha": alpha, "beta": beta, "gamma": gamma},
+        "public_dns": {
+            "ttl": 600,
+            "address": {"source": "cname", "target": "dynamic.operator.example.net"},
+        },
+    }
+    cname_apps = self.build_public_dns_apps(cname_infra)["_caddy_public_dns_apps"]
+    assert "dynamic_dns" not in cname_apps, "CNAME source has no dynamic updater"
+    records = cname_apps["dns_records"]
+    assert records["ttl"] == "600s", "CNAME records use the lab-wide TTL"
+    assert records["best_effort"] is True, "CNAME provider failures do not stop Caddy"
+    assert records["providers"] == [
+        {
+            "dns_provider": expected_providers[0]["dns_provider"],
+            "records": [
+                {"name": "alpha.example.test", "zone": "alpha.example.test", "type": "CNAME", "value": ["dynamic.operator.example.net."]},
+                {"name": "*.alpha.example.test", "zone": "alpha.example.test", "type": "CNAME", "value": ["dynamic.operator.example.net."]},
+            ],
+        },
+        {
+            "dns_provider": expected_providers[1]["dns_provider"],
+            "records": [
+                {"name": "beta.example.test", "zone": "beta.example.test", "type": "CNAME", "value": ["dynamic.operator.example.net."]},
+                {"name": "*.beta.example.test", "zone": "beta.example.test", "type": "CNAME", "value": ["dynamic.operator.example.net."]},
+            ],
+        },
+    ], "CNAME source publishes apex and wildcard for each enabled estate"
+
+    private_apps = self.build_public_dns_apps(
+        {
+            "domains": {"alpha": alpha},
+            "public_dns": {
+                "allow_private": True,
+                "address": {"source": "static", "address": "192.168.1.10"},
+            },
+        }
+    )["_caddy_public_dns_apps"]
+    assert "exclude" not in private_apps["dynamic_dns"], (
+        "allow_private removes the global address exclusions"
+    )
+
+    disabled = self.build_public_dns_apps(
+        {"domains": {"alpha": {"domain": "alpha.example.test", "public_dns": {"enabled": False}}}}
+    )
+    assert disabled["_caddy_public_dns_apps"] == {}, "disabled estates render no public DNS app"
+    assert disabled["_caddy_public_dns_enabled_estates"] == [], "no disabled estate is included"
+
+    for task_name in (
+        "Reconcile the Caddy dynamic DNS app",
+        "Reconcile CNAME records through the estate DNS providers",
+    ):
+        task = task_named(self.tasks, task_name)
+        assert "_running.status != 200" in task["when"][-1], (
+            f"{task_name} compares current and desired app config"
+        )
 
 
 def caddy_explicit_estate_options_are_isolated_and_provider_fields_preserved(self):
@@ -1907,7 +2010,7 @@ if __name__ == "__main__":
     caddy_configured_ca_reaches_every_acme_issuer_and_keeps_email(caddy)
     caddy_internal_mode_ignores_configured_ca(caddy)
     caddy_declared_lab_dns_reaches_guest_and_disabled_propagation_policy(caddy)
-    caddy_public_dns_is_resolved_beside_its_estate_challenge(caddy)
+    caddy_public_dns_renders_each_address_source_and_provider(caddy)
     caddy_explicit_estate_options_are_isolated_and_provider_fields_preserved(caddy)
     caddy_infrastructure_overrides_legacy_instance_resolvers_only_for_default_policy(
         caddy

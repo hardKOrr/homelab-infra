@@ -18,9 +18,9 @@
 #
 # Drift: per CLAUDE.md ("fire-and-forget provisioning — we do not police drift")
 # this role does not rewrite a healthy running config. It creates the base config
-# when no srv0 exists, and otherwise reconciles only the three subtrees it owns
-# (srv0 listeners, TLS automation policies, and the automated certificate names)
-# in place, never touching routes.
+# when no srv0 exists, and otherwise reconciles only the subtrees it owns (srv0
+# listeners, TLS automation policies, automated certificate names, and public DNS
+# app configuration) in place, never touching routes.
 #
 # Certificates: one wildcard per estate, requested through the `automate` loader and
 # issued by that estate's DNS-01 policy. Apps are served from it and issue nothing of
@@ -145,6 +145,17 @@
          | list | items2dict }}
   no_log: true
 
+- name: Collect DNS provider module names
+  ansible.builtin.set_fact:
+    _caddy_dns_provider_names: >-
+      {%- set result = _caddy_dns_domains
+            | map(attribute='dns_challenge.provider') | list -%}
+      {%- for provider in _caddy_public_dns_provider_names -%}
+      {%- if provider not in result -%}{%- set _ = result.append(provider) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ result | unique | list }}
+  no_log: true
+
 - name: Validate DNS-challenge resolver path
   ansible.builtin.assert:
     that:
@@ -171,17 +182,37 @@
     cmd: caddy list-modules
   register: _caddy_modules
   changed_when: false
-  when: _caddy_dns_domains | length > 0
+  when: _caddy_dns_provider_names | length > 0 or _caddy_public_dns_enabled_estates | length > 0
 
 - name: Install missing DNS provider modules
   ansible.builtin.command:
     cmd: "caddy add-package github.com/caddy-dns/{{ item }}"
-  loop: >-
-    {{ _caddy_dns_domains | map(attribute='dns_challenge.provider')
-       | unique | list }}
+  loop: "{{ _caddy_dns_provider_names }}"
   when:
-    - _caddy_dns_domains | length > 0
+    - _caddy_dns_provider_names | length > 0
     - ('dns.providers.' ~ item) not in _caddy_modules.stdout | default('')
+  changed_when: true
+  notify: Restart caddy
+
+- name: Install pinned Caddy dynamic DNS module
+  ansible.builtin.command:
+    cmd: >-
+      caddy add-package
+      github.com/mholt/caddy-dynamicdns@v0.0.0-20260805195708-67d107a42c02
+  when:
+    - _caddy_public_dns_enabled_estates | length > 0
+    - "'dynamic_dns' not in _caddy_modules.stdout | default('')"
+  changed_when: true
+  notify: Restart caddy
+
+- name: Install pinned Caddy static DNS records module for CNAME sources
+  ansible.builtin.command:
+    cmd: >-
+      caddy add-package
+      github.com/SvenDowideit/caddy-host-dns/dnsrec@v0.0.0-20261018020852-ed6a941fc8cc
+  when:
+    - _caddy_dns_records_enabled | bool
+    - "'dns_records' not in _caddy_modules.stdout | default('')"
   changed_when: true
   notify: Restart caddy
 
@@ -282,7 +313,7 @@
              'tls': {'automation': {'policies':
                (_caddy_dns_policies | default([])) + [{'issuers': [_caddy_issuer]}]}}
                | combine(_caddy_certificates),
-           },
+           } | combine(_caddy_public_dns_apps, recursive=True),
          } }}
   vars:
     _caddy_certificates: >-
@@ -390,6 +421,81 @@
   retries: 30
   delay: 5
   changed_when: false
+
+# Reconcile only the two public DNS app paths this role owns. An unchanged GET
+# response is a no-op; the provider API is called only when the desired Caddy app
+# configuration changes (or when the CNAME app is first added).
+- name: Read the running Caddy dynamic DNS app
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dynamic_dns"
+    status_code: [200, 404]
+    return_content: true
+  register: _caddy_dynamic_dns_running
+  changed_when: false
+  no_log: true
+
+- name: Reconcile the Caddy dynamic DNS app
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dynamic_dns"
+    method: POST
+    body_format: json
+    body: "{{ _caddy_public_dns_apps.dynamic_dns }}"
+    status_code: 200
+  when:
+    - _caddy_dynamic_dns_enabled | bool
+    - >-
+      _caddy_dynamic_dns_running.status != 200
+      or (_caddy_dynamic_dns_running.json | default(None))
+         != _caddy_public_dns_apps.dynamic_dns
+  changed_when: true
+  no_log: true
+
+- name: Remove the Caddy dynamic DNS app when no estate uses it
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dynamic_dns"
+    method: DELETE
+    status_code: 200
+  when:
+    - not (_caddy_dynamic_dns_enabled | bool)
+    - _caddy_dynamic_dns_running.status == 200
+  changed_when: true
+  no_log: true
+
+- name: Read the running Caddy static DNS records app
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dns_records"
+    status_code: [200, 404]
+    return_content: true
+  register: _caddy_dns_records_running
+  changed_when: false
+  no_log: true
+
+- name: Reconcile CNAME records through the estate DNS providers
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dns_records"
+    method: POST
+    body_format: json
+    body: "{{ _caddy_public_dns_apps.dns_records }}"
+    status_code: 200
+  when:
+    - _caddy_dns_records_enabled | bool
+    - >-
+      _caddy_dns_records_running.status != 200
+      or (_caddy_dns_records_running.json | default(None))
+         != _caddy_public_dns_apps.dns_records
+  changed_when: true
+  no_log: true
+
+- name: Remove the Caddy static DNS records app when no estate uses it
+  ansible.builtin.uri:
+    url: "http://{{ _caddy_bind_ip }}:{{ app_config.app.port }}/config/apps/dns_records"
+    method: DELETE
+    status_code: 200
+  when:
+    - not (_caddy_dns_records_enabled | bool)
+    - _caddy_dns_records_running.status == 200
+  changed_when: true
+  no_log: true
 
 # ── Reconcile the subtrees this role owns ─────────────────────────────────────
 - name: Read the running http server config
