@@ -325,6 +325,10 @@ configure_backup_refresh = task(configure, "PBS | Refresh managed backup job fro
 assert configure_backup_refresh["ansible.builtin.include_tasks"] == "../proxmox/refresh-backup-job.yml"
 assert configure_backup_refresh["vars"]["backup_job_create_if_missing"] is True
 refresh_backup_job = load_yaml("ansible/tasks/proxmox/refresh-backup-job.yml")
+assert not any(
+    item.get("name") == "PBS backup | Require at least one eligible managed guest"
+    for item in refresh_backup_job
+)
 assert "managed by homelab-infra" in str(
     task(refresh_backup_job, "PBS backup | Resolve PVE connection and schedule")[
         "ansible.builtin.set_fact"
@@ -357,6 +361,49 @@ selected_vmids = selector_env.from_string(vmid_expression).render(
     _backup_job_pbs_instance="pbs",
 )
 assert selected_vmids == "10,15", selected_vmids
+assert selector_env.from_string(vmid_expression).render(
+    _backup_job_guests={"json": {"data": []}},
+    _backup_job_pbs_instance="pbs",
+) == ""
+
+
+def ansible_when_value(condition, context):
+    rendered = selector_env.from_string("{{ " + condition + " }}").render(**context)
+    return yaml.safe_load(rendered)
+
+
+disable_empty_job = task(
+    refresh_backup_job,
+    "PBS backup | Disable the managed job when no guests are eligible",
+)
+assert disable_empty_job["ansible.builtin.uri"]["body"] == {"enabled": 0}
+assert disable_empty_job["when"] == [
+    "_backup_job_id | length > 0",
+    "_backup_job_vmids | length == 0",
+    "_backup_job.enabled | default(1) | int != 0",
+]
+empty_existing_job = {
+    "_backup_job_id": "nightly",
+    "_backup_job_vmids": "",
+    "_backup_job": {"enabled": 1},
+}
+empty_missing_job = {
+    "_backup_job_id": "",
+    "_backup_job_vmids": "",
+    "_backup_job": {},
+}
+assert all(
+    ansible_when_value(condition, empty_existing_job)
+    for condition in disable_empty_job["when"]
+)
+assert not all(
+    ansible_when_value(condition, empty_missing_job)
+    for condition in disable_empty_job["when"]
+)
+assert not ansible_when_value(
+    disable_empty_job["when"][2],
+    {"_backup_job_id": "nightly", "_backup_job_vmids": "", "_backup_job": {"enabled": 0}},
+)
 
 for lifecycle_file in (
     "ansible/tasks/proxmox/lxc-create.yml",
@@ -391,6 +438,7 @@ assert restore_refresh["when"] == ["_rg_execute | bool", "_rg_destination == 'ne
 for api_task_name in (
     "PBS backup | Read current Proxmox guest resources",
     "PBS backup | Read configured Proxmox backup jobs",
+    "PBS backup | Disable the managed job when no guests are eligible",
     "PBS backup | Create the managed backup job",
     "PBS backup | Refresh the managed backup job",
 ):
@@ -402,11 +450,20 @@ assert task(refresh_backup_job, "PBS backup | Read configured Proxmox backup job
 assert task(refresh_backup_job, "PBS backup | Create the managed backup job")["when"][-1] == (
     "backup_job_create_if_missing | default(false) | bool"
 )
+assert "_backup_job_vmids | length > 0" in task(
+    refresh_backup_job, "PBS backup | Create the managed backup job"
+)["when"]
+assert not ansible_when_value(
+    task(refresh_backup_job, "PBS backup | Create the managed backup job")["when"][0],
+    empty_missing_job,
+)
 assert task(refresh_backup_job, "PBS backup | Create the managed backup job")[
     "ansible.builtin.uri"
 ]["body"]["vmid"] == "{{ _backup_job_vmids }}"
 refresh_job_update = task(refresh_backup_job, "PBS backup | Refresh the managed backup job")
 assert refresh_job_update["when"][-1] == "_backup_job_needs_update | bool"
+assert "_backup_job_vmids | length > 0" in refresh_job_update["when"]
+assert not ansible_when_value(refresh_job_update["when"][0], empty_missing_job)
 assert refresh_job_update["ansible.builtin.uri"]["body"]["vmid"] == "{{ _backup_job_vmids }}"
 assert task(configure, "PBS | Read current datastore configuration")["register"] == "_pbs_datastore_config"
 policy_defaults = task(configure, "PBS | Resolve effective retention and schedules")["ansible.builtin.set_fact"]

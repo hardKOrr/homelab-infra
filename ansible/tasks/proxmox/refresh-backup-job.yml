@@ -4,6 +4,8 @@
 # shared guest create/destroy seams. PBS configuration sets
 # backup_job_create_if_missing=true; ordinary guest lifecycle calls only update an
 # existing managed job, so application Deploy still works before PBS is configured.
+# When no guests are eligible, do not create a job; disable an existing managed job
+# until an eligible guest is created again.
 #
 # Inputs:
 #   homelabinfra_config.proxmox.* — PVE API connection
@@ -69,13 +71,6 @@
   no_log: true
   changed_when: false
 
-- name: PBS backup | Require at least one eligible managed guest
-  ansible.builtin.assert:
-    that: _backup_job_vmids | length > 0
-    fail_msg: >-
-      Proxmox reported no eligible _+lab guest VMIDs. Refusing to leave a stale backup
-      job or create an empty one.
-
 - name: PBS backup | Read configured Proxmox backup jobs
   ansible.builtin.uri:
     url: "{{ _backup_job_url }}/cluster/backup"
@@ -125,6 +120,23 @@
   no_log: true
   changed_when: false
 
+- name: PBS backup | Disable the managed job when no guests are eligible
+  ansible.builtin.uri:
+    url: "{{ _backup_job_url }}/cluster/backup/{{ _backup_job_id }}"
+    method: PUT
+    headers: "{{ _backup_job_headers }}"
+    body_format: form-urlencoded
+    body:
+      enabled: 0
+    validate_certs: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when:
+    - _backup_job_id | length > 0
+    - _backup_job_vmids | length == 0
+    - _backup_job.enabled | default(1) | int != 0
+
 - name: PBS backup | Create the managed backup job
   ansible.builtin.uri:
     url: "{{ _backup_job_url }}/cluster/backup"
@@ -143,6 +155,7 @@
   become: false
   no_log: true
   when:
+    - _backup_job_vmids | length > 0
     - _backup_job_id | length == 0
     - backup_job_create_if_missing | default(false) | bool
 
@@ -164,5 +177,6 @@
   become: false
   no_log: true
   when:
+    - _backup_job_vmids | length > 0
     - _backup_job_id | length > 0
     - _backup_job_needs_update | bool
