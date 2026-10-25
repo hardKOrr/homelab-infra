@@ -13,6 +13,14 @@ x-mautic-env: &mautic-env
   MAUTIC_DB_DATABASE: "{{ app_config.app.database.name }}"
   MAUTIC_DB_USER: "{{ app_config.app.database_user }}"
   MAUTIC_DB_PASSWORD: "{{ app_config.app.database_password }}"
+  # Follow docker-mautic's basic example: email and hit use Doctrine. Mautic 6
+  # documents sync:// as the default and Doctrine as a consumable queue. This worker
+  # also consumes failed, so all three transports need the same consumable backend.
+  # https://github.com/mautic/docker-mautic/blob/main/examples/basic/.mautic_env
+  # https://docs.mautic.org/en/6.0/configuration/settings.html#queue-settings
+  MAUTIC_MESSENGER_DSN_EMAIL: doctrine://default
+  MAUTIC_MESSENGER_DSN_HIT: doctrine://default
+  MAUTIC_MESSENGER_DSN_FAILED: doctrine://default
 
 x-mautic-volumes: &mautic-volumes
   - "{{ mautic_config_dir }}:/var/www/html/config"
