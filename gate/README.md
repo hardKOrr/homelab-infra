@@ -35,7 +35,7 @@ templates.
 
 - `test-allocate-ip.sh`: address allocation, exclusions and exhaustion.
 - `test-vmid-from-ip.sh`: Bash/Jinja VMID agreement and valid VMID range.
-- `test-config.py`: Config Doctor, precedence, estates, mail, provider gates and networks.
+- `test-config.py`: Config Doctor, precedence, estates, mail, public DNS validation, provider gates and networks.
 - `test-kometa-config.py`: optional operator-owned collection YAML stays in the Kubernetes Secret and mounts read-only only when configured.
 - `test-database-facts.py`: generated database registry cleanup, PostgreSQL privilege/extension setup and delete/redeploy cluster lifecycle.
 - `test-rundeck-yaml.py`: rendered jobs, YAML aliases, estate options and instance publishing.

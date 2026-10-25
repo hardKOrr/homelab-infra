@@ -37,6 +37,9 @@
 # Exports (read by Play 3 to write the reverse_proxy registry key):
 #   caddy_admin_host, caddy_admin_port
 
+- name: Validate public DNS config
+  ansible.builtin.include_tasks: public-dns-contract.yml
+
 # ── Install ───────────────────────────────────────────────────────────────────
 - name: Install apt repository prerequisites
   ansible.builtin.apt:

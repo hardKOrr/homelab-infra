@@ -1,0 +1,49 @@
+---
+# Resolve and validate the per-estate contract only. Public DNS record creation is
+# intentionally implemented by the follow-up dynamic-DNS work, not by this task.
+- name: Resolve public DNS config beside each estate DNS challenge
+  ansible.builtin.set_fact:
+    _caddy_public_dns_estates: "{{ _caddy_public_dns_estates_json | from_json }}"
+  vars:
+    _caddy_public_dns_estates_json: >-
+      {%- set result = [] -%}
+      {%- for estate in (homelabinfra_config.infrastructure.domains | default({}) | dict2items) -%}
+      {%- if estate.value.public_dns is defined -%}
+      {%- set challenge = estate.value.dns_challenge | default({}) -%}
+      {%- set public_dns = estate.value.public_dns -%}
+      {%- if public_dns is mapping -%}
+      {%- set public_dns = {
+            'enabled': false,
+            'provider': (challenge.provider | default('') if challenge is mapping else ''),
+            'ttl': 300,
+            'families': ['ipv4'],
+            'proxied': false,
+            'adopt_existing': false,
+            'allow_private': false
+          } | combine(public_dns, recursive=True) -%}
+      {%- endif -%}
+      {%- set challenge_values = challenge | dict2items if challenge is mapping else [] -%}
+      {%- set credentials = challenge_values
+            | rejectattr('key', 'in', ['provider', 'resolvers', 'ttl', 'propagation_delay',
+                                      'propagation_timeout', 'override_domain'])
+            | selectattr('value', 'truthy') | list -%}
+      {%- set _ = result.append({
+            'name': estate.key,
+            'domain': estate.value.domain | default(''),
+            'dns_challenge_provider': (challenge.provider | default('')
+                                       if challenge is mapping else ''),
+            'has_dns_challenge_credentials': credentials | length > 0,
+            'public_dns': public_dns
+          }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ result | to_json }}
+  no_log: true
+
+- name: Validate public DNS config
+  ansible.builtin.assert:
+    that:
+      - _caddy_public_dns_errors | length == 0
+    fail_msg: "{{ _caddy_public_dns_errors | first | default('Invalid public DNS configuration.') }}"
+  vars:
+    _caddy_public_dns_errors: "{{ _caddy_public_dns_estates | public_dns_errors }}"
