@@ -34,26 +34,33 @@
   changed_when: false
   no_log: true
 
+- name: Forgejo Runner | Query Forgejo-specific API version
+  ansible.builtin.uri:
+    url: "{{ app_config.app.forgejo_url | regex_replace('/+$', '') }}/api/forgejo/v1/version"
+    method: GET
+    status_code: 200
+    return_content: true
+  register: _forgejo_runner_forgejo_version_response
+  failed_when: false
+  changed_when: false
+  when: _forgejo_runner_version_response.status | default(0) != 200
+  no_log: true
+
 - name: Forgejo Runner | Parse Forgejo API version
   ansible.builtin.set_fact:
     _forgejo_runner_server_version: >-
-      {{ (_forgejo_runner_version_response.json | default({})).version | default('') }}
+      {{ ((_forgejo_runner_version_response.json | default({}))
+          if _forgejo_runner_version_response.status | default(0) == 200
+          else (_forgejo_runner_forgejo_version_response.json | default({})))
+         .version | default('') }}
     _forgejo_runner_server_major: >-
-      {{ ((_forgejo_runner_version_response.json | default({})).version | default('')
+      {{ ((((_forgejo_runner_version_response.json | default({}))
+           if _forgejo_runner_version_response.status | default(0) == 200
+           else (_forgejo_runner_forgejo_version_response.json | default({})))
+          .version | default(''))
           | regex_search('^[0-9]+'))
          | default('0', true) | int }}
   no_log: true
-
-- name: Forgejo Runner | Require Forgejo API version
-  ansible.builtin.assert:
-    that:
-      - _forgejo_runner_version_response.status | default(0) == 200
-      - _forgejo_runner_server_version | length > 0
-    fail_msg: >-
-      Cannot reconcile {{ instance }} registration: the configured Forgejo endpoint
-      did not return its API version (HTTP {{ _forgejo_runner_version_response.status
-      | default(0) }}; version field found:
-      {{ _forgejo_runner_server_version | length > 0 }}).
 
 - name: Forgejo Runner | Build registration API scopes
   ansible.builtin.set_fact:
