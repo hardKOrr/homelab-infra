@@ -2,8 +2,11 @@
 """Run the guarded native LXC destroy path with local Proxmox command stubs."""
 
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
+import ssl
 import subprocess
+import threading
 import tempfile
 from pathlib import Path
 
@@ -20,6 +23,47 @@ def main():
         bindir = root / "bin"
         bindir.mkdir()
         calls = root / "calls.jsonl"
+
+        cert = root / "pve-test.crt"
+        key = root / "pve-test.key"
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost",
+                "-days", "1",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        api_requests = []
+
+        class PveApiHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                api_requests.append(self.path)
+                if self.path == "/api2/json/cluster/resources?type=vm":
+                    data = {"data": [{"vmid": 999, "tags": "_+lab;_other", "template": 0}]}
+                elif self.path == "/api2/json/cluster/backup":
+                    data = {"data": []}
+                else:
+                    self.send_error(404)
+                    return
+                body = json.dumps(data).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                return
+
+        api_server = ThreadingHTTPServer(("127.0.0.1", 0), PveApiHandler)
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(cert, key)
+        api_server.socket = tls.wrap_socket(api_server.socket, server_side=True)
+        api_thread = threading.Thread(target=api_server.serve_forever, daemon=True)
+        api_thread.start()
 
         pvesh = bindir / "pvesh"
         pvesh.write_text(
@@ -74,6 +118,10 @@ def main():
                                 "proxmox": {
                                     "node": "test-node",
                                     "api_host": "127.0.0.1",
+                                    "api_port": api_server.server_port,
+                                    "api_user": "test-user",
+                                    "api_token_id": "test-token",
+                                    "api_token_secret": "test-secret",
                                     "nodes": {"test-node": "127.0.0.1"},
                                 },
                                 "ansible": {"ssh_user": "root"},
@@ -149,6 +197,10 @@ def main():
                         "proxmox": {
                             "node": "test-node",
                             "api_host": "127.0.0.1",
+                            "api_port": api_server.server_port,
+                            "api_user": "test-user",
+                            "api_token_id": "test-token",
+                            "api_token_secret": "test-secret",
                             "nodes": {"test-node": "127.0.0.1"},
                         },
                         "ansible": {"ssh_user": "root"},
@@ -182,6 +234,15 @@ def main():
         assert vm_requests[4][1:] == ["shutdown", "456", "--timeout", "60"], vm_requests
         assert vm_requests[6][1:] == ["destroy", "456", "--purge", "1"], vm_requests
         assert vm_requests[7][2:4] == ["/cluster/resources", "--type"], vm_requests
+
+        expected_api_reads = [
+            "/api2/json/cluster/resources?type=vm",
+            "/api2/json/cluster/backup",
+        ] * 2
+        assert api_requests == expected_api_reads, api_requests
+        api_server.shutdown()
+        api_server.server_close()
+        api_thread.join(timeout=5)
     print("Owned LXC and VM destruction: registered-node delegation and ownership checks passed")
 
 

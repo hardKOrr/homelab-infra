@@ -5,6 +5,7 @@ import json
 import importlib.util
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -320,7 +321,93 @@ assert ".server == _pbs_pve_server" in str(storage_check["ansible.builtin.assert
 assert ".datastore == _pbs_datastore" in str(storage_check["ansible.builtin.assert"]["that"])
 assert "datastore" in str(task(configure, "PBS | Validate the existing PVE storage identity"))
 assert "pbs_token_rotated" in str(task(configure, "PBS | Decide whether the PVE storage entry needs repair"))
-assert "_backup_job_needs_update" in str(task(configure, "PBS | Refresh existing backup job (vmid list + schedule)")["when"])
+configure_backup_refresh = task(configure, "PBS | Refresh managed backup job from current guests")
+assert configure_backup_refresh["ansible.builtin.include_tasks"] == "../proxmox/refresh-backup-job.yml"
+assert configure_backup_refresh["vars"]["backup_job_create_if_missing"] is True
+refresh_backup_job = load_yaml("ansible/tasks/proxmox/refresh-backup-job.yml")
+assert "managed by homelab-infra" in str(
+    task(refresh_backup_job, "PBS backup | Resolve PVE connection and schedule")[
+        "ansible.builtin.set_fact"
+    ]["_backup_job_comment"]
+)
+vmid_selector = task(refresh_backup_job, "PBS backup | Build the exact managed guest VMID list")
+vmid_expression = vmid_selector["ansible.builtin.set_fact"]["_backup_job_vmids"]
+assert "_+lab" in vmid_expression
+assert "regex_escape" in vmid_expression
+assert "rejectattr('template', 'equalto', 1)" in vmid_expression
+assert "_backup_job_pbs_instance" in vmid_expression
+assert "map(attribute='vmid') | sort | join(',')" in vmid_expression
+
+# The selector uses exact tag boundaries: similarly prefixed tags and guests with no
+# ownership tag must never enter the VMID list. Templates and the PBS instance retain
+# their intentional exclusions.
+selector_fixtures = [
+    {"vmid": 10, "tags": "_+lab;_redis", "template": 0},
+    {"vmid": 11, "tags": "_+labsomething;_redis", "template": 0},
+    {"vmid": 12, "tags": "_redis", "template": 0},
+    {"vmid": 13, "tags": "_+lab;_.template", "template": 1},
+    {"vmid": 14, "tags": "_+lab;_pbs", "template": 0},
+    {"vmid": 15, "tags": "_redis;_+lab", "template": 0},
+]
+selector_env = Environment(undefined=StrictUndefined)
+selector_env.filters["regex_escape"] = re.escape
+selector_env.tests["search"] = lambda value, pattern: re.search(pattern, value) is not None
+selected_vmids = selector_env.from_string(vmid_expression).render(
+    _backup_job_guests={"json": {"data": selector_fixtures}},
+    _backup_job_pbs_instance="pbs",
+)
+assert selected_vmids == "10,15", selected_vmids
+
+for lifecycle_file in (
+    "ansible/tasks/proxmox/lxc-create.yml",
+    "ansible/tasks/proxmox/vm-create.yml",
+    "ansible/tasks/proxmox/vm-clone.yml",
+    "ansible/tasks/proxmox/destroy-owned-lxc.yml",
+    "ansible/tasks/proxmox/destroy-owned-vm.yml",
+):
+    lifecycle_tasks = load_yaml(lifecycle_file)
+    assert any(
+        item.get("ansible.builtin.include_tasks") == "refresh-backup-job.yml"
+        for item in lifecycle_tasks
+    ), lifecycle_file
+
+installer_create = load_yaml("ansible/tasks/proxmox/create-installer-vm.yml")
+assert any(
+    item.get("ansible.builtin.include_tasks") == "refresh-backup-job.yml"
+    for item in installer_create
+)
+restore_playbook = load_yaml("ansible/playbooks/maintenance/restore-guest.yml")
+restore_block = task(
+    restore_playbook[0]["tasks"], "Restore the guest without activating the target"
+)["block"]
+restore_refresh = task(
+    restore_block, "Refresh PBS backup VMIDs after restoring a new managed guest"
+)
+assert restore_refresh["ansible.builtin.include_tasks"] == (
+    "../../tasks/proxmox/refresh-backup-job.yml"
+)
+assert restore_refresh["when"] == ["_rg_execute | bool", "_rg_destination == 'new'"]
+
+for api_task_name in (
+    "PBS backup | Read current Proxmox guest resources",
+    "PBS backup | Read configured Proxmox backup jobs",
+    "PBS backup | Create the managed backup job",
+    "PBS backup | Refresh the managed backup job",
+):
+    api_task = task(refresh_backup_job, api_task_name)
+    assert api_task["delegate_to"] == "localhost", api_task_name
+    assert api_task["become"] is False, api_task_name
+assert task(refresh_backup_job, "PBS backup | Read current Proxmox guest resources")["changed_when"] is False
+assert task(refresh_backup_job, "PBS backup | Read configured Proxmox backup jobs")["changed_when"] is False
+assert task(refresh_backup_job, "PBS backup | Create the managed backup job")["when"][-1] == (
+    "backup_job_create_if_missing | default(false) | bool"
+)
+assert task(refresh_backup_job, "PBS backup | Create the managed backup job")[
+    "ansible.builtin.uri"
+]["body"]["vmid"] == "{{ _backup_job_vmids }}"
+refresh_job_update = task(refresh_backup_job, "PBS backup | Refresh the managed backup job")
+assert refresh_job_update["when"][-1] == "_backup_job_needs_update | bool"
+assert refresh_job_update["ansible.builtin.uri"]["body"]["vmid"] == "{{ _backup_job_vmids }}"
 assert task(configure, "PBS | Read current datastore configuration")["register"] == "_pbs_datastore_config"
 policy_defaults = task(configure, "PBS | Resolve effective retention and schedules")["ansible.builtin.set_fact"]
 assert "homelabinfra_config.infrastructure.backups.retention" in policy_defaults["_pbs_retention"]

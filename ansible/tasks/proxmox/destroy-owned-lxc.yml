@@ -128,3 +128,6 @@
     fail_msg: >-
       Proxmox still reports the destroyed native guest; inspect its configuration before
       deploying a replacement.
+
+- name: Refresh the PBS backup job after destroying the LXC
+  ansible.builtin.include_tasks: refresh-backup-job.yml

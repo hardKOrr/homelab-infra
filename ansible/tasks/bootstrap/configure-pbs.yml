@@ -572,114 +572,10 @@
       API token. PBS deployment cannot report success while scheduled backups are unable
       to reach the datastore.
 
-- name: PBS | Collect vmids of guests tagged _+lab
-  ansible.builtin.uri:
-    url: "{{ _pve_url }}/cluster/resources?type=vm"
-    headers: "{{ _pve_headers }}"
-    validate_certs: false
-  register: _pve_guests
-
-- name: PBS | Set backup job facts
-  ansible.builtin.set_fact:
-    # Templates are excluded even though they carry the ownership tag. That tag is what
-    # lets tasks/proxmox/ensure-cloud-template.yml recognise its own template rather than
-    # adopting a stranger's, so a template is legitimately "ours" — but it is not a guest
-    # to back up. It never changes, and it is rebuildable from its image URL by deleting it
-    # and re-running, which is exactly what that task documents. Without this the nightly
-    # job carried the 3 GB cloud-init template forever.
-    #
-    # This PBS instance is excluded from its own job, matched by its application tag
-    # `_<instance>` — every guest this platform creates carries the tag of each application
-    # its hosting unit hosts, and for a native VM that is its own instance. A snapshot
-    # of the PBS VM stored inside that VM's own datastore cannot restore it, and the
-    # attempt does not even complete: QEMU's backup stream to the datastore it is
-    # snapshotting times out ("http upgrade request timed out"), failing the nightly
-    # job every night. A second PBS instance under a different name is still included.
-    _backup_vmids: >-
-      {{ _pve_guests.json.data
-         | selectattr('tags', 'defined')
-         | selectattr('tags', 'search', '(^|;)' ~ ('_+lab' | regex_escape) ~ '(;|$)')
-         | rejectattr('template', 'equalto', 1)
-         | rejectattr('tags', 'search', '(^|;)' ~ (('_' ~ pbs_instance) | regex_escape) ~ '(;|$)')
-         | map(attribute='vmid') | sort | join(',') }}
-    # infrastructure.yml keywords → PVE calendar events; custom values pass through
-    _backup_schedule: >-
-      {{ {'daily': '02:00', 'weekly': 'sun 02:00'}.get(_schedule_raw, _schedule_raw) }}
+- name: PBS | Refresh managed backup job from current guests
+  ansible.builtin.include_tasks: ../proxmox/refresh-backup-job.yml
   vars:
-    _schedule_raw: "{{ homelabinfra_config.infrastructure.backups.schedule | default('daily') }}"
-
-- name: PBS | List existing PVE backup jobs
-  ansible.builtin.uri:
-    url: "{{ _pve_url }}/cluster/backup"
-    headers: "{{ _pve_headers }}"
-    validate_certs: false
-  register: _pve_backup_jobs
-
-- name: PBS | Find our backup job (by comment marker)
-  ansible.builtin.set_fact:
-    _backup_job_matches: >-
-      {{ _pve_backup_jobs.json.data
-         | selectattr('comment', 'defined')
-         | selectattr('comment', 'search', 'managed by homelab-infra')
-         | list }}
-
-- name: PBS | Reject duplicate managed backup jobs
-  ansible.builtin.assert:
-    that: _backup_job_matches | length <= 1
-    fail_msg: >-
-      PVE has multiple managed PBS backup jobs. Refusing to update an arbitrary job.
-
-- name: PBS | Resolve managed backup job state
-  ansible.builtin.set_fact:
-    _backup_job: "{{ _backup_job_matches | first | default({}) }}"
-    _backup_job_id: "{{ (_backup_job_matches | first | default({})).id | default('') }}"
-
-- name: PBS | Detect backup job drift
-  ansible.builtin.set_fact:
-    _backup_job_needs_update: >-
-      {{ _backup_job_id | length > 0
-         and (
-           (_backup_job.schedule | default('') != _backup_schedule)
-           or ((_backup_job.vmid | default('') | string) != (_backup_vmids | string))
-           or (_backup_job.storage | default('') != 'pbs-homelab')
-           or (_backup_job.mode | default('') != 'snapshot')
-           or (_backup_job.enabled | default(0) | int != 1)
-         ) }}
-
-- name: PBS | Create backup job for tagged guests
-  ansible.builtin.uri:
-    url: "{{ _pve_url }}/cluster/backup"
-    method: POST
-    headers: "{{ _pve_headers }}"
-    body_format: form-urlencoded
-    body:
-      storage: pbs-homelab
-      schedule: "{{ _backup_schedule }}"
-      vmid: "{{ _backup_vmids }}"
-      mode: snapshot
-      enabled: 1
-      comment: managed by homelab-infra — vmid list refreshed on bootstrap re-run
-    validate_certs: false
-  when:
-    - _backup_job_id | length == 0
-    - _backup_vmids | length > 0
-
-- name: PBS | Refresh existing backup job (vmid list + schedule)
-  ansible.builtin.uri:
-    url: "{{ _pve_url }}/cluster/backup/{{ _backup_job_id }}"
-    method: PUT
-    headers: "{{ _pve_headers }}"
-    body_format: form-urlencoded
-    body:
-      storage: pbs-homelab
-      schedule: "{{ _backup_schedule }}"
-      vmid: "{{ _backup_vmids }}"
-      mode: snapshot
-      enabled: 1
-    validate_certs: false
-  when:
-    - _backup_job_needs_update | bool
-    - _backup_vmids | length > 0
+    backup_job_create_if_missing: true
 
 # ── Confirm + record ──────────────────────────────────────────────────────────
 
@@ -696,8 +592,8 @@
                    else {}) }}
     body: >-
       Datastore '{{ _pbs_datastore }}' ready; backup job covers
-      {{ _backup_vmids | split(',') | length if _backup_vmids | length > 0 else 0 }}
-      guest(s) on schedule '{{ _backup_schedule }}'. PBS notifications route to
+      {{ _backup_job_vmids | split(',') | length }}
+      guest(s) on schedule '{{ _backup_job_schedule }}'. PBS notifications route to
       this topic.
     body_format: raw
   changed_when: false
