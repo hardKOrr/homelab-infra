@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
@@ -31,14 +32,16 @@ class RunnerApiState:
         self.version_endpoint = version_endpoint
         self.deletes = []
         self.authorizations = []
+        self.registration_requests = []
 
 
 class RunnerApi(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         state = self.server.state
-        parts = self.path.strip("/").split("/")
-        if self.path in {"/api/v1/version", "/api/forgejo/v1/version"}:
-            if state.version is None or self.path != state.version_endpoint:
+        parsed_url = urlsplit(self.path)
+        parts = parsed_url.path.strip("/").split("/")
+        if parsed_url.path in {"/api/v1/version", "/api/forgejo/v1/version"}:
+            if state.version is None or parsed_url.path != state.version_endpoint:
                 self.send_error(404)
                 return
             body = json.dumps({"version": state.version}).encode()
@@ -53,12 +56,19 @@ class RunnerApi(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
             return
         scope = parts[2]
+        query = parse_qs(parsed_url.query)
+        page = int(query.get("page", ["1"])[0])
+        limit = int(query.get("limit", ["50"])[0])
+        state.registration_requests.append((scope, page, limit))
         if scope in state.fail_scopes:
             self.send_error(403)
             return
-        body = json.dumps({"runners": state.registrations_by_scope.get(scope, [])}).encode()
+        runners = state.registrations_by_scope.get(scope, [])
+        start = (page - 1) * limit
+        body = json.dumps(runners[start:start + limit]).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("X-Total-Count", str(len(runners)))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -67,7 +77,7 @@ class RunnerApi(http.server.BaseHTTPRequestHandler):
         state = self.server.state
         state.authorizations.append(self.headers.get("Authorization", ""))
         state.deletes.append(self.path)
-        parts = self.path.strip("/").split("/")
+        parts = urlsplit(self.path).path.strip("/").split("/")
         if len(parts) == 6 and parts[:2] == ["api", "v1"] and parts[3:5] == ["actions", "runners"]:
             scope, runner_id = parts[2], parts[5]
             if any(
@@ -229,7 +239,7 @@ esac
 
 def run_reconciliation(marker_url, marker_token, current_token, registrations, expected_deletes,
                        keep_local_registration, fail_scopes=None, server_version="16.0.0",
-                       version_endpoint="/api/v1/version"):
+                       version_endpoint="/api/v1/version", expected_list_pages=None):
     state = RunnerApiState(
         {"user": [], "admin": registrations},
         fail_scopes=fail_scopes,
@@ -307,11 +317,19 @@ def run_reconciliation(marker_url, marker_token, current_token, registrations, e
             assert "fixture-admin-token" not in output
             assert "saved-runner-secret" not in output
         expected_authorizations = (
-            ["token fixture-admin-token"] * (1 + len(expected_deletes))
+            ["token fixture-admin-token"]
+            * (len(state.registration_requests) + len(expected_deletes))
             if server_version is not None and int(server_version.split(".", 1)[0]) >= 16
             else []
         )
         assert state.authorizations == expected_authorizations, state.authorizations
+        if expected_list_pages is None:
+            expected_list_pages = (
+                [("admin", 1, 50)]
+                if server_version is not None and int(server_version.split(".", 1)[0]) >= 16
+                else []
+            )
+        assert state.registration_requests == expected_list_pages, state.registration_requests
     finally:
         server.shutdown()
         thread.join()
@@ -333,6 +351,25 @@ def check_registration_reconciliation():
         ],
         ["/api/v1/admin/actions/runners/43"],
         True,
+    )
+
+    # Registrations and duplicates beyond the first Forgejo API page are included.
+    paged_registrations = [
+        {"id": runner_id, "name": f"other-runner-{runner_id}"}
+        for runner_id in range(1, 51)
+    ] + [
+        {"id": 41, "name": "forgejo-runner"},
+        {"id": 43, "name": "forgejo-runner"},
+        {"id": 42, "name": "other-runner"},
+    ]
+    run_reconciliation(
+        None,
+        current_token,
+        current_token,
+        paged_registrations,
+        ["/api/v1/admin/actions/runners/43"],
+        True,
+        expected_list_pages=[("admin", 1, 50), ("admin", 2, 50)],
     )
 
     # A registration-token change removes only this runner's old server registration.

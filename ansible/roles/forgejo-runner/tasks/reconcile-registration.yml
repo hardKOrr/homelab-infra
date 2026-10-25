@@ -123,11 +123,11 @@
           ~ (app_config.app.labels | hash('sha256'))) | hash('sha256') }}
   no_log: true
 
-- name: Forgejo Runner | Query existing scoped registrations
+- name: Forgejo Runner | Query first page of existing scoped registrations
   ansible.builtin.uri:
     url: >-
       {{ app_config.app.forgejo_url | regex_replace('/+$', '')
-         }}/api/v1/{{ item.scope }}/actions/runners
+         }}/api/v1/{{ item.scope }}/actions/runners?limit=50&page=1
     method: GET
     headers:
       Authorization: "token {{ item.token }}"
@@ -135,6 +135,45 @@
     return_content: true
   loop: "{{ _forgejo_runner_api_scopes }}"
   register: _forgejo_runner_registration_lists
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Forgejo Runner | Require pagination totals for registration lists
+  ansible.builtin.assert:
+    that:
+      - item.status | default(0) != 200 or item.x_total_count is defined
+      - item.status | default(0) != 200 or (item.x_total_count | string) is match('^[0-9]+$')
+    fail_msg: >-
+      Cannot safely reconcile {{ instance }} registration: Forgejo returned a runner
+      list without a valid X-Total-Count pagination header.
+  loop: "{{ _forgejo_runner_registration_lists.results }}"
+  no_log: true
+
+- name: Forgejo Runner | Build remaining registration API page requests
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_pages_by_scope: >-
+      {{ _forgejo_runner_registration_pages_by_scope | default([])
+         + [{'scope': item.item.scope, 'token': item.item.token,
+            'pages': range(2, (((item.x_total_count | int) + 49) // 50) + 1) | list}] }}
+  loop: "{{ _forgejo_runner_registration_lists.results }}"
+  when: item.status | default(0) == 200
+  no_log: true
+
+- name: Forgejo Runner | Query remaining scoped registration pages
+  ansible.builtin.uri:
+    url: >-
+      {{ app_config.app.forgejo_url | regex_replace('/+$', '')
+         }}/api/v1/{{ registration_page.0.scope }}/actions/runners?limit=50&page={{ registration_page.1 }}
+    method: GET
+    headers:
+      Authorization: "token {{ registration_page.0.token }}"
+    status_code: 200
+    return_content: true
+  loop: "{{ _forgejo_runner_registration_pages_by_scope | default([]) | subelements('pages') }}"
+  loop_control:
+    loop_var: registration_page
+  register: _forgejo_runner_registration_page_responses
   failed_when: false
   changed_when: false
   no_log: true
@@ -163,6 +202,31 @@
       {{ _forgejo_runner_registration_api_status_summary | join(', ') }}.
   when: _forgejo_runner_server_major | int >= 16
 
+- name: Forgejo Runner | Require all registration API pages to be reachable
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_forgejo_runner_registration_page_responses.results | default([])
+         | selectattr('status', 'equalto', 200) | list | length)
+        == (_forgejo_runner_registration_page_responses.results | default([]) | length)
+    fail_msg: >-
+      Cannot safely reconcile {{ instance }} registration: Forgejo could not return
+      every page of the configured runner scope.
+  when: _forgejo_runner_server_major | int >= 16
+
+- name: Forgejo Runner | Normalize remaining registration pages
+  ansible.builtin.set_fact:
+    _forgejo_runner_registration_page_runners: >-
+      {{ _forgejo_runner_registration_page_runners | default([])
+         + [{'scope': response.registration_page.0.scope,
+            'runners': (response.json.runners
+                        if response.json is mapping and response.json.runners is defined
+                        else response.json | default([]))}] }}
+  loop: "{{ _forgejo_runner_registration_page_responses.results | default([]) }}"
+  loop_control:
+    loop_var: response
+  no_log: true
+
 - name: Forgejo Runner | Normalize scoped registration results
   ansible.builtin.set_fact:
     _forgejo_runner_api_scopes_with_runners: >-
@@ -170,7 +234,10 @@
          + [item.item | combine({'runners':
              (item.json.runners
               if item.json is mapping and item.json.runners is defined
-              else item.json | default([]))})] }}
+              else item.json | default([]))
+             + (_forgejo_runner_registration_page_runners | default([])
+                | selectattr('scope', 'equalto', item.item.scope)
+                | map(attribute='runners') | flatten)})] }}
   loop: "{{ _forgejo_runner_registration_lists.results }}"
   no_log: true
 
