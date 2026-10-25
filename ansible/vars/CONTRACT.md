@@ -405,7 +405,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `domains.<estate>.public_dns` | optional | turns public apex and wildcard resolution on for this estate; absent or disabled is inert |
 | `domains.<estate>.public_dns.enabled` | optional, default `false` | when enabled, publish only `<ESTATE-domain>` and `*.<ESTATE-domain>` at the lab-wide address; there are no per-app records |
 | `domains.<estate>.public_dns.provider` | optional | `github.com/caddy-dns/<provider>` module name; defaults to this estate's `dns_challenge.provider` and uses that challenge's credentials |
-| `domains.<estate>.public_dns.adopt_existing` | optional, default `false` | whether pre-existing records may be adopted; otherwise only records created by this feature may be changed |
+| `domains.<estate>.public_dns.adopt_existing` | rejected until follow-up #528 | the Caddy apps have no adoption control; the first-publish preflight will add and consume this option |
 | `domains.<estate>.public_dns` unknown keys | rejected | `ttl`, `families`, `allow_private` and `address` are lab-wide and belong in top-level `public_dns` |
 | `maintenance.boot.order` | optional | default Proxmox startup tier for a guest that declares no `proxmox.boot_order`; `50`. `none` disables boot ordering lab-wide and leaves `startup` unset on every guest |
 | `maintenance.boot.up` | optional | seconds Proxmox waits after a guest before starting the next tier; `15` |
@@ -738,7 +738,6 @@ domains:
     public_dns:                    # optional; opt-in public apex and wildcard only
       enabled: false               # absent or false leaves existing behavior unchanged
       # provider: cloudflare       # defaults to this estate's dns_challenge.provider
-      adopt_existing: false
     dns:                           # optional — which DNS provider serves THIS estate
       provider: opnsense           # pihole | adguard | opnsense | none
       host: 192.0.2.1            # non-secret half only; see below
@@ -759,9 +758,10 @@ WAN port forwards. The lab has one WAN behind one firewall, so the address setti
 lab-wide in top-level `public_dns`, like the Caddy guest itself; each estate only opts in
 and names its provider. It is off unless that estate sets `public_dns.enabled: true`; the
 DNS-01 provider credentials already loaded for that estate are reused, with no second
-token in `public_dns`. Existing records are not adopted by default; `adopt_existing: true`
-is the explicit exception. Private, loopback, link-local and CGNAT addresses are refused
-unless `allow_private: true`; inbound ports remain an explicit `firewall.inbound` choice.
+token in `public_dns`. The Caddy apps do not expose record-ownership controls, so
+`adopt_existing` is rejected until the first-publish preflight in follow-up #528 is
+implemented. Private, loopback, link-local and CGNAT addresses are refused unless
+`allow_private: true`; inbound ports remain an explicit `firewall.inbound` choice.
 
 Caddy's dynamic DNS app keeps `static` and `lookup` records current. When a provider write
 fails it logs the error but does not retry until the WAN address changes or the Caddy

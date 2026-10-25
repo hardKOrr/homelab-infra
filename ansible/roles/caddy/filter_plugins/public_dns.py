@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 
 PUBLIC_DNS_KEYS = {"ttl", "families", "allow_private", "address"}
-ESTATE_PUBLIC_DNS_KEYS = {"enabled", "provider", "adopt_existing"}
+ESTATE_PUBLIC_DNS_KEYS = {"enabled", "provider"}
 ADDRESS_KEYS = {"source", "address", "urls", "target"}
 DNS_PROVIDER_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
 HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
@@ -89,10 +89,6 @@ def _estate_public_dns(estate):
         not isinstance(provider, str) or not DNS_PROVIDER_NAME.fullmatch(provider)
     ):
         return path, None, f"{path}.provider must name a Caddy DNS-01 provider module."
-
-    adopt_existing = config.get("adopt_existing", False)
-    if not isinstance(adopt_existing, bool):
-        return path, None, f"{path}.adopt_existing must be true or false."
 
     if not enabled:
         return path, None, None

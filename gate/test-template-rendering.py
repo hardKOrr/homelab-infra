@@ -355,7 +355,7 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
             "secret_access_key": "fixture-secret-key-beta",
             "region": "fixture-region",
         },
-        "public_dns": {"enabled": True, "provider": "route53", "adopt_existing": True},
+        "public_dns": {"enabled": True, "provider": "route53"},
     }
     gamma = {"domain": "gamma.example.test", "public_dns": {"enabled": False}}
     infra = {
@@ -394,7 +394,7 @@ def caddy_public_dns_renders_each_address_source_and_provider(self):
         "alpha", "beta"
     ], "only opted-in estates are enabled"
     assert rendered["_caddy_public_dns_enabled_estates"][1]["public_dns"] == beta["public_dns"], (
-        "the enabled estate settings, including adopt_existing, remain available to the preflight"
+        "the enabled estate settings are preserved for app rendering"
     )
     assert apps["dynamic_dns"] == {
         "providers": expected_providers,

@@ -54,7 +54,6 @@ domain: "homelab.example.com"
 #     public_dns:                  # optional; absent or disabled has no effect
 #       enabled: false             # one estate apex and wildcard; never per-app records
 #       # provider: cloudflare     # defaults to this estate's dns_challenge.provider
-#       adopt_existing: false      # address settings are lab-wide: see public_dns below
 #     dns:                         # optional — which DNS provider serves THIS estate
 #       provider: opnsense         # pihole | adguard | opnsense | none
 #       host: "192.168.1.1"

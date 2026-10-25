@@ -63,8 +63,6 @@
          and (_caddy_public_dns_config.address.source | default('') == 'cname') }}
   vars:
     _caddy_public_dns_enabled_estates_json: >-
-      {# Keep the full estate block, including adopt_existing, available to the
-         separate first-publish preflight; dynamic_dns has no ownership switch. #}
       {{ _caddy_public_dns_estates
          | selectattr('public_dns.enabled', 'defined')
          | selectattr('public_dns.enabled', 'equalto', true) | list | to_json }}

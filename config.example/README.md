@@ -44,7 +44,6 @@ This example is commented out, so copying it keeps the feature disabled:
 #     public_dns:
 #       enabled: false
 #       # provider: cloudflare  # defaults to this estate's dns_challenge.provider
-#       adopt_existing: false
 #
 # public_dns:                   # lab-wide; one WAN address for every enabled estate
 #   ttl: 300

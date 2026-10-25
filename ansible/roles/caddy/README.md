@@ -41,9 +41,9 @@ preflight must run before first publish. Provider `SetRecords` behavior may have
 provider-specific effects at those same record names. The `static` IP source returns
 the configured address, while the app still checks at its `check_interval` (30 minutes
 by default); only the CNAME app has no polling loop.
-The role retains each enabled estate's full `public_dns` block, including
-`adopt_existing`, for the separate first-publish preflight; neither Caddy app exposes
-that ownership option in its JSON.
+The pinned dynamic DNS app has no ownership or adoption option. This role rejects
+`adopt_existing` until the first-publish preflight in follow-up issue #528 consumes it;
+the preflight must be in place before public DNS is first deployed.
 
 When a dynamic DNS provider write fails, the module logs the error without crashing
 Caddy, but caches the attempted address. It tries again after the address changes or

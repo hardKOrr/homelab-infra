@@ -130,8 +130,8 @@ def public_dns_contract():
          "domains.personal.public_dns has unsupported key 'proxied'."),
         ("invalid provider", {}, [estate(config={"enabled": False, "provider": "cloudflare/other"})],
          "domains.personal.public_dns.provider must name a Caddy DNS-01 provider module."),
-        ("invalid adopt_existing", {}, [estate(config={"enabled": False, "adopt_existing": "false"})],
-         "domains.personal.public_dns.adopt_existing must be true or false."),
+        ("deferred adopt_existing option", {}, [estate(config={"enabled": False, "adopt_existing": True})],
+         "domains.personal.public_dns has unsupported key 'adopt_existing'."),
         ("missing DNS-01 credentials", {"address": good_cname}, [estate(config=enabled, credentials=False)],
          "domains.personal.public_dns.enabled requires provider credentials in this estate's dns_challenge block."),
     )
