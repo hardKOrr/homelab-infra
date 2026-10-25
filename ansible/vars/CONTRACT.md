@@ -402,7 +402,7 @@ destroy either native guest type when `destroy_guest: true` is paired with
 | `domains.<estate>.public_dns.adopt_existing` | optional, default `false` | whether pre-existing records may be adopted; otherwise only records created by this feature may be changed |
 | `domains.<estate>.public_dns.allow_private` | optional, default `false` | permit private, loopback, link-local, or CGNAT addresses; this is an explicit exception |
 | `domains.<estate>.public_dns.address.source` | required when enabled | `static`, `lookup`, or `cname` |
-| `domains.<estate>.public_dns.address.address` | required for `static` | IP address whose family must appear in `families` |
+| `domains.<estate>.public_dns.address.address` | required for `static` | IP address whose family must appear in `families`; private, loopback, link-local, and CGNAT addresses require `allow_private: true` |
 | `domains.<estate>.public_dns.address.urls` | required for `lookup` | at least two HTTPS echo URLs; the lookups must agree |
 | `domains.<estate>.public_dns.address.target` | required for `cname` | valid hostname outside this estate's own domain |
 | `domains.<estate>.public_dns` and `.address` unknown keys | rejected | source-specific address keys are also rejected when they do not match `address.source` |

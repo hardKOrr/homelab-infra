@@ -1,7 +1,7 @@
 """Validation helpers for the Caddy role's opt-in public DNS contract."""
 
 from collections.abc import Mapping
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 import re
 from urllib.parse import urlsplit
 
@@ -19,6 +19,30 @@ PUBLIC_DNS_KEYS = {
 ADDRESS_KEYS = {"source", "address", "urls", "target"}
 DNS_PROVIDER_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
 HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+RESTRICTED_ADDRESS_NETWORKS = tuple(
+    ip_network(network)
+    for network in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "100.64.0.0/10",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
+
+
+def _is_restricted_address(value):
+    """Return whether an address is private, local, or carrier-grade NAT."""
+    if value.version == 6 and value.ipv4_mapped is not None:
+        value = value.ipv4_mapped
+    return any(
+        value.version == network.version and value in network
+        for network in RESTRICTED_ADDRESS_NETWORKS
+    )
 
 
 def _hostname(value):
@@ -134,6 +158,11 @@ def _public_dns_error(estate):
         family = "ipv4" if value.version == 4 else "ipv6"
         if family not in families:
             return f"{path}.address.address must match one of public_dns.families."
+        if not config.get("allow_private", False) and _is_restricted_address(value):
+            return (
+                f"{path}.address.address must not be private, loopback, link-local, "
+                "or CGNAT unless public_dns.allow_private is true."
+            )
         return None
 
     if source == "lookup":

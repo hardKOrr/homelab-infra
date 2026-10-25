@@ -71,6 +71,11 @@ def public_dns_contract():
         },
         {
             **enabled,
+            "allow_private": True,
+            "address": {"source": "static", "address": "192.168.1.10"},
+        },
+        {
+            **enabled,
             "address": {
                 "source": "lookup",
                 "urls": ["https://one.example.test/ip", "https://two.example.test/ip"],
@@ -108,6 +113,53 @@ def public_dns_contract():
                 "address": {"source": "static", "address": "2001:db8::10"},
             },
             "domains.personal.public_dns.address.address must match one of public_dns.families.",
+        ),
+        (
+            "static RFC 1918 address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "192.168.1.10"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static loopback address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "127.0.0.1"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static link-local address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "169.254.1.10"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static CGNAT address without allow_private",
+            {**enabled, "address": {"source": "static", "address": "100.64.0.1"}},
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static IPv6 ULA address without allow_private",
+            {
+                **enabled,
+                "families": ["ipv6"],
+                "address": {"source": "static", "address": "fd00::1"},
+            },
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static IPv6 loopback address without allow_private",
+            {
+                **enabled,
+                "families": ["ipv6"],
+                "address": {"source": "static", "address": "::1"},
+            },
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
+        ),
+        (
+            "static IPv6 link-local address without allow_private",
+            {
+                **enabled,
+                "families": ["ipv6"],
+                "address": {"source": "static", "address": "fe80::1"},
+            },
+            "domains.personal.public_dns.address.address must not be private, loopback, link-local, or CGNAT unless public_dns.allow_private is true.",
         ),
         (
             "CNAME inside the estate domain",
