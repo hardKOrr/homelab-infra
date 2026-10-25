@@ -85,11 +85,10 @@ use the supported reuse path instead of re-entering creation. Its module argumen
 inventory selection, the module returns without mutation and the seam refuses all
 subsequent node-local configuration.
 
-The direct [`create-lxc.yml`](../../playbooks/proxmox/create-lxc.yml) entry point and
-the LXC path of [`create-docker-host.yml`](../../playbooks/docker/create-docker-host.yml)
-have no inventory reuse branch and are create-only. Re-running either against an
-existing pinned address/VMID refuses creation instead of updating that guest in
-place. Use the application or stack deployment path for existing-guest reuse.
+The LXC path of [`create-docker-host.yml`](../../playbooks/docker/create-docker-host.yml)
+has no inventory reuse branch and is create-only. Re-running it against an existing
+pinned address/VMID refuses creation instead of updating that guest in place. Use the
+application or stack deployment path for existing-guest reuse.
 
 Pinned `community.proxmox` 2.0.0 defaults to `update: true` and `cmode: default`.
 Creation strips that sentinel, while existing updates can forward it to PVE. Disabling

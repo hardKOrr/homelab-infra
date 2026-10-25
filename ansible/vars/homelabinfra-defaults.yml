@@ -99,7 +99,7 @@ homelabinfra_defaults:
       tags:
         - _+lab
         - _-debian
-    vm: #TODO: EVerything about VM stuff
+    vm:
       agent: 1
       onboot: true
       autostart: true
