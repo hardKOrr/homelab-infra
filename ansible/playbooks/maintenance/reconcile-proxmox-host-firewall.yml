@@ -1,0 +1,19 @@
+---
+# Reconcile the explicitly enabled Proxmox datacenter and host firewall baseline.
+#
+# Usage: lab-run playbooks/maintenance/reconcile-proxmox-host-firewall.yml
+# An absent/false proxmox.firewall.enabled flag makes this playbook a no-op.
+
+- name: Proxmox host firewall | Reconcile the configured baseline
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  pre_tasks:
+    - name: Load platform vars
+      ansible.builtin.import_tasks: ../../tasks/load-user-vars.yml
+
+  tasks:
+    - name: Reconcile enabled Proxmox firewall baseline
+      ansible.builtin.include_tasks: ../../tasks/proxmox/reconcile-host-firewall-baseline.yml
+      when: homelabinfra_config.proxmox.firewall.enabled | default(false) | bool

@@ -1,0 +1,30 @@
+---
+- name: Proxmox host firewall | Plan the baseline from current API state
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ (_luv_vars_file | dirname | dirname) ~ '/scripts/proxmox-firewall-plan.py' }}"
+    stdin: >-
+      {{ {
+        'proxmox': {
+          'node': homelabinfra_config.proxmox.node,
+          'api_host': homelabinfra_config.proxmox.api_host,
+          'nodes': homelabinfra_config.proxmox.nodes | default({}),
+          'node_roles': homelabinfra_config.proxmox.node_roles | default({}),
+          'storage_nodes': homelabinfra_config.proxmox.storage_nodes | default(none),
+          'firewall': homelabinfra_config.proxmox.firewall | default({})
+        },
+        'cluster_status': _pve_fw_cluster_status,
+        'cluster_options': _pve_fw_cluster_options | default({}),
+        'cluster_rules': _pve_fw_cluster_rules | default([]),
+        'node_options': _pve_fw_node_options | default({}),
+        'node_rules': _pve_fw_node_rules | default({})
+      } | to_json }}
+  register: _pve_fw_plan_command
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Save the baseline plan
+  ansible.builtin.set_fact:
+    _pve_fw_plan: "{{ _pve_fw_plan_command.stdout | from_json }}"
+  no_log: true

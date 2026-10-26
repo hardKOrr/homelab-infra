@@ -273,6 +273,59 @@ else:
                 report("ERROR", "proxmox.yml", "proxmox.floating_vm_cpu_model",
                        "must be migratable; host is not permitted")
 
+        storage_nodes = pve.get("storage_nodes")
+        if storage_nodes is not None:
+            if not isinstance(storage_nodes, list) or any(
+                    not isinstance(node, str) or not node.strip() for node in storage_nodes):
+                report("ERROR", "proxmox.yml", "proxmox.storage_nodes",
+                       "must be a list of Proxmox node names")
+            elif len(set(storage_nodes)) != len(storage_nodes):
+                report("ERROR", "proxmox.yml", "proxmox.storage_nodes",
+                       "must not repeat a node")
+            elif isinstance(node_addresses, dict):
+                for node in storage_nodes:
+                    if node not in node_addresses and node != pve.get("node"):
+                        report("ERROR", "proxmox.yml", "proxmox.storage_nodes",
+                               "must name a node in proxmox.nodes or proxmox.node")
+
+        firewall = pve.get("firewall", {})
+        if not isinstance(firewall, dict):
+            report("ERROR", "proxmox.yml", "proxmox.firewall", "must be a mapping")
+            firewall = {}
+        firewall_enabled = firewall.get("enabled", False)
+        if not isinstance(firewall_enabled, bool):
+            report("ERROR", "proxmox.yml", "proxmox.firewall.enabled",
+                   "must be a boolean")
+            firewall_enabled = False
+        for key in ("management_sources", "storage_clients"):
+            cidrs = firewall.get(key, [])
+            if not isinstance(cidrs, list):
+                report("ERROR", "proxmox.yml", "proxmox.firewall." + key,
+                       "must be a list of CIDRs")
+                continue
+            if firewall_enabled and key == "management_sources" and not cidrs:
+                report("ERROR", "proxmox.yml", "proxmox.firewall.management_sources",
+                       "must contain at least one CIDR when the baseline is enabled")
+            for index, cidr in enumerate(cidrs):
+                if not isinstance(cidr, str) or not cidr.strip():
+                    report("ERROR", "proxmox.yml",
+                           "proxmox.firewall.%s.%d" % (key, index),
+                           "must be a non-empty CIDR")
+                    continue
+                try:
+                    ipaddress.ip_network(cidr, strict=False)
+                except ValueError:
+                    report("ERROR", "proxmox.yml",
+                           "proxmox.firewall.%s.%d" % (key, index),
+                           "must be a valid IPv4 or IPv6 CIDR")
+        if firewall_enabled and isinstance(node_addresses, dict):
+            for node, address in node_addresses.items():
+                try:
+                    ipaddress.ip_address(address)
+                except (TypeError, ValueError):
+                    report("ERROR", "proxmox.yml", "proxmox.nodes." + str(node),
+                           "must be an IP address when the Proxmox firewall baseline is enabled")
+
     networks = proxmox.get("networks")
     network_names = set(networks) if isinstance(networks, dict) else set()
     if not isinstance(networks, dict) or not networks:

@@ -6,6 +6,7 @@ that interface.
 
 ## Operation groups
 
+- `reconcile-proxmox-host-firewall.yml` is the opt-in Proxmox datacenter and host baseline operation. It reads `config/proxmox.yml`, leaves state untouched when `proxmox.firewall.enabled` is absent or false, and verifies node access, quorum and NFS mounts before it cancels its automatic rollback.
 - Application operations resolve the current hosting target before restart or log access.
   Native applications use their installed `lab-*` helpers; Docker applications act on the
   Compose project; Kubernetes operations use the owning namespace.

@@ -89,6 +89,7 @@ templates.
   the bind-mounted data directory is accessible to Apache's `www-data` user.
 - `test-firewall-wiring.py`: OPNsense app rules and opt-in port forwards plus k3s host alias ownership and convergence against a fake API.
 - `test-firewall-base.py`: base aliases and filter rules render from the documented example, validate family-specific ICMP, migrate only the legacy Green lab set, preserve foreign rules, converge, and restore a pre-write config backup after a failed readback.
+- `test-proxmox-firewall-base.py`: Proxmox datacenter and node rules render from the documented example, migrate only the legacy host-firewall rule shapes, preserve per-app/foreign rules, converge, and open a configured joining node as a peer.
 - `test-mariadb-recovery.py`: native root-socket exports, global consistency lock, PBS dispatch, manifest integrity, version guard, and same-filesystem restore rollback.
 
 On a Windows checkout accessed through WSL, wrap each command:

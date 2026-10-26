@@ -1,0 +1,63 @@
+---
+- name: Proxmox host firewall | Read rules before removing a baseline rule
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - get
+      - "{{ pve_fw_delete_path }}"
+      - --output-format
+      - json
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  register: _pve_fw_delete_read
+  changed_when: false
+  no_log: true
+
+- name: Proxmox host firewall | Find the rule at its saved position
+  ansible.builtin.set_fact:
+    _pve_fw_delete_current: "{{ _pve_fw_delete_current_json | from_json }}"
+  vars:
+    _pve_fw_delete_current_json: >-
+      {{ (_pve_fw_delete_read.stdout | from_json)
+         | selectattr('pos', 'defined')
+         | selectattr('pos', 'equalto', pve_fw_delete_rule.pos | int)
+         | list | to_json }}
+  no_log: true
+
+- name: Proxmox host firewall | Compare the current rule with the planned removal
+  ansible.builtin.set_fact:
+    _pve_fw_delete_matches: >-
+      {{ _pve_fw_delete_current | length == 1
+         and (_pve_fw_delete_current[0].get('comment', '') | string)
+             == (pve_fw_delete_rule.get('comment', '') | string)
+         and (_pve_fw_delete_current[0].get('type', '') | lower)
+             == (pve_fw_delete_rule.get('type', '') | lower)
+         and (_pve_fw_delete_current[0].get('action', '') | upper)
+             == (pve_fw_delete_rule.get('action', '') | upper)
+         and (_pve_fw_delete_current[0].get('proto', '') | lower)
+             == (pve_fw_delete_rule.get('proto', '') | lower)
+         and (_pve_fw_delete_current[0].get('dport', '') | string)
+             == (pve_fw_delete_rule.get('dport', '') | string)
+         and (_pve_fw_delete_current[0].get('source', '') | string)
+             == (pve_fw_delete_rule.get('source', '') | string)
+         and (_pve_fw_delete_current[0].get('dest', '') | string)
+             == (pve_fw_delete_rule.get('dest', '') | string)
+         and (_pve_fw_delete_current[0].get('enable', 1) | int)
+             == (pve_fw_delete_rule.get('enable', 1) | int) }}
+  no_log: true
+
+- name: Proxmox host firewall | Refuse to remove a rule that changed ownership or content
+  ansible.builtin.assert:
+    that:
+      - _pve_fw_delete_matches | bool
+    fail_msg: Refusing to remove a Proxmox firewall rule that changed after planning.
+  no_log: true
+
+- name: Proxmox host firewall | Delete the verified rule with its current digest
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pvesh', 'delete', pve_fw_delete_path ~ '/' ~ (pve_fw_delete_current[0].pos | string)]
+         + (['--digest', pve_fw_delete_current[0].digest]
+            if pve_fw_delete_current[0].digest | default('') | string | length > 0 else []) }}
+  delegate_to: "{{ homelabinfra_config.proxmox.node }}"
+  changed_when: true
+  no_log: true

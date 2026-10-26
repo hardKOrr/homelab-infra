@@ -104,6 +104,24 @@ proxmox:
   # nodes:
   #   <pve-node>: <pve-node-ip>
 
+  # Optional nodes that hold an NFS export protected by the Proxmox host firewall.
+  # If omitted, the baseline targets node_roles.storage when configured, otherwise node.
+  # Add a joining storage node here and to nodes before it joins; the datacenter peer
+  # rules are opened first, then its host NFS rule is added after it joins.
+  # storage_nodes:
+  #   - <pve-node-1>
+
+  # The Proxmox datacenter and host firewall baseline is opt-in. With enabled unset or
+  # false, this repository does not change the datacenter firewall options or add host
+  # rules beyond the per-app rules its playbooks already manage.
+  firewall:
+    enabled: false
+    # CIDRs allowed to reach each node's SSH (22) and API (8006).
+    management_sources: []
+    # CIDRs allowed to reach NFS TCP ports 111 and 2049 on storage_nodes.
+    # Use /32 or /128 entries for exact legacy host-rule takeover.
+    storage_clients: []
+
   # Verify the Proxmox API's TLS certificate. Defaults to false, because a stock Proxmox
   # node serves a self-signed certificate and every guest-creating task would otherwise
   # fail with CERTIFICATE_VERIFY_FAILED. The dynamic inventory makes the same assumption
